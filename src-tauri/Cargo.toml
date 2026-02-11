@@ -57,6 +57,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # 延迟初始化单例
 once_cell = "1"
+specta-typescript = "0.0.9"
 
 [target.'cfg(windows)'.dependencies]
 junction = "1"
