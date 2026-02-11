@@ -1,0 +1,222 @@
+{
+  "app": {
+    "name": "Skill Deck"
+  },
+  "common": {
+    "loading": "Loading...",
+    "copy": "Copy"
+  },
+  "nav": {
+    "skills": "Skills",
+    "settings": "Settings"
+  },
+  "context": {
+    "title": "Context",
+    "global": "Global",
+    "globalSubtitle": "Base layer • All global skills",
+    "projects": "Projects",
+    "addProject": "Add Project",
+    "manageInSettings": "Manage in Settings",
+    "noProjects": "No projects added",
+    "openInExplorer": "Open in Explorer",
+    "remove": "Remove",
+    "removeConfirm": {
+      "title": "Remove Project",
+      "description": "Are you sure you want to remove \"{{name}}\" from the list? This will not delete the project files.",
+      "cancel": "Cancel",
+      "confirm": "Remove"
+    }
+  },
+  "skills": {
+    "title": "My Skills",
+    "empty": "No skills installed",
+    "emptyHint": "Click \"Add\" to install your first skill",
+    "add": "Add",
+    "enabled": "Enabled: {{count}}/{{total}} agents",
+    "scope": {
+      "global": "Global",
+      "addProject": "Add Project..."
+    },
+    "select": "Select",
+    "update": "update",
+    "updates": "updates",
+    "updated": "Updated {{time}}",
+    "actions": {
+      "update": "Update",
+      "delete": "Delete",
+      "moreOptions": "More options"
+    },
+    "agent": {
+      "enable": "Enable {{name}}",
+      "disable": "Disable {{name}}"
+    },
+    "externalLink": "opens in new tab",
+    "globalSkills": "Global Skills",
+    "projectSkills": "Project Skills",
+    "project": {
+      "select": "Select Project",
+      "clear": "Clear"
+    },
+    "search": "Search skills...",
+    "sync": "Sync",
+    "scopeIcon": {
+      "project": "Project skill",
+      "global": "Global skill"
+    },
+    "conflict": {
+      "alsoInGlobal": "Also installed globally",
+      "alsoInProject": "Also installed in this project"
+    },
+    "projectNotFound": "Project directory not found: {{path}}",
+    "detail": {
+      "title": "Skill Details",
+      "description": "Description",
+      "source": "Source",
+      "path": "Path",
+      "installed": "Installed",
+      "updated": "Updated",
+      "syncedAgents": "Synced Agents",
+      "noSource": "Manually added",
+      "noAgents": "Not synced to any agent"
+    },
+    "deleteConfirm": {
+      "title": "Delete Skill",
+      "description": "This will remove \"{{name}}\" from all installed editors. This action cannot be undone.",
+      "cancel": "Cancel",
+      "confirm": "Delete"
+    },
+    "deleteSuccess": "\"{{name}}\" has been deleted",
+    "deleteError": "Failed to delete \"{{name}}\": {{error}}"
+  },
+  "settings": {
+    "title": "Settings",
+    "tabs": {
+      "general": "General",
+      "projects": "Projects",
+      "about": "About"
+    },
+    "defaultAgents": {
+      "title": "Default Install Targets",
+      "description": "Agents selected by default when installing skills",
+      "universalHint": "Skills will also be installed to the universal directory (~/.agents/skills/)",
+      "empty": "No agents detected",
+      "emptyHint": "Install AI coding agents like Claude Code, Cursor, or Windsurf",
+      "addMore": "Add more agents",
+      "searchPlaceholder": "Search agents...",
+      "noResults": "No agents found",
+      "cliShared": "This setting is shared with skills CLI"
+    },
+    "detected": "Detected",
+    "projects": "Projects",
+    "projectsHint": "Saved project paths for quick access to project-level skills",
+    "projectsEmpty": "No projects added",
+    "projectsEmptyHint": "Add a project to manage project-level skills",
+    "addProject": "Add Project",
+    "about": "About",
+    "version": "Version",
+    "compatible": "Compatible with"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "language": {
+    "switchTo": "Switch to Chinese"
+  },
+  "addSkill": {
+    "title": "Add Skill",
+    "steps": {
+      "source": "Source",
+      "skills": "Skills",
+      "options": "Options",
+      "confirm": "Confirm"
+    },
+    "source": {
+      "label": "Source",
+      "placeholder": "e.g. vercel-labs/agent-skills",
+      "hint": "Supports GitHub (owner/repo), URLs, or local paths",
+      "fetch": "Fetch Skills",
+      "fetching": "Fetching skills...",
+      "cloning": "Cloning repository...",
+      "connecting": "Connecting...",
+      "cloningWithTime": "Cloning... ({{elapsed}}s / {{timeout}}s)",
+      "cloneDone": "Clone complete",
+      "error": {
+        "empty": "Please enter a source",
+        "notFound": "Repository not found",
+        "noSkills": "No skills found in this source",
+        "network": "Network error, please check your connection",
+        "timeout": "Clone timed out. The repository may be too large or network is slow.",
+        "auth": "Authentication failed. Check your credentials or repository access.",
+        "refNotFound": "Branch or tag not found"
+      }
+    },
+    "skills": {
+      "title": "Select Skills",
+      "selected": "Selected: {{count}} of {{total}}",
+      "search": "Search skills...",
+      "selectAll": "Select All",
+      "clear": "Clear",
+      "empty": "No skills match your search",
+      "required": "Please select at least one skill"
+    },
+    "agents": {
+      "title": "Install Targets",
+      "detected": "Detected",
+      "detectedSection": "Detected",
+      "otherSection": "Other Agents",
+      "otherAgentsTitle": "Other Agents",
+      "expand": "Expand",
+      "collapse": "Collapse"
+    },
+    "scope": {
+      "title": "Scope",
+      "project": "Project",
+      "projectHint": "Install in current project directory",
+      "global": "Global",
+      "globalHint": "Install in home directory (available everywhere)"
+    },
+    "mode": {
+      "title": "Installation Method",
+      "symlink": "Symlink",
+      "symlinkHint": "Recommended - Single source of truth",
+      "copy": "Copy",
+      "copyHint": "Independent copies for each agent"
+    },
+    "confirm": {
+      "title": "Installation Summary",
+      "scopeGlobal": "Installing to: Global (~/.agents/skills/)",
+      "scopeProject": "Installing to: {{name}} ({{path}})",
+      "installing": "Installing {{count}} skill to {{agents}} agents",
+      "installing_plural": "Installing {{count}} skills to {{agents}} agents",
+      "universal": "universal",
+      "symlink": "symlink →",
+      "copy": "copy →",
+      "overwrites": "overwrites",
+      "overwriteWarning": "These skills will be overwritten"
+    },
+    "installing": {
+      "title": "Installing...",
+      "progress": "Progress: {{completed}}/{{total}}"
+    },
+    "complete": {
+      "success": "Installed {{count}} skill",
+      "success_plural": "Installed {{count}} skills",
+      "partial": "Installation completed with errors",
+      "successCount": "Successful: {{count}}",
+      "failedCount": "Failed: {{count}}",
+      "symlinked": "symlinked",
+      "copied": "copied",
+      "symlinkFailed": "Symlinks failed for: {{agents}}",
+      "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support."
+    },
+    "actions": {
+      "cancel": "Cancel",
+      "back": "Back",
+      "next": "Next",
+      "install": "Install",
+      "retry": "Retry",
+      "done": "Done"
+    }
+  }
+}

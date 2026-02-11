@@ -1,0 +1,222 @@
+{
+  "app": {
+    "name": "Skill Deck"
+  },
+  "common": {
+    "loading": "加载中...",
+    "copy": "复制"
+  },
+  "nav": {
+    "skills": "Skills",
+    "settings": "设置"
+  },
+  "context": {
+    "title": "上下文",
+    "global": "全局",
+    "globalSubtitle": "基础层 • 所有全局技能",
+    "projects": "项目",
+    "addProject": "添加项目",
+    "manageInSettings": "在设置中管理",
+    "noProjects": "暂无项目",
+    "openInExplorer": "在文件管理器中打开",
+    "remove": "移除",
+    "removeConfirm": {
+      "title": "移除项目",
+      "description": "确定要从列表中移除「{{name}}」吗？这不会删除项目文件。",
+      "cancel": "取消",
+      "confirm": "移除"
+    }
+  },
+  "skills": {
+    "title": "My Skills",
+    "empty": "暂无已安装的 Skill",
+    "emptyHint": "点击「添加」安装你的第一个 Skill",
+    "add": "添加",
+    "enabled": "已启用: {{count}}/{{total}} 个 Agent",
+    "scope": {
+      "global": "全局",
+      "addProject": "添加项目..."
+    },
+    "select": "选择",
+    "update": "个更新",
+    "updates": "个更新",
+    "updated": "更新于 {{time}}",
+    "actions": {
+      "update": "更新",
+      "delete": "删除",
+      "moreOptions": "更多选项"
+    },
+    "agent": {
+      "enable": "启用 {{name}}",
+      "disable": "禁用 {{name}}"
+    },
+    "externalLink": "在新标签页中打开",
+    "globalSkills": "Global Skills",
+    "projectSkills": "Project Skills",
+    "project": {
+      "select": "选择项目",
+      "clear": "清除"
+    },
+    "search": "搜索 Skills...",
+    "sync": "同步",
+    "scopeIcon": {
+      "project": "项目级 Skill",
+      "global": "全局 Skill"
+    },
+    "conflict": {
+      "alsoInGlobal": "同时安装在全局",
+      "alsoInProject": "同时安装在此项目"
+    },
+    "projectNotFound": "项目目录不存在：{{path}}",
+    "detail": {
+      "title": "Skill 详情",
+      "description": "描述",
+      "source": "来源",
+      "path": "路径",
+      "installed": "安装时间",
+      "updated": "更新时间",
+      "syncedAgents": "已同步 Agents",
+      "noSource": "手动添加",
+      "noAgents": "未同步到任何 Agent"
+    },
+    "deleteConfirm": {
+      "title": "删除 Skill",
+      "description": "将从所有已安装的编辑器中移除「{{name}}」，此操作不可撤销。",
+      "cancel": "取消",
+      "confirm": "删除"
+    },
+    "deleteSuccess": "已删除「{{name}}」",
+    "deleteError": "删除「{{name}}」失败：{{error}}"
+  },
+  "settings": {
+    "title": "设置",
+    "tabs": {
+      "general": "通用",
+      "projects": "项目",
+      "about": "关于"
+    },
+    "defaultAgents": {
+      "title": "默认安装目标",
+      "description": "安装 Skill 时默认选中的 Agents",
+      "universalHint": "Skills 将同时安装到通用目录 (~/.agents/skills/)",
+      "empty": "未检测到 Agent",
+      "emptyHint": "请安装 Claude Code、Cursor 或 Windsurf 等 AI Agent",
+      "addMore": "添加更多 Agents",
+      "searchPlaceholder": "搜索 Agents...",
+      "noResults": "未找到 Agent",
+      "cliShared": "此设置与 skills CLI 共享"
+    },
+    "detected": "已检测",
+    "projects": "项目",
+    "projectsHint": "已保存的项目路径，方便快速查看项目级 Skills",
+    "projectsEmpty": "暂无已添加的项目",
+    "projectsEmptyHint": "添加项目以管理项目级 Skills",
+    "addProject": "添加项目",
+    "about": "关于",
+    "version": "版本",
+    "compatible": "兼容"
+  },
+  "theme": {
+    "light": "浅色",
+    "dark": "深色"
+  },
+  "language": {
+    "switchTo": "切换到英文"
+  },
+  "addSkill": {
+    "title": "添加 Skill",
+    "steps": {
+      "source": "来源",
+      "skills": "选择",
+      "options": "选项",
+      "confirm": "确认"
+    },
+    "source": {
+      "label": "来源",
+      "placeholder": "例如 vercel-labs/agent-skills",
+      "hint": "支持 GitHub (owner/repo)、URL 或本地路径",
+      "fetch": "获取 Skills",
+      "fetching": "正在获取...",
+      "cloning": "正在克隆仓库...",
+      "connecting": "正在连接...",
+      "cloningWithTime": "正在克隆... ({{elapsed}}秒 / {{timeout}}秒)",
+      "cloneDone": "克隆完成",
+      "error": {
+        "empty": "请输入来源",
+        "notFound": "未找到仓库",
+        "noSkills": "该来源中未找到 Skills",
+        "network": "网络错误，请检查网络连接",
+        "timeout": "克隆超时。仓库可能太大或网络较慢。",
+        "auth": "认证失败。请检查凭据或仓库访问权限。",
+        "refNotFound": "未找到指定的分支或标签"
+      }
+    },
+    "skills": {
+      "title": "选择 Skills",
+      "selected": "已选择: {{count}}/{{total}}",
+      "search": "搜索 Skills...",
+      "selectAll": "全选",
+      "clear": "清除",
+      "empty": "没有匹配的 Skills",
+      "required": "请至少选择一个 Skill"
+    },
+    "agents": {
+      "title": "安装目标",
+      "detected": "已检测",
+      "detectedSection": "已检测",
+      "otherSection": "其他 Agents",
+      "otherAgentsTitle": "其他 Agents",
+      "expand": "展开",
+      "collapse": "收起"
+    },
+    "scope": {
+      "title": "安装范围",
+      "project": "项目",
+      "projectHint": "安装到当前项目目录",
+      "global": "全局",
+      "globalHint": "安装到用户目录（全局可用）"
+    },
+    "mode": {
+      "title": "安装方式",
+      "symlink": "符号链接",
+      "symlinkHint": "推荐 - 保持单一来源",
+      "copy": "复制",
+      "copyHint": "为每个 Agent 创建独立副本"
+    },
+    "confirm": {
+      "title": "安装摘要",
+      "scopeGlobal": "安装到：全局 (~/.agents/skills/)",
+      "scopeProject": "安装到：{{name}} ({{path}})",
+      "installing": "正在安装 {{count}} 个 Skill 到 {{agents}} 个 Agents",
+      "installing_plural": "正在安装 {{count}} 个 Skills 到 {{agents}} 个 Agents",
+      "universal": "通用",
+      "symlink": "符号链接 →",
+      "copy": "复制 →",
+      "overwrites": "将被覆盖",
+      "overwriteWarning": "这些 Skills 将被覆盖"
+    },
+    "installing": {
+      "title": "安装中...",
+      "progress": "进度: {{completed}}/{{total}}"
+    },
+    "complete": {
+      "success": "已安装 {{count}} 个 Skill",
+      "success_plural": "已安装 {{count}} 个 Skills",
+      "partial": "安装完成，但有错误",
+      "successCount": "成功: {{count}}",
+      "failedCount": "失败: {{count}}",
+      "symlinked": "已链接",
+      "copied": "已复制",
+      "symlinkFailed": "符号链接失败: {{agents}}",
+      "symlinkFailedHint": "已改为复制文件。在 Windows 上，启用开发者模式可支持符号链接。"
+    },
+    "actions": {
+      "cancel": "取消",
+      "back": "上一步",
+      "next": "下一步",
+      "install": "安装",
+      "retry": "重试",
+      "done": "完成"
+    }
+  }
+}
