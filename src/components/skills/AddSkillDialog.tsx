@@ -7,8 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
+import { Globe, Folder } from 'lucide-react';
 import { SourceStep } from './add-skill/SourceStep';
 import { SkillsStep } from './add-skill/SkillsStep';
 import { OptionsStep } from './add-skill/OptionsStep';
@@ -24,6 +25,12 @@ interface AddSkillDialogProps {
   scope: 'global' | 'project';
   projectPath?: string;
   onInstallComplete?: () => void;
+}
+
+/** 从完整路径中提取项目名称 */
+function getProjectName(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || path;
 }
 
 const STEP_LABELS = ['source', 'skills', 'options', 'confirm'] as const;
@@ -114,7 +121,7 @@ export function AddSkillDialog({
     const currentStep = typeof state.step === 'number' ? state.step : 0;
 
     return (
-      <div className="flex items-center justify-center gap-2 py-4">
+      <div className="flex items-center justify-center gap-2 pt-2">
         {STEP_LABELS.map((label, index) => {
           const stepNum = index + 1;
           const isActive = stepNum === currentStep;
@@ -236,9 +243,7 @@ export function AddSkillDialog({
     })();
 
     return (
-      <>
-        <Separator />
-        <div className="flex justify-end gap-2 p-4">
+      <div className="flex justify-end gap-2 px-6 py-3 border-t">
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
             {t('addSkill.actions.cancel')}
           </Button>
@@ -258,7 +263,6 @@ export function AddSkillDialog({
             </Button>
           )}
         </div>
-      </>
     );
   };
 
@@ -267,14 +271,23 @@ export function AddSkillDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+      <DialogContent className="w-[90vw] max-w-3xl max-h-[85vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>{t('addSkill.title')}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {t('addSkill.title')}
+            <Badge variant="outline" className="font-normal text-xs">
+              {scope === 'global' ? (
+                <><Globe className="w-3 h-3 mr-1" />{t('addSkill.scope.global')}</>
+              ) : (
+                <><Folder className="w-3 h-3 mr-1" />{getProjectName(projectPath ?? '')}</>
+              )}
+            </Badge>
+          </DialogTitle>
         </DialogHeader>
 
         {showStepper && renderStepper()}
 
-        <div className="flex-1 overflow-auto px-1">
+        <div className="flex-1 overflow-auto min-h-0 px-1">
           {renderStepContent()}
         </div>
 

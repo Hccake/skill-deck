@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Globe, Folder } from 'lucide-react';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { checkOverwrites } from '@/hooks/useTauriApi';
 import type { AddSkillState } from './types';
 
@@ -82,8 +81,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
         )}
       </div>
 
-      <ScrollArea className="h-64 border rounded-md">
-        <div className="p-3 space-y-3">
+      <div className="border rounded-md p-3 space-y-3">
           {state.selectedSkills.map((skillName) => {
             const overwriteAgents = state.overwrites[skillName] ?? [];
 
@@ -116,8 +114,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
               </div>
             );
           })}
-        </div>
-      </ScrollArea>
+      </div>
 
       {/* Summary */}
       <div className="text-sm text-muted-foreground">

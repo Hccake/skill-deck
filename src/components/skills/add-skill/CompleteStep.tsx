@@ -3,7 +3,6 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import type { AddSkillState } from './types';
 
 interface CompleteStepProps {
@@ -73,8 +72,7 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
       )}
 
       {/* Results list */}
-      <ScrollArea className="h-48 border rounded-md">
-        <div className="p-3 space-y-2">
+      <div className="border rounded-md p-3 space-y-2">
           {/* Successful */}
           {Array.from(successfulBySkill.entries()).map(([skillName, items]) => {
             const first = items[0];
@@ -117,8 +115,7 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
               </div>
             );
           })}
-        </div>
-      </ScrollArea>
+      </div>
 
       {/* Symlink fallback warning */}
       {hasSymlinkFallback && (

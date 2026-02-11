@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import type { AddSkillState, AvailableSkill } from './types';
 
 interface SkillsStepProps {
@@ -48,16 +47,22 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
   }, [updateState]);
 
   return (
-    <div className="space-y-4 py-4">
-      {/* Header with count */}
+    <div className="space-y-4 py-1">
+      {/* Header with count / validation */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">{t('addSkill.skills.title')}</h3>
-        <span className="text-sm text-muted-foreground">
-          {t('addSkill.skills.selected', {
-            count: state.selectedSkills.length,
-            total: state.availableSkills.length,
-          })}
-        </span>
+        {state.selectedSkills.length === 0 ? (
+          <span className="text-sm text-destructive">
+            {t('addSkill.skills.required')}
+          </span>
+        ) : (
+          <span className="text-sm text-muted-foreground">
+            {t('addSkill.skills.selected', {
+              count: state.selectedSkills.length,
+              total: state.availableSkills.length,
+            })}
+          </span>
+        )}
       </div>
 
       {/* Search */}
@@ -68,8 +73,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
       />
 
       {/* Skills list */}
-      <ScrollArea className="h-64 border rounded-md">
-        <div className="p-2 space-y-1">
+      <div className="border rounded-md p-2 space-y-1">
           {filteredSkills.length === 0 ? (
             <div className="p-4 text-center text-sm text-muted-foreground">
               {t('addSkill.skills.empty')}
@@ -84,8 +88,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
               />
             ))
           )}
-        </div>
-      </ScrollArea>
+      </div>
 
       {/* Actions */}
       <div className="flex gap-2">
@@ -96,13 +99,6 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
           {t('addSkill.skills.clear')}
         </Button>
       </div>
-
-      {/* Validation message */}
-      {state.selectedSkills.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          {t('addSkill.skills.required')}
-        </p>
-      )}
     </div>
   );
 }
@@ -125,7 +121,7 @@ const SkillItem = memo(function SkillItem({
       <Checkbox checked={selected} className="mt-1" />
       <div className="flex-1 min-w-0">
         <div className="font-medium text-sm">{skill.name}</div>
-        <div className="text-xs text-muted-foreground truncate">
+        <div className="text-xs text-muted-foreground line-clamp-2">
           {skill.description}
         </div>
       </div>
