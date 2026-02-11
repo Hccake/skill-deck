@@ -219,6 +219,15 @@
       "symlinkFailed": "符号链接失败: {{agents}}",
       "symlinkFailedHint": "已改为复制文件。在 Windows 上，启用开发者模式可支持符号链接。"
     },
+    "error": {
+      "title": "安装失败",
+      "detailsLabel": "详细信息",
+      "suggestionsLabel": "建议",
+      "actions": {
+        "backToSource": "返回修改",
+        "close": "关闭"
+      }
+    },
     "actions": {
       "cancel": "取消",
       "back": "上一步",

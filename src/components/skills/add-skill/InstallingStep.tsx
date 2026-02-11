@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Progress } from '@/components/ui/progress';
 import { installSkills, saveLastSelectedAgents } from '@/hooks/useTauriApi';
+import { parseInstallError } from '@/utils/parse-install-error';
 import type { AddSkillState, InstallParams } from './types';
 
 interface InstallingStepProps {
@@ -74,12 +75,21 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
         });
       } catch (error) {
         console.error('Installation failed:', error);
+
+        // 解析错误信息
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const installError = parseInstallError(errorMessage, {
+          selectedSkills,
+          availableSkills: state.availableSkills,
+        });
+
         updateStateRef.current({
           installResults: {
             successful: [],
             failed: [],
             symlinkFallbackAgents: [],
           },
+          installError,
           step: 'error',
         });
       }

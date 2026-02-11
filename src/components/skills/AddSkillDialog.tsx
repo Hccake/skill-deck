@@ -16,6 +16,7 @@ import { OptionsStep } from './add-skill/OptionsStep';
 import { ConfirmStep } from './add-skill/ConfirmStep';
 import { InstallingStep } from './add-skill/InstallingStep';
 import { CompleteStep } from './add-skill/CompleteStep';
+import { ErrorStep } from './add-skill/ErrorStep';
 import type { AddSkillState, WizardStep } from './add-skill/types';
 
 interface AddSkillDialogProps {
@@ -198,8 +199,20 @@ export function AddSkillDialog({
             projectPath={projectPath}
           />
         );
-      case 'complete':
       case 'error':
+        // 区分完全失败和部分失败
+        if (state.installError) {
+          // 完全失败 → ErrorStep
+          return (
+            <ErrorStep
+              error={state.installError}
+              onBack={() => goToStep(1)}
+              onClose={() => handleOpenChange(false)}
+            />
+          );
+        }
+        // 部分失败 → CompleteStep（fallthrough）
+      case 'complete':
         return (
           <CompleteStep
             state={state}

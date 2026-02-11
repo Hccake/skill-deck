@@ -219,6 +219,15 @@
       "symlinkFailed": "Symlinks failed for: {{agents}}",
       "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support."
     },
+    "error": {
+      "title": "Installation Failed",
+      "detailsLabel": "Details",
+      "suggestionsLabel": "Suggestions",
+      "actions": {
+        "backToSource": "Back to Edit",
+        "close": "Close"
+      }
+    },
     "actions": {
       "cancel": "Cancel",
       "back": "Back",

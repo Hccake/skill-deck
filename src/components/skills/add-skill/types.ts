@@ -44,6 +44,16 @@ export interface InstallResults {
   symlinkFallbackAgents: string[];
 }
 
+/** 安装错误详情 */
+export interface InstallError {
+  /** 用户友好的错误描述 */
+  message: string;
+  /** 详细上下文信息（可选） */
+  details?: string;
+  /** 修复建议列表（可选） */
+  suggestions?: string[];
+}
+
 /** Agent 分组 */
 export type AgentGroupId = 'universal' | 'detected' | 'other';
 
@@ -93,4 +103,5 @@ export interface AddSkillState {
 
   // Installing
   installResults: InstallResults | null;
+  installError?: InstallError;
 }
