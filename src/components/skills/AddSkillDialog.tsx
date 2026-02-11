@@ -211,7 +211,17 @@ export function AddSkillDialog({
             />
           );
         }
-        // 部分失败 → CompleteStep（fallthrough）
+        // 部分失败 → CompleteStep
+        return (
+          <CompleteStep
+            state={state}
+            onDone={() => {
+              handleOpenChange(false);
+              onInstallComplete?.();
+            }}
+            onRetry={() => goToStep(4)}
+          />
+        );
       case 'complete':
         return (
           <CompleteStep
