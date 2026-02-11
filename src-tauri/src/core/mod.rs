@@ -14,6 +14,4 @@ pub use discovery::*;
 pub use git::*;
 pub use github_api::*;
 pub use installer::*;
-pub use installer::is_skill_installed;
 pub use source_parser::*;
-pub use uninstaller::remove_skill;

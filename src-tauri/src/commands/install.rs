@@ -12,7 +12,7 @@ use crate::core::{
 };
 use crate::error::AppError;
 use crate::models::{
-    AvailableSkill, FetchResult, InstallParams, InstallResult, InstallResults, SourceType,
+    AvailableSkill, FetchResult, InstallParams, InstallResults, SourceType,
 };
 use tauri::{command, AppHandle, Emitter};
 
