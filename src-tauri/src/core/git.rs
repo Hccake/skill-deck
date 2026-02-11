@@ -174,6 +174,14 @@ where
     // 设置 stderr 捕获
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
+    // Windows: 隐藏控制台窗口
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let mut child = cmd
         .spawn()
         .map_err(|e| AppError::GitCloneFailed(format!("Failed to spawn git: {}", e)))?;
