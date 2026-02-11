@@ -46,6 +46,8 @@ function createInitialState(): AddSkillState {
     otherAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
+    preSelectedSkills: [],
+    preSelectedAgents: [],
     installResults: null,
   };
 }

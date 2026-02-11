@@ -87,6 +87,10 @@ export interface AddSkillState {
   // Step 4: Confirm
   overwrites: Record<string, string[]>;
 
+  // 从 CLI 命令解析出的预填值
+  preSelectedSkills: string[];
+  preSelectedAgents: string[];
+
   // Installing
   installResults: InstallResults | null;
 }

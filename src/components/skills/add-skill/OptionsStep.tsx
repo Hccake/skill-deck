@@ -22,6 +22,10 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   const updateStateRef = useRef(updateState);
   updateStateRef.current = updateState;
 
+  // 使用 ref 保存 preSelectedAgents，避免将其作为 useEffect 依赖
+  const preSelectedAgentsRef = useRef(state.preSelectedAgents);
+  preSelectedAgentsRef.current = state.preSelectedAgents;
+
   // 初始化 agents 数据 — async-parallel 规则
   useEffect(() => {
     async function initAgents() {
@@ -46,7 +50,14 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
       );
 
       let selectedAgents: string[];
-      if (lastSelected.length > 0) {
+
+      // 优先使用从 CLI 命令解析出的 preSelectedAgents
+      if (preSelectedAgentsRef.current.length > 0) {
+        const matched = preSelectedAgentsRef.current.filter((id) =>
+          allAgents.some((a) => a.id === id && !a.isUniversal)
+        );
+        selectedAgents = matched.length > 0 ? matched : [];
+      } else if (lastSelected.length > 0) {
         selectedAgents = lastSelected.filter(
           (id) => allAgents.some((a) => a.id === id && !a.isUniversal)
         );

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { fetchAvailable } from '@/hooks/useTauriApi';
+import { parseSkillsCommand } from '@/utils/parse-skills-command';
 import type { AddSkillState } from './types';
 
 /** 克隆进度事件 */
@@ -59,7 +60,19 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
     setCloneProgress(null);
 
     try {
-      const result = await fetchAvailable(source.trim());
+      // 解析 CLI 命令（如 npx skills add repo --skill x -a y）
+      const parsed = parseSkillsCommand(source);
+      const actualSource = parsed.isCommand ? parsed.source : source.trim();
+
+      if (!actualSource) {
+        updateState({
+          fetchStatus: 'error',
+          fetchError: t('addSkill.source.error.empty'),
+        });
+        return;
+      }
+
+      const result = await fetchAvailable(actualSource);
 
       if (result.skills.length === 0) {
         updateState({
@@ -69,18 +82,24 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
         return;
       }
 
-      // 如果有 @skill 语法预选
-      const preselected = result.skillFilter
+      // 合并 skillFilter（@skill 语法）和 CLI --skill 参数
+      const preselectedFromFilter = result.skillFilter
         ? result.skills
             .filter(s => s.name === result.skillFilter)
             .map(s => s.name)
         : [];
+      const preselectedFromCommand = parsed.skills.filter(name =>
+        result.skills.some(s => s.name === name)
+      );
+      const preselected = [...new Set([...preselectedFromFilter, ...preselectedFromCommand])];
 
       updateState({
         fetchStatus: 'success',
         availableSkills: result.skills,
         selectedSkills: preselected,
         skillFilter: result.skillFilter,
+        preSelectedSkills: parsed.skills,
+        preSelectedAgents: parsed.agents,
       });
 
       // 自动进入下一步
