@@ -30,9 +30,6 @@ serde_yaml = "0.9"
 thiserror = "2"
 dirs = "6"
 
-# Git 操作
-git2 = { version = "0.19", default-features = false, features = ["https", "vendored-openssl", "vendored-libgit2"] }
-
 # 临时目录
 tempfile = "3"
 
