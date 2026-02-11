@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { NavLink } from 'react-router-dom';
-import { Sun, Moon, Package, Settings, Check, Globe } from 'lucide-react';
+import { Sun, Moon, Package, Settings, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -63,9 +63,11 @@ export function Header() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
+              className="group h-8 w-8 cursor-pointer"
             >
-              <Globe className="h-4 w-4" />
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground transition-colors group-hover:bg-muted-foreground/15 group-hover:text-foreground">
+                {LOCALE_OPTIONS.find((o) => o.value === locale)?.code}
+              </span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -89,16 +91,18 @@ export function Header() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
+          className="group h-8 w-8 cursor-pointer"
           onClick={toggleTheme}
           aria-label={t(`theme.${theme}`)}
           title={t(`theme.${theme}`)}
         >
-          {theme === 'light' ? (
-            <Sun className="h-4 w-4" />
-          ) : (
-            <Moon className="h-4 w-4" />
-          )}
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-muted-foreground/15 group-hover:text-foreground">
+            {theme === 'light' ? (
+              <Sun className="h-4 w-4" />
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+          </span>
         </Button>
       </div>
     </header>
