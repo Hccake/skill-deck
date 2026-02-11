@@ -31,7 +31,7 @@ thiserror = "2"
 dirs = "6"
 
 # Git 操作
-git2 = "0.19"
+git2 = { version = "0.19", default-features = false, features = ["https", "vendored-openssl", "vendored-libgit2"] }
 
 # 临时目录
 tempfile = "3"
