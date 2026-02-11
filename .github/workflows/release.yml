@@ -51,6 +51,12 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Install OpenSSL
+        if: matrix.platform == 'macos-latest'
+        run: |
+          brew install openssl
+          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+
       - name: Install frontend dependencies
         run: pnpm install
 
