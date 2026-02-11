@@ -94,6 +94,7 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
       const preselected = [...new Set([...preselectedFromFilter, ...preselectedFromCommand])];
 
       updateState({
+        source: actualSource, // 保存解析后的 source（去除命令前缀）
         fetchStatus: 'success',
         availableSkills: result.skills,
         selectedSkills: preselected,
