@@ -31,7 +31,19 @@ pub struct PathContext {
 impl PathContext {
     fn new() -> Self {
         let home = dirs::home_dir().expect("Failed to get home directory");
-        let config_home = dirs::config_dir().unwrap_or_else(|| home.join(".config"));
+        // 对齐 CLI: xdgConfig ?? join(home, '.config')
+        // xdg-basedir 在 Windows/macOS 上返回 None，fallback 到 ~/.config
+        // dirs::config_dir() 在 Windows 上返回 AppData\Roaming，与 CLI 不一致
+        // 因此仅在 Linux 上使用 XDG_CONFIG_HOME，其余平台统一用 ~/.config
+        let config_home = if cfg!(target_os = "linux") {
+            std::env::var("XDG_CONFIG_HOME")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".config"))
+        } else {
+            home.join(".config")
+        };
 
         let codex_home = std::env::var("CODEX_HOME")
             .ok()
