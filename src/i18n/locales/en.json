@@ -59,6 +59,10 @@
     },
     "search": "Search skills...",
     "sync": "Refresh",
+    "filter": {
+      "allAgents": "All agents",
+      "noResults": "No skills found for {{name}}"
+    },
     "scopeIcon": {
       "project": "Project skill",
       "global": "Global skill"

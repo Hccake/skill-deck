@@ -18,7 +18,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { Skill, SkillScope } from '@/types';
+import type { AgentType, Skill, SkillScope } from '@/types';
+
+/** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
+const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
 
 interface SkillCardProps {
   skill: Skill;
@@ -28,6 +31,8 @@ interface SkillCardProps {
   hasConflict?: boolean;
   /** 是否正在更新中 */
   isUpdating?: boolean;
+  /** Agent display name 映射（agentId → displayName） */
+  agentDisplayNames?: Map<AgentType, string>;
   /** 点击卡片打开详情 */
   onClick?: (skill: Skill) => void;
   onUpdate?: (skillName: string) => void;
@@ -40,6 +45,7 @@ export function SkillCard({
   displayScope,
   hasConflict = false,
   isUpdating = false,
+  agentDisplayNames = EMPTY_DISPLAY_NAMES,
   onClick,
   onUpdate,
   onDelete,
@@ -156,7 +162,7 @@ export function SkillCard({
             )}
           </div>
 
-          {/* Row 4: Synced Agents */}
+          {/* Row 4: Agents */}
           <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
             {skill.agents.map((agentId) => (
               <Toggle
@@ -166,11 +172,11 @@ export function SkillCard({
                 size="sm"
                 variant="outline"
                 className="h-7 px-2 sm:px-2.5 text-xs gap-1 sm:gap-1.5"
-                aria-label={t('skills.agent.disable', { name: agentId })}
+                aria-label={t('skills.agent.disable', { name: agentDisplayNames.get(agentId) ?? agentId })}
                 onClick={(e) => e.stopPropagation()}
               >
                 <span className="flex h-1.5 w-1.5 rounded-full bg-success" />
-                {agentId}
+                {agentDisplayNames.get(agentId) ?? agentId}
               </Toggle>
             ))}
           </div>

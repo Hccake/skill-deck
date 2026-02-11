@@ -59,6 +59,10 @@
     },
     "search": "搜索 Skills...",
     "sync": "刷新",
+    "filter": {
+      "allAgents": "全部 Agents",
+      "noResults": "未找到 {{name}} 的 Skills"
+    },
     "scopeIcon": {
       "project": "项目级 Skill",
       "global": "全局 Skill"

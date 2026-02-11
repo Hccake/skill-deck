@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useContextStore } from '@/stores/context';
-import { listSkills, removeSkill, checkUpdates, updateSkill } from '@/hooks/useTauriApi';
+import { listSkills, listAgents, removeSkill, checkUpdates, updateSkill } from '@/hooks/useTauriApi';
 import { SkillsToolbar } from './SkillsToolbar';
 import { SkillsSection } from './SkillsSection';
 import { SkillDetailDialog } from './SkillDetailDialog';
@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import type { Skill, SkillScope, SkillUpdateInfo } from '@/types';
+import type { Agent, Skill, SkillScope, SkillUpdateInfo, AgentType } from '@/types';
 
 export function SkillsPanel() {
   const { t } = useTranslation();
@@ -32,8 +32,12 @@ export function SkillsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState('all');
   const [isSyncing, setIsSyncing] = useState(false);
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
+
+  // All agents (for filter dropdown and display names)
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
 
   // Detail dialog state
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
@@ -79,16 +83,22 @@ export function SkillsPanel() {
       setError(null);
 
       if (isProjectSelected) {
-        // 并行获取 global 和 project skills
-        const [globalResult, projectResult] = await Promise.all([
+        // 并行获取 agents + global + project skills
+        const [agents, globalResult, projectResult] = await Promise.all([
+          listAgents(),
           listSkills({ scope: 'global' }),
           listSkills({ scope: 'project', projectPath: selectedContext }),
         ]);
+        setAllAgents(agents);
         setGlobalSkills(sortSkills(globalResult.skills));
         setProjectSkills(sortSkills(projectResult.skills));
         setProjectPathExists(projectResult.pathExists);
       } else {
-        const globalResult = await listSkills({ scope: 'global' });
+        const [agents, globalResult] = await Promise.all([
+          listAgents(),
+          listSkills({ scope: 'global' }),
+        ]);
+        setAllAgents(agents);
         setGlobalSkills(sortSkills(globalResult.skills));
         setProjectSkills([]);
         setProjectPathExists(true);
@@ -142,26 +152,56 @@ export function SkillsPanel() {
   // Derived state
   const isProjectSelected = selectedContext !== 'global';
 
-  // Filter skills by search query — rerender-memo 规则
+  // All agents available for the filter dropdown — collect agents that appear in skill.agents
+  const filterableAgents = useMemo(() => {
+    const agentIds = new Set<string>();
+    const allSkills = isProjectSelected ? [...globalSkills, ...projectSkills] : globalSkills;
+    for (const s of allSkills) {
+      for (const id of s.agents) agentIds.add(id);
+    }
+    return allAgents
+      .filter((a) => agentIds.has(a.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [allAgents, globalSkills, projectSkills, isProjectSelected]);
+
+  // Agent display name map for SkillCard synced agent labels
+  const agentDisplayNames = useMemo(
+    () => new Map(allAgents.map((a) => [a.id, a.name])),
+    [allAgents]
+  );
+
+  // Filter skills by search query + agent filter
   const filteredGlobalSkills = useMemo(() => {
-    if (!searchQuery) return globalSkills;
-    const query = searchQuery.toLowerCase();
-    return globalSkills.filter(
-      (s) =>
-        s.name.toLowerCase().includes(query) ||
-        s.description.toLowerCase().includes(query)
-    );
-  }, [globalSkills, searchQuery]);
+    let skills = globalSkills;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      skills = skills.filter(
+        (s) =>
+          s.name.toLowerCase().includes(query) ||
+          s.description.toLowerCase().includes(query)
+      );
+    }
+    if (selectedAgentFilter !== 'all') {
+      skills = skills.filter((s) => s.agents.includes(selectedAgentFilter as AgentType));
+    }
+    return skills;
+  }, [globalSkills, searchQuery, selectedAgentFilter]);
 
   const filteredProjectSkills = useMemo(() => {
-    if (!searchQuery) return projectSkills;
-    const query = searchQuery.toLowerCase();
-    return projectSkills.filter(
-      (s) =>
-        s.name.toLowerCase().includes(query) ||
-        s.description.toLowerCase().includes(query)
-    );
-  }, [projectSkills, searchQuery]);
+    let skills = projectSkills;
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      skills = skills.filter(
+        (s) =>
+          s.name.toLowerCase().includes(query) ||
+          s.description.toLowerCase().includes(query)
+      );
+    }
+    if (selectedAgentFilter !== 'all') {
+      skills = skills.filter((s) => s.agents.includes(selectedAgentFilter as AgentType));
+    }
+    return skills;
+  }, [projectSkills, searchQuery, selectedAgentFilter]);
 
   // Detect conflicts — js-set-map-lookups 规则
   const conflictSkillNames = useMemo(() => {
@@ -287,6 +327,9 @@ export function SkillsPanel() {
         <SkillsToolbar
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          selectedAgent={selectedAgentFilter}
+          onAgentChange={setSelectedAgentFilter}
+          filterableAgents={filterableAgents}
           onSync={handleSync}
           isSyncing={isSyncing}
         />
@@ -304,6 +347,7 @@ export function SkillsPanel() {
             pathExists={projectPathExists}
             projectPath={selectedContext}
             updatingSkill={updatingSkill}
+            agentDisplayNames={agentDisplayNames}
             onSkillClick={handleSkillClick}
             onUpdate={handleUpdate}
             onDelete={handleDeleteProject}
@@ -320,6 +364,7 @@ export function SkillsPanel() {
           scope="global"
           conflictSkillNames={conflictSkillNames}
           updatingSkill={updatingSkill}
+          agentDisplayNames={agentDisplayNames}
           onSkillClick={handleSkillClick}
           onUpdate={handleUpdate}
           onDelete={handleDeleteGlobal}

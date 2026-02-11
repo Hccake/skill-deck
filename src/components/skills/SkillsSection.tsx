@@ -4,10 +4,11 @@ import { useTranslation } from 'react-i18next';
 import { Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
-import type { Skill, SkillScope } from '@/types';
+import type { AgentType, Skill, SkillScope } from '@/types';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
+const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
 
 interface SkillsSectionProps {
   title: string;
@@ -20,6 +21,8 @@ interface SkillsSectionProps {
   projectPath?: string;
   /** 当前正在更新的 skill 名称 */
   updatingSkill?: string | null;
+  /** Agent display name 映射（agentId → displayName） */
+  agentDisplayNames?: Map<AgentType, string>;
   onSkillClick: (skill: Skill) => void;
   onUpdate: (skillName: string) => void;
   onDelete: (skillName: string) => void;
@@ -36,6 +39,7 @@ export function SkillsSection({
   pathExists = true,
   projectPath,
   updatingSkill,
+  agentDisplayNames = EMPTY_DISPLAY_NAMES,
   onSkillClick,
   onUpdate,
   onDelete,
@@ -100,6 +104,7 @@ export function SkillsSection({
                   displayScope={scope}
                   hasConflict={conflictSkillNames.has(skill.name)}
                   isUpdating={updatingSkill === skill.name}
+                  agentDisplayNames={agentDisplayNames}
                   onClick={onSkillClick}
                   onUpdate={onUpdate}
                   onDelete={onDelete}
