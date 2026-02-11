@@ -46,7 +46,7 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const { projects, projectsLoaded, loadProjects, addProject, removeProject } = useContextStore();
 
-  const version = '0.1.0';
+  const version = '0.2.0';
 
   // 确保 projects 已加载
   useEffect(() => {
