@@ -12,6 +12,7 @@ use commands::install::{fetch_available, install_skills};
 use commands::overwrites::check_overwrites;
 use commands::remove::remove_skill;
 use commands::skills::list_skills;
+use commands::update::{check_updates, update_skill};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -42,6 +43,8 @@ pub fn run() {
             install_skills,
             check_overwrites,
             remove_skill,
+            check_updates,
+            update_skill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

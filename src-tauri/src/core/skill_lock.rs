@@ -73,6 +73,19 @@ pub fn get_skill_lock_path() -> std::path::PathBuf {
     PATHS.home.join(".agents").join(".skill-lock.json")
 }
 
+/// 获取指定 scope 的 skill-lock.json 路径
+///
+/// - Global (None): ~/.agents/.skill-lock.json
+/// - Project (Some(path)): <project_path>/.agents/.skill-lock.json
+pub fn get_scoped_lock_path(project_path: Option<&str>) -> std::path::PathBuf {
+    match project_path {
+        Some(path) => std::path::PathBuf::from(path)
+            .join(".agents")
+            .join(".skill-lock.json"),
+        None => get_skill_lock_path(),
+    }
+}
+
 /// 读取 skill-lock.json
 /// 对应 CLI: readSkillLock (skill-lock.ts:70-93)
 pub fn read_skill_lock() -> Result<SkillLockFile, AppError> {
@@ -94,6 +107,23 @@ pub fn read_skill_lock() -> Result<SkillLockFile, AppError> {
         return Ok(SkillLockFile::empty());
     }
 
+    Ok(lock)
+}
+
+/// 读取指定 scope 的 skill-lock.json
+pub fn read_scoped_lock(project_path: Option<&str>) -> Result<SkillLockFile, AppError> {
+    let path = get_scoped_lock_path(project_path);
+    if !path.exists() {
+        return Ok(SkillLockFile::empty());
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let lock: SkillLockFile = match serde_json::from_str(&content) {
+        Ok(l) => l,
+        Err(_) => return Ok(SkillLockFile::empty()),
+    };
+    if lock.version < CURRENT_VERSION {
+        return Ok(SkillLockFile::empty());
+    }
     Ok(lock)
 }
 
@@ -128,6 +158,20 @@ pub fn write_skill_lock(lock: &SkillLockFile) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 写入指定 scope 的 skill-lock.json
+pub fn write_scoped_lock(
+    lock: &SkillLockFile,
+    project_path: Option<&str>,
+) -> Result<(), AppError> {
+    let lock_path = get_scoped_lock_path(project_path);
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let content = serde_json::to_string_pretty(lock)?;
+    std::fs::write(&lock_path, content)?;
+    Ok(())
+}
+
 /// 添加或更新 skill 到 lock 文件
 /// 对应 CLI: addSkillToLock (skill-lock.ts:227-242)
 pub fn add_skill_to_lock(
@@ -140,7 +184,7 @@ pub fn add_skill_to_lock(
 ) -> Result<(), AppError> {
     let mut lock = read_skill_lock().unwrap_or_else(|_| SkillLockFile::empty());
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
     // 保留原有的 installed_at
     let installed_at = lock
@@ -174,6 +218,53 @@ pub fn remove_skill_from_lock(skill_name: &str) -> Result<bool, AppError> {
     }
 
     write_skill_lock(&lock)?;
+    Ok(true)
+}
+
+/// 添加或更新 skill 到指定 scope 的 lock 文件
+pub fn add_skill_to_scoped_lock(
+    skill_name: &str,
+    source: &str,
+    source_type: &str,
+    source_url: &str,
+    skill_path: Option<&str>,
+    skill_folder_hash: &str,
+    project_path: Option<&str>,
+) -> Result<(), AppError> {
+    let mut lock =
+        read_scoped_lock(project_path).unwrap_or_else(|_| SkillLockFile::empty());
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    let installed_at = lock
+        .skills
+        .get(skill_name)
+        .map(|e| e.installed_at.clone())
+        .unwrap_or_else(|| now.clone());
+
+    let entry = SkillLockEntry {
+        source: source.to_string(),
+        source_type: source_type.to_string(),
+        source_url: source_url.to_string(),
+        skill_path: skill_path.map(|s| s.to_string()),
+        skill_folder_hash: skill_folder_hash.to_string(),
+        installed_at,
+        updated_at: now,
+    };
+
+    lock.skills.insert(skill_name.to_string(), entry);
+    write_scoped_lock(&lock, project_path)
+}
+
+/// 从指定 scope 的 lock 文件移除 skill
+pub fn remove_skill_from_scoped_lock(
+    skill_name: &str,
+    project_path: Option<&str>,
+) -> Result<bool, AppError> {
+    let mut lock = read_scoped_lock(project_path)?;
+    if lock.skills.remove(skill_name).is_none() {
+        return Ok(false);
+    }
+    write_scoped_lock(&lock, project_path)?;
     Ok(true)
 }
 

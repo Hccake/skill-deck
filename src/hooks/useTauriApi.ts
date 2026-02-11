@@ -153,3 +153,30 @@ export async function checkProjectPath(path: string): Promise<boolean> {
 export async function openInExplorer(path: string): Promise<void> {
   return invoke<void>('open_in_explorer', { path });
 }
+
+// ============ 更新检测 API ============
+
+import type { SkillUpdateInfo } from '@/types';
+
+/**
+ * 检测指定 scope 的 skills 是否有更新
+ * 调用 Rust: check_updates command
+ */
+export async function checkUpdates(
+  scope: SkillScope,
+  projectPath?: string
+): Promise<SkillUpdateInfo[]> {
+  return invoke<SkillUpdateInfo[]>('check_updates', { scope, projectPath });
+}
+
+/**
+ * 更新指定 skill
+ * 调用 Rust: update_skill command
+ */
+export async function updateSkill(params: {
+  scope: SkillScope;
+  name: string;
+  projectPath?: string;
+}): Promise<void> {
+  return invoke<void>('update_skill', params);
+}

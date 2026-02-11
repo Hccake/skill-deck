@@ -5,10 +5,10 @@
 //! - install_skills: 安装选中的 skills
 
 use crate::core::agents::AgentType;
-use crate::core::skill_lock::{add_skill_to_lock, save_selected_agents};
+use crate::core::skill_lock::{add_skill_to_lock, add_skill_to_scoped_lock, save_selected_agents};
 use crate::core::{
-    clone_repo_with_progress, discover_skills, get_owner_repo, install_skill_for_agent,
-    parse_source, CloneProgress, DiscoverOptions,
+    clone_repo_with_progress, discover_skills, fetch_skill_folder_hash, get_owner_repo,
+    install_skill_for_agent, parse_source, CloneProgress, DiscoverOptions,
 };
 use crate::error::AppError;
 use crate::models::{
@@ -117,10 +117,10 @@ fn discover_and_build_result(
 /// * `InstallResults` - 安装结果汇总
 #[command]
 pub async fn install_skills(app: AppHandle, params: InstallParams) -> Result<InstallResults, String> {
-    install_skills_inner(&app, params).map_err(|e| format_error(&e))
+    install_skills_inner(&app, params).await.map_err(|e| format_error(&e))
 }
 
-fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<InstallResults, AppError> {
+async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<InstallResults, AppError> {
     // 1. 解析来源
     let parsed = parse_source(&params.source)?;
 
@@ -206,26 +206,51 @@ fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<Instal
         }
     }
 
-    // 7. 写入 lock 文件（仅 Global 安装）
-    if params.scope == crate::models::Scope::Global && !successful.is_empty() {
+    // 7. 写入 lock 文件
+    if !successful.is_empty() {
         let owner_repo = get_owner_repo(&parsed);
 
         for skill in &selected_skills {
-            // 检查是否成功安装
             let installed = successful.iter().any(|r| r.skill_name == skill.name);
             if !installed {
                 continue;
             }
 
-            // 写入 lock（hash 暂时为空，后续可通过 GitHub API 获取）
-            let _ = add_skill_to_lock(
-                &skill.name,
-                owner_repo.as_deref().unwrap_or(&params.source),
-                &parsed.source_type.to_string(),
-                &parsed.url,
-                Some(&skill.relative_path),
-                "", // hash 暂时为空
-            );
+            // 获取 skill folder hash（仅 GitHub 来源）
+            let skill_folder_hash = if parsed.source_type == SourceType::GitHub {
+                if let Some(ref repo) = owner_repo {
+                    fetch_skill_folder_hash(repo, &skill.relative_path, None)
+                        .await
+                        .unwrap_or(None)
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+
+            let source = owner_repo.as_deref().unwrap_or(&params.source);
+            let source_type_str = &parsed.source_type.to_string();
+            let source_url = &parsed.url;
+            let skill_path = Some(skill.relative_path.as_str());
+
+            // 根据 scope 写入对应的 lock 文件
+            match params.scope {
+                crate::models::Scope::Global => {
+                    let _ = add_skill_to_lock(
+                        &skill.name, source, source_type_str, source_url,
+                        skill_path, &skill_folder_hash,
+                    );
+                }
+                crate::models::Scope::Project => {
+                    let _ = add_skill_to_scoped_lock(
+                        &skill.name, source, source_type_str, source_url,
+                        skill_path, &skill_folder_hash,
+                        params.project_path.as_deref(),
+                    );
+                }
+            }
         }
     }
 

@@ -58,7 +58,7 @@
       "clear": "Clear"
     },
     "search": "Search skills...",
-    "sync": "Sync",
+    "sync": "Refresh",
     "scopeIcon": {
       "project": "Project skill",
       "global": "Global skill"
@@ -86,7 +86,9 @@
       "confirm": "Delete"
     },
     "deleteSuccess": "\"{{name}}\" has been deleted",
-    "deleteError": "Failed to delete \"{{name}}\": {{error}}"
+    "deleteError": "Failed to delete \"{{name}}\": {{error}}",
+    "updateSuccess": "\"{{name}}\" has been updated",
+    "updateError": "Failed to update \"{{name}}\": {{error}}"
   },
   "settings": {
     "title": "Settings",

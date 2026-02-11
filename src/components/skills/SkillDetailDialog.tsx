@@ -1,5 +1,6 @@
 // src/components/skills/SkillDetailDialog.tsx
 import { useTranslation } from 'react-i18next';
+import { formatTime } from '@/lib/utils';
 import { Globe, Folder, ExternalLink, Copy, Check } from 'lucide-react';
 import { useState } from 'react';
 import {
@@ -27,7 +28,7 @@ export function SkillDetailDialog({
   open,
   onOpenChange,
 }: SkillDetailDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   if (!skill) return null;
@@ -102,7 +103,7 @@ export function SkillDetailDialog({
                 <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
                   {t('skills.detail.installed')}
                 </dt>
-                <dd className="mt-1">{skill.installedAt}</dd>
+                <dd className="mt-1">{formatTime(skill.installedAt, i18n.language)}</dd>
               </div>
             )}
 
@@ -112,7 +113,7 @@ export function SkillDetailDialog({
                 <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
                   {t('skills.detail.updated')}
                 </dt>
-                <dd className="mt-1">{skill.updatedAt}</dd>
+                <dd className="mt-1">{formatTime(skill.updatedAt, i18n.language)}</dd>
               </div>
             )}
           </div>

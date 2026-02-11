@@ -94,3 +94,10 @@ export interface ListSkillsResult {
   /** 项目目录是否存在（project scope 时有意义，global 始终为 true） */
   pathExists: boolean;
 }
+
+/** 更新检测结果 */
+export interface SkillUpdateInfo {
+  name: string;
+  source: string;
+  hasUpdate: boolean;
+}

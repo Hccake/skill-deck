@@ -13,7 +13,10 @@
 use crate::core::agents::AgentType;
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
-use crate::core::skill_lock::{get_skill_from_lock, remove_skill_from_lock};
+use crate::core::skill_lock::{
+    get_skill_from_lock, read_scoped_lock, remove_skill_from_lock,
+    remove_skill_from_scoped_lock,
+};
 use crate::error::AppError;
 use crate::models::{RemoveResult, Scope};
 use std::fs;
@@ -100,7 +103,7 @@ pub fn remove_skill(
     // force: true 语义通过 .ok() 忽略错误实现
     let _ = remove_path(&canonical_path);
 
-    // 4. 更新 lock file（仅 Global）
+    // 4. 更新 lock file
     // 对应 CLI: remove.ts:173-178
     let (source, source_type) = if is_global {
         // 先读取 lock entry 获取 source 信息（用于返回结果）
@@ -120,9 +123,19 @@ pub fn remove_skill(
 
         (Some(effective_source), Some(effective_source_type))
     } else {
-        // 对应 CLI: remove.ts:173 "isGlobal ? await getSkillFromLock(skillName) : null"
-        // Project scope 不操作 lock file
-        (None, None)
+        // Project: 从 <project>/.agents/.skill-lock.json 移除（Skill Deck 扩展）
+        let lock = read_scoped_lock(project_path).ok();
+        let lock_entry = lock.and_then(|l| l.skills.get(skill_name).cloned());
+        let effective_source = lock_entry
+            .as_ref()
+            .map(|e| e.source.clone());
+        let effective_source_type = lock_entry
+            .as_ref()
+            .map(|e| e.source_type.clone());
+
+        let _ = remove_skill_from_scoped_lock(skill_name, project_path);
+
+        (effective_source, effective_source_type)
     };
 
     Ok(RemoveResult {

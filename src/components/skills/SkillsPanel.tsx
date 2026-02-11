@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useContextStore } from '@/stores/context';
-import { listSkills, removeSkill } from '@/hooks/useTauriApi';
+import { listSkills, removeSkill, checkUpdates, updateSkill } from '@/hooks/useTauriApi';
 import { SkillsToolbar } from './SkillsToolbar';
 import { SkillsSection } from './SkillsSection';
 import { SkillDetailDialog } from './SkillDetailDialog';
@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import type { Skill, SkillScope } from '@/types';
+import type { Skill, SkillScope, SkillUpdateInfo } from '@/types';
 
 export function SkillsPanel() {
   const { t } = useTranslation();
@@ -33,6 +33,7 @@ export function SkillsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
 
   // Detail dialog state
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
@@ -50,6 +51,24 @@ export function SkillsPanel() {
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  /** 按名称排序 skills，保证展示顺序稳定 */
+  const sortSkills = useCallback(
+    (skills: Skill[]): Skill[] => [...skills].sort((a, b) => a.name.localeCompare(b.name)),
+    []
+  );
+
+  /** 将 check_updates 结果合并到 skills 列表 */
+  const mergeUpdateInfo = useCallback(
+    (skills: Skill[], updates: SkillUpdateInfo[]): Skill[] => {
+      const updateMap = new Map(updates.map((u) => [u.name, u.hasUpdate]));
+      return skills.map((s) => ({
+        ...s,
+        hasUpdate: updateMap.get(s.name) ?? false,
+      }));
+    },
+    []
+  );
+
   // Fetch skills data
   // 使用 Promise.all 并行获取，符合 async-parallel 规则
   const fetchSkills = useCallback(async () => {
@@ -65,12 +84,12 @@ export function SkillsPanel() {
           listSkills({ scope: 'global' }),
           listSkills({ scope: 'project', projectPath: selectedContext }),
         ]);
-        setGlobalSkills(globalResult.skills);
-        setProjectSkills(projectResult.skills);
+        setGlobalSkills(sortSkills(globalResult.skills));
+        setProjectSkills(sortSkills(projectResult.skills));
         setProjectPathExists(projectResult.pathExists);
       } else {
         const globalResult = await listSkills({ scope: 'global' });
-        setGlobalSkills(globalResult.skills);
+        setGlobalSkills(sortSkills(globalResult.skills));
         setProjectSkills([]);
         setProjectPathExists(true);
       }
@@ -89,11 +108,36 @@ export function SkillsPanel() {
   const handleSync = useCallback(async () => {
     setIsSyncing(true);
     try {
-      await fetchSkills();
+      const isProjectSelected = selectedContext !== 'global';
+
+      if (isProjectSelected) {
+        const [globalResult, projectResult, globalUpdates, projectUpdates] =
+          await Promise.all([
+            listSkills({ scope: 'global' }),
+            listSkills({ scope: 'project', projectPath: selectedContext }),
+            checkUpdates('global').catch(() => [] as SkillUpdateInfo[]),
+            checkUpdates('project', selectedContext).catch(() => [] as SkillUpdateInfo[]),
+          ]);
+
+        setGlobalSkills(sortSkills(mergeUpdateInfo(globalResult.skills, globalUpdates)));
+        setProjectSkills(sortSkills(mergeUpdateInfo(projectResult.skills, projectUpdates)));
+        setProjectPathExists(projectResult.pathExists);
+      } else {
+        const [globalResult, globalUpdates] = await Promise.all([
+          listSkills({ scope: 'global' }),
+          checkUpdates('global').catch(() => [] as SkillUpdateInfo[]),
+        ]);
+
+        setGlobalSkills(sortSkills(mergeUpdateInfo(globalResult.skills, globalUpdates)));
+        setProjectSkills([]);
+        setProjectPathExists(true);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to sync skills');
     } finally {
       setIsSyncing(false);
     }
-  }, [fetchSkills]);
+  }, [selectedContext, mergeUpdateInfo]);
 
   // Derived state
   const isProjectSelected = selectedContext !== 'global';
@@ -132,9 +176,35 @@ export function SkillsPanel() {
   }, [globalSkills, projectSkills]);
 
   // Event handlers
-  const handleUpdate = useCallback((skillName: string) => {
-    console.log('TODO: Update skill', skillName);
-  }, []);
+  const handleUpdate = useCallback(
+    async (skillName: string) => {
+      if (updatingSkill) return;
+
+      const isProjectSkill = projectSkills.some((s) => s.name === skillName);
+      const scope: SkillScope = isProjectSkill ? 'project' : 'global';
+
+      setUpdatingSkill(skillName);
+      try {
+        await updateSkill({
+          scope,
+          name: skillName,
+          projectPath: isProjectSkill ? selectedContext : undefined,
+        });
+        toast.success(t('skills.updateSuccess', { name: skillName }));
+        await handleSync();
+      } catch (e) {
+        toast.error(
+          t('skills.updateError', {
+            name: skillName,
+            error: e instanceof Error ? e.message : String(e),
+          })
+        );
+      } finally {
+        setUpdatingSkill(null);
+      }
+    },
+    [updatingSkill, projectSkills, selectedContext, handleSync, t]
+  );
 
   const handleDeleteGlobal = useCallback((skillName: string) => {
     setDeleteTarget({ name: skillName, scope: 'global' });
@@ -233,6 +303,7 @@ export function SkillsPanel() {
             conflictSkillNames={conflictSkillNames}
             pathExists={projectPathExists}
             projectPath={selectedContext}
+            updatingSkill={updatingSkill}
             onSkillClick={handleSkillClick}
             onUpdate={handleUpdate}
             onDelete={handleDeleteProject}
@@ -248,6 +319,7 @@ export function SkillsPanel() {
           skills={filteredGlobalSkills}
           scope="global"
           conflictSkillNames={conflictSkillNames}
+          updatingSkill={updatingSkill}
           onSkillClick={handleSkillClick}
           onUpdate={handleUpdate}
           onDelete={handleDeleteGlobal}

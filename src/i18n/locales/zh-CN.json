@@ -58,7 +58,7 @@
       "clear": "清除"
     },
     "search": "搜索 Skills...",
-    "sync": "同步",
+    "sync": "刷新",
     "scopeIcon": {
       "project": "项目级 Skill",
       "global": "全局 Skill"
@@ -86,7 +86,9 @@
       "confirm": "删除"
     },
     "deleteSuccess": "已删除「{{name}}」",
-    "deleteError": "删除「{{name}}」失败：{{error}}"
+    "deleteError": "删除「{{name}}」失败：{{error}}",
+    "updateSuccess": "已更新「{{name}}」",
+    "updateError": "更新「{{name}}」失败：{{error}}"
   },
   "settings": {
     "title": "设置",

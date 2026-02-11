@@ -18,6 +18,8 @@ interface SkillsSectionProps {
   pathExists?: boolean;
   /** 项目路径（仅 project scope，用于提示信息） */
   projectPath?: string;
+  /** 当前正在更新的 skill 名称 */
+  updatingSkill?: string | null;
   onSkillClick: (skill: Skill) => void;
   onUpdate: (skillName: string) => void;
   onDelete: (skillName: string) => void;
@@ -33,6 +35,7 @@ export function SkillsSection({
   conflictSkillNames = EMPTY_CONFLICT_SET,
   pathExists = true,
   projectPath,
+  updatingSkill,
   onSkillClick,
   onUpdate,
   onDelete,
@@ -96,6 +99,7 @@ export function SkillsSection({
                   skill={skill}
                   displayScope={scope}
                   hasConflict={conflictSkillNames.has(skill.name)}
+                  isUpdating={updatingSkill === skill.name}
                   onClick={onSkillClick}
                   onUpdate={onUpdate}
                   onDelete={onDelete}

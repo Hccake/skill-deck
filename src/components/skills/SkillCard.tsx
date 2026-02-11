@@ -1,7 +1,8 @@
 // src/components/skills/SkillCard.tsx
 import { useTranslation } from 'react-i18next';
+import { cn, formatTime } from '@/lib/utils';
 import {
-  RefreshCw,
+  ArrowUpCircle,
   Trash2,
   ExternalLink,
   Globe,
@@ -25,6 +26,8 @@ interface SkillCardProps {
   displayScope: SkillScope;
   /** 是否存在冲突（同时在 project 和 global 安装） */
   hasConflict?: boolean;
+  /** 是否正在更新中 */
+  isUpdating?: boolean;
   /** 点击卡片打开详情 */
   onClick?: (skill: Skill) => void;
   onUpdate?: (skillName: string) => void;
@@ -36,12 +39,13 @@ export function SkillCard({
   skill,
   displayScope,
   hasConflict = false,
+  isUpdating = false,
   onClick,
   onUpdate,
   onDelete,
   onToggleAgent,
 }: SkillCardProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const ScopeIcon = displayScope === 'global' ? Globe : Folder;
   const scopeTooltip = t(`skills.scopeIcon.${displayScope}`);
@@ -53,7 +57,10 @@ export function SkillCard({
   return (
     <TooltipProvider>
       <Card
-        className="py-0 gap-0 cursor-pointer transition-colors hover:bg-accent/50"
+        className={cn(
+          "py-0 gap-0 cursor-pointer transition-colors hover:bg-accent/50",
+          skill.hasUpdate && "border-l-2 border-l-warning"
+        )}
         onClick={() => onClick?.(skill)}
       >
         <CardContent className="p-3 sm:p-4">
@@ -97,12 +104,13 @@ export function SkillCard({
                   className="h-7 w-7 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
                   aria-label={t('skills.actions.update')}
                   title={t('skills.actions.update')}
+                  disabled={isUpdating}
                   onClick={(e) => {
                     e.stopPropagation();
                     onUpdate?.(skill.name);
                   }}
                 >
-                  <RefreshCw className="h-3.5 w-3.5" />
+                  <ArrowUpCircle className={`h-3.5 w-3.5 ${isUpdating ? 'animate-spin' : ''}`} />
                 </Button>
               )}
               <Button
@@ -144,7 +152,7 @@ export function SkillCard({
               </>
             )}
             {skill.updatedAt && (
-              <span>{t('skills.updated', { time: skill.updatedAt })}</span>
+              <span>{t('skills.updated', { time: formatTime(skill.updatedAt, i18n.language) })}</span>
             )}
           </div>
 
