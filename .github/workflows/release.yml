@@ -54,6 +54,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Install OpenSSL
+        if: matrix.platform == 'macos-latest'
+        run: |
+          brew install openssl
+          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
