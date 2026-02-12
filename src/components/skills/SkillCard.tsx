@@ -18,13 +18,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { AgentType, Skill, SkillScope } from '@/types';
+import type { AgentType, InstalledSkill, SkillScope } from '@/bindings';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
 const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
 
 interface SkillCardProps {
-  skill: Skill;
+  skill: InstalledSkill;
   /** 当前显示的 scope（用于决定图标） */
   displayScope: SkillScope;
   /** 是否存在冲突（同时在 project 和 global 安装） */
@@ -34,7 +34,7 @@ interface SkillCardProps {
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentType, string>;
   /** 点击卡片打开详情 */
-  onClick?: (skill: Skill) => void;
+  onClick?: (skill: InstalledSkill) => void;
   onUpdate?: (skillName: string) => void;
   onDelete?: (skillName: string) => void;
   onToggleAgent?: (skillName: string, agentId: string) => void;

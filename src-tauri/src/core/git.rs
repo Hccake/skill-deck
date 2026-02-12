@@ -94,7 +94,7 @@ where
 
     // 创建临时目录
     let temp_dir = TempDir::new()
-        .map_err(|e| AppError::GitCloneFailed(format!("Failed to create temp dir: {}", e)))?;
+        .map_err(|e| AppError::GitCloneFailed { message: format!("Failed to create temp dir: {}", e) })?;
 
     let repo_path = temp_dir.path().to_path_buf();
 
@@ -184,7 +184,7 @@ where
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| AppError::GitCloneFailed(format!("Failed to spawn git: {}", e)))?;
+        .map_err(|e| AppError::GitCloneFailed { message: format!("Failed to spawn git: {}", e) })?;
 
     // 等待进程完成或超时
     let start = std::time::Instant::now();
@@ -238,10 +238,9 @@ where
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                return Err(AppError::GitCloneFailed(format!(
-                    "Failed to wait for git: {}",
-                    e
-                )));
+                return Err(AppError::GitCloneFailed {
+                    message: format!("Failed to wait for git: {}", e),
+                });
             }
         }
     }
@@ -256,12 +255,14 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         || stderr_lower.contains("could not read username")
         || stderr_lower.contains("permission denied")
     {
-        return AppError::GitAuthFailed(format!(
-            "Authentication failed for {url}.\n\
-             - For private repos, ensure you have access\n\
-             - For SSH: Check your keys with 'ssh -T git@github.com'\n\
-             - For HTTPS: Run 'gh auth login' or configure git credentials"
-        ));
+        return AppError::GitAuthFailed {
+            message: format!(
+                "Authentication failed for {url}.\n\
+                 - For private repos, ensure you have access\n\
+                 - For SSH: Check your keys with 'ssh -T git@github.com'\n\
+                 - For HTTPS: Run 'gh auth login' or configure git credentials"
+            ),
+        };
     }
 
     // 网络/连接错误
@@ -269,11 +270,13 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         || stderr_lower.contains("unable to resolve")
         || stderr_lower.contains("name or service not known")
     {
-        return AppError::GitNetworkError(format!(
-            "DNS resolution failed for {url}.\n\
-             - Check your internet connection\n\
-             - Verify the URL is correct"
-        ));
+        return AppError::GitNetworkError {
+            message: format!(
+                "DNS resolution failed for {url}.\n\
+                 - Check your internet connection\n\
+                 - Verify the URL is correct"
+            ),
+        };
     }
 
     if stderr_lower.contains("connection timed out")
@@ -281,22 +284,26 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         || stderr_lower.contains("network is unreachable")
         || stderr_lower.contains("no route to host")
     {
-        return AppError::GitNetworkError(format!(
-            "Connection failed for {url}.\n\
-             - Check your internet connection\n\
-             - Check if a proxy/VPN is required"
-        ));
+        return AppError::GitNetworkError {
+            message: format!(
+                "Connection failed for {url}.\n\
+                 - Check your internet connection\n\
+                 - Check if a proxy/VPN is required"
+            ),
+        };
     }
 
     if stderr_lower.contains("ssl certificate")
         || stderr_lower.contains("certificate verify failed")
         || stderr_lower.contains("ssl_error")
     {
-        return AppError::GitNetworkError(format!(
-            "SSL/TLS error for {url}.\n\
-             - Check your system time\n\
-             - Check if a proxy is intercepting HTTPS"
-        ));
+        return AppError::GitNetworkError {
+            message: format!(
+                "SSL/TLS error for {url}.\n\
+                 - Check your system time\n\
+                 - Check if a proxy is intercepting HTTPS"
+            ),
+        };
     }
 
     // 分支/tag 不存在（必须在 "repository not found" 检查之前）
@@ -305,18 +312,24 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         || stderr_lower.contains("not a valid ref")
         || (stderr_lower.contains("not found") && stderr_lower.contains("branch"))
     {
-        return AppError::GitRefNotFound(stderr.to_string());
+        return AppError::GitRefNotFound {
+            ref_name: stderr.to_string(),
+        };
     }
 
     // 仓库不存在
     if stderr_lower.contains("repository not found")
         || stderr_lower.contains("does not exist")
     {
-        return AppError::GitRepoNotFound(url.to_string());
+        return AppError::GitRepoNotFound {
+            repo: url.to_string(),
+        };
     }
 
     // 通用错误
-    AppError::GitCloneFailed(format!("Failed to clone {}: {}", url, stderr))
+    AppError::GitCloneFailed {
+        message: format!("Failed to clone {}: {}", url, stderr),
+    }
 }
 
 #[cfg(test)]
@@ -326,42 +339,42 @@ mod tests {
     #[test]
     fn test_classify_auth_error() {
         let err = classify_git_error("Authentication failed for ...", "https://example.com");
-        assert!(matches!(err, AppError::GitAuthFailed(_)));
+        assert!(matches!(err, AppError::GitAuthFailed { .. }));
     }
 
     #[test]
     fn test_classify_not_found_error() {
         let err = classify_git_error("Repository not found", "https://example.com");
-        assert!(matches!(err, AppError::GitRepoNotFound(_)));
+        assert!(matches!(err, AppError::GitRepoNotFound { .. }));
     }
 
     #[test]
     fn test_classify_ref_not_found() {
         let err = classify_git_error("Remote branch 'foo' not found", "https://example.com");
-        assert!(matches!(err, AppError::GitRefNotFound(_)));
+        assert!(matches!(err, AppError::GitRefNotFound { .. }));
     }
 
     #[test]
     fn test_classify_generic_error() {
         let err = classify_git_error("Some random error", "https://example.com");
-        assert!(matches!(err, AppError::GitCloneFailed(_)));
+        assert!(matches!(err, AppError::GitCloneFailed { .. }));
     }
 
     #[test]
     fn test_classify_dns_error() {
         let err = classify_git_error("Could not resolve host: github.com", "https://github.com");
-        assert!(matches!(err, AppError::GitNetworkError(_)));
+        assert!(matches!(err, AppError::GitNetworkError { .. }));
     }
 
     #[test]
     fn test_classify_connection_error() {
         let err = classify_git_error("Connection timed out", "https://github.com");
-        assert!(matches!(err, AppError::GitNetworkError(_)));
+        assert!(matches!(err, AppError::GitNetworkError { .. }));
     }
 
     #[test]
     fn test_classify_ssl_error() {
         let err = classify_git_error("SSL certificate problem", "https://github.com");
-        assert!(matches!(err, AppError::GitNetworkError(_)));
+        assert!(matches!(err, AppError::GitNetworkError { .. }));
     }
 }

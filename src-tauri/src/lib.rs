@@ -10,7 +10,24 @@ mod models;
 pub fn run() {
     // 创建 specta builder
     let builder = Builder::<tauri::Wry>::new()
-        .commands(collect_commands![])
+        .commands(collect_commands![
+            commands::agents::list_agents,
+            commands::skills::list_skills,
+            commands::config::get_config,
+            commands::config::save_config,
+            commands::config::get_last_selected_agents,
+            commands::config::save_last_selected_agents,
+            commands::config::add_project,
+            commands::config::remove_project,
+            commands::config::check_project_path,
+            commands::config::open_in_explorer,
+            commands::install::fetch_available,
+            commands::install::install_skills,
+            commands::overwrites::check_overwrites,
+            commands::remove::remove_skill,
+            commands::update::check_updates,
+            commands::update::update_skill,
+        ])
         .events(collect_events![]);
 
     // Debug 模式下导出 TypeScript 绑定

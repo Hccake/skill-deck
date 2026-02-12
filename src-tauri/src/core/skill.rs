@@ -1,6 +1,7 @@
 // Skill 解析逻辑
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -34,15 +35,17 @@ pub fn parse_skill_md(path: &Path) -> Result<SkillFrontmatter, AppError> {
 
     // 检查是否以 --- 开头
     if !content.starts_with("---") {
-        return Err(AppError::InvalidSkillMd(
-            "Missing frontmatter delimiter".to_string(),
-        ));
+        return Err(AppError::InvalidSkillMd {
+            message: "Missing frontmatter delimiter".to_string(),
+        });
     }
 
     // 找到第二个 ---
     let rest = &content[3..];
     let end_pos = rest.find("---").ok_or_else(|| {
-        AppError::InvalidSkillMd("Unclosed frontmatter delimiter".to_string())
+        AppError::InvalidSkillMd {
+            message: "Unclosed frontmatter delimiter".to_string(),
+        }
     })?;
 
     // 提取 YAML 部分（跳过开头的换行符）
@@ -53,12 +56,14 @@ pub fn parse_skill_md(path: &Path) -> Result<SkillFrontmatter, AppError> {
 
     // 验证必填字段
     if frontmatter.name.is_empty() {
-        return Err(AppError::InvalidSkillMd("Missing name field".to_string()));
+        return Err(AppError::InvalidSkillMd {
+            message: "Missing name field".to_string(),
+        });
     }
     if frontmatter.description.is_empty() {
-        return Err(AppError::InvalidSkillMd(
-            "Missing description field".to_string(),
-        ));
+        return Err(AppError::InvalidSkillMd {
+            message: "Missing description field".to_string(),
+        });
     }
 
     Ok(frontmatter)
@@ -105,8 +110,9 @@ pub fn sanitize_name(name: &str) -> String {
 }
 
 /// Skill 范围
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
+#[specta(rename_all = "lowercase")]
 pub enum SkillScope {
     Global,
     Project,
@@ -114,8 +120,9 @@ pub enum SkillScope {
 
 /// 已安装的 Skill 信息
 /// 对应 CLI: InstalledSkill (installer.ts:783-790)
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct InstalledSkill {
     pub name: String,
     pub description: String,
@@ -151,8 +158,9 @@ impl InstalledSkill {
 
 /// list_skills 返回结果
 /// 包含 skills 列表和路径存在性信息
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct ListSkillsResult {
     pub skills: Vec<InstalledSkill>,
     /// 项目目录是否存在（project scope 时有意义，global 始终为 true）

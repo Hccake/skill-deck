@@ -1,65 +1,110 @@
 // src-tauri/src/error.rs
 use serde::Serialize;
+use specta::Type;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Serialize, Type)]
+#[serde(tag = "kind", content = "data", rename_all = "camelCase")]
+#[specta(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum AppError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("IO error: {message}")]
+    Io { message: String },
 
-    #[error("YAML parse error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    #[error("YAML error: {message}")]
+    Yaml { message: String },
 
-    #[error("JSON parse error: {0}")]
-    Json(#[from] serde_json::Error),
+    #[error("JSON error: {message}")]
+    Json { message: String },
 
-    #[error("Invalid SKILL.md: {0}")]
-    InvalidSkillMd(String),
+    #[error("Invalid SKILL.md: {message}")]
+    InvalidSkillMd { message: String },
 
-    #[error("Path error: {0}")]
-    Path(String),
+    #[error("Path error: {message}")]
+    Path { message: String },
 
-    #[error("Invalid source: {0}")]
-    InvalidSource(String),
+    #[error("Invalid source: {value}")]
+    InvalidSource { value: String },
 
-    // Git 相关错误
-    #[error("Git clone failed: {0}")]
-    GitCloneFailed(String),
+    #[error("Git clone failed: {message}")]
+    GitCloneFailed { message: String },
 
-    #[error("Git authentication failed: {0}")]
-    GitAuthFailed(String),
+    #[error("Git authentication failed: {message}")]
+    GitAuthFailed { message: String },
 
-    #[error("Git repository not found: {0}")]
-    GitRepoNotFound(String),
+    #[error("Git repository not found: {repo}")]
+    GitRepoNotFound { repo: String },
 
-    #[error("Git ref not found: {0}")]
-    GitRefNotFound(String),
+    #[error("Git ref not found: {ref_name}")]
+    GitRefNotFound {
+        #[serde(rename = "refName")]
+        ref_name: String,
+    },
 
     #[error("Git operation timed out")]
     GitTimeout,
 
-    #[error("Git network error: {0}")]
-    GitNetworkError(String),
+    #[error("Git network error: {message}")]
+    GitNetworkError { message: String },
 
-    #[error("Path not found: {0}")]
-    PathNotFound(String),
+    #[error("Path not found: {path}")]
+    PathNotFound { path: String },
 
-    #[error("Install failed: {0}")]
-    InstallFailed(String),
+    #[error("Install failed: {message}")]
+    InstallFailed { message: String },
 
     #[error("No skills found")]
     NoSkillsFound,
 
-    #[error("Invalid agent: {0}")]
-    InvalidAgent(String),
+    #[error("Invalid agent: {agent}")]
+    InvalidAgent { agent: String },
+
+    #[error("{message}")]
+    Custom { message: String },
 }
 
-// Tauri Command 要求 Result 的 Err 类型实现 Serialize
-impl Serialize for AppError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
+// From 实现
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<serde_yaml::Error> for AppError {
+    fn from(e: serde_yaml::Error) -> Self {
+        Self::Yaml {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<String> for AppError {
+    fn from(message: String) -> Self {
+        Self::Custom { message }
+    }
+}
+
+impl From<&str> for AppError {
+    fn from(message: &str) -> Self {
+        Self::Custom {
+            message: message.to_string(),
+        }
+    }
+}
+
+impl From<reqwest::Error> for AppError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::GitNetworkError {
+            message: e.to_string(),
+        }
     }
 }

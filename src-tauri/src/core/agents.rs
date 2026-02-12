@@ -3,6 +3,7 @@
 
 use crate::core::paths::PATHS;
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::path::PathBuf;
 
 /// Agent 配置
@@ -20,8 +21,9 @@ pub struct AgentConfig {
 
 /// Agent 信息（返回给前端）
 /// 对应 CLI: 综合 AgentConfig + detectInstalled 结果
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct AgentInfo {
     pub id: AgentType,
     pub name: String,
@@ -38,8 +40,9 @@ pub struct AgentInfo {
 
 /// Agent 类型枚举
 /// 完整对应 CLI: types.ts AgentType
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
+#[specta(rename_all = "kebab-case")]
 pub enum AgentType {
     Amp,
     Antigravity,

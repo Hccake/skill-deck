@@ -6,7 +6,219 @@
 
 
 export const commands = {
-
+/**
+ * 列出所有 Agents（包括未安装的）
+ * 返回完整信息供前端使用，前端无需额外计算
+ * 对应前端调用: invoke('list_agents')
+ */
+async listAgents() : Promise<Result<AgentInfo[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_agents") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 列出已安装的 skills
+ * 对应前端调用: invoke('list_skills', { params })
+ */
+async listSkills(params: ListSkillsParams) : Promise<Result<ListSkillsResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_skills", { params }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 获取配置
+ * 文件不存在或解析失败时返回默认配置
+ */
+async getConfig() : Promise<Result<SkillDeckConfig, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_config") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 保存配置
+ * 目录不存在时自动创建
+ */
+async saveConfig(config: SkillDeckConfig) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_config", { config }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 获取上次选择的 agents
+ * 读取 ~/.agents/.skill-lock.json 中的 lastSelectedAgents
+ */
+async getLastSelectedAgents() : Promise<string[]> {
+    return await TAURI_INVOKE("get_last_selected_agents");
+},
+/**
+ * 保存选择的 agents
+ * 写入 ~/.agents/.skill-lock.json 中的 lastSelectedAgents
+ */
+async saveLastSelectedAgents(agents: string[]) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_last_selected_agents", { agents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 添加项目路径
+ * 已存在则忽略，返回更新后的 projects 列表
+ */
+async addProject(path: string) : Promise<Result<string[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_project", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 移除项目路径
+ * 返回更新后的 projects 列表
+ */
+async removeProject(path: string) : Promise<Result<string[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_project", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 检查项目路径是否存在
+ */
+async checkProjectPath(path: string) : Promise<boolean> {
+    return await TAURI_INVOKE("check_project_path", { path });
+},
+/**
+ * 在系统文件管理器中打开路径
+ */
+async openInExplorer(path: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_in_explorer", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 从来源获取可用的 skills 列表
+ * 
+ * # Arguments
+ * * `source` - 来源字符串（支持 9 种格式）
+ * 
+ * # Returns
+ * * `FetchResult` - 包含来源信息和可用 skills 列表
+ */
+async fetchAvailable(source: string) : Promise<Result<FetchResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_available", { source }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 安装选中的 skills
+ * 
+ * # Arguments
+ * * `params` - 安装参数（来源、选中的 skills、agents、scope、mode）
+ * 
+ * # Returns
+ * * `InstallResults` - 安装结果汇总
+ */
+async installSkills(params: InstallParams) : Promise<Result<InstallResults, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_skills", { params }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 检测哪些 skill × agent 组合会被覆盖
+ * 
+ * # Arguments
+ * * `skills` - 要安装的 skill 名称列表
+ * * `agents` - 目标 agent 列表
+ * * `scope` - 安装范围
+ * * `project_path` - Project scope 时的项目路径
+ * 
+ * # Returns
+ * * `HashMap<String, Vec<String>>` - { skill_name: [agent_ids that will be overwritten] }
+ */
+async checkOverwrites(skills: string[], agents: string[], scope: Scope, projectPath: string | null) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { skills, agents, scope, projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 删除指定 skill
+ * 
+ * # Arguments
+ * * `scope` - 删除范围（global/project）
+ * * `name` - skill 名称
+ * * `project_path` - Project scope 时的项目路径
+ * 
+ * # Returns
+ * * `RemoveResult` - 删除结果
+ */
+async removeSkill(scope: Scope, name: string, projectPath: string | null) : Promise<Result<RemoveResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { scope, name, projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 检测指定 scope 的 skills 是否有更新
+ * 
+ * 流程：
+ * 1. 读取对应 scope 的 .skill-lock.json
+ * 2. 过滤出 sourceType == "github" 且有 skillFolderHash 和 skillPath 的 skills
+ * 3. 按 source 分组，对每组调用 GitHub Trees API
+ * 4. 比对本地 hash 与远程 hash
+ */
+async checkUpdates(scope: Scope, projectPath: string | null) : Promise<Result<SkillUpdateInfo[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_updates", { scope, projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 更新指定 skill
+ * 
+ * 本质是"重新安装"：从 lock 文件读取来源信息，构造安装 URL，复用安装逻辑。
+ * 与 CLI update 命令行为一致。
+ */
+async updateSkill(scope: Scope, name: string, projectPath: string | null) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_skill", { scope, name, projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+}
 }
 
 /** user-defined events **/
@@ -19,13 +231,228 @@ export const commands = {
 
 /** user-defined types **/
 
-
+/**
+ * Agent 信息（返回给前端）
+ * 对应 CLI: 综合 AgentConfig + detectInstalled 结果
+ */
+export type AgentInfo = { id: AgentType; name: string; skillsDir: string; globalSkillsDir: string; detected: boolean; 
+/**
+ * 是否是 Universal Agent（安装逻辑用）
+ * 对应 CLI: isUniversalAgent()
+ */
+isUniversal: boolean; 
+/**
+ * 是否在 Universal 列表显示（UI 显示用）
+ * 对应 CLI: getUniversalAgents() 的过滤条件
+ */
+showInUniversalList: boolean }
+/**
+ * Agent 类型枚举
+ * 完整对应 CLI: types.ts AgentType
+ */
+export type AgentType = "amp" | "antigravity" | "augment" | "claude-code" | "openclaw" | "cline" | "codebuddy" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "droid" | "gemini-cli" | "github-copilot" | "goose" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "roo" | "trae" | "trae-cn" | "windsurf" | "zencoder" | "pochi" | "adal"
+export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout" } | { kind: "gitNetworkError"; data: { message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "noSkillsFound" } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
+/**
+ * 可用的 Skill 信息（fetch_available 返回）
+ */
+export type AvailableSkill = { 
+/**
+ * Skill 名称
+ */
+name: string; 
+/**
+ * 描述
+ */
+description: string; 
+/**
+ * 仓库内相对路径
+ */
+relativePath: string }
+/**
+ * fetch_available 返回结果
+ */
+export type FetchResult = { 
+/**
+ * 来源类型
+ */
+sourceType: string; 
+/**
+ * 规范化 URL
+ */
+sourceUrl: string; 
+/**
+ * @skill 语法提取的名称（用于预选）
+ */
+skillFilter: string | null; 
+/**
+ * 可用的 skills 列表
+ */
+skills: AvailableSkill[] }
+/**
+ * 安装模式
+ */
+export type InstallMode = "symlink" | "copy"
+/**
+ * 安装参数
+ */
+export type InstallParams = { 
+/**
+ * 原始来源字符串
+ */
+source: string; 
+/**
+ * 选中的 skill 名称列表
+ */
+skills: string[]; 
+/**
+ * 目标 agents
+ */
+agents: string[]; 
+/**
+ * 安装范围
+ */
+scope: Scope; 
+/**
+ * Project scope 时的项目路径
+ */
+projectPath: string | null; 
+/**
+ * 安装模式
+ */
+mode: InstallMode }
+/**
+ * 单个 skill 的安装结果
+ */
+export type InstallResult = { 
+/**
+ * Skill 名称
+ */
+skillName: string; 
+/**
+ * Agent 名称
+ */
+agent: string; 
+/**
+ * 是否成功
+ */
+success: boolean; 
+/**
+ * 安装路径
+ */
+path: string; 
+/**
+ * Canonical 路径（symlink 模式）
+ */
+canonicalPath: string | null; 
+/**
+ * 实际使用的安装模式
+ */
+mode: InstallMode; 
+/**
+ * symlink 是否失败并降级为 copy
+ */
+symlinkFailed: boolean; 
+/**
+ * 错误信息
+ */
+error: string | null }
+/**
+ * 安装结果汇总
+ */
+export type InstallResults = { 
+/**
+ * 成功的安装
+ */
+successful: InstallResult[]; 
+/**
+ * 失败的安装
+ */
+failed: InstallResult[]; 
+/**
+ * symlink 失败降级为 copy 的 agents
+ */
+symlinkFallbackAgents: string[] }
+/**
+ * 已安装的 Skill 信息
+ * 对应 CLI: InstalledSkill (installer.ts:783-790)
+ */
+export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null }
+/**
+ * list_skills 参数
+ */
+export type ListSkillsParams = { 
+/**
+ * 范围: "global" | "project" | null (返回全部)
+ */
+scope: string | null; 
+/**
+ * 项目路径（用于 project scope）
+ */
+projectPath: string | null }
+/**
+ * list_skills 返回结果
+ * 包含 skills 列表和路径存在性信息
+ */
+export type ListSkillsResult = { skills: InstalledSkill[]; 
+/**
+ * 项目目录是否存在（project scope 时有意义，global 始终为 true）
+ */
+pathExists: boolean }
+/**
+ * 单个 skill 的删除结果
+ * 对应 CLI: remove.ts 第 148-195 行的 results 数组元素
+ */
+export type RemoveResult = { 
+/**
+ * Skill 名称
+ */
+skillName: string; 
+/**
+ * 是否成功
+ */
+success: boolean; 
+/**
+ * 删除的 agent 目录路径列表
+ */
+removedPaths: string[]; 
+/**
+ * 来源信息（从 lock file 读取，仅 Global）
+ */
+source: string | null; 
+/**
+ * 来源类型
+ */
+sourceType: string | null; 
+/**
+ * 错误信息
+ */
+error: string | null }
+/**
+ * 安装范围
+ */
+export type Scope = "global" | "project"
+/**
+ * Skill Deck 应用配置
+ * 持久化到 ~/.skill-deck/config.json
+ */
+export type SkillDeckConfig = { 
+/**
+ * 已保存的项目路径列表
+ */
+projects?: string[] }
+/**
+ * Skill 范围
+ */
+export type SkillScope = "global" | "project"
+/**
+ * 更新检测结果
+ */
+export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean }
 
 /** tauri-specta globals **/
 
 import {
 	invoke as TAURI_INVOKE,
-	Channel as TAURI_CHANNEL,
 } from "@tauri-apps/api/core";
 import * as TAURI_API_EVENT from "@tauri-apps/api/event";
 import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
@@ -46,7 +473,7 @@ export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-function __makeEvents__<T extends Record<string, any>>(
+export function __makeEvents__<T extends Record<string, any>>(
 	mappings: Record<keyof T, string>,
 ) {
 	return new Proxy(

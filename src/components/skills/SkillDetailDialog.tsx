@@ -15,10 +15,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { Skill } from '@/types';
+import type { InstalledSkill } from '@/bindings';
 
 interface SkillDetailDialogProps {
-  skill: Skill | null;
+  skill: InstalledSkill | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }

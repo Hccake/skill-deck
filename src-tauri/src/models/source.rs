@@ -1,11 +1,13 @@
 //! 来源解析相关类型定义
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::path::PathBuf;
 
 /// 来源类型枚举
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
+#[specta(rename_all = "lowercase")]
 pub enum SourceType {
     GitHub,
     GitLab,
@@ -29,8 +31,9 @@ impl std::fmt::Display for SourceType {
 }
 
 /// 解析后的来源信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct ParsedSource {
     /// 来源类型
     pub source_type: SourceType,

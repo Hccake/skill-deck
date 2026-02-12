@@ -157,7 +157,8 @@
         "network": "Network error, please check your connection",
         "timeout": "Clone timed out. The repository may be too large or network is slow.",
         "auth": "Authentication failed. Check your credentials or repository access.",
-        "refNotFound": "Branch or tag not found"
+        "refNotFound": "Branch or tag not found",
+        "invalidSource": "Invalid source format: {{value}}"
       }
     },
     "skills": {
@@ -223,6 +224,37 @@
       "title": "Installation Failed",
       "detailsLabel": "Details",
       "suggestionsLabel": "Suggestions",
+      "unknown": "An unknown error occurred",
+      "noSkillsFound": "No matching skills found",
+      "noSkillsFoundDetails": "Selected skills: {{selected}}\nAvailable skills: {{available}}",
+      "networkFailed": "Network connection failed",
+      "authFailed": "Authentication failed",
+      "repoNotFound": "Repository not found",
+      "refNotFound": "Branch or tag not found",
+      "cloneTimeout": "Clone timed out",
+      "ioFailed": "File operation failed",
+      "invalidAgent": "Invalid agent: {{agent}}",
+      "invalidSource": "Invalid source format: {{value}}",
+      "pathNotFound": "Path not found: {{path}}",
+      "installFailed": "Installation failed",
+      "parseFailed": "Parse failed",
+      "suggestion": {
+        "checkSkillName": "Check that the skill name is correct",
+        "reselect": "Go back and reselect skills",
+        "checkNetwork": "Check your network connection",
+        "checkRepo": "Verify the repository URL is correct",
+        "checkPrivateRepo": "For private repos, configure SSH keys or access tokens",
+        "checkCredentials": "Check that SSH keys or access tokens are configured correctly",
+        "checkAccess": "Verify you have access to this repository",
+        "checkRef": "Check that the branch or tag name is correct",
+        "useDefaultBranch": "Try using the default branch",
+        "retryLater": "The repository may be too large, try again later",
+        "runAsAdmin": "Try running the app with administrator privileges",
+        "checkPermission": "Check write permissions for the target directory",
+        "checkAgentName": "Check that the agent name is correct",
+        "reselectAgents": "Go back and reselect agents",
+        "retryOrContact": "Check the error details and retry, or check logs if the issue persists"
+      },
       "actions": {
         "backToSource": "Back to Edit",
         "close": "Close"

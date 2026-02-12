@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { listAgents, getLastSelectedAgents, saveLastSelectedAgents } from '@/hooks/useTauriApi';
 import { useContextStore } from '@/stores/context';
 import { AgentSelector } from '@/components/skills/add-skill/AgentSelector';
-import type { AgentItem } from '@/components/skills/add-skill/types';
+import type { AgentInfo } from '@/bindings';
 
 interface ProjectRowProps {
   path: string;
@@ -41,7 +41,7 @@ export function SettingsPage() {
   const { t } = useTranslation();
 
   // 状态管理
-  const [allAgents, setAllAgents] = useState<AgentItem[]>([]);
+  const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const { projects, projectsLoaded, loadProjects, addProject, removeProject } = useContextStore();
@@ -64,15 +64,7 @@ export function SettingsPage() {
           listAgents(),
           getLastSelectedAgents(),
         ]);
-        // 转换为 AgentItem 格式供 AgentSelector 使用
-        const agentItems: AgentItem[] = agentsData.map((agent) => ({
-          id: agent.id,
-          displayName: agent.name,
-          detected: agent.detected,
-          isUniversal: agent.isUniversal,
-          showInUniversalList: agent.showInUniversalList,
-        }));
-        setAllAgents(agentItems);
+        setAllAgents(agentsData);
         setSelectedAgents(lastSelected);
       } catch (e) {
         console.error('Failed to load data:', e);

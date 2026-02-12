@@ -1,27 +1,31 @@
 //! 安装相关类型定义
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::path::PathBuf;
 
 /// 安装范围
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
+#[specta(rename_all = "lowercase")]
 pub enum Scope {
     Global,
     Project,
 }
 
 /// 安装模式
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
+#[specta(rename_all = "lowercase")]
 pub enum InstallMode {
     Symlink,
     Copy,
 }
 
 /// 安装参数
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct InstallParams {
     /// 原始来源字符串
     pub source: String,
@@ -38,8 +42,9 @@ pub struct InstallParams {
 }
 
 /// 单个 skill 的安装结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct InstallResult {
     /// Skill 名称
     pub skill_name: String,
@@ -60,8 +65,9 @@ pub struct InstallResult {
 }
 
 /// 安装结果汇总
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct InstallResults {
     /// 成功的安装
     pub successful: Vec<InstallResult>,
@@ -72,8 +78,9 @@ pub struct InstallResults {
 }
 
 /// 可用的 Skill 信息（fetch_available 返回）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct AvailableSkill {
     /// Skill 名称
     pub name: String,
@@ -85,8 +92,9 @@ pub struct AvailableSkill {
 
 /// 单个 skill 的删除结果
 /// 对应 CLI: remove.ts 第 148-195 行的 results 数组元素
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct RemoveResult {
     /// Skill 名称
     pub skill_name: String,
@@ -103,8 +111,9 @@ pub struct RemoveResult {
 }
 
 /// fetch_available 返回结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct FetchResult {
     /// 来源类型
     pub source_type: String,

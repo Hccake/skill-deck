@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
-import type { AgentType, Skill, SkillScope } from '@/types';
+import type { AgentType, InstalledSkill, SkillScope } from '@/bindings';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
@@ -12,7 +12,7 @@ const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
 
 interface SkillsSectionProps {
   title: string;
-  skills: Skill[];
+  skills: InstalledSkill[];
   scope: SkillScope;
   conflictSkillNames?: Set<string>;
   /** 项目目录是否存在（仅 project scope） */
@@ -23,7 +23,7 @@ interface SkillsSectionProps {
   updatingSkill?: string | null;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentType, string>;
-  onSkillClick: (skill: Skill) => void;
+  onSkillClick: (skill: InstalledSkill) => void;
   onUpdate: (skillName: string) => void;
   onDelete: (skillName: string) => void;
   onToggleAgent: (skillName: string, agentId: string) => void;

@@ -72,7 +72,9 @@ pub fn discover_skills(
     };
 
     if !search_path.exists() {
-        return Err(AppError::PathNotFound(search_path.display().to_string()));
+        return Err(AppError::PathNotFound {
+            path: search_path.display().to_string(),
+        });
     }
 
     let mut skills = Vec::new();

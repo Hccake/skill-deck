@@ -1,18 +1,20 @@
 use crate::core::skill_lock;
+use crate::error::AppError;
 use crate::models::SkillDeckConfig;
 use std::fs;
 use std::path::PathBuf;
 
 /// 获取配置文件路径: ~/.skill-deck/config.json
-fn get_config_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+fn get_config_path() -> Result<PathBuf, AppError> {
+    let home = dirs::home_dir().ok_or(AppError::Path { message: "无法获取用户主目录".to_string() })?;
     Ok(home.join(".skill-deck").join("config.json"))
 }
 
 /// 获取配置
 /// 文件不存在或解析失败时返回默认配置
 #[tauri::command]
-pub fn get_config() -> Result<SkillDeckConfig, String> {
+#[specta::specta]
+pub fn get_config() -> Result<SkillDeckConfig, AppError> {
     let path = get_config_path()?;
 
     if !path.exists() {
@@ -38,20 +40,18 @@ pub fn get_config() -> Result<SkillDeckConfig, String> {
 /// 保存配置
 /// 目录不存在时自动创建
 #[tauri::command]
-pub fn save_config(config: SkillDeckConfig) -> Result<(), String> {
+#[specta::specta]
+pub fn save_config(config: SkillDeckConfig) -> Result<(), AppError> {
     let path = get_config_path()?;
 
     // 确保目录存在
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("创建配置目录失败: {}", e))?;
+        fs::create_dir_all(parent)?;
     }
 
-    let content = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("序列化配置失败: {}", e))?;
+    let content = serde_json::to_string_pretty(&config)?;
 
-    fs::write(&path, content)
-        .map_err(|e| format!("写入配置文件失败: {}", e))?;
+    fs::write(&path, content)?;
 
     log::info!("配置已保存到: {:?}", path);
     Ok(())
@@ -60,6 +60,7 @@ pub fn save_config(config: SkillDeckConfig) -> Result<(), String> {
 /// 获取上次选择的 agents
 /// 读取 ~/.agents/.skill-lock.json 中的 lastSelectedAgents
 #[tauri::command]
+#[specta::specta]
 pub fn get_last_selected_agents() -> Vec<String> {
     skill_lock::get_last_selected_agents().unwrap_or_default()
 }
@@ -67,15 +68,17 @@ pub fn get_last_selected_agents() -> Vec<String> {
 /// 保存选择的 agents
 /// 写入 ~/.agents/.skill-lock.json 中的 lastSelectedAgents
 #[tauri::command]
-pub fn save_last_selected_agents(agents: Vec<String>) -> Result<(), String> {
-    skill_lock::save_selected_agents(&agents)
-        .map_err(|e| format!("保存 agents 失败: {}", e))
+#[specta::specta]
+pub fn save_last_selected_agents(agents: Vec<String>) -> Result<(), AppError> {
+    skill_lock::save_selected_agents(&agents)?;
+    Ok(())
 }
 
 /// 添加项目路径
 /// 已存在则忽略，返回更新后的 projects 列表
 #[tauri::command]
-pub fn add_project(path: String) -> Result<Vec<String>, String> {
+#[specta::specta]
+pub fn add_project(path: String) -> Result<Vec<String>, AppError> {
     let mut config = get_config()?;
     if !config.projects.contains(&path) {
         config.projects.push(path);
@@ -87,7 +90,8 @@ pub fn add_project(path: String) -> Result<Vec<String>, String> {
 /// 移除项目路径
 /// 返回更新后的 projects 列表
 #[tauri::command]
-pub fn remove_project(path: String) -> Result<Vec<String>, String> {
+#[specta::specta]
+pub fn remove_project(path: String) -> Result<Vec<String>, AppError> {
     let mut config = get_config()?;
     config.projects.retain(|p| p != &path);
     save_config(config.clone())?;
@@ -96,33 +100,32 @@ pub fn remove_project(path: String) -> Result<Vec<String>, String> {
 
 /// 检查项目路径是否存在
 #[tauri::command]
+#[specta::specta]
 pub fn check_project_path(path: String) -> bool {
     std::path::Path::new(&path).is_dir()
 }
 
 /// 在系统文件管理器中打开路径
 #[tauri::command]
-pub fn open_in_explorer(path: String) -> Result<(), String> {
+#[specta::specta]
+pub fn open_in_explorer(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
             .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open explorer: {}", e))?;
+            .spawn()?;
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
             .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open Finder: {}", e))?;
+            .spawn()?;
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
             .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open file manager: {}", e))?;
+            .spawn()?;
     }
     Ok(())
 }

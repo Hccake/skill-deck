@@ -157,7 +157,8 @@
         "network": "网络错误，请检查网络连接",
         "timeout": "克隆超时。仓库可能太大或网络较慢。",
         "auth": "认证失败。请检查凭据或仓库访问权限。",
-        "refNotFound": "未找到指定的分支或标签"
+        "refNotFound": "未找到指定的分支或标签",
+        "invalidSource": "无效的来源格式: {{value}}"
       }
     },
     "skills": {
@@ -223,6 +224,37 @@
       "title": "安装失败",
       "detailsLabel": "详细信息",
       "suggestionsLabel": "建议",
+      "unknown": "发生未知错误",
+      "noSkillsFound": "未找到匹配的 Skills",
+      "noSkillsFoundDetails": "选择的 skills: {{selected}}\n可用的 skills: {{available}}",
+      "networkFailed": "网络连接失败",
+      "authFailed": "认证失败",
+      "repoNotFound": "仓库未找到",
+      "refNotFound": "分支/标签未找到",
+      "cloneTimeout": "克隆超时",
+      "ioFailed": "文件操作失败",
+      "invalidAgent": "无效的 Agent: {{agent}}",
+      "invalidSource": "无效的来源格式: {{value}}",
+      "pathNotFound": "路径未找到: {{path}}",
+      "installFailed": "安装失败",
+      "parseFailed": "解析失败",
+      "suggestion": {
+        "checkSkillName": "检查 skill 名称是否正确",
+        "reselect": "返回上一步重新选择 skills",
+        "checkNetwork": "检查网络连接是否正常",
+        "checkRepo": "确认仓库地址是否正确",
+        "checkPrivateRepo": "如果是私有仓库，请配置 SSH 密钥或访问令牌",
+        "checkCredentials": "检查 SSH 密钥或访问令牌是否正确配置",
+        "checkAccess": "确认你对该仓库有访问权限",
+        "checkRef": "检查分支或标签名称是否正确",
+        "useDefaultBranch": "尝试使用默认分支",
+        "retryLater": "仓库可能过大，请稍后重试",
+        "runAsAdmin": "尝试使用管理员权限运行应用",
+        "checkPermission": "检查目标目录的写入权限",
+        "checkAgentName": "检查 agent 名称是否正确",
+        "reselectAgents": "返回上一步重新选择 agents",
+        "retryOrContact": "请检查错误信息并重试，如果问题持续请查看日志"
+      },
       "actions": {
         "backToSource": "返回修改",
         "close": "关闭"

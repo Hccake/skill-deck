@@ -14,12 +14,14 @@ use crate::core::{
 };
 use crate::models::{InstallMode, Scope};
 use serde::Serialize;
+use specta::Type;
 use std::collections::HashMap;
-use tauri::command;
+use crate::error::AppError;
 
 /// 更新检测结果
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct SkillUpdateInfo {
     pub name: String,
     pub source: String,
@@ -33,20 +35,19 @@ pub struct SkillUpdateInfo {
 /// 2. 过滤出 sourceType == "github" 且有 skillFolderHash 和 skillPath 的 skills
 /// 3. 按 source 分组，对每组调用 GitHub Trees API
 /// 4. 比对本地 hash 与远程 hash
-#[command]
+#[tauri::command]
+#[specta::specta]
 pub async fn check_updates(
     scope: Scope,
     project_path: Option<String>,
-) -> Result<Vec<SkillUpdateInfo>, String> {
-    check_updates_inner(scope, project_path.as_deref())
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<Vec<SkillUpdateInfo>, AppError> {
+    check_updates_inner(scope, project_path.as_deref()).await
 }
 
 async fn check_updates_inner(
     scope: Scope,
     project_path: Option<&str>,
-) -> Result<Vec<SkillUpdateInfo>, crate::error::AppError> {
+) -> Result<Vec<SkillUpdateInfo>, AppError> {
     // 1. 确定 lock 文件路径
     let lock_project_path = match scope {
         Scope::Global => None,
@@ -113,16 +114,15 @@ async fn check_updates_inner(
 ///
 /// 本质是"重新安装"：从 lock 文件读取来源信息，构造安装 URL，复用安装逻辑。
 /// 与 CLI update 命令行为一致。
-#[command]
+#[tauri::command]
+#[specta::specta]
 pub async fn update_skill(
     app: tauri::AppHandle,
     scope: Scope,
     name: String,
     project_path: Option<String>,
-) -> Result<(), String> {
-    update_skill_inner(&app, scope, &name, project_path.as_deref())
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<(), AppError> {
+    update_skill_inner(&app, scope, &name, project_path.as_deref()).await
 }
 
 async fn update_skill_inner(
@@ -130,7 +130,7 @@ async fn update_skill_inner(
     scope: Scope,
     skill_name: &str,
     project_path: Option<&str>,
-) -> Result<(), crate::error::AppError> {
+) -> Result<(), AppError> {
     use tauri::Emitter;
 
     // 1. 从 lock 文件读取 skill 的来源信息
@@ -140,10 +140,9 @@ async fn update_skill_inner(
     };
     let lock = read_scoped_lock(lock_project_path)?;
     let entry = lock.skills.get(skill_name).ok_or_else(|| {
-        crate::error::AppError::InvalidSource(format!(
-            "Skill '{}' not found in lock file",
-            skill_name
-        ))
+        AppError::InvalidSource {
+            value: format!("Skill '{}' not found in lock file", skill_name),
+        }
     })?;
     // Clone needed fields before moving
     let entry_source = entry.source.clone();
@@ -178,7 +177,7 @@ async fn update_skill_inner(
     let skill = discovered
         .iter()
         .find(|s| s.name == skill_name)
-        .ok_or_else(|| crate::error::AppError::NoSkillsFound)?;
+        .ok_or_else(|| AppError::NoSkillsFound)?;
 
     // 7. 检测已安装的 agents + universal agents
     let mut target_agents = AgentType::detect_installed();

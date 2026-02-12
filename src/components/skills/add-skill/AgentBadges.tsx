@@ -1,12 +1,12 @@
 // src/components/skills/add-skill/AgentBadges.tsx
 import { Badge } from '@/components/ui/badge';
-import type { AgentItem } from './types';
+import type { AgentInfo } from '@/bindings';
 
 interface AgentBadgesProps {
   /** 选中的 agent IDs */
   selectedAgents: string[];
-  /** 所有 agents（用于获取 displayName） */
-  allAgents: AgentItem[];
+  /** 所有 agents（用于获取 name） */
+  allAgents: AgentInfo[];
   /** 是否排除 Universal Agents（折叠时 Universal 已单独显示） */
   excludeUniversal?: boolean;
 }
@@ -24,8 +24,8 @@ export function AgentBadges({
     ? allAgents.filter((a) => !a.isUniversal)
     : allAgents;
 
-  // 构建 id -> displayName 映射
-  const agentNames = new Map(filteredAgents.map((a) => [a.id, a.displayName]));
+  // 构建 id -> name 映射
+  const agentNames = new Map<string, string>(filteredAgents.map((a) => [a.id, a.name]));
 
   // 只显示在过滤后列表中的已选 agents
   const displayAgents = excludeUniversal

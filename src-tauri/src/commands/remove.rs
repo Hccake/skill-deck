@@ -9,7 +9,6 @@
 use crate::core::uninstaller;
 use crate::error::AppError;
 use crate::models::{RemoveResult, Scope};
-use tauri::command;
 
 /// 删除指定 skill
 ///
@@ -20,17 +19,12 @@ use tauri::command;
 ///
 /// # Returns
 /// * `RemoveResult` - 删除结果
-#[command]
+#[tauri::command]
+#[specta::specta]
 pub async fn remove_skill(
     scope: Scope,
     name: String,
     project_path: Option<String>,
-) -> Result<RemoveResult, String> {
+) -> Result<RemoveResult, AppError> {
     uninstaller::remove_skill(&name, &scope, project_path.as_deref())
-        .map_err(|e| format_error(&e))
-}
-
-/// 格式化错误信息
-fn format_error(e: &AppError) -> String {
-    e.to_string()
 }

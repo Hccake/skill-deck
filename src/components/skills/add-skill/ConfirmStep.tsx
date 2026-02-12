@@ -29,19 +29,24 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     const selectedSet = new Set(state.selectedAgents);
     return state.allAgents
       .filter((a) => selectedSet.has(a.id))
-      .map((a) => a.displayName);
+      .map((a) => a.name);
   }, [state.selectedAgents, state.allAgents]);
 
   // 检测覆盖
   useEffect(() => {
     async function detectOverwrites() {
       try {
-        const overwrites = await checkOverwrites(
+        const result = await checkOverwrites(
           state.selectedSkills,
           state.selectedAgents,
           scope,
           scope === 'project' ? projectPath : undefined
         );
+        // checkOverwrites 返回 Partial<Record>，但 state 需要 Record
+        const overwrites: Record<string, string[]> = {};
+        for (const [key, value] of Object.entries(result)) {
+          if (value) overwrites[key] = value;
+        }
         updateStateRef.current({ overwrites });
       } catch (error) {
         console.error('Failed to check overwrites:', error);

@@ -8,6 +8,7 @@ use crate::error::AppError;
 /// 返回完整信息供前端使用，前端无需额外计算
 /// 对应前端调用: invoke('list_agents')
 #[tauri::command]
+#[specta::specta]
 pub fn list_agents() -> Result<Vec<AgentInfo>, AppError> {
     let agents: Vec<AgentInfo> = AgentType::all()
         .map(|agent| agent.to_agent_info())

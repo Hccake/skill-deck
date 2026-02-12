@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::models::{
     AvailableSkill, FetchResult, InstallParams, InstallResults, SourceType,
 };
-use tauri::{command, AppHandle, Emitter};
+use tauri::{AppHandle, Emitter};
 
 /// 从来源获取可用的 skills 列表
 ///
@@ -23,21 +23,10 @@ use tauri::{command, AppHandle, Emitter};
 ///
 /// # Returns
 /// * `FetchResult` - 包含来源信息和可用 skills 列表
-#[command]
-pub async fn fetch_available(app: AppHandle, source: String) -> Result<FetchResult, String> {
-    fetch_available_inner(&app, &source).map_err(|e| format_error(&e))
-}
-
-/// 格式化错误，提供更友好的错误信息
-fn format_error(e: &AppError) -> String {
-    match e {
-        AppError::GitTimeout => "clone_timeout".to_string(),
-        AppError::GitNetworkError(_) => format!("network_error:{}", e),
-        AppError::GitAuthFailed(_) => format!("auth_error:{}", e),
-        AppError::GitRepoNotFound(_) => format!("repo_not_found:{}", e),
-        AppError::GitRefNotFound(_) => format!("ref_not_found:{}", e),
-        _ => e.to_string(),
-    }
+#[tauri::command]
+#[specta::specta]
+pub async fn fetch_available(app: AppHandle, source: String) -> Result<FetchResult, AppError> {
+    fetch_available_inner(&app, &source)
 }
 
 fn fetch_available_inner(app: &AppHandle, source: &str) -> Result<FetchResult, AppError> {
@@ -50,7 +39,7 @@ fn fetch_available_inner(app: &AppHandle, source: &str) -> Result<FetchResult, A
             let path = parsed
                 .local_path
                 .as_ref()
-                .ok_or_else(|| AppError::InvalidSource("Missing local path".to_string()))?;
+                .ok_or_else(|| AppError::InvalidSource { value: "Missing local path".to_string() })?;
             (path.clone(), None)
         }
         SourceType::GitHub | SourceType::GitLab | SourceType::Git => {
@@ -115,9 +104,10 @@ fn discover_and_build_result(
 ///
 /// # Returns
 /// * `InstallResults` - 安装结果汇总
-#[command]
-pub async fn install_skills(app: AppHandle, params: InstallParams) -> Result<InstallResults, String> {
-    install_skills_inner(&app, params).await.map_err(|e| format_error(&e))
+#[tauri::command]
+#[specta::specta]
+pub async fn install_skills(app: AppHandle, params: InstallParams) -> Result<InstallResults, AppError> {
+    install_skills_inner(&app, params).await
 }
 
 async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<InstallResults, AppError> {
@@ -130,7 +120,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
             let path = parsed
                 .local_path
                 .as_ref()
-                .ok_or_else(|| AppError::InvalidSource("Missing local path".to_string()))?;
+                .ok_or_else(|| AppError::InvalidSource { value: "Missing local path".to_string() })?;
             (path.clone(), None)
         }
         _ => {
@@ -184,7 +174,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
         for agent_str in &target_agents {
             let agent: AgentType = agent_str
                 .parse()
-                .map_err(|_| AppError::InvalidAgent(agent_str.clone()))?;
+                .map_err(|_| AppError::InvalidAgent { agent: agent_str.clone() })?;
 
             let result = install_skill_for_agent(
                 &skill.path,

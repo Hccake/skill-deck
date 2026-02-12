@@ -2,11 +2,11 @@
 import { memo } from 'react';
 import { FolderOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import type { AgentItem } from './types';
+import type { AgentInfo } from '@/bindings';
 
 interface UniversalAgentsCardProps {
   /** Universal Agents 列表 */
-  universalAgents: AgentItem[];
+  universalAgents: AgentInfo[];
   /** 安装范围（用于动态显示路径） */
   scope?: 'global' | 'project';
 }
@@ -54,7 +54,7 @@ export const UniversalAgentsCard = memo(function UniversalAgentsCard({
             variant="secondary"
             className="text-xs font-normal"
           >
-            {agent.displayName}
+            {agent.name}
           </Badge>
         ))}
       </div>

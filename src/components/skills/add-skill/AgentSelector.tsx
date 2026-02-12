@@ -7,13 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { AgentBadges } from './AgentBadges';
 import { UniversalAgentsCard } from './UniversalAgentsCard';
-import type { AgentItem } from './types';
+import type { AgentInfo } from '@/bindings';
 
 interface AgentSelectorProps {
   /** 选中的 agent IDs */
   selectedAgents: string[];
   /** 所有 agents */
-  allAgents: AgentItem[];
+  allAgents: AgentInfo[];
   /** 选择变化回调 */
   onSelectionChange: (agents: string[]) => void;
   /** 安装范围（用于动态显示 Universal 路径） */
@@ -39,9 +39,9 @@ export function AgentSelector({
 
   // 分组：Universal / 已检测 / 其他
   const { universalAgents, detectedAgents, otherAgents } = useMemo(() => {
-    const universal: AgentItem[] = [];
-    const detected: AgentItem[] = [];
-    const other: AgentItem[] = [];
+    const universal: AgentInfo[] = [];
+    const detected: AgentInfo[] = [];
+    const other: AgentInfo[] = [];
 
     for (const agent of allAgents) {
       if (agent.isUniversal && agent.showInUniversalList) {
@@ -243,7 +243,7 @@ const AgentRow = memo(function AgentRow({
   onToggle,
   showDetectedBadge = false,
 }: {
-  agent: AgentItem;
+  agent: AgentInfo;
   selected: boolean;
   onToggle: () => void;
   showDetectedBadge?: boolean;
@@ -257,7 +257,7 @@ const AgentRow = memo(function AgentRow({
     >
       <Checkbox checked={selected} />
       <div className="flex-1 min-w-0">
-        <span className="text-sm">{agent.displayName}</span>
+        <span className="text-sm">{agent.name}</span>
       </div>
       {showDetectedBadge && agent.detected && (
         <Badge variant="outline" className="text-xs">

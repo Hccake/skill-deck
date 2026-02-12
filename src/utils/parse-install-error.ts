@@ -1,4 +1,6 @@
-import type { AvailableSkill, InstallError } from '@/components/skills/add-skill/types';
+import type { TFunction } from 'i18next';
+import type { AppError, AvailableSkill } from '@/bindings';
+import type { InstallError } from '@/components/skills/add-skill/types';
 
 interface ErrorContext {
   selectedSkills?: string[];
@@ -6,75 +8,157 @@ interface ErrorContext {
 }
 
 /**
- * 解析安装错误，返回用户友好的错误信息
+ * 将结构化 AppError 转换为用户友好的 InstallError 视图模型
  */
 export function parseInstallError(
-  errorMessage: string,
+  error: AppError,
+  t: TFunction,
   context: ErrorContext = {}
 ): InstallError {
   const { selectedSkills = [], availableSkills = [] } = context;
 
-  // 1. Skill 不匹配
-  if (errorMessage.includes('No skills matched') || errorMessage.includes('NoSkillsFound')) {
-    const availableNames = availableSkills.map(s => s.name);
-    return {
-      message: '未找到匹配的 skills',
-      details: selectedSkills.length > 0 && availableNames.length > 0
-        ? `选择的 skills: ${selectedSkills.join(', ')}\n可用的 skills: ${availableNames.join(', ')}`
-        : undefined,
-      suggestions: [
-        '检查 skill 名称是否正确',
-        '返回上一步重新选择 skills',
-      ],
-    };
-  }
+  switch (error.kind) {
+    case 'noSkillsFound': {
+      const availableNames = availableSkills.map(s => s.name);
+      return {
+        message: t('addSkill.error.noSkillsFound'),
+        details: selectedSkills.length > 0 && availableNames.length > 0
+          ? t('addSkill.error.noSkillsFoundDetails', {
+              selected: selectedSkills.join(', '),
+              available: availableNames.join(', '),
+            })
+          : undefined,
+        suggestions: [
+          t('addSkill.error.suggestion.checkSkillName'),
+          t('addSkill.error.suggestion.reselect'),
+        ],
+      };
+    }
 
-  // 2. 网络错误
-  if (
-    errorMessage.includes('network') ||
-    errorMessage.includes('clone failed') ||
-    errorMessage.includes('Failed to clone') ||
-    errorMessage.includes('Network')
-  ) {
-    return {
-      message: '网络连接失败',
-      details: errorMessage,
-      suggestions: [
-        '检查网络连接是否正常',
-        '确认仓库地址是否正确',
-        '如果是私有仓库，请配置 SSH 密钥或访问令牌',
-      ],
-    };
-  }
+    case 'gitNetworkError':
+    case 'gitCloneFailed':
+      return {
+        message: t('addSkill.error.networkFailed'),
+        details: error.data.message,
+        suggestions: [
+          t('addSkill.error.suggestion.checkNetwork'),
+          t('addSkill.error.suggestion.checkRepo'),
+          t('addSkill.error.suggestion.checkPrivateRepo'),
+        ],
+      };
 
-  // 3. 权限错误
-  if (errorMessage.includes('permission') || errorMessage.includes('Permission denied')) {
-    return {
-      message: '权限不足',
-      details: errorMessage,
-      suggestions: [
-        '尝试使用管理员权限运行应用',
-        '检查目标目录的写入权限',
-      ],
-    };
-  }
+    case 'gitAuthFailed':
+      return {
+        message: t('addSkill.error.authFailed'),
+        details: error.data.message,
+        suggestions: [
+          t('addSkill.error.suggestion.checkCredentials'),
+          t('addSkill.error.suggestion.checkAccess'),
+        ],
+      };
 
-  // 4. 仓库未找到
-  if (errorMessage.includes('not found') || errorMessage.includes('404')) {
-    return {
-      message: '仓库未找到',
-      details: errorMessage,
-      suggestions: [
-        '检查仓库地址是否正确',
-        '确认仓库是否公开或你是否有访问权限',
-      ],
-    };
-  }
+    case 'gitRepoNotFound':
+      return {
+        message: t('addSkill.error.repoNotFound'),
+        details: error.data.repo,
+        suggestions: [
+          t('addSkill.error.suggestion.checkRepo'),
+          t('addSkill.error.suggestion.checkAccess'),
+        ],
+      };
 
-  // 5. 默认：通用错误
-  return {
-    message: '安装失败',
-    details: errorMessage,
-    suggestions: ['请检查错误信息并重试', '如果问题持续，请查看日志或联系支持'],
-  };
+    case 'gitRefNotFound':
+      return {
+        message: t('addSkill.error.refNotFound'),
+        details: error.data.refName,
+        suggestions: [
+          t('addSkill.error.suggestion.checkRef'),
+          t('addSkill.error.suggestion.useDefaultBranch'),
+        ],
+      };
+
+    case 'gitTimeout':
+      return {
+        message: t('addSkill.error.cloneTimeout'),
+        suggestions: [
+          t('addSkill.error.suggestion.checkNetwork'),
+          t('addSkill.error.suggestion.retryLater'),
+        ],
+      };
+
+    case 'io':
+      return {
+        message: t('addSkill.error.ioFailed'),
+        details: error.data.message,
+        suggestions: [
+          t('addSkill.error.suggestion.runAsAdmin'),
+          t('addSkill.error.suggestion.checkPermission'),
+        ],
+      };
+
+    case 'invalidAgent':
+      return {
+        message: t('addSkill.error.invalidAgent', { agent: error.data.agent }),
+        suggestions: [
+          t('addSkill.error.suggestion.checkAgentName'),
+          t('addSkill.error.suggestion.reselectAgents'),
+        ],
+      };
+
+    case 'invalidSource':
+      return {
+        message: t('addSkill.error.invalidSource', { value: error.data.value }),
+        suggestions: [
+          t('addSkill.error.suggestion.checkRepo'),
+        ],
+      };
+
+    case 'pathNotFound':
+      return {
+        message: t('addSkill.error.pathNotFound', { path: error.data.path }),
+        suggestions: [
+          t('addSkill.error.suggestion.checkPermission'),
+        ],
+      };
+
+    case 'installFailed':
+      return {
+        message: t('addSkill.error.installFailed'),
+        details: error.data.message,
+        suggestions: [
+          t('addSkill.error.suggestion.retryOrContact'),
+        ],
+      };
+
+    case 'custom':
+      return {
+        message: error.data.message,
+        suggestions: [
+          t('addSkill.error.suggestion.retryOrContact'),
+        ],
+      };
+
+    case 'yaml':
+    case 'json':
+    case 'invalidSkillMd':
+    case 'path':
+      return {
+        message: t('addSkill.error.parseFailed'),
+        details: error.data.message,
+        suggestions: [
+          t('addSkill.error.suggestion.retryOrContact'),
+        ],
+      };
+
+    default: {
+      const _exhaustive: never = error;
+      void _exhaustive;
+      return {
+        message: t('addSkill.error.unknown'),
+        suggestions: [
+          t('addSkill.error.suggestion.retryOrContact'),
+        ],
+      };
+    }
+  }
 }

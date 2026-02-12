@@ -23,7 +23,9 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
     let input = input.trim();
 
     if input.is_empty() {
-        return Err(AppError::InvalidSource("Empty source".to_string()));
+        return Err(AppError::InvalidSource {
+            value: "Empty source".to_string(),
+        });
     }
 
     // 1. 检查本地路径
@@ -73,8 +75,9 @@ fn parse_local_path(input: &str) -> Result<ParsedSource, AppError> {
 
 /// 解析 URL
 fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
-    let url =
-        Url::parse(input).map_err(|e| AppError::InvalidSource(format!("Invalid URL: {}", e)))?;
+    let url = Url::parse(input).map_err(|e| AppError::InvalidSource {
+        value: format!("Invalid URL: {}", e),
+    })?;
 
     let host = url.host_str().unwrap_or("");
 
@@ -130,9 +133,9 @@ fn parse_github_url(_input: &str, url: &Url) -> Result<ParsedSource, AppError> {
     let parts: Vec<&str> = path.split('/').collect();
 
     if parts.len() < 2 {
-        return Err(AppError::InvalidSource(
-            "Invalid GitHub URL: missing owner/repo".to_string(),
-        ));
+        return Err(AppError::InvalidSource {
+            value: "Invalid GitHub URL: missing owner/repo".to_string(),
+        });
     }
 
     let owner = parts[0];
@@ -229,10 +232,9 @@ fn parse_github_shorthand(input: &str) -> Result<ParsedSource, AppError> {
     let parts: Vec<&str> = source.split('/').collect();
 
     if parts.len() < 2 {
-        return Err(AppError::InvalidSource(format!(
-            "Invalid source format: {}. Expected owner/repo",
-            input
-        )));
+        return Err(AppError::InvalidSource {
+            value: format!("Invalid source format: {}. Expected owner/repo", input),
+        });
     }
 
     let owner = parts[0];

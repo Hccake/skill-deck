@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { Agent } from '@/types';
+import type { AgentInfo } from '@/bindings';
 
 interface SkillsToolbarProps {
   /** 搜索关键词 */
@@ -22,7 +22,7 @@ interface SkillsToolbarProps {
   /** agent 筛选变更回调 */
   onAgentChange: (agentId: string) => void;
   /** 可筛选的 agent 列表 */
-  filterableAgents: Agent[];
+  filterableAgents: AgentInfo[];
   /** 同步按钮回调 */
   onSync: () => void;
   /** 是否正在同步 */

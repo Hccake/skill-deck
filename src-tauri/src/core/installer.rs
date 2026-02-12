@@ -174,7 +174,7 @@ fn clean_and_create_directory(path: &Path) -> Result<(), AppError> {
 
     // 创建目录
     fs::create_dir_all(path)
-        .map_err(|e| AppError::InstallFailed(format!("Failed to create dir: {}", e)))?;
+        .map_err(|e| AppError::InstallFailed { message: format!("Failed to create dir: {}", e) })?;
 
     Ok(())
 }
@@ -183,11 +183,11 @@ fn clean_and_create_directory(path: &Path) -> Result<(), AppError> {
 fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
     // 确保目标目录存在
     fs::create_dir_all(dst)
-        .map_err(|e| AppError::InstallFailed(format!("Failed to create dir: {}", e)))?;
+        .map_err(|e| AppError::InstallFailed { message: format!("Failed to create dir: {}", e) })?;
 
     // 遍历源目录
     let entries = fs::read_dir(src)
-        .map_err(|e| AppError::InstallFailed(format!("Failed to read dir: {}", e)))?;
+        .map_err(|e| AppError::InstallFailed { message: format!("Failed to read dir: {}", e) })?;
 
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -214,7 +214,7 @@ fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
         } else {
             // 复制文件（解引用 symlink）
             fs::copy(&path, &dst_path)
-                .map_err(|e| AppError::InstallFailed(format!("Failed to copy file: {}", e)))?;
+                .map_err(|e| AppError::InstallFailed { message: format!("Failed to copy file: {}", e) })?;
         }
     }
 
@@ -226,7 +226,7 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
     // 确保父目录存在
     if let Some(parent) = link.parent() {
         fs::create_dir_all(parent)
-            .map_err(|e| AppError::InstallFailed(format!("Failed to create parent dir: {}", e)))?;
+            .map_err(|e| AppError::InstallFailed { message: format!("Failed to create parent dir: {}", e) })?;
     }
 
     // 检查目标和链接是否相同
@@ -253,7 +253,7 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
 
     // 计算相对路径
     let relative_target = pathdiff::diff_paths(&resolved_target, &resolved_link_parent)
-        .ok_or_else(|| AppError::InstallFailed("Failed to compute relative path".to_string()))?;
+        .ok_or_else(|| AppError::InstallFailed { message: "Failed to compute relative path".to_string() })?;
 
     // 创建 symlink
     #[cfg(unix)]
@@ -268,7 +268,7 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
         if let Err(_) = junction::create(&resolved_target, link) {
             // Junction 失败，尝试 symlink_dir
             std::os::windows::fs::symlink_dir(&relative_target, link)
-                .map_err(|e| AppError::InstallFailed(format!("Failed to create symlink: {}", e)))?;
+                .map_err(|e| AppError::InstallFailed { message: format!("Failed to create symlink: {}", e) })?;
         }
     }
 

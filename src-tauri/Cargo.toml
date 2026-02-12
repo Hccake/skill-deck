@@ -28,6 +28,7 @@ tauri-plugin-dialog = "2"
 # 类型安全绑定生成
 specta = "2.0.0-rc.22"
 tauri-specta = { version = "2.0.0-rc.21", features = ["typescript"] }
+specta-typescript = "0.0.9"
 
 # 新增依赖
 serde_yaml = "0.9"
@@ -57,7 +58,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # 延迟初始化单例
 once_cell = "1"
-specta-typescript = "0.0.9"
 
 [target.'cfg(windows)'.dependencies]
 junction = "1"

@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next';
 import { Progress } from '@/components/ui/progress';
 import { installSkills, saveLastSelectedAgents } from '@/hooks/useTauriApi';
 import { parseInstallError } from '@/utils/parse-install-error';
-import type { AddSkillState, InstallParams } from './types';
+import { toAppError } from '@/utils/to-app-error';
+import type { InstallParams } from '@/bindings';
+import type { AddSkillState } from './types';
 
 interface InstallingStepProps {
   state: AddSkillState;
@@ -53,7 +55,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
         skills: selectedSkills,
         agents: selectedAgents,
         scope: installScope,
-        projectPath: installScope === 'project' ? installProjectPath : undefined,
+        projectPath: installScope === 'project' ? (installProjectPath ?? null) : null,
         mode,
       };
 
@@ -76,9 +78,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       } catch (error) {
         console.error('Installation failed:', error);
 
-        // 解析错误信息
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const installError = parseInstallError(errorMessage, {
+        const installError = parseInstallError(toAppError(error), t, {
           selectedSkills,
           availableSkills: state.availableSkills,
         });

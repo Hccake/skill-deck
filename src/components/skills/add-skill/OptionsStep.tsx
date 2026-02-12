@@ -5,7 +5,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { listAgents, getLastSelectedAgents } from '@/hooks/useTauriApi';
 import { AgentSelector } from './AgentSelector';
-import type { AddSkillState, AgentItem } from './types';
+import type { AddSkillState } from './types';
 
 // CLI 默认选中的 Non-Universal agents
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
@@ -29,22 +29,14 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   // 初始化 agents 数据 — async-parallel 规则
   useEffect(() => {
     async function initAgents() {
-      const [agents, lastSelected] = await Promise.all([
+      const [allAgents, lastSelected] = await Promise.all([
         listAgents(),
         getLastSelectedAgents(),
       ]);
 
-      const allAgents: AgentItem[] = agents.map((agent) => ({
-        id: agent.id,
-        displayName: agent.name,
-        detected: agent.detected,
-        isUniversal: agent.isUniversal,
-        showInUniversalList: agent.showInUniversalList,
-      }));
-
       // js-set-map-lookups 规则
       const detectedNonUniversalIds = new Set<string>(
-        agents
+        allAgents
           .filter((a) => a.detected && !a.isUniversal)
           .map((a) => a.id)
       );

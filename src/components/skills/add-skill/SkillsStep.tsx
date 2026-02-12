@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import type { AddSkillState, AvailableSkill } from './types';
+import type { AvailableSkill } from '@/bindings';
+import type { AddSkillState } from './types';
 
 interface SkillsStepProps {
   state: AddSkillState;

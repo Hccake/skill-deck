@@ -178,7 +178,9 @@ fn remove_path(path: &PathBuf) -> Result<(), AppError> {
             // 路径不存在，无需操作（对应 CLI 的 force: true）
             Ok(())
         }
-        Err(e) => Err(AppError::Io(e)),
+        Err(e) => Err(AppError::Io {
+            message: e.to_string(),
+        }),
     }
 }
 

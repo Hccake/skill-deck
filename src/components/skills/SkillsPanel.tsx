@@ -19,15 +19,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import type { Agent, Skill, SkillScope, SkillUpdateInfo, AgentType } from '@/types';
+import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, AgentType } from '@/bindings';
 
 export function SkillsPanel() {
   const { t } = useTranslation();
   const { selectedContext } = useContextStore();
 
   // State
-  const [globalSkills, setGlobalSkills] = useState<Skill[]>([]);
-  const [projectSkills, setProjectSkills] = useState<Skill[]>([]);
+  const [globalSkills, setGlobalSkills] = useState<InstalledSkill[]>([]);
+  const [projectSkills, setProjectSkills] = useState<InstalledSkill[]>([]);
   const [projectPathExists, setProjectPathExists] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +37,10 @@ export function SkillsPanel() {
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
 
   // All agents (for filter dropdown and display names)
-  const [allAgents, setAllAgents] = useState<Agent[]>([]);
+  const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
 
   // Detail dialog state
-  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<InstalledSkill | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
   // Add skill dialog state
@@ -57,13 +57,13 @@ export function SkillsPanel() {
 
   /** 按名称排序 skills，保证展示顺序稳定 */
   const sortSkills = useCallback(
-    (skills: Skill[]): Skill[] => [...skills].sort((a, b) => a.name.localeCompare(b.name)),
+    (skills: InstalledSkill[]): InstalledSkill[] => [...skills].sort((a, b) => a.name.localeCompare(b.name)),
     []
   );
 
   /** 将 check_updates 结果合并到 skills 列表 */
   const mergeUpdateInfo = useCallback(
-    (skills: Skill[], updates: SkillUpdateInfo[]): Skill[] => {
+    (skills: InstalledSkill[], updates: SkillUpdateInfo[]): InstalledSkill[] => {
       const updateMap = new Map(updates.map((u) => [u.name, u.hasUpdate]));
       return skills.map((s) => ({
         ...s,
@@ -297,7 +297,7 @@ export function SkillsPanel() {
   }, [fetchSkills]);
 
   // Skill detail dialog handler
-  const handleSkillClick = useCallback((skill: Skill) => {
+  const handleSkillClick = useCallback((skill: InstalledSkill) => {
     setSelectedSkill(skill);
     setDialogOpen(true);
   }, []);

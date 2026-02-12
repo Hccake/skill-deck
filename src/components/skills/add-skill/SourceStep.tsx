@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { fetchAvailable } from '@/hooks/useTauriApi';
 import { parseSkillsCommand } from '@/utils/parse-skills-command';
+import { formatAppError } from '@/utils/format-app-error';
+import { toAppError } from '@/utils/to-app-error';
 import type { AddSkillState } from './types';
 
 /** 克隆进度事件 */
@@ -51,7 +53,7 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
     if (!source.trim()) {
       updateState({
         fetchStatus: 'error',
-        fetchError: t('addSkill.source.error.empty'),
+        fetchError: { kind: 'custom', data: { message: t('addSkill.source.error.empty') } },
       });
       return;
     }
@@ -67,7 +69,7 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
       if (!actualSource) {
         updateState({
           fetchStatus: 'error',
-          fetchError: t('addSkill.source.error.empty'),
+          fetchError: { kind: 'custom', data: { message: t('addSkill.source.error.empty') } },
         });
         return;
       }
@@ -77,7 +79,7 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
       if (result.skills.length === 0) {
         updateState({
           fetchStatus: 'error',
-          fetchError: t('addSkill.source.error.noSkills'),
+          fetchError: { kind: 'noSkillsFound' },
         });
         return;
       }
@@ -106,31 +108,9 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
       // 自动进入下一步
       onNext();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      // 解析结构化错误
-      let errorKey = 'addSkill.source.error.network';
-      let errorDetail = '';
-
-      if (message.startsWith('clone_timeout')) {
-        errorKey = 'addSkill.source.error.timeout';
-      } else if (message.startsWith('network_error:')) {
-        errorKey = 'addSkill.source.error.network';
-        errorDetail = message.replace('network_error:', '');
-      } else if (message.startsWith('auth_error:')) {
-        errorKey = 'addSkill.source.error.auth';
-        errorDetail = message.replace('auth_error:', '');
-      } else if (message.startsWith('repo_not_found:')) {
-        errorKey = 'addSkill.source.error.notFound';
-      } else if (message.startsWith('ref_not_found:')) {
-        errorKey = 'addSkill.source.error.refNotFound';
-      } else if (message.includes('not found') || message.includes('404')) {
-        errorKey = 'addSkill.source.error.notFound';
-      }
-
       updateState({
         fetchStatus: 'error',
-        fetchError: errorDetail || t(errorKey),
+        fetchError: toAppError(error),
       });
     }
   }, [state.source, updateState, onNext, t]);
@@ -196,7 +176,7 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
       {/* Error message */}
       {state.fetchStatus === 'error' && state.fetchError && (
         <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md whitespace-pre-wrap">
-          {state.fetchError}
+          {formatAppError(state.fetchError, t)}
         </div>
       )}
 

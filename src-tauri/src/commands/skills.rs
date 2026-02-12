@@ -1,13 +1,15 @@
 // list_skills command
 
 use serde::Deserialize;
+use specta::Type;
 
 use crate::core::skill::{list_installed_skills, ListSkillsResult, SkillScope};
 use crate::error::AppError;
 
 /// list_skills 参数
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
 pub struct ListSkillsParams {
     /// 范围: "global" | "project" | null (返回全部)
     pub scope: Option<String>,
@@ -18,6 +20,7 @@ pub struct ListSkillsParams {
 /// 列出已安装的 skills
 /// 对应前端调用: invoke('list_skills', { params })
 #[tauri::command]
+#[specta::specta]
 pub fn list_skills(params: ListSkillsParams) -> Result<ListSkillsResult, AppError> {
     let scope = match params.scope.as_deref() {
         Some("global") => Some(SkillScope::Global),
