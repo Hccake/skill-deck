@@ -5,14 +5,14 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { listAgents, getLastSelectedAgents } from '@/hooks/useTauriApi';
 import { AgentSelector } from './AgentSelector';
-import type { AddSkillState } from './types';
+import type { WizardState } from './types';
 
 // CLI 默认选中的 Non-Universal agents
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
 
 interface OptionsStepProps {
-  state: AddSkillState;
-  updateState: (updates: Partial<AddSkillState>) => void;
+  state: WizardState;
+  updateState: (updates: Partial<WizardState>) => void;
 }
 
 export function OptionsStep({ state, updateState }: OptionsStepProps) {

@@ -8,6 +8,7 @@
   },
   "nav": {
     "skills": "Skills",
+    "discover": "发现",
     "settings": "设置"
   },
   "context": {
@@ -92,7 +93,19 @@
     "deleteSuccess": "已删除「{{name}}」",
     "deleteError": "删除「{{name}}」失败：{{error}}",
     "updateSuccess": "已更新「{{name}}」",
-    "updateError": "更新「{{name}}」失败：{{error}}"
+    "updateError": "更新「{{name}}」失败：{{error}}",
+    "discover": {
+      "searchPlaceholder": "搜索 Skills...",
+      "minCharsHint": "输入关键词搜索在线 Skills",
+      "searching": "搜索中...",
+      "noResults": "未找到相关 Skills",
+      "noResultsHint": "试试其他关键词",
+      "error": "搜索失败",
+      "retry": "重试",
+      "install": "安装",
+      "installed": "已安装",
+      "installs": "{{count}} 次安装"
+    }
   },
   "settings": {
     "title": "设置",
@@ -132,6 +145,7 @@
   "addSkill": {
     "title": "添加 Skill",
     "steps": {
+      "scope": "范围",
       "source": "来源",
       "skills": "选择",
       "options": "选项",
@@ -147,6 +161,10 @@
       "connecting": "正在连接...",
       "cloningWithTime": "正在克隆... ({{elapsed}}秒 / {{timeout}}秒)",
       "cloneDone": "克隆完成",
+      "tabs": {
+        "search": "搜索在线 Skills",
+        "manual": "输入地址"
+      },
       "error": {
         "empty": "请输入来源",
         "notFound": "未找到仓库",
@@ -183,6 +201,12 @@
       "projectHint": "安装到当前项目目录",
       "global": "全局",
       "globalHint": "安装到用户目录（全局可用）"
+    },
+    "scopeSelect": {
+      "title": "安装位置",
+      "hint": "选择将此 Skill 安装到哪里",
+      "global": "全局",
+      "globalHint": "全局可用 (~/.agents/skills/)"
     },
     "mode": {
       "title": "安装方式",
@@ -255,6 +279,7 @@
       },
       "actions": {
         "backToSource": "返回修改",
+        "retry": "重试",
         "close": "关闭"
       }
     },

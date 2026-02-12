@@ -27,6 +27,7 @@ pub fn run() {
             commands::remove::remove_skill,
             commands::update::check_updates,
             commands::update::update_skill,
+            commands::wizard::open_install_wizard,
         ])
         .events(collect_events![]);
 
@@ -43,6 +44,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);

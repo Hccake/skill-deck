@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { NavLink } from 'react-router-dom';
-import { Sun, Moon, Package, Settings, Check } from 'lucide-react';
+import { Sun, Moon, Package, Settings, Check, Compass } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -48,6 +48,10 @@ export function Header() {
         <NavLink to="/" end className={getNavLinkClass}>
           <Package className="h-4 w-4 sm:hidden" />
           <span>{t('nav.skills')}</span>
+        </NavLink>
+        <NavLink to="/discover" className={getNavLinkClass}>
+          <Compass className="h-4 w-4 sm:hidden" />
+          <span>{t('nav.discover')}</span>
         </NavLink>
         <NavLink to="/settings" className={getNavLinkClass}>
           <Settings className="h-4 w-4 sm:hidden" />

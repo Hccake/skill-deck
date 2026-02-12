@@ -8,6 +8,7 @@
   },
   "nav": {
     "skills": "Skills",
+    "discover": "Discover",
     "settings": "Settings"
   },
   "context": {
@@ -92,7 +93,19 @@
     "deleteSuccess": "\"{{name}}\" has been deleted",
     "deleteError": "Failed to delete \"{{name}}\": {{error}}",
     "updateSuccess": "\"{{name}}\" has been updated",
-    "updateError": "Failed to update \"{{name}}\": {{error}}"
+    "updateError": "Failed to update \"{{name}}\": {{error}}",
+    "discover": {
+      "searchPlaceholder": "Search skills...",
+      "minCharsHint": "Type keywords to search online skills",
+      "searching": "Searching...",
+      "noResults": "No skills found",
+      "noResultsHint": "Try different keywords",
+      "error": "Search failed",
+      "retry": "Retry",
+      "install": "Install",
+      "installed": "Installed",
+      "installs": "{{count}} installs"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -132,6 +145,7 @@
   "addSkill": {
     "title": "Add Skill",
     "steps": {
+      "scope": "Scope",
       "source": "Source",
       "skills": "Skills",
       "options": "Options",
@@ -147,6 +161,10 @@
       "connecting": "Connecting...",
       "cloningWithTime": "Cloning... ({{elapsed}}s / {{timeout}}s)",
       "cloneDone": "Clone complete",
+      "tabs": {
+        "search": "Search Online",
+        "manual": "Enter URL"
+      },
       "error": {
         "empty": "Please enter a source",
         "notFound": "Repository not found",
@@ -183,6 +201,12 @@
       "projectHint": "Install in current project directory",
       "global": "Global",
       "globalHint": "Install in home directory (available everywhere)"
+    },
+    "scopeSelect": {
+      "title": "Install Location",
+      "hint": "Choose where to install this skill",
+      "global": "Global",
+      "globalHint": "Available everywhere (~/.agents/skills/)"
     },
     "mode": {
       "title": "Installation Method",
@@ -255,6 +279,7 @@
       },
       "actions": {
         "backToSource": "Back to Edit",
+        "retry": "Retry",
         "close": "Close"
       }
     },

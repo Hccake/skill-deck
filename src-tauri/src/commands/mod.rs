@@ -6,4 +6,5 @@ pub mod overwrites;
 pub mod remove;
 pub mod skills;
 pub mod update;
+pub mod wizard;
 

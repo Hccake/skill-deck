@@ -172,3 +172,26 @@ export async function updateSkill(params: {
 }): Promise<void> {
   unwrap(await commands.updateSkill(params.scope, params.name, params.projectPath ?? null));
 }
+
+// ============ 向导窗口 API ============
+
+/**
+ * 打开安装向导独立窗口
+ */
+export async function openInstallWizard(params: {
+  entryPoint: string;
+  scope: string;
+  projectPath?: string;
+  prefillSource?: string;
+  prefillSkillName?: string;
+}): Promise<void> {
+  unwrap(
+    await commands.openInstallWizard(
+      params.entryPoint,
+      params.scope,
+      params.projectPath ?? null,
+      params.prefillSource ?? null,
+      params.prefillSkillName ?? null
+    )
+  );
+}

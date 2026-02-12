@@ -7,3 +7,5 @@ export { AgentSelector } from './AgentSelector';
 export { ConfirmStep } from './ConfirmStep';
 export { InstallingStep } from './InstallingStep';
 export { CompleteStep } from './CompleteStep';
+export { StepIndicator } from './StepIndicator';
+export { ScopeBadge } from './ScopeBadge';

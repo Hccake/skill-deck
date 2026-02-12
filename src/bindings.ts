@@ -218,6 +218,21 @@ async updateSkill(scope: Scope, name: string, projectPath: string | null) : Prom
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * 打开安装向导独立窗口
+ * 
+ * 必须为 async —— 同步 command 在主线程执行，
+ * 而 WebviewWindowBuilder::build() 也需要主线程，会导致死锁。
+ * async command 在异步线程执行，build() 可以安全回调主线程。
+ */
+async openInstallWizard(entryPoint: string, scope: string, projectPath: string | null, prefillSource: string | null, prefillSkillName: string | null) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_install_wizard", { entryPoint, scope, projectPath, prefillSource, prefillSkillName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

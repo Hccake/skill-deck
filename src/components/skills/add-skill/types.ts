@@ -1,36 +1,65 @@
 // src/components/skills/add-skill/types.ts
 
-import type {AgentInfo, AppError, AvailableSkill, InstallMode, InstallResults} from '@/bindings';
+import type { AgentInfo, AppError, AvailableSkill, InstallMode, InstallResults } from '@/bindings';
 
 /** 安装错误详情（UI 视图模型，由 parseInstallError 从 AppError 转换而来） */
 export interface InstallError {
-  /** 用户友好的错误描述 */
   message: string;
-  /** 详细上下文信息（可选） */
   details?: string;
-  /** 修复建议列表（可选） */
   suggestions?: string[];
 }
 
-/** 向导步骤 */
-export type WizardStep = 1 | 2 | 3 | 4 | 'installing' | 'complete' | 'error';
+/** 安装入口类型 */
+export type EntryPoint = 'skills-panel' | 'discovery';
 
-/** AddSkillDialog 状态 */
-export interface AddSkillState {
+/** 核心步骤（用户需要操作的 5 步） */
+export type CoreStep = 'scope' | 'source' | 'skills' | 'options' | 'confirm';
+
+/** 结果态步骤 */
+export type ResultStep = 'installing' | 'complete' | 'error';
+
+/** 所有向导步骤 */
+export type WizardStep = CoreStep | ResultStep;
+
+/** 固定 5 步流程（所有入口统一） */
+const STEP_FLOW: CoreStep[] = ['scope', 'source', 'skills', 'options', 'confirm'];
+
+/** 获取步骤流程 */
+export function getStepFlow(_entryPoint?: EntryPoint): CoreStep[] {
+  return STEP_FLOW;
+}
+
+/** 向导初始化参数（通过窗口 URL query 传递） */
+export interface WizardParams {
+  entryPoint: EntryPoint;
+  scope: 'global' | 'project';
+  projectPath?: string;
+  /** Discovery 入口的预填信息 */
+  prefillSource?: string;
+  prefillSkillName?: string;
+}
+
+/** AddSkillWizard 内部状态 */
+export interface WizardState {
   step: WizardStep;
+  entryPoint: EntryPoint;
 
-  // Step 1: Source
+  // Scope
+  scope: 'global' | 'project';
+  projectPath?: string;
+
+  // Source
   source: string;
   fetchStatus: 'idle' | 'loading' | 'error' | 'success';
   fetchError: AppError | null;
 
-  // Step 2: Skills
+  // Skills
   availableSkills: AvailableSkill[];
   selectedSkills: string[];
   skillFilter: string | null;
   skillSearchQuery: string;
 
-  // Step 3: Options
+  // Options
   selectedAgents: string[];
   allAgents: AgentInfo[];
   agentsCollapsed: boolean;
@@ -38,10 +67,10 @@ export interface AddSkillState {
   otherAgentsExpanded: boolean;
   otherAgentsSearchQuery: string;
 
-  // Step 4: Confirm
+  // Confirm
   overwrites: Record<string, string[]>;
 
-  // 从 CLI 命令解析出的预填值
+  // CLI 预填值
   preSelectedSkills: string[];
   preSelectedAgents: string[];
 

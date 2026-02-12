@@ -6,7 +6,6 @@ import { useSkillsStore } from '@/stores/skills';
 import { SkillsToolbar } from './SkillsToolbar';
 import { SkillsSection } from './SkillsSection';
 import { SkillDetailDialog } from './SkillDetailDialog';
-import { AddSkillDialog } from './AddSkillDialog';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
 import type { AgentType, InstalledSkill } from '@/bindings';
@@ -201,7 +200,6 @@ export function SkillsPanel() {
 
       {/* Dialog 完全自治 — 零 props，各自从 store 读取 */}
       <SkillDetailDialog />
-      <AddSkillDialog />
       <DeleteSkillDialog />
     </div>
   );

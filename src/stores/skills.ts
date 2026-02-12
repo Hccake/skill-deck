@@ -9,6 +9,7 @@ import {
   removeSkill as apiRemoveSkill,
   checkUpdates,
   updateSkill as apiUpdateSkill,
+  openInstallWizard,
 } from '@/hooks/useTauriApi';
 import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo } from '@/bindings';
 
@@ -37,10 +38,9 @@ export interface DeleteTarget {
   projectPath?: string;
 }
 
-export interface AddDialogState {
-  open: boolean;
-  scope: SkillScope;
-  projectPath?: string;
+export interface AddDialogPrefill {
+  source: string;
+  skillName: string;
 }
 
 interface SkillsState {
@@ -59,7 +59,6 @@ interface SkillsState {
   // Dialog 触发状态
   detailSkill: InstalledSkill | null;
   deleteTarget: DeleteTarget | null;
-  addDialog: AddDialogState;
 
   // Actions — 内部通过 useContextStore.getState() 获取 selectedContext
   fetchSkills: () => Promise<void>;
@@ -71,7 +70,7 @@ interface SkillsState {
   openDelete: (name: string, scope: SkillScope, projectPath?: string) => void;
   closeDelete: () => void;
   openAdd: (scope: SkillScope) => void;
-  closeAdd: () => void;
+  openAddWithPrefill: (prefill: AddDialogPrefill) => void;
 }
 
 export const useSkillsStore = create<SkillsState>()((set, get) => ({
@@ -90,7 +89,6 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   // Dialog 初始值
   detailSkill: null,
   deleteTarget: null,
-  addDialog: { open: false, scope: 'global' },
 
   // === Actions ===
 
@@ -231,13 +229,24 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
 
   openAdd: (scope) => {
     const { selectedContext } = useContextStore.getState();
-    set({
-      addDialog: {
-        open: true,
-        scope,
-        projectPath: scope === 'project' ? selectedContext : undefined,
-      },
+    openInstallWizard({
+      entryPoint: 'skills-panel',
+      scope,
+      projectPath: scope === 'project' ? selectedContext : undefined,
+    }).catch((e) => {
+      console.error('[openAdd] Failed to open wizard:', e);
+      toast.error(String(e));
     });
   },
-  closeAdd: () => set({ addDialog: { open: false, scope: 'global' } }),
+  openAddWithPrefill: (prefill) => {
+    openInstallWizard({
+      entryPoint: 'discovery',
+      scope: 'global',
+      prefillSource: prefill.source,
+      prefillSkillName: prefill.skillName,
+    }).catch((e) => {
+      console.error('[openAddWithPrefill] Failed to open wizard:', e);
+      toast.error(String(e));
+    });
+  },
 }));

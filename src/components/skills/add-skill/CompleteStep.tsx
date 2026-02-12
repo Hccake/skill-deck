@@ -3,10 +3,10 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { AddSkillState } from './types';
+import type { WizardState } from './types';
 
 interface CompleteStepProps {
-  state: AddSkillState;
+  state: WizardState;
   onDone: () => void;
   onRetry: () => void;
 }

@@ -6,11 +6,11 @@ import { installSkills, saveLastSelectedAgents } from '@/hooks/useTauriApi';
 import { parseInstallError } from '@/utils/parse-install-error';
 import { toAppError } from '@/utils/to-app-error';
 import type { InstallParams } from '@/bindings';
-import type { AddSkillState } from './types';
+import type { WizardState } from './types';
 
 interface InstallingStepProps {
-  state: AddSkillState;
-  updateState: (updates: Partial<AddSkillState>) => void;
+  state: WizardState;
+  updateState: (updates: Partial<WizardState>) => void;
   scope: 'global' | 'project';
   projectPath?: string;
 }

@@ -83,8 +83,16 @@ function ProjectContextItem({ project }: { project: string }) {
   };
 
   const itemButton = (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => toggleProjectContext(project)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleProjectContext(project);
+        }
+      }}
       className={cn(
         'w-full rounded-md px-3 py-2 text-left transition-colors duration-200',
         'group relative cursor-pointer',
@@ -132,7 +140,7 @@ function ProjectContextItem({ project }: { project: string }) {
           <p className="text-xs text-muted-foreground/70 truncate mt-0.5">{project}</p>
         </div>
       </div>
-    </button>
+    </div>
   );
 
   return (

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Globe, Folder } from 'lucide-react';
 import { checkOverwrites } from '@/hooks/useTauriApi';
-import type { AddSkillState } from './types';
+import type { WizardState } from './types';
 
 /** 从完整路径中提取项目名称 */
 function getProjectName(path: string): string {
@@ -12,8 +12,8 @@ function getProjectName(path: string): string {
 }
 
 interface ConfirmStepProps {
-  state: AddSkillState;
-  updateState: (updates: Partial<AddSkillState>) => void;
+  state: WizardState;
+  updateState: (updates: Partial<WizardState>) => void;
   scope: 'global' | 'project';
   projectPath?: string;
 }

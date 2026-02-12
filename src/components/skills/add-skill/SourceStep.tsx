@@ -1,15 +1,19 @@
 // src/components/skills/add-skill/SourceStep.tsx
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { fetchAvailable } from '@/hooks/useTauriApi';
 import { parseSkillsCommand } from '@/utils/parse-skills-command';
 import { formatAppError } from '@/utils/format-app-error';
 import { toAppError } from '@/utils/to-app-error';
-import type { AddSkillState } from './types';
+import { SkillSearch } from '../skill-search';
+import type { SearchSkill } from '../skill-search';
+import { useSkillsStore } from '@/stores/skills';
+import type { WizardState } from './types';
 
 /** 克隆进度事件 */
 interface CloneProgress {
@@ -20,14 +24,25 @@ interface CloneProgress {
 }
 
 interface SourceStepProps {
-  state: AddSkillState;
-  updateState: (updates: Partial<AddSkillState>) => void;
+  state: WizardState;
+  updateState: (updates: Partial<WizardState>) => void;
   onNext: () => void;
+  autoFetch?: boolean;
 }
 
-export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
+export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStepProps) {
   const { t } = useTranslation();
   const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
+
+  // 已安装 skill key 集合（用于 SkillSearch 组件）
+  const globalSkills = useSkillsStore((s) => s.globalSkills);
+  const projectSkills = useSkillsStore((s) => s.projectSkills);
+  const installedSkillKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const s of globalSkills) keys.add(`${s.source ?? ''}::${s.name}`);
+    for (const s of projectSkills) keys.add(`${s.source ?? ''}::${s.name}`);
+    return keys;
+  }, [globalSkills, projectSkills]);
 
   // 监听克隆进度事件
   useEffect(() => {
@@ -40,9 +55,8 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
     };
   }, []);
 
-  const handleFetch = useCallback(async () => {
-    const { source } = state;
-
+  // 核心 fetch 逻辑，接受 source 参数
+  const handleFetchWithSource = useCallback(async (source: string) => {
     if (!source.trim()) {
       updateState({
         fetchStatus: 'error',
@@ -106,7 +120,30 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
         fetchError: toAppError(error),
       });
     }
-  }, [state.source, updateState, onNext, t]);
+  }, [updateState, onNext, t]);
+
+  const handleFetch = useCallback(() => {
+    handleFetchWithSource(state.source);
+  }, [handleFetchWithSource, state.source]);
+
+  // autoFetch 仅在 fetchStatus 为 idle（从未 fetch 过）时触发
+  // 回退再进入时 fetchStatus 已非 idle，不会重复触发，用户可自由修改 source
+  useEffect(() => {
+    if (autoFetch && state.fetchStatus === 'idle' && state.source) {
+      requestAnimationFrame(() => {
+        handleFetch();
+      });
+    }
+  }, [autoFetch, state.fetchStatus, state.source, handleFetch]);
+
+  // 搜索结果选中处理（用于 SkillSearch 组件）
+  const handleSearchSelect = useCallback((skill: SearchSkill) => {
+    const newSource = `${skill.source}@${skill.name}`;
+    updateState({ source: newSource });
+    setTimeout(() => {
+      handleFetchWithSource(newSource);
+    }, 0);
+  }, [updateState, handleFetchWithSource]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && state.fetchStatus !== 'loading') {
@@ -141,50 +178,74 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
 
   return (
     <div className="space-y-4 py-4">
-      <div className="space-y-2">
-        <label className="text-sm font-medium">
-          {t('addSkill.source.label')}
-        </label>
-        <div className="flex gap-2">
-          <Input
-            value={state.source}
-            onChange={(e) => updateState({ source: e.target.value })}
-            onKeyDown={handleKeyDown}
-            placeholder={t('addSkill.source.placeholder')}
-            disabled={isLoading}
-            className="flex-1"
-          />
-          <Button
-            onClick={handleFetch}
-            disabled={isLoading || !state.source.trim()}
-          >
-            {isLoading ? t('addSkill.source.fetching') : t('addSkill.source.fetch')}
-          </Button>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {t('addSkill.source.hint')}
-        </p>
-      </div>
+      <Tabs defaultValue="manual">
+        <TabsList className="w-full">
+          <TabsTrigger value="search" className="flex-1">
+            {t('addSkill.source.tabs.search')}
+          </TabsTrigger>
+          <TabsTrigger value="manual" className="flex-1">
+            {t('addSkill.source.tabs.manual')}
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Error message */}
-      {state.fetchStatus === 'error' && state.fetchError && (
-        <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md whitespace-pre-wrap">
-          {formatAppError(state.fetchError, t)}
-        </div>
-      )}
-
-      {/* Loading indicator with progress */}
-      {isLoading && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            <span>{getPhaseText()}</span>
+        {/* 搜索 Tab */}
+        <TabsContent value="search">
+          <div className="h-64">
+            <SkillSearch
+              installedSkillKeys={installedSkillKeys}
+              onInstall={handleSearchSelect}
+            />
           </div>
-          {cloneProgress && cloneProgress.phase === 'cloning' && (
-            <Progress value={progressPercent} className="h-1" />
+        </TabsContent>
+
+        {/* 手动输入 Tab（原有内容） */}
+        <TabsContent value="manual">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">
+              {t('addSkill.source.label')}
+            </label>
+            <div className="flex gap-2">
+              <Input
+                value={state.source}
+                onChange={(e) => updateState({ source: e.target.value })}
+                onKeyDown={handleKeyDown}
+                placeholder={t('addSkill.source.placeholder')}
+                disabled={isLoading}
+                className="flex-1"
+              />
+              <Button
+                onClick={handleFetch}
+                disabled={isLoading || !state.source.trim()}
+              >
+                {isLoading ? t('addSkill.source.fetching') : t('addSkill.source.fetch')}
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t('addSkill.source.hint')}
+            </p>
+          </div>
+
+          {/* Error message */}
+          {state.fetchStatus === 'error' && state.fetchError && (
+            <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md whitespace-pre-wrap mt-2">
+              {formatAppError(state.fetchError, t)}
+            </div>
           )}
-        </div>
-      )}
+
+          {/* Loading indicator with progress */}
+          {isLoading && (
+            <div className="space-y-2 mt-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                <span>{getPhaseText()}</span>
+              </div>
+              {cloneProgress && cloneProgress.phase === 'cloning' && (
+                <Progress value={progressPercent} className="h-1" />
+              )}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

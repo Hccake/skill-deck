@@ -3,10 +3,20 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "install-wizard"
   ],
   "permissions": [
     "core:default",
-    "dialog:allow-open"
+    "core:window:allow-close",
+    "dialog:allow-open",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://skills.sh/*"
+        }
+      ]
+    }
   ]
 }
