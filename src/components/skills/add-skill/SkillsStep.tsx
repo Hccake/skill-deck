@@ -85,7 +85,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
                 key={skill.name}
                 skill={skill}
                 selected={state.selectedSkills.includes(skill.name)}
-                onToggle={() => toggleSkill(skill.name)}
+                onToggle={toggleSkill}
               />
             ))
           )}
@@ -112,12 +112,12 @@ const SkillItem = memo(function SkillItem({
 }: {
   skill: AvailableSkill;
   selected: boolean;
-  onToggle: () => void;
+  onToggle: (skillName: string) => void;
 }) {
   return (
     <div
       className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
-      onClick={onToggle}
+      onClick={() => onToggle(skill.name)}
     >
       <Checkbox checked={selected} className="mt-1" />
       <div className="flex-1 min-w-0">

@@ -1,4 +1,5 @@
 // src/components/skills/SkillCard.tsx
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn, formatTime } from '@/lib/utils';
 import {
@@ -15,7 +16,6 @@ import { Toggle } from '@/components/ui/toggle';
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import type { AgentType, InstalledSkill, SkillScope } from '@/bindings';
@@ -40,7 +40,7 @@ interface SkillCardProps {
   onToggleAgent?: (skillName: string, agentId: string) => void;
 }
 
-export function SkillCard({
+export const SkillCard = memo(function SkillCard({
   skill,
   displayScope,
   hasConflict = false,
@@ -61,7 +61,6 @@ export function SkillCard({
       : t('skills.conflict.alsoInProject');
 
   return (
-    <TooltipProvider>
       <Card
         className={cn(
           "py-0 gap-0 cursor-pointer transition-colors hover:bg-accent/50",
@@ -182,6 +181,5 @@ export function SkillCard({
           </div>
         </CardContent>
       </Card>
-    </TooltipProvider>
   );
-}
+});

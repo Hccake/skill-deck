@@ -40,13 +40,6 @@ export function SourceStep({ state, updateState, onNext }: SourceStepProps) {
     };
   }, []);
 
-  // 当不在 loading 状态时清除进度
-  useEffect(() => {
-    if (state.fetchStatus !== 'loading') {
-      setCloneProgress(null);
-    }
-  }, [state.fetchStatus]);
-
   const handleFetch = useCallback(async () => {
     const { source } = state;
 

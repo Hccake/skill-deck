@@ -14,4 +14,8 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // 优化 lucide-react barrel import，避免 dev 模式加载全部图标 (bundle-barrel-imports)
+  optimizeDeps: {
+    include: ["lucide-react"],
+  },
 })

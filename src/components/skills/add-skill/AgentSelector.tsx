@@ -1,5 +1,5 @@
 // src/components/skills/add-skill/AgentSelector.tsx
-import { useMemo, memo } from 'react';
+import { useMemo, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
@@ -61,14 +61,14 @@ export function AgentSelector({
     return { universalAgents: universal, detectedAgents: detected, otherAgents: other };
   }, [allAgents]);
 
-  // 切换单个 agent
-  const toggleAgent = (agentId: string) => {
+  // 切换单个 agent — useCallback 保证引用稳定
+  const toggleAgent = useCallback((agentId: string) => {
     const isSelected = selectedAgents.includes(agentId);
     const newSelection = isSelected
       ? selectedAgents.filter((id) => id !== agentId)
       : [...selectedAgents, agentId];
     onSelectionChange(newSelection);
-  };
+  }, [selectedAgents, onSelectionChange]);
 
   // 是否有可选的 agents
   const hasSelectableAgents = detectedAgents.length > 0 || otherAgents.length > 0;
@@ -100,7 +100,7 @@ export function AgentSelector({
                     key={agent.id}
                     agent={agent}
                     selected={selectedAgents.includes(agent.id)}
-                    onToggle={() => toggleAgent(agent.id)}
+                    onToggle={toggleAgent}
                     showDetectedBadge
                   />
                 ))}
@@ -123,7 +123,7 @@ export function AgentSelector({
                     key={agent.id}
                     agent={agent}
                     selected={selectedAgents.includes(agent.id)}
-                    onToggle={() => toggleAgent(agent.id)}
+                    onToggle={toggleAgent}
                   />
                 ))}
               </div>
@@ -191,7 +191,7 @@ export function AgentSelector({
                           key={agent.id}
                           agent={agent}
                           selected={selectedAgents.includes(agent.id)}
-                          onToggle={() => toggleAgent(agent.id)}
+                          onToggle={toggleAgent}
                           showDetectedBadge
                         />
                       ))}
@@ -214,7 +214,7 @@ export function AgentSelector({
                           key={agent.id}
                           agent={agent}
                           selected={selectedAgents.includes(agent.id)}
-                          onToggle={() => toggleAgent(agent.id)}
+                          onToggle={toggleAgent}
                         />
                       ))}
                     </div>
@@ -245,7 +245,7 @@ const AgentRow = memo(function AgentRow({
 }: {
   agent: AgentInfo;
   selected: boolean;
-  onToggle: () => void;
+  onToggle: (agentId: string) => void;
   showDetectedBadge?: boolean;
 }) {
   const { t } = useTranslation();
@@ -253,7 +253,7 @@ const AgentRow = memo(function AgentRow({
   return (
     <div
       className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
-      onClick={onToggle}
+      onClick={() => onToggle(agent.id)}
     >
       <Checkbox checked={selected} />
       <div className="flex-1 min-w-0">

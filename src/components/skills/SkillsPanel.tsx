@@ -1,158 +1,66 @@
 // src/components/skills/SkillsPanel.tsx
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 import { useContextStore } from '@/stores/context';
-import { listSkills, listAgents, removeSkill, checkUpdates, updateSkill } from '@/hooks/useTauriApi';
+import { useSkillsStore } from '@/stores/skills';
 import { SkillsToolbar } from './SkillsToolbar';
 import { SkillsSection } from './SkillsSection';
 import { SkillDetailDialog } from './SkillDetailDialog';
 import { AddSkillDialog } from './AddSkillDialog';
+import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, AgentType } from '@/bindings';
+import type { AgentType, InstalledSkill } from '@/bindings';
+
+/** 按搜索关键词 + agent 筛选过滤 skills — 单次遍历 (js-combine-iterations) */
+function filterSkills(skills: InstalledSkill[], searchQuery: string, agentFilter: string): InstalledSkill[] {
+  if (!searchQuery && agentFilter === 'all') return skills;
+  const query = searchQuery ? searchQuery.toLowerCase() : '';
+  return skills.filter((s) => {
+    if (query && !s.name.toLowerCase().includes(query) && !s.description.toLowerCase().includes(query)) {
+      return false;
+    }
+    if (agentFilter !== 'all' && !s.agents.includes(agentFilter as AgentType)) {
+      return false;
+    }
+    return true;
+  });
+}
 
 export function SkillsPanel() {
   const { t } = useTranslation();
   const { selectedContext } = useContextStore();
 
-  // State
-  const [globalSkills, setGlobalSkills] = useState<InstalledSkill[]>([]);
-  const [projectSkills, setProjectSkills] = useState<InstalledSkill[]>([]);
-  const [projectPathExists, setProjectPathExists] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // ① Store — 细粒度 selector 订阅
+  const globalSkills = useSkillsStore((s) => s.globalSkills);
+  const projectSkills = useSkillsStore((s) => s.projectSkills);
+  const projectPathExists = useSkillsStore((s) => s.projectPathExists);
+  const allAgents = useSkillsStore((s) => s.allAgents);
+  const loading = useSkillsStore((s) => s.loading);
+  const error = useSkillsStore((s) => s.error);
+  const isSyncing = useSkillsStore((s) => s.isSyncing);
+  const updatingSkill = useSkillsStore((s) => s.updatingSkill);
+  const fetchSkills = useSkillsStore((s) => s.fetchSkills);
+  const syncSkills = useSkillsStore((s) => s.syncSkills);
+  const storeUpdateSkill = useSkillsStore((s) => s.updateSkill);
+  const openDetail = useSkillsStore((s) => s.openDetail);
+  const openDelete = useSkillsStore((s) => s.openDelete);
+  const openAdd = useSkillsStore((s) => s.openAdd);
+
+  // ② UI 状态 — 仅 2 个 useState
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgentFilter, setSelectedAgentFilter] = useState('all');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
 
-  // All agents (for filter dropdown and display names)
-  const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
+  // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
+  const deferredQuery = useDeferredValue(searchQuery);
 
-  // Detail dialog state
-  const [selectedSkill, setSelectedSkill] = useState<InstalledSkill | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-
-  // Add skill dialog state
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [addDialogScope, setAddDialogScope] = useState<SkillScope>('global');
-
-  // Delete confirmation state
-  const [deleteTarget, setDeleteTarget] = useState<{
-    name: string;
-    scope: SkillScope;
-    projectPath?: string;
-  } | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  /** 按名称排序 skills，保证展示顺序稳定 */
-  const sortSkills = useCallback(
-    (skills: InstalledSkill[]): InstalledSkill[] => [...skills].sort((a, b) => a.name.localeCompare(b.name)),
-    []
-  );
-
-  /** 将 check_updates 结果合并到 skills 列表 */
-  const mergeUpdateInfo = useCallback(
-    (skills: InstalledSkill[], updates: SkillUpdateInfo[]): InstalledSkill[] => {
-      const updateMap = new Map(updates.map((u) => [u.name, u.hasUpdate]));
-      return skills.map((s) => ({
-        ...s,
-        hasUpdate: updateMap.get(s.name) ?? false,
-      }));
-    },
-    []
-  );
-
-  // Fetch skills data
-  // 使用 Promise.all 并行获取，符合 async-parallel 规则
-  const fetchSkills = useCallback(async () => {
-    const isProjectSelected = selectedContext !== 'global';
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      if (isProjectSelected) {
-        // 并行获取 agents + global + project skills
-        const [agents, globalResult, projectResult] = await Promise.all([
-          listAgents(),
-          listSkills({ scope: 'global' }),
-          listSkills({ scope: 'project', projectPath: selectedContext }),
-        ]);
-        setAllAgents(agents);
-        setGlobalSkills(sortSkills(globalResult.skills));
-        setProjectSkills(sortSkills(projectResult.skills));
-        setProjectPathExists(projectResult.pathExists);
-      } else {
-        const [agents, globalResult] = await Promise.all([
-          listAgents(),
-          listSkills({ scope: 'global' }),
-        ]);
-        setAllAgents(agents);
-        setGlobalSkills(sortSkills(globalResult.skills));
-        setProjectSkills([]);
-        setProjectPathExists(true);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load skills');
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedContext]);
-
+  // ③ 数据初始化 — selectedContext 变化时重新获取
   useEffect(() => {
     fetchSkills();
-  }, [fetchSkills]);
+  }, [selectedContext, fetchSkills]);
 
-  // Sync handler
-  const handleSync = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      const isProjectSelected = selectedContext !== 'global';
-
-      if (isProjectSelected) {
-        const [globalResult, projectResult, globalUpdates, projectUpdates] =
-          await Promise.all([
-            listSkills({ scope: 'global' }),
-            listSkills({ scope: 'project', projectPath: selectedContext }),
-            checkUpdates('global').catch(() => [] as SkillUpdateInfo[]),
-            checkUpdates('project', selectedContext).catch(() => [] as SkillUpdateInfo[]),
-          ]);
-
-        setGlobalSkills(sortSkills(mergeUpdateInfo(globalResult.skills, globalUpdates)));
-        setProjectSkills(sortSkills(mergeUpdateInfo(projectResult.skills, projectUpdates)));
-        setProjectPathExists(projectResult.pathExists);
-      } else {
-        const [globalResult, globalUpdates] = await Promise.all([
-          listSkills({ scope: 'global' }),
-          checkUpdates('global').catch(() => [] as SkillUpdateInfo[]),
-        ]);
-
-        setGlobalSkills(sortSkills(mergeUpdateInfo(globalResult.skills, globalUpdates)));
-        setProjectSkills([]);
-        setProjectPathExists(true);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to sync skills');
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [selectedContext, mergeUpdateInfo]);
-
-  // Derived state
+  // ④ Derived state
   const isProjectSelected = selectedContext !== 'global';
 
-  // All agents available for the filter dropdown — collect agents that appear in skill.agents
   const filterableAgents = useMemo(() => {
     const agentIds = new Set<string>();
     const allSkills = isProjectSelected ? [...globalSkills, ...projectSkills] : globalSkills;
@@ -164,46 +72,22 @@ export function SkillsPanel() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [allAgents, globalSkills, projectSkills, isProjectSelected]);
 
-  // Agent display name map for SkillCard synced agent labels
   const agentDisplayNames = useMemo(
     () => new Map(allAgents.map((a) => [a.id, a.name])),
     [allAgents]
   );
 
-  // Filter skills by search query + agent filter
-  const filteredGlobalSkills = useMemo(() => {
-    let skills = globalSkills;
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      skills = skills.filter(
-        (s) =>
-          s.name.toLowerCase().includes(query) ||
-          s.description.toLowerCase().includes(query)
-      );
-    }
-    if (selectedAgentFilter !== 'all') {
-      skills = skills.filter((s) => s.agents.includes(selectedAgentFilter as AgentType));
-    }
-    return skills;
-  }, [globalSkills, searchQuery, selectedAgentFilter]);
+  // 使用 deferredQuery 而非 searchQuery，列表过滤作为低优先级更新
+  const filteredGlobalSkills = useMemo(
+    () => filterSkills(globalSkills, deferredQuery, selectedAgentFilter),
+    [globalSkills, deferredQuery, selectedAgentFilter]
+  );
 
-  const filteredProjectSkills = useMemo(() => {
-    let skills = projectSkills;
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      skills = skills.filter(
-        (s) =>
-          s.name.toLowerCase().includes(query) ||
-          s.description.toLowerCase().includes(query)
-      );
-    }
-    if (selectedAgentFilter !== 'all') {
-      skills = skills.filter((s) => s.agents.includes(selectedAgentFilter as AgentType));
-    }
-    return skills;
-  }, [projectSkills, searchQuery, selectedAgentFilter]);
+  const filteredProjectSkills = useMemo(
+    () => filterSkills(projectSkills, deferredQuery, selectedAgentFilter),
+    [projectSkills, deferredQuery, selectedAgentFilter]
+  );
 
-  // Detect conflicts — js-set-map-lookups 规则
   const conflictSkillNames = useMemo(() => {
     const globalNames = new Set(globalSkills.map((s) => s.name));
     const conflicts = new Set<string>();
@@ -215,92 +99,33 @@ export function SkillsPanel() {
     return conflicts;
   }, [globalSkills, projectSkills]);
 
-  // Event handlers
-  const handleUpdate = useCallback(
-    async (skillName: string) => {
-      if (updatingSkill) return;
-
-      const isProjectSkill = projectSkills.some((s) => s.name === skillName);
-      const scope: SkillScope = isProjectSkill ? 'project' : 'global';
-
-      setUpdatingSkill(skillName);
-      try {
-        await updateSkill({
-          scope,
-          name: skillName,
-          projectPath: isProjectSkill ? selectedContext : undefined,
-        });
-        toast.success(t('skills.updateSuccess', { name: skillName }));
-        await handleSync();
-      } catch (e) {
-        toast.error(
-          t('skills.updateError', {
-            name: skillName,
-            error: e instanceof Error ? e.message : String(e),
-          })
-        );
-      } finally {
-        setUpdatingSkill(null);
-      }
-    },
-    [updatingSkill, projectSkills, selectedContext, handleSync, t]
-  );
-
-  const handleDeleteGlobal = useCallback((skillName: string) => {
-    setDeleteTarget({ name: skillName, scope: 'global' });
-  }, []);
-
-  const handleDeleteProject = useCallback((skillName: string) => {
-    setDeleteTarget({ name: skillName, scope: 'project', projectPath: selectedContext });
-  }, [selectedContext]);
-
-  const handleConfirmDelete = useCallback(async () => {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
-    try {
-      await removeSkill({
-        scope: deleteTarget.scope,
-        name: deleteTarget.name,
-        projectPath: deleteTarget.projectPath,
-      });
-      toast.success(t('skills.deleteSuccess', { name: deleteTarget.name }));
-      await fetchSkills();
-    } catch (e) {
-      toast.error(t('skills.deleteError', {
-        name: deleteTarget.name,
-        error: e instanceof Error ? e.message : String(e),
-      }));
-    } finally {
-      setIsDeleting(false);
-      setDeleteTarget(null);
-    }
-  }, [deleteTarget, fetchSkills, t]);
-
+  // ⑤ Event handlers — 直接调用 store action，无需 useCallback 包装
   const handleToggleAgent = useCallback((skillName: string, agentId: string) => {
     console.log('TODO: Toggle agent', skillName, agentId);
   }, []);
 
-  // Add skill — scope 由触发按钮所在区块决定
+  const handleDeleteGlobal = useCallback((skillName: string) => {
+    openDelete(skillName, 'global');
+  }, [openDelete]);
+
+  const handleDeleteProject = useCallback((skillName: string) => {
+    openDelete(skillName, 'project', selectedContext);
+  }, [openDelete, selectedContext]);
+
   const handleAddGlobal = useCallback(() => {
-    setAddDialogScope('global');
-    setAddDialogOpen(true);
-  }, []);
+    openAdd('global');
+  }, [openAdd]);
 
   const handleAddProject = useCallback(() => {
-    setAddDialogScope('project');
-    setAddDialogOpen(true);
-  }, []);
+    openAdd('project');
+  }, [openAdd]);
 
-  // Install complete handler
-  const handleInstallComplete = useCallback(() => {
-    fetchSkills();
-  }, [fetchSkills]);
-
-  // Skill detail dialog handler
-  const handleSkillClick = useCallback((skill: InstalledSkill) => {
-    setSelectedSkill(skill);
-    setDialogOpen(true);
-  }, []);
+  // 缓存 emptyState JSX (rerender-memo-with-default-value)
+  const projectEmptyState = useMemo(() => <ProjectEmptyState />, []);
+  const globalEmptyState = useMemo(
+    () => <GlobalEmptyState onAdd={handleAddGlobal} />,
+    [handleAddGlobal]
+  );
 
   // Loading state
   if (loading) {
@@ -330,7 +155,7 @@ export function SkillsPanel() {
           selectedAgent={selectedAgentFilter}
           onAgentChange={setSelectedAgentFilter}
           filterableAgents={filterableAgents}
-          onSync={handleSync}
+          onSync={syncSkills}
           isSyncing={isSyncing}
         />
       </div>
@@ -348,12 +173,12 @@ export function SkillsPanel() {
             projectPath={selectedContext}
             updatingSkill={updatingSkill}
             agentDisplayNames={agentDisplayNames}
-            onSkillClick={handleSkillClick}
-            onUpdate={handleUpdate}
+            onSkillClick={openDetail}
+            onUpdate={storeUpdateSkill}
             onDelete={handleDeleteProject}
             onToggleAgent={handleToggleAgent}
             onAdd={handleAddProject}
-            emptyState={<ProjectEmptyState />}
+            emptyState={projectEmptyState}
           />
         )}
 
@@ -365,57 +190,19 @@ export function SkillsPanel() {
           conflictSkillNames={conflictSkillNames}
           updatingSkill={updatingSkill}
           agentDisplayNames={agentDisplayNames}
-          onSkillClick={handleSkillClick}
-          onUpdate={handleUpdate}
+          onSkillClick={openDetail}
+          onUpdate={storeUpdateSkill}
           onDelete={handleDeleteGlobal}
           onToggleAgent={handleToggleAgent}
           onAdd={handleAddGlobal}
-          emptyState={<GlobalEmptyState onAdd={handleAddGlobal} />}
+          emptyState={globalEmptyState}
         />
       </div>
 
-      {/* Skill Detail Dialog */}
-      <SkillDetailDialog
-        skill={selectedSkill}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-      />
-
-      {/* Add Skill Dialog — scope 固定，不可更改 */}
-      <AddSkillDialog
-        open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
-        scope={addDialogScope}
-        projectPath={isProjectSelected ? selectedContext : undefined}
-        onInstallComplete={handleInstallComplete}
-      />
-
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('skills.deleteConfirm.title')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('skills.deleteConfirm.description', { name: deleteTarget?.name })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>
-              {t('skills.deleteConfirm.cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                handleConfirmDelete();
-              }}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting ? t('common.loading') : t('skills.deleteConfirm.confirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Dialog 完全自治 — 零 props，各自从 store 读取 */}
+      <SkillDetailDialog />
+      <AddSkillDialog />
+      <DeleteSkillDialog />
     </div>
   );
 }

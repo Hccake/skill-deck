@@ -2,7 +2,8 @@
 import { useTranslation } from 'react-i18next';
 import { formatTime } from '@/lib/utils';
 import { Globe, Folder, ExternalLink, Copy, Check } from 'lucide-react';
-import { useState } from 'react';
+import { useState, memo, useCallback } from 'react';
+import { useSkillsStore } from '@/stores/skills';
 import {
   Dialog,
   DialogContent,
@@ -12,24 +13,18 @@ import { Button } from '@/components/ui/button';
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { InstalledSkill } from '@/bindings';
 
-interface SkillDetailDialogProps {
-  skill: InstalledSkill | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
-
-export function SkillDetailDialog({
-  skill,
-  open,
-  onOpenChange,
-}: SkillDetailDialogProps) {
+export const SkillDetailDialog = memo(function SkillDetailDialog() {
   const { t, i18n } = useTranslation();
+  const skill = useSkillsStore((s) => s.detailSkill);
+  const closeDetail = useSkillsStore((s) => s.closeDetail);
   const [copied, setCopied] = useState(false);
+
+  const handleOpenChange = useCallback((open: boolean) => {
+    if (!open) closeDetail();
+  }, [closeDetail]);
 
   if (!skill) return null;
 
@@ -47,7 +42,7 @@ export function SkillDetailDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={!!skill} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-xl">
         {/* 隐藏的标题用于无障碍访问 */}
         <DialogTitle className="sr-only">{t('skills.detail.title')}</DialogTitle>
@@ -124,8 +119,7 @@ export function SkillDetailDialog({
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
                 {t('skills.detail.path')}
               </dt>
-              <TooltipProvider>
-                <Tooltip>
+              <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
@@ -144,7 +138,6 @@ export function SkillDetailDialog({
                     <p>{t('common.copy')}</p>
                   </TooltipContent>
                 </Tooltip>
-              </TooltipProvider>
             </div>
             <div className="mt-1.5 rounded-md bg-muted p-2">
               <code className="text-xs font-mono break-all">
@@ -182,4 +175,4 @@ export function SkillDetailDialog({
       </DialogContent>
     </Dialog>
   );
-}
+});

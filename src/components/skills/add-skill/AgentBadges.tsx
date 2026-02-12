@@ -1,4 +1,5 @@
 // src/components/skills/add-skill/AgentBadges.tsx
+import { useTranslation } from 'react-i18next';
 import { Badge } from '@/components/ui/badge';
 import type { AgentInfo } from '@/bindings';
 
@@ -19,6 +20,7 @@ export function AgentBadges({
   allAgents,
   excludeUniversal = false,
 }: AgentBadgesProps) {
+  const { t } = useTranslation();
   // 过滤掉 Universal Agents（如果需要）
   const filteredAgents = excludeUniversal
     ? allAgents.filter((a) => !a.isUniversal)
@@ -40,7 +42,7 @@ export function AgentBadges({
         </Badge>
       ))}
       {displayAgents.length === 0 && (
-        <span className="text-sm text-muted-foreground">未选择</span>
+        <span className="text-sm text-muted-foreground">{t('addSkill.agents.noneSelected')}</span>
       )}
     </div>
   );

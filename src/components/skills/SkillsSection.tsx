@@ -1,5 +1,5 @@
 // src/components/skills/SkillsSection.tsx
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,7 @@ interface SkillsSectionProps {
   emptyState?: React.ReactNode;
 }
 
-export function SkillsSection({
+export const SkillsSection = memo(function SkillsSection({
   title,
   skills,
   scope,
@@ -117,4 +117,4 @@ export function SkillsSection({
       )}
     </section>
   );
-}
+});

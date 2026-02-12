@@ -131,9 +131,6 @@
   },
   "addSkill": {
     "title": "Add Skill",
-    "scope": {
-      "global": "Global"
-    },
     "steps": {
       "source": "Source",
       "skills": "Skills",
@@ -177,7 +174,8 @@
       "otherSection": "Other Agents",
       "otherAgentsTitle": "Other Agents",
       "expand": "Expand",
-      "collapse": "Collapse"
+      "collapse": "Collapse",
+      "noneSelected": "None selected"
     },
     "scope": {
       "title": "Scope",

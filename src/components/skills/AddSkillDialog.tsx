@@ -1,6 +1,7 @@
 // src/components/skills/AddSkillDialog.tsx
-import { useState, useCallback } from 'react';
+import { useState, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSkillsStore } from '@/stores/skills';
 import {
   Dialog,
   DialogContent,
@@ -18,15 +19,6 @@ import { InstallingStep } from './add-skill/InstallingStep';
 import { CompleteStep } from './add-skill/CompleteStep';
 import { ErrorStep } from './add-skill/ErrorStep';
 import type { AddSkillState, WizardStep } from './add-skill/types';
-
-interface AddSkillDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** 安装范围，由触发按钮所在区块决定，不可更改 */
-  scope: 'global' | 'project';
-  projectPath?: string;
-  onInstallComplete?: () => void;
-}
 
 /** 从完整路径中提取项目名称 */
 function getProjectName(path: string): string {
@@ -60,14 +52,11 @@ function createInitialState(): AddSkillState {
   };
 }
 
-export function AddSkillDialog({
-  open,
-  onOpenChange,
-  scope,
-  projectPath,
-  onInstallComplete,
-}: AddSkillDialogProps) {
+export const AddSkillDialog = memo(function AddSkillDialog() {
   const { t } = useTranslation();
+  const { open, scope, projectPath } = useSkillsStore((s) => s.addDialog);
+  const closeAdd = useSkillsStore((s) => s.closeAdd);
+  const fetchSkills = useSkillsStore((s) => s.fetchSkills);
 
   // 使用函数初始化避免每次渲染重新创建对象
   const [state, setState] = useState<AddSkillState>(() =>
@@ -80,12 +69,12 @@ export function AddSkillDialog({
   }, []);
 
   // 关闭弹窗时重置
-  const handleOpenChange = useCallback((open: boolean) => {
-    if (!open) {
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (!nextOpen) {
       resetState();
+      closeAdd();
     }
-    onOpenChange(open);
-  }, [onOpenChange, resetState]);
+  }, [resetState, closeAdd]);
 
   // 更新状态的 helper - 支持函数式更新，符合 rerender-functional-setstate 规则
   const updateState = useCallback(
@@ -217,7 +206,7 @@ export function AddSkillDialog({
             state={state}
             onDone={() => {
               handleOpenChange(false);
-              onInstallComplete?.();
+              fetchSkills();
             }}
             onRetry={() => goToStep(4)}
           />
@@ -228,7 +217,7 @@ export function AddSkillDialog({
             state={state}
             onDone={() => {
               handleOpenChange(false);
-              onInstallComplete?.();
+              fetchSkills();
             }}
             onRetry={() => goToStep(4)}
           />
@@ -318,4 +307,4 @@ export function AddSkillDialog({
       </DialogContent>
     </Dialog>
   );
-}
+});

@@ -131,9 +131,6 @@
   },
   "addSkill": {
     "title": "添加 Skill",
-    "scope": {
-      "global": "全局"
-    },
     "steps": {
       "source": "来源",
       "skills": "选择",
@@ -177,7 +174,8 @@
       "otherSection": "其他 Agents",
       "otherAgentsTitle": "其他 Agents",
       "expand": "展开",
-      "collapse": "收起"
+      "collapse": "收起",
+      "noneSelected": "未选择"
     },
     "scope": {
       "title": "安装范围",
