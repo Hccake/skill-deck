@@ -1,4 +1,5 @@
 use tauri_specta::{collect_commands, collect_events, Builder};
+#[cfg(debug_assertions)]
 use specta_typescript::Typescript;
 
 mod commands;

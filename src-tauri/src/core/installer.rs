@@ -259,7 +259,7 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&relative_target, link)
-            .map_err(|e| AppError::InstallFailed(format!("Failed to create symlink: {}", e)))?;
+            .map_err(|e| AppError::InstallFailed { message: format!("Failed to create symlink: {}", e) })?;
     }
 
     #[cfg(windows)]
