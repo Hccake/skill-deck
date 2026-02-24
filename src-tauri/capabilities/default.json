@@ -17,6 +17,9 @@
           "url": "https://skills.sh/*"
         }
       ]
-    }
+    },
+    "updater:default",
+    "process:default",
+    "os:default"
   ]
 }

@@ -25,6 +25,9 @@ tauri = { version = "2.10.0", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-http = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-os = "2"
+tauri-plugin-process = "2"
 
 # 类型安全绑定生成
 specta = "2.0.0-rc.22"

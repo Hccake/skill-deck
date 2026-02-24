@@ -133,7 +133,22 @@
     "addProject": "添加项目",
     "about": "关于",
     "version": "版本",
-    "compatible": "兼容"
+    "compatible": "兼容",
+    "update": {
+      "checkForUpdates": "检查更新",
+      "checking": "检查中...",
+      "upToDate": "已是最新版本",
+      "newVersion": "新版本 v{{version}} 已就绪",
+      "newVersionHint": "重启应用即可完成更新",
+      "newVersionMac": "发现新版本 v{{version}}",
+      "newVersionMacHint": "请前往 GitHub 下载最新版本",
+      "downloading": "正在下载 v{{version}}...",
+      "restartNow": "立即重启",
+      "later": "稍后再说",
+      "dismiss": "忽略",
+      "goToDownload": "前往下载",
+      "checkError": "检查更新失败"
+    }
   },
   "theme": {
     "light": "浅色",

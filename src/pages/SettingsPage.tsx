@@ -1,13 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Target, ExternalLink, FolderOpen, X, Plus, Info } from 'lucide-react';
+import { Target, ExternalLink, FolderOpen, X, Plus, Info, RefreshCw, Check } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { getVersion } from '@tauri-apps/api/app';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { listAgents, getLastSelectedAgents, saveLastSelectedAgents } from '@/hooks/useTauriApi';
 import { useContextStore } from '@/stores/context';
+import { useUpdaterStore } from '@/stores/updater';
 import { AgentSelector } from '@/components/skills/add-skill/AgentSelector';
 import type { AgentInfo } from '@/bindings';
 
@@ -45,8 +47,14 @@ export function SettingsPage() {
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const { projects, projectsLoaded, loadProjects, addProject, removeProject } = useContextStore();
+  const { status: updateStatus, checkForUpdate } = useUpdaterStore();
 
-  const version = '0.2.0';
+  const [version, setVersion] = useState('');
+
+  // 动态获取应用版本号
+  useEffect(() => {
+    getVersion().then(setVersion);
+  }, []);
 
   // 确保 projects 已加载
   useEffect(() => {
@@ -258,6 +266,33 @@ export function SettingsPage() {
                         <ExternalLink className="h-3.5 w-3.5" />
                         <span className="sr-only">({t('skills.externalLink')})</span>
                       </a>
+                    </div>
+                    <Separator />
+                    <div className="flex items-center justify-between py-3 px-3 sm:px-4">
+                      <span className="text-sm text-muted-foreground">
+                        {t('settings.update.checkForUpdates')}
+                      </span>
+                      {updateStatus === 'checking' ? (
+                        <Button variant="ghost" size="sm" disabled className="gap-1.5">
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          <span className="text-xs">{t('settings.update.checking')}</span>
+                        </Button>
+                      ) : updateStatus === 'idle' && localStorage.getItem('updater_last_check') ? (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <Check className="h-3.5 w-3.5 text-green-500" />
+                          <span>{t('settings.update.upToDate')}</span>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 cursor-pointer"
+                          onClick={() => checkForUpdate()}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          <span className="text-xs">{t('settings.update.checkForUpdates')}</span>
+                        </Button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

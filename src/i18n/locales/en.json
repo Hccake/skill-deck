@@ -133,7 +133,22 @@
     "addProject": "Add Project",
     "about": "About",
     "version": "Version",
-    "compatible": "Compatible with"
+    "compatible": "Compatible with",
+    "update": {
+      "checkForUpdates": "Check for Updates",
+      "checking": "Checking...",
+      "upToDate": "You're up to date",
+      "newVersion": "New version v{{version}} is ready",
+      "newVersionHint": "Restart the app to complete the update",
+      "newVersionMac": "New version v{{version}} available",
+      "newVersionMacHint": "Go to GitHub to download the latest version",
+      "downloading": "Downloading v{{version}}...",
+      "restartNow": "Restart Now",
+      "later": "Later",
+      "dismiss": "Dismiss",
+      "goToDownload": "Download",
+      "checkError": "Failed to check for updates"
+    }
   },
   "theme": {
     "light": "Light",
