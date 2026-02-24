@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Skill Deck",
-  "version": "0.2.0",
+  "version": "../package.json",
   "identifier": "com.skill-deck.dev",
   "build": {
     "frontendDist": "../dist",

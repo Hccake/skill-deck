@@ -1,14 +1,15 @@
 {
   "name": "skill-deck",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/patch-bindings.mjs && tsc -b && vite build",
+    "build": "node scripts/sync-version.mjs && node scripts/patch-bindings.mjs && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "patch-bindings": "node scripts/patch-bindings.mjs"
+    "patch-bindings": "node scripts/patch-bindings.mjs",
+    "sync-version": "node scripts/sync-version.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
