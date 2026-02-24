@@ -47,7 +47,7 @@ export function SettingsPage() {
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const { projects, projectsLoaded, loadProjects, addProject, removeProject } = useContextStore();
-  const { status: updateStatus, checkForUpdate } = useUpdaterStore();
+  const { status: updateStatus, lastCheckResult, checkForUpdate } = useUpdaterStore();
 
   const [version, setVersion] = useState('');
 
@@ -277,10 +277,32 @@ export function SettingsPage() {
                           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                           <span className="text-xs">{t('settings.update.checking')}</span>
                         </Button>
-                      ) : updateStatus === 'idle' && localStorage.getItem('updater_last_check') ? (
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <Check className="h-3.5 w-3.5 text-green-500" />
-                          <span>{t('settings.update.upToDate')}</span>
+                      ) : lastCheckResult === 'up-to-date' ? (
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Check className="h-3.5 w-3.5 text-green-500" />
+                            <span>{t('settings.update.upToDate')}</span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground cursor-pointer"
+                            onClick={() => checkForUpdate()}
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ) : lastCheckResult === 'error' ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-destructive">{t('settings.update.checkError')}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-muted-foreground cursor-pointer"
+                            onClick={() => checkForUpdate()}
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                          </Button>
                         </div>
                       ) : (
                         <Button

@@ -14,8 +14,11 @@ type UpdateStatus =
   | 'ready'
   | 'error';
 
+type LastCheckResult = 'none' | 'up-to-date' | 'available' | 'error';
+
 interface UpdaterState {
   status: UpdateStatus;
+  lastCheckResult: LastCheckResult;
   newVersion: string | null;
   downloadProgress: number;
   error: string | null;
@@ -32,6 +35,7 @@ let pendingUpdate: Update | null = null;
 
 export const useUpdaterStore = create<UpdaterState>((set, get) => ({
   status: 'idle',
+  lastCheckResult: 'none',
   newVersion: null,
   downloadProgress: 0,
   error: null,
@@ -50,7 +54,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       localStorage.setItem(LAST_CHECK_KEY, Date.now().toString());
 
       if (!update) {
-        set({ status: 'idle', newVersion: null });
+        set({ status: 'idle', newVersion: null, lastCheckResult: 'up-to-date' });
         return;
       }
 
@@ -58,6 +62,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       const currentPlatform = platform();
       set({
         status: 'available',
+        lastCheckResult: 'available',
         newVersion: update.version,
         currentPlatform,
       });
@@ -70,6 +75,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       console.error('Update check failed:', e);
       set({
         status: 'error',
+        lastCheckResult: 'error',
         error: e instanceof Error ? e.message : String(e),
       });
     }
