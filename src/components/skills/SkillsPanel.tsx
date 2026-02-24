@@ -44,6 +44,8 @@ export function SkillsPanel() {
   const openDetail = useSkillsStore((s) => s.openDetail);
   const openDelete = useSkillsStore((s) => s.openDelete);
   const openAdd = useSkillsStore((s) => s.openAdd);
+  const auditCache = useSkillsStore((s) => s.auditCache);
+  const fetchAuditForSkills = useSkillsStore((s) => s.fetchAuditForSkills);
 
   // ② UI 状态 — 仅 2 个 useState
   const [searchQuery, setSearchQuery] = useState('');
@@ -56,6 +58,15 @@ export function SkillsPanel() {
   useEffect(() => {
     fetchSkills();
   }, [selectedContext, fetchSkills]);
+
+  // ③b 审计数据 — skills 变化后获取（仅对有 source 的 skills 请求）
+  useEffect(() => {
+    const allSkills = [...globalSkills, ...projectSkills];
+    const skillsWithSource = allSkills.filter((s) => s.source);
+    if (skillsWithSource.length > 0) {
+      fetchAuditForSkills(skillsWithSource);
+    }
+  }, [globalSkills, projectSkills, fetchAuditForSkills]);
 
   // ④ Derived state
   const isProjectSelected = selectedContext !== 'global';
@@ -172,6 +183,7 @@ export function SkillsPanel() {
             projectPath={selectedContext}
             updatingSkill={updatingSkill}
             agentDisplayNames={agentDisplayNames}
+            auditCache={auditCache}
             onSkillClick={openDetail}
             onUpdate={storeUpdateSkill}
             onDelete={handleDeleteProject}
@@ -189,6 +201,7 @@ export function SkillsPanel() {
           conflictSkillNames={conflictSkillNames}
           updatingSkill={updatingSkill}
           agentDisplayNames={agentDisplayNames}
+          auditCache={auditCache}
           onSkillClick={openDetail}
           onUpdate={storeUpdateSkill}
           onDelete={handleDeleteGlobal}

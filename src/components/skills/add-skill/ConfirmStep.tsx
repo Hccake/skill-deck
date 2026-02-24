@@ -1,8 +1,10 @@
 // src/components/skills/add-skill/ConfirmStep.tsx
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Globe, Folder } from 'lucide-react';
-import { checkOverwrites } from '@/hooks/useTauriApi';
+import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
+import type { SkillAuditData } from '@/hooks/useTauriApi';
+import { RiskBadge } from '../RiskBadge';
 import type { WizardState } from './types';
 
 /** 从完整路径中提取项目名称 */
@@ -24,6 +26,9 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
   const updateStateRef = useRef(updateState);
   updateStateRef.current = updateState;
 
+  // 审计数据（组件级 state，不影响 wizard 流程）
+  const [auditData, setAuditData] = useState<Partial<Record<string, SkillAuditData>>>({});
+
   // 获取选中的 agent 名称 — rerender-memo 规则
   const selectedAgentNames = useMemo(() => {
     const selectedSet = new Set(state.selectedAgents);
@@ -32,32 +37,39 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
       .map((a) => a.name);
   }, [state.selectedAgents, state.allAgents]);
 
-  // 检测覆盖
+  // 并行检测覆盖 + 获取审计数据 — async-parallel 规则
   useEffect(() => {
-    async function detectOverwrites() {
-      try {
-        const result = await checkOverwrites(
-          state.selectedSkills,
-          state.selectedAgents,
-          scope,
-          scope === 'project' ? projectPath : undefined
-        );
-        // checkOverwrites 返回 Partial<Record>，但 state 需要 Record
-        const overwrites: Record<string, string[]> = {};
-        for (const [key, value] of Object.entries(result)) {
-          if (value) overwrites[key] = value;
-        }
-        updateStateRef.current({ overwrites });
-      } catch (error) {
-        console.error('Failed to check overwrites:', error);
-        updateStateRef.current({ overwrites: {} });
-      }
-    }
+    if (state.selectedAgents.length === 0 || state.selectedSkills.length === 0) return;
 
-    if (state.selectedAgents.length > 0 && state.selectedSkills.length > 0) {
-      detectOverwrites();
-    }
-  }, [state.selectedSkills, state.selectedAgents, scope, projectPath]);
+    // 覆盖检测（影响安装流程）
+    const overwritePromise = checkOverwrites(
+      state.selectedSkills,
+      state.selectedAgents,
+      scope,
+      scope === 'project' ? projectPath : undefined
+    );
+
+    // 审计数据（不影响流程，仅展示）
+    const auditPromise = state.source
+      ? checkSkillAudit(state.source, state.selectedSkills).catch(() => null)
+      : Promise.resolve(null);
+
+    // 并行执行
+    Promise.all([overwritePromise, auditPromise]).then(([overwriteResult, auditResult]) => {
+      const overwrites: Record<string, string[]> = {};
+      for (const [key, value] of Object.entries(overwriteResult)) {
+        if (value) overwrites[key] = value;
+      }
+      updateStateRef.current({ overwrites });
+
+      if (auditResult) {
+        setAuditData(auditResult);
+      }
+    }).catch((error) => {
+      console.error('Failed to check overwrites/audit:', error);
+      updateStateRef.current({ overwrites: {} });
+    });
+  }, [state.selectedSkills, state.selectedAgents, state.source, scope, projectPath]);
 
   const totalAgents = state.selectedAgents.length;
   const hasOverwrites = Object.keys(state.overwrites).length > 0;
@@ -92,9 +104,14 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
 
             return (
               <div key={skillName} className="p-3 bg-muted/30 rounded-md space-y-2">
-                <div className="font-medium text-sm">
-                  {scope === 'global' ? '~/.agents/skills/' : './.agents/skills/'}
-                  {skillName}
+                <div className="flex items-center gap-2 font-medium text-sm">
+                  <span>
+                    {scope === 'global' ? '~/.agents/skills/' : './.agents/skills/'}
+                    {skillName}
+                  </span>
+                  {auditData[skillName] && (
+                    <RiskBadge risk={auditData[skillName].risk} />
+                  )}
                 </div>
 
                 {selectedAgentNames.length > 0 && (

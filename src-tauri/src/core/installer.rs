@@ -16,7 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// 复制时排除的文件（与 CLI 一致）
-const EXCLUDE_FILES: &[&str] = &["README.md", "metadata.json"];
+const EXCLUDE_FILES: &[&str] = &["metadata.json"];
 
 /// 复制时排除的目录（与 CLI 一致）
 const EXCLUDE_DIRS: &[&str] = &[".git"];
@@ -341,8 +341,9 @@ mod tests {
 
         // SKILL.md 应该被复制
         assert!(dst.path().join("SKILL.md").exists());
+        // README.md 现在会被保留（CLI v1.4.1 变更）
+        assert!(dst.path().join("README.md").exists());
         // 这些应该被排除
-        assert!(!dst.path().join("README.md").exists());
         assert!(!dst.path().join("metadata.json").exists());
         assert!(!dst.path().join("_internal.md").exists());
         assert!(!dst.path().join(".git").exists());

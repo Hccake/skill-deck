@@ -4,11 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { Plus, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
-import type { AgentType, InstalledSkill, SkillScope } from '@/bindings';
+import type { AgentType, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
 const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
+const EMPTY_AUDIT_CACHE: Record<string, SkillAuditData> = {};
 
 interface SkillsSectionProps {
   title: string;
@@ -23,6 +24,8 @@ interface SkillsSectionProps {
   updatingSkill?: string | null;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentType, string>;
+  /** 审计数据缓存（skillName → SkillAuditData） */
+  auditCache?: Record<string, SkillAuditData>;
   onSkillClick: (skill: InstalledSkill) => void;
   onUpdate: (skillName: string) => void;
   onDelete: (skillName: string) => void;
@@ -40,6 +43,7 @@ export const SkillsSection = memo(function SkillsSection({
   projectPath,
   updatingSkill,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
+  auditCache = EMPTY_AUDIT_CACHE,
   onSkillClick,
   onUpdate,
   onDelete,
@@ -105,6 +109,7 @@ export const SkillsSection = memo(function SkillsSection({
                   hasConflict={conflictSkillNames.has(skill.name)}
                   isUpdating={updatingSkill === skill.name}
                   agentDisplayNames={agentDisplayNames}
+                  riskLevel={auditCache[skill.name]?.risk}
                   onClick={onSkillClick}
                   onUpdate={onUpdate}
                   onDelete={onDelete}

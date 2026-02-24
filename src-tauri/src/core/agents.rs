@@ -83,6 +83,8 @@ pub enum AgentType {
     Zencoder,
     Pochi,
     Adal,
+    Cortex,
+    Universal,
 }
 
 impl std::fmt::Display for AgentType {
@@ -127,6 +129,8 @@ impl std::fmt::Display for AgentType {
             Self::Zencoder => "zencoder",
             Self::Pochi => "pochi",
             Self::Adal => "adal",
+            Self::Cortex => "cortex",
+            Self::Universal => "universal",
         };
         write!(f, "{}", name)
     }
@@ -176,6 +180,8 @@ impl std::str::FromStr for AgentType {
             "zencoder" => Ok(Self::Zencoder),
             "pochi" => Ok(Self::Pochi),
             "adal" => Ok(Self::Adal),
+            "cortex" => Ok(Self::Cortex),
+            "universal" => Ok(Self::Universal),
             _ => Err(format!("Unknown agent type: {}", s)),
         }
     }
@@ -224,6 +230,8 @@ impl AgentType {
             Self::Zencoder,
             Self::Pochi,
             Self::Adal,
+            Self::Cortex,
+            Self::Universal,
         ]
         .into_iter()
     }
@@ -312,7 +320,7 @@ impl AgentType {
             Self::Cursor => AgentConfig {
                 name: "cursor",
                 display_name: "Cursor",
-                skills_dir: ".cursor/skills",
+                skills_dir: ".agents/skills",
                 global_skills_dir: Some(PATHS.home.join(".cursor/skills")),
                 show_in_universal_list: true,
             },
@@ -507,6 +515,24 @@ impl AgentType {
                 global_skills_dir: Some(PATHS.home.join(".adal/skills")),
                 show_in_universal_list: true,
             },
+            // Cortex Code: Snowflake 的 AI 编码助手
+            // 对应 CLI: agents.ts cortex 配置
+            Self::Cortex => AgentConfig {
+                name: "cortex",
+                display_name: "Cortex Code",
+                skills_dir: ".cortex/skills",
+                global_skills_dir: Some(PATHS.home.join(".snowflake/cortex/skills")),
+                show_in_universal_list: true,
+            },
+            // Universal: 统一的规范目录，不在列表中显示，不参与自动检测
+            // 对应 CLI: agents.ts universal 配置
+            Self::Universal => AgentConfig {
+                name: "universal",
+                display_name: "Universal",
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(PATHS.config_home.join("agents/skills")),
+                show_in_universal_list: false,
+            },
         }
     }
 
@@ -517,8 +543,10 @@ impl AgentType {
             PATHS.home.join(".openclaw/skills")
         } else if PATHS.home.join(".clawdbot").exists() {
             PATHS.home.join(".clawdbot/skills")
-        } else {
+        } else if PATHS.home.join(".moltbot").exists() {
             PATHS.home.join(".moltbot/skills")
+        } else {
+            PATHS.home.join(".openclaw/skills")
         }
     }
 
@@ -529,9 +557,7 @@ impl AgentType {
 
         match self {
             Self::Amp => PATHS.config_home.join("amp").exists(),
-            Self::Antigravity => {
-                cwd.join(".agent").exists() || PATHS.home.join(".gemini/antigravity").exists()
-            }
+            Self::Antigravity => PATHS.home.join(".gemini/antigravity").exists(),
             Self::Augment => PATHS.home.join(".augment").exists(),
             Self::ClaudeCode => PATHS.claude_home.exists(),
             Self::Openclaw => {
@@ -552,7 +578,7 @@ impl AgentType {
             Self::Cursor => PATHS.home.join(".cursor").exists(),
             Self::Droid => PATHS.home.join(".factory").exists(),
             Self::GeminiCli => PATHS.home.join(".gemini").exists(),
-            Self::GithubCopilot => cwd.join(".github").exists() || PATHS.home.join(".copilot").exists(),
+            Self::GithubCopilot => PATHS.home.join(".copilot").exists(),
             Self::Goose => PATHS.config_home.join("goose").exists(),
             Self::IflowCli => PATHS.home.join(".iflow").exists(),
             Self::Junie => PATHS.home.join(".junie").exists(),
@@ -564,15 +590,12 @@ impl AgentType {
             Self::MistralVibe => PATHS.home.join(".vibe").exists(),
             Self::Mux => PATHS.home.join(".mux").exists(),
             Self::Neovate => PATHS.home.join(".neovate").exists(),
-            Self::Opencode => {
-                PATHS.config_home.join("opencode").exists()
-                    || PATHS.claude_home.join("skills").exists()
-            }
+            Self::Opencode => PATHS.config_home.join("opencode").exists(),
             Self::Openhands => PATHS.home.join(".openhands").exists(),
             Self::Pi => PATHS.home.join(".pi/agent").exists(),
             Self::Qoder => PATHS.home.join(".qoder").exists(),
             Self::QwenCode => PATHS.home.join(".qwen").exists(),
-            Self::Replit => cwd.join(".agents").exists(),
+            Self::Replit => cwd.join(".replit").exists(),
             Self::Roo => PATHS.home.join(".roo").exists(),
             Self::Trae => PATHS.home.join(".trae").exists(),
             Self::TraeCn => PATHS.home.join(".trae-cn").exists(),
@@ -580,6 +603,9 @@ impl AgentType {
             Self::Zencoder => PATHS.home.join(".zencoder").exists(),
             Self::Pochi => PATHS.home.join(".pochi").exists(),
             Self::Adal => PATHS.home.join(".adal").exists(),
+            Self::Cortex => PATHS.home.join(".snowflake/cortex").exists(),
+            // Universal agent 永远不自动检测
+            Self::Universal => false,
         }
     }
 
@@ -642,7 +668,7 @@ mod tests {
     #[test]
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
-        assert_eq!(count, 39, "Should have 39 agent types");
+        assert_eq!(count, 41, "Should have 41 agent types (39 + cortex + universal)");
     }
 
     #[test]
@@ -663,7 +689,7 @@ mod tests {
         assert!(AgentType::GeminiCli.is_universal());
         assert!(AgentType::GithubCopilot.is_universal());
         assert!(AgentType::Replit.is_universal()); // Replit 技术上是 Universal
-        assert!(!AgentType::Cursor.is_universal());
+        assert!(AgentType::Cursor.is_universal());
         assert!(!AgentType::ClaudeCode.is_universal());
     }
 
@@ -702,6 +728,35 @@ mod tests {
     #[test]
     fn test_detect_installed_returns_vec() {
         let installed = AgentType::detect_installed();
-        assert!(installed.len() <= 39);
+        assert!(installed.len() <= 41);
+    }
+
+    #[test]
+    fn test_cortex_agent() {
+        let config = AgentType::Cortex.config();
+        assert_eq!(config.name, "cortex");
+        assert_eq!(config.skills_dir, ".cortex/skills");
+        assert!(!AgentType::Cortex.is_universal());
+    }
+
+    #[test]
+    fn test_universal_agent() {
+        let config = AgentType::Universal.config();
+        assert_eq!(config.name, "universal");
+        assert_eq!(config.skills_dir, ".agents/skills");
+        assert!(AgentType::Universal.is_universal());
+        assert!(!config.show_in_universal_list);
+        // Universal 不参与自动检测
+        assert!(!AgentType::Universal.is_installed());
+        // Universal 不在 universal list 中
+        let universal_agents = AgentType::get_universal_agents();
+        assert!(!universal_agents.contains(&AgentType::Universal));
+    }
+
+    #[test]
+    fn test_replit_detection_changed() {
+        // Replit 现在检查 .replit 而非 .agents
+        // 这里只能验证不 panic
+        let _ = AgentType::Replit.is_installed();
     }
 }

@@ -233,6 +233,17 @@ async openInstallWizard(entryPoint: string, scope: string, projectPath: string |
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * 检查 skill 的安全审计数据
+ */
+async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial<{ [key in string]: SkillAuditData }> | null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_skill_audit", { source, skills }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -265,7 +276,7 @@ showInUniversalList: boolean }
  * Agent 类型枚举
  * 完整对应 CLI: types.ts AgentType
  */
-export type AgentType = "amp" | "antigravity" | "augment" | "claude-code" | "openclaw" | "cline" | "codebuddy" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "droid" | "gemini-cli" | "github-copilot" | "goose" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "roo" | "trae" | "trae-cn" | "windsurf" | "zencoder" | "pochi" | "adal"
+export type AgentType = "amp" | "antigravity" | "augment" | "claude-code" | "openclaw" | "cline" | "codebuddy" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "droid" | "gemini-cli" | "github-copilot" | "goose" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "roo" | "trae" | "trae-cn" | "windsurf" | "zencoder" | "pochi" | "adal" | "cortex" | "universal"
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout" } | { kind: "gitNetworkError"; data: { message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "noSkillsFound" } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
 /**
  * 可用的 Skill 信息（fetch_available 返回）
@@ -443,9 +454,17 @@ sourceType: string | null;
  */
 error: string | null }
 /**
+ * 风险等级
+ */
+export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical" | "unknown"
+/**
  * 安装范围
  */
 export type Scope = "global" | "project"
+/**
+ * Skill 审计数据
+ */
+export type SkillAuditData = { risk: RiskLevel; alerts?: number | null; score?: number | null; analyzedAt: string }
 /**
  * Skill Deck 应用配置
  * 持久化到 ~/.skill-deck/config.json

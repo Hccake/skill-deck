@@ -1,5 +1,6 @@
 // src-tauri/src/commands/mod.rs
 pub mod agents;
+pub mod audit;
 pub mod config;
 pub mod install;
 pub mod overwrites;

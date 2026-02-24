@@ -7,6 +7,7 @@ use std::path::Path;
 
 use super::agents::AgentType;
 use super::paths::canonical_skills_dir;
+use super::local_lock::{read_local_lock, LocalSkillLockEntry};
 use super::skill_lock::{get_skill_from_lock, SkillLockEntry};
 use crate::error::AppError;
 
@@ -144,13 +145,27 @@ pub struct InstalledSkill {
 }
 
 impl InstalledSkill {
-    /// 从 lock entry 填充元数据
+    /// 从 global lock entry 填充元数据
     pub fn with_lock_entry(mut self, entry: Option<&SkillLockEntry>) -> Self {
         if let Some(e) = entry {
             self.source = Some(e.source.clone());
             self.source_url = Some(e.source_url.clone());
             self.installed_at = Some(e.installed_at.clone());
             self.updated_at = Some(e.updated_at.clone());
+        }
+        self
+    }
+
+    /// 从 local lock entry 填充元数据（项目级）
+    pub fn with_local_lock_entry(mut self, entry: Option<&LocalSkillLockEntry>) -> Self {
+        if let Some(e) = entry {
+            self.source = Some(e.source.clone());
+            // local lock 没有 source_url，从 source 构造
+            self.source_url = if e.source_type == "github" {
+                Some(format!("https://github.com/{}", e.source))
+            } else {
+                Some(e.source.clone())
+            };
         }
         self
     }
@@ -182,6 +197,9 @@ pub fn list_installed_skills(
 ) -> Result<Vec<InstalledSkill>, AppError> {
     let mut skills_map: HashMap<String, InstalledSkill> = HashMap::new();
     let mut scopes: Vec<ScanScope> = Vec::new();
+
+    // 预读项目级 local lock（如果存在）
+    let local_lock = read_local_lock(cwd).ok();
 
     // 检测已安装的 agents
     let detected_agents = AgentType::detect_installed();
@@ -278,7 +296,6 @@ pub fn list_installed_skills(
                         existing.agents.push(agent_type);
                     }
                 } else {
-                    let lock_entry = get_skill_from_lock(&frontmatter.name).ok().flatten();
                     let skill = InstalledSkill {
                         name: frontmatter.name.clone(),
                         description: frontmatter.description,
@@ -295,8 +312,17 @@ pub fn list_installed_skills(
                         installed_at: None,
                         updated_at: None,
                         has_update: None,
-                    }
-                    .with_lock_entry(lock_entry.as_ref());
+                    };
+
+                    // 根据 scope 从对应的 lock 文件填充元数据
+                    let skill = if scope_info.global {
+                        let lock_entry = get_skill_from_lock(&frontmatter.name).ok().flatten();
+                        skill.with_lock_entry(lock_entry.as_ref())
+                    } else {
+                        let local_entry = local_lock.as_ref()
+                            .and_then(|l| l.skills.get(&frontmatter.name));
+                        skill.with_local_lock_entry(local_entry)
+                    };
 
                     skills_map.insert(skill_key, skill);
                 }
@@ -372,9 +398,8 @@ pub fn list_installed_skills(
                     }
                 }
             } else {
-                let lock_entry = get_skill_from_lock(&frontmatter.name).ok().flatten();
                 let skill = InstalledSkill {
-                    name: frontmatter.name,
+                    name: frontmatter.name.clone(),
                     description: frontmatter.description,
                     path: path.to_string_lossy().to_string(),
                     canonical_path: path.to_string_lossy().to_string(),
@@ -389,8 +414,17 @@ pub fn list_installed_skills(
                     installed_at: None,
                     updated_at: None,
                     has_update: None,
-                }
-                .with_lock_entry(lock_entry.as_ref());
+                };
+
+                // 根据 scope 从对应的 lock 文件填充元数据
+                let skill = if scope_info.global {
+                    let lock_entry = get_skill_from_lock(&frontmatter.name).ok().flatten();
+                    skill.with_lock_entry(lock_entry.as_ref())
+                } else {
+                    let local_entry = local_lock.as_ref()
+                        .and_then(|l| l.skills.get(&frontmatter.name));
+                    skill.with_local_lock_entry(local_entry)
+                };
 
                 skills_map.insert(skill_key, skill);
             }

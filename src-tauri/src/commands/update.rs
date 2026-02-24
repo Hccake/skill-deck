@@ -5,18 +5,19 @@
 
 use crate::core::agents::AgentType;
 use crate::core::fetch_skill_folder_hash;
-use crate::core::skill_lock::{
-    add_skill_to_lock, add_skill_to_scoped_lock, read_scoped_lock,
+use crate::core::local_lock::{
+    add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
 };
+use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock, SkillLockFile};
 use crate::core::{
-    clone_repo_with_progress, discover_skills, install_skill_for_agent,
-    parse_source, CloneProgress, DiscoverOptions,
+    clone_repo_with_progress, discover_skills, install_skill_for_agent, parse_source,
+    CloneProgress, DiscoverOptions,
 };
+use crate::error::AppError;
 use crate::models::{InstallMode, Scope};
 use serde::Serialize;
 use specta::Type;
 use std::collections::HashMap;
-use crate::error::AppError;
 
 /// 更新检测结果
 #[derive(Debug, Clone, Serialize, Type)]
@@ -48,14 +49,39 @@ async fn check_updates_inner(
     scope: Scope,
     project_path: Option<&str>,
 ) -> Result<Vec<SkillUpdateInfo>, AppError> {
-    // 1. 确定 lock 文件路径
-    let lock_project_path = match scope {
-        Scope::Global => None,
-        Scope::Project => project_path,
+    // 1-2. 根据 scope 读取对应的 lock 文件
+    let lock = match scope {
+        Scope::Global => read_scoped_lock(None)?,
+        Scope::Project => {
+            if let Some(pp) = project_path {
+                let local_lock = read_local_lock(pp)?;
+                // 转换 LocalSkillLockFile -> SkillLockFile 用于统一流程
+                let mut skills = HashMap::new();
+                for (name, entry) in local_lock.skills {
+                    skills.insert(
+                        name,
+                        crate::core::skill_lock::SkillLockEntry {
+                            source: entry.source,
+                            source_type: entry.source_type,
+                            source_url: String::new(),
+                            skill_path: entry.skill_path,
+                            skill_folder_hash: entry.remote_hash.unwrap_or_default(),
+                            installed_at: String::new(),
+                            updated_at: String::new(),
+                        },
+                    );
+                }
+                SkillLockFile {
+                    version: 3,
+                    skills,
+                    dismissed: None,
+                    last_selected_agents: None,
+                }
+            } else {
+                read_scoped_lock(None)?
+            }
+        }
     };
-
-    // 2. 读取 lock 文件
-    let lock = read_scoped_lock(lock_project_path)?;
 
     // 3. 过滤并按 source 分组
     // value: Vec<(skill_name, skill_path, local_hash)>
@@ -133,25 +159,58 @@ async fn update_skill_inner(
 ) -> Result<(), AppError> {
     use tauri::Emitter;
 
-    // 1. 从 lock 文件读取 skill 的来源信息
-    let lock_project_path = match scope {
-        Scope::Global => None,
-        Scope::Project => project_path,
-    };
-    let lock = read_scoped_lock(lock_project_path)?;
-    let entry = lock.skills.get(skill_name).ok_or_else(|| {
-        AppError::InvalidSource {
-            value: format!("Skill '{}' not found in lock file", skill_name),
+    // 1. 根据 scope 读取对应的 lock 文件
+    let (entry_source, entry_source_type, entry_source_url, entry_skill_path) = match scope {
+        Scope::Global => {
+            let lock = read_scoped_lock(None)?;
+            let entry = lock.skills.get(skill_name).ok_or_else(|| AppError::InvalidSource {
+                value: format!("Skill '{}' not found in lock file", skill_name),
+            })?;
+            (
+                entry.source.clone(),
+                entry.source_type.clone(),
+                entry.source_url.clone(),
+                entry.skill_path.clone(),
+            )
         }
-    })?;
-    // Clone needed fields before moving
-    let entry_source = entry.source.clone();
-    let entry_source_type = entry.source_type.clone();
-    let entry_source_url = entry.source_url.clone();
-    let entry_skill_path = entry.skill_path.clone();
+        Scope::Project => {
+            if let Some(pp) = project_path {
+                let local_lock = read_local_lock(pp)?;
+                let entry =
+                    local_lock
+                        .skills
+                        .get(skill_name)
+                        .ok_or_else(|| AppError::InvalidSource {
+                            value: format!(
+                                "Skill '{}' not found in project lock file",
+                                skill_name
+                            ),
+                        })?;
+                // local lock 没有 source_url，从 source 构造
+                let source_url = if entry.source_type == "github" {
+                    format!("https://github.com/{}", entry.source)
+                } else {
+                    entry.source.clone()
+                };
+                (
+                    entry.source.clone(),
+                    entry.source_type.clone(),
+                    source_url,
+                    entry.skill_path.clone(),
+                )
+            } else {
+                return Err(AppError::InvalidSource {
+                    value: "Project path is required for project scope".to_string(),
+                });
+            }
+        }
+    };
 
     // 2. 构造安装 URL（与 CLI runUpdate 逻辑一致）
-    let install_url = build_install_url(entry);
+    let install_url = build_install_url_from_parts(
+        &entry_source_url,
+        entry_skill_path.as_deref(),
+    );
 
     // 3. 解析来源
     let parsed = parse_source(&install_url)?;
@@ -230,31 +289,39 @@ async fn update_skill_inner(
             );
         }
         Scope::Project => {
-            let _ = add_skill_to_scoped_lock(
-                skill_name,
-                &entry_source,
-                &entry_source_type,
-                &entry_source_url,
-                entry_skill_path.as_deref(),
-                &new_hash,
-                project_path,
-            );
+            if let Some(pp) = project_path {
+                let install_dir = crate::core::paths::canonical_skills_dir(false, pp)
+                    .join(crate::core::skill::sanitize_name(skill_name));
+                let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
+                let entry = LocalSkillLockEntry {
+                    source: entry_source.clone(),
+                    source_type: entry_source_type.clone(),
+                    computed_hash,
+                    remote_hash: if new_hash.is_empty() {
+                        None
+                    } else {
+                        Some(new_hash.clone())
+                    },
+                    skill_path: entry_skill_path.clone(),
+                };
+                let _ = add_skill_to_local_lock(skill_name, entry, pp);
+            }
         }
     }
 
     Ok(())
 }
 
-/// 从 lock entry 构造安装 URL
+/// 从来源信息构造安装 URL
 ///
 /// 与 CLI cli.ts runUpdate() 中构造 installUrl 的逻辑一致：
-/// 1. 基础 URL = entry.sourceUrl
+/// 1. 基础 URL = source_url
 /// 2. 如果有 skillPath，去掉 SKILL.md 后缀，拼接为 GitHub tree URL
-fn build_install_url(entry: &crate::core::skill_lock::SkillLockEntry) -> String {
-    let mut install_url = entry.source_url.clone();
+fn build_install_url_from_parts(source_url: &str, skill_path: Option<&str>) -> String {
+    let mut install_url = source_url.to_string();
 
-    if let Some(ref skill_path) = entry.skill_path {
-        let mut skill_folder = skill_path.clone();
+    if let Some(sp) = skill_path {
+        let mut skill_folder = sp.to_string();
 
         // 去掉 /SKILL.md 或 SKILL.md 后缀
         if skill_folder.ends_with("/SKILL.md") {

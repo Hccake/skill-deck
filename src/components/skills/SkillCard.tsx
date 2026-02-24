@@ -18,7 +18,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { AgentType, InstalledSkill, SkillScope } from '@/bindings';
+import type { AgentType, InstalledSkill, RiskLevel, SkillScope } from '@/bindings';
+import { RiskBadge } from './RiskBadge';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
 const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
@@ -33,6 +34,8 @@ interface SkillCardProps {
   isUpdating?: boolean;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentType, string>;
+  /** 安全审计风险等级 */
+  riskLevel?: RiskLevel;
   /** 点击卡片打开详情 */
   onClick?: (skill: InstalledSkill) => void;
   onUpdate?: (skillName: string) => void;
@@ -46,6 +49,7 @@ export const SkillCard = memo(function SkillCard({
   hasConflict = false,
   isUpdating = false,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
+  riskLevel,
   onClick,
   onUpdate,
   onDelete,
@@ -86,6 +90,9 @@ export const SkillCard = memo(function SkillCard({
 
               {/* Skill Name */}
               <h3 className="text-sm font-semibold text-foreground">{skill.name}</h3>
+
+              {/* Risk Badge */}
+              {riskLevel && <RiskBadge risk={riskLevel} />}
 
               {/* Conflict Icon */}
               {hasConflict && (

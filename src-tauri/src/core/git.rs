@@ -103,7 +103,8 @@ where
     cmd.arg("clone")
         .arg("--depth")
         .arg("1")
-        .arg("--progress");
+        .arg("--progress")
+        .env("GIT_TERMINAL_PROMPT", "0");
 
     // 如果指定了分支/tag
     if let Some(branch) = git_ref {

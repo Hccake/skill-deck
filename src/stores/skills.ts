@@ -10,8 +10,9 @@ import {
   checkUpdates,
   updateSkill as apiUpdateSkill,
   openInstallWizard,
+  checkSkillAudit,
 } from '@/hooks/useTauriApi';
-import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo } from '@/bindings';
+import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData } from '@/bindings';
 
 /** 按名称排序 skills，保证展示顺序稳定 */
 function sortSkills(skills: InstalledSkill[]): InstalledSkill[] {
@@ -52,6 +53,9 @@ interface SkillsState {
   loading: boolean;
   error: string | null;
 
+  // 审计数据缓存（key = skillName）
+  auditCache: Record<string, SkillAuditData>;
+
   // 操作层
   isSyncing: boolean;
   updatingSkill: string | null;
@@ -63,6 +67,7 @@ interface SkillsState {
   // Actions — 内部通过 useContextStore.getState() 获取 selectedContext
   fetchSkills: () => Promise<void>;
   syncSkills: () => Promise<void>;
+  fetchAuditForSkills: (skills: InstalledSkill[]) => Promise<void>;
   updateSkill: (skillName: string) => Promise<void>;
   deleteSkill: () => Promise<void>;
   openDetail: (skill: InstalledSkill) => void;
@@ -81,6 +86,9 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   allAgents: [],
   loading: true,
   error: null,
+
+  // 审计缓存
+  auditCache: {},
 
   // 操作层初始值
   isSyncing: false,
@@ -128,6 +136,36 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
     } finally {
       set({ loading: false });
     }
+  },
+
+  fetchAuditForSkills: async (skills: InstalledSkill[]) => {
+    // 按 source 分组，批量请求审计数据 — js-index-maps 规则
+    const bySource = new Map<string, string[]>();
+    for (const skill of skills) {
+      if (!skill.source) continue;
+      const existing = bySource.get(skill.source);
+      if (existing) {
+        existing.push(skill.name);
+      } else {
+        bySource.set(skill.source, [skill.name]);
+      }
+    }
+
+    // 并行请求所有 source 的审计数据 — async-parallel 规则
+    const results = await Promise.all(
+      Array.from(bySource.entries()).map(([source, skillNames]) =>
+        checkSkillAudit(source, skillNames).catch(() => null)
+      )
+    );
+
+    const newCache: Record<string, SkillAuditData> = { ...get().auditCache };
+    for (const result of results) {
+      if (!result) continue;
+      for (const [name, data] of Object.entries(result)) {
+        if (data) newCache[name] = data;
+      }
+    }
+    set({ auditCache: newCache });
   },
 
   syncSkills: async () => {

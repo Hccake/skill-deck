@@ -18,9 +18,26 @@ use crate::models::{ParsedSource, SourceType};
 use std::path::Path;
 use url::Url;
 
+/// Source 别名映射
+/// 对应 CLI: source-parser.ts SOURCE_ALIASES
+const SOURCE_ALIASES: &[(&str, &str)] = &[
+    ("coinbase/agentWallet", "coinbase/agentic-wallet-skills"),
+];
+
+/// 解析 source 别名
+fn resolve_alias(source: &str) -> String {
+    SOURCE_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == source)
+        .map(|(_, target)| target.to_string())
+        .unwrap_or_else(|| source.to_string())
+}
+
 /// 解析来源字符串
 pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
     let input = input.trim();
+    // 解析别名
+    let input = &resolve_alias(input);
 
     if input.is_empty() {
         return Err(AppError::InvalidSource {
@@ -411,5 +428,13 @@ mod tests {
         let result = parse_source("  owner/repo  ").unwrap();
         assert_eq!(result.source_type, SourceType::GitHub);
         assert_eq!(result.url, "https://github.com/owner/repo");
+    }
+
+    #[test]
+    fn test_source_alias_resolution() {
+        let result = parse_source("coinbase/agentWallet").unwrap();
+        assert_eq!(result.source_type, SourceType::GitHub);
+        // URL 应包含 resolved 后的 repo 名
+        assert!(result.url.contains("agentic-wallet-skills"));
     }
 }

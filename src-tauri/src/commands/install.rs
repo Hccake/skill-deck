@@ -5,7 +5,8 @@
 //! - install_skills: 安装选中的 skills
 
 use crate::core::agents::AgentType;
-use crate::core::skill_lock::{add_skill_to_lock, add_skill_to_scoped_lock, save_selected_agents};
+use crate::core::local_lock::{add_skill_to_local_lock, compute_skill_folder_hash, LocalSkillLockEntry};
+use crate::core::skill_lock::{add_skill_to_lock, save_selected_agents};
 use crate::core::{
     clone_repo_with_progress, discover_skills, fetch_skill_folder_hash, get_owner_repo,
     install_skill_for_agent, parse_source, CloneProgress, DiscoverOptions,
@@ -234,11 +235,26 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
                     );
                 }
                 crate::models::Scope::Project => {
-                    let _ = add_skill_to_scoped_lock(
-                        &skill.name, source, source_type_str, source_url,
-                        skill_path, &skill_folder_hash,
-                        params.project_path.as_deref(),
-                    );
+                    if let Some(ref project_path) = params.project_path {
+                        // 计算安装后的本地文件 SHA-256
+                        let install_dir = crate::core::paths::canonical_skills_dir(false, project_path)
+                            .join(crate::core::skill::sanitize_name(&skill.name));
+                        let computed_hash = compute_skill_folder_hash(&install_dir)
+                            .unwrap_or_default();
+
+                        let entry = LocalSkillLockEntry {
+                            source: source.to_string(),
+                            source_type: source_type_str.to_string(),
+                            computed_hash,
+                            remote_hash: if skill_folder_hash.is_empty() {
+                                None
+                            } else {
+                                Some(skill_folder_hash.clone())
+                            },
+                            skill_path: skill_path.map(|s| s.to_string()),
+                        };
+                        let _ = add_skill_to_local_lock(&skill.name, entry, project_path);
+                    }
                 }
             }
         }
