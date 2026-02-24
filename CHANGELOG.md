@@ -5,6 +5,14 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- 修复设置页「检查更新」按钮在首次检查后永久消失的问题，改为始终显示刷新按钮允许手动重新检查
+- 修复检查更新失败时无任何错误提示的问题，新增错误状态展示和重试按钮
+- 更新检查 UI 改为由 store 状态驱动，移除对 `localStorage` 的直接依赖
+
 ## [0.4.0] - 2026-02-24
 
 ### Added
@@ -83,7 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 深色/浅色主题切换
 - GitHub Actions CI/CD 构建流水线（Windows / macOS / Ubuntu）
 
-[Unreleased]: https://github.com/hccake/skill-deck/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/hccake/skill-deck/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hccake/skill-deck/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/hccake/skill-deck/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/hccake/skill-deck/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hccake/skill-deck/compare/v0.2.0...v0.3.0
