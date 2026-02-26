@@ -177,8 +177,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   };
 
   return (
-    <div className="space-y-4">
-      <Tabs defaultValue="manual">
+    <div className="flex flex-col gap-4 h-full">
+      <Tabs defaultValue="manual" className="flex flex-col flex-1 min-h-0">
         <TabsList className="w-full">
           <TabsTrigger value="search" className="flex-1" disabled={isLoading}>
             {t('addSkill.source.tabs.search')}
@@ -190,7 +190,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
 
         {isLoading ? (
           /* 统一加载视图 — 替换所有 Tab 内容，无论从哪个 tab 触发都可见 */
-          <div className="flex flex-col items-center justify-center h-64 space-y-3">
+          <div className="flex flex-col items-center justify-center flex-1 space-y-3">
             <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin" />
             <div className="text-center space-y-1.5">
               <p className="text-sm text-muted-foreground">{getPhaseText()}</p>
@@ -207,8 +207,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         ) : (
           <>
             {/* 搜索 Tab */}
-            <TabsContent value="search">
-              <div className="h-64">
+            <TabsContent value="search" className="flex-1 min-h-0">
+              <div className="h-full">
                 <SkillSearch
                   installedSkillKeys={installedSkillKeys}
                   onInstall={handleSearchSelect}
