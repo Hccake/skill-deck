@@ -45,7 +45,7 @@ export function ScopeStep({ defaultScope, defaultProjectPath, onSelect }: ScopeS
   }, [projects, t]);
 
   return (
-    <div className="space-y-4 py-4">
+    <div className="space-y-4">
       <div className="space-y-2">
         <label className="text-sm font-medium">
           {t('addSkill.scopeSelect.title')}

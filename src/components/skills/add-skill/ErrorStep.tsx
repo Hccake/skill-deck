@@ -16,7 +16,7 @@ export function ErrorStep({ error, onRetry, onBack, onClose }: ErrorStepProps) {
   const [detailsExpanded, setDetailsExpanded] = useState(true);
 
   return (
-    <div className="space-y-4 py-4">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
         <XCircle className="h-8 w-8 text-destructive shrink-0" />

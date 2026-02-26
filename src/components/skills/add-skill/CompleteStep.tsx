@@ -44,7 +44,7 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
   }, [results.successful, results.failed]);
 
   return (
-    <div className="space-y-4 py-4">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
         {hasFailures ? (

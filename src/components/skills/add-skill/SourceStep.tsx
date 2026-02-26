@@ -177,7 +177,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   };
 
   return (
-    <div className="space-y-4 py-4">
+    <div className="space-y-4">
       <Tabs defaultValue="manual">
         <TabsList className="w-full">
           <TabsTrigger value="search" className="flex-1" disabled={isLoading}>
