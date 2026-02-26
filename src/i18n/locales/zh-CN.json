@@ -242,15 +242,13 @@
     },
     "confirm": {
       "title": "安装摘要",
-      "scopeGlobal": "安装到：全局 (~/.agents/skills/)",
-      "scopeProject": "安装到：{{name}} ({{path}})",
-      "installing": "正在安装 {{count}} 个 Skill 到 {{agents}} 个 Agents",
-      "installing_plural": "正在安装 {{count}} 个 Skills 到 {{agents}} 个 Agents",
+      "overwriteCount": "{{count}} 个 Skills 已存在，安装后将被覆盖",
+      "willOverwrite": "将覆盖: {{agents}}",
+      "mode": "安装方式",
+      "directories": "安装目录",
       "universal": "通用",
-      "symlink": "符号链接 →",
-      "copy": "复制 →",
-      "overwrites": "将被覆盖",
-      "overwriteWarning": "这些 Skills 将被覆盖"
+      "symlink": "符号链接",
+      "copy": "复制"
     },
     "installing": {
       "title": "安装中...",

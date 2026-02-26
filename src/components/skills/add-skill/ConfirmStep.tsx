@@ -1,17 +1,19 @@
 // src/components/skills/add-skill/ConfirmStep.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Globe, Folder } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
 import { RiskBadge } from '../RiskBadge';
 import type { WizardState } from './types';
-
-/** 从完整路径中提取项目名称 */
-function getProjectName(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/');
-  return parts[parts.length - 1] || path;
-}
 
 interface ConfirmStepProps {
   state: WizardState;
@@ -24,24 +26,17 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
   const { t } = useTranslation();
 
   const updateStateRef = useRef(updateState);
-  updateStateRef.current = updateState;
+  useEffect(() => { updateStateRef.current = updateState; });
 
   // 审计数据（组件级 state，不影响 wizard 流程）
   const [auditData, setAuditData] = useState<Partial<Record<string, SkillAuditData>>>({});
 
-  // 获取选中的 agent 名称 — rerender-memo 规则
-  const selectedAgentNames = useMemo(() => {
-    const selectedSet = new Set(state.selectedAgents);
-    return state.allAgents
-      .filter((a) => selectedSet.has(a.id))
-      .map((a) => a.name);
-  }, [state.selectedAgents, state.allAgents]);
-
-  // 并行检测覆盖 + 获取审计数据 — async-parallel 规则
+  // 并行检测覆盖 + 获取审计数据
   useEffect(() => {
     if (state.selectedAgents.length === 0 || state.selectedSkills.length === 0) return;
 
-    // 覆盖检测（影响安装流程）
+    updateStateRef.current({ confirmReady: false });
+
     const overwritePromise = checkOverwrites(
       state.selectedSkills,
       state.selectedAgents,
@@ -49,110 +44,132 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
       scope === 'project' ? projectPath : undefined
     );
 
-    // 审计数据（不影响流程，仅展示）
     const auditPromise = state.source
       ? checkSkillAudit(state.source, state.selectedSkills).catch(() => null)
       : Promise.resolve(null);
 
-    // 并行执行
     Promise.all([overwritePromise, auditPromise]).then(([overwriteResult, auditResult]) => {
       const overwrites: Record<string, string[]> = {};
       for (const [key, value] of Object.entries(overwriteResult)) {
         if (value) overwrites[key] = value;
       }
-      updateStateRef.current({ overwrites });
+      updateStateRef.current({ overwrites, confirmReady: true });
 
       if (auditResult) {
         setAuditData(auditResult);
       }
     }).catch((error) => {
       console.error('Failed to check overwrites/audit:', error);
-      updateStateRef.current({ overwrites: {} });
+      updateStateRef.current({ overwrites: {}, confirmReady: true });
     });
   }, [state.selectedSkills, state.selectedAgents, state.source, scope, projectPath]);
 
-  const totalAgents = state.selectedAgents.length;
-  const hasOverwrites = Object.keys(state.overwrites).length > 0;
+  // 覆盖统计
+  const overwriteCount = useMemo(
+    () => Object.values(state.overwrites).filter((agents) => agents.length > 0).length,
+    [state.overwrites]
+  );
+
+  // 已选的非 universal agents 信息（用于目录列表）
+  const selectedNonUniversalAgents = useMemo(() => {
+    const selectedSet = new Set(state.selectedAgents);
+    return state.allAgents.filter((a) => selectedSet.has(a.id) && !a.isUniversal);
+  }, [state.selectedAgents, state.allAgents]);
+
+  const modeLabel = state.mode === 'symlink'
+    ? t('addSkill.confirm.symlink')
+    : t('addSkill.confirm.copy');
+
+  const universalDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
 
   return (
-    <div className="space-y-4 py-4">
+    <div className="space-y-4">
       <h3 className="text-sm font-medium">{t('addSkill.confirm.title')}</h3>
 
-      {/* Scope 信息 Banner */}
-      <div className="flex items-center gap-2 p-3 bg-muted/50 text-foreground text-sm rounded-md border border-border/50">
-        {scope === 'global' ? (
-          <>
-            <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span>{t('addSkill.confirm.scopeGlobal')}</span>
-          </>
-        ) : (
-          <>
-            <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span>
-              {t('addSkill.confirm.scopeProject', {
-                name: getProjectName(projectPath ?? ''),
-                path: projectPath,
-              })}
-            </span>
-          </>
-        )}
-      </div>
+      {/* 集中覆盖警告条 */}
+      {state.confirmReady && overwriteCount > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-md text-sm text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{t('addSkill.confirm.overwriteCount', { count: overwriteCount })}</span>
+        </div>
+      )}
 
-      <div className="border rounded-md p-3 space-y-3">
-          {state.selectedSkills.map((skillName) => {
+      {/* Skills 列表 */}
+      <div className="border rounded-md divide-y divide-border/50">
+        {!state.confirmReady ? (
+          // 骨架屏
+          state.selectedSkills.map((skillName) => (
+            <div key={skillName} className="flex items-center justify-between gap-2 px-3 py-2">
+              <span className="font-mono text-[13px]">{skillName}</span>
+              <Skeleton className="h-5 w-14 rounded-full" />
+            </div>
+          ))
+        ) : (
+          state.selectedSkills.map((skillName) => {
             const overwriteAgents = state.overwrites[skillName] ?? [];
+            const hasOverwrite = overwriteAgents.length > 0;
 
             return (
-              <div key={skillName} className="p-3 bg-muted/30 rounded-md space-y-2">
-                <div className="flex items-center gap-2 font-medium text-sm">
-                  <span>
-                    {scope === 'global' ? '~/.agents/skills/' : './.agents/skills/'}
+              <div key={skillName} className="flex items-center justify-between gap-2 px-3 py-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {hasOverwrite && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t('addSkill.confirm.willOverwrite', { agents: overwriteAgents.join(', ') })}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  <span className="font-mono text-[13px] text-foreground truncate">
                     {skillName}
                   </span>
-                  {auditData[skillName] && (
-                    <RiskBadge risk={auditData[skillName].risk} />
-                  )}
                 </div>
-
-                {selectedAgentNames.length > 0 && (
-                  <div className="text-xs text-muted-foreground">
-                    <span>
-                      {state.mode === 'symlink'
-                        ? t('addSkill.confirm.symlink')
-                        : t('addSkill.confirm.copy')}
-                    </span>{' '}
-                    {selectedAgentNames.join(', ')}
-                  </div>
-                )}
-
-                {overwriteAgents.length > 0 && (
-                  <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-500">
-                    <AlertTriangle className="h-3 w-3" />
-                    <span>
-                      {t('addSkill.confirm.overwrites')}: {overwriteAgents.join(', ')}
-                    </span>
-                  </div>
+                {auditData[skillName] && (
+                  <RiskBadge risk={auditData[skillName].risk} />
                 )}
               </div>
             );
-          })}
+          })
+        )}
       </div>
 
-      {/* Summary */}
-      <div className="text-sm text-muted-foreground">
-        {t('addSkill.confirm.installing', {
-          count: state.selectedSkills.length,
-          agents: totalAgents,
-        })}
+      {/* 安装信息区 */}
+      <Separator />
+
+      {/* 安装方式 */}
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 text-sm">
+        <span className="text-muted-foreground">{t('addSkill.confirm.mode')}</span>
+        <span className="text-foreground">{modeLabel}</span>
       </div>
 
-      {/* Overwrite warning banner */}
-      {hasOverwrites && (
-        <div className="flex items-center gap-2 p-3 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-sm rounded-md">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {t('addSkill.confirm.overwriteWarning')}
+      {/* 安装目录 */}
+      <div className="space-y-2">
+        <span className="text-sm font-medium">{t('addSkill.confirm.directories')}</span>
+        <div className="border rounded-md divide-y divide-border/50">
+          {/* 通用目录 */}
+          <div className="flex items-center justify-between gap-2 px-3 py-2">
+            <code className="font-mono text-[13px] text-foreground truncate">
+              {universalDir}
+            </code>
+            <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
+              {t('addSkill.confirm.universal')}
+            </Badge>
+          </div>
+          {/* Agent 目录 */}
+          {selectedNonUniversalAgents.map((agent) => (
+            <div key={agent.id} className="flex items-center justify-between gap-2 px-3 py-2">
+              <code className="font-mono text-[13px] text-foreground truncate">
+                {scope === 'global' ? agent.globalSkillsDir : agent.skillsDir}
+              </code>
+              <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
+                {agent.name}
+              </Badge>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
