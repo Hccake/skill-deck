@@ -241,12 +241,10 @@
       "copyHint": "Independent copies for each agent"
     },
     "confirm": {
-      "title": "Installation Summary",
       "overwriteCount": "{{count}} skills already exist and will be overwritten",
       "willOverwrite": "Overwrites: {{agents}}",
-      "mode": "Install mode",
-      "directories": "Install directories",
       "universal": "universal",
+      "directories": "Install directories",
       "symlink": "Symlink",
       "copy": "Copy"
     },

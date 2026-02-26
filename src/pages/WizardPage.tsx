@@ -59,6 +59,7 @@ function createInitialState(params: {
     otherAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
+    confirmReady: false,
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
@@ -153,11 +154,11 @@ export function WizardPage() {
       case 'options':
         return true;
       case 'confirm':
-        return true;
+        return state.confirmReady;
       default:
         return false;
     }
-  }, [state.step, state.fetchStatus, state.availableSkills.length, state.selectedSkills.length]);
+  }, [state.step, state.fetchStatus, state.availableSkills.length, state.selectedSkills.length, state.confirmReady]);
 
   // 是否为结果态
   const isResultState = state.step === 'installing' || state.step === 'complete' || state.step === 'error';
@@ -292,7 +293,7 @@ export function WizardPage() {
               </Button>
             )}
             {state.step === 'confirm' ? (
-              <Button onClick={() => goToStep('installing')}>
+              <Button onClick={() => goToStep('installing')} disabled={!canProceed}>
                 {t('addSkill.actions.install')}
               </Button>
             ) : (

@@ -69,6 +69,7 @@ export interface WizardState {
 
   // Confirm
   overwrites: Record<string, string[]>;
+  confirmReady: boolean;
 
   // CLI 预填值
   preSelectedSkills: string[];

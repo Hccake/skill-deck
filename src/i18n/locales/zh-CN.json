@@ -241,12 +241,10 @@
       "copyHint": "为每个 Agent 创建独立副本"
     },
     "confirm": {
-      "title": "安装摘要",
       "overwriteCount": "{{count}} 个 Skills 已存在，安装后将被覆盖",
       "willOverwrite": "将覆盖: {{agents}}",
-      "mode": "安装方式",
-      "directories": "安装目录",
       "universal": "通用",
+      "directories": "安装目录",
       "symlink": "符号链接",
       "copy": "复制"
     },

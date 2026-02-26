@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Tooltip,
@@ -76,16 +75,10 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     return state.allAgents.filter((a) => selectedSet.has(a.id) && !a.isUniversal);
   }, [state.selectedAgents, state.allAgents]);
 
-  const modeLabel = state.mode === 'symlink'
-    ? t('addSkill.confirm.symlink')
-    : t('addSkill.confirm.copy');
-
   const universalDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium">{t('addSkill.confirm.title')}</h3>
-
       {/* 集中覆盖警告条 */}
       {state.confirmReady && overwriteCount > 0 && (
         <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-md text-sm text-amber-700 dark:text-amber-400">
@@ -97,10 +90,10 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
       {/* Skills 列表 */}
       <div className="border rounded-md divide-y divide-border/50">
         {!state.confirmReady ? (
-          // 骨架屏
-          state.selectedSkills.map((skillName) => (
-            <div key={skillName} className="flex items-center justify-between gap-2 px-3 py-2">
-              <span className="font-mono text-[13px]">{skillName}</span>
+          // 统一骨架屏 — 不显示 skill 名称，避免加载完成后警告突然插入的突兀感
+          state.selectedSkills.map((_, idx) => (
+            <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2">
+              <Skeleton className="h-4 w-32" />
               <Skeleton className="h-5 w-14 rounded-full" />
             </div>
           ))
@@ -135,20 +128,11 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
         )}
       </div>
 
-      {/* 安装信息区 */}
-      <Separator />
-
-      {/* 安装方式 */}
-      <div className="grid grid-cols-[auto_1fr] gap-x-4 text-sm">
-        <span className="text-muted-foreground">{t('addSkill.confirm.mode')}</span>
-        <span className="text-foreground">{modeLabel}</span>
-      </div>
-
-      {/* 安装目录 */}
-      <div className="space-y-2">
-        <span className="text-sm font-medium">{t('addSkill.confirm.directories')}</span>
-        <div className="border rounded-md divide-y divide-border/50">
-          {/* 通用目录 */}
+      {/* 安装目录 — 通用目录始终存储原始文件，Agent 目录根据 mode 符号链接或复制 */}
+      <div className="space-y-1.5">
+        <span className="text-sm text-muted-foreground">{t('addSkill.confirm.directories')}</span>
+        {/* 通用目录 — 原始文件所在 */}
+        <div className="border rounded-md">
           <div className="flex items-center justify-between gap-2 px-3 py-2">
             <code className="font-mono text-[13px] text-foreground truncate">
               {universalDir}
@@ -157,18 +141,32 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
               {t('addSkill.confirm.universal')}
             </Badge>
           </div>
-          {/* Agent 目录 */}
-          {selectedNonUniversalAgents.map((agent) => (
-            <div key={agent.id} className="flex items-center justify-between gap-2 px-3 py-2">
-              <code className="font-mono text-[13px] text-foreground truncate">
-                {scope === 'global' ? agent.globalSkillsDir : agent.skillsDir}
-              </code>
-              <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
-                {agent.name}
-              </Badge>
-            </div>
-          ))}
         </div>
+        {/* 关系标注 + Agent 目录 */}
+        {selectedNonUniversalAgents.length > 0 && (
+          <>
+            <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+              <span>↓</span>
+              <span>
+                {state.mode === 'symlink'
+                  ? t('addSkill.confirm.symlink')
+                  : t('addSkill.confirm.copy')}
+              </span>
+            </div>
+            <div className="border rounded-md divide-y divide-border/50">
+              {selectedNonUniversalAgents.map((agent) => (
+                <div key={agent.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                  <code className="font-mono text-[13px] text-foreground truncate">
+                    {scope === 'global' ? agent.globalSkillsDir : agent.skillsDir}
+                  </code>
+                  <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
+                    {agent.name}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
