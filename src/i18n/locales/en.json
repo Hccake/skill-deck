@@ -254,7 +254,13 @@
     },
     "installing": {
       "title": "Installing...",
-      "progress": "Progress: {{completed}}/{{total}}"
+      "progress": "Progress: {{completed}}/{{total}}",
+      "preparing": "Preparing...",
+      "connecting": "Connecting...",
+      "cloning": "Cloning repository...",
+      "cloningWithTime": "Cloning... ({{elapsed}}s / {{timeout}}s)",
+      "installingSkill": "Installing {{skill}} ({{completed}}/{{total}})",
+      "writingConfig": "Saving configuration..."
     },
     "complete": {
       "success": "Installed {{count}} skill",

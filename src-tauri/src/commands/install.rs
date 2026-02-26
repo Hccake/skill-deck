@@ -17,6 +17,19 @@ use crate::models::{
 };
 use tauri::{AppHandle, Emitter};
 
+/// 安装进度事件（发送到前端）
+#[derive(serde::Serialize, Clone)]
+struct InstallProgress {
+    /// 当前阶段: "installing" | "writing_lock"
+    phase: String,
+    /// 当前正在处理的 skill 名称
+    current_skill: String,
+    /// 已完成的 skill 数量
+    completed: usize,
+    /// 总 skill 数量
+    total: usize,
+}
+
 /// 从来源获取可用的 skills 列表
 ///
 /// # Arguments
@@ -170,8 +183,17 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
     let mut successful = Vec::new();
     let mut failed = Vec::new();
     let mut symlink_fallback_agents = Vec::new();
+    let total_skills = selected_skills.len();
 
-    for skill in &selected_skills {
+    for (idx, skill) in selected_skills.iter().enumerate() {
+        // 发送安装进度事件
+        let _ = app.emit("install-progress", &InstallProgress {
+            phase: "installing".to_string(),
+            current_skill: skill.name.clone(),
+            completed: idx,
+            total: total_skills,
+        });
+
         for agent_str in &target_agents {
             let agent: AgentType = agent_str
                 .parse()
@@ -199,6 +221,13 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
 
     // 7. 写入 lock 文件
     if !successful.is_empty() {
+        let _ = app.emit("install-progress", &InstallProgress {
+            phase: "writing_lock".to_string(),
+            current_skill: String::new(),
+            completed: total_skills,
+            total: total_skills,
+        });
+
         let owner_repo = get_owner_repo(&parsed);
 
         for skill in &selected_skills {

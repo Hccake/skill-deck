@@ -180,72 +180,78 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
     <div className="space-y-4 py-4">
       <Tabs defaultValue="manual">
         <TabsList className="w-full">
-          <TabsTrigger value="search" className="flex-1">
+          <TabsTrigger value="search" className="flex-1" disabled={isLoading}>
             {t('addSkill.source.tabs.search')}
           </TabsTrigger>
-          <TabsTrigger value="manual" className="flex-1">
+          <TabsTrigger value="manual" className="flex-1" disabled={isLoading}>
             {t('addSkill.source.tabs.manual')}
           </TabsTrigger>
         </TabsList>
 
-        {/* 搜索 Tab */}
-        <TabsContent value="search">
-          <div className="h-64">
-            <SkillSearch
-              installedSkillKeys={installedSkillKeys}
-              onInstall={handleSearchSelect}
-            />
-          </div>
-        </TabsContent>
-
-        {/* 手动输入 Tab（原有内容） */}
-        <TabsContent value="manual">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">
-              {t('addSkill.source.label')}
-            </label>
-            <div className="flex gap-2">
-              <Input
-                value={state.source}
-                onChange={(e) => updateState({ source: e.target.value })}
-                onKeyDown={handleKeyDown}
-                placeholder={t('addSkill.source.placeholder')}
-                disabled={isLoading}
-                className="flex-1"
-              />
-              <Button
-                onClick={handleFetch}
-                disabled={isLoading || !state.source.trim()}
-              >
-                {isLoading ? t('addSkill.source.fetching') : t('addSkill.source.fetch')}
-              </Button>
+        {isLoading ? (
+          /* 统一加载视图 — 替换所有 Tab 内容，无论从哪个 tab 触发都可见 */
+          <div className="flex flex-col items-center justify-center h-64 space-y-3">
+            <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin" />
+            <div className="text-center space-y-1.5">
+              <p className="text-sm text-muted-foreground">{getPhaseText()}</p>
+              <p className="text-xs text-muted-foreground/70 font-mono truncate max-w-xs">
+                {state.source.replace(/@[^@]+$/, '')}
+              </p>
             </div>
-            <p className="text-sm text-muted-foreground">
-              {t('addSkill.source.hint')}
-            </p>
-          </div>
-
-          {/* Error message */}
-          {state.fetchStatus === 'error' && state.fetchError && (
-            <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md whitespace-pre-wrap mt-2">
-              {formatAppError(state.fetchError, t)}
-            </div>
-          )}
-
-          {/* Loading indicator with progress */}
-          {isLoading && (
-            <div className="space-y-2 mt-2">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                <span>{getPhaseText()}</span>
-              </div>
-              {cloneProgress && cloneProgress.phase === 'cloning' && (
+            {cloneProgress && cloneProgress.phase === 'cloning' && (
+              <div className="w-full max-w-xs">
                 <Progress value={progressPercent} className="h-1" />
-              )}
-            </div>
-          )}
-        </TabsContent>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* 搜索 Tab */}
+            <TabsContent value="search">
+              <div className="h-64">
+                <SkillSearch
+                  installedSkillKeys={installedSkillKeys}
+                  onInstall={handleSearchSelect}
+                />
+              </div>
+            </TabsContent>
+
+            {/* 手动输入 Tab */}
+            <TabsContent value="manual">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  {t('addSkill.source.label')}
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    value={state.source}
+                    onChange={(e) => updateState({ source: e.target.value })}
+                    onKeyDown={handleKeyDown}
+                    placeholder={t('addSkill.source.placeholder')}
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={handleFetch}
+                    disabled={!state.source.trim()}
+                  >
+                    {t('addSkill.source.fetch')}
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {t('addSkill.source.hint')}
+                </p>
+              </div>
+            </TabsContent>
+          </>
+        )}
       </Tabs>
+
+      {/* Error 在 Tabs 外层 — 无论从哪个 tab 触发的错误都能显示 */}
+      {state.fetchStatus === 'error' && state.fetchError && (
+        <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md whitespace-pre-wrap">
+          {formatAppError(state.fetchError, t)}
+        </div>
+      )}
     </div>
   );
 }

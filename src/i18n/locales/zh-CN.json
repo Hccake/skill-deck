@@ -254,7 +254,13 @@
     },
     "installing": {
       "title": "安装中...",
-      "progress": "进度: {{completed}}/{{total}}"
+      "progress": "进度: {{completed}}/{{total}}",
+      "preparing": "准备中...",
+      "connecting": "正在连接...",
+      "cloning": "正在克隆仓库...",
+      "cloningWithTime": "正在克隆... ({{elapsed}}秒 / {{timeout}}秒)",
+      "installingSkill": "正在安装 {{skill}} ({{completed}}/{{total}})",
+      "writingConfig": "正在保存配置..."
     },
     "complete": {
       "success": "已安装 {{count}} 个 Skill",
