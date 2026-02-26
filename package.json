@@ -1,12 +1,12 @@
 {
   "name": "skill-deck",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "node scripts/sync-version.mjs && node scripts/patch-bindings.mjs && tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "eslint src",
     "preview": "vite preview",
     "patch-bindings": "node scripts/patch-bindings.mjs",
     "sync-version": "node scripts/sync-version.mjs"

@@ -5,7 +5,18 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-02-26
+
+### Changed
+
+- **重构 ConfirmStep 确认页面** — 移除冗余的 Scope 信息卡片和重复的路径前缀、agent badges、mode label，新增集中覆盖警告条与行内 Tooltip 标记，新增安装信息区展示安装方式和安装目录列表
+- **优化安装进度展示** — 安装过程新增细粒度进度状态反馈，提升安装体验
+- 搜索安装 skill 时窗口自适应高度
+- 移除安装步骤中内容区域多余的 padding top
+- 优化 ConfirmStep 布局层级和交互体验
+- ESLint 校验范围限定为 `src` 目录
+
+## [0.5.0] - 2026-02-24
 
 ### Fixed
 
@@ -91,7 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 深色/浅色主题切换
 - GitHub Actions CI/CD 构建流水线（Windows / macOS / Ubuntu）
 
-[Unreleased]: https://github.com/hccake/skill-deck/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hccake/skill-deck/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/hccake/skill-deck/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/hccake/skill-deck/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hccake/skill-deck/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/hccake/skill-deck/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/hccake/skill-deck/compare/v0.3.0...v0.3.1

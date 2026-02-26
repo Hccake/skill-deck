@@ -487,6 +487,7 @@ export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean
 
 import {
 	invoke as TAURI_INVOKE,
+	Channel as TAURI_CHANNEL,
 } from "@tauri-apps/api/core";
 import * as TAURI_API_EVENT from "@tauri-apps/api/event";
 import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
@@ -507,7 +508,7 @@ export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-export function __makeEvents__<T extends Record<string, any>>(
+function __makeEvents__<T extends Record<string, any>>(
 	mappings: Record<keyof T, string>,
 ) {
 	return new Proxy(
