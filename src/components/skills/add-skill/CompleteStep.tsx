@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { InstallResult } from '@/bindings';
 import type { WizardState } from './types';
 
 interface CompleteStepProps {
@@ -15,18 +16,17 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
   const { t } = useTranslation();
   const results = state.installResults;
 
-  if (!results) {
-    return null;
-  }
-
-  const failedCount = results.failed.length;
-  const hasFailures = failedCount > 0;
-  const hasSymlinkFallback = results.symlinkFallbackAgents.length > 0;
-
-  // 合并两个 useMemo 为单次遍历，符合 js-combine-iterations 规则
+  // useMemo 必须在 early return 之前调用（rules-of-hooks）
   const { successfulBySkill, failedBySkill } = useMemo(() => {
-    const successMap = new Map<string, typeof results.successful>();
-    const failedMap = new Map<string, typeof results.failed>();
+    if (!results) {
+      return {
+        successfulBySkill: new Map<string, InstallResult[]>(),
+        failedBySkill: new Map<string, InstallResult[]>(),
+      };
+    }
+
+    const successMap = new Map<string, InstallResult[]>();
+    const failedMap = new Map<string, InstallResult[]>();
 
     for (const r of results.successful) {
       const existing = successMap.get(r.skillName) ?? [];
@@ -41,7 +41,14 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
     }
 
     return { successfulBySkill: successMap, failedBySkill: failedMap };
-  }, [results.successful, results.failed]);
+  }, [results]);
+
+  if (!results) {
+    return null;
+  }
+
+  const hasFailures = results.failed.length > 0;
+  const hasSymlinkFallback = results.symlinkFallbackAgents.length > 0;
 
   return (
     <div className="space-y-4">

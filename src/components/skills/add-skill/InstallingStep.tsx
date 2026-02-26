@@ -47,12 +47,16 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
   const updateStateRef = useRef(updateState);
   useEffect(() => { updateStateRef.current = updateState; });
 
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; });
+
   // 捕获当前状态值用于安装
   const installParamsRef = useRef({
     source: state.source,
     selectedSkills: state.selectedSkills,
     selectedAgents: state.selectedAgents,
     mode: state.mode,
+    availableSkills: state.availableSkills,
     scope,
     projectPath,
   });
@@ -62,6 +66,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       selectedSkills: state.selectedSkills,
       selectedAgents: state.selectedAgents,
       mode: state.mode,
+      availableSkills: state.availableSkills,
       scope,
       projectPath,
     };
@@ -123,9 +128,9 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       } catch (error) {
         console.error('Installation failed:', error);
 
-        const installError = parseInstallError(toAppError(error), t, {
+        const installError = parseInstallError(toAppError(error), tRef.current, {
           selectedSkills,
-          availableSkills: state.availableSkills,
+          availableSkills: installParamsRef.current.availableSkills,
         });
 
         updateStateRef.current({

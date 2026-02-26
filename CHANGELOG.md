@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 优化 ConfirmStep 布局层级和交互体验
 - ESLint 校验范围限定为 `src` 目录
 
+### Fixed
+
+- 修复 CompleteStep 中 `useMemo` 在 early return 之后调用导致违反 Rules of Hooks 的问题
+- 修复 OptionsStep 中渲染期间直接写入 `ref.current` 的问题，改为通过 `useEffect` 同步
+- 修复 InstallingStep 中 `useEffect` 缺失 `t` 和 `state.availableSkills` 依赖的问题，通过 ref 捕获
+- ESLint 配置新增 `argsIgnorePattern: '^_'`，支持下划线前缀的未使用参数惯例
+
 ## [0.5.0] - 2026-02-24
 
 ### Fixed

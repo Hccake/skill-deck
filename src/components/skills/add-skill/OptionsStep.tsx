@@ -18,13 +18,13 @@ interface OptionsStepProps {
 export function OptionsStep({ state, updateState }: OptionsStepProps) {
   const { t } = useTranslation();
 
-  // 使用 ref 保存 updateState，避免将其作为 useEffect 依赖
+  // 使用 ref 保存 updateState，避免将其作为 useEffect 依赖（advanced-event-handler-refs）
   const updateStateRef = useRef(updateState);
-  updateStateRef.current = updateState;
+  useEffect(() => { updateStateRef.current = updateState; });
 
   // 使用 ref 保存 preSelectedAgents，避免将其作为 useEffect 依赖
   const preSelectedAgentsRef = useRef(state.preSelectedAgents);
-  preSelectedAgentsRef.current = state.preSelectedAgents;
+  useEffect(() => { preSelectedAgentsRef.current = state.preSelectedAgents; });
 
   // 初始化 agents 数据 — async-parallel 规则
   useEffect(() => {
