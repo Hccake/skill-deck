@@ -14,7 +14,7 @@
   "context": {
     "title": "Context",
     "global": "Global",
-    "globalSubtitle": "Base layer • All global skills",
+    "globalSubtitle": "Shared across projects",
     "projects": "Projects",
     "addProject": "Add Project",
     "manageInSettings": "Manage in Settings",

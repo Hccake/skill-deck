@@ -14,7 +14,7 @@
   "context": {
     "title": "上下文",
     "global": "全局",
-    "globalSubtitle": "基础层 • 所有全局技能",
+    "globalSubtitle": "所有项目共享",
     "projects": "项目",
     "addProject": "添加项目",
     "manageInSettings": "在设置中管理",

@@ -1,8 +1,7 @@
 // src/components/skills/ContextSidebar.tsx
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Settings, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Plus, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -45,15 +44,16 @@ function GlobalContextItem() {
         'w-full rounded-md px-3 py-2 text-left transition-colors duration-200',
         'cursor-pointer',
         isSelected
-          ? 'bg-accent text-accent-foreground'
-          : 'hover:bg-accent/50 hover:text-accent-foreground'
+          ? 'bg-foreground/[0.06] text-foreground font-medium'
+          : 'text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground'
       )}
     >
       <div className="flex items-center gap-2.5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10">
-          <Globe className="h-4 w-4 text-primary" />
+        <Globe className="h-[18px] w-[18px] text-primary flex-shrink-0" />
+        <div className="min-w-0">
+          <span className="text-sm">{t('context.global')}</span>
+          <p className="text-xs text-muted-foreground/60 truncate mt-0.5">{t('context.globalSubtitle')}</p>
         </div>
-        <span className="text-sm font-medium">{t('context.global')}</span>
       </div>
     </button>
   );
@@ -97,18 +97,16 @@ function ProjectContextItem({ project }: { project: string }) {
         'w-full rounded-md px-3 py-2 text-left transition-colors duration-200',
         'group relative cursor-pointer',
         isSelected
-          ? 'bg-accent text-accent-foreground'
-          : 'hover:bg-accent/50 hover:text-accent-foreground'
+          ? 'bg-foreground/[0.06] text-foreground font-medium'
+          : 'text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground'
       )}
     >
       <div className="flex items-center gap-2.5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted-foreground/10">
-          <Folder className="h-4 w-4 text-muted-foreground" />
-        </div>
+        <Folder className={cn('h-[18px] w-[18px] flex-shrink-0', isSelected ? 'text-foreground' : 'text-muted-foreground')} />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium truncate">{projectName}</span>
+            <span className="text-sm truncate">{projectName}</span>
 
             {/* Hover 时显示的操作按钮 */}
             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-auto">
@@ -136,8 +134,10 @@ function ProjectContextItem({ project }: { project: string }) {
             </div>
           </div>
 
-          {/* 项目路径提示 - 与标题左对齐 */}
-          <p className="text-xs text-muted-foreground/70 truncate mt-0.5">{project}</p>
+          {/* 项目路径 */}
+          <p className="text-xs text-muted-foreground/60 truncate mt-0.5">
+            {project}
+          </p>
         </div>
       </div>
     </div>
@@ -199,7 +199,6 @@ function ProjectContextItem({ project }: { project: string }) {
 /** ContextSidebar 主组件 */
 export function ContextSidebar() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { projects, projectsLoaded, loadProjects, addProject } = useContextStore();
 
   // 初始化加载 projects
@@ -224,33 +223,18 @@ export function ContextSidebar() {
     }
   };
 
-  const handleManageInSettings = () => {
-    navigate('/settings?tab=projects');
-  };
-
   return (
-    <aside className="w-60 flex-shrink-0 border-r border-border bg-muted/30 flex flex-col h-full">
-      {/* 标题区 */}
-      <div className="px-4 py-3 border-b border-border/40">
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-          {t('context.title')}
-        </h2>
-      </div>
-
-      {/* Global 区域 */}
-      <div className="px-3 py-3 border-b border-border/40">
+    <aside className="w-60 flex-shrink-0 border-r border-border flex flex-col h-full">
+      {/* Global */}
+      <div className="px-4 pt-4 sm:pt-5">
         <GlobalContextItem />
       </div>
 
       {/* Projects 列表区域（可滚动） */}
       <div className="flex-1 overflow-auto">
-        <div className="px-3 py-3">
-          <h3 className="px-2 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            {t('context.projects')}
-          </h3>
-
+        <div className="px-4">
           {projects.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">
+            <p className="py-2 text-xs text-muted-foreground">
               {t('context.noProjects')}
             </p>
           ) : (
@@ -265,27 +249,15 @@ export function ContextSidebar() {
           <Button
             variant="ghost"
             size="sm"
-            className="w-full justify-start mt-2 text-muted-foreground hover:text-foreground cursor-pointer"
+            className="w-full justify-start gap-2.5 mt-2 text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground cursor-pointer"
             onClick={handleAddProject}
           >
-            <Plus className="h-4 w-4 mr-2" />
+            <Plus className="h-[18px] w-[18px]" />
             {t('context.addProject')}
           </Button>
         </div>
       </div>
 
-      {/* 底部固定操作区 */}
-      <div className="px-3 py-3 border-t border-border/40">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-muted-foreground hover:text-foreground cursor-pointer"
-          onClick={handleManageInSettings}
-        >
-          <Settings className="h-4 w-4 mr-2" />
-          {t('context.manageInSettings')}
-        </Button>
-      </div>
     </aside>
   );
 }
