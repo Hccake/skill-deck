@@ -26,6 +26,7 @@ pub fn run() {
             commands::install::install_skills,
             commands::overwrites::check_overwrites,
             commands::remove::remove_skill,
+            commands::remove_details::get_skill_agent_details,
             commands::update::check_updates,
             commands::update::update_skill,
             commands::wizard::open_install_wizard,

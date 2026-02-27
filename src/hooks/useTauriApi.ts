@@ -3,6 +3,7 @@
 import { commands } from '@/bindings';
 import type {
   AgentInfo,
+  AgentType,
   ListSkillsResult,
   SkillScope,
   RemoveResult,
@@ -13,10 +14,11 @@ import type {
   SkillDeckConfig,
   Scope,
   SkillAuditData,
+  SkillAgentDetails,
 } from '@/bindings';
 
 // 重导出类型供组件使用
-export type { AgentInfo, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, FetchResult, InstallParams, InstallResults, SkillDeckConfig, SkillAuditData };
+export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, FetchResult, InstallParams, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
 function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; error: E }): T {
@@ -112,13 +114,38 @@ export async function checkOverwrites(
 
 /**
  * 删除指定 skill
+ * @param params.fullRemoval - true=完全删除，false=部分移除（仅删除指定 agents 的 symlink）
+ * @param params.agents - 部分移除时指定的 agent 列表
  */
 export async function removeSkill(params: {
   scope: Scope;
   name: string;
   projectPath?: string;
+  agents?: AgentType[];
+  fullRemoval?: boolean;
 }): Promise<RemoveResult> {
-  return unwrap(await commands.removeSkill(params.scope, params.name, params.projectPath ?? null));
+  return unwrap(
+    await commands.removeSkill(
+      params.scope,
+      params.name,
+      params.projectPath ?? null,
+      params.agents ?? null,
+      params.fullRemoval ?? null,
+    )
+  );
+}
+
+/**
+ * 查询 skill 的 agent 安装详情（智能删除对话框用）
+ */
+export async function getSkillAgentDetails(params: {
+  scope: Scope;
+  name: string;
+  projectPath?: string;
+}): Promise<SkillAgentDetails> {
+  return unwrap(
+    await commands.getSkillAgentDetails(params.scope, params.name, params.projectPath ?? null)
+  );
 }
 
 // ============ 项目管理 API ============

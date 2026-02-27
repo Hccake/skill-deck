@@ -5,6 +5,7 @@ pub mod config;
 pub mod install;
 pub mod overwrites;
 pub mod remove;
+pub mod remove_details;
 pub mod skills;
 pub mod update;
 pub mod wizard;

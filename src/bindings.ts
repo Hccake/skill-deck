@@ -176,13 +176,25 @@ async checkOverwrites(skills: string[], agents: string[], scope: Scope, projectP
  * * `scope` - 删除范围（global/project）
  * * `name` - skill 名称
  * * `project_path` - Project scope 时的项目路径
- * 
- * # Returns
- * * `RemoveResult` - 删除结果
+ * * `agents` - 部分移除时指定的 agent 列表（None 或空 = 完全删除）
+ * * `full_removal` - 是否完全删除（true = 删除一切，false = 仅删除指定 agents 的 symlink）
  */
-async removeSkill(scope: Scope, name: string, projectPath: string | null) : Promise<Result<RemoveResult, AppError>> {
+async removeSkill(scope: Scope, name: string, projectPath: string | null, agents: AgentType[] | null, fullRemoval: boolean | null) : Promise<Result<RemoveResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { scope, name, projectPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { scope, name, projectPath, agents, fullRemoval }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 查询 skill 的 agent 安装详情
+ * 
+ * 对话框挂载时调用，返回 universal/non-universal 分组信息
+ */
+async getSkillAgentDetails(scope: Scope, name: string, projectPath: string | null) : Promise<Result<SkillAgentDetails, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_skill_agent_details", { scope, name, projectPath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -318,6 +330,26 @@ skillFilter: string | null;
  * 可用的 skills 列表
  */
 skills: AvailableSkill[] }
+/**
+ * 非 Universal Agent 的安装详情
+ */
+export type IndependentAgentInfo = { 
+/**
+ * Agent 类型
+ */
+agent: AgentType; 
+/**
+ * Agent 显示名称
+ */
+displayName: string; 
+/**
+ * 安装路径
+ */
+path: string; 
+/**
+ * 是否是 symlink（false 表示 copy 模式安装）
+ */
+isSymlink: boolean }
 /**
  * 安装模式
  */
@@ -470,6 +502,30 @@ export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical" | "unkno
  */
 export type Scope = "global" | "project"
 /**
+ * Skill 的 Agent 安装详情（用于智能删除对话框）
+ */
+export type SkillAgentDetails = { 
+/**
+ * Skill 名称
+ */
+skillName: string; 
+/**
+ * 安装范围
+ */
+scope: Scope; 
+/**
+ * Canonical 目录路径
+ */
+canonicalPath: string; 
+/**
+ * 共享 canonical 的 Universal Agents（带显示名称）
+ */
+universalAgents: ([AgentType, string])[]; 
+/**
+ * 有独立 symlink 的 Non-Universal Agents
+ */
+independentAgents: IndependentAgentInfo[] }
+/**
  * Skill 审计数据
  */
 export type SkillAuditData = { risk: RiskLevel; alerts?: number | null; score?: number | null; analyzedAt: string }
@@ -495,6 +551,7 @@ export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean
 
 import {
 	invoke as TAURI_INVOKE,
+	Channel as TAURI_CHANNEL,
 } from "@tauri-apps/api/core";
 import * as TAURI_API_EVENT from "@tauri-apps/api/event";
 import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
@@ -515,7 +572,7 @@ export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-export function __makeEvents__<T extends Record<string, any>>(
+function __makeEvents__<T extends Record<string, any>>(
 	mappings: Record<keyof T, string>,
 ) {
 	return new Proxy(

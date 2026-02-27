@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
 
+use crate::core::agents::AgentType;
+
 /// 安装范围
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
@@ -91,6 +93,39 @@ pub struct AvailableSkill {
     /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_name: Option<String>,
+}
+
+/// 非 Universal Agent 的安装详情
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct IndependentAgentInfo {
+    /// Agent 类型
+    pub agent: AgentType,
+    /// Agent 显示名称
+    pub display_name: String,
+    /// 安装路径
+    pub path: String,
+    /// 是否是 symlink（false 表示 copy 模式安装）
+    pub is_symlink: bool,
+}
+
+/// Skill 的 Agent 安装详情（用于智能删除对话框）
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct SkillAgentDetails {
+    /// Skill 名称
+    pub skill_name: String,
+    /// 安装范围
+    pub scope: Scope,
+    /// Canonical 目录路径
+    pub canonical_path: String,
+    /// 共享 canonical 的 Universal Agents（带显示名称）
+    pub universal_agents: Vec<(AgentType, String)>,
+    /// 有独立 symlink 的 Non-Universal Agents
+    pub independent_agents: Vec<IndependentAgentInfo>,
+    // 注意：不设 has_independent_agents 字段，前端直接用 independent_agents.length > 0 推导（YAGNI）
 }
 
 /// 单个 skill 的删除结果

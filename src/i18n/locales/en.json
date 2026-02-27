@@ -89,11 +89,20 @@
     },
     "deleteConfirm": {
       "title": "Delete Skill",
-      "description": "This will remove \"{{name}}\" from all installed editors. This action cannot be undone.",
+      "description": "Choose which agents to remove this skill from",
+      "sharedDirSection": "Shared directory",
+      "deleteCanonical": "Delete source files and install records",
+      "canonicalWarning": "All agents will lose access to this skill",
+      "independentSection": "Independent installs",
+      "noAgentsInstalled": "No agents detected with this skill installed. Delete source files?",
+      "fallbackConfirm": "Are you sure you want to delete the source files and install records?",
+      "loadingDetails": "Loading installation details...",
       "cancel": "Cancel",
-      "confirm": "Delete"
+      "confirm": "Delete",
+      "confirmPartial": "Remove ({{count}})"
     },
     "deleteSuccess": "\"{{name}}\" has been deleted",
+    "partialDeleteSuccess": "Removed \"{{name}}\" from {{count}} agents",
     "deleteError": "Failed to delete \"{{name}}\": {{error}}",
     "updateSuccess": "\"{{name}}\" has been updated",
     "updateError": "Failed to update \"{{name}}\": {{error}}",

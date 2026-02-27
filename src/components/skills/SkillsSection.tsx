@@ -28,7 +28,7 @@ interface SkillsSectionProps {
   auditCache?: Record<string, SkillAuditData>;
   onSkillClick: (skill: InstalledSkill) => void;
   onUpdate: (skillName: string) => void;
-  onDelete: (skillName: string) => void;
+  onDelete: (skill: InstalledSkill) => void;
   onToggleAgent: (skillName: string, agentId: string) => void;
   onAdd: () => void;
   emptyState?: React.ReactNode;

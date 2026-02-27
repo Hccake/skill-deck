@@ -7,12 +7,13 @@ import {
   listSkills,
   listAgents,
   removeSkill as apiRemoveSkill,
+  getSkillAgentDetails as apiGetAgentDetails,
   checkUpdates,
   updateSkill as apiUpdateSkill,
   openInstallWizard,
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
-import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData } from '@/bindings';
+import type { AgentInfo, AgentType, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData, SkillAgentDetails } from '@/bindings';
 
 /** 按名称排序 skills，保证展示顺序稳定 */
 function sortSkills(skills: InstalledSkill[]): InstalledSkill[] {
@@ -34,7 +35,7 @@ function t(key: string, options?: Record<string, unknown>): string {
 }
 
 export interface DeleteTarget {
-  name: string;
+  skill: InstalledSkill;
   scope: SkillScope;
   projectPath?: string;
 }
@@ -63,16 +64,18 @@ interface SkillsState {
   // Dialog 触发状态
   detailSkill: InstalledSkill | null;
   deleteTarget: DeleteTarget | null;
+  agentDetails: SkillAgentDetails | null;
+  loadingAgentDetails: boolean;
 
   // Actions — 内部通过 useContextStore.getState() 获取 selectedContext
   fetchSkills: () => Promise<void>;
   syncSkills: () => Promise<void>;
   fetchAuditForSkills: (skills: InstalledSkill[]) => Promise<void>;
   updateSkill: (skillName: string) => Promise<void>;
-  deleteSkill: () => Promise<void>;
+  deleteSkill: (params: { fullRemoval: boolean; agents?: AgentType[] }) => Promise<void>;
   openDetail: (skill: InstalledSkill) => void;
   closeDetail: () => void;
-  openDelete: (name: string, scope: SkillScope, projectPath?: string) => void;
+  openDelete: (skill: InstalledSkill, scope: SkillScope, projectPath?: string) => void;
   closeDelete: () => void;
   openAdd: (scope: SkillScope) => void;
   openAddWithPrefill: (prefill: AddDialogPrefill) => void;
@@ -97,6 +100,8 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   // Dialog 初始值
   detailSkill: null,
   deleteTarget: null,
+  agentDetails: null,
+  loadingAgentDetails: false,
 
   // === Actions ===
 
@@ -235,25 +240,30 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
     }
   },
 
-  deleteSkill: async () => {
+  deleteSkill: async ({ fullRemoval, agents }) => {
     const { deleteTarget } = get();
     if (!deleteTarget) return;
 
     try {
       await apiRemoveSkill({
         scope: deleteTarget.scope,
-        name: deleteTarget.name,
+        name: deleteTarget.skill.name,
         projectPath: deleteTarget.projectPath,
+        fullRemoval,
+        agents,
       });
-      toast.success(t('skills.deleteSuccess', { name: deleteTarget.name }));
-      set({ deleteTarget: null });
+      const msg = fullRemoval
+        ? t('skills.deleteSuccess', { name: deleteTarget.skill.name })
+        : t('skills.partialDeleteSuccess', { name: deleteTarget.skill.name, count: agents?.length ?? 0 });
+      toast.success(msg);
+      set({ deleteTarget: null, agentDetails: null });
       await get().fetchSkills();
     } catch (e) {
       toast.error(t('skills.deleteError', {
-        name: deleteTarget.name,
+        name: deleteTarget.skill.name,
         error: e instanceof Error ? e.message : String(e),
       }));
-      set({ deleteTarget: null });
+      set({ deleteTarget: null, agentDetails: null });
     }
   },
 
@@ -261,9 +271,20 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   openDetail: (skill) => set({ detailSkill: skill }),
   closeDetail: () => set({ detailSkill: null }),
 
-  openDelete: (name, scope, projectPath) =>
-    set({ deleteTarget: { name, scope, projectPath } }),
-  closeDelete: () => set({ deleteTarget: null }),
+  openDelete: (skill, scope, projectPath) => {
+    // 立即打开对话框
+    set({
+      deleteTarget: { skill, scope, projectPath },
+      agentDetails: null,
+      loadingAgentDetails: true,
+    });
+    // fire-and-forget: prefetch agent 详情
+    apiGetAgentDetails({ scope, name: skill.name, projectPath })
+      .then((details) => set({ agentDetails: details }))
+      .catch((e) => console.warn('Failed to fetch agent details:', e))
+      .finally(() => set({ loadingAgentDetails: false }));
+  },
+  closeDelete: () => set({ deleteTarget: null, agentDetails: null, loadingAgentDetails: false }),
 
   openAdd: (scope) => {
     const { selectedContext } = useContextStore.getState();

@@ -40,7 +40,7 @@ interface SkillCardProps {
   /** 点击卡片打开详情 */
   onClick?: (skill: InstalledSkill) => void;
   onUpdate?: (skillName: string) => void;
-  onDelete?: (skillName: string) => void;
+  onDelete?: (skill: InstalledSkill) => void;
   onToggleAgent?: (skillName: string, agentId: string) => void;
 }
 
@@ -141,7 +141,7 @@ export const SkillCard = memo(function SkillCard({
                 title={t('skills.actions.delete')}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDelete?.(skill.name);
+                  onDelete?.(skill);
                 }}
               >
                 <Trash2 className="h-3.5 w-3.5" />

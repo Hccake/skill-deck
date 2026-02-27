@@ -110,16 +110,17 @@ export function SkillsPanel() {
   }, [globalSkills, projectSkills]);
 
   // ⑤ Event handlers — 直接调用 store action，无需 useCallback 包装
-  const handleToggleAgent = useCallback((skillName: string, agentId: string) => {
-    console.log('TODO: Toggle agent', skillName, agentId);
+  // Agent Toggle 当前为只读展示，不支持操作
+  const handleToggleAgent = useCallback((_skillName: string, _agentId: string) => {
+    // no-op: agent toggle is display-only for now
   }, []);
 
-  const handleDeleteGlobal = useCallback((skillName: string) => {
-    openDelete(skillName, 'global');
+  const handleDeleteGlobal = useCallback((skill: InstalledSkill) => {
+    openDelete(skill, 'global');
   }, [openDelete]);
 
-  const handleDeleteProject = useCallback((skillName: string) => {
-    openDelete(skillName, 'project', selectedContext);
+  const handleDeleteProject = useCallback((skill: InstalledSkill) => {
+    openDelete(skill, 'project', selectedContext);
   }, [openDelete, selectedContext]);
 
   const handleAddGlobal = useCallback(() => {

@@ -23,11 +23,14 @@ use std::path::PathBuf;
 /// 删除 skill
 ///
 /// 对应 CLI: remove.ts 第 150-179 行的核心循环
+/// GUI 增强：支持 partial removal（仅删除指定 agents 的 symlink，不删 canonical 和 lock）
 ///
 /// # Arguments
 /// * `skill_name` - 要删除的 skill 名称
 /// * `scope` - 删除范围（Global/Project）
 /// * `project_path` - Project scope 时的项目路径
+/// * `full_removal` - 是否完全删除（true = 删除一切，false = 仅删除指定 agents 的 symlink）
+/// * `target_agents` - 部分移除时指定的 agent 列表（None = 自动检测）
 ///
 /// # Returns
 /// * `RemoveResult` - 删除结果
@@ -35,18 +38,20 @@ pub fn remove_skill(
     skill_name: &str,
     scope: &Scope,
     project_path: Option<&str>,
+    full_removal: bool,
+    target_agents: Option<&[AgentType]>,
 ) -> Result<RemoveResult, AppError> {
     let is_global = matches!(scope, Scope::Global);
     let cwd = project_path.unwrap_or(".");
     let sanitized_name = sanitize_name(skill_name);
 
-    // 1. 检测 target agents
-    // 对应 CLI: remove.ts:109-120 detectInstalledAgents()
-    let target_agents = {
+    // 1. 确定要操作的 agents
+    let agents_to_remove: Vec<AgentType> = if let Some(specified) = target_agents {
+        specified.to_vec()
+    } else {
+        // 自动检测（向后兼容原始行为）
         let detected = AgentType::detect_installed();
         if detected.is_empty() {
-            // CLI fallback: 检测到 0 个 agent 时 fallback 到全部 agents
-            // 对应 CLI: remove.ts:115-117 "Fallback to all agents if none detected"
             AgentType::all().collect::<Vec<_>>()
         } else {
             detected
@@ -57,7 +62,7 @@ pub fn remove_skill(
 
     // 2. 遍历 agents 删除 skill 目录
     // 对应 CLI: remove.ts:152-168
-    for agent in &target_agents {
+    for agent in &agents_to_remove {
         let config = agent.config();
 
         // 计算 agent 目录下的 skill 路径
@@ -93,76 +98,70 @@ pub fn remove_skill(
         }
     }
 
-    // 3. 删除 canonical 目录（带共享保护）
-    // 对应 CLI v1.4.1: remove.ts 删除前检查其他 agents 是否仍在使用
-    // 注意：使用 AgentType::all() 而非 detect_installed()，因为即使 agent 未全局安装，
-    // 项目目录下也可能存在该 agent 的 skill 目录
-    let canonical_path = canonical_skills_dir(is_global, cwd).join(&sanitized_name);
-    let should_remove_canonical = if is_global {
-        let still_used = AgentType::all().any(|agent| {
-            // 跳过已包含在 target_agents 中的 agent（它们的 symlink 已被删除）
-            if target_agents.contains(&agent) {
-                return false;
-            }
-            let config = agent.config();
-            if let Some(global_dir) = &config.global_skills_dir {
-                let agent_skill_path = global_dir.join(&sanitized_name);
-                // 检查是否存在指向 canonical 的 symlink
-                agent_skill_path.symlink_metadata().is_ok()
-            } else {
-                false
-            }
-        });
-        !still_used
-    } else {
-        let still_used = AgentType::all().any(|agent| {
-            if target_agents.contains(&agent) {
-                return false;
-            }
-            let config = agent.config();
-            let agent_skill_path = PathBuf::from(cwd)
-                .join(&config.skills_dir)
-                .join(&sanitized_name);
-            agent_skill_path.symlink_metadata().is_ok()
-        });
-        !still_used
-    };
-
-    if should_remove_canonical {
-        let _ = remove_path(&canonical_path);
-    }
-
-    // 4. 更新 lock file
-    // 对应 CLI: remove.ts:173-178
-    let (source, source_type) = if is_global {
-        // 先读取 lock entry 获取 source 信息（用于返回结果）
-        // 对应 CLI: remove.ts:173
-        let lock_entry = get_skill_from_lock(skill_name).ok().flatten();
-        let effective_source = lock_entry
-            .as_ref()
-            .map(|e| e.source.clone())
-            .unwrap_or_else(|| "local".to_string());
-        let effective_source_type = lock_entry
-            .as_ref()
-            .map(|e| e.source_type.clone())
-            .unwrap_or_else(|| "local".to_string());
-
-        // 对应 CLI: remove.ts:177-178
-        let _ = remove_skill_from_lock(skill_name);
-
-        (Some(effective_source), Some(effective_source_type))
-    } else {
-        // 从新的 local lock (skills-lock.json) 读取信息并移除
-        if let Some(project_dir) = project_path {
-            let local_lock = crate::core::local_lock::read_local_lock(project_dir).ok();
-            let lock_entry = local_lock.and_then(|l| l.skills.get(skill_name).cloned());
-            let effective_source = lock_entry.as_ref().map(|e| e.source.clone());
-            let effective_source_type = lock_entry.as_ref().map(|e| e.source_type.clone());
-            let _ = remove_skill_from_local_lock(skill_name, project_dir);
-            (effective_source, effective_source_type)
+    // 3. 完全删除模式：清理 canonical 目录 + lock file
+    let (source, source_type) = if full_removal {
+        // 删除 canonical 目录（带共享保护）
+        let canonical_path = canonical_skills_dir(is_global, cwd).join(&sanitized_name);
+        let should_remove_canonical = if is_global {
+            let still_used = AgentType::all().any(|agent| {
+                if agents_to_remove.contains(&agent) {
+                    return false;
+                }
+                let config = agent.config();
+                if let Some(global_dir) = &config.global_skills_dir {
+                    let agent_skill_path = global_dir.join(&sanitized_name);
+                    agent_skill_path.symlink_metadata().is_ok()
+                } else {
+                    false
+                }
+            });
+            !still_used
         } else {
-            (None, None)
+            let still_used = AgentType::all().any(|agent| {
+                if agents_to_remove.contains(&agent) {
+                    return false;
+                }
+                let config = agent.config();
+                let agent_skill_path = PathBuf::from(cwd)
+                    .join(&config.skills_dir)
+                    .join(&sanitized_name);
+                agent_skill_path.symlink_metadata().is_ok()
+            });
+            !still_used
+        };
+
+        if should_remove_canonical {
+            let _ = remove_path(&canonical_path);
         }
+
+        // 更新 lock file
+        if is_global {
+            let lock_entry = get_skill_from_lock(skill_name).ok().flatten();
+            let effective_source = lock_entry
+                .as_ref()
+                .map(|e| e.source.clone())
+                .unwrap_or_else(|| "local".to_string());
+            let effective_source_type = lock_entry
+                .as_ref()
+                .map(|e| e.source_type.clone())
+                .unwrap_or_else(|| "local".to_string());
+            let _ = remove_skill_from_lock(skill_name);
+            (Some(effective_source), Some(effective_source_type))
+        } else {
+            if let Some(project_dir) = project_path {
+                let local_lock = crate::core::local_lock::read_local_lock(project_dir).ok();
+                let lock_entry = local_lock.and_then(|l| l.skills.get(skill_name).cloned());
+                let effective_source = lock_entry.as_ref().map(|e| e.source.clone());
+                let effective_source_type = lock_entry.as_ref().map(|e| e.source_type.clone());
+                let _ = remove_skill_from_local_lock(skill_name, project_dir);
+                (effective_source, effective_source_type)
+            } else {
+                (None, None)
+            }
+        }
+    } else {
+        // 部分移除：不删 canonical、不更新 lock
+        (None, None)
     };
 
     Ok(RemoveResult {

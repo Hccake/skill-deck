@@ -89,11 +89,20 @@
     },
     "deleteConfirm": {
       "title": "删除 Skill",
-      "description": "将从所有已安装的编辑器中移除「{{name}}」，此操作不可撤销。",
+      "description": "选择要从哪些 Agent 中移除此 Skill",
+      "sharedDirSection": "共享目录",
+      "deleteCanonical": "删除源文件和安装记录",
+      "canonicalWarning": "删除后，所有 Agent 都将失去此 Skill",
+      "independentSection": "独立安装",
+      "noAgentsInstalled": "未检测到安装此 Skill 的 Agent，确认删除源文件？",
+      "fallbackConfirm": "确认要删除此 Skill 的源文件和安装记录吗？",
+      "loadingDetails": "正在加载安装详情...",
       "cancel": "取消",
-      "confirm": "删除"
+      "confirm": "确认删除",
+      "confirmPartial": "移除 ({{count}})"
     },
     "deleteSuccess": "已删除「{{name}}」",
+    "partialDeleteSuccess": "已从 {{count}} 个 Agent 中移除「{{name}}」",
     "deleteError": "删除「{{name}}」失败：{{error}}",
     "updateSuccess": "已更新「{{name}}」",
     "updateError": "更新「{{name}}」失败：{{error}}",
