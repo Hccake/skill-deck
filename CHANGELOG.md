@@ -5,7 +5,7 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-02-27
 
 ### Added
 
@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Header 导航栏优化** — 导航标签改为 pill 圆角胶囊样式，放大 logo 和品牌名，导航图标始终可见（移除 `sm:hidden`），主题/语言按钮增大触控区域
+- **ContextSidebar 侧边栏精简** — 移除标题栏、分区标题和底部「在设置中管理」按钮；去掉图标外层包裹容器；选中/悬停状态改为更柔和的 `foreground` 透明度样式；全局上下文新增副标题说明
 - **remove_skill 命令增强** — 新增 `agents` 和 `full_removal` 参数，支持完全删除和部分移除两种模式；部分移除时仅删除指定 agent 的 symlink，不清理 canonical 目录和 lock file
 - **DeleteSkillDialog 重构** — 从简单的 AlertDialog 升级为完整的 Dialog，包含 Skill 信息横幅、共享目录区（含级联全选和警告提示）、独立安装区（Checkbox 逐项选择）、加载骨架屏
 - **Cline Agent 路径迁移** — skill 目录从 `.cline/skills` 迁移到 `.agents/skills`（对齐 skills CLI v1.4.2）
