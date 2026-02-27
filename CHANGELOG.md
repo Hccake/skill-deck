@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plugin 分组支持** — 解析 `.claude-plugin/marketplace.json` 和 `.claude-plugin/plugin.json`，自动识别 skill 所属 plugin 并在 UI 中分组展示（对齐 skills CLI v1.4.2）
 - **plugin_manifest 模块** — 新增 `src-tauri/src/core/plugin_manifest.rs`，支持多 plugin manifest 解析、路径安全校验（防目录穿越）和路径归一化
 - **pluginName 字段贯穿数据链路** — `DiscoveredSkill` → `AvailableSkill` → `InstalledSkill` → `SkillLockEntry` / `LocalSkillLockEntry` 全链路传递 `pluginName`
+- **分层 CLAUDE.md** — 新增 `src/CLAUDE.md`（前端 Store 交互模式、组件约定）和 `src-tauri/CLAUDE.md`（Rust 命令添加流程、模块职责表），根 CLAUDE.md 新增 Business Rules、Change Dependencies、Verification 段落
+- **Vitest 测试基础设施** — 配置 Vitest + jsdom + @testing-library/react，包含 Tauri invoke mock 和 i18n mock 的全局 test-utils
+- **29 个单元测试** — 覆盖 useTauriApi unwrap 逻辑（5）、context store（10）、skills store（6）、settings store（8）
+- **Pre-commit hooks** — husky + lint-staged，提交前自动 eslint --fix
+- **CI pipeline** — GitHub Actions 工作流：lint → test → build → cargo check
 
 ### Changed
 
