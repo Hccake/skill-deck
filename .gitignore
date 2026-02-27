@@ -27,5 +27,4 @@ vercel-skills
 /.agents
 /.claude
 /.tauri
-/docs
-/CLAUDE.md
+/docs/plans
