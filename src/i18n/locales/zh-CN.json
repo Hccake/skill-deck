@@ -54,6 +54,9 @@
     "externalLink": "在新标签页中打开",
     "globalSkills": "Global Skills",
     "projectSkills": "Project Skills",
+    "pluginGroup": {
+      "general": "通用"
+    },
     "project": {
       "select": "选择项目",
       "clear": "清除"

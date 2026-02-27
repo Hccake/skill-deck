@@ -54,6 +54,9 @@
     "externalLink": "opens in new tab",
     "globalSkills": "Global Skills",
     "projectSkills": "Project Skills",
+    "pluginGroup": {
+      "general": "General"
+    },
     "project": {
       "select": "Select Project",
       "clear": "Clear"

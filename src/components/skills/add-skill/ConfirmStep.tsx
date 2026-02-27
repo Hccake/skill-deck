@@ -14,6 +14,11 @@ import type { SkillAuditData } from '@/hooks/useTauriApi';
 import { RiskBadge } from '../RiskBadge';
 import type { WizardState } from './types';
 
+/** kebab-case → Title Case */
+function toTitleCase(kebab: string): string {
+  return kebab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
 interface ConfirmStepProps {
   state: WizardState;
   updateState: (updates: Partial<WizardState>) => void;
@@ -69,6 +74,27 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     [state.overwrites]
   );
 
+  // 按 plugin 分组选中的 skills
+  const groupedSelectedSkills = useMemo(() => {
+    const skillMap = new Map(state.availableSkills.map((s) => [s.name, s]));
+    const hasAnyPlugin = state.selectedSkills.some((name) => skillMap.get(name)?.pluginName);
+    if (!hasAnyPlugin) return null;
+
+    const groups: Record<string, string[]> = {};
+    const ungrouped: string[] = [];
+
+    for (const name of state.selectedSkills) {
+      const pluginName = skillMap.get(name)?.pluginName;
+      if (pluginName) {
+        if (!groups[pluginName]) groups[pluginName] = [];
+        groups[pluginName].push(name);
+      } else {
+        ungrouped.push(name);
+      }
+    }
+    return { groups, ungrouped };
+  }, [state.selectedSkills, state.availableSkills]);
+
   // 已选的非 universal agents 信息（用于目录列表）
   const selectedNonUniversalAgents = useMemo(() => {
     const selectedSet = new Set(state.selectedAgents);
@@ -76,6 +102,33 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
   }, [state.selectedAgents, state.allAgents]);
 
   const universalDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
+
+  const renderSkillRow = (skillName: string) => {
+    const overwriteAgents = state.overwrites[skillName] ?? [];
+    const hasOverwrite = overwriteAgents.length > 0;
+    return (
+      <div key={skillName} className="flex items-center justify-between gap-2 px-3 py-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {hasOverwrite && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              </TooltipTrigger>
+              <TooltipContent>
+                {t('addSkill.confirm.willOverwrite', { agents: overwriteAgents.join(', ') })}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          <span className="font-mono text-[13px] text-foreground truncate">
+            {skillName}
+          </span>
+        </div>
+        {auditData[skillName] && (
+          <RiskBadge risk={auditData[skillName].risk} />
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -90,41 +143,34 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
       {/* Skills 列表 */}
       <div className="border rounded-md divide-y divide-border/50">
         {!state.confirmReady ? (
-          // 统一骨架屏 — 不显示 skill 名称，避免加载完成后警告突然插入的突兀感
+          // 统一骨架屏
           state.selectedSkills.map((_, idx) => (
             <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2">
               <Skeleton className="h-4 w-32" />
               <Skeleton className="h-5 w-14 rounded-full" />
             </div>
           ))
-        ) : (
-          state.selectedSkills.map((skillName) => {
-            const overwriteAgents = state.overwrites[skillName] ?? [];
-            const hasOverwrite = overwriteAgents.length > 0;
-
-            return (
-              <div key={skillName} className="flex items-center justify-between gap-2 px-3 py-2">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  {hasOverwrite && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {t('addSkill.confirm.willOverwrite', { agents: overwriteAgents.join(', ') })}
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                  <span className="font-mono text-[13px] text-foreground truncate">
-                    {skillName}
-                  </span>
+        ) : groupedSelectedSkills ? (
+          <>
+            {Object.keys(groupedSelectedSkills.groups).sort().map((groupName) => (
+              <div key={groupName}>
+                <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted/30">
+                  {toTitleCase(groupName)}
                 </div>
-                {auditData[skillName] && (
-                  <RiskBadge risk={auditData[skillName].risk} />
-                )}
+                {groupedSelectedSkills.groups[groupName].map(renderSkillRow)}
               </div>
-            );
-          })
+            ))}
+            {groupedSelectedSkills.ungrouped.length > 0 && (
+              <div>
+                <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted/30">
+                  {t('skills.pluginGroup.general')}
+                </div>
+                {groupedSelectedSkills.ungrouped.map(renderSkillRow)}
+              </div>
+            )}
+          </>
+        ) : (
+          state.selectedSkills.map(renderSkillRow)
         )}
       </div>
 

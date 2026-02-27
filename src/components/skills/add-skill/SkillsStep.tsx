@@ -9,6 +9,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import type { AvailableSkill } from '@/bindings';
 import type { WizardState } from './types';
 
+/** kebab-case → Title Case (e.g., "doc-skills" → "Doc Skills") */
+function toTitleCase(kebab: string): string {
+  return kebab
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 interface SkillsStepProps {
   state: WizardState;
   updateState: (updates: Partial<WizardState> | ((prev: WizardState) => Partial<WizardState>)) => void;
@@ -26,6 +34,27 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
         skill.description.toLowerCase().includes(query)
     );
   }, [state.availableSkills, state.skillSearchQuery]);
+
+  // 按 plugin 分组（仅在有 pluginName 的 skills 存在时才分组）
+  const groupedSkills = useMemo(() => {
+    const hasAnyPlugin = filteredSkills.some((s) => s.pluginName);
+    if (!hasAnyPlugin) return null;
+
+    const groups: Record<string, AvailableSkill[]> = {};
+    const ungrouped: AvailableSkill[] = [];
+
+    for (const skill of filteredSkills) {
+      if (skill.pluginName) {
+        const group = skill.pluginName;
+        if (!groups[group]) groups[group] = [];
+        groups[group].push(skill);
+      } else {
+        ungrouped.push(skill);
+      }
+    }
+
+    return { groups, ungrouped };
+  }, [filteredSkills]);
 
   const toggleSkill = useCallback((skillName: string) => {
     updateState((prev) => ({
@@ -115,7 +144,42 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
           <div className="p-4 text-center text-sm text-muted-foreground">
             {t('addSkill.skills.empty')}
           </div>
+        ) : groupedSkills ? (
+          /* 按 plugin 分组展示 */
+          <>
+            {Object.keys(groupedSkills.groups).sort().map((groupName) => (
+              <div key={groupName}>
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  {toTitleCase(groupName)}
+                </div>
+                {groupedSkills.groups[groupName].map((skill) => (
+                  <SkillItem
+                    key={skill.name}
+                    skill={skill}
+                    selected={state.selectedSkills.includes(skill.name)}
+                    onToggle={toggleSkill}
+                  />
+                ))}
+              </div>
+            ))}
+            {groupedSkills.ungrouped.length > 0 && (
+              <div>
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  {t('skills.pluginGroup.general')}
+                </div>
+                {groupedSkills.ungrouped.map((skill) => (
+                  <SkillItem
+                    key={skill.name}
+                    skill={skill}
+                    selected={state.selectedSkills.includes(skill.name)}
+                    onToggle={toggleSkill}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         ) : (
+          /* 无分组，扁平列表 */
           filteredSkills.map((skill) => (
             <SkillItem
               key={skill.name}

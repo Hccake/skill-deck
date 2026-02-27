@@ -37,6 +37,8 @@ pub struct DiscoveredSkill {
     pub path: PathBuf,
     pub relative_path: String,
     pub is_internal: bool,
+    /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
+    pub plugin_name: Option<String>,
 }
 
 impl From<DiscoveredSkill> for AvailableSkill {
@@ -45,6 +47,7 @@ impl From<DiscoveredSkill> for AvailableSkill {
             name: skill.name,
             description: skill.description,
             relative_path: skill.relative_path,
+            plugin_name: skill.plugin_name,
         }
     }
 }
@@ -77,6 +80,9 @@ pub fn discover_skills(
         });
     }
 
+    // 获取 plugin 分组映射
+    let plugin_groupings = crate::core::plugin_manifest::get_plugin_groupings(&search_path);
+
     let mut skills = Vec::new();
     let mut seen_names: HashSet<String> = HashSet::new();
 
@@ -105,6 +111,14 @@ pub fn discover_skills(
     // 3. 如果未找到或启用 fullDepth，进行递归搜索
     if skills.is_empty() || options.full_depth {
         discover_recursive(&search_path, base_path, &options, &mut skills, &mut seen_names)?;
+    }
+
+    // 为 skills 填充 plugin_name
+    for skill in &mut skills {
+        let normalized = crate::core::plugin_manifest::normalize_path(&skill.path);
+        if let Some(name) = plugin_groupings.get(&normalized) {
+            skill.plugin_name = Some(name.clone());
+        }
     }
 
     Ok(skills)
@@ -268,6 +282,7 @@ fn try_parse_skill(
         path: skill_dir.to_path_buf(),
         relative_path: relative_skill_path,
         is_internal,
+        plugin_name: None,
     }))
 }
 

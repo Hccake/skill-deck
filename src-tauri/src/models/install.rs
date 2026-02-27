@@ -88,6 +88,9 @@ pub struct AvailableSkill {
     pub description: String,
     /// 仓库内相对路径
     pub relative_path: String,
+    /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
 }
 
 /// 单个 skill 的删除结果

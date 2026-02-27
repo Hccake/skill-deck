@@ -8,6 +8,7 @@ pub mod installer;
 pub mod paths;
 pub mod skill;
 pub mod local_lock;
+pub mod plugin_manifest;
 pub mod skill_lock;
 pub mod source_parser;
 pub mod uninstaller;

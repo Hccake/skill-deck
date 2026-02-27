@@ -293,7 +293,11 @@ description: string;
 /**
  * 仓库内相对路径
  */
-relativePath: string }
+relativePath: string; 
+/**
+ * 所属 plugin 名称（来自 .claude-plugin/ manifest）
+ */
+pluginName?: string | null }
 /**
  * fetch_available 返回结果
  */
@@ -402,7 +406,11 @@ symlinkFallbackAgents: string[] }
  * 已安装的 Skill 信息
  * 对应 CLI: InstalledSkill (installer.ts:783-790)
  */
-export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null }
+export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null; 
+/**
+ * 所属 plugin 名称
+ */
+pluginName?: string | null }
 /**
  * list_skills 参数
  */

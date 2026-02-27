@@ -46,6 +46,11 @@ pub struct LocalSkillLockEntry {
     /// CLI 会忽略此字段
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_path: Option<String>,
+
+    /// 所属 plugin 名称
+    /// 对应 CLI: SkillLockEntry.pluginName
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
 }
 
 /// Local Skill Lock 文件
@@ -127,6 +132,7 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
                     Some(entry.skill_folder_hash)
                 },
                 skill_path: entry.skill_path,
+                plugin_name: entry.plugin_name,
             },
         );
     }
@@ -260,6 +266,7 @@ mod tests {
                 computed_hash: "hash-z".to_string(),
                 remote_hash: None,
                 skill_path: None,
+                plugin_name: None,
             },
         );
         lock.skills.insert(
@@ -270,6 +277,7 @@ mod tests {
                 computed_hash: "hash-a".to_string(),
                 remote_hash: None,
                 skill_path: None,
+                plugin_name: None,
             },
         );
 
@@ -287,6 +295,7 @@ mod tests {
             computed_hash: "abc123".to_string(),
             remote_hash: None,
             skill_path: None,
+            plugin_name: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(!json.contains("remoteHash"), "None remote_hash should not be serialized");
@@ -349,6 +358,7 @@ mod tests {
                 computed_hash: "abc123".to_string(),
                 remote_hash: Some("tree-sha".to_string()),
                 skill_path: Some("skills/test/SKILL.md".to_string()),
+                plugin_name: None,
             },
         );
 
@@ -386,6 +396,7 @@ mod tests {
                 computed_hash: "hash1".to_string(),
                 remote_hash: None,
                 skill_path: None,
+                plugin_name: None,
             },
             &project_path,
         )

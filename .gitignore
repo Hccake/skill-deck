@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 vercel-skills
+/.agents
+/.claude
+/.tauri
+/docs
+/CLAUDE.md

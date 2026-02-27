@@ -68,6 +68,7 @@ async fn check_updates_inner(
                             skill_folder_hash: entry.remote_hash.unwrap_or_default(),
                             installed_at: String::new(),
                             updated_at: String::new(),
+                            plugin_name: entry.plugin_name,
                         },
                     );
                 }
@@ -160,7 +161,7 @@ async fn update_skill_inner(
     use tauri::Emitter;
 
     // 1. 根据 scope 读取对应的 lock 文件
-    let (entry_source, entry_source_type, entry_source_url, entry_skill_path) = match scope {
+    let (entry_source, entry_source_type, entry_source_url, entry_skill_path, entry_plugin_name) = match scope {
         Scope::Global => {
             let lock = read_scoped_lock(None)?;
             let entry = lock.skills.get(skill_name).ok_or_else(|| AppError::InvalidSource {
@@ -171,6 +172,7 @@ async fn update_skill_inner(
                 entry.source_type.clone(),
                 entry.source_url.clone(),
                 entry.skill_path.clone(),
+                entry.plugin_name.clone(),
             )
         }
         Scope::Project => {
@@ -197,6 +199,7 @@ async fn update_skill_inner(
                     entry.source_type.clone(),
                     source_url,
                     entry.skill_path.clone(),
+                    entry.plugin_name.clone(),
                 )
             } else {
                 return Err(AppError::InvalidSource {
@@ -286,6 +289,7 @@ async fn update_skill_inner(
                 &entry_source_url,
                 entry_skill_path.as_deref(),
                 &new_hash,
+                entry_plugin_name.as_deref(),
             );
         }
         Scope::Project => {
@@ -303,6 +307,7 @@ async fn update_skill_inner(
                         Some(new_hash.clone())
                     },
                     skill_path: entry_skill_path.clone(),
+                    plugin_name: entry_plugin_name.clone(),
                 };
                 let _ = add_skill_to_local_lock(skill_name, entry, pp);
             }

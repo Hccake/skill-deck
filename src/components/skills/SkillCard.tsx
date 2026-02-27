@@ -10,6 +10,7 @@ import {
   Folder,
   AlertTriangle,
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Toggle } from '@/components/ui/toggle';
@@ -20,6 +21,11 @@ import {
 } from '@/components/ui/tooltip';
 import type { AgentType, InstalledSkill, RiskLevel, SkillScope } from '@/bindings';
 import { RiskBadge } from './RiskBadge';
+
+/** kebab-case → Title Case */
+function toTitleCase(kebab: string): string {
+  return kebab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
 const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
@@ -93,6 +99,13 @@ export const SkillCard = memo(function SkillCard({
 
               {/* Risk Badge */}
               {riskLevel && <RiskBadge risk={riskLevel} />}
+
+              {/* Plugin Name Badge */}
+              {skill.pluginName && (
+                <Badge variant="secondary" className="text-xs px-1.5 py-0">
+                  {toTitleCase(skill.pluginName)}
+                </Badge>
+              )}
 
               {/* Conflict Icon */}
               {hasConflict && (

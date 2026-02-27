@@ -142,6 +142,9 @@ pub struct InstalledSkill {
     pub updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_update: Option<bool>,
+    /// 所属 plugin 名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
 }
 
 impl InstalledSkill {
@@ -152,6 +155,7 @@ impl InstalledSkill {
             self.source_url = Some(e.source_url.clone());
             self.installed_at = Some(e.installed_at.clone());
             self.updated_at = Some(e.updated_at.clone());
+            self.plugin_name = e.plugin_name.clone();
         }
         self
     }
@@ -166,6 +170,7 @@ impl InstalledSkill {
             } else {
                 Some(e.source.clone())
             };
+            self.plugin_name = e.plugin_name.clone();
         }
         self
     }
@@ -312,6 +317,7 @@ pub fn list_installed_skills(
                         installed_at: None,
                         updated_at: None,
                         has_update: None,
+                        plugin_name: None,
                     };
 
                     // 根据 scope 从对应的 lock 文件填充元数据
@@ -414,6 +420,7 @@ pub fn list_installed_skills(
                     installed_at: None,
                     updated_at: None,
                     has_update: None,
+                    plugin_name: None,
                 };
 
                 // 根据 scope 从对应的 lock 文件填充元数据

@@ -278,8 +278,8 @@ impl AgentType {
             Self::Cline => AgentConfig {
                 name: "cline",
                 display_name: "Cline",
-                skills_dir: ".cline/skills",
-                global_skills_dir: Some(PATHS.home.join(".cline/skills")),
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
                 show_in_universal_list: true,
             },
             Self::Codebuddy => AgentConfig {

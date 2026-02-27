@@ -261,6 +261,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
                     let _ = add_skill_to_lock(
                         &skill.name, source, source_type_str, source_url,
                         skill_path, &skill_folder_hash,
+                        skill.plugin_name.as_deref(),
                     );
                 }
                 crate::models::Scope::Project => {
@@ -281,6 +282,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
                                 Some(skill_folder_hash.clone())
                             },
                             skill_path: skill_path.map(|s| s.to_string()),
+                            plugin_name: skill.plugin_name.clone(),
                         };
                         let _ = add_skill_to_local_lock(&skill.name, entry, project_path);
                     }

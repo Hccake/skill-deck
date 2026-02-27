@@ -30,6 +30,9 @@ pub struct SkillLockEntry {
     pub installed_at: String,
     /// 更新时间 (ISO 格式)
     pub updated_at: String,
+    /// 所属 plugin 名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
 }
 
 /// 已忽略的提示
@@ -181,6 +184,7 @@ pub fn add_skill_to_lock(
     source_url: &str,
     skill_path: Option<&str>,
     skill_folder_hash: &str,
+    plugin_name: Option<&str>,
 ) -> Result<(), AppError> {
     let mut lock = read_skill_lock().unwrap_or_else(|_| SkillLockFile::empty());
 
@@ -201,6 +205,7 @@ pub fn add_skill_to_lock(
         skill_folder_hash: skill_folder_hash.to_string(),
         installed_at,
         updated_at: now,
+        plugin_name: plugin_name.map(|s| s.to_string()),
     };
 
     lock.skills.insert(skill_name.to_string(), entry);
@@ -230,6 +235,7 @@ pub fn add_skill_to_scoped_lock(
     skill_path: Option<&str>,
     skill_folder_hash: &str,
     project_path: Option<&str>,
+    plugin_name: Option<&str>,
 ) -> Result<(), AppError> {
     let mut lock =
         read_scoped_lock(project_path).unwrap_or_else(|_| SkillLockFile::empty());
@@ -249,6 +255,7 @@ pub fn add_skill_to_scoped_lock(
         skill_folder_hash: skill_folder_hash.to_string(),
         installed_at,
         updated_at: now,
+        plugin_name: plugin_name.map(|s| s.to_string()),
     };
 
     lock.skills.insert(skill_name.to_string(), entry);
