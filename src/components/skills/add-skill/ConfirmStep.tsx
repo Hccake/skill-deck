@@ -9,15 +9,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { toTitleCase } from '@/lib/utils';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
 import { RiskBadge } from '../RiskBadge';
 import type { WizardState } from './types';
-
-/** kebab-case → Title Case */
-function toTitleCase(kebab: string): string {
-  return kebab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
 
 interface ConfirmStepProps {
   state: WizardState;
@@ -74,25 +70,25 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     [state.overwrites]
   );
 
-  // 按 plugin 分组选中的 skills
+  // 按 plugin 分组选中的 skills — js-combine-iterations
   const groupedSelectedSkills = useMemo(() => {
     const skillMap = new Map(state.availableSkills.map((s) => [s.name, s]));
-    const hasAnyPlugin = state.selectedSkills.some((name) => skillMap.get(name)?.pluginName);
-    if (!hasAnyPlugin) return null;
-
     const groups: Record<string, string[]> = {};
     const ungrouped: string[] = [];
+    let hasAnyPlugin = false;
 
     for (const name of state.selectedSkills) {
       const pluginName = skillMap.get(name)?.pluginName;
       if (pluginName) {
+        hasAnyPlugin = true;
         if (!groups[pluginName]) groups[pluginName] = [];
         groups[pluginName].push(name);
       } else {
         ungrouped.push(name);
       }
     }
-    return { groups, ungrouped };
+
+    return hasAnyPlugin ? { groups, ungrouped } : null;
   }, [state.selectedSkills, state.availableSkills]);
 
   // 已选的非 universal agents 信息（用于目录列表）

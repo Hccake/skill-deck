@@ -6,16 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { toTitleCase } from '@/lib/utils';
 import type { AvailableSkill } from '@/bindings';
 import type { WizardState } from './types';
-
-/** kebab-case → Title Case (e.g., "doc-skills" → "Doc Skills") */
-function toTitleCase(kebab: string): string {
-  return kebab
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-}
 
 interface SkillsStepProps {
   state: WizardState;
@@ -35,26 +28,30 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
     );
   }, [state.availableSkills, state.skillSearchQuery]);
 
-  // 按 plugin 分组（仅在有 pluginName 的 skills 存在时才分组）
+  // 按 plugin 分组（仅在有 pluginName 的 skills 存在时才分组）— js-combine-iterations
   const groupedSkills = useMemo(() => {
-    const hasAnyPlugin = filteredSkills.some((s) => s.pluginName);
-    if (!hasAnyPlugin) return null;
-
     const groups: Record<string, AvailableSkill[]> = {};
     const ungrouped: AvailableSkill[] = [];
+    let hasAnyPlugin = false;
 
     for (const skill of filteredSkills) {
       if (skill.pluginName) {
-        const group = skill.pluginName;
-        if (!groups[group]) groups[group] = [];
-        groups[group].push(skill);
+        hasAnyPlugin = true;
+        if (!groups[skill.pluginName]) groups[skill.pluginName] = [];
+        groups[skill.pluginName].push(skill);
       } else {
         ungrouped.push(skill);
       }
     }
 
-    return { groups, ungrouped };
+    return hasAnyPlugin ? { groups, ungrouped } : null;
   }, [filteredSkills]);
+
+  // O(1) 查找已选 skills — js-index-maps
+  const selectedSet = useMemo(
+    () => new Set(state.selectedSkills),
+    [state.selectedSkills]
+  );
 
   const toggleSkill = useCallback((skillName: string) => {
     updateState((prev) => ({
@@ -156,7 +153,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
                   <SkillItem
                     key={skill.name}
                     skill={skill}
-                    selected={state.selectedSkills.includes(skill.name)}
+                    selected={selectedSet.has(skill.name)}
                     onToggle={toggleSkill}
                   />
                 ))}
@@ -171,7 +168,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
                   <SkillItem
                     key={skill.name}
                     skill={skill}
-                    selected={state.selectedSkills.includes(skill.name)}
+                    selected={selectedSet.has(skill.name)}
                     onToggle={toggleSkill}
                   />
                 ))}
@@ -184,7 +181,7 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
             <SkillItem
               key={skill.name}
               skill={skill}
-              selected={state.selectedSkills.includes(skill.name)}
+              selected={selectedSet.has(skill.name)}
               onToggle={toggleSkill}
             />
           ))

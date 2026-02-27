@@ -1,7 +1,7 @@
 // src/components/skills/SkillCard.tsx
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cn, formatTime } from '@/lib/utils';
+import { cn, formatTime, toTitleCase } from '@/lib/utils';
 import {
   ArrowUpCircle,
   Trash2,
@@ -21,11 +21,6 @@ import {
 } from '@/components/ui/tooltip';
 import type { AgentType, InstalledSkill, RiskLevel, SkillScope } from '@/bindings';
 import { RiskBadge } from './RiskBadge';
-
-/** kebab-case → Title Case */
-function toTitleCase(kebab: string): string {
-  return kebab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-}
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
 const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();

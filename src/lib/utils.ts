@@ -5,6 +5,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/** kebab-case → Title Case (e.g., "doc-skills" → "Doc Skills") */
+export function toTitleCase(kebab: string): string {
+  return kebab.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
 /**
  * 将 ISO 时间字符串格式化为用户友好的本地时间
  *
