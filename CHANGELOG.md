@@ -9,12 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **智能删除对话框** — 删除 skill 时展示 agent 安装详情，支持选择仅从部分 Agent 中移除 skill（保留源文件），或完全删除
+- **get_skill_agent_details 命令** — 新增后端命令，查询 skill 的 universal / independent agent 分组安装详情，为智能删除对话框提供数据
+- **SkillAgentDetails / IndependentAgentInfo 类型** — 新增数据模型，描述 skill 在各 agent 中的安装状态（路径、是否 symlink）
 - **Plugin 分组支持** — 解析 `.claude-plugin/marketplace.json` 和 `.claude-plugin/plugin.json`，自动识别 skill 所属 plugin 并在 UI 中分组展示（对齐 skills CLI v1.4.2）
 - **plugin_manifest 模块** — 新增 `src-tauri/src/core/plugin_manifest.rs`，支持多 plugin manifest 解析、路径安全校验（防目录穿越）和路径归一化
 - **pluginName 字段贯穿数据链路** — `DiscoveredSkill` → `AvailableSkill` → `InstalledSkill` → `SkillLockEntry` / `LocalSkillLockEntry` 全链路传递 `pluginName`
 
 ### Changed
 
+- **remove_skill 命令增强** — 新增 `agents` 和 `full_removal` 参数，支持完全删除和部分移除两种模式；部分移除时仅删除指定 agent 的 symlink，不清理 canonical 目录和 lock file
+- **DeleteSkillDialog 重构** — 从简单的 AlertDialog 升级为完整的 Dialog，包含 Skill 信息横幅、共享目录区（含级联全选和警告提示）、独立安装区（Checkbox 逐项选择）、加载骨架屏
 - **Cline Agent 路径迁移** — skill 目录从 `.cline/skills` 迁移到 `.agents/skills`（对齐 skills CLI v1.4.2）
 - **SkillsStep 安装向导** — 当 skill 来源包含 plugin 时，按 plugin 分组展示可选 skill 列表
 - **ConfirmStep 确认页面** — 选中的 skills 按 plugin 分组展示，未归属 plugin 的归入「通用」分组
