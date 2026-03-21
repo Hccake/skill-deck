@@ -27,5 +27,6 @@ vercel-skills
 /.agents
 /.claude
 /.tauri
+/.worktrees
 /docs/plans
 /skills-lock.json
