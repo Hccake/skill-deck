@@ -72,12 +72,21 @@ async fn check_updates_inner(
                 // 转换 LocalSkillLockFile -> SkillLockFile 用于统一流程
                 let mut skills = HashMap::new();
                 for (name, entry) in local_lock.skills {
+                    let source = entry.source.clone();
+                    let source_type = entry.source_type.clone();
+                    let source_url = entry.source_url.unwrap_or_else(|| {
+                        if source_type == "github" {
+                            format!("https://github.com/{}", source)
+                        } else {
+                            source.clone()
+                        }
+                    });
                     skills.insert(
                         name,
                         crate::core::skill_lock::SkillLockEntry {
-                            source: entry.source,
-                            source_type: entry.source_type,
-                            source_url: String::new(),
+                            source,
+                            source_type,
+                            source_url,
                             skill_path: entry.skill_path,
                             skill_folder_hash: entry.remote_hash.unwrap_or_default(),
                             installed_at: String::new(),
@@ -240,12 +249,13 @@ async fn update_skill_single(
                             skill_name
                         ),
                     })?;
-                // local lock 没有 source_url，从 source 构造
-                let source_url = if entry.source_type == "github" {
-                    format!("https://github.com/{}", entry.source)
-                } else {
-                    entry.source.clone()
-                };
+                let source_url = entry.source_url.clone().unwrap_or_else(|| {
+                    if entry.source_type == "github" {
+                        format!("https://github.com/{}", entry.source)
+                    } else {
+                        entry.source.clone()
+                    }
+                });
                 (
                     entry.source.clone(),
                     entry.source_type.clone(),
@@ -376,6 +386,7 @@ async fn update_skill_single(
                 let entry = LocalSkillLockEntry {
                     source: entry_source.clone(),
                     source_type: entry_source_type.clone(),
+                    source_url: Some(entry_source_url.clone()),
                     computed_hash,
                     remote_hash: if new_hash.is_empty() {
                         None
@@ -472,11 +483,13 @@ async fn update_skills_batch_inner(
                 if let Ok(local_lock) = read_local_lock(pp) {
                     for (name, entry) in &local_lock.skills {
                         if names_set.contains(name.as_str()) {
-                            let source_url = if entry.source_type == "github" {
-                                format!("https://github.com/{}", entry.source)
-                            } else {
-                                entry.source.clone()
-                            };
+                            let source_url = entry.source_url.clone().unwrap_or_else(|| {
+                                if entry.source_type == "github" {
+                                    format!("https://github.com/{}", entry.source)
+                                } else {
+                                    entry.source.clone()
+                                }
+                            });
                             entries.push(SkillEntry {
                                 name: name.clone(),
                                 source: entry.source.clone(),
@@ -677,6 +690,7 @@ async fn update_skills_batch_inner(
                         let lock_entry = LocalSkillLockEntry {
                             source: entry.source.clone(),
                             source_type: entry.source_type.clone(),
+                            source_url: Some(entry.source_url.clone()),
                             computed_hash,
                             remote_hash: if new_hash.is_empty() { None } else { Some(new_hash.clone()) },
                             skill_path: entry.skill_path.clone(),

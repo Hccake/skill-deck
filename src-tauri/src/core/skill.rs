@@ -164,12 +164,13 @@ impl InstalledSkill {
     pub fn with_local_lock_entry(mut self, entry: Option<&LocalSkillLockEntry>) -> Self {
         if let Some(e) = entry {
             self.source = Some(e.source.clone());
-            // local lock 没有 source_url，从 source 构造
-            self.source_url = if e.source_type == "github" {
-                Some(format!("https://github.com/{}", e.source))
-            } else {
-                Some(e.source.clone())
-            };
+            self.source_url = e.source_url.clone().or_else(|| {
+                if e.source_type == "github" {
+                    Some(format!("https://github.com/{}", e.source))
+                } else {
+                    Some(e.source.clone())
+                }
+            });
             self.plugin_name = e.plugin_name.clone();
         }
         self
@@ -247,6 +248,37 @@ pub fn list_installed_skills(
                     global: *is_global,
                     path: agent_dir,
                     agent_type: Some(*agent_type),
+                });
+            }
+        }
+
+        // 与 CLI 对齐：即使 agent 当前未被检测到，只要技能目录实际存在，也应参与扫描。
+        for agent_type in AgentType::all() {
+            if detected_agents.contains(&agent_type) {
+                continue;
+            }
+
+            let config = agent_type.config();
+
+            if *is_global && config.global_skills_dir.is_none() {
+                continue;
+            }
+
+            let agent_dir = if *is_global {
+                config.global_skills_dir.clone().unwrap()
+            } else {
+                std::path::PathBuf::from(cwd).join(config.skills_dir)
+            };
+
+            if !agent_dir.exists() {
+                continue;
+            }
+
+            if !scopes.iter().any(|s| s.path == agent_dir && s.global == *is_global) {
+                scopes.push(ScanScope {
+                    global: *is_global,
+                    path: agent_dir,
+                    agent_type: Some(agent_type),
                 });
             }
         }
@@ -444,8 +476,9 @@ pub fn list_installed_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{tempdir, NamedTempFile};
 
     #[test]
     fn test_parse_valid_skill_md() {
@@ -514,5 +547,85 @@ Content.
     fn test_sanitize_name_consecutive_hyphens() {
         assert_eq!(sanitize_name("a  b  c"), "a-b-c");
         assert_eq!(sanitize_name("a---b"), "a-b");
+    }
+
+    #[test]
+    fn test_list_installed_skills_scans_existing_dirs_for_undetected_agents() {
+        let project = tempdir().unwrap();
+        let cwd = project.path().to_string_lossy().to_string();
+
+        let detected = AgentType::detect_installed();
+        let undetected_agent = AgentType::all()
+            .find(|agent| {
+                !detected.contains(agent) && agent.config().skills_dir != ".agents/skills"
+            })
+            .expect("expected at least one undetected non-universal agent");
+
+        let agent_dir = project
+            .path()
+            .join(undetected_agent.config().skills_dir)
+            .join("ghost-skill");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("SKILL.md"),
+            "---\nname: ghost-skill\ndescription: Hidden skill\n---\n",
+        )
+        .unwrap();
+
+        let skills = list_installed_skills(Some(SkillScope::Project), &cwd).unwrap();
+
+        let ghost_skill = skills
+            .iter()
+            .find(|skill| skill.name == "ghost-skill")
+            .expect("skill should be visible even when agent is undetected");
+        assert!(
+            ghost_skill.agents.contains(&undetected_agent),
+            "skill should be associated with the undetected agent directory"
+        );
+    }
+
+    #[test]
+    fn test_with_local_lock_entry_prefers_explicit_source_url() {
+        let project = tempdir().unwrap();
+        let cwd = project.path().to_string_lossy().to_string();
+        fs::write(
+            project.path().join("skills-lock.json"),
+            r#"{
+  "version": 1,
+  "skills": {
+    "ssh-skill": {
+      "source": "owner/private-repo",
+      "sourceType": "github",
+      "sourceUrl": "git@github.com:owner/private-repo.git",
+      "computedHash": "abc123"
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let local_lock = read_local_lock(&cwd).unwrap();
+        let entry = local_lock.skills.get("ssh-skill").unwrap();
+        let skill = InstalledSkill {
+            name: "ssh-skill".to_string(),
+            description: "SSH skill".to_string(),
+            path: String::new(),
+            canonical_path: String::new(),
+            scope: SkillScope::Project,
+            agents: Vec::new(),
+            source: None,
+            source_url: None,
+            installed_at: None,
+            updated_at: None,
+            has_update: None,
+            plugin_name: None,
+        }
+        .with_local_lock_entry(Some(entry));
+
+        assert_eq!(
+            skill.source_url.as_deref(),
+            Some("git@github.com:owner/private-repo.git")
+        );
     }
 }

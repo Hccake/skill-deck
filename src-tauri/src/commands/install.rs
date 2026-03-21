@@ -318,6 +318,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
                         let entry = LocalSkillLockEntry {
                             source: source.clone(),
                             source_type: source_type_str.to_string(),
+                            source_url: Some(source_url.clone()),
                             computed_hash,
                             remote_hash: if skill_folder_hash.is_empty() {
                                 None

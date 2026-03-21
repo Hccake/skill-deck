@@ -36,6 +36,9 @@ pub struct LocalSkillLockEntry {
     pub source: String,
     /// 来源类型 ("github", "local" 等)
     pub source_type: String,
+    /// 原始来源 URL（GUI 扩展，用于 SSH/private repo 保真）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
     /// SHA-256 本地文件内容哈希
     pub computed_hash: String,
 
@@ -127,6 +130,7 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
             LocalSkillLockEntry {
                 source: entry.source,
                 source_type: entry.source_type,
+                source_url: Some(entry.source_url),
                 computed_hash: String::new(), // 旧版没有 SHA-256，留空
                 remote_hash: if entry.skill_folder_hash.is_empty() {
                     None
@@ -269,6 +273,7 @@ mod tests {
             LocalSkillLockEntry {
                 source: "owner/z".to_string(),
                 source_type: "github".to_string(),
+                source_url: None,
                 computed_hash: "hash-z".to_string(),
                 remote_hash: None,
                 skill_path: None,
@@ -280,6 +285,7 @@ mod tests {
             LocalSkillLockEntry {
                 source: "owner/a".to_string(),
                 source_type: "github".to_string(),
+                source_url: None,
                 computed_hash: "hash-a".to_string(),
                 remote_hash: None,
                 skill_path: None,
@@ -298,6 +304,7 @@ mod tests {
         let entry = LocalSkillLockEntry {
             source: "owner/repo".to_string(),
             source_type: "github".to_string(),
+            source_url: None,
             computed_hash: "abc123".to_string(),
             remote_hash: None,
             skill_path: None,
@@ -361,6 +368,7 @@ mod tests {
             LocalSkillLockEntry {
                 source: "owner/repo".to_string(),
                 source_type: "github".to_string(),
+                source_url: None,
                 computed_hash: "abc123".to_string(),
                 remote_hash: Some("tree-sha".to_string()),
                 skill_path: Some("skills/test/SKILL.md".to_string()),
@@ -399,6 +407,7 @@ mod tests {
             LocalSkillLockEntry {
                 source: "owner/repo".to_string(),
                 source_type: "github".to_string(),
+                source_url: None,
                 computed_hash: "hash1".to_string(),
                 remote_hash: None,
                 skill_path: None,
@@ -421,5 +430,38 @@ mod tests {
         // 再次移除不存在的
         let removed = remove_skill_from_local_lock("my-skill", &project_path).unwrap();
         assert!(!removed);
+    }
+
+    #[test]
+    fn test_read_write_local_lock_preserves_source_url_when_present() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let lock_path = temp.path().join("skills-lock.json");
+
+        fs::write(
+            &lock_path,
+            r#"{
+  "version": 1,
+  "skills": {
+    "ssh-skill": {
+      "source": "git@github.com:owner/private-repo.git",
+      "sourceType": "git",
+      "sourceUrl": "git@github.com:owner/private-repo.git",
+      "computedHash": "abc123"
+    }
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let lock = read_local_lock(&project_path).unwrap();
+        write_local_lock(&lock, &project_path).unwrap();
+
+        let written = fs::read_to_string(&lock_path).unwrap();
+        assert!(
+            written.contains("\"sourceUrl\""),
+            "sourceUrl should survive local lock round-trip"
+        );
     }
 }
