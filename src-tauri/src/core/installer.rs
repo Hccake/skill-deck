@@ -32,7 +32,7 @@ pub struct PerAgentInstallResult {
 const EXCLUDE_FILES: &[&str] = &["metadata.json"];
 
 /// 复制时排除的目录（与 CLI 一致）
-const EXCLUDE_DIRS: &[&str] = &[".git"];
+const EXCLUDE_DIRS: &[&str] = &[".git", "__pycache__", "__pypackages__"];
 
 /// 安装 skill 到指定 agent
 ///
@@ -210,8 +210,8 @@ fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
         if EXCLUDE_FILES.contains(&file_name) {
             continue;
         }
-        // 跳过 _ 开头的文件/目录
-        if file_name.starts_with('_') {
+        // 仅跳过 dotfile / dotdir（CLI 不再排除 underscore 文件）
+        if file_name.starts_with('.') {
             continue;
         }
 
@@ -225,9 +225,20 @@ fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
             // 递归复制目录
             copy_skill_files(&path, &dst_path)?;
         } else {
-            // 复制文件（解引用 symlink）
-            fs::copy(&path, &dst_path)
-                .map_err(|e| AppError::InstallFailed { message: format!("Failed to copy file: {}", e) })?;
+            // 复制文件（解引用 symlink）。broken symlink 直接跳过，不中断整个安装。
+            if let Err(e) = fs::copy(&path, &dst_path) {
+                let is_broken_symlink = e.kind() == std::io::ErrorKind::NotFound
+                    && path
+                        .symlink_metadata()
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+
+                if !is_broken_symlink {
+                    return Err(AppError::InstallFailed {
+                        message: format!("Failed to copy file: {}", e),
+                    });
+                }
+            }
         }
     }
 
@@ -474,8 +485,13 @@ mod tests {
         fs::write(src.path().join("README.md"), "# README").unwrap();
         fs::write(src.path().join("metadata.json"), "{}").unwrap();
         fs::write(src.path().join("_internal.md"), "internal").unwrap();
+        fs::write(src.path().join(".env"), "secret").unwrap();
         fs::create_dir(src.path().join(".git")).unwrap();
         fs::write(src.path().join(".git/config"), "git config").unwrap();
+        fs::create_dir(src.path().join("__pycache__")).unwrap();
+        fs::write(src.path().join("__pycache__/module.pyc"), "pyc").unwrap();
+        fs::create_dir(src.path().join("__pypackages__")).unwrap();
+        fs::write(src.path().join("__pypackages__/lock"), "pkg").unwrap();
 
         copy_skill_files(src.path(), dst.path()).unwrap();
 
@@ -483,10 +499,14 @@ mod tests {
         assert!(dst.path().join("SKILL.md").exists());
         // README.md 现在会被保留（CLI v1.4.1 变更）
         assert!(dst.path().join("README.md").exists());
+        // underscore 文件现在应该被保留
+        assert!(dst.path().join("_internal.md").exists());
         // 这些应该被排除
         assert!(!dst.path().join("metadata.json").exists());
-        assert!(!dst.path().join("_internal.md").exists());
+        assert!(!dst.path().join(".env").exists());
         assert!(!dst.path().join(".git").exists());
+        assert!(!dst.path().join("__pycache__").exists());
+        assert!(!dst.path().join("__pypackages__").exists());
     }
 
     #[test]

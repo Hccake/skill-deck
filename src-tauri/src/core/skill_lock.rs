@@ -76,6 +76,14 @@ impl SkillLockFile {
 /// 获取 skill-lock.json 路径
 /// 对应 CLI: getSkillLockPath (skill-lock.ts:61-63)
 pub fn get_skill_lock_path() -> std::path::PathBuf {
+    if let Ok(xdg_state_home) = std::env::var("XDG_STATE_HOME") {
+        let trimmed = xdg_state_home.trim();
+        if !trimmed.is_empty() {
+            return std::path::PathBuf::from(trimmed)
+                .join("skills")
+                .join(".skill-lock.json");
+        }
+    }
     PATHS.home.join(".agents").join(".skill-lock.json")
 }
 
@@ -305,7 +313,11 @@ pub fn get_last_selected_agents() -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     #[test]
     fn test_empty_lock_file() {
@@ -319,6 +331,24 @@ mod tests {
         let path = get_skill_lock_path();
         assert!(path.to_string_lossy().contains(".agents"));
         assert!(path.to_string_lossy().contains(".skill-lock.json"));
+    }
+
+    #[test]
+    fn test_get_skill_lock_path_uses_xdg_state_home_when_set() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original = std::env::var("XDG_STATE_HOME").ok();
+        let temp = tempdir().unwrap();
+        let xdg_state_home = temp.path().join("state");
+        std::env::set_var("XDG_STATE_HOME", &xdg_state_home);
+
+        let path = get_skill_lock_path();
+        assert_eq!(path, xdg_state_home.join("skills").join(".skill-lock.json"));
+
+        if let Some(value) = original {
+            std::env::set_var("XDG_STATE_HOME", value);
+        } else {
+            std::env::remove_var("XDG_STATE_HOME");
+        }
     }
 
     #[test]

@@ -56,6 +56,7 @@ pub enum AgentType {
     Continue,
     Crush,
     Cursor,
+    Deepagents,
     Droid,
     GeminiCli,
     GithubCopilot,
@@ -79,6 +80,7 @@ pub enum AgentType {
     Roo,
     Trae,
     TraeCn,
+    Warp,
     Windsurf,
     Zencoder,
     Pochi,
@@ -102,6 +104,7 @@ impl std::fmt::Display for AgentType {
             Self::Continue => "continue",
             Self::Crush => "crush",
             Self::Cursor => "cursor",
+            Self::Deepagents => "deepagents",
             Self::Droid => "droid",
             Self::GeminiCli => "gemini-cli",
             Self::GithubCopilot => "github-copilot",
@@ -125,6 +128,7 @@ impl std::fmt::Display for AgentType {
             Self::Roo => "roo",
             Self::Trae => "trae",
             Self::TraeCn => "trae-cn",
+            Self::Warp => "warp",
             Self::Windsurf => "windsurf",
             Self::Zencoder => "zencoder",
             Self::Pochi => "pochi",
@@ -153,6 +157,7 @@ impl std::str::FromStr for AgentType {
             "continue" => Ok(Self::Continue),
             "crush" => Ok(Self::Crush),
             "cursor" => Ok(Self::Cursor),
+            "deepagents" => Ok(Self::Deepagents),
             "droid" => Ok(Self::Droid),
             "gemini-cli" => Ok(Self::GeminiCli),
             "github-copilot" => Ok(Self::GithubCopilot),
@@ -176,6 +181,7 @@ impl std::str::FromStr for AgentType {
             "roo" => Ok(Self::Roo),
             "trae" => Ok(Self::Trae),
             "trae-cn" => Ok(Self::TraeCn),
+            "warp" => Ok(Self::Warp),
             "windsurf" => Ok(Self::Windsurf),
             "zencoder" => Ok(Self::Zencoder),
             "pochi" => Ok(Self::Pochi),
@@ -203,6 +209,7 @@ impl AgentType {
             Self::Continue,
             Self::Crush,
             Self::Cursor,
+            Self::Deepagents,
             Self::Droid,
             Self::GeminiCli,
             Self::GithubCopilot,
@@ -226,6 +233,7 @@ impl AgentType {
             Self::Roo,
             Self::Trae,
             Self::TraeCn,
+            Self::Warp,
             Self::Windsurf,
             Self::Zencoder,
             Self::Pochi,
@@ -250,7 +258,7 @@ impl AgentType {
             Self::Antigravity => AgentConfig {
                 name: "antigravity",
                 display_name: "Antigravity",
-                skills_dir: ".agent/skills",
+                skills_dir: ".agents/skills",
                 global_skills_dir: Some(PATHS.home.join(".gemini/antigravity/skills")),
                 show_in_universal_list: true,
             },
@@ -322,6 +330,13 @@ impl AgentType {
                 display_name: "Cursor",
                 skills_dir: ".agents/skills",
                 global_skills_dir: Some(PATHS.home.join(".cursor/skills")),
+                show_in_universal_list: true,
+            },
+            Self::Deepagents => AgentConfig {
+                name: "deepagents",
+                display_name: "Deep Agents",
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(PATHS.home.join(".deepagents/agent/skills")),
                 show_in_universal_list: true,
             },
             Self::Droid => AgentConfig {
@@ -487,6 +502,13 @@ impl AgentType {
                 global_skills_dir: Some(PATHS.home.join(".trae-cn/skills")),
                 show_in_universal_list: true,
             },
+            Self::Warp => AgentConfig {
+                name: "warp",
+                display_name: "Warp",
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(PATHS.home.join(".agents/skills")),
+                show_in_universal_list: true,
+            },
             Self::Windsurf => AgentConfig {
                 name: "windsurf",
                 display_name: "Windsurf",
@@ -576,6 +598,7 @@ impl AgentType {
             Self::Continue => cwd.join(".continue").exists() || PATHS.home.join(".continue").exists(),
             Self::Crush => PATHS.config_home.join("crush").exists(),
             Self::Cursor => PATHS.home.join(".cursor").exists(),
+            Self::Deepagents => PATHS.home.join(".deepagents").exists(),
             Self::Droid => PATHS.home.join(".factory").exists(),
             Self::GeminiCli => PATHS.home.join(".gemini").exists(),
             Self::GithubCopilot => PATHS.home.join(".copilot").exists(),
@@ -599,6 +622,7 @@ impl AgentType {
             Self::Roo => PATHS.home.join(".roo").exists(),
             Self::Trae => PATHS.home.join(".trae").exists(),
             Self::TraeCn => PATHS.home.join(".trae-cn").exists(),
+            Self::Warp => PATHS.home.join(".warp").exists(),
             Self::Windsurf => PATHS.home.join(".codeium/windsurf").exists(),
             Self::Zencoder => PATHS.home.join(".zencoder").exists(),
             Self::Pochi => PATHS.home.join(".pochi").exists(),
@@ -668,7 +692,7 @@ mod tests {
     #[test]
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
-        assert_eq!(count, 41, "Should have 41 agent types (39 + cortex + universal)");
+        assert_eq!(count, 43, "Should have 43 agent types after adding warp and deepagents");
     }
 
     #[test]
@@ -728,7 +752,7 @@ mod tests {
     #[test]
     fn test_detect_installed_returns_vec() {
         let installed = AgentType::detect_installed();
-        assert!(installed.len() <= 41);
+        assert!(installed.len() <= 43);
     }
 
     #[test]
@@ -758,5 +782,23 @@ mod tests {
         // Replit 现在检查 .replit 而非 .agents
         // 这里只能验证不 panic
         let _ = AgentType::Replit.is_installed();
+    }
+
+    #[test]
+    fn test_warp_agent_is_parseable() {
+        let parsed = "warp".parse::<AgentType>();
+        assert!(parsed.is_ok(), "warp should be a supported agent");
+    }
+
+    #[test]
+    fn test_deepagents_agent_is_parseable() {
+        let parsed = "deepagents".parse::<AgentType>();
+        assert!(parsed.is_ok(), "deepagents should be a supported agent");
+    }
+
+    #[test]
+    fn test_antigravity_uses_universal_project_dir() {
+        let config = AgentType::Antigravity.config();
+        assert_eq!(config.skills_dir, ".agents/skills");
     }
 }
