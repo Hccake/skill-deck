@@ -6,7 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import { installSkills } from '@/hooks/useTauriApi';
 import { parseInstallError } from '@/utils/parse-install-error';
 import { toAppError } from '@/utils/to-app-error';
-import type { WizardState } from './types';
+import { getEffectiveInstallMode, type WizardState } from './types';
 
 /** 克隆进度事件（与 SourceStep 共用后端事件） */
 interface CloneProgress {
@@ -56,10 +56,10 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
     selectedAgents: state.selectedAgents,
     retrySkillName: state.retrySkillName,
     retryAgents: state.retryAgents ?? [],
-    mode: state.mode,
-    availableSkills: state.availableSkills,
-    scope,
-    projectPath,
+        mode: getEffectiveInstallMode(state),
+        availableSkills: state.availableSkills,
+        scope,
+        projectPath,
   });
   useEffect(() => {
     installParamsRef.current = {
@@ -68,10 +68,10 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       selectedAgents: state.selectedAgents,
       retrySkillName: state.retrySkillName,
       retryAgents: state.retryAgents ?? [],
-      mode: state.mode,
-      availableSkills: state.availableSkills,
-      scope,
-      projectPath,
+        mode: getEffectiveInstallMode(state),
+        availableSkills: state.availableSkills,
+        scope,
+        projectPath,
     };
   });
 

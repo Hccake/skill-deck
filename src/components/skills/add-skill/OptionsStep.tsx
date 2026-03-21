@@ -5,7 +5,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { listAgents, getLastSelectedAgents } from '@/hooks/useTauriApi';
 import { AgentSelector } from './AgentSelector';
-import type { WizardState } from './types';
+import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
 
 // CLI 默认选中的 Non-Universal agents
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
@@ -85,6 +85,9 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
     [updateState]
   );
 
+  const shouldShowModeSelection = shouldShowInstallModeSelection(state);
+  const effectiveMode = getEffectiveInstallMode(state);
+
   return (
     <div className="space-y-6 py-4">
       {/* Agents */}
@@ -98,39 +101,45 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
       />
 
       {/* Mode */}
-      <div className="space-y-3">
-        <Label className="text-sm font-medium">{t('addSkill.mode.title')}</Label>
-        <RadioGroup
-          value={state.mode}
-          onValueChange={(value) =>
-            updateState({ mode: value as 'symlink' | 'copy' })
-          }
-          className="space-y-2"
-        >
-          <div className="flex items-start gap-3">
-            <RadioGroupItem value="symlink" id="mode-symlink" className="mt-1" />
-            <div>
-              <Label htmlFor="mode-symlink" className="font-medium">
-                {t('addSkill.mode.symlink')}
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                {t('addSkill.mode.symlinkHint')}
-              </p>
+      {shouldShowModeSelection ? (
+        <div className="space-y-3">
+          <Label className="text-sm font-medium">{t('addSkill.mode.title')}</Label>
+          <RadioGroup
+            value={effectiveMode}
+            onValueChange={(value) =>
+              updateState({ mode: value as 'symlink' | 'copy' })
+            }
+            className="space-y-2"
+          >
+            <div className="flex items-start gap-3">
+              <RadioGroupItem value="symlink" id="mode-symlink" className="mt-1" />
+              <div>
+                <Label htmlFor="mode-symlink" className="font-medium">
+                  {t('addSkill.mode.symlink')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('addSkill.mode.symlinkHint')}
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <RadioGroupItem value="copy" id="mode-copy" className="mt-1" />
-            <div>
-              <Label htmlFor="mode-copy" className="font-medium">
-                {t('addSkill.mode.copy')}
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                {t('addSkill.mode.copyHint')}
-              </p>
+            <div className="flex items-start gap-3">
+              <RadioGroupItem value="copy" id="mode-copy" className="mt-1" />
+              <div>
+                <Label htmlFor="mode-copy" className="font-medium">
+                  {t('addSkill.mode.copy')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('addSkill.mode.copyHint')}
+                </p>
+              </div>
             </div>
-          </div>
-        </RadioGroup>
-      </div>
+          </RadioGroup>
+        </div>
+      ) : (
+        <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          {t('addSkill.mode.singleDirectoryHint')}
+        </div>
+      )}
     </div>
   );
 }

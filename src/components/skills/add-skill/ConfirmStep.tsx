@@ -13,7 +13,7 @@ import { toTitleCase } from '@/lib/utils';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
 import { RiskBadge } from '../RiskBadge';
-import type { WizardState } from './types';
+import { getEffectiveInstallMode, type WizardState } from './types';
 
 interface ConfirmStepProps {
   state: WizardState;
@@ -96,6 +96,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     const selectedSet = new Set(state.selectedAgents);
     return state.allAgents.filter((a) => selectedSet.has(a.id) && !a.isUniversal);
   }, [state.selectedAgents, state.allAgents]);
+  const effectiveMode = getEffectiveInstallMode(state);
 
   const universalDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
 
@@ -190,13 +191,13 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
             <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
               <span>↓</span>
               <span>
-                {state.mode === 'symlink'
+                {effectiveMode === 'symlink'
                   ? t('addSkill.confirm.symlink')
                   : t('addSkill.confirm.copy')}
               </span>
               <span className="text-muted-foreground/50">—</span>
               <span className="text-muted-foreground/60">
-                {state.mode === 'symlink'
+                {effectiveMode === 'symlink'
                   ? t('addSkill.confirm.symlinkHint')
                   : t('addSkill.confirm.copyHint')}
               </span>

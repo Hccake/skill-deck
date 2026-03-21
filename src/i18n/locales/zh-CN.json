@@ -285,7 +285,8 @@
       "symlink": "符号链接",
       "symlinkHint": "推荐 - 保持单一来源",
       "copy": "复制",
-      "copyHint": "为每个 Agent 创建独立副本"
+      "copyHint": "为每个 Agent 创建独立副本",
+      "singleDirectoryHint": "当前所有有效目标最终都会落到同一个 Skill 目录中，因此安装方式会自动处理。"
     },
     "confirm": {
       "overwriteCount": "{{count}} 个 Skills 已存在，安装后将被覆盖",

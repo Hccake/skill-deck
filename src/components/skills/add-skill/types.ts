@@ -29,6 +29,33 @@ export function getStepFlow(_entryPoint?: EntryPoint): CoreStep[] {
   return STEP_FLOW;
 }
 
+type InstallModeState = Pick<WizardState, 'allAgents' | 'selectedAgents' | 'mode'>;
+
+/** 是否需要显示安装方式选择 */
+export function shouldShowInstallModeSelection(state: Pick<WizardState, 'allAgents' | 'selectedAgents'>): boolean {
+  if (state.allAgents.length === 0) {
+    return true;
+  }
+
+  const effectiveDirs = new Set<string>();
+  const selectedSet = new Set(state.selectedAgents);
+
+  for (const agent of state.allAgents) {
+    if (agent.isUniversal && agent.showInUniversalList) {
+      effectiveDirs.add(agent.skillsDir);
+    } else if (!agent.isUniversal && selectedSet.has(agent.id)) {
+      effectiveDirs.add(agent.skillsDir);
+    }
+  }
+
+  return effectiveDirs.size > 1;
+}
+
+/** 当前安装流程实际生效的 mode */
+export function getEffectiveInstallMode(state: InstallModeState): InstallMode {
+  return shouldShowInstallModeSelection(state) ? state.mode : 'copy';
+}
+
 /** 向导初始化参数（通过窗口 URL query 传递） */
 export interface WizardParams {
   entryPoint: EntryPoint;

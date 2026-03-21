@@ -285,7 +285,8 @@
       "symlink": "Symlink",
       "symlinkHint": "Recommended - Single source of truth",
       "copy": "Copy",
-      "copyHint": "Independent copies for each agent"
+      "copyHint": "Independent copies for each agent",
+      "singleDirectoryHint": "All effective targets resolve to the same skill directory, so the installation method is handled automatically."
     },
     "confirm": {
       "overwriteCount": "{{count}} skills already exist and will be overwritten",
