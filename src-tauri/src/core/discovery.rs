@@ -176,7 +176,6 @@ fn get_priority_search_dirs(search_path: &Path) -> Vec<PathBuf> {
         search_path.join("skills/.curated"),
         search_path.join("skills/.experimental"),
         search_path.join("skills/.system"),
-        search_path.join(".agent/skills"),
         search_path.join(".agents/skills"),
         search_path.join(".claude/skills"),
         search_path.join(".cline/skills"),
