@@ -34,6 +34,9 @@ const LEGACY_PROJECT_LOCK_PATH: &str = ".agents/.skill-lock.json";
 pub struct LocalSkillLockEntry {
     /// 来源标识符 (owner/repo, npm 包名, 本地路径)
     pub source: String,
+    /// Branch or tag ref used for installation
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub ref_name: Option<String>,
     /// 来源类型 ("github", "local" 等)
     pub source_type: String,
     /// 原始来源 URL（GUI 扩展，用于 SSH/private repo 保真）
@@ -129,6 +132,7 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
             name,
             LocalSkillLockEntry {
                 source: entry.source,
+                ref_name: None,
                 source_type: entry.source_type,
                 source_url: Some(entry.source_url),
                 computed_hash: String::new(), // 旧版没有 SHA-256，留空
@@ -272,6 +276,7 @@ mod tests {
             "z-skill".to_string(),
             LocalSkillLockEntry {
                 source: "owner/z".to_string(),
+                ref_name: None,
                 source_type: "github".to_string(),
                 source_url: None,
                 computed_hash: "hash-z".to_string(),
@@ -284,6 +289,7 @@ mod tests {
             "a-skill".to_string(),
             LocalSkillLockEntry {
                 source: "owner/a".to_string(),
+                ref_name: None,
                 source_type: "github".to_string(),
                 source_url: None,
                 computed_hash: "hash-a".to_string(),
@@ -303,6 +309,7 @@ mod tests {
     fn test_remote_hash_skip_serialization() {
         let entry = LocalSkillLockEntry {
             source: "owner/repo".to_string(),
+            ref_name: None,
             source_type: "github".to_string(),
             source_url: None,
             computed_hash: "abc123".to_string(),
@@ -367,6 +374,7 @@ mod tests {
             "test-skill".to_string(),
             LocalSkillLockEntry {
                 source: "owner/repo".to_string(),
+                ref_name: None,
                 source_type: "github".to_string(),
                 source_url: None,
                 computed_hash: "abc123".to_string(),
@@ -406,6 +414,7 @@ mod tests {
             "my-skill",
             LocalSkillLockEntry {
                 source: "owner/repo".to_string(),
+                ref_name: None,
                 source_type: "github".to_string(),
                 source_url: None,
                 computed_hash: "hash1".to_string(),
@@ -463,5 +472,42 @@ mod tests {
             written.contains("\"sourceUrl\""),
             "sourceUrl should survive local lock round-trip"
         );
+    }
+
+    #[test]
+    fn test_ref_name_serialization() {
+        let entry = LocalSkillLockEntry {
+            source: "owner/repo".to_string(),
+            ref_name: Some("feature-branch".to_string()),
+            source_type: "github".to_string(),
+            source_url: None,
+            computed_hash: "abc123".to_string(),
+            remote_hash: None,
+            skill_path: None,
+            plugin_name: None,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains(r#""ref":"feature-branch"#));
+
+        let deserialized: LocalSkillLockEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.ref_name, Some("feature-branch".to_string()));
+
+        let entry_no_ref = LocalSkillLockEntry { ref_name: None, ..entry.clone() };
+        let json_no_ref = serde_json::to_string(&entry_no_ref).unwrap();
+        assert!(!json_no_ref.contains("ref"));
+    }
+
+    #[test]
+    fn test_cli_lock_format_compat() {
+        let cli_json = r#"{
+            "source": "owner/repo",
+            "ref": "main",
+            "sourceType": "github",
+            "computedHash": "abc123"
+        }"#;
+        let entry: LocalSkillLockEntry = serde_json::from_str(cli_json).unwrap();
+        assert_eq!(entry.ref_name, Some("main".to_string()));
+        assert_eq!(entry.source_url, None);
+        assert_eq!(entry.remote_hash, None);
     }
 }
