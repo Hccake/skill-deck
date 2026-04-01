@@ -122,6 +122,7 @@ fn discover_and_build_result(
     Ok(FetchResult {
         source_type: parsed.source_type.to_string(),
         source_url: parsed.url.clone(),
+        git_ref: parsed.git_ref.clone(),
         skill_filter: parsed.skill_filter.clone(),
         skills,
     })

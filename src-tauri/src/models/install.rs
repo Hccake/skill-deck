@@ -160,6 +160,9 @@ pub struct FetchResult {
     pub source_type: String,
     /// 规范化 URL
     pub source_url: String,
+    /// Git ref（branch/tag）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_ref: Option<String>,
     /// @skill 语法提取的名称（用于预选）
     pub skill_filter: Option<String>,
     /// 可用的 skills 列表
