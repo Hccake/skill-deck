@@ -277,7 +277,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
             // 获取 skill folder hash（仅 GitHub 来源）
             let skill_folder_hash = if parsed.source_type == SourceType::GitHub {
                 if let Some(ref repo) = owner_repo {
-                    fetch_skill_folder_hash(repo, &skill.relative_path, None)
+                    fetch_skill_folder_hash(repo, &skill.relative_path, parsed.git_ref.as_deref())
                         .await
                         .unwrap_or(None)
                         .unwrap_or_default()
@@ -303,7 +303,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
                 crate::models::Scope::Global => {
                     let _ = add_skill_to_lock(
                         &skill.name, &source, source_type_str, source_url,
-                        None,    // ref_name - will be filled in Task 4
+                        parsed.git_ref.as_deref(),
                         skill_path, &skill_folder_hash,
                         skill.plugin_name.as_deref(),
                     );
@@ -318,7 +318,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
 
                         let entry = LocalSkillLockEntry {
                             source: source.clone(),
-                            ref_name: None, // will be filled in Task 4
+                            ref_name: parsed.git_ref.clone(),
                             source_type: source_type_str.to_string(),
                             source_url: Some(source_url.clone()),
                             computed_hash,
