@@ -13,6 +13,10 @@ const SEARCH_API_BASE = 'https://skills.sh';
 const LEADERBOARD_BASE = 'https://skills.sh';
 const OFFICIAL_PATH = '/official';
 
+const LEADING_SLASHES_RE = /^\/+/;
+const WHITESPACE_RE = /\s+/g;
+const LAST_METRIC_RE = /([\d.,]+\s*[kKmM]?)(?!.*[\d.,]+\s*[kKmM]?)/;
+
 const inflightRequests = new Map<string, Promise<unknown>>();
 const leaderboardCache = new Map<string, DiscoverSkillSummary[]>();
 const detailCache = new Map<string, DiscoverSkillDetail>();
@@ -96,13 +100,13 @@ function parseLeaderboardHtml(html: string): DiscoverSkillSummary[] {
     if (!href.includes('/skills/')) continue;
 
     const absoluteUrl = toAbsoluteUrl(href);
-    const parts = href.replace(/^\/+/, '').split('/').filter(Boolean);
+    const parts = href.replace(LEADING_SLASHES_RE, '').split('/').filter(Boolean);
     const owner = parts[0] ?? extractSourceOwner(href);
     const repo = parts[1] ?? 'skills';
-    const slug = parts.at(-1) ?? anchor.textContent?.trim().split(/\s+/)[0] ?? repo;
+    const slug = parts.at(-1) ?? anchor.textContent?.trim().split(WHITESPACE_RE)[0] ?? repo;
     const source = `https://github.com/${owner}/${repo}`;
-    const text = anchor.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-    const installs = parseMetric(text.match(/([\d.,]+\s*[kKmM]?)(?!.*[\d.,]+\s*[kKmM]?)/)?.[1] ?? text.split(/\s+/).at(-1) ?? '0');
+    const text = anchor.textContent?.replace(WHITESPACE_RE, ' ').trim() ?? '';
+    const installs = parseMetric(text.match(LAST_METRIC_RE)?.[1] ?? text.split(WHITESPACE_RE).at(-1) ?? '0');
     const summary = text && text !== slug ? text.replace(slug, '').trim() : undefined;
 
     results.push({
