@@ -1,7 +1,8 @@
-//! Well-Known Skills protocol support (RFC 8615 `.well-known/skills`).
+//! Well-Known Skills protocol support (RFC 8615 `.well-known/agent-skills`).
 //!
-//! Implements discovery of skills hosted under the `.well-known/skills/` path
-//! on websites. This is the Rust equivalent of the CLI's `providers/wellknown.ts`.
+//! Implements discovery of skills hosted under the `.well-known/agent-skills/`
+//! path on websites, with fallback to the legacy `.well-known/skills/` path.
+//! This is the Rust equivalent of the CLI's `providers/wellknown.ts`.
 
 use crate::error::AppError;
 use reqwest::Client;
@@ -11,7 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use url::Url;
 
-const WELL_KNOWN_PATH: &str = ".well-known/skills";
+const WELL_KNOWN_PATHS: &[&str] = &[".well-known/agent-skills", ".well-known/skills"];
 const INDEX_FILE: &str = "index.json";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -46,6 +47,7 @@ pub struct WellKnownFetchResult {
 struct IndexUrlCandidate {
     index_url: String,
     base_url: String,
+    well_known_path: String,
 }
 
 /// Extract the hostname from a URL, stripping a leading `www.` prefix.
@@ -58,13 +60,17 @@ pub fn extract_hostname(url: &str) -> Option<String> {
 
 /// Build candidate index URLs for a given page URL.
 ///
-/// For a URL with a non-trivial path (e.g. `https://example.com/docs`) we
-/// return two candidates:
-///   1. Path-relative: `https://example.com/docs/.well-known/skills/index.json`
-///   2. Root fallback: `https://example.com/.well-known/skills/index.json`
+/// For each well-known path (`agent-skills` first, then legacy `skills`), and
+/// for a URL with a non-trivial path (e.g. `https://example.com/docs`), we
+/// generate:
+///   1. Path-relative: `https://example.com/docs/.well-known/<wk>/index.json`
+///   2. Root fallback: `https://example.com/.well-known/<wk>/index.json`
 ///
 /// For a root URL (`https://example.com` or `https://example.com/`) only the
-/// root candidate is returned.
+/// root candidate is generated per well-known path.
+///
+/// The resulting list is ordered so that `agent-skills` candidates are tried
+/// before `skills` candidates (new path preferred, legacy as fallback).
 fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
     let Ok(parsed) = Url::parse(url) else {
         return vec![];
@@ -73,21 +79,25 @@ fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
     let origin = parsed.origin().ascii_serialization();
     let path = parsed.path().trim_end_matches('/');
 
-    let root_candidate = IndexUrlCandidate {
-        index_url: format!("{origin}/{WELL_KNOWN_PATH}/{INDEX_FILE}"),
-        base_url: format!("{origin}/{WELL_KNOWN_PATH}"),
-    };
+    let mut candidates = Vec::new();
 
-    if path.is_empty() {
-        return vec![root_candidate];
+    for &wk_path in WELL_KNOWN_PATHS {
+        if !path.is_empty() {
+            candidates.push(IndexUrlCandidate {
+                index_url: format!("{origin}{path}/{wk_path}/{INDEX_FILE}"),
+                base_url: format!("{origin}{path}/{wk_path}"),
+                well_known_path: wk_path.to_string(),
+            });
+        }
+
+        candidates.push(IndexUrlCandidate {
+            index_url: format!("{origin}/{wk_path}/{INDEX_FILE}"),
+            base_url: format!("{origin}/{wk_path}"),
+            well_known_path: wk_path.to_string(),
+        });
     }
 
-    let path_candidate = IndexUrlCandidate {
-        index_url: format!("{origin}{path}/{WELL_KNOWN_PATH}/{INDEX_FILE}"),
-        base_url: format!("{origin}{path}/{WELL_KNOWN_PATH}"),
-    };
-
-    vec![path_candidate, root_candidate]
+    candidates
 }
 
 /// Validate a single skill entry from the index.
@@ -218,7 +228,7 @@ pub async fn fetch_wellknown_skills(url: &str) -> Result<WellKnownFetchResult, A
 
 /// Try each candidate index URL in order; return the first that responds with
 /// a non-empty skills list, together with its `base_url` (which already
-/// includes `.well-known/skills`).
+/// includes the matched well-known path, e.g. `.well-known/agent-skills`).
 async fn fetch_index(
     client: &Client,
     url: &str,
@@ -399,21 +409,48 @@ mod tests {
     #[test]
     fn test_build_index_urls_with_path() {
         let candidates = build_index_urls("https://example.com/docs");
-        assert_eq!(candidates.len(), 2);
+        // 2 well-known paths × 2 locations (path-relative + root) = 4 candidates
+        assert_eq!(candidates.len(), 4);
+
+        // agent-skills path-relative (preferred)
         assert_eq!(
             candidates[0].index_url,
-            "https://example.com/docs/.well-known/skills/index.json"
+            "https://example.com/docs/.well-known/agent-skills/index.json"
         );
         assert_eq!(
             candidates[0].base_url,
-            "https://example.com/docs/.well-known/skills"
+            "https://example.com/docs/.well-known/agent-skills"
         );
+        assert_eq!(candidates[0].well_known_path, ".well-known/agent-skills");
+
+        // agent-skills root
         assert_eq!(
             candidates[1].index_url,
-            "https://example.com/.well-known/skills/index.json"
+            "https://example.com/.well-known/agent-skills/index.json"
         );
         assert_eq!(
             candidates[1].base_url,
+            "https://example.com/.well-known/agent-skills"
+        );
+
+        // legacy skills path-relative (fallback)
+        assert_eq!(
+            candidates[2].index_url,
+            "https://example.com/docs/.well-known/skills/index.json"
+        );
+        assert_eq!(
+            candidates[2].base_url,
+            "https://example.com/docs/.well-known/skills"
+        );
+        assert_eq!(candidates[2].well_known_path, ".well-known/skills");
+
+        // legacy skills root
+        assert_eq!(
+            candidates[3].index_url,
+            "https://example.com/.well-known/skills/index.json"
+        );
+        assert_eq!(
+            candidates[3].base_url,
             "https://example.com/.well-known/skills"
         );
     }
@@ -421,10 +458,39 @@ mod tests {
     #[test]
     fn test_build_index_urls_root() {
         let candidates = build_index_urls("https://example.com");
-        assert_eq!(candidates.len(), 1);
+        // 2 well-known paths × 1 location (root only) = 2 candidates
+        assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[0].index_url,
+            "https://example.com/.well-known/agent-skills/index.json"
+        );
+        assert_eq!(candidates[0].well_known_path, ".well-known/agent-skills");
+        assert_eq!(
+            candidates[1].index_url,
             "https://example.com/.well-known/skills/index.json"
+        );
+        assert_eq!(candidates[1].well_known_path, ".well-known/skills");
+    }
+
+    #[test]
+    fn test_build_index_urls_agent_skills_tried_before_legacy() {
+        let candidates = build_index_urls("https://example.com/app");
+        // Verify ordering: all agent-skills candidates come before legacy skills
+        let agent_skills_indices: Vec<usize> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.well_known_path.contains("agent-skills"))
+            .map(|(i, _)| i)
+            .collect();
+        let legacy_indices: Vec<usize> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.well_known_path.contains("agent-skills"))
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            agent_skills_indices.iter().all(|&a| legacy_indices.iter().all(|&l| a < l)),
+            "agent-skills candidates must come before legacy skills candidates"
         );
     }
 }
