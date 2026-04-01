@@ -79,6 +79,7 @@ export interface WizardState {
   source: string;
   fetchStatus: 'idle' | 'loading' | 'error' | 'success';
   fetchError: AppError | null;
+  gitRef: string | null;
 
   // Skills
   availableSkills: AvailableSkill[];

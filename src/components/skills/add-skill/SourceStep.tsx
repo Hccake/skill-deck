@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -108,6 +109,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         availableSkills: result.skills,
         selectedSkills: preselected,
         skillFilter: result.skillFilter,
+        gitRef: result.gitRef ?? null,
         preSelectedSkills: parsed.skills,
         preSelectedAgents: parsed.agents,
       });
@@ -240,6 +242,18 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
                 <p className="text-sm text-muted-foreground">
                   {t('addSkill.source.hint')}
                 </p>
+                {state.gitRef ? (
+                  <div className="flex items-center gap-2 mt-1">
+                    <Badge variant="secondary">
+                      {t('addSkill.source.refBadge', { ref: state.gitRef })}
+                    </Badge>
+                    {state.skillFilter ? (
+                      <Badge variant="outline">
+                        {t('addSkill.source.skillFilterBadge', { filter: state.skillFilter })}
+                      </Badge>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </TabsContent>
           </>

@@ -42,6 +42,7 @@
     "update": "update available",
     "updates": "updates available",
     "updated": "Updated {{time}}",
+    "refBadge": "branch: {{ref}}",
     "actions": {
       "update": "Update",
       "delete": "Delete",
@@ -237,6 +238,8 @@
         "search": "Search Online",
         "manual": "Enter URL"
       },
+      "refBadge": "branch: {{ref}}",
+      "skillFilterBadge": "skill: {{filter}}",
       "error": {
         "empty": "Please enter a source",
         "notFound": "Repository not found",

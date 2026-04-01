@@ -232,6 +232,14 @@ export const SkillCard = memo(function SkillCard({
                 <span className="text-border">·</span>
               </>
             ) : null}
+            {skill.gitRef ? (
+              <>
+                <Badge variant="outline" className="text-xs px-1.5 py-0">
+                  {t('skills.refBadge', { ref: skill.gitRef })}
+                </Badge>
+                <span className="text-border">·</span>
+              </>
+            ) : null}
             {skill.updatedAt ? (
               <span>{t('skills.updated', { time: formatTime(skill.updatedAt, i18n.language) })}</span>
             ) : null}

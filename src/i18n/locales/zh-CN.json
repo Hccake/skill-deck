@@ -42,6 +42,7 @@
     "update": "个可更新",
     "updates": "个可更新",
     "updated": "更新于 {{time}}",
+    "refBadge": "分支: {{ref}}",
     "actions": {
       "update": "更新",
       "delete": "删除",
@@ -237,6 +238,8 @@
         "search": "搜索在线 Skills",
         "manual": "输入地址"
       },
+      "refBadge": "分支: {{ref}}",
+      "skillFilterBadge": "技能: {{filter}}",
       "error": {
         "empty": "请输入来源",
         "notFound": "未找到仓库",

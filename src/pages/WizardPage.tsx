@@ -48,6 +48,7 @@ function createInitialState(params: {
     source,
     fetchStatus: 'idle',
     fetchError: null,
+    gitRef: null,
     availableSkills: [],
     selectedSkills: [],
     skillFilter: null,

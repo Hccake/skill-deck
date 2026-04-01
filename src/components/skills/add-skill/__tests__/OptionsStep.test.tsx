@@ -35,6 +35,7 @@ function createState(): WizardState {
     source: 'test/repo',
     fetchStatus: 'success',
     fetchError: null,
+    gitRef: null,
     availableSkills: [],
     selectedSkills: ['demo-skill'],
     skillFilter: null,
