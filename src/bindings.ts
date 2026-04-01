@@ -302,7 +302,7 @@ showInUniversalList: boolean }
  * Agent 类型枚举
  * 完整对应 CLI: types.ts AgentType
  */
-export type AgentType = "amp" | "antigravity" | "augment" | "claude-code" | "openclaw" | "cline" | "codebuddy" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "droid" | "gemini-cli" | "github-copilot" | "goose" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "roo" | "trae" | "trae-cn" | "warp" | "windsurf" | "zencoder" | "pochi" | "adal" | "cortex" | "universal"
+export type AgentType = "amp" | "antigravity" | "augment" | "bob" | "claude-code" | "openclaw" | "cline" | "codebuddy" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "droid" | "firebender" | "gemini-cli" | "github-copilot" | "goose" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "roo" | "trae" | "trae-cn" | "warp" | "windsurf" | "zencoder" | "pochi" | "adal" | "cortex" | "universal"
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout" } | { kind: "gitNetworkError"; data: { message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "noSkillsFound" } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
 /**
  * 可用的 Skill 信息（fetch_available 返回）
@@ -336,6 +336,10 @@ sourceType: string;
  * 规范化 URL
  */
 sourceUrl: string; 
+/**
+ * Git ref（branch/tag）
+ */
+gitRef?: string | null; 
 /**
  * @skill 语法提取的名称（用于预选）
  */
@@ -460,7 +464,11 @@ export type InstalledSkill = { name: string; description: string; path: string; 
 /**
  * 所属 plugin 名称
  */
-pluginName?: string | null }
+pluginName?: string | null; 
+/**
+ * Git ref（branch/tag）
+ */
+gitRef?: string | null }
 /**
  * list_skills 参数
  */
@@ -563,7 +571,7 @@ export type SkillScope = "global" | "project"
 /**
  * 更新检测结果
  */
-export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean }
+export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; gitRef?: string | null }
 /**
  * agent 级更新结果
  */
