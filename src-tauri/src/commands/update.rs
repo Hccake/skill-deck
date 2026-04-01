@@ -41,6 +41,8 @@ pub struct SkillUpdateInfo {
     pub name: String,
     pub source: String,
     pub has_update: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_ref: Option<String>,
 }
 
 /// 检测指定 scope 的 skills 是否有更新
@@ -87,7 +89,7 @@ async fn check_updates_inner(
                             source,
                             source_type,
                             source_url,
-                            ref_name: None,
+                            ref_name: entry.ref_name,
                             skill_path: entry.skill_path,
                             skill_folder_hash: entry.remote_hash.unwrap_or_default(),
                             installed_at: String::new(),
@@ -108,9 +110,9 @@ async fn check_updates_inner(
         }
     };
 
-    // 3. 过滤并按 source 分组
+    // 3. 过滤并按 (source, ref_name) 分组
     // value: Vec<(skill_name, skill_path, local_hash)>
-    let mut skills_by_source: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
+    let mut skills_by_source: HashMap<(String, Option<String>), Vec<(String, String, String)>> = HashMap::new();
 
     for (name, entry) in &lock.skills {
         if entry.skill_folder_hash.is_empty() {
@@ -122,20 +124,20 @@ async fn check_updates_inner(
         };
 
         skills_by_source
-            .entry(entry.source.clone())
+            .entry((entry.source.clone(), entry.ref_name.clone()))
             .or_default()
             .push((name.clone(), skill_path, entry.skill_folder_hash.clone()));
     }
 
-    // 4. 对每组 source 批量查询 hash（单次 API 请求 per source）
+    // 4. 对每组 (source, ref_name) 批量查询 hash（单次 API 请求 per source+ref）
     let mut results = Vec::new();
 
-    for (source, skills) in &skills_by_source {
+    for ((source, ref_name), skills) in &skills_by_source {
         let paths: Vec<(String, String)> = skills
             .iter()
             .map(|(name, skill_path, _)| (name.clone(), skill_path.clone()))
             .collect();
-        match fetch_skill_folder_hashes_batch(source, &paths, None).await {
+        match fetch_skill_folder_hashes_batch(source, &paths, ref_name.as_deref()).await {
             Ok(hashes) => {
                 for (name, _, local_hash) in skills {
                     let has_update = hashes
@@ -147,6 +149,7 @@ async fn check_updates_inner(
                         name: name.clone(),
                         source: source.clone(),
                         has_update,
+                        git_ref: ref_name.clone(),
                     });
                 }
             }
@@ -157,6 +160,7 @@ async fn check_updates_inner(
                         name: name.clone(),
                         source: source.clone(),
                         has_update: false,
+                        git_ref: ref_name.clone(),
                     });
                 }
             }
@@ -220,7 +224,7 @@ async fn update_skill_single(
     let mut warnings = Vec::new();
 
     // 1. 根据 scope 读取对应的 lock 文件
-    let (entry_source, entry_source_type, entry_source_url, entry_skill_path, entry_plugin_name) =
+    let (entry_source, entry_source_type, entry_source_url, entry_skill_path, entry_plugin_name, entry_ref_name) =
         match scope {
             Scope::Global => {
                 let lock = read_scoped_lock(None)?;
@@ -234,6 +238,7 @@ async fn update_skill_single(
                     entry.source_url.clone(),
                     entry.skill_path.clone(),
                     entry.plugin_name.clone(),
+                    entry.ref_name.clone(),
                 )
             }
             Scope::Project => {
@@ -263,6 +268,7 @@ async fn update_skill_single(
                     source_url,
                     entry.skill_path.clone(),
                     entry.plugin_name.clone(),
+                    entry.ref_name.clone(),
                 )
             }
         };
@@ -271,6 +277,7 @@ async fn update_skill_single(
     let install_url = build_install_url_from_parts(
         &entry_source_url,
         entry_skill_path.as_deref(),
+        entry_ref_name.as_deref(),
     );
 
     // 3. 解析来源
@@ -356,7 +363,7 @@ async fn update_skill_single(
         fetch_skill_folder_hash(
             &entry_source,
             entry_skill_path.as_deref().unwrap_or(""),
-            None,
+            entry_ref_name.as_deref(),
         )
         .await
         .unwrap_or(None)
@@ -372,7 +379,7 @@ async fn update_skill_single(
                 &entry_source,
                 &entry_source_type,
                 &entry_source_url,
-                None,    // ref_name - will be filled in Task 5
+                entry_ref_name.as_deref(),
                 entry_skill_path.as_deref(),
                 &new_hash,
                 entry_plugin_name.as_deref(),
@@ -387,7 +394,7 @@ async fn update_skill_single(
                 let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
                 let entry = LocalSkillLockEntry {
                     source: entry_source.clone(),
-                    ref_name: None, // will be filled in Task 5
+                    ref_name: entry_ref_name.clone(),
                     source_type: entry_source_type.clone(),
                     source_url: Some(entry_source_url.clone()),
                     computed_hash,
@@ -459,6 +466,7 @@ async fn update_skills_batch_inner(
         source_url: String,
         skill_path: Option<String>,
         plugin_name: Option<String>,
+        ref_name: Option<String>,
     }
 
     let names_set: std::collections::HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
@@ -476,6 +484,7 @@ async fn update_skills_batch_inner(
                             source_url: entry.source_url.clone(),
                             skill_path: entry.skill_path.clone(),
                             plugin_name: entry.plugin_name.clone(),
+                            ref_name: entry.ref_name.clone(),
                         });
                     }
                 }
@@ -500,6 +509,7 @@ async fn update_skills_batch_inner(
                                 source_url,
                                 skill_path: entry.skill_path.clone(),
                                 plugin_name: entry.plugin_name.clone(),
+                                ref_name: entry.ref_name.clone(),
                             });
                         }
                     }
@@ -523,7 +533,11 @@ async fn update_skills_batch_inner(
     // 2. 每组 source 只 clone 一次
     for (source_url, group) in &by_source {
         // 用第一个 entry 构造安装 URL（取顶层 URL，不含 skill 子路径，以获取整个仓库）
-        let parsed = match parse_source(source_url) {
+        let source_with_ref = match &group[0].ref_name {
+            Some(r) => format!("{}#{}", source_url, r),
+            None => source_url.clone(),
+        };
+        let parsed = match parse_source(&source_with_ref) {
             Ok(p) => p,
             Err(err) => {
                 // 整组失败
@@ -662,7 +676,7 @@ async fn update_skills_batch_inner(
                 fetch_skill_folder_hash(
                     &entry.source,
                     entry.skill_path.as_deref().unwrap_or(""),
-                    None,
+                    entry.ref_name.as_deref(),
                 )
                 .await
                 .unwrap_or(None)
@@ -678,7 +692,7 @@ async fn update_skills_batch_inner(
                         &entry.source,
                         &entry.source_type,
                         &entry.source_url,
-                        None,    // ref_name - will be filled in Task 5
+                        entry.ref_name.as_deref(),
                         entry.skill_path.as_deref(),
                         &new_hash,
                         entry.plugin_name.as_deref(),
@@ -693,7 +707,7 @@ async fn update_skills_batch_inner(
                         let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
                         let lock_entry = LocalSkillLockEntry {
                             source: entry.source.clone(),
-                            ref_name: None, // will be filled in Task 5
+                            ref_name: entry.ref_name.clone(),
                             source_type: entry.source_type.clone(),
                             source_url: Some(entry.source_url.clone()),
                             computed_hash,
@@ -810,8 +824,9 @@ fn summarize_results(results: &[UpdateSkillItemResult]) -> UpdateSkillSummary {
 ///
 /// 与 CLI cli.ts runUpdate() 中构造 installUrl 的逻辑一致：
 /// 1. 基础 URL = source_url
-/// 2. 如果有 skillPath，去掉 SKILL.md 后缀，拼接为 GitHub tree URL
-fn build_install_url_from_parts(source_url: &str, skill_path: Option<&str>) -> String {
+/// 2. 如果有 skillPath，去掉 SKILL.md 后缀，拼接为 GitHub tree URL（使用 ref_name 分支）
+/// 3. 如果没有 skillPath 但有 ref_name，追加 #ref 片段
+fn build_install_url_from_parts(source_url: &str, skill_path: Option<&str>, ref_name: Option<&str>) -> String {
     let mut install_url = source_url.to_string();
 
     if let Some(sp) = skill_path {
@@ -834,8 +849,19 @@ fn build_install_url_from_parts(source_url: &str, skill_path: Option<&str>) -> S
                 .trim_end_matches('/')
                 .to_string();
 
-            // 拼接 GitHub tree URL（硬编码 main 分支，与 CLI 一致）
-            install_url = format!("{}/tree/main/{}", install_url, skill_folder);
+            // 拼接 GitHub tree URL（使用 ref_name，默认 main 分支）
+            let branch = ref_name.unwrap_or("main");
+            install_url = format!("{}/tree/{}/{}", install_url, branch, skill_folder);
+        } else if let Some(r) = ref_name {
+            // 没有子路径但有 ref，追加 #ref 片段
+            if !install_url.contains("/tree/") {
+                install_url = format!("{}#{}", install_url, r);
+            }
+        }
+    } else if let Some(r) = ref_name {
+        // 没有 skillPath 但有 ref_name，追加 #ref 片段
+        if !install_url.contains("/tree/") {
+            install_url = format!("{}#{}", install_url, r);
         }
     }
 

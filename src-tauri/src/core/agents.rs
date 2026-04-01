@@ -47,6 +47,7 @@ pub enum AgentType {
     Amp,
     Antigravity,
     Augment,
+    Bob,
     ClaudeCode,
     Openclaw,
     Cline,
@@ -58,6 +59,7 @@ pub enum AgentType {
     Cursor,
     Deepagents,
     Droid,
+    Firebender,
     GeminiCli,
     GithubCopilot,
     Goose,
@@ -95,6 +97,7 @@ impl std::fmt::Display for AgentType {
             Self::Amp => "amp",
             Self::Antigravity => "antigravity",
             Self::Augment => "augment",
+            Self::Bob => "bob",
             Self::ClaudeCode => "claude-code",
             Self::Openclaw => "openclaw",
             Self::Cline => "cline",
@@ -106,6 +109,7 @@ impl std::fmt::Display for AgentType {
             Self::Cursor => "cursor",
             Self::Deepagents => "deepagents",
             Self::Droid => "droid",
+            Self::Firebender => "firebender",
             Self::GeminiCli => "gemini-cli",
             Self::GithubCopilot => "github-copilot",
             Self::Goose => "goose",
@@ -148,6 +152,7 @@ impl std::str::FromStr for AgentType {
             "amp" => Ok(Self::Amp),
             "antigravity" => Ok(Self::Antigravity),
             "augment" => Ok(Self::Augment),
+            "bob" => Ok(Self::Bob),
             "claude-code" => Ok(Self::ClaudeCode),
             "openclaw" => Ok(Self::Openclaw),
             "cline" => Ok(Self::Cline),
@@ -159,6 +164,7 @@ impl std::str::FromStr for AgentType {
             "cursor" => Ok(Self::Cursor),
             "deepagents" => Ok(Self::Deepagents),
             "droid" => Ok(Self::Droid),
+            "firebender" => Ok(Self::Firebender),
             "gemini-cli" => Ok(Self::GeminiCli),
             "github-copilot" => Ok(Self::GithubCopilot),
             "goose" => Ok(Self::Goose),
@@ -200,6 +206,7 @@ impl AgentType {
             Self::Amp,
             Self::Antigravity,
             Self::Augment,
+            Self::Bob,
             Self::ClaudeCode,
             Self::Openclaw,
             Self::Cline,
@@ -211,6 +218,7 @@ impl AgentType {
             Self::Cursor,
             Self::Deepagents,
             Self::Droid,
+            Self::Firebender,
             Self::GeminiCli,
             Self::GithubCopilot,
             Self::Goose,
@@ -267,6 +275,13 @@ impl AgentType {
                 display_name: "Augment",
                 skills_dir: ".augment/skills",
                 global_skills_dir: Some(PATHS.home.join(".augment/skills")),
+                show_in_universal_list: true,
+            },
+            Self::Bob => AgentConfig {
+                name: "bob",
+                display_name: "IBM Bob",
+                skills_dir: ".bob/skills",
+                global_skills_dir: Some(PATHS.home.join(".bob/skills")),
                 show_in_universal_list: true,
             },
             Self::ClaudeCode => AgentConfig {
@@ -344,6 +359,13 @@ impl AgentType {
                 display_name: "Droid",
                 skills_dir: ".factory/skills",
                 global_skills_dir: Some(PATHS.home.join(".factory/skills")),
+                show_in_universal_list: true,
+            },
+            Self::Firebender => AgentConfig {
+                name: "firebender",
+                display_name: "Firebender",
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(PATHS.home.join(".firebender/skills")),
                 show_in_universal_list: true,
             },
             Self::GeminiCli => AgentConfig {
@@ -581,6 +603,7 @@ impl AgentType {
             Self::Amp => PATHS.config_home.join("amp").exists(),
             Self::Antigravity => PATHS.home.join(".gemini/antigravity").exists(),
             Self::Augment => PATHS.home.join(".augment").exists(),
+            Self::Bob => PATHS.home.join(".bob").exists(),
             Self::ClaudeCode => PATHS.claude_home.exists(),
             Self::Openclaw => {
                 PATHS.home.join(".openclaw").exists()
@@ -600,6 +623,7 @@ impl AgentType {
             Self::Cursor => PATHS.home.join(".cursor").exists(),
             Self::Deepagents => PATHS.home.join(".deepagents").exists(),
             Self::Droid => PATHS.home.join(".factory").exists(),
+            Self::Firebender => PATHS.home.join(".firebender").exists(),
             Self::GeminiCli => PATHS.home.join(".gemini").exists(),
             Self::GithubCopilot => PATHS.home.join(".copilot").exists(),
             Self::Goose => PATHS.config_home.join("goose").exists(),
@@ -692,7 +716,7 @@ mod tests {
     #[test]
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
-        assert_eq!(count, 43, "Should have 43 agent types after adding warp and deepagents");
+        assert_eq!(count, 45, "Should have 45 agent types after adding bob and firebender");
     }
 
     #[test]
@@ -752,7 +776,7 @@ mod tests {
     #[test]
     fn test_detect_installed_returns_vec() {
         let installed = AgentType::detect_installed();
-        assert!(installed.len() <= 43);
+        assert!(installed.len() <= 45);
     }
 
     #[test]
