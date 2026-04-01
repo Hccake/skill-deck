@@ -303,6 +303,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
                 crate::models::Scope::Global => {
                     let _ = add_skill_to_lock(
                         &skill.name, &source, source_type_str, source_url,
+                        None,    // ref_name - will be filled in Task 4
                         skill_path, &skill_folder_hash,
                         skill.plugin_name.as_deref(),
                     );
@@ -317,6 +318,7 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
 
                         let entry = LocalSkillLockEntry {
                             source: source.clone(),
+                            ref_name: None, // will be filled in Task 4
                             source_type: source_type_str.to_string(),
                             source_url: Some(source_url.clone()),
                             computed_hash,

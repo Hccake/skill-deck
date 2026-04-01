@@ -87,6 +87,7 @@ async fn check_updates_inner(
                             source,
                             source_type,
                             source_url,
+                            ref_name: None,
                             skill_path: entry.skill_path,
                             skill_folder_hash: entry.remote_hash.unwrap_or_default(),
                             installed_at: String::new(),
@@ -371,6 +372,7 @@ async fn update_skill_single(
                 &entry_source,
                 &entry_source_type,
                 &entry_source_url,
+                None,    // ref_name - will be filled in Task 5
                 entry_skill_path.as_deref(),
                 &new_hash,
                 entry_plugin_name.as_deref(),
@@ -385,6 +387,7 @@ async fn update_skill_single(
                 let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
                 let entry = LocalSkillLockEntry {
                     source: entry_source.clone(),
+                    ref_name: None, // will be filled in Task 5
                     source_type: entry_source_type.clone(),
                     source_url: Some(entry_source_url.clone()),
                     computed_hash,
@@ -675,6 +678,7 @@ async fn update_skills_batch_inner(
                         &entry.source,
                         &entry.source_type,
                         &entry.source_url,
+                        None,    // ref_name - will be filled in Task 5
                         entry.skill_path.as_deref(),
                         &new_hash,
                         entry.plugin_name.as_deref(),
@@ -689,6 +693,7 @@ async fn update_skills_batch_inner(
                         let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
                         let lock_entry = LocalSkillLockEntry {
                             source: entry.source.clone(),
+                            ref_name: None, // will be filled in Task 5
                             source_type: entry.source_type.clone(),
                             source_url: Some(entry.source_url.clone()),
                             computed_hash,

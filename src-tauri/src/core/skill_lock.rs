@@ -24,6 +24,9 @@ pub struct SkillLockEntry {
     pub source_type: String,
     /// 原始安装 URL
     pub source_url: String,
+    /// Branch or tag ref used for installation
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub ref_name: Option<String>,
     /// 仓库内的子路径
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_path: Option<String>,
@@ -201,6 +204,7 @@ pub fn add_skill_to_lock(
     source: &str,
     source_type: &str,
     source_url: &str,
+    ref_name: Option<&str>,
     skill_path: Option<&str>,
     skill_folder_hash: &str,
     plugin_name: Option<&str>,
@@ -220,6 +224,7 @@ pub fn add_skill_to_lock(
         source: source.to_string(),
         source_type: source_type.to_string(),
         source_url: source_url.to_string(),
+        ref_name: ref_name.map(|s| s.to_string()),
         skill_path: skill_path.map(|s| s.to_string()),
         skill_folder_hash: skill_folder_hash.to_string(),
         installed_at,
@@ -251,6 +256,7 @@ pub fn add_skill_to_scoped_lock(
     source: &str,
     source_type: &str,
     source_url: &str,
+    ref_name: Option<&str>,
     skill_path: Option<&str>,
     skill_folder_hash: &str,
     project_path: Option<&str>,
@@ -270,6 +276,7 @@ pub fn add_skill_to_scoped_lock(
         source: source.to_string(),
         source_type: source_type.to_string(),
         source_url: source_url.to_string(),
+        ref_name: ref_name.map(|s| s.to_string()),
         skill_path: skill_path.map(|s| s.to_string()),
         skill_folder_hash: skill_folder_hash.to_string(),
         installed_at,
@@ -426,6 +433,7 @@ mod tests {
                 source: "owner/repo".to_string(),
                 source_type: "github".to_string(),
                 source_url: "https://github.com/owner/repo".to_string(),
+                ref_name: None,
                 skill_path: Some("skills/test/SKILL.md".to_string()),
                 skill_folder_hash: "abc123".to_string(),
                 installed_at: "2024-01-01T00:00:00Z".to_string(),
