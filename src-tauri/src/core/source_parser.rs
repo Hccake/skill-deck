@@ -36,45 +36,185 @@ fn resolve_alias(source: &str) -> String {
         .unwrap_or_else(|| source.to_string())
 }
 
+/// Fragment ref 解析结果
+struct FragmentRefResult {
+    /// 去除 #fragment 后的输入
+    input_without_fragment: String,
+    /// 提取的 git ref（分支/tag）
+    git_ref: Option<String>,
+    /// 提取的 skill filter（#ref@skill 中的 skill 部分）
+    skill_filter: Option<String>,
+}
+
+// Lazy regex patterns for looks_like_git_source
+static GITHUB_PATH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^/[^/]+/[^/]+(?:\.git)?(?:/tree/[^/]+(?:/.*)?)?/?$").unwrap());
+static GITLAB_PATH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^/.+?/[^/]+(?:\.git)?(?:/-/tree/[^/]+(?:/.*)?)?/?$").unwrap());
+static GIT_URL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\.git(?:$|\?|/)").unwrap());
+static SHORTHAND_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[^/]+/[^/]+(?:/(.+)|@(.+))?$").unwrap());
+
+/// 判断输入是否看起来像 git 来源（用于决定是否提取 #fragment 作为分支引用）
+/// 只有 git-like 来源才应将 # 后的内容解释为分支 ref
+fn looks_like_git_source(input: &str) -> bool {
+    // 前缀检查
+    if input.starts_with("github:")
+        || input.starts_with("gitlab:")
+        || input.starts_with("git@")
+    {
+        return true;
+    }
+    // HTTP(S) URL
+    if let Ok(parsed) = Url::parse(input) {
+        let host = parsed.host_str().unwrap_or("");
+        let path = parsed.path();
+        if host == "github.com" || host == "www.github.com" {
+            return GITHUB_PATH_RE.is_match(path);
+        }
+        if host == "gitlab.com" || host.contains("gitlab") {
+            return GITLAB_PATH_RE.is_match(path);
+        }
+        // 通用 .git URL
+        if GIT_URL_RE.is_match(input) {
+            return true;
+        }
+    }
+    // GitHub shorthand: owner/repo（不含冒号，不以 . 或 / 开头）
+    !input.contains(':')
+        && !input.starts_with('.')
+        && !input.starts_with('/')
+        && SHORTHAND_RE.is_match(input)
+}
+
+/// 从输入字符串中提取 #fragment 部分作为 git ref
+/// 重要：url crate 会在解析时去掉 #fragment，所以必须在 URL 解析之前提取
+fn parse_fragment_ref(input: &str) -> FragmentRefResult {
+    if let Some(hash_pos) = input.find('#') {
+        let before = &input[..hash_pos];
+        let fragment = &input[hash_pos + 1..];
+
+        // 空 fragment 或非 git 来源 → 不提取
+        if fragment.is_empty() || !looks_like_git_source(before) {
+            return FragmentRefResult {
+                input_without_fragment: input.to_string(),
+                git_ref: None,
+                skill_filter: None,
+            };
+        }
+
+        // 解析 fragment：如果包含 @，拆分为 ref 和 skill_filter
+        if let Some(at_pos) = fragment.find('@') {
+            let git_ref = &fragment[..at_pos];
+            let skill = &fragment[at_pos + 1..];
+            FragmentRefResult {
+                input_without_fragment: before.to_string(),
+                git_ref: if git_ref.is_empty() {
+                    None
+                } else {
+                    Some(git_ref.to_string())
+                },
+                skill_filter: if skill.is_empty() {
+                    None
+                } else {
+                    Some(skill.to_string())
+                },
+            }
+        } else {
+            FragmentRefResult {
+                input_without_fragment: before.to_string(),
+                git_ref: Some(fragment.to_string()),
+                skill_filter: None,
+            }
+        }
+    } else {
+        FragmentRefResult {
+            input_without_fragment: input.to_string(),
+            git_ref: None,
+            skill_filter: None,
+        }
+    }
+}
+
+/// 将 fragment ref 信息附加回输入字符串（用于递归调用 parse_source 时携带 ref）
+fn append_fragment_ref(input: &str, git_ref: Option<&str>, skill_filter: Option<&str>) -> String {
+    match (git_ref, skill_filter) {
+        (Some(r), Some(s)) => format!("{}#{}@{}", input, r, s),
+        (Some(r), None) => format!("{}#{}", input, r),
+        (None, Some(s)) => format!("{}#@{}", input, s),
+        (None, None) => input.to_string(),
+    }
+}
+
 /// 解析来源字符串
 pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
     let input = input.trim();
-    // 解析别名
-    let input = &resolve_alias(input);
 
-    // github: 前缀简写 → 复用 shorthand 解析
-    if let Some(rest) = input.strip_prefix("github:") {
-        return parse_source(rest);
-    }
-
-    // gitlab: 前缀简写 → 转换为 GitLab URL
-    if let Some(rest) = input.strip_prefix("gitlab:") {
-        return parse_source(&format!("https://gitlab.com/{}", rest));
-    }
-
+    // 0. 空输入检查（最先）
     if input.is_empty() {
         return Err(AppError::InvalidSource {
             value: "Empty source".to_string(),
         });
     }
 
-    // 1. 检查本地路径
+    // 1. 本地路径检查（在 fragment 提取之前，本地路径不含 #ref）
     if is_local_path(input) {
         return parse_local_path(input);
     }
 
-    // 2. 检查是否是 URL
+    // 2. 提取 #fragment ref（必须在 URL 解析之前，url crate 会吞掉 fragment）
+    let frag = parse_fragment_ref(input);
+    let input = &frag.input_without_fragment;
+    let fragment_ref = frag.git_ref;
+    let fragment_skill_filter = frag.skill_filter;
+
+    // 3. 解析别名
+    let input = &resolve_alias(input);
+
+    // 4. github: 前缀简写 → 复用 shorthand 解析（携带 fragment ref）
+    if let Some(rest) = input.strip_prefix("github:") {
+        let recursive_input =
+            append_fragment_ref(rest, fragment_ref.as_deref(), fragment_skill_filter.as_deref());
+        return parse_source(&recursive_input);
+    }
+
+    // 5. gitlab: 前缀简写 → 转换为 GitLab URL（携带 fragment ref）
+    if let Some(rest) = input.strip_prefix("gitlab:") {
+        let gitlab_url = format!("https://gitlab.com/{}", rest);
+        let recursive_input = append_fragment_ref(
+            &gitlab_url,
+            fragment_ref.as_deref(),
+            fragment_skill_filter.as_deref(),
+        );
+        return parse_source(&recursive_input);
+    }
+
+    // 6. 检查是否是 URL
     if input.starts_with("http://") || input.starts_with("https://") {
-        return parse_url(input);
+        let mut result = parse_url(input)?;
+        // 合并 fragment ref（URL 提取的 ref 优先，fragment 作为 fallback）
+        // Well-known 类型不应用 fragment ref
+        if result.source_type != SourceType::WellKnown {
+            result.git_ref = result.git_ref.or(fragment_ref);
+            result.skill_filter = fragment_skill_filter.or(result.skill_filter);
+        }
+        return Ok(result);
     }
 
-    // 3. 检查 Git URL (git@...) - 注意：不检查 .git 后缀，因为 shorthand 也可能带 .git
+    // 7. 检查 Git URL (git@...)
     if input.starts_with("git@") {
-        return parse_git_url(input);
+        let mut result = parse_git_url(input)?;
+        result.git_ref = fragment_ref;
+        result.skill_filter = fragment_skill_filter;
+        return Ok(result);
     }
 
-    // 4. 尝试解析为 GitHub shorthand（支持 .git 后缀）
-    parse_github_shorthand(input)
+    // 8. 尝试解析为 GitHub shorthand（支持 .git 后缀）
+    let mut result = parse_github_shorthand(input)?;
+    result.git_ref = result.git_ref.or(fragment_ref);
+    result.skill_filter = fragment_skill_filter.or(result.skill_filter);
+    Ok(result)
 }
 
 /// 检查是否是本地路径
@@ -619,5 +759,76 @@ mod tests {
             skill_filter: None,
         };
         assert_eq!(get_owner_repo(&parsed), None);
+    }
+
+    // ── Fragment ref (#branch) tests ──
+
+    #[test]
+    fn test_fragment_ref_github_shorthand() {
+        let result = parse_source("owner/repo#feature-branch").unwrap();
+        assert_eq!(result.source_type, SourceType::GitHub);
+        assert_eq!(result.git_ref, Some("feature-branch".to_string()));
+        assert_eq!(result.url, "https://github.com/owner/repo");
+    }
+
+    #[test]
+    fn test_fragment_ref_with_skill_filter() {
+        let result = parse_source("owner/repo#branch@skill-name").unwrap();
+        assert_eq!(result.git_ref, Some("branch".to_string()));
+        assert_eq!(result.skill_filter, Some("skill-name".to_string()));
+    }
+
+    #[test]
+    fn test_fragment_ref_github_url() {
+        let result = parse_source("https://github.com/owner/repo#v2.0").unwrap();
+        assert_eq!(result.source_type, SourceType::GitHub);
+        assert_eq!(result.git_ref, Some("v2.0".to_string()));
+    }
+
+    #[test]
+    fn test_fragment_ref_git_ssh() {
+        let result = parse_source("git@github.com:owner/repo.git#develop").unwrap();
+        assert_eq!(result.git_ref, Some("develop".to_string()));
+    }
+
+    #[test]
+    fn test_fragment_ref_github_prefix() {
+        let result = parse_source("github:owner/repo#my-branch").unwrap();
+        assert_eq!(result.source_type, SourceType::GitHub);
+        assert_eq!(result.git_ref, Some("my-branch".to_string()));
+    }
+
+    #[test]
+    fn test_fragment_ref_gitlab_prefix() {
+        let result = parse_source("gitlab:group/repo#my-branch").unwrap();
+        assert_eq!(result.source_type, SourceType::GitLab);
+        assert_eq!(result.git_ref, Some("my-branch".to_string()));
+    }
+
+    #[test]
+    fn test_fragment_ref_not_extracted_for_wellknown() {
+        let result = parse_source("https://example.com#anchor").unwrap();
+        assert_eq!(result.source_type, SourceType::WellKnown);
+        assert_eq!(result.git_ref, None);
+    }
+
+    #[test]
+    fn test_fragment_ref_empty_fragment_ignored() {
+        let result = parse_source("owner/repo#").unwrap();
+        assert_eq!(result.git_ref, None);
+    }
+
+    #[test]
+    fn test_fragment_ref_slash_in_branch() {
+        let result = parse_source("owner/repo#feature/my-branch").unwrap();
+        assert_eq!(result.git_ref, Some("feature/my-branch".to_string()));
+    }
+
+    #[test]
+    fn test_fragment_ref_shorthand_with_subpath() {
+        let result = parse_source("owner/repo/skills/foo#my-branch").unwrap();
+        assert_eq!(result.source_type, SourceType::GitHub);
+        assert_eq!(result.git_ref, Some("my-branch".to_string()));
+        assert_eq!(result.subpath, Some("skills/foo".to_string()));
     }
 }
