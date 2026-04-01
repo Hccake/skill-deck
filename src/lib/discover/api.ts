@@ -89,32 +89,34 @@ function parseLeaderboardHtml(html: string): DiscoverSkillSummary[] {
   const document = createDocument(html);
   const anchors = Array.from(document.querySelectorAll('a[href]'));
 
-  return anchors
-    .map((anchor) => {
-      const href = anchor.getAttribute('href') ?? '';
-      if (!href.includes('/skills/')) return null;
+  const results: DiscoverSkillSummary[] = [];
 
-      const absoluteUrl = toAbsoluteUrl(href);
-      const parts = href.replace(/^\/+/, '').split('/').filter(Boolean);
-      const owner = parts[0] ?? extractSourceOwner(href);
-      const repo = parts[1] ?? 'skills';
-      const slug = parts.at(-1) ?? anchor.textContent?.trim().split(/\s+/)[0] ?? repo;
-      const source = `https://github.com/${owner}/${repo}`;
-      const text = anchor.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-      const installs = parseMetric(text.match(/([\d.,]+\s*[kKmM]?)(?!.*[\d.,]+\s*[kKmM]?)/)?.[1] ?? text.split(/\s+/).at(-1) ?? '0');
-      const summary = text && text !== slug ? text.replace(slug, '').trim() : undefined;
+  for (const anchor of anchors) {
+    const href = anchor.getAttribute('href') ?? '';
+    if (!href.includes('/skills/')) continue;
 
-      return {
-        slug,
-        name: slug,
-        source,
-        summary,
-        installs,
-        isOfficial: false,
-        detailUrl: absoluteUrl,
-      } satisfies DiscoverSkillSummary;
-    })
-    .filter((item): item is DiscoverSkillSummary => Boolean(item));
+    const absoluteUrl = toAbsoluteUrl(href);
+    const parts = href.replace(/^\/+/, '').split('/').filter(Boolean);
+    const owner = parts[0] ?? extractSourceOwner(href);
+    const repo = parts[1] ?? 'skills';
+    const slug = parts.at(-1) ?? anchor.textContent?.trim().split(/\s+/)[0] ?? repo;
+    const source = `https://github.com/${owner}/${repo}`;
+    const text = anchor.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    const installs = parseMetric(text.match(/([\d.,]+\s*[kKmM]?)(?!.*[\d.,]+\s*[kKmM]?)/)?.[1] ?? text.split(/\s+/).at(-1) ?? '0');
+    const summary = text && text !== slug ? text.replace(slug, '').trim() : undefined;
+
+    results.push({
+      slug,
+      name: slug,
+      source,
+      summary,
+      installs,
+      isOfficial: false,
+      detailUrl: absoluteUrl,
+    });
+  }
+
+  return results;
 }
 
 function parseOfficialOwners(html: string): Set<string> {
@@ -150,7 +152,7 @@ function parseDetailHtml(html: string, fallback: DiscoverSkillSummary): Discover
     const href = anchor.getAttribute('href') ?? '';
     return href.includes('github.com');
   });
-  const repoUrl = repoAnchor?.getAttribute('href') ?? fallback.repoUrl ?? buildGithubUrl(fallback.source) ?? fallback.source;
+  const repoUrl = repoAnchor?.getAttribute('href') ?? buildGithubUrl(fallback.source) ?? fallback.source;
 
   const starsMatch = bodyText.match(/stars?\s*([\d,]+)/i);
   const stars = starsMatch ? Number.parseInt(starsMatch[1].replace(/,/g, ''), 10) : fallback.stars;

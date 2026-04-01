@@ -84,7 +84,7 @@ export function sortDiscoverSkills(
 
       if (leftHasRelevance && rightHasRelevance) {
         if (left.skill.relevanceScore !== right.skill.relevanceScore) {
-          return right.skill.relevanceScore - left.skill.relevanceScore;
+          return right.skill.relevanceScore! - left.skill.relevanceScore!;
         }
         if (left.skill.installs !== right.skill.installs) {
           return right.skill.installs - left.skill.installs;
