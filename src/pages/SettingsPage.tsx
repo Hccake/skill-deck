@@ -136,7 +136,7 @@ export function SettingsPage() {
                     <Target className="h-4 w-4 text-accent-foreground" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-semibold text-foreground">
+                    <h2 className="text-sm font-heading font-bold text-foreground">
                       {t('settings.defaultAgents.title')}
                     </h2>
                     <p className="text-xs text-muted-foreground">
@@ -190,7 +190,7 @@ export function SettingsPage() {
                     <FolderOpen className="h-4 w-4 text-accent-foreground" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-semibold text-foreground">
+                    <h2 className="text-sm font-heading font-bold text-foreground">
                       {t('settings.projects')}
                     </h2>
                     <p className="text-xs text-muted-foreground">
@@ -244,7 +244,7 @@ export function SettingsPage() {
             {/* About Tab */}
             <TabsContent value="about" className="space-y-5 sm:space-y-6">
               <section>
-                <h2 className="text-sm font-semibold text-foreground mb-3">
+                <h2 className="text-sm font-heading font-bold text-foreground mb-3">
                   {t('settings.about')}
                 </h2>
                 <Card className="py-0 gap-0">

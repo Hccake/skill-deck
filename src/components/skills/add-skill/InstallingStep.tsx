@@ -218,7 +218,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       <div className="w-10 h-10 border-3 border-primary border-t-transparent rounded-full animate-spin" />
 
       <div className="text-center space-y-1.5">
-        <h3 className="text-lg font-medium">{t('addSkill.installing.title')}</h3>
+        <h3 className="text-lg font-heading font-bold">{t('addSkill.installing.title')}</h3>
         <p className="text-sm text-muted-foreground">{getPhaseText()}</p>
       </div>
 

@@ -88,7 +88,7 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
         ) : (
           <CheckCircle2 className="h-6 w-6 text-green-600" />
         )}
-        <h3 className="text-lg font-medium">
+        <h3 className="text-lg font-heading font-bold">
           {hasFailures
             ? t('addSkill.complete.partial')
             : t('addSkill.complete.success', { count: successfulSkillCount })}

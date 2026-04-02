@@ -21,7 +21,7 @@ export function ErrorStep({ error, onRetry, onBack, onClose }: ErrorStepProps) {
       <div className="flex items-center gap-3">
         <XCircle className="h-8 w-8 text-destructive shrink-0" />
         <div>
-          <h3 className="text-lg font-medium">{t('addSkill.error.title')}</h3>
+          <h3 className="text-lg font-heading font-bold">{t('addSkill.error.title')}</h3>
           <p className="text-sm text-muted-foreground mt-1">{error.message}</p>
         </div>
       </div>
