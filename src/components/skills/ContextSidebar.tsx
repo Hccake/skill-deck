@@ -49,9 +49,12 @@ function GlobalContextItem() {
     >
       <div className="flex items-center gap-3">
         <Globe className="h-[18px] w-[18px] flex-shrink-0" />
-        <span className={cn('text-sm', isSelected ? 'font-bold' : 'font-medium')}>
-          {t('context.global')}
-        </span>
+        <div className="min-w-0">
+          <span className={cn('text-sm', isSelected ? 'font-bold' : 'font-medium')}>
+            {t('context.global')}
+          </span>
+          <p className="text-[10px] text-muted-foreground/60 truncate mt-0.5">{t('context.globalSubtitle')}</p>
+        </div>
       </div>
     </button>
   );
@@ -132,7 +135,7 @@ function ProjectContextItem({ project }: { project: string }) {
               </Button>
             </div>
           </div>
-          <span className={cn('text-[10px] truncate ml-7 block', isSelected ? 'opacity-70' : 'opacity-60')}>
+          <span className={cn('text-[10px] truncate block', isSelected ? 'opacity-70' : 'opacity-60')}>
             {project}
           </span>
         </div>
@@ -231,11 +234,8 @@ export function ContextSidebar() {
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto space-y-6">
-        {/* Global Section */}
+        {/* Global */}
         <div>
-          <h3 className="px-6 mb-2 font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
-            {t('context.sectionGlobal')}
-          </h3>
           <GlobalContextItem />
         </div>
 
@@ -261,7 +261,7 @@ export function ContextSidebar() {
       {/* Add Project Button — pinned to bottom */}
       <div className="p-4 border-t border-border">
         <button
-          className="w-full flex items-center justify-center gap-2 py-2.5 bg-accent hover:bg-accent/80 transition-colors text-foreground font-bold text-sm cursor-pointer"
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-foreground hover:bg-foreground/90 transition-colors text-background font-bold text-sm cursor-pointer"
           onClick={handleAddProject}
         >
           <PlusCircle className="h-[18px] w-[18px]" />
