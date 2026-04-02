@@ -252,14 +252,16 @@ export function ContextSidebar() {
       </div>
 
       {/* Add Project Button — pinned to bottom */}
-      <div className="border-t border-border px-4 py-3 bg-accent/30">
+      <div className="px-4 py-4">
         <Button
-          variant="ghost"
+          variant="default"
           size="sm"
-          className="w-full justify-start gap-2.5 text-muted-foreground hover:bg-accent/50 hover:text-foreground cursor-pointer"
+          className="w-full gap-2 bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
           onClick={handleAddProject}
         >
-          <Plus className="h-[18px] w-[18px]" />
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-background text-foreground">
+            <Plus className="h-3.5 w-3.5" />
+          </span>
           {t('context.addProject')}
         </Button>
       </div>
