@@ -18,6 +18,8 @@
     "projects": "项目",
     "addProject": "添加项目",
     "manageInSettings": "在设置中管理",
+    "sectionGlobal": "全局",
+    "sectionProjects": "项目",
     "noProjects": "暂无项目",
     "openInExplorer": "在文件管理器中打开",
     "remove": "移除",

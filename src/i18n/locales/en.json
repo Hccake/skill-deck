@@ -18,6 +18,8 @@
     "projects": "Projects",
     "addProject": "Add Project",
     "manageInSettings": "Manage in Settings",
+    "sectionGlobal": "Global",
+    "sectionProjects": "Projects",
     "noProjects": "No projects added",
     "openInExplorer": "Open in Explorer",
     "remove": "Remove",

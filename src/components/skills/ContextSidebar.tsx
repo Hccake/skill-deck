@@ -41,11 +41,11 @@ function GlobalContextItem() {
     <button
       onClick={() => selectContext('global')}
       className={cn(
-        'w-full rounded-md px-3 py-2 text-left transition-colors duration-200',
-        'cursor-pointer',
+        'w-full px-3 py-2 text-left transition-colors duration-200',
+        'cursor-pointer border-l-4',
         isSelected
-          ? 'bg-foreground/[0.06] text-foreground font-medium'
-          : 'text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground'
+          ? 'border-primary bg-primary/10 text-primary font-heading font-bold'
+          : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground'
       )}
     >
       <div className="flex items-center gap-2.5">
@@ -94,15 +94,15 @@ function ProjectContextItem({ project }: { project: string }) {
         }
       }}
       className={cn(
-        'w-full rounded-md px-3 py-2 text-left transition-colors duration-200',
-        'group relative cursor-pointer',
+        'w-full px-3 py-2 text-left transition-colors duration-200',
+        'group relative cursor-pointer border-l-4',
         isSelected
-          ? 'bg-foreground/[0.06] text-foreground font-medium'
-          : 'text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground'
+          ? 'border-primary bg-primary/10 text-primary font-heading font-bold'
+          : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground'
       )}
     >
       <div className="flex items-center gap-2.5">
-        <Folder className={cn('h-[18px] w-[18px] flex-shrink-0', isSelected ? 'text-foreground' : 'text-muted-foreground')} />
+        <Folder className={cn('h-[18px] w-[18px] flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -227,37 +227,42 @@ export function ContextSidebar() {
     <aside className="w-60 flex-shrink-0 border-r border-border flex flex-col h-full bg-muted/20">
       {/* Global */}
       <div className="px-4 pt-4 sm:pt-5">
+        <h3 className="font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground mb-2 px-3">
+          {t('context.sectionGlobal')}
+        </h3>
         <GlobalContextItem />
       </div>
 
       {/* Projects 列表区域（可滚动） */}
-      <div className="flex-1 overflow-auto">
-        <div className="px-4">
-          {projects.length === 0 ? (
-            <p className="py-2 text-xs text-muted-foreground">
-              {t('context.noProjects')}
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {projects.map((project) => (
-                <ProjectContextItem key={project} project={project} />
-              ))}
-            </div>
-          )}
-
-          {/* Add Project Button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start gap-2.5 mt-2 text-muted-foreground hover:bg-foreground/[0.03] hover:text-foreground cursor-pointer"
-            onClick={handleAddProject}
-          >
-            <Plus className="h-[18px] w-[18px]" />
-            {t('context.addProject')}
-          </Button>
-        </div>
+      <div className="flex-1 overflow-auto px-4 mt-4">
+        <h3 className="font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground mb-2 px-3">
+          {t('context.sectionProjects')}
+        </h3>
+        {projects.length === 0 ? (
+          <p className="py-2 px-3 text-xs text-muted-foreground">
+            {t('context.noProjects')}
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {projects.map((project) => (
+              <ProjectContextItem key={project} project={project} />
+            ))}
+          </div>
+        )}
       </div>
 
+      {/* Add Project Button — pinned to bottom */}
+      <div className="border-t border-border px-4 py-3 bg-accent/30">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start gap-2.5 text-muted-foreground hover:bg-accent/50 hover:text-foreground cursor-pointer"
+          onClick={handleAddProject}
+        >
+          <Plus className="h-[18px] w-[18px]" />
+          {t('context.addProject')}
+        </Button>
+      </div>
     </aside>
   );
 }
