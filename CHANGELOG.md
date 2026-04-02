@@ -7,9 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **对齐 vercel-skills CLI v1.4.7** — 完成与上游 23 个 commit（`7022ad3..HEAD`）的兼容性适配
+- **Well-Known 路径迁移** — 优先探测 `.well-known/agent-skills`，fallback 到旧的 `.well-known/skills`；`build_index_urls()` 为每个 well-known 路径生成候选 URL
+- **Discovery 搜索路径清理** — 移除已废弃的 `.agent/skills`（单数）搜索路径，仅保留 `.agents/skills`
+
+### Added
+
+- **Branch ref `#fragment` 语法** — source 输入支持 `owner/repo#branch`、`owner/repo#branch@skill-name` 格式；source parser 新增 `parse_fragment_ref()` + `looks_like_git_source()` 判定逻辑；含 `/` 的分支名、tag、`github:`/`gitlab:` 前缀递归附加等场景全覆盖（10 个新测试）
+- **Lock 文件 `ref` 字段** — `SkillLockEntry` 和 `LocalSkillLockEntry` 新增 `ref_name: Option<String>`（serde rename `ref`），install/update 命令全链路传递；更新检测按 `(source, ref)` 分组，同仓库不同分支互不干扰
+- **新增 Agent：Bob (IBM) 和 Firebender** — agent 总数 43 → 45；Bob 使用 `.bob/skills` 目录，Firebender 使用 `.agents/skills` + `~/.firebender/skills`
+- **前端 ref badge** — SourceStep 输入框下方展示 branch/skill-filter Badge；SkillCard 已安装 skill 卡片在 source 信息行展示分支标签；新增 en/zh-CN 双语 i18n key
+
 ### Fixed
 
 - **macOS 外部链接无法打开** — 更新弹窗中「前往下载」按钮使用 `window.open()` 在 Tauri webview 中无效，改用 `tauri-plugin-opener` 的 `openUrl()` 通过系统浏览器打开；同时 opener 插件自动拦截页面中所有 `<a target="_blank">` 链接，修复 SettingsPage、SkillCard、SkillDetailDialog 等处的外部链接
+- **Discover 模块 TypeScript 严格模式错误** — 修复 `parseLeaderboardHtml` 返回值含 null 的类型不匹配、`DiscoverSkillSummary` 上不存在的 `repoUrl` 引用、`relevanceScore` 可能 undefined 的排序比较
+- **SkillCard ref badge 尾部分隔符** — 当 `gitRef` 存在但 `updatedAt` 为空时不再渲染多余的 `·` 分隔符
+- **Discover 模块 regex 性能** — `parseLeaderboardHtml` 循环内的 3 个 regex literal 提升为模块级常量（`js-hoist-regexp`）
 
 ## [0.10.0] - 2026-03-12
 
