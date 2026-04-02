@@ -1,7 +1,7 @@
 // src/components/skills/ContextSidebar.tsx
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PlusCircle, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
+import { Plus, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -261,10 +261,12 @@ export function ContextSidebar() {
       {/* Add Project Button — pinned to bottom */}
       <div className="p-4 border-t border-border">
         <button
-          className="w-full flex items-center justify-center gap-2 py-2.5 bg-foreground hover:bg-foreground/90 transition-colors text-background font-bold text-sm cursor-pointer"
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-accent hover:bg-accent/80 transition-colors text-foreground font-bold text-sm cursor-pointer"
           onClick={handleAddProject}
         >
-          <PlusCircle className="h-[18px] w-[18px]" />
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-foreground text-background">
+            <Plus className="h-3 w-3" strokeWidth={3} />
+          </span>
           {t('context.addProject')}
         </button>
       </div>
