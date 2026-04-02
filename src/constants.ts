@@ -1,1 +1,1 @@
-export const COMPATIBLE_CLI_VERSION = "1.4.4";
+export const COMPATIBLE_CLI_VERSION = "1.4.7";

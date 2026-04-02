@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-02
+
 ### Changed
 
 - **对齐 vercel-skills CLI v1.4.7** — 完成与上游 23 个 commit（`7022ad3..HEAD`）的兼容性适配
@@ -229,6 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 深色/浅色主题切换
 - GitHub Actions CI/CD 构建流水线（Windows / macOS / Ubuntu）
 
+[0.11.0]: https://github.com/hccake/skill-deck/compare/v0.10.0...0.11.0
 [0.10.0]: https://github.com/hccake/skill-deck/compare/v0.9.0...0.10.0
 [0.9.0]: https://github.com/hccake/skill-deck/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hccake/skill-deck/compare/v0.7.0...v0.8.0

@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/status-Early%20Alpha-orange" alt="Early Alpha">
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-v1.4.4-green" alt="skills CLI v1.4.4">
+    <img src="https://img.shields.io/badge/skills%20CLI-v1.4.7-green" alt="skills CLI v1.4.7">
   </p>
 
   <img src="docs/images/screenshot-main.png" alt="Skill Deck 主界面" width="800">
