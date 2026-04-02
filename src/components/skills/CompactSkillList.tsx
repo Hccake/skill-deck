@@ -1,6 +1,7 @@
-// src/components/skills/CompactSkillList.tsx
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { CompactSkillItem } from './CompactSkillItem';
 import type { InstalledSkill, SkillScope } from '@/bindings';
@@ -12,6 +13,9 @@ interface CompactSkillListProps {
   selectedSkillScope: SkillScope | null;
   isProjectSelected: boolean;
   projectTitle: string;
+  pathExists?: boolean;
+  onAddProject?: () => void;
+  onAddGlobal?: () => void;
   onSkillClick: (skill: InstalledSkill) => void;
 }
 
@@ -22,6 +26,9 @@ export const CompactSkillList = memo(function CompactSkillList({
   selectedSkillScope,
   isProjectSelected,
   projectTitle,
+  pathExists = true,
+  onAddProject,
+  onAddGlobal,
   onSkillClick,
 }: CompactSkillListProps) {
   const { t } = useTranslation();
@@ -29,12 +36,20 @@ export const CompactSkillList = memo(function CompactSkillList({
   return (
     <div className="flex-1 relative min-h-0">
       <ScrollArea className="absolute inset-0 w-full h-full">
-        <div className="p-2 w-full overflow-hidden">
+        <div className="pt-2 w-full overflow-hidden">
           {/* Project skills section */}
           {isProjectSelected && projectSkills.length > 0 ? (
-            <div className="mb-3">
-              <div className="font-heading text-[10px] font-extrabold text-muted-foreground uppercase tracking-[0.2em] px-1.5 mb-1">
-                {projectTitle}
+            <div className="mb-4">
+              <div className="flex items-center justify-between px-1.5 mb-1.5 mt-1">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  {projectTitle}
+                  <span className="font-normal opacity-70">({projectSkills.length})</span>
+                </div>
+                {pathExists && onAddProject && (
+                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer" onClick={onAddProject} title={t('skills.add')}>
+                    <Plus className="h-3 w-3" />
+                  </Button>
+                )}
               </div>
               {projectSkills.map((skill) => (
                 <CompactSkillItem
@@ -49,9 +64,17 @@ export const CompactSkillList = memo(function CompactSkillList({
 
           {/* Global skills section */}
           {globalSkills.length > 0 ? (
-            <div>
-              <div className="font-heading text-[10px] font-extrabold text-muted-foreground uppercase tracking-[0.2em] px-1.5 mb-1">
-                {t('skills.globalSkills')}
+            <div className="mb-4">
+              <div className="flex items-center justify-between px-1.5 mb-1.5 mt-1">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  {t('skills.globalSkills')}
+                  <span className="font-normal opacity-70">({globalSkills.length})</span>
+                </div>
+                {onAddGlobal && (
+                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer" onClick={onAddGlobal} title={t('skills.add')}>
+                    <Plus className="h-3 w-3" />
+                  </Button>
+                )}
               </div>
               {globalSkills.map((skill) => (
                 <CompactSkillItem

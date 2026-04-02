@@ -224,6 +224,9 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           selectedSkillScope={selectedSkill?.scope ?? null}
           isProjectSelected={isProjectSelected}
           projectTitle={t('skills.projectSkills')}
+          pathExists={projectPathExists}
+          onAddProject={handleAddProject}
+          onAddGlobal={handleAddGlobal}
           onSkillClick={selectSkill}
         />
       ) : (
