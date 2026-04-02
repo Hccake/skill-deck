@@ -4,7 +4,8 @@
   },
   "common": {
     "loading": "加载中...",
-    "copy": "复制"
+    "copy": "复制",
+    "close": "关闭"
   },
   "nav": {
     "skills": "Skills",

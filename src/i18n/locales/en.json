@@ -4,7 +4,8 @@
   },
   "common": {
     "loading": "Loading...",
-    "copy": "Copy"
+    "copy": "Copy",
+    "close": "Close"
   },
   "nav": {
     "skills": "Skills",

@@ -3,7 +3,7 @@ import { memo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Globe, Folder, Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle } from 'lucide-react';
+import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -35,8 +35,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);
 
-  const ScopeIcon = skill.scope === 'global' ? Globe : Folder;
-
   const handleCopyPath = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(skill.canonicalPath);
@@ -47,48 +45,16 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     }
   }, [skill.canonicalPath]);
 
-  const handleUpdate = useCallback(() => {
-    onUpdate(skill.name, skill.scope);
-  }, [onUpdate, skill.name, skill.scope]);
-
   const handleDelete = useCallback(() => {
     onDelete(skill);
   }, [onDelete, skill]);
 
+  const handleUpdate = useCallback(() => {
+    onUpdate(skill.name, skill.scope);
+  }, [onUpdate, skill.name, skill.scope]);
+
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
-      <div className="flex items-center justify-between px-4 sm:px-5 py-2.5 border-b border-border/80 flex-shrink-0 bg-background/95 backdrop-blur z-10">
-        <div className="flex items-center gap-2 min-w-0 text-muted-foreground">
-          <ScopeIcon className="h-3.5 w-3.5 shrink-0" />
-          <span className="text-[13px] font-medium truncate tracking-tight">{skill.name}</span>
-        </div>
-        <div className="flex items-center gap-0.5 shrink-0">
-          {skill.hasUpdate ? (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="h-6 w-6 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
-              title={t('skills.actions.update')}
-              onClick={handleUpdate}
-            >
-              <ArrowUpCircle className="h-3.5 w-3.5" />
-            </Button>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
-            title={t('skills.actions.delete')}
-            onClick={handleDelete}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon-xs" className="h-6 w-6 cursor-pointer text-muted-foreground" onClick={onClose}>
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-
       {/* 沉浸式滚动文档流 (Scrollable Document Area) */}
       <div className="flex-1 min-h-0 relative">
         <ScrollArea className="absolute inset-0 w-full h-full">
@@ -100,14 +66,34 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 {skill.name}
               </h2>
               <div className="flex gap-1 shrink-0">
+                {skill.hasUpdate ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
+                    title={t('skills.actions.update')}
+                    onClick={handleUpdate}
+                  >
+                    <ArrowUpCircle className="h-4 w-4" />
+                  </Button>
+                ) : null}
                 <Button
                   variant="ghost"
-                  size="icon-xs"
-                  className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
                   title={t('skills.actions.delete')}
                   onClick={handleDelete}
                 >
                   <Trash2 className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
+                  title={t('common.close')}
+                  onClick={onClose}
+                >
+                  <X className="h-4 w-4" />
                 </Button>
               </div>
             </div>
