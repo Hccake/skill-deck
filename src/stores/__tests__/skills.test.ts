@@ -13,6 +13,7 @@ const mockCheckUpdates = vi.fn();
 const mockUpdateSkill = vi.fn();
 const mockOpenInstallWizard = vi.fn();
 const mockCheckSkillAudit = vi.fn();
+const mockReadSkillContent = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mockListSkills(...args),
@@ -23,6 +24,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   updateSkill: (...args: unknown[]) => mockUpdateSkill(...args),
   openInstallWizard: (...args: unknown[]) => mockOpenInstallWizard(...args),
   checkSkillAudit: (...args: unknown[]) => mockCheckSkillAudit(...args),
+  readSkillContent: (...args: unknown[]) => mockReadSkillContent(...args),
 }));
 
 vi.mock('sonner', () => ({
@@ -59,10 +61,12 @@ describe('useSkillsStore', () => {
       checkingUpdateScopes: new Set(),
       updatingSkills: new Map(),
       updateAllCancelled: false,
-      detailSkill: null,
       deleteTarget: null,
       agentDetails: null,
       loadingAgentDetails: false,
+      selectedSkill: null,
+      skillContent: null,
+      loadingContent: false,
     });
   });
 
@@ -112,15 +116,6 @@ describe('useSkillsStore', () => {
   });
 
   describe('dialog state', () => {
-    it('openDetail sets detailSkill, closeDetail clears it', () => {
-      const skill = makeSkill('test-skill');
-      useSkillsStore.getState().openDetail(skill);
-      expect(useSkillsStore.getState().detailSkill).toEqual(skill);
-
-      useSkillsStore.getState().closeDetail();
-      expect(useSkillsStore.getState().detailSkill).toBeNull();
-    });
-
     it('openDelete sets deleteTarget and fetches agent details', async () => {
       const skill = makeSkill('test-skill');
       const details: SkillAgentDetails = { skillName: 'test-skill', scope: 'global', canonicalPath: '/tmp', universalAgents: [], independentAgents: [] };
@@ -185,6 +180,73 @@ describe('useSkillsStore', () => {
       expect(toast.warning).toHaveBeenCalledTimes(2);
       expect(toast.success).not.toHaveBeenCalled();
       expect(toast.error).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('selectSkill / deselectSkill', () => {
+    it('selectSkill sets selectedSkill and loads content', async () => {
+      const skill = makeSkill('commit');
+      mockReadSkillContent.mockResolvedValue('# Commit\n\nBody content');
+
+      await useSkillsStore.getState().selectSkill(skill);
+
+      const state = useSkillsStore.getState();
+      expect(state.selectedSkill).toEqual(skill);
+      expect(state.skillContent).toBe('# Commit\n\nBody content');
+      expect(state.loadingContent).toBe(false);
+    });
+
+    it('selectSkill ignores stale response on fast switch', async () => {
+      const skill1 = makeSkill('skill-1');
+      const skill2 = makeSkill('skill-2');
+
+      mockReadSkillContent
+        .mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve('content-1'), 100)))
+        .mockImplementationOnce(() => Promise.resolve('content-2'));
+
+      const p1 = useSkillsStore.getState().selectSkill(skill1);
+      const p2 = useSkillsStore.getState().selectSkill(skill2);
+      await Promise.all([p1, p2]);
+
+      const state = useSkillsStore.getState();
+      expect(state.selectedSkill?.name).toBe('skill-2');
+      expect(state.skillContent).toBe('content-2');
+    });
+
+    it('selectSkill same skill is no-op', async () => {
+      const skill = makeSkill('commit');
+      mockReadSkillContent.mockResolvedValue('content');
+
+      await useSkillsStore.getState().selectSkill(skill);
+      mockReadSkillContent.mockClear();
+
+      await useSkillsStore.getState().selectSkill(skill);
+      expect(mockReadSkillContent).not.toHaveBeenCalled();
+    });
+
+    it('deselectSkill clears selection', async () => {
+      const skill = makeSkill('commit');
+      mockReadSkillContent.mockResolvedValue('content');
+      await useSkillsStore.getState().selectSkill(skill);
+
+      useSkillsStore.getState().deselectSkill();
+
+      const state = useSkillsStore.getState();
+      expect(state.selectedSkill).toBeNull();
+      expect(state.skillContent).toBeNull();
+      expect(state.loadingContent).toBe(false);
+    });
+
+    it('selectSkill handles load error gracefully', async () => {
+      const skill = makeSkill('broken');
+      mockReadSkillContent.mockRejectedValue(new Error('read failed'));
+
+      await useSkillsStore.getState().selectSkill(skill);
+
+      const state = useSkillsStore.getState();
+      expect(state.selectedSkill).toEqual(skill);
+      expect(state.skillContent).toBeNull();
+      expect(state.loadingContent).toBe(false);
     });
   });
 });

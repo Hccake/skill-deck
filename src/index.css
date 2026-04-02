@@ -203,6 +203,59 @@
   }
 }
 
+/* Skill detail markdown prose */
+.skill-prose {
+  @apply text-[13px] leading-[1.75] text-foreground/80;
+}
+.skill-prose h1 {
+  @apply text-xl font-bold tracking-tight text-foreground mb-2 mt-0;
+}
+.skill-prose h2 {
+  @apply text-[15px] font-semibold text-foreground/90 mb-2 mt-5;
+}
+.skill-prose h3 {
+  @apply text-sm font-semibold text-foreground/90 mb-1.5 mt-4;
+}
+.skill-prose p {
+  @apply mb-3;
+}
+.skill-prose ul, .skill-prose ol {
+  @apply pl-5 mb-3;
+}
+.skill-prose li {
+  @apply mb-1.5;
+}
+.skill-prose code:not(pre code) {
+  @apply bg-muted border border-border/40 rounded-sm px-1.5 py-0.5 font-mono text-xs text-primary;
+}
+.skill-prose pre {
+  @apply bg-card border border-border rounded-lg p-3.5 mb-3 overflow-x-auto;
+}
+.skill-prose pre code {
+  @apply bg-transparent border-0 p-0 text-xs text-foreground/80 font-mono leading-relaxed;
+}
+.skill-prose a {
+  @apply text-primary hover:underline;
+}
+.skill-prose hr {
+  @apply border-border/40 my-4;
+}
+.skill-prose blockquote {
+  @apply border-l-2 border-border pl-4 text-muted-foreground italic my-3;
+}
+.skill-prose table {
+  @apply w-full border-collapse text-xs mb-3;
+}
+.skill-prose th {
+  @apply text-left font-semibold border-b border-border pb-2 pr-4;
+}
+.skill-prose td {
+  @apply border-b border-border/40 py-1.5 pr-4;
+}
+.skill-prose img {
+  @apply max-w-full rounded-md;
+}
+
 /* Reduced Motion support (MASTER.md Section 5) */
 @media (prefers-reduced-motion: reduce) {
   *,

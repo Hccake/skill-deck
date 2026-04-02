@@ -14,6 +14,8 @@ import {
 import type { AgentInfo } from '@/bindings';
 
 interface SkillsToolbarProps {
+  /** 紧凑模式 — 只显示搜索框 */
+  compact?: boolean;
   /** 搜索关键词 */
   searchQuery: string;
   /** 搜索关键词变更回调 */
@@ -31,6 +33,7 @@ interface SkillsToolbarProps {
 }
 
 export function SkillsToolbar({
+  compact = false,
   searchQuery,
   onSearchChange,
   selectedAgent,
@@ -53,6 +56,22 @@ export function SkillsToolbar({
     setSyncStatus('done');
     setTimeout(() => setSyncStatus('idle'), 800);
   }, [isBusy, onSync]);
+
+  // 紧凑模式：只显示搜索框
+  if (compact) {
+    return (
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+        <Input
+          type="text"
+          placeholder={t('skills.search')}
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="h-8 pl-8 text-sm"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-3 mb-4">

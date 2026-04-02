@@ -32,6 +32,17 @@ async listSkills(params: ListSkillsParams) : Promise<Result<ListSkillsResult, Ap
 }
 },
 /**
+ * Read the markdown body of a skill's SKILL.md
+ */
+async readSkillContent(canonicalPath: string) : Promise<Result<string, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("read_skill_content", { canonicalPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * 获取配置
  * 文件不存在或解析失败时返回默认配置
  */
@@ -601,7 +612,6 @@ export type UpdateSkillSummary = { total: number; succeeded: number; partial: nu
 
 import {
 	invoke as TAURI_INVOKE,
-	Channel as TAURI_CHANNEL,
 } from "@tauri-apps/api/core";
 import * as TAURI_API_EVENT from "@tauri-apps/api/event";
 import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
@@ -622,7 +632,7 @@ export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-function __makeEvents__<T extends Record<string, any>>(
+export function __makeEvents__<T extends Record<string, any>>(
 	mappings: Record<keyof T, string>,
 ) {
 	return new Proxy(

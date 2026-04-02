@@ -14,6 +14,7 @@ pub fn run() {
         .commands(collect_commands![
             commands::agents::list_agents,
             commands::skills::list_skills,
+            commands::skills::read_skill_content,
             commands::config::get_config,
             commands::config::save_config,
             commands::config::get_last_selected_agents,

@@ -480,6 +480,27 @@ pub fn list_installed_skills(
     Ok(skills_map.into_values().collect())
 }
 
+/// Read the markdown body of SKILL.md, stripping YAML frontmatter.
+/// Takes the skill's canonical directory path.
+pub fn read_skill_content(canonical_path: &str) -> Result<String, AppError> {
+    let skill_md = std::path::Path::new(canonical_path).join("SKILL.md");
+    let content = std::fs::read_to_string(&skill_md).map_err(|_| AppError::PathNotFound {
+        path: skill_md.to_string_lossy().to_string(),
+    })?;
+
+    // Strip YAML frontmatter if present
+    if content.starts_with("---") {
+        if let Some(end) = content[3..].find("---") {
+            // Skip past the closing --- and any trailing newline
+            let body_start = 3 + end + 3;
+            return Ok(content[body_start..].trim_start_matches('\n').to_string());
+        }
+    }
+
+    // No frontmatter — return full content
+    Ok(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,5 +656,38 @@ Content.
             skill.source_url.as_deref(),
             Some("git@github.com:owner/private-repo.git")
         );
+    }
+
+    #[test]
+    fn test_read_skill_content_returns_body_without_frontmatter() {
+        let content = "---\nname: test\ndescription: A test\n---\n\n# Test Skill\n\nBody content here.\n";
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("test-skill");
+        fs::create_dir(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), content).unwrap();
+
+        let result = read_skill_content(&skill_dir.to_string_lossy()).unwrap();
+        assert!(result.starts_with("# Test Skill"));
+        assert!(result.contains("Body content here."));
+        assert!(!result.contains("---"));
+        assert!(!result.contains("name: test"));
+    }
+
+    #[test]
+    fn test_read_skill_content_missing_skill_md() {
+        let dir = tempdir().unwrap();
+        let result = read_skill_content(&dir.path().to_string_lossy());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_skill_content_no_frontmatter() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("plain");
+        fs::create_dir(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# Just content\n\nNo frontmatter.").unwrap();
+
+        let result = read_skill_content(&skill_dir.to_string_lossy()).unwrap();
+        assert!(result.starts_with("# Just content"));
     }
 }

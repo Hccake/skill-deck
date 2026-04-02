@@ -87,7 +87,11 @@
       "updated": "更新时间",
       "syncedAgents": "已安装到",
       "noSource": "手动添加",
-      "noAgents": "尚未安装到任何 Agent"
+      "noAgents": "尚未安装到任何 Agent",
+      "loading": "正在加载内容...",
+      "loadError": "加载 skill 内容失败",
+      "emptyContent": "该 skill 没有内容",
+      "retry": "重试"
     },
     "deleteConfirm": {
       "title": "删除 Skill",

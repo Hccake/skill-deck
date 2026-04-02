@@ -1,13 +1,14 @@
 // src/components/skills/SkillsPanel.tsx
-import { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
+import { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useContextStore } from '@/stores/context';
 import { useSkillsStore } from '@/stores/skills';
 import { SkillsToolbar } from './SkillsToolbar';
 import { SkillsSection } from './SkillsSection';
-import { SkillDetailDialog } from './SkillDetailDialog';
+import { CompactSkillList } from './CompactSkillList';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
+import { cn } from '@/lib/utils';
 import type { AgentType, InstalledSkill } from '@/bindings';
 
 /** 按搜索关键词 + agent 筛选过滤 skills — 单次遍历 (js-combine-iterations) */
@@ -25,7 +26,12 @@ function filterSkills(skills: InstalledSkill[], searchQuery: string, agentFilter
   });
 }
 
-export function SkillsPanel() {
+interface SkillsPanelProps {
+  /** 紧凑模式 — 选中 skill 后由 SkillsPage 传入 */
+  compact: boolean;
+}
+
+export function SkillsPanel({ compact }: SkillsPanelProps) {
   const { t } = useTranslation();
   const { selectedContext } = useContextStore();
 
@@ -47,7 +53,9 @@ export function SkillsPanel() {
   const fetchSkills = useSkillsStore((s) => s.fetchSkills);
   const syncSkills = useSkillsStore((s) => s.syncSkills);
   const storeUpdateSkill = useSkillsStore((s) => s.updateSkill);
-  const openDetail = useSkillsStore((s) => s.openDetail);
+  const selectSkill = useSkillsStore((s) => s.selectSkill);
+  const deselectSkill = useSkillsStore((s) => s.deselectSkill);
+  const selectedSkill = useSkillsStore((s) => s.selectedSkill);
   const openDelete = useSkillsStore((s) => s.openDelete);
   const openAdd = useSkillsStore((s) => s.openAdd);
   const auditCache = useSkillsStore((s) => s.auditCache);
@@ -60,7 +68,7 @@ export function SkillsPanel() {
   // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
   const deferredQuery = useDeferredValue(searchQuery);
 
-  // ③ 数据初始化 — selectedContext 变化时重新获取，然后自动检测更新
+  // ③ 数据初始化 — mount / selectedContext 变化时重新获取，然后自动检测更新
   useEffect(() => {
     let ignore = false;
     fetchSkills().then(() => {
@@ -68,6 +76,25 @@ export function SkillsPanel() {
     });
     return () => { ignore = true; };
   }, [selectedContext, fetchSkills, syncUpdates]);
+
+  // ③a 仅在 context 真正切换时关闭详情面板
+  const previousContextRef = useRef(selectedContext);
+  useEffect(() => {
+    if (previousContextRef.current !== selectedContext) {
+      deselectSkill();
+      previousContextRef.current = selectedContext;
+    }
+  }, [selectedContext, deselectSkill]);
+
+  // Esc 键关闭详情面板
+  useEffect(() => {
+    if (!selectedSkill) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') deselectSkill();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedSkill, deselectSkill]);
 
   // ③b 审计数据 — skills 变化后获取（仅对有 source 的 skills 请求）
   useEffect(() => {
@@ -172,10 +199,11 @@ export function SkillsPanel() {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Toolbar */}
-      <div className="px-4 sm:px-6 pt-4 sm:pt-5">
+    <div className={cn("flex flex-col h-full overflow-hidden", compact && "bg-muted/10")}>
+      {/* Toolbar — compact 模式下只显示搜索框 */}
+      <div className={compact ? 'px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex-shrink-0' : 'px-4 sm:px-6 pt-4 sm:pt-5'}>
         <SkillsToolbar
+          compact={compact}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           selectedAgent={selectedAgentFilter}
@@ -186,55 +214,67 @@ export function SkillsPanel() {
         />
       </div>
 
-      {/* Skills Content */}
-      <div className="flex-1 overflow-auto px-4 sm:px-6 pb-4 sm:pb-5">
-        {/* Project Skills Section (only when project is selected) */}
-        {isProjectSelected && (
+      {/* Skills list content */}
+      {compact ? (
+        /* 紧凑列表 — 选中 skill 时 */
+        <CompactSkillList
+          globalSkills={filteredGlobalSkills}
+          projectSkills={filteredProjectSkills}
+          selectedSkillName={selectedSkill?.name ?? null}
+          selectedSkillScope={selectedSkill?.scope ?? null}
+          isProjectSelected={isProjectSelected}
+          projectTitle={t('skills.projectSkills')}
+          onSkillClick={selectSkill}
+        />
+      ) : (
+        /* 卡片列表 — 未选中时 */
+        <div className="flex-1 overflow-auto px-4 sm:px-6 pb-4 sm:pb-5">
+          {/* Project Skills Section (only when project is selected) */}
+          {isProjectSelected && (
+            <SkillsSection
+              title={t('skills.projectSkills')}
+              skills={filteredProjectSkills}
+              scope="project"
+              conflictSkillNames={conflictSkillNames}
+              pathExists={projectPathExists}
+              projectPath={selectedContext}
+              updatingSkills={updatingSkills}
+              isCheckingUpdates={isCheckingProject}
+              agentDisplayNames={agentDisplayNames}
+              auditCache={auditCache}
+              onSkillClick={selectSkill}
+              onUpdate={storeUpdateSkill}
+              onUpdateAll={updateAllInSection}
+              onCancelUpdateAll={cancelUpdateAll}
+              onDelete={handleDeleteProject}
+              onAdd={handleAddProject}
+              onCheckUpdates={handleCheckProjectUpdates}
+              emptyState={projectEmptyState}
+            />
+          )}
+
+          {/* Global Skills Section */}
           <SkillsSection
-            title={t('skills.projectSkills')}
-            skills={filteredProjectSkills}
-            scope="project"
+            title={t('skills.globalSkills')}
+            skills={filteredGlobalSkills}
+            scope="global"
             conflictSkillNames={conflictSkillNames}
-            pathExists={projectPathExists}
-            projectPath={selectedContext}
             updatingSkills={updatingSkills}
-            isCheckingUpdates={isCheckingProject}
+            isCheckingUpdates={isCheckingGlobal}
             agentDisplayNames={agentDisplayNames}
             auditCache={auditCache}
-            onSkillClick={openDetail}
+            onSkillClick={selectSkill}
             onUpdate={storeUpdateSkill}
             onUpdateAll={updateAllInSection}
             onCancelUpdateAll={cancelUpdateAll}
-            onDelete={handleDeleteProject}
-            onAdd={handleAddProject}
-            onCheckUpdates={handleCheckProjectUpdates}
-            emptyState={projectEmptyState}
+            onDelete={handleDeleteGlobal}
+            onAdd={handleAddGlobal}
+            onCheckUpdates={handleCheckGlobalUpdates}
+            emptyState={globalEmptyState}
           />
-        )}
+        </div>
+      )}
 
-        {/* Global Skills Section */}
-        <SkillsSection
-          title={t('skills.globalSkills')}
-          skills={filteredGlobalSkills}
-          scope="global"
-          conflictSkillNames={conflictSkillNames}
-          updatingSkills={updatingSkills}
-          isCheckingUpdates={isCheckingGlobal}
-          agentDisplayNames={agentDisplayNames}
-          auditCache={auditCache}
-          onSkillClick={openDetail}
-          onUpdate={storeUpdateSkill}
-          onUpdateAll={updateAllInSection}
-          onCancelUpdateAll={cancelUpdateAll}
-          onDelete={handleDeleteGlobal}
-          onAdd={handleAddGlobal}
-          onCheckUpdates={handleCheckGlobalUpdates}
-          emptyState={globalEmptyState}
-        />
-      </div>
-
-      {/* Dialog 完全自治 — 零 props，各自从 store 读取 */}
-      <SkillDetailDialog />
       <DeleteSkillDialog />
     </div>
   );

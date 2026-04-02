@@ -13,6 +13,7 @@ import {
   updateSkillsBatch as apiUpdateSkillsBatch,
   openInstallWizard,
   checkSkillAudit,
+  readSkillContent as apiReadSkillContent,
 } from '@/hooks/useTauriApi';
 import type { AgentInfo, AgentType, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData, SkillAgentDetails } from '@/bindings';
 
@@ -83,10 +84,14 @@ interface SkillsState {
   updateAllCancelled: boolean;
 
   // Dialog 触发状态
-  detailSkill: InstalledSkill | null;
   deleteTarget: DeleteTarget | null;
   agentDetails: SkillAgentDetails | null;
   loadingAgentDetails: boolean;
+
+  // Detail panel state
+  selectedSkill: InstalledSkill | null;
+  skillContent: string | null;
+  loadingContent: boolean;
 
   // Actions — 内部通过 useContextStore.getState() 获取 selectedContext
   fetchSkills: () => Promise<void>;
@@ -98,8 +103,9 @@ interface SkillsState {
   updateAllInSection: (scope: SkillScope) => Promise<void>;
   cancelUpdateAll: () => void;
   deleteSkill: (params: { fullRemoval: boolean; agents?: AgentType[] }) => Promise<void>;
-  openDetail: (skill: InstalledSkill) => void;
-  closeDetail: () => void;
+  selectSkill: (skill: InstalledSkill) => Promise<void>;
+  deselectSkill: () => void;
+  reloadContent: () => Promise<void>;
   openDelete: (skill: InstalledSkill, scope: SkillScope, projectPath?: string) => void;
   closeDelete: () => void;
   openAdd: (scope: SkillScope) => void;
@@ -125,10 +131,14 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   updateAllCancelled: false,
 
   // Dialog 初始值
-  detailSkill: null,
   deleteTarget: null,
   agentDetails: null,
   loadingAgentDetails: false,
+
+  // Detail panel initial values
+  selectedSkill: null,
+  skillContent: null,
+  loadingContent: false,
 
   // === Actions ===
 
@@ -387,6 +397,18 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
       // Bug1 修复：清除缓存中的 hasUpdate 标记，防止 syncSkills 恢复旧标记
       clearUpdateCacheForSkill(skillName, scope);
 
+      // Refresh detail panel content if this skill is selected
+      const { selectedSkill } = get();
+      if (selectedSkill?.name === skillName && selectedSkill?.scope === scope) {
+        apiReadSkillContent(selectedSkill.canonicalPath)
+          .then((content) => {
+            if (get().selectedSkill?.name === skillName) {
+              set({ skillContent: content });
+            }
+          })
+          .catch(() => {}); // silent — update already succeeded
+      }
+
       set((state) => {
         const next = new Map(state.updatingSkills);
         next.set(skillName, 'done');
@@ -541,6 +563,11 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
         ? t('skills.deleteSuccess', { name: deleteTarget.skill.name })
         : t('skills.partialDeleteSuccess', { name: deleteTarget.skill.name, count: agents?.length ?? 0 });
       toast.success(msg);
+      // Auto-deselect if the deleted skill was selected
+      const { selectedSkill } = get();
+      if (selectedSkill && selectedSkill.name === deleteTarget.skill.name) {
+        get().deselectSkill();
+      }
       set({ deleteTarget: null, agentDetails: null });
       await get().fetchSkills();
     } catch (e) {
@@ -552,9 +579,44 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
     }
   },
 
-  // Dialog actions
-  openDetail: (skill) => set({ detailSkill: skill }),
-  closeDetail: () => set({ detailSkill: null }),
+  // Detail panel actions
+  selectSkill: async (skill) => {
+    // js-early-exit: same skill → no-op (use reloadContent for retry)
+    if (get().selectedSkill?.name === skill.name && get().selectedSkill?.scope === skill.scope) return;
+
+    set({ selectedSkill: skill, skillContent: null, loadingContent: true });
+
+    try {
+      const content = await apiReadSkillContent(skill.canonicalPath);
+      // Race condition guard: only apply if still the same skill
+      if (get().selectedSkill?.name === skill.name && get().selectedSkill?.scope === skill.scope) {
+        set({ skillContent: content, loadingContent: false });
+      }
+    } catch (e) {
+      if (get().selectedSkill?.name === skill.name && get().selectedSkill?.scope === skill.scope) {
+        console.error('[selectSkill] Failed to read content:', e);
+        set({ skillContent: null, loadingContent: false });
+      }
+    }
+  },
+
+  deselectSkill: () => set({ selectedSkill: null, skillContent: null, loadingContent: false }),
+
+  reloadContent: async () => {
+    const { selectedSkill } = get();
+    if (!selectedSkill) return;
+    set({ skillContent: null, loadingContent: true });
+    try {
+      const content = await apiReadSkillContent(selectedSkill.canonicalPath);
+      if (get().selectedSkill?.name === selectedSkill.name) {
+        set({ skillContent: content, loadingContent: false });
+      }
+    } catch {
+      if (get().selectedSkill?.name === selectedSkill.name) {
+        set({ skillContent: null, loadingContent: false });
+      }
+    }
+  },
 
   openDelete: (skill, scope, projectPath) => {
     // 立即打开对话框

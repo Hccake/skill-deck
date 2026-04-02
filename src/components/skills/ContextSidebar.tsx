@@ -224,7 +224,7 @@ export function ContextSidebar() {
   };
 
   return (
-    <aside className="w-60 flex-shrink-0 border-r border-border flex flex-col h-full">
+    <aside className="w-60 flex-shrink-0 border-r border-border flex flex-col h-full bg-muted/20">
       {/* Global */}
       <div className="px-4 pt-4 sm:pt-5">
         <GlobalContextItem />

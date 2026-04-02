@@ -32,7 +32,7 @@ export function Header() {
   const { theme, toggleTheme, locale, setLocale } = useSettingsStore();
 
   return (
-    <header className="flex h-16 items-center justify-between px-4 sm:px-6 border-b border-border/40 bg-background/80 backdrop-blur-sm">
+    <header className="flex h-16 items-center justify-between px-4 sm:px-6 border-b border-border bg-background/95 backdrop-blur flex-shrink-0">
       {/* Left: Logo + Brand */}
       <div className="flex items-center gap-2.5 min-w-[120px]">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-teal-500 to-teal-600 shadow-md shadow-primary/20">

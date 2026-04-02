@@ -6,4 +6,7 @@ export { SkillsSection } from './SkillsSection';
 export { SkillCard } from './SkillCard';
 export { RiskBadge } from './RiskBadge';
 export { SkillsToolbar } from './SkillsToolbar';
+export { CompactSkillList } from './CompactSkillList';
+export { CompactSkillItem } from './CompactSkillItem';
+export { SkillDetailPanel } from './SkillDetailPanel';
 export { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';

@@ -51,3 +51,12 @@ pub fn list_skills(params: ListSkillsParams) -> Result<ListSkillsResult, AppErro
         path_exists,
     })
 }
+
+use crate::core::skill::read_skill_content as core_read_skill_content;
+
+/// Read the markdown body of a skill's SKILL.md
+#[tauri::command]
+#[specta::specta]
+pub fn read_skill_content(canonical_path: String) -> Result<String, AppError> {
+    core_read_skill_content(&canonical_path)
+}

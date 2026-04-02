@@ -87,7 +87,11 @@
       "updated": "Updated",
       "syncedAgents": "Installed To",
       "noSource": "Manually added",
-      "noAgents": "Not installed to any agent"
+      "noAgents": "Not installed to any agent",
+      "loading": "Loading content...",
+      "loadError": "Failed to load skill content",
+      "emptyContent": "This skill has no content",
+      "retry": "Retry"
     },
     "deleteConfirm": {
       "title": "Delete Skill",

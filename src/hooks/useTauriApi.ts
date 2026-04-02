@@ -51,6 +51,14 @@ export async function listSkills(params?: ListSkillsParams): Promise<ListSkillsR
   }));
 }
 
+/**
+ * Read SKILL.md content (markdown body, frontmatter stripped).
+ * Takes the skill's canonical directory path.
+ */
+export async function readSkillContent(canonicalPath: string): Promise<string> {
+  return unwrap(await commands.readSkillContent(canonicalPath));
+}
+
 // ============ 配置相关 API ============
 
 /**
