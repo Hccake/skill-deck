@@ -12,7 +12,7 @@
     "settings": "Settings"
   },
   "context": {
-    "title": "Projects",
+    "title": "Workspace",
     "global": "Global",
     "globalSubtitle": "Available to all projects",
     "projects": "Projects",

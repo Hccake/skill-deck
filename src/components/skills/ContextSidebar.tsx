@@ -234,8 +234,11 @@ export function ContextSidebar() {
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto space-y-6">
-        {/* Global */}
+        {/* Global Section */}
         <div>
+          <h3 className="px-6 mb-2 font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+            {t('context.sectionGlobal')}
+          </h3>
           <GlobalContextItem />
         </div>
 
