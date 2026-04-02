@@ -1,7 +1,7 @@
 // src/components/skills/ContextSidebar.tsx
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
+import { PlusCircle, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,19 +41,17 @@ function GlobalContextItem() {
     <button
       onClick={() => selectContext('global')}
       className={cn(
-        'w-full px-3 py-2 text-left transition-colors duration-200',
-        'cursor-pointer border-l-4',
+        'w-full px-6 py-2.5 text-left transition-colors cursor-pointer',
         isSelected
-          ? 'border-primary bg-primary/10 text-primary font-heading font-bold'
-          : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+          ? 'bg-primary/10 text-primary border-l-4 border-primary'
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
       )}
     >
-      <div className="flex items-center gap-2.5">
-        <Globe className="h-[18px] w-[18px] text-primary flex-shrink-0" />
-        <div className="min-w-0">
-          <span className="text-sm">{t('context.global')}</span>
-          <p className="text-xs text-muted-foreground/60 truncate mt-0.5">{t('context.globalSubtitle')}</p>
-        </div>
+      <div className="flex items-center gap-3">
+        <Globe className="h-[18px] w-[18px] flex-shrink-0" />
+        <span className={cn('text-sm', isSelected ? 'font-bold' : 'font-medium')}>
+          {t('context.global')}
+        </span>
       </div>
     </button>
   );
@@ -94,22 +92,23 @@ function ProjectContextItem({ project }: { project: string }) {
         }
       }}
       className={cn(
-        'w-full px-3 py-2 text-left transition-colors duration-200',
-        'group relative cursor-pointer border-l-4',
+        'w-full px-6 py-2.5 text-left transition-colors',
+        'group relative cursor-pointer',
         isSelected
-          ? 'border-primary bg-primary/10 text-primary font-heading font-bold'
-          : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+          ? 'bg-primary/10 text-primary border-l-4 border-primary'
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
       )}
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-3">
         <Folder className={cn('h-[18px] w-[18px] flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
-
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm truncate">{projectName}</span>
+            <span className={cn('text-sm truncate', isSelected ? 'font-bold' : 'font-medium')}>
+              {projectName}
+            </span>
 
             {/* Hover 时显示的操作按钮 */}
-            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-auto">
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
               <Button
                 variant="ghost"
                 size="icon"
@@ -133,11 +132,9 @@ function ProjectContextItem({ project }: { project: string }) {
               </Button>
             </div>
           </div>
-
-          {/* 项目路径 */}
-          <p className="text-xs text-muted-foreground/60 truncate mt-0.5">
+          <span className={cn('text-[10px] truncate ml-7 block', isSelected ? 'opacity-70' : 'opacity-60')}>
             {project}
-          </p>
+          </span>
         </div>
       </div>
     </div>
@@ -224,46 +221,52 @@ export function ContextSidebar() {
   };
 
   return (
-    <aside className="w-60 flex-shrink-0 border-r border-border flex flex-col h-full bg-muted/20">
-      {/* Global */}
-      <div className="px-4 pt-4 sm:pt-5">
-        <h3 className="font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground mb-2 px-3">
-          {t('context.sectionGlobal')}
-        </h3>
-        <GlobalContextItem />
+    <aside className="w-64 flex-shrink-0 border-r border-border flex flex-col h-full bg-sidebar">
+      {/* Title */}
+      <div className="px-6 pt-6 mb-6">
+        <h2 className="font-heading text-lg font-bold text-foreground tracking-tight">
+          {t('context.title')}
+        </h2>
       </div>
 
-      {/* Projects 列表区域（可滚动） */}
-      <div className="flex-1 overflow-auto px-4 mt-4">
-        <h3 className="font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground mb-2 px-3">
-          {t('context.sectionProjects')}
-        </h3>
-        {projects.length === 0 ? (
-          <p className="py-2 px-3 text-xs text-muted-foreground">
-            {t('context.noProjects')}
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {projects.map((project) => (
-              <ProjectContextItem key={project} project={project} />
-            ))}
-          </div>
-        )}
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto space-y-6">
+        {/* Global Section */}
+        <div>
+          <h3 className="px-6 mb-2 font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+            {t('context.sectionGlobal')}
+          </h3>
+          <GlobalContextItem />
+        </div>
+
+        {/* Projects Section */}
+        <div>
+          <h3 className="px-6 mb-2 font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+            {t('context.sectionProjects')}
+          </h3>
+          {projects.length === 0 ? (
+            <p className="px-6 py-2 text-xs text-muted-foreground">
+              {t('context.noProjects')}
+            </p>
+          ) : (
+            <div className="space-y-0.5">
+              {projects.map((project) => (
+                <ProjectContextItem key={project} project={project} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Add Project Button — pinned to bottom */}
-      <div className="px-4 py-4">
-        <Button
-          variant="default"
-          size="sm"
-          className="w-full gap-2 bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
+      <div className="p-4 border-t border-border">
+        <button
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-accent hover:bg-accent/80 transition-colors text-foreground font-bold text-sm cursor-pointer"
           onClick={handleAddProject}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-background text-foreground">
-            <Plus className="h-3.5 w-3.5" />
-          </span>
+          <PlusCircle className="h-[18px] w-[18px]" />
           {t('context.addProject')}
-        </Button>
+        </button>
       </div>
     </aside>
   );
