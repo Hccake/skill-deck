@@ -87,6 +87,8 @@
       "pathHint": "Source files in the universal directory. Non-universal agents reference via symlink or copy.",
       "installed": "Installed",
       "updated": "Updated",
+      "installPath": "Install Path",
+      "agents": "Associated Agents",
       "syncedAgents": "Installed To",
       "noSource": "Manually added",
       "noAgents": "Not installed to any agent",

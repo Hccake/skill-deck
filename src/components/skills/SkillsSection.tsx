@@ -100,7 +100,7 @@ export const SkillsSection = memo(function SkillsSection({
       {/* Section Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <h2 className="text-sm font-semibold text-foreground">
+          <h2 className="text-sm font-heading font-extrabold text-foreground">
             {title} ({skills.length})
           </h2>
           {isCheckingUpdates && updatesCount === 0 && (

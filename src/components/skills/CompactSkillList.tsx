@@ -33,8 +33,8 @@ export const CompactSkillList = memo(function CompactSkillList({
           {/* Project skills section */}
           {isProjectSelected && projectSkills.length > 0 ? (
             <div className="mb-3">
-              <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-1.5 mb-1">
-                {projectTitle} · {projectSkills.length}
+              <div className="font-heading text-[10px] font-extrabold text-muted-foreground uppercase tracking-[0.2em] px-1.5 mb-1">
+                {projectTitle}
               </div>
               {projectSkills.map((skill) => (
                 <CompactSkillItem
@@ -50,8 +50,8 @@ export const CompactSkillList = memo(function CompactSkillList({
           {/* Global skills section */}
           {globalSkills.length > 0 ? (
             <div>
-              <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-1.5 mb-1">
-                {t('skills.globalSkills')} · {globalSkills.length}
+              <div className="font-heading text-[10px] font-extrabold text-muted-foreground uppercase tracking-[0.2em] px-1.5 mb-1">
+                {t('skills.globalSkills')}
               </div>
               {globalSkills.map((skill) => (
                 <CompactSkillItem

@@ -87,6 +87,8 @@
       "pathHint": "通用目录中的源文件，非通用 Agent 通过链接或复制引用",
       "installed": "安装时间",
       "updated": "更新时间",
+      "installPath": "安装路径",
+      "agents": "关联 Agents",
       "syncedAgents": "已安装到",
       "noSource": "手动添加",
       "noAgents": "尚未安装到任何 Agent",

@@ -22,23 +22,23 @@ export const CompactSkillItem = memo(function CompactSkillItem({
     <button
       type="button"
       className={cn(
-        'group relative w-full text-left rounded-md px-3 py-2 block overflow-hidden transition-all duration-200 cursor-pointer border border-transparent',
+        'group relative w-full text-left px-4 py-2.5 block overflow-hidden transition-colors cursor-pointer',
         isSelected
-          ? 'bg-primary/10 select-none'
+          ? 'bg-primary/[0.06] border-y border-primary/15 select-none'
           : 'hover:bg-accent/50 text-muted-foreground'
       )}
       onClick={handleClick}
     >
-      {isSelected && (
-        <div className="absolute left-0 top-1.5 bottom-1.5 w-[3px] bg-primary rounded-r-md" />
-      )}
       <div className={cn(
-        'w-full text-sm font-medium tracking-tight truncate',
-        isSelected ? 'text-primary' : 'text-foreground/80'
+        'w-full text-sm tracking-tight truncate',
+        isSelected ? 'font-heading font-bold text-primary' : 'font-heading font-semibold text-foreground'
       )}>
         {skill.name}
       </div>
-      <div className="w-full text-sm text-foreground/60 truncate mt-0.5 leading-relaxed">
+      <div className={cn(
+        'w-full text-sm truncate mt-0.5 leading-relaxed',
+        isSelected ? 'text-primary/60' : 'text-muted-foreground'
+      )}>
         {skill.description}
       </div>
     </button>

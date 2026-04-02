@@ -122,7 +122,7 @@ export const SkillCard = memo(function SkillCard({
               {/* Scope Icon */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent">
+                  <div className="flex h-8 w-8 items-center justify-center bg-accent">
                     <ScopeIcon className="h-4 w-4 text-accent-foreground" />
                   </div>
                 </TooltipTrigger>
@@ -132,7 +132,7 @@ export const SkillCard = memo(function SkillCard({
               </Tooltip>
 
               {/* Skill Name */}
-              <h3 className="text-sm font-semibold text-foreground">{skill.name}</h3>
+              <h3 className="text-sm font-heading font-bold tracking-tight text-foreground">{skill.name}</h3>
 
               {/* Risk Badge */}
               {riskLevel ? <RiskBadge risk={riskLevel} /> : null}
@@ -250,7 +250,7 @@ export const SkillCard = memo(function SkillCard({
             {skill.agents.map((agentId) => (
               <span
                 key={agentId}
-                className="inline-flex items-center gap-1 sm:gap-1.5 rounded-md border border-border/40 bg-accent px-2 sm:px-2.5 py-1.5 text-xs font-medium text-accent-foreground shadow-sm"
+                className="inline-flex items-center gap-1 sm:gap-1.5 border border-primary/15 bg-primary/[0.08] px-2 sm:px-2.5 py-1.5 text-xs font-medium text-accent-foreground"
               >
                 <span className="flex h-1.5 w-1.5 rounded-full bg-success" />
                 {agentDisplayNames.get(agentId) ?? agentId}
@@ -261,16 +261,16 @@ export const SkillCard = memo(function SkillCard({
         {/* Bug2 修复：底部极细进度条，无文字标签 */}
         {updateStatus === 'updating' ? (
           <div className="absolute bottom-0 left-0 right-0">
-            <div className="h-0.5 bg-warning/20 overflow-hidden rounded-b-xl">
+            <div className="h-0.5 bg-warning/20 overflow-hidden ">
               <div ref={progressBarRef} className="h-full bg-warning transition-all duration-500" style={{ width: '10%' }} />
             </div>
           </div>
         ) : null}
         {updateStatus === 'done' ? (
-          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-success transition-opacity duration-700 rounded-b-xl" />
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-success transition-opacity duration-700 " />
         ) : null}
         {updateStatus === 'failed' ? (
-          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-destructive rounded-b-xl" />
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-destructive " />
         ) : null}
       </Card>
   );
