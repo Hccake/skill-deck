@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-03
+
 ### Added
 
 - **Skill 内容详情面板** — Skills 页面支持在可调节宽度的双栏布局中查看已安装 skill 的 `SKILL.md` 正文；自动剥离 frontmatter 并以 Markdown/GFM 渲染，同时展示来源、安装时间、更新时间、适用 Agents 和安装路径，支持复制路径、重试加载、面板内直接更新/删除
@@ -249,6 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 深色/浅色主题切换
 - GitHub Actions CI/CD 构建流水线（Windows / macOS / Ubuntu）
 
+[1.0.0]: https://github.com/hccake/skill-deck/compare/v0.11.0...v1.0.0
 [0.11.0]: https://github.com/hccake/skill-deck/compare/v0.10.0...0.11.0
 [0.10.0]: https://github.com/hccake/skill-deck/compare/v0.9.0...0.10.0
 [0.9.0]: https://github.com/hccake/skill-deck/compare/v0.8.0...v0.9.0

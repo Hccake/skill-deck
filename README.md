@@ -7,7 +7,6 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/status-Early%20Alpha-orange" alt="Early Alpha">
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
     <img src="https://img.shields.io/badge/skills%20CLI-v1.4.7-green" alt="skills CLI v1.4.7">
@@ -55,12 +54,11 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 
 - **Windows**: `Skill-Deck_x.x.x_x64_en-US.msi`
 - **macOS**: `Skill-Deck_x.x.x_universal.dmg` (Intel + Apple Silicon)
+  > **Note for macOS users**: The application is currently unsigned. If you encounter an "app is damaged" or "cannot be opened because the developer cannot be verified" error after installation, please run the following command in your terminal:
+  > ```bash
+  > sudo xattr -rd com.apple.quarantine "/Applications/Skill Deck.app"
+  > ```
 - **Linux**: `skill-deck_x.x.x_amd64.deb` or `skill-deck-x.x.x-1.x86_64.rpm`
-
-> ⚠️ **Early Alpha**: Skill Deck is in early development (v0.x.x). Features and APIs may change frequently.
-> - ✅ Great for testing and feedback
-> - ⚠️ Back up important configurations before use
-> - ❌ Not recommended for production environments yet
 
 ### Option 2: Build from source
 

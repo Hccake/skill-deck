@@ -7,7 +7,6 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/status-Early%20Alpha-orange" alt="Early Alpha">
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
     <img src="https://img.shields.io/badge/skills%20CLI-v1.4.7-green" alt="skills CLI v1.4.7">
@@ -54,12 +53,11 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 
 - **Windows**: `Skill-Deck_x.x.x_x64_en-US.msi`
 - **macOS**: `Skill-Deck_x.x.x_universal.dmg`（支持 Intel 和 Apple Silicon）
+  > **macOS 用户注意**：当前应用未进行 Apple 开发者签名。如果在安装后提示“应用已损坏，打不开”或“无法打开，因为无法验证开发者”，请在终端执行以下命令解除系统隔离：
+  > ```bash
+  > sudo xattr -rd com.apple.quarantine "/Applications/Skill Deck.app"
+  > ```
 - **Linux**: `skill-deck_x.x.x_amd64.deb` 或 `skill-deck-x.x.x-1.x86_64.rpm`
-
-> ⚠️ **Early Alpha 提示**：Skill Deck 当前处于早期开发阶段（v0.x.x），功能和 API 可能频繁变动。
-> - ✅ 用于测试和反馈
-> - ⚠️ 使用前备份重要配置
-> - ❌ 暂不建议在生产环境使用
 
 ### 方式二：从源码构建
 
