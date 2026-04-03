@@ -133,7 +133,7 @@
     "updatePhaseWritingLock": "Saving configuration...",
     "updateDone": "Updated",
     "updateFailed": "Failed",
-    "checkUpdates": "Check",
+    "checkUpdates": "Check Updates",
     "discover": {
       "searchPlaceholder": "Search skills...",
       "minCharsHint": "Type keywords to search online skills",
@@ -172,6 +172,17 @@
     "projectsEmptyHint": "Add a project to manage project-level skills",
     "addProject": "Add Project",
     "about": "About",
+    "aboutSections": {
+      "tagline": "Desktop Agent Manager"
+    },
+    "links": {
+      "openSource": "OPEN SOURCE",
+      "githubTitle": "GitHub Repo",
+      "feedback": "FEEDBACK",
+      "issuesTitle": "Submit Issue",
+      "cliCompatibility": "CLI COMPATIBILITY",
+      "vercelSkills": "Vercel Skills"
+    },
     "version": "Version",
     "compatible": "Compatible with",
     "update": {

@@ -133,7 +133,7 @@
     "updatePhaseWritingLock": "正在保存配置...",
     "updateDone": "已更新",
     "updateFailed": "更新失败",
-    "checkUpdates": "检查",
+    "checkUpdates": "检查更新",
     "discover": {
       "searchPlaceholder": "搜索 Skills...",
       "minCharsHint": "输入关键词搜索在线 Skills",
@@ -172,6 +172,17 @@
     "projectsEmptyHint": "添加项目以管理项目级 Skills",
     "addProject": "添加项目",
     "about": "关于",
+    "aboutSections": {
+      "tagline": "桌面级 Agent 管理器"
+    },
+    "links": {
+      "openSource": "开源项目",
+      "githubTitle": "GitHub 仓库",
+      "feedback": "反馈意见",
+      "issuesTitle": "提交 Issue",
+      "cliCompatibility": "CLI 兼容",
+      "vercelSkills": "Vercel Skills"
+    },
     "version": "版本",
     "compatible": "兼容",
     "update": {
