@@ -10,6 +10,8 @@ import {
   Globe,
   Folder,
   AlertTriangle,
+  FolderOutput,
+  Pencil,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -59,6 +61,8 @@ interface SkillCardProps {
   onClick?: (skill: InstalledSkill) => void;
   onUpdate?: (skillName: string) => void;
   onDelete?: (skill: InstalledSkill) => void;
+  onCopyToProject?: (skill: InstalledSkill) => void;
+  onManageAgents?: (skill: InstalledSkill) => void;
 }
 
 export const SkillCard = memo(function SkillCard({
@@ -71,6 +75,8 @@ export const SkillCard = memo(function SkillCard({
   onClick,
   onUpdate,
   onDelete,
+  onCopyToProject,
+  onManageAgents,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
 
@@ -192,6 +198,36 @@ export const SkillCard = memo(function SkillCard({
                   }}
                 >
                   <ArrowUpCircle className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+              {displayScope === 'project' && onCopyToProject ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
+                  aria-label={t('skills.actions.copyToProject')}
+                  title={t('skills.actions.copyToProject')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCopyToProject(skill);
+                  }}
+                >
+                  <FolderOutput className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+              {onManageAgents ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
+                  aria-label={t('skills.manageAgents.title')}
+                  title={t('skills.manageAgents.title')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onManageAgents(skill);
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
                 </Button>
               ) : null}
               <Button

@@ -281,6 +281,49 @@ async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * 管理 skill 的 agent 支持（添加/移除）
+ * 
+ * # Arguments
+ * * `skill_name` - skill 名称
+ * * `scope` - 安装范围
+ * * `project_path` - Project scope 时的项目路径
+ * * `add_agents` - 要添加的 agent 列表
+ * * `remove_agents` - 要移除的 agent 列表
+ */
+async manageSkillAgents(skillName: string, scope: Scope, projectPath: string | null, addAgents: AgentType[], removeAgents: AgentType[]) : Promise<Result<ManageAgentsResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents", { skillName, scope, projectPath, addAgents, removeAgents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 复制项目级 skill 到其他项目
+ * 
+ * # Arguments
+ * * `skill_name` - skill 名称
+ * * `source_project_path` - 源项目路径
+ * * `target_project_paths` - 目标项目路径列表
+ * * `agents` - 要安装的 agent 列表（与源 skill 相同）
+ */
+async copySkillToProjects(skillName: string, sourceProjectPath: string, targetProjectPaths: string[], agents: string[]) : Promise<Result<CopySkillResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects", { skillName, sourceProjectPath, targetProjectPaths, agents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * 检查 skill 在哪些项目中已存在
+ * 
+ * 返回每个项目路径是否存在该 skill 的 canonical dir
+ */
+async checkSkillInProjects(skillName: string, projectPaths: string[]) : Promise<ProjectSkillStatus[]> {
+    return await TAURI_INVOKE("check_skill_in_projects", { skillName, projectPaths });
 }
 }
 
@@ -335,6 +378,26 @@ relativePath: string;
  * 所属 plugin 名称（来自 .claude-plugin/ manifest）
  */
 pluginName?: string | null }
+/**
+ * 单个目标项目的复制结果
+ */
+export type CopyProjectResult = { 
+/**
+ * 目标项目路径
+ */
+projectPath: string; 
+/**
+ * 是否成功
+ */
+success: boolean; 
+/**
+ * 错误信息
+ */
+error: string | null }
+/**
+ * 复制结果汇总
+ */
+export type CopySkillResult = { results: CopyProjectResult[] }
 /**
  * fetch_available 返回结果
  */
@@ -501,6 +564,26 @@ export type ListSkillsResult = { skills: InstalledSkill[];
  * 项目目录是否存在（project scope 时有意义，global 始终为 true）
  */
 pathExists: boolean }
+/**
+ * Agent 管理操作结果
+ */
+export type ManageAgentsResult = { 
+/**
+ * 成功添加的 agent IDs
+ */
+added: string[]; 
+/**
+ * 成功移除的 agent IDs
+ */
+removed: string[]; 
+/**
+ * 错误信息列表
+ */
+errors: string[] }
+/**
+ * 项目中 skill 存在状态
+ */
+export type ProjectSkillStatus = { projectPath: string; hasSkill: boolean }
 /**
  * 单个 skill 的删除结果
  * 对应 CLI: remove.ts 第 148-195 行的 results 数组元素

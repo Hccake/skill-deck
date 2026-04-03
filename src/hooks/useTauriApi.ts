@@ -16,10 +16,14 @@ import type {
   Scope,
   SkillAuditData,
   SkillAgentDetails,
+  ManageAgentsResult,
+  CopySkillResult,
+  CopyProjectResult,
+  ProjectSkillStatus,
 } from '@/bindings';
 
 // 重导出类型供组件使用
-export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallParams, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails };
+export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallParams, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
 function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; error: E }): T {
@@ -255,4 +259,58 @@ export async function openInstallWizard(params: {
       params.prefillSkillName ?? null
     )
   );
+}
+
+// ============ Agent 管理 API ============
+
+/**
+ * 管理 skill 的 agent 支持（添加/移除）
+ */
+export async function manageSkillAgents(params: {
+  skillName: string;
+  scope: Scope;
+  projectPath?: string;
+  addAgents: AgentType[];
+  removeAgents: AgentType[];
+}): Promise<ManageAgentsResult> {
+  return unwrap(
+    await commands.manageSkillAgents(
+      params.skillName,
+      params.scope,
+      params.projectPath ?? null,
+      params.addAgents,
+      params.removeAgents,
+    )
+  );
+}
+
+// ============ 复制 Skill API ============
+
+/**
+ * 复制项目级 skill 到其他项目
+ */
+export async function copySkillToProjects(params: {
+  skillName: string;
+  sourceProjectPath: string;
+  targetProjectPaths: string[];
+  agents: string[];
+}): Promise<CopySkillResult> {
+  return unwrap(
+    await commands.copySkillToProjects(
+      params.skillName,
+      params.sourceProjectPath,
+      params.targetProjectPaths,
+      params.agents,
+    )
+  );
+}
+
+/**
+ * 检查 skill 在哪些项目中已存在
+ */
+export async function checkSkillInProjects(
+  skillName: string,
+  projectPaths: string[],
+): Promise<ProjectSkillStatus[]> {
+  return await commands.checkSkillInProjects(skillName, projectPaths);
 }

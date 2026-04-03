@@ -5,7 +5,8 @@
   "common": {
     "loading": "Loading...",
     "copy": "Copy",
-    "close": "Close"
+    "close": "Close",
+    "cancel": "Cancel"
   },
   "nav": {
     "skills": "Skills",
@@ -49,7 +50,8 @@
     "actions": {
       "update": "Update",
       "delete": "Delete",
-      "moreOptions": "More options"
+      "moreOptions": "More options",
+      "copyToProject": "Copy to Project"
     },
     "agent": {
       "enable": "Enable {{name}}",
@@ -111,6 +113,22 @@
       "cancel": "Cancel",
       "confirm": "Delete",
       "confirmPartial": "Remove ({{count}})"
+    },
+    "manageAgents": {
+      "title": "Manage Agents",
+      "description": "Configure which agents have access to \"{{name}}\"",
+      "save": "Save Changes",
+      "success": "Agent configuration updated"
+    },
+    "copyToProject": {
+      "title": "Copy to Project",
+      "description": "Copy \"{{name}}\" to other projects",
+      "noProjects": "No other projects available",
+      "installed": "Installed",
+      "copy": "Copy to {{count}} project(s)",
+      "overwriteWarning": "{{count}} selected project(s) already have this skill — they will be overwritten",
+      "success": "Copied to {{count}} project(s) successfully",
+      "partialError": "{{success}} succeeded, {{fail}} failed"
     },
     "deleteSuccess": "\"{{name}}\" has been deleted",
     "partialDeleteSuccess": "Removed \"{{name}}\" from {{count}} agents",

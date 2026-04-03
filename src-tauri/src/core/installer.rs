@@ -127,12 +127,37 @@ fn install_with_symlink(
     clean_and_create_directory(&canonical_dir)?;
     copy_skill_files(skill_path, &canonical_dir)?;
 
-    // 3. 对于 Universal Agent 的 global 安装，跳过 symlink（已在 canonical 目录）
+    // 3. 创建 symlink（Universal Agent global 安装跳过）
+    symlink_canonical_to_agent(&canonical_dir, skill_name, agent, is_global, cwd)
+}
+
+/// 从已有的 canonical 目录创建 symlink 到 agent 目录（不复制 canonical）
+///
+/// 与 `install_with_symlink` 共享 "resolve agent dir + create symlink" 逻辑。
+fn link_from_canonical(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    is_global: bool,
+    cwd: &str,
+) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+    symlink_canonical_to_agent(canonical_dir, skill_name, agent, is_global, cwd)
+}
+
+/// 共享核心：从 canonical dir 创建 symlink 到 agent dir
+fn symlink_canonical_to_agent(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    is_global: bool,
+    cwd: &str,
+) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+    // Universal Agent 的 global 安装无需 symlink（已在 canonical 目录）
     if is_global && agent.is_universal() {
-        return Ok((canonical_dir.clone(), Some(canonical_dir), false));
+        return Ok((canonical_dir.to_path_buf(), Some(canonical_dir.to_path_buf()), false));
     }
 
-    // 4. 获取 agent 目录
+    // 获取 agent 目录
     let config = agent.config();
     let agent_base = if is_global {
         config.global_skills_dir.clone().unwrap()
@@ -141,18 +166,18 @@ fn install_with_symlink(
     };
     let agent_dir = agent_base.join(skill_name);
 
-    // 5. 创建 symlink
-    let symlink_failed = match create_symlink(&canonical_dir, &agent_dir) {
+    // 创建 symlink
+    let symlink_failed = match create_symlink(canonical_dir, &agent_dir) {
         Ok(_) => false,
         Err(_) => {
             // Symlink 失败，fallback 到 copy
             clean_and_create_directory(&agent_dir)?;
-            copy_skill_files(skill_path, &agent_dir)?;
+            copy_skill_files(canonical_dir, &agent_dir)?;
             true
         }
     };
 
-    Ok((agent_dir, Some(canonical_dir), symlink_failed))
+    Ok((agent_dir, Some(canonical_dir.to_path_buf()), symlink_failed))
 }
 
 /// Copy 模式安装
@@ -297,6 +322,64 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+/// 为已安装的 skill 创建到新 agent 的 symlink（不重新复制 canonical dir）
+///
+/// 与 `install_skill_for_agent` 的区别：跳过 copy-to-canonical 步骤，
+/// 仅创建从已有 canonical dir 到 agent dir 的 symlink。
+/// 用于 manage_agents 命令（为已有 skill 添加 agent 支持）。
+pub fn link_skill_for_agent(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    scope: &Scope,
+    project_path: Option<&str>,
+) -> InstallResult {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+
+    // 检查 agent 是否支持 global 安装
+    let config = agent.config();
+    if is_global && config.global_skills_dir.is_none() {
+        return InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: false,
+            path: PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Symlink,
+            symlink_failed: false,
+            error: Some(format!(
+                "{} does not support global skill installation",
+                config.display_name
+            )),
+        };
+    }
+
+    match link_from_canonical(canonical_dir, &sanitized_name, agent, is_global, cwd) {
+        Ok((path, canonical_path, symlink_failed)) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: true,
+            path,
+            canonical_path,
+            mode: if symlink_failed { InstallMode::Copy } else { InstallMode::Symlink },
+            symlink_failed,
+            error: None,
+        },
+        Err(e) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: false,
+            path: PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Symlink,
+            symlink_failed: false,
+            error: Some(e.to_string()),
+        },
+    }
 }
 
 /// Install a single skill to multiple agents, returning per-agent results.
@@ -569,5 +652,58 @@ mod tests {
             None,
         );
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_link_skill_for_agent_creates_symlink_from_canonical() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+
+        // 创建 canonical dir（模拟已安装的 skill）
+        let canonical_dir = temp.path().join(".agents").join("skills").join("test-skill");
+        fs::create_dir_all(&canonical_dir).unwrap();
+        fs::write(canonical_dir.join("SKILL.md"), "# Test Skill").unwrap();
+        fs::write(canonical_dir.join("config.json"), "{}").unwrap();
+
+        // 用一个 non-universal agent 测试
+        let agent = AgentType::Cursor;
+        let result = link_skill_for_agent(
+            &canonical_dir,
+            "test-skill",
+            &agent,
+            &Scope::Project,
+            Some(&project_path),
+        );
+
+        assert!(result.success, "link should succeed: {:?}", result.error);
+        assert!(result.canonical_path.is_some());
+        // canonical dir 应该保持不变
+        assert!(canonical_dir.join("SKILL.md").exists(), "canonical dir should not be destroyed");
+        assert!(canonical_dir.join("config.json").exists());
+    }
+
+    #[test]
+    fn test_link_skill_for_agent_does_not_destroy_canonical() {
+        // 这是之前 install_skill_for_agent 的自毁 bug 的回归测试
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+
+        let canonical_dir = temp.path().join(".agents").join("skills").join("my-skill");
+        fs::create_dir_all(&canonical_dir).unwrap();
+        let content = "---\nname: my-skill\n---\n# My Skill Content";
+        fs::write(canonical_dir.join("SKILL.md"), content).unwrap();
+
+        let agent = AgentType::Cline;
+        let _ = link_skill_for_agent(
+            &canonical_dir,
+            "my-skill",
+            &agent,
+            &Scope::Project,
+            Some(&project_path),
+        );
+
+        // 关键断言：canonical dir 内容完好
+        let read_content = fs::read_to_string(canonical_dir.join("SKILL.md")).unwrap();
+        assert_eq!(read_content, content, "canonical dir content must survive linking");
     }
 }

@@ -9,6 +9,7 @@ import { SkillsPage } from '../SkillsPage';
 const mocks = vi.hoisted(() => ({
   contextState: {
     selectedContext: 'global',
+    projects: [] as string[],
   },
   skillsState: {
     selectedSkill: null as null | { name: string; scope: 'global' | 'project' },
@@ -19,6 +20,15 @@ const mocks = vi.hoisted(() => ({
     updateSkill: vi.fn(),
     openDelete: vi.fn(),
     allAgents: [] as Array<{ id: string; name: string }>,
+    openManageAgents: vi.fn(),
+    closeManageAgents: vi.fn(),
+    saveAgentChanges: vi.fn(),
+    manageAgentsSkill: null,
+    manageAgentsScope: 'global',
+    copySkill: null,
+    openCopyToProject: vi.fn(),
+    closeCopyToProject: vi.fn(),
+    executeCopy: vi.fn(),
   },
   resizable: {
     groups: [] as Array<Record<string, unknown>>,

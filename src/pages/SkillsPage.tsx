@@ -4,6 +4,9 @@ import { useGroupRef } from 'react-resizable-panels';
 import { useContextStore } from '@/stores/context';
 import { useSkillsStore } from '@/stores/skills';
 import { ContextSidebar, SkillsPanel, SkillDetailPanel } from '@/components/skills';
+import { ManageAgentsDialog } from '@/components/skills/ManageAgentsDialog';
+import { CopyToProjectDialog } from '@/components/skills/CopyToProjectDialog';
+import { checkSkillInProjects } from '@/hooks/useTauriApi';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import type { SkillScope } from '@/bindings';
 
@@ -27,6 +30,16 @@ export function SkillsPage() {
   const storeUpdateSkill = useSkillsStore((s) => s.updateSkill);
   const openDelete = useSkillsStore((s) => s.openDelete);
   const allAgents = useSkillsStore((s) => s.allAgents);
+  const openManageAgents = useSkillsStore((s) => s.openManageAgents);
+  const closeManageAgents = useSkillsStore((s) => s.closeManageAgents);
+  const saveAgentChanges = useSkillsStore((s) => s.saveAgentChanges);
+  const manageAgentsSkill = useSkillsStore((s) => s.manageAgentsSkill);
+  const manageAgentsScope = useSkillsStore((s) => s.manageAgentsScope);
+  const copySkill = useSkillsStore((s) => s.copySkill);
+  const openCopyToProject = useSkillsStore((s) => s.openCopyToProject);
+  const closeCopyToProject = useSkillsStore((s) => s.closeCopyToProject);
+  const executeCopy = useSkillsStore((s) => s.executeCopy);
+  const projects = useContextStore((s) => s.projects);
   const layoutRef = useGroupRef();
   const previousSplitViewRef = useRef(Boolean(selectedSkill));
 
@@ -43,6 +56,15 @@ export function SkillsPage() {
   const handleDetailUpdate = useCallback((name: string, scope: SkillScope) => {
     storeUpdateSkill(name, scope);
   }, [storeUpdateSkill]);
+
+  const handleManageAgents = useCallback((skill: typeof selectedSkill & {}) => {
+    const scope = skill.scope;
+    openManageAgents(skill, scope);
+  }, [openManageAgents]);
+
+  const handleCopyToProject = useCallback((skill: typeof selectedSkill & {}) => {
+    openCopyToProject(skill);
+  }, [openCopyToProject]);
 
   useLayoutEffect(() => {
     const hasDetail = Boolean(selectedSkill);
@@ -79,6 +101,7 @@ export function SkillsPage() {
   }, [selectedSkill, layoutRef]);
 
   return (
+    <>
     <div className="flex h-full">
       {/* Left Sidebar: Context */}
       <ContextSidebar />
@@ -120,6 +143,8 @@ export function SkillsPage() {
                   onUpdate={handleDetailUpdate}
                   onDelete={handleDetailDelete}
                   onRetry={reloadContent}
+                  onManageAgents={handleManageAgents}
+                  onCopyToProject={selectedSkill.scope === 'project' ? handleCopyToProject : undefined}
                 />
               </ResizablePanel>
             </>
@@ -127,5 +152,25 @@ export function SkillsPage() {
         </ResizablePanelGroup>
       </div>
     </div>
+
+    {/* Manage Agents Dialog */}
+    <ManageAgentsDialog
+      skill={manageAgentsSkill}
+      scope={manageAgentsScope}
+      allAgents={allAgents}
+      onClose={closeManageAgents}
+      onSave={saveAgentChanges}
+    />
+
+    {/* Copy to Project Dialog */}
+    <CopyToProjectDialog
+      skill={copySkill}
+      currentProjectPath={selectedContext}
+      projects={projects}
+      checkExistence={checkSkillInProjects}
+      onClose={closeCopyToProject}
+      onCopy={executeCopy}
+    />
+    </>
   );
 }

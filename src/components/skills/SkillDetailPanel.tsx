@@ -3,7 +3,7 @@ import { memo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle } from 'lucide-react';
+import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,6 +20,8 @@ interface SkillDetailPanelProps {
   onUpdate: (name: string, scope: SkillScope) => void;
   onDelete: (skill: InstalledSkill) => void;
   onRetry: () => void;
+  onManageAgents: (skill: InstalledSkill) => void;
+  onCopyToProject?: (skill: InstalledSkill) => void;
 }
 
 export const SkillDetailPanel = memo(function SkillDetailPanel({
@@ -31,6 +33,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onUpdate,
   onDelete,
   onRetry,
+  onManageAgents,
+  onCopyToProject,
 }: SkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -53,6 +57,14 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     onUpdate(skill.name, skill.scope);
   }, [onUpdate, skill.name, skill.scope]);
 
+  const handleManageAgents = useCallback(() => {
+    onManageAgents(skill);
+  }, [onManageAgents, skill]);
+
+  const handleCopyToProject = useCallback(() => {
+    onCopyToProject?.(skill);
+  }, [onCopyToProject, skill]);
+
   return (
     <div className="h-full flex flex-col overflow-hidden bg-surface">
       {/* 沉浸式滚动文档流 (Scrollable Document Area) */}
@@ -73,6 +85,17 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 ) : null}
               </div>
               <div className="flex gap-1 shrink-0 pt-1">
+                {skill.scope === 'project' && onCopyToProject ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
+                    title={t('skills.actions.copyToProject')}
+                    onClick={handleCopyToProject}
+                  >
+                    <FolderOutput className="h-4 w-4" />
+                  </Button>
+                ) : null}
                 {skill.hasUpdate ? (
                   <Button
                     variant="ghost"
@@ -84,6 +107,15 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     <ArrowUpCircle className="h-4 w-4" />
                   </Button>
                 ) : null}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
+                  title={t('skills.manageAgents.title')}
+                  onClick={handleManageAgents}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

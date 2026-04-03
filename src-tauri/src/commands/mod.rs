@@ -2,7 +2,9 @@
 pub mod agents;
 pub mod audit;
 pub mod config;
+pub mod copy_skill;
 pub mod install;
+pub mod manage_agents;
 pub mod overwrites;
 pub mod remove;
 pub mod remove_details;

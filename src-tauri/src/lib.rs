@@ -33,6 +33,9 @@ pub fn run() {
             commands::update::update_skills_batch,
             commands::wizard::open_install_wizard,
             commands::audit::check_skill_audit,
+            commands::manage_agents::manage_skill_agents,
+            commands::copy_skill::copy_skill_to_projects,
+            commands::copy_skill::check_skill_in_projects,
         ])
         .events(collect_events![]);
 

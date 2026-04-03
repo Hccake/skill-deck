@@ -36,8 +36,10 @@ The goal is simple: make Skills easier to inspect, understand, and apply across 
 - 🌍 **Global & project scope** — Manage Skills at global level or per-project
 - 🧠 **Clear visibility** — Understand where each Skill is applied at a glance
 - 🔄 **Multi-editor support** — Auto-detect installed editors (VS Code, Cursor, Windsurf, etc.) and sync Skills across them
+- ✏️ **Agent management** — Add or remove editor support for installed Skills without reinstalling
 - 📦 **Dual install modes** — Choose between Symlink and Copy when installing Skills
 - 🔍 **Discover & install** — Install Skills from GitHub repos or local paths
+- 📋 **Copy across projects** — Quickly copy project-level Skills to other projects with one click
 - 🌐 **Bilingual UI** — English and Chinese interface
 - ⚡ **Fast & lightweight** — Built with Tauri v2, fast startup, low resource usage
 

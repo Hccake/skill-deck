@@ -57,6 +57,8 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const selectedSkill = useSkillsStore((s) => s.selectedSkill);
   const openDelete = useSkillsStore((s) => s.openDelete);
   const openAdd = useSkillsStore((s) => s.openAdd);
+  const openCopyToProject = useSkillsStore((s) => s.openCopyToProject);
+  const openManageAgents = useSkillsStore((s) => s.openManageAgents);
   const auditCache = useSkillsStore((s) => s.auditCache);
   const fetchAuditForSkills = useSkillsStore((s) => s.fetchAuditForSkills);
 
@@ -152,6 +154,14 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const handleDeleteProject = useCallback((skill: InstalledSkill) => {
     openDelete(skill, 'project', selectedContext);
   }, [openDelete, selectedContext]);
+
+  const handleManageAgentsGlobal = useCallback((skill: InstalledSkill) => {
+    openManageAgents(skill, 'global');
+  }, [openManageAgents]);
+
+  const handleManageAgentsProject = useCallback((skill: InstalledSkill) => {
+    openManageAgents(skill, 'project');
+  }, [openManageAgents]);
 
   const handleAddGlobal = useCallback(() => {
     openAdd('global');
@@ -249,6 +259,8 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               onUpdateAll={updateAllInSection}
               onCancelUpdateAll={cancelUpdateAll}
               onDelete={handleDeleteProject}
+              onCopyToProject={openCopyToProject}
+              onManageAgents={handleManageAgentsProject}
               onAdd={handleAddProject}
               onCheckUpdates={handleCheckProjectUpdates}
               emptyState={projectEmptyState}
@@ -270,6 +282,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             onUpdateAll={updateAllInSection}
             onCancelUpdateAll={cancelUpdateAll}
             onDelete={handleDeleteGlobal}
+            onManageAgents={handleManageAgentsGlobal}
             onAdd={handleAddGlobal}
             onCheckUpdates={handleCheckGlobalUpdates}
             emptyState={globalEmptyState}

@@ -14,6 +14,8 @@ const mockUpdateSkill = vi.fn();
 const mockOpenInstallWizard = vi.fn();
 const mockCheckSkillAudit = vi.fn();
 const mockReadSkillContent = vi.fn();
+const mockManageSkillAgents = vi.fn();
+const mockCopySkillToProjects = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mockListSkills(...args),
@@ -25,6 +27,8 @@ vi.mock('@/hooks/useTauriApi', () => ({
   openInstallWizard: (...args: unknown[]) => mockOpenInstallWizard(...args),
   checkSkillAudit: (...args: unknown[]) => mockCheckSkillAudit(...args),
   readSkillContent: (...args: unknown[]) => mockReadSkillContent(...args),
+  manageSkillAgents: (...args: unknown[]) => mockManageSkillAgents(...args),
+  copySkillToProjects: (...args: unknown[]) => mockCopySkillToProjects(...args),
 }));
 
 vi.mock('sonner', () => ({
@@ -67,6 +71,9 @@ describe('useSkillsStore', () => {
       selectedSkill: null,
       skillContent: null,
       loadingContent: false,
+      manageAgentsSkill: null,
+      manageAgentsScope: 'global',
+      copySkill: null,
     });
   });
 
@@ -247,6 +254,101 @@ describe('useSkillsStore', () => {
       expect(state.selectedSkill).toEqual(skill);
       expect(state.skillContent).toBeNull();
       expect(state.loadingContent).toBe(false);
+    });
+  });
+
+  describe('manageAgents', () => {
+    it('openManageAgents sets target skill and scope', () => {
+      const skill = makeSkill('test', { scope: 'project' });
+      useSkillsStore.getState().openManageAgents(skill, 'project');
+      expect(useSkillsStore.getState().manageAgentsSkill).toBe(skill);
+      expect(useSkillsStore.getState().manageAgentsScope).toBe('project');
+    });
+
+    it('closeManageAgents clears target', () => {
+      const skill = makeSkill('test');
+      useSkillsStore.setState({ manageAgentsSkill: skill });
+      useSkillsStore.getState().closeManageAgents();
+      expect(useSkillsStore.getState().manageAgentsSkill).toBeNull();
+    });
+
+    it('saveAgentChanges calls API and syncs skills', async () => {
+      const skill = makeSkill('test');
+      mockManageSkillAgents.mockResolvedValue({ added: ['cursor'], removed: [], errors: [] });
+      mockListSkills.mockResolvedValue({ skills: [makeSkill('test', { agents: ['claude-code', 'cursor'] })], pathExists: true });
+      mockListAgents.mockResolvedValue([]);
+
+      useSkillsStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      await useSkillsStore.getState().saveAgentChanges(['cursor'], []);
+
+      expect(mockManageSkillAgents).toHaveBeenCalledWith({
+        skillName: 'test',
+        scope: 'global',
+        projectPath: undefined,
+        addAgents: ['cursor'],
+        removeAgents: [],
+      });
+      expect(useSkillsStore.getState().manageAgentsSkill).toBeNull();
+      expect(toast.success).toHaveBeenCalled();
+    });
+
+    it('saveAgentChanges shows error toast on API errors', async () => {
+      const skill = makeSkill('test');
+      mockManageSkillAgents.mockResolvedValue({ added: [], removed: [], errors: ['cursor: failed'] });
+      mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
+
+      useSkillsStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      await useSkillsStore.getState().saveAgentChanges(['cursor'], []);
+
+      expect(toast.error).toHaveBeenCalled();
+    });
+  });
+
+  describe('copyToProject', () => {
+    it('openCopyToProject sets target skill', () => {
+      const skill = makeSkill('test', { scope: 'project' });
+      useSkillsStore.getState().openCopyToProject(skill);
+      expect(useSkillsStore.getState().copySkill).toBe(skill);
+    });
+
+    it('closeCopyToProject clears target', () => {
+      useSkillsStore.setState({ copySkill: makeSkill('test') });
+      useSkillsStore.getState().closeCopyToProject();
+      expect(useSkillsStore.getState().copySkill).toBeNull();
+    });
+
+    it('executeCopy calls API and shows success toast', async () => {
+      const skill = makeSkill('test', { scope: 'project', agents: ['claude-code'] });
+      mockCopySkillToProjects.mockResolvedValue({
+        results: [{ projectPath: '/project-b', success: true, error: null }],
+      });
+
+      useSkillsStore.setState({ copySkill: skill });
+      await useSkillsStore.getState().executeCopy(['/project-b']);
+
+      expect(mockCopySkillToProjects).toHaveBeenCalledWith({
+        skillName: 'test',
+        sourceProjectPath: 'global',
+        targetProjectPaths: ['/project-b'],
+        agents: ['claude-code'],
+      });
+      expect(useSkillsStore.getState().copySkill).toBeNull();
+      expect(toast.success).toHaveBeenCalled();
+    });
+
+    it('executeCopy shows error toast on partial failure', async () => {
+      const skill = makeSkill('test', { scope: 'project' });
+      mockCopySkillToProjects.mockResolvedValue({
+        results: [
+          { projectPath: '/a', success: true, error: null },
+          { projectPath: '/b', success: false, error: 'disk full' },
+        ],
+      });
+
+      useSkillsStore.setState({ copySkill: skill });
+      await useSkillsStore.getState().executeCopy(['/a', '/b']);
+
+      expect(toast.error).toHaveBeenCalled();
     });
   });
 });

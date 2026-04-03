@@ -5,7 +5,8 @@
   "common": {
     "loading": "加载中...",
     "copy": "复制",
-    "close": "关闭"
+    "close": "关闭",
+    "cancel": "取消"
   },
   "nav": {
     "skills": "Skills",
@@ -49,7 +50,8 @@
     "actions": {
       "update": "更新",
       "delete": "删除",
-      "moreOptions": "更多选项"
+      "moreOptions": "更多选项",
+      "copyToProject": "复制到项目"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -111,6 +113,22 @@
       "cancel": "取消",
       "confirm": "确认删除",
       "confirmPartial": "移除 ({{count}})"
+    },
+    "manageAgents": {
+      "title": "管理 Agents",
+      "description": "配置哪些 agents 可以使用 \"{{name}}\"",
+      "save": "保存更改",
+      "success": "Agent 配置已更新"
+    },
+    "copyToProject": {
+      "title": "复制到项目",
+      "description": "将 \"{{name}}\" 复制到其他项目",
+      "noProjects": "没有其他可用项目",
+      "installed": "已安装",
+      "copy": "复制到 {{count}} 个项目",
+      "overwriteWarning": "{{count}} 个选中的项目已安装此 skill，将被覆盖",
+      "success": "已成功复制到 {{count}} 个项目",
+      "partialError": "{{success}} 个成功，{{fail}} 个失败"
     },
     "deleteSuccess": "已删除「{{name}}」",
     "partialDeleteSuccess": "已从 {{count}} 个 Agent 中移除「{{name}}」",

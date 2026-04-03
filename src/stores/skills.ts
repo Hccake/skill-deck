@@ -14,6 +14,8 @@ import {
   openInstallWizard,
   checkSkillAudit,
   readSkillContent as apiReadSkillContent,
+  manageSkillAgents as apiManageSkillAgents,
+  copySkillToProjects as apiCopySkillToProjects,
 } from '@/hooks/useTauriApi';
 import type { AgentInfo, AgentType, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData, SkillAgentDetails } from '@/bindings';
 
@@ -93,6 +95,13 @@ interface SkillsState {
   skillContent: string | null;
   loadingContent: boolean;
 
+  // Manage agents dialog state
+  manageAgentsSkill: InstalledSkill | null;
+  manageAgentsScope: SkillScope;
+
+  // Copy to project dialog state
+  copySkill: InstalledSkill | null;
+
   // Actions — 内部通过 useContextStore.getState() 获取 selectedContext
   fetchSkills: () => Promise<void>;
   syncSkills: () => Promise<void>;
@@ -110,6 +119,12 @@ interface SkillsState {
   closeDelete: () => void;
   openAdd: (scope: SkillScope) => void;
   openAddWithPrefill: (prefill: AddDialogPrefill) => void;
+  openManageAgents: (skill: InstalledSkill, scope: SkillScope) => void;
+  closeManageAgents: () => void;
+  saveAgentChanges: (addAgents: string[], removeAgents: string[]) => Promise<void>;
+  openCopyToProject: (skill: InstalledSkill) => void;
+  closeCopyToProject: () => void;
+  executeCopy: (targetPaths: string[]) => Promise<void>;
 }
 
 export const useSkillsStore = create<SkillsState>()((set, get) => ({
@@ -139,6 +154,13 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   selectedSkill: null,
   skillContent: null,
   loadingContent: false,
+
+  // Manage agents dialog initial values
+  manageAgentsSkill: null,
+  manageAgentsScope: 'global' as SkillScope,
+
+  // Copy to project dialog initial values
+  copySkill: null,
 
   // === Actions ===
 
@@ -654,5 +676,88 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
       console.error('[openAddWithPrefill] Failed to open wizard:', e);
       toast.error(String(e));
     });
+  },
+
+  openManageAgents: (skill, scope) => {
+    set({ manageAgentsSkill: skill, manageAgentsScope: scope });
+  },
+  closeManageAgents: () => set({ manageAgentsSkill: null }),
+  saveAgentChanges: async (addAgents, removeAgents) => {
+    const { manageAgentsSkill, manageAgentsScope } = get();
+    if (!manageAgentsSkill) return;
+
+    const { selectedContext } = useContextStore.getState();
+    const scope = manageAgentsScope === 'project' ? 'project' : 'global';
+    const projectPath = scope === 'project' ? selectedContext : undefined;
+
+    try {
+      const result = await apiManageSkillAgents({
+        skillName: manageAgentsSkill.name,
+        scope,
+        projectPath,
+        addAgents: addAgents as AgentType[],
+        removeAgents: removeAgents as AgentType[],
+      });
+
+      if (result.errors.length > 0) {
+        toast.error(result.errors.join('\n'));
+      } else {
+        toast.success(t('skills.manageAgents.success'));
+      }
+
+      set({ manageAgentsSkill: null });
+      // 刷新 skills 列表
+      await get().syncSkills();
+      // 刷新 selectedSkill（agents 列表已变化）
+      const { selectedSkill, globalSkills, projectSkills } = get();
+      if (selectedSkill) {
+        const allSkills = [...globalSkills, ...projectSkills];
+        const updated = allSkills.find((s) => s.name === selectedSkill.name && s.scope === selectedSkill.scope);
+        if (updated) {
+          set({ selectedSkill: updated });
+        }
+      }
+    } catch (e) {
+      console.error('[saveAgentChanges] Failed:', e);
+      toast.error(String(e));
+    }
+  },
+
+  openCopyToProject: (skill) => {
+    set({ copySkill: skill });
+  },
+  closeCopyToProject: () => set({ copySkill: null }),
+  executeCopy: async (targetPaths) => {
+    const { copySkill } = get();
+    if (!copySkill) return;
+
+    const { selectedContext } = useContextStore.getState();
+
+    try {
+      const result = await apiCopySkillToProjects({
+        skillName: copySkill.name,
+        sourceProjectPath: selectedContext,
+        targetProjectPaths: targetPaths,
+        agents: copySkill.agents,
+      });
+
+      const successCount = result.results.filter((r) => r.success).length;
+      const failCount = result.results.filter((r) => !r.success).length;
+
+      if (failCount > 0) {
+        const errors = result.results
+          .filter((r) => !r.success)
+          .map((r) => `${r.projectPath}: ${r.error}`)
+          .join('\n');
+        toast.error(t('skills.copyToProject.partialError', { success: successCount, fail: failCount }) + '\n' + errors);
+      } else {
+        toast.success(t('skills.copyToProject.success', { count: successCount }));
+      }
+
+      set({ copySkill: null });
+    } catch (e) {
+      console.error('[executeCopy] Failed:', e);
+      toast.error(String(e));
+    }
   },
 }));
