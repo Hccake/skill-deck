@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Agent 管理** — 为已安装的 Skill 添加或移除 Agent 支持，无需重新安装；SkillCard 和详情面板均提供入口
 - **跨项目复制 Skill** — 一键将项目级 Skill 复制到其他项目，自动标注目标项目中已存在的 Skill 并提示覆盖
+- **单实例运行** — 集成 `tauri-plugin-single-instance`，防止同时打开多个应用进程；重复启动时自动聚焦已有窗口
 
 ## [1.0.0] - 2026-04-03
 
