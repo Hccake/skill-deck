@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Skill 内容详情面板** — Skills 页面支持在可调节宽度的双栏布局中查看已安装 skill 的 `SKILL.md` 正文；自动剥离 frontmatter 并以 Markdown/GFM 渲染，同时展示来源、安装时间、更新时间、适用 Agents 和安装路径，支持复制路径、重试加载、面板内直接更新/删除
+
+### Changed
+
+- **整体视觉重设计** — 引入 Manrope / Inter 字体，更新为 emerald 主色与分层中性色面板体系，统一更利落的圆角、边框、滚动条和文档排版风格
+- **导航与品牌焕新** — Header 改为胶囊式导航，刷新应用 Logo，并同步更新 Tauri 桌面端图标资源
+- **Skills 工作台重构** — 选中 skill 后切换为“紧凑列表 + 沉浸式详情面板”的工作台布局；SkillCard、Compact List、Empty States 和详情阅读区整体重做
+- **Context Sidebar 重做** — 左侧上下文切换区调整为 Workspace / Global / Projects 分区，强化选中态、项目路径信息和底部 Add Project 入口
+- **Discover / Wizard / Settings 统一改版** — 搜索安装流程、Discover 页面和 Settings 三个标签页统一为新的卡片化界面；About 区新增品牌展示、外链入口和更新操作聚合区
+
+### Fixed
+
+- **Sidebar 设计稿对齐问题** — 修复 Add Project 按钮、Workspace 标题、GLOBAL 分区标题和项目列表细节与设计稿不一致的问题
+- **详情面板阅读干扰** — 移除详情区 sticky header，并将更新/删除等操作收纳到 Hero 区域，减少滚动阅读时的视觉干扰
+- **紧凑列表细节打磨** — 调整列表计数、间距和选中态表现，改善双栏模式下的浏览与定位体验
+
 ## [0.11.0] - 2026-04-02
 
 ### Changed
