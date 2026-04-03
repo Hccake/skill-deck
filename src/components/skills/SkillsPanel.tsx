@@ -8,7 +8,6 @@ import { SkillsSection } from './SkillsSection';
 import { CompactSkillList } from './CompactSkillList';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
-import { cn } from '@/lib/utils';
 import type { AgentType, InstalledSkill } from '@/bindings';
 
 /** 按搜索关键词 + agent 筛选过滤 skills — 单次遍历 (js-combine-iterations) */
@@ -199,7 +198,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }
 
   return (
-    <div className={cn("flex flex-col h-full overflow-hidden", compact && "bg-muted/10")}>
+    <div className="flex flex-col h-full overflow-hidden bg-panel">
       {/* Toolbar — compact 模式下只显示搜索框 */}
       <div className={compact ? 'px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex-shrink-0' : 'px-4 sm:px-6 pt-4 sm:pt-5'}>
         <SkillsToolbar

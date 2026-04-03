@@ -11,14 +11,15 @@ import {
 import { useSettingsStore } from '@/stores/settings';
 import { cn } from '@/lib/utils';
 import type { Locale } from '@/stores/settings';
+import logoUrl from '@/assets/logo.png';
 
 // Hoisted outside component to avoid recreation on each render
 const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    'h-full flex items-center gap-1.5 px-1 font-heading font-semibold text-sm tracking-tight transition-colors',
+    'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-medium transition-all duration-200',
     isActive
-      ? 'text-primary border-b-2 border-primary font-bold'
-      : 'text-muted-foreground hover:text-primary border-b-2 border-transparent'
+      ? 'bg-foreground text-background shadow-sm'
+      : 'text-muted-foreground hover:text-foreground hover:bg-foreground/10 dark:hover:bg-foreground/15'
   );
 
 const LOCALE_OPTIONS: { value: Locale; code: string; label: string }[] = [
@@ -31,43 +32,42 @@ export function Header() {
   const { theme, toggleTheme, locale, setLocale } = useSettingsStore();
 
   return (
-    <header className="flex h-14 items-center justify-between px-4 sm:px-6 border-b border-border bg-background/95 backdrop-blur flex-shrink-0">
-      {/* Left: Logo + Brand + Nav */}
-      <div className="flex h-full items-center gap-6">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center bg-primary">
-            <span className="text-base font-bold text-primary-foreground">S</span>
-          </div>
-          <span className="hidden sm:inline font-heading text-xl font-extrabold text-primary tracking-tighter">
-            {t('app.name')}
-          </span>
+    <header className="relative flex h-14 items-center justify-between px-4 sm:px-6 border-b border-border bg-background/95 backdrop-blur flex-shrink-0">
+      {/* Left: Logo + Brand */}
+      <div className="flex items-center gap-2 sm:gap-2.5 z-10 box-border">
+        <div className="flex items-center justify-center transition-transform hover:scale-105">
+          <img src={logoUrl} alt="Logo" className="h-7 w-7 sm:h-8 sm:w-8 object-contain" />
         </div>
-
-        <nav className="flex h-full items-center gap-4">
-          <NavLink to="/" end className={getNavLinkClass}>
-            <Package className="h-4 w-4" />
-            <span>{t('nav.skills')}</span>
-          </NavLink>
-          <NavLink to="/discover" className={getNavLinkClass}>
-            <Compass className="h-4 w-4" />
-            <span>{t('nav.discover')}</span>
-          </NavLink>
-          <NavLink to="/settings" className={getNavLinkClass}>
-            <Settings className="h-4 w-4" />
-            <span>{t('nav.settings')}</span>
-          </NavLink>
-        </nav>
+        <span className="hidden sm:inline font-heading text-lg font-bold text-primary tracking-tight">
+          {t('app.name')}
+        </span>
       </div>
 
+      {/* Center: Segmented Navigation (Capsule Shape for Global Nav) */}
+      <nav className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:flex items-center space-x-1 bg-muted/40 p-1 rounded-full border border-border/50">
+        <NavLink to="/" end className={getNavLinkClass}>
+          <Package className="h-4 w-4" />
+          <span>{t('nav.skills')}</span>
+        </NavLink>
+        <NavLink to="/discover" className={getNavLinkClass}>
+          <Compass className="h-4 w-4" />
+          <span>{t('nav.discover')}</span>
+        </NavLink>
+        <NavLink to="/settings" className={getNavLinkClass}>
+          <Settings className="h-4 w-4" />
+          <span>{t('nav.settings')}</span>
+        </NavLink>
+      </nav>
+
       {/* Right: Tool Buttons */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 z-10 box-border">
         {/* Language Selector */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              size="sm"
-              className="cursor-pointer text-sm font-semibold text-muted-foreground hover:text-foreground"
+              size="icon"
+              className="cursor-pointer text-sm font-bold font-mono text-muted-foreground hover:text-foreground transition-colors"
             >
               {LOCALE_OPTIONS.find((o) => o.value === locale)?.code}
             </Button>

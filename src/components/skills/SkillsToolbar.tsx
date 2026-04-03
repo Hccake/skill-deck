@@ -67,7 +67,7 @@ export function SkillsToolbar({
           placeholder={t('skills.search')}
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="h-8 pl-8 text-sm"
+          className="h-8 pl-8 text-sm bg-muted border-transparent shadow-none hover:bg-accent focus-visible:bg-background focus-visible:ring-1 transition-colors"
         />
       </div>
     );
@@ -77,20 +77,20 @@ export function SkillsToolbar({
     <div className="flex items-center gap-3 mb-4">
       {/* Search Input */}
       <div className="relative flex-1">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           type="text"
           placeholder={t('skills.search')}
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="pl-9 h-9"
+          className="pl-8 h-8 text-sm bg-muted border-transparent shadow-none hover:bg-accent focus-visible:bg-background focus-visible:ring-1 transition-colors"
         />
       </div>
 
       {/* Agent Filter */}
       {filterableAgents.length > 0 && (
         <Select value={selectedAgent} onValueChange={onAgentChange}>
-          <SelectTrigger size="sm" className="h-9 min-w-[130px]">
+          <SelectTrigger size="sm" className="h-8 min-w-[130px] bg-muted border-transparent shadow-none hover:bg-accent transition-colors focus:ring-1">
             <SelectValue placeholder={t('skills.filter.allAgents')} />
           </SelectTrigger>
           <SelectContent position="popper">
@@ -106,9 +106,9 @@ export function SkillsToolbar({
 
       {/* Sync Button */}
       <Button
-        variant="outline"
+        variant="secondary"
         size="sm"
-        className="h-9 gap-2"
+        className="h-8 gap-2 shadow-none bg-muted hover:bg-accent text-foreground border border-transparent transition-colors"
         onClick={handleSync}
         disabled={isBusy}
       >

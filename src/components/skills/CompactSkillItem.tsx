@@ -24,8 +24,8 @@ export const CompactSkillItem = memo(function CompactSkillItem({
       className={cn(
         'group relative w-full text-left px-4 py-2.5 block overflow-hidden transition-colors cursor-pointer',
         isSelected
-          ? 'bg-primary/[0.06] border-y border-primary/15 select-none'
-          : 'hover:bg-accent/50 text-muted-foreground'
+          ? 'bg-primary/5 select-none shadow-[inset_2px_0_0_0_theme(colors.primary.DEFAULT)]'
+          : 'hover:bg-foreground/[0.03] text-muted-foreground'
       )}
       onClick={handleClick}
     >
@@ -36,10 +36,14 @@ export const CompactSkillItem = memo(function CompactSkillItem({
         {skill.name}
       </div>
       <div className={cn(
-        'w-full text-sm truncate mt-0.5 leading-relaxed',
-        isSelected ? 'text-primary/60' : 'text-muted-foreground'
+        'w-full text-xs truncate mt-0.5 flex items-center gap-1',
+        isSelected ? 'text-primary/70' : 'text-muted-foreground/60'
       )}>
-        {skill.description}
+        {skill.source ? (
+          <span className="font-mono">{skill.source}</span>
+        ) : (
+          <span className="italic opacity-60">Local</span>
+        )}
       </div>
     </button>
   );

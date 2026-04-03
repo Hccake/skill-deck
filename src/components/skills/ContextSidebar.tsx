@@ -41,14 +41,14 @@ function GlobalContextItem() {
     <button
       onClick={() => selectContext('global')}
       className={cn(
-        'w-full px-6 py-2.5 text-left transition-colors cursor-pointer',
+        'w-full px-4 py-2 text-left transition-colors cursor-pointer',
         isSelected
-          ? 'bg-primary/10 text-primary border-l-4 border-primary'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+          ? 'bg-primary/10 text-primary'
+          : 'text-muted-foreground hover:bg-foreground/[0.02] hover:text-foreground'
       )}
     >
       <div className="flex items-center gap-3">
-        <Globe className="h-[18px] w-[18px] flex-shrink-0" />
+        <Globe className="h-4 w-4 flex-shrink-0" />
         <div className="min-w-0">
           <span className={cn('text-sm', isSelected ? 'font-bold' : 'font-medium')}>
             {t('context.global')}
@@ -95,15 +95,15 @@ function ProjectContextItem({ project }: { project: string }) {
         }
       }}
       className={cn(
-        'w-full px-6 py-2.5 text-left transition-colors',
+        'w-full px-4 py-2 text-left transition-colors',
         'group relative cursor-pointer',
         isSelected
-          ? 'bg-primary/10 text-primary border-l-4 border-primary'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+          ? 'bg-primary/10 text-primary shadow-[inset_2px_0_0_0_theme(colors.primary.DEFAULT)]'
+          : 'text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground'
       )}
     >
       <div className="flex items-center gap-3">
-        <Folder className={cn('h-[18px] w-[18px] flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
+        <Folder className={cn('h-4 w-4 flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={cn('text-sm truncate', isSelected ? 'font-bold' : 'font-medium')}>
@@ -224,19 +224,19 @@ export function ContextSidebar() {
   };
 
   return (
-    <aside className="w-64 flex-shrink-0 border-r border-border flex flex-col h-full bg-sidebar">
+    <aside className="flex flex-col h-full bg-canvas w-64 flex-shrink-0 border-r border-border/50">
       {/* Title */}
-      <div className="px-6 pt-6 mb-6">
+      <div className="px-4 pt-5 mb-4">
         <h2 className="font-heading text-lg font-bold text-foreground tracking-tight">
           {t('context.title')}
         </h2>
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto space-y-6">
+      <div className="flex-1 overflow-y-auto space-y-4">
         {/* Global Section */}
         <div>
-          <h3 className="px-6 mb-2 font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+          <h3 className="px-4 mb-2 text-xs font-semibold text-muted-foreground/80">
             {t('context.sectionGlobal')}
           </h3>
           <GlobalContextItem />
@@ -244,11 +244,11 @@ export function ContextSidebar() {
 
         {/* Projects Section */}
         <div>
-          <h3 className="px-6 mb-2 font-heading text-[10px] font-extrabold uppercase tracking-[0.2em] text-muted-foreground">
+          <h3 className="px-4 mb-2 text-xs font-semibold text-muted-foreground/80">
             {t('context.sectionProjects')}
           </h3>
           {projects.length === 0 ? (
-            <p className="px-6 py-2 text-xs text-muted-foreground">
+            <p className="px-4 py-2 text-xs text-muted-foreground">
               {t('context.noProjects')}
             </p>
           ) : (
@@ -262,14 +262,12 @@ export function ContextSidebar() {
       </div>
 
       {/* Add Project Button — pinned to bottom */}
-      <div className="p-4 border-t border-border">
+      <div className="p-4">
         <button
-          className="w-full flex items-center justify-center gap-2 py-2.5 bg-accent hover:bg-accent/80 transition-colors text-foreground font-bold text-sm cursor-pointer"
+          className="w-full flex items-center justify-start gap-1.5 px-3 py-2 rounded-md hover:bg-foreground/[0.04] transition-colors text-muted-foreground hover:text-foreground font-semibold text-sm cursor-pointer"
           onClick={handleAddProject}
         >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-foreground text-background">
-            <Plus className="h-3 w-3" strokeWidth={3} />
-          </span>
+          <Plus className="h-4 w-4" />
           {t('context.addProject')}
         </button>
       </div>

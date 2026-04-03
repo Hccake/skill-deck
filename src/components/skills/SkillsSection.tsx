@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, AlertTriangle, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
+import { cn } from '@/lib/utils';
 import type { AgentType, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
@@ -100,9 +101,9 @@ export const SkillsSection = memo(function SkillsSection({
       {/* Section Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <h2 className="text-sm font-bold tracking-tight text-foreground/90 flex items-center gap-1.5">
             {title}
-            <span className="font-normal opacity-70">({skills.length})</span>
+            <span className="text-xs font-semibold opacity-50">({skills.length})</span>
           </h2>
           {isCheckingUpdates && updatesCount === 0 && (
             <>
@@ -136,32 +137,39 @@ export const SkillsSection = memo(function SkillsSection({
               </Button>
             </>
           ) : null}
-          {/* Check 按钮：不在 batch 更新中、有 skills 时始终显示 */}
+        </div>
+        
+        {/* Right Actions: Check Updates + Add Skill */}
+        <div className="flex items-center gap-1.5">
           {!isAnyUpdating && onCheckUpdates && skills.length > 0 && (
             checkDone ? (
-              <span className="inline-flex items-center gap-1 h-5 px-1.5 text-xs text-success font-medium">
-                <Check className="h-3 w-3" />
+              <span className="inline-flex items-center justify-center h-7 px-2.5 text-xs text-success font-medium gap-1.5">
+                <Check className="h-3.5 w-3.5" />
+                {t('skills.updateDone')}
               </span>
             ) : (
-              <Button variant="ghost" size="sm" className="h-5 px-1.5 text-xs text-muted-foreground cursor-pointer"
+              <Button variant="ghost" size="sm" className="h-7 px-2.5 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
                 disabled={isCheckingUpdates}
                 onClick={onCheckUpdates}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                 {t('skills.checkUpdates')}
               </Button>
             )
           )}
+          
+          {/* 路径不存在时隐藏 Add 按钮 */}
+          {pathExists && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-7 px-2.5 sm:px-3 text-xs font-semibold gap-1.5 shadow-none text-primary/80 bg-primary/[0.04] hover:bg-primary/10 hover:text-primary border border-transparent cursor-pointer transition-all"
+              onClick={onAdd}
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              {t('skills.add')}
+            </Button>
+          )}
         </div>
-        {/* 路径不存在时隐藏 Add 按钮 */}
-        {pathExists && (
-          <Button
-            size="sm"
-            className="h-8 px-2 sm:px-3 text-xs gap-1 sm:gap-1.5 shadow-sm cursor-pointer"
-            onClick={onAdd}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t('skills.add')}
-          </Button>
-        )}
       </div>
 
       {/* 路径不存在提示 */}

@@ -54,18 +54,25 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   }, [onUpdate, skill.name, skill.scope]);
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-background">
+    <div className="h-full flex flex-col overflow-hidden bg-surface">
       {/* 沉浸式滚动文档流 (Scrollable Document Area) */}
       <div className="flex-1 min-h-0 relative">
         <ScrollArea className="absolute inset-0 w-full h-full">
           <div className="px-6 py-6 sm:px-8 sm:py-6 w-full space-y-4">
 
-            {/* Hero title */}
-            <div className="flex justify-between items-start">
-              <h2 className="text-2xl sm:text-3xl font-heading font-extrabold tracking-tight text-foreground leading-tight max-w-2xl">
-                {skill.name}
-              </h2>
-              <div className="flex gap-1 shrink-0">
+            {/* Hero title & Abstract */}
+            <div className="flex justify-between items-start gap-4">
+              <div className="flex flex-col gap-3 max-w-3xl">
+                <h2 className="text-2xl sm:text-3xl font-heading font-extrabold tracking-tight text-foreground leading-tight">
+                  {skill.name}
+                </h2>
+                {skill.description ? (
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {skill.description}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex gap-1 shrink-0 pt-1">
                 {skill.hasUpdate ? (
                   <Button
                     variant="ghost"

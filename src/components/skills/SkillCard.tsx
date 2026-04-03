@@ -110,8 +110,8 @@ export const SkillCard = memo(function SkillCard({
   return (
       <Card
         className={cn(
-          "relative py-0 gap-0 cursor-pointer transition-colors hover:bg-accent/50",
-          skill.hasUpdate && "border-l-2 border-l-warning"
+          "relative py-0 gap-0 cursor-pointer transition-colors border border-border/80 bg-surface rounded-lg hover:border-primary/20 hover:bg-accent/30",
+          skill.hasUpdate && "border-l-warning border-l-2"
         )}
         onClick={() => onClick?.(skill)}
       >
@@ -122,8 +122,8 @@ export const SkillCard = memo(function SkillCard({
               {/* Scope Icon */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex h-8 w-8 items-center justify-center bg-accent">
-                    <ScopeIcon className="h-4 w-4 text-accent-foreground" />
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/5 dark:border-white/[0.08] bg-muted/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-none bg-gradient-to-br from-background to-muted">
+                    <ScopeIcon className="h-4 w-4 text-foreground/80 drop-shadow-sm" />
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -223,7 +223,7 @@ export const SkillCard = memo(function SkillCard({
                   href={skill.sourceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer"
+                  className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors cursor-pointer font-medium"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <span className="truncate max-w-[120px] sm:max-w-none">{skill.source}</span>
@@ -246,13 +246,12 @@ export const SkillCard = memo(function SkillCard({
           </div>
 
           {/* Row 4: Agents */}
-          <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             {skill.agents.map((agentId) => (
               <span
                 key={agentId}
-                className="inline-flex items-center gap-1 sm:gap-1.5 border border-primary/15 bg-primary/[0.08] px-2 sm:px-2.5 py-1.5 text-xs font-medium text-accent-foreground"
+                className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary"
               >
-                <span className="flex h-1.5 w-1.5 rounded-full bg-success" />
                 {agentDisplayNames.get(agentId) ?? agentId}
               </span>
             ))}

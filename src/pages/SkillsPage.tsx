@@ -104,12 +104,12 @@ export function SkillsPage() {
           {/* Detail panel — only when a skill is selected */}
           {selectedSkill && (
             <>
-              <ResizableHandle />
+              <ResizableHandle className="bg-transparent" />
               <ResizablePanel
                 id="skill-detail-panel"
                 defaultSize="78%"
                 minSize="15%"
-                className="bg-background relative"
+                className="bg-surface relative"
               >
                 <SkillDetailPanel
                   skill={selectedSkill}

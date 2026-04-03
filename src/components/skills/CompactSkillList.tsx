@@ -46,8 +46,8 @@ export const CompactSkillList = memo(function CompactSkillList({
                   <span className="font-normal opacity-70">({projectSkills.length})</span>
                 </div>
                 {pathExists && onAddProject && (
-                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer" onClick={onAddProject} title={t('skills.add')}>
-                    <Plus className="h-3 w-3" />
+                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddProject} title={t('skills.add')}>
+                    <Plus className="h-3.5 w-3.5" />
                   </Button>
                 )}
               </div>
@@ -71,8 +71,8 @@ export const CompactSkillList = memo(function CompactSkillList({
                   <span className="font-normal opacity-70">({globalSkills.length})</span>
                 </div>
                 {onAddGlobal && (
-                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer" onClick={onAddGlobal} title={t('skills.add')}>
-                    <Plus className="h-3 w-3" />
+                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddGlobal} title={t('skills.add')}>
+                    <Plus className="h-3.5 w-3.5" />
                   </Button>
                 )}
               </div>
