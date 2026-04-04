@@ -4,6 +4,7 @@ import { Target, ExternalLink, FolderOpen, Trash2, Plus, Info, RefreshCw, Check,
 import { open } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
 import { Card, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -152,8 +153,16 @@ export function SettingsPage() {
                 </div>
 
                 {loading ? (
-                  <div className="text-center py-4 text-muted-foreground text-sm">
-                    {t('common.loading')}
+                  <div className="space-y-2 sm:space-y-3 animate-in fade-in duration-300">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-3 p-3 sm:p-4 rounded-xl border border-border/40 bg-accent/10">
+                        <Skeleton className="h-10 w-10 rounded-lg shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-4 w-1/3 max-w-[120px]" />
+                          <Skeleton className="h-3 w-1/2 max-w-[200px]" />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : !hasNonUniversalAgents ? (
                   <div className="relative overflow-hidden rounded-xl border border-dashed border-border/80 bg-accent/20 p-5 sm:p-6">
