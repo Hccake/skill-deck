@@ -162,7 +162,41 @@
       "retry": "Retry",
       "install": "Install",
       "installed": "Installed",
-      "installs": "{{count}} installs"
+      "installs": "{{count}} installs",
+      "installsLabel": "installs",
+      "starsLabel": "Stars",
+      "tabs": {
+        "popular": "All Time",
+        "trending": "Trending",
+        "hot": "Hot"
+      },
+      "emptyTitle": "Explore the Ecosystem",
+      "emptyDescription": "Browse the directory or search for specific agent skills. Select an item from the list to preview its capabilities and install it into your agent deck.",
+      "overview": "Overview",
+      "skillContent": "Skill Content",
+      "loadDetailErrorTitle": "Failed to load detailed information.",
+      "loadDetailErrorHint": "Please check your network or try again later.",
+      "official": "Official",
+      "highlights": "Highlights",
+      "installViaCli": "Install via CLI",
+      "weeklyInstalls": "Weekly Installs",
+      "firstSeen": "First Seen",
+      "securityAudits": "Security Audits",
+      "installedOn": "Installed on",
+      "riskBadge": {
+        "safe": "Safe Risk",
+        "low": "Low Risk",
+        "medium": "Medium Risk",
+        "high": "High Risk",
+        "critical": "Critical Risk",
+        "unknown": "Unknown Risk"
+      },
+      "securityStatus": {
+        "pass": "Pass",
+        "warn": "Warn",
+        "fail": "Fail",
+        "unknown": "Unknown"
+      }
     }
   },
   "settings": {

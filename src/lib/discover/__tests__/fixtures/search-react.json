@@ -1,0 +1,20 @@
+{
+  "query": "react",
+  "searchType": "fuzzy",
+  "skills": [
+    {
+      "id": "vercel-labs/agent-skills/vercel-react-best-practices",
+      "skillId": "vercel-react-best-practices",
+      "name": "vercel-react-best-practices",
+      "installs": 263732,
+      "source": "vercel-labs/agent-skills"
+    },
+    {
+      "id": "google-labs-code/stitch-skills/react:components",
+      "skillId": "react:components",
+      "name": "react:components",
+      "installs": 26055,
+      "source": "google-labs-code/stitch-skills"
+    }
+  ]
+}

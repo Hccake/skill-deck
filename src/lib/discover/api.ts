@@ -1,32 +1,79 @@
 import { fetch } from '@tauri-apps/plugin-http';
-import { extractSourceOwner, parseMetric, sortDiscoverSkills } from './ranking';
-import type { DiscoverAuditRisk, DiscoverSkillSummary } from './types';
+import { formatInstalls } from './format';
+import { extractSourceOwner, parseMetric } from './ranking';
+import type {
+  DiscoverAuditRisk,
+  DiscoverInstalledOn,
+  DiscoverSecurityAudit,
+  DiscoverSkillSummary,
+  DiscoverTab,
+} from './types';
 
 export interface DiscoverSkillDetail extends DiscoverSkillSummary {
   description?: string;
+  summaryHtml?: string;
   installCommand?: string;
   repoUrl?: string;
   highlights: string[];
+  firstSeen?: string;
+  securityAudits: DiscoverSecurityAudit[];
+  installedOn: DiscoverInstalledOn[];
+  contentHtml?: string;
 }
 
+type SearchApiResponse = {
+  skills: Array<{
+    id: string;
+    skillId?: string;
+    name: string;
+    installs: number;
+    source: string;
+    summary?: string;
+  }>;
+};
+
 const SEARCH_API_BASE = 'https://skills.sh';
+const SEARCH_LIMIT = 100;
 const LEADERBOARD_BASE = 'https://skills.sh';
 const OFFICIAL_PATH = '/official';
-
-const LEADING_SLASHES_RE = /^\/+/;
-const WHITESPACE_RE = /\s+/g;
-const LAST_METRIC_RE = /([\d.,]+\s*[kKmM]?)(?!.*[\d.,]+\s*[kKmM]?)/;
+const ALLOWED_RICH_TEXT_TAGS = new Set([
+  'a',
+  'blockquote',
+  'br',
+  'code',
+  'em',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'img',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'strong',
+  'table',
+  'tbody',
+  'td',
+  'th',
+  'thead',
+  'tr',
+  'ul',
+]);
 
 const inflightRequests = new Map<string, Promise<unknown>>();
 const leaderboardCache = new Map<string, DiscoverSkillSummary[]>();
 const detailCache = new Map<string, DiscoverSkillDetail>();
-const officialOwnersCache = new Map<string, Set<string>>();
+const officialCreatorsCache = new Map<string, Set<string>>();
 
 export function __resetDiscoverApiState(): void {
   inflightRequests.clear();
   leaderboardCache.clear();
   detailCache.clear();
-  officialOwnersCache.clear();
+  officialCreatorsCache.clear();
 }
 
 function dedupeRequest<T>(key: string, loader: () => Promise<T>): Promise<T> {
@@ -45,38 +92,96 @@ function createDocument(html: string): Document {
   return new DOMParser().parseFromString(html, 'text/html');
 }
 
+function normalizeWhitespace(input?: string | null): string {
+  return input?.replace(/\s+/g, ' ').trim() ?? '';
+}
+
+function extractPathParts(reference: string): string[] {
+  const trimmed = reference.trim().replace(/\.git$/, '');
+  if (!trimmed) return [];
+
+  let normalized = trimmed;
+
+  if (/^git@[^:]+:/i.test(normalized)) {
+    const colonIndex = normalized.indexOf(':');
+    normalized = colonIndex >= 0 ? normalized.slice(colonIndex + 1) : normalized;
+  } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(normalized)) {
+    try {
+      normalized = new URL(normalized).pathname;
+    } catch {
+      return [];
+    }
+  }
+
+  return normalized.replace(/^\/+/, '').split('/').filter(Boolean);
+}
+
 function toAbsoluteUrl(pathOrUrl: string): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(pathOrUrl)) return pathOrUrl;
   return `${SEARCH_API_BASE}${pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`}`;
+}
+
+function formatDisplayMetricValue(count: number): string {
+  const formatted = formatInstalls(count);
+  return formatted.endsWith('k') ? `${formatted.slice(0, -1)}K` : formatted;
 }
 
 function parseStructuredGithubReference(input: string): { owner: string; repo: string } | null {
   const trimmed = input.trim().replace(/\.git$/, '');
   if (!trimmed) return null;
 
-  let normalized = trimmed;
-  if (/^git@[^:]+:/i.test(normalized)) {
-    const colonIndex = normalized.indexOf(':');
-    normalized = colonIndex >= 0 ? normalized.slice(colonIndex + 1) : normalized;
-  } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(normalized)) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
     try {
-      const parsed = new URL(normalized);
+      const parsed = new URL(trimmed);
       if (!parsed.hostname.endsWith('github.com')) return null;
-      normalized = parsed.pathname;
     } catch {
       return null;
     }
   }
 
-  const parts = normalized.replace(/^\/+/, '').split('/').filter(Boolean);
+  const parts = extractPathParts(trimmed);
   if (parts.length < 2) return null;
   return { owner: parts[0], repo: parts[1] };
 }
 
+function normalizeSource(reference: string, fallbackPath?: string): string {
+  const githubReference = parseStructuredGithubReference(reference);
+  if (githubReference) {
+    return `${githubReference.owner}/${githubReference.repo}`;
+  }
+
+  const referenceParts = extractPathParts(reference);
+  if (referenceParts[0] === 'site' && referenceParts.length >= 2) {
+    return referenceParts[1];
+  }
+
+  if (referenceParts.length >= 2) {
+    return `${referenceParts[0]}/${referenceParts[1]}`;
+  }
+
+  const fallbackParts = fallbackPath ? extractPathParts(fallbackPath) : [];
+  if (fallbackParts[0] === 'site' && fallbackParts.length >= 2) {
+    return fallbackParts[1];
+  }
+
+  if (fallbackParts.length >= 2) {
+    return `${fallbackParts[0]}/${fallbackParts[1]}`;
+  }
+
+  return reference.trim().replace(/^\/+/, '');
+}
+
 function buildGithubUrl(reference: string): string | null {
-  const parsed = parseStructuredGithubReference(reference);
+  const normalizedSource = normalizeSource(reference);
+  const parsed = parseStructuredGithubReference(normalizedSource);
   if (!parsed) return null;
   return `https://github.com/${parsed.owner}/${parsed.repo}`;
+}
+
+function parseOfficialCreatorSlug(href: string): string | null {
+  const trimmed = href.trim();
+  if (!/^\/[^/]+$/.test(trimmed)) return null;
+  return trimmed.slice(1);
 }
 
 function parseRisk(text: string): DiscoverAuditRisk {
@@ -89,99 +194,447 @@ function parseRisk(text: string): DiscoverAuditRisk {
   return 'unknown';
 }
 
-function parseLeaderboardHtml(html: string): DiscoverSkillSummary[] {
+function parseAuditStatus(text: string): DiscoverSecurityAudit['status'] {
+  const normalized = text.toLowerCase();
+  if (normalized.includes('pass')) return 'pass';
+  if (normalized.includes('warn')) return 'warn';
+  if (normalized.includes('fail')) return 'fail';
+  return 'unknown';
+}
+
+function stripAuditStatusLabel(text: string): string {
+  return text.replace(/\b(pass|warn|fail|unknown)\b$/i, '').trim();
+}
+
+function getLeaderboardMetricKind(tab: DiscoverTab): 'installs' | 'trending-24h' | 'hot' {
+  if (tab === 'trending') return 'trending-24h';
+  if (tab === 'hot') return 'hot';
+  return 'installs';
+}
+
+function extractLeaderboardMetricText(text: string, source: string): string {
+  const sourceIndex = text.lastIndexOf(source);
+  if (sourceIndex >= 0) {
+    return text.slice(sourceIndex + source.length).trim();
+  }
+
+  const parts = text.split(/\s+/);
+  return parts.at(-1) ?? '';
+}
+
+function getLeaderboardName(anchor: Element, fallbackSlug: string): string {
+  return normalizeWhitespace(anchor.querySelector('h3')?.textContent) || fallbackSlug;
+}
+
+function getLeaderboardSource(anchor: Element, hrefParts: string[]): string {
+  const renderedSource = normalizeWhitespace(anchor.querySelector('p')?.textContent);
+  if (renderedSource) {
+    return renderedSource;
+  }
+
+  if (hrefParts[0] === 'site' && hrefParts.length >= 2) {
+    return hrefParts[1];
+  }
+
+  if (hrefParts.length >= 2) {
+    return `${hrefParts[0]}/${hrefParts[1]}`;
+  }
+
+  return '';
+}
+
+function getStructuredLeaderboardMetricText(anchor: Element): string | undefined {
+  if (anchor.children.length < 3) {
+    return undefined;
+  }
+
+  const metricContainer = anchor.lastElementChild;
+  if (!metricContainer) {
+    return undefined;
+  }
+
+  const metricParts = Array.from(metricContainer.children)
+    .map((child) => normalizeWhitespace(child.textContent))
+    .filter(Boolean);
+
+  if (metricParts.length === 0) {
+    return undefined;
+  }
+
+  return metricParts.join(' ');
+}
+
+function parseLeaderboardHtml(
+  html: string,
+  tab: DiscoverTab,
+  officialCreators: Set<string> = new Set(),
+): DiscoverSkillSummary[] {
   const document = createDocument(html);
   const anchors = Array.from(document.querySelectorAll('a[href]'));
 
-  const results: DiscoverSkillSummary[] = [];
-
-  for (const anchor of anchors) {
+  return anchors.flatMap((anchor) => {
     const href = anchor.getAttribute('href') ?? '';
-    if (!href.includes('/skills/')) continue;
+    const parts = extractPathParts(href);
+    if (parts.length < 3) return [];
 
-    const absoluteUrl = toAbsoluteUrl(href);
-    const parts = href.replace(LEADING_SLASHES_RE, '').split('/').filter(Boolean);
-    const owner = parts[0] ?? extractSourceOwner(href);
-    const repo = parts[1] ?? 'skills';
-    const slug = parts.at(-1) ?? anchor.textContent?.trim().split(WHITESPACE_RE)[0] ?? repo;
-    const source = `https://github.com/${owner}/${repo}`;
-    const text = anchor.textContent?.replace(WHITESPACE_RE, ' ').trim() ?? '';
-    const installs = parseMetric(text.match(LAST_METRIC_RE)?.[1] ?? text.split(WHITESPACE_RE).at(-1) ?? '0');
-    const summary = text && text !== slug ? text.replace(slug, '').trim() : undefined;
+    const slug = parts.at(-1) ?? '';
+    const owner = parts[0] ?? '';
+    const source = getLeaderboardSource(anchor, parts);
+    const metricText = getStructuredLeaderboardMetricText(anchor)
+      ?? extractLeaderboardMetricText(normalizeWhitespace(anchor.textContent), source);
+    if (!metricText) return [];
 
-    results.push({
+    const displayMetric = {
+      kind: getLeaderboardMetricKind(tab),
+      rawText: metricText,
+      sortValue: parseMetric(metricText),
+    };
+
+    return [{
       slug,
-      name: slug,
+      name: getLeaderboardName(anchor, slug),
       source,
-      summary,
-      installs,
-      isOfficial: false,
-      detailUrl: absoluteUrl,
-    });
-  }
-
-  return results;
+      summary: undefined,
+      installs: tab === 'popular' ? displayMetric.sortValue : undefined,
+      displayMetric,
+      isOfficial: officialCreators.has(owner),
+      detailUrl: toAbsoluteUrl(href),
+    } satisfies DiscoverSkillSummary];
+  });
 }
 
 function parseOfficialOwners(html: string): Set<string> {
   const document = createDocument(html);
-  const owners = new Set<string>();
+  const creators = new Set<string>();
 
   for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
-    const href = anchor.getAttribute('href') ?? '';
-    const hrefReference = parseStructuredGithubReference(href);
-    if (hrefReference) owners.add(hrefReference.owner);
-
-    const textReference = parseStructuredGithubReference(anchor.textContent ?? '');
-    if (textReference) owners.add(textReference.owner);
+    const creatorSlug = parseOfficialCreatorSlug(anchor.getAttribute('href') ?? '');
+    if (creatorSlug) {
+      creators.add(creatorSlug);
+    }
   }
 
-  return owners;
+  return creators;
 }
 
-function parseLeaderboardSource(tab: 'popular' | 'trending'): string {
+function parseLeaderboardSource(tab: DiscoverTab): string {
   if (tab === 'trending') return `${LEADERBOARD_BASE}/trending`;
+  if (tab === 'hot') return `${LEADERBOARD_BASE}/hot`;
   return LEADERBOARD_BASE;
+}
+
+function findLabeledBlock(document: Document, label: string): Element | undefined {
+  const normalizedLabel = label.toLowerCase();
+
+  return Array.from(document.querySelectorAll('div')).find((element) => {
+    const firstChildText = normalizeWhitespace(element.firstElementChild?.textContent).toLowerCase();
+    return firstChildText === normalizedLabel;
+  });
+}
+
+function readLabeledBlockText(document: Document, label: string): string | undefined {
+  const block = findLabeledBlock(document, label);
+  if (block) {
+    const children = Array.from(block.children);
+    const valueNode = children[1];
+    const text = normalizeWhitespace(valueNode?.textContent);
+    if (text) return text;
+  }
+
+  const valueNode = findValueElementByLabel(document, label);
+  const text = normalizeWhitespace(valueNode?.textContent);
+  return text || undefined;
+}
+
+function findExactTextElement(document: Document, label: string): Element | undefined {
+  const normalizedLabel = label.toLowerCase();
+
+  return Array.from(document.querySelectorAll('div, span, h1, h2, h3, h4, h5, h6, p, a, button, code')).find((element) => {
+    const text = normalizeWhitespace(element.textContent).toLowerCase();
+    if (text !== normalizedLabel) return false;
+
+    return !Array.from(element.children).some((child) => normalizeWhitespace(child.textContent).toLowerCase() === normalizedLabel);
+  });
+}
+
+function findNextMeaningfulSibling(element: Element | null | undefined): Element | undefined {
+  let sibling = element?.nextElementSibling ?? null;
+
+  while (sibling) {
+    if (normalizeWhitespace(sibling.textContent)) {
+      return sibling;
+    }
+
+    sibling = sibling.nextElementSibling;
+  }
+
+  return undefined;
+}
+
+function findValueElementByLabel(document: Document, label: string): Element | undefined {
+  const labelElement = findExactTextElement(document, label);
+  if (!labelElement) return undefined;
+
+  return findNextMeaningfulSibling(labelElement)
+    ?? findNextMeaningfulSibling(labelElement.parentElement)
+    ?? findNextMeaningfulSibling(labelElement.parentElement?.parentElement);
+}
+
+function findRichContentAfterLabel(document: Document, label: string): Element | undefined {
+  const labelElement = findExactTextElement(document, label);
+  if (!labelElement) return undefined;
+
+  const candidates = [
+    findNextMeaningfulSibling(labelElement),
+    findNextMeaningfulSibling(labelElement.parentElement),
+    findNextMeaningfulSibling(labelElement.parentElement?.parentElement),
+  ].filter((candidate): candidate is Element => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    if (candidate.matches('.prose, article')) {
+      return candidate;
+    }
+
+    const prose = candidate.querySelector('.prose, article');
+    if (prose) {
+      return prose;
+    }
+  }
+
+  return undefined;
+}
+
+function parseAuditRow(entry: Element): DiscoverSecurityAudit | null {
+  const link = entry.matches('a[href]') ? entry : entry.querySelector('a[href]');
+  if (!link) return null;
+
+  const children = Array.from(entry.children).filter((child) => normalizeWhitespace(child.textContent));
+  const statusText = children.length >= 2
+    ? normalizeWhitespace(children.at(-1)?.textContent)
+    : normalizeWhitespace(link.textContent);
+  const nameSource = children.length >= 2
+    ? normalizeWhitespace(children[0]?.textContent)
+    : normalizeWhitespace(link.textContent);
+  const name = stripAuditStatusLabel(nameSource);
+
+  return {
+    name: name || normalizeWhitespace(link.textContent),
+    status: parseAuditStatus(statusText || link.textContent || ''),
+    url: toAbsoluteUrl(link.getAttribute('href') ?? ''),
+  };
+}
+
+function parseSecurityAudits(document: Document): DiscoverSecurityAudit[] {
+  const legacyBlock = findLabeledBlock(document, 'Security Audits');
+  if (legacyBlock) {
+    const legacyRows = Array.from(legacyBlock.querySelectorAll('a[href]'))
+      .map((anchor) => parseAuditRow(anchor))
+      .filter((entry): entry is DiscoverSecurityAudit => Boolean(entry));
+
+    if (legacyRows.length > 0) {
+      return legacyRows;
+    }
+  }
+
+  const block = findValueElementByLabel(document, 'Security Audits');
+  if (!block) return [];
+
+  return Array.from(block.children)
+    .map((entry) => parseAuditRow(entry))
+    .filter((entry): entry is DiscoverSecurityAudit => Boolean(entry));
+}
+
+function parseInstalledOnEntry(entry: Element): DiscoverInstalledOn | null {
+  const children = Array.from(entry.children).filter((child) => normalizeWhitespace(child.textContent));
+  if (children.length >= 2) {
+    const agent = normalizeWhitespace(children[0]?.textContent);
+    const installsText = normalizeWhitespace(children.at(-1)?.textContent);
+
+    if (agent && installsText && agent !== installsText) {
+      return {
+        agent,
+        installsText,
+        installs: parseMetric(installsText),
+      } satisfies DiscoverInstalledOn;
+    }
+  }
+
+  const text = normalizeWhitespace(entry.textContent);
+  if (!text) return null;
+
+  const match = text.match(/^(.+?)\s+([\d.,]+\s*[kKmM]?)$/);
+  if (!match) {
+    return {
+      agent: text,
+      installsText: text,
+    } satisfies DiscoverInstalledOn;
+  }
+
+  return {
+    agent: match[1],
+    installsText: match[2],
+    installs: parseMetric(match[2]),
+  } satisfies DiscoverInstalledOn;
+}
+
+function getStructuredSectionRows(container: Element, skipFirstChild = false): Element[] {
+  const directChildren = Array.from(container.children).filter((child) => normalizeWhitespace(child.textContent));
+  const candidates = skipFirstChild ? directChildren.slice(1) : directChildren;
+
+  if (candidates.length === 1) {
+    const nestedRows = Array.from(candidates[0].children).filter((child) => normalizeWhitespace(child.textContent));
+    if (nestedRows.length > 0) {
+      return nestedRows;
+    }
+  }
+
+  return candidates;
+}
+
+function parseInstalledOn(document: Document): DiscoverInstalledOn[] {
+  const legacyBlock = findLabeledBlock(document, 'Installed on');
+  if (legacyBlock) {
+    const legacyRows = getStructuredSectionRows(legacyBlock, true)
+      .map((entry) => parseInstalledOnEntry(entry))
+      .filter((entry): entry is DiscoverInstalledOn => Boolean(entry));
+
+    if (legacyRows.length > 0) {
+      return legacyRows;
+    }
+  }
+
+  const block = findValueElementByLabel(document, 'Installed on');
+  if (!block) return [];
+
+  return getStructuredSectionRows(block)
+    .map((entry) => parseInstalledOnEntry(entry))
+    .filter((entry): entry is DiscoverInstalledOn => Boolean(entry));
+}
+
+function unwrapElement(element: Element): void {
+  const parent = element.parentNode;
+  if (!parent) return;
+
+  while (element.firstChild) {
+    parent.insertBefore(element.firstChild, element);
+  }
+
+  parent.removeChild(element);
+}
+
+function sanitizeRichTextHtml(root: Element | null | undefined): string | undefined {
+  if (!root) return undefined;
+
+  const clone = root.cloneNode(true) as HTMLElement;
+
+  for (const element of Array.from(clone.querySelectorAll('*'))) {
+    const tagName = element.tagName.toLowerCase();
+    if (!ALLOWED_RICH_TEXT_TAGS.has(tagName)) {
+      unwrapElement(element);
+      continue;
+    }
+
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value;
+
+      if (name.startsWith('on') || name === 'style' || name === 'class') {
+        element.removeAttribute(attribute.name);
+        continue;
+      }
+
+      if (tagName === 'a' && name === 'href') {
+        const href = toAbsoluteUrl(value);
+        if (!/^https?:\/\//i.test(href)) {
+          element.removeAttribute(attribute.name);
+          continue;
+        }
+
+        element.setAttribute('href', href);
+        element.setAttribute('target', '_blank');
+        element.setAttribute('rel', 'noreferrer');
+        continue;
+      }
+
+      if (tagName === 'img' && name === 'src') {
+        const src = toAbsoluteUrl(value);
+        if (!/^https?:\/\//i.test(src)) {
+          element.removeAttribute(attribute.name);
+          continue;
+        }
+
+        element.setAttribute('src', src);
+        continue;
+      }
+
+      const isAllowedAnchorAttribute = tagName === 'a' && ['href', 'title', 'target', 'rel'].includes(name);
+      const isAllowedImageAttribute = tagName === 'img' && ['src', 'alt', 'title'].includes(name);
+
+      if (!isAllowedAnchorAttribute && !isAllowedImageAttribute) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+
+  const html = clone.innerHTML.trim();
+  return html || undefined;
+}
+
+function normalizeInstallCommand(input?: string | null): string | undefined {
+  const text = normalizeWhitespace(input);
+  if (!text) return undefined;
+
+  return text.replace(/^\$\s*/, '').trim() || undefined;
+}
+
+function extractHighlightsFromElement(element: Element | null | undefined): string[] {
+  if (!element) return [];
+
+  return Array.from(element.querySelectorAll('li'))
+    .map((item) => normalizeWhitespace(item.textContent))
+    .filter(Boolean);
 }
 
 function parseDetailHtml(html: string, fallback: DiscoverSkillSummary): DiscoverSkillDetail {
   const document = createDocument(html);
-  const bodyText = (document.body.textContent ?? '').replace(/\s+/g, ' ').trim();
-  const summary = document.querySelector('p')?.textContent?.replace(/\s+/g, ' ').trim() || fallback.summary || '';
-
-  const codeBlock = document.querySelector('pre code, code');
-  const installCommand = codeBlock?.textContent?.replace(/\s+/g, ' ').trim();
-
-  const repoAnchor = Array.from(document.querySelectorAll('a[href]')).find((anchor) => {
-    const href = anchor.getAttribute('href') ?? '';
-    return href.includes('github.com');
-  });
-  const repoUrl = repoAnchor?.getAttribute('href') ?? buildGithubUrl(fallback.source) ?? fallback.source;
-
-  const starsMatch = bodyText.match(/stars?\s*([\d,]+)/i);
-  const stars = starsMatch ? Number.parseInt(starsMatch[1].replace(/,/g, ''), 10) : fallback.stars;
-
-  const weeklyMatch = bodyText.match(/weekly\s+installs?\s+([\d.,]+\s*[kKmM]?)/i);
-  const weeklyInstalls = weeklyMatch ? parseMetric(weeklyMatch[1]) : fallback.weeklyInstalls;
-
-  const riskMatch = bodyText.match(/risk\s+(safe|low|medium|high|critical)/i);
-  const auditRisk = riskMatch ? parseRisk(riskMatch[1]) : fallback.auditRisk;
-
-  const highlights = Array.from(document.querySelectorAll('li'))
-    .map((item) => item.textContent?.replace(/\s+/g, ' ').trim())
-    .filter((item): item is string => Boolean(item));
+  const summaryContent = findRichContentAfterLabel(document, 'Summary');
+  const summaryHtml = sanitizeRichTextHtml(summaryContent);
+  const summary = normalizeWhitespace(summaryContent?.querySelector('p')?.textContent) || fallback.summary;
+  const name = normalizeWhitespace(document.querySelector('h1')?.textContent) || fallback.name;
+  const installCommand = normalizeInstallCommand(
+    document.querySelector('button[title*="Copy"] code, button code, pre code, code')?.textContent,
+  );
+  const repositoryBlock = findLabeledBlock(document, 'Repository') ?? findValueElementByLabel(document, 'Repository');
+  const repositoryAnchor = repositoryBlock?.matches('a[href]')
+    ? repositoryBlock
+    : repositoryBlock?.querySelector('a[href]')
+    ?? Array.from(document.querySelectorAll('a[href]')).find((anchor) => (anchor.getAttribute('href') ?? '').includes('github.com'));
+  const repoUrl = repositoryAnchor?.getAttribute('href') ?? buildGithubUrl(fallback.source) ?? undefined;
+  const weeklyInstallsText = readLabeledBlockText(document, 'Weekly Installs');
+  const starsText = readLabeledBlockText(document, 'GitHub Stars');
+  const riskText = readLabeledBlockText(document, 'Risk');
+  const legacyHighlights = Array.from(document.querySelectorAll('section[aria-label="summary-highlights"] li'))
+    .map((item) => normalizeWhitespace(item.textContent))
+    .filter(Boolean);
+  const highlights = legacyHighlights.length > 0 ? legacyHighlights : extractHighlightsFromElement(summaryContent);
 
   return {
     ...fallback,
+    name,
+    source: normalizeSource(fallback.source, fallback.detailUrl),
     summary,
     description: summary,
+    summaryHtml,
     installCommand,
     repoUrl,
-    source: buildGithubUrl(fallback.source) ?? fallback.source,
-    stars,
-    weeklyInstalls,
-    auditRisk,
+    stars: starsText ? parseMetric(starsText) : fallback.stars,
+    weeklyInstalls: weeklyInstallsText ? parseMetric(weeklyInstallsText) : fallback.weeklyInstalls,
+    auditRisk: riskText ? parseRisk(riskText) : fallback.auditRisk,
     highlights,
+    firstSeen: readLabeledBlockText(document, 'First Seen'),
+    securityAudits: parseSecurityAudits(document),
+    installedOn: parseInstalledOn(document),
+    contentHtml: sanitizeRichTextHtml(findRichContentAfterLabel(document, 'SKILL.md') ?? document.querySelector('article')),
   };
 }
 
@@ -201,90 +654,86 @@ async function fetchJson<T>(url: string): Promise<T> {
   return await response.json() as T;
 }
 
-async function loadPopularLeaderboard(): Promise<DiscoverSkillSummary[]> {
-  const cacheKey = 'leaderboard:popular';
-  const cached = leaderboardCache.get(cacheKey);
-  if (cached) return cached;
-
-  return dedupeRequest(cacheKey, async () => {
-    const html = await fetchText(parseLeaderboardSource('popular'));
-    const sorted = sortDiscoverSkills(parseLeaderboardHtml(html), { mode: 'browse', sort: 'installs' });
-    leaderboardCache.set(cacheKey, sorted);
-    return sorted;
-  });
-}
-
-async function loadTrendingLeaderboard(): Promise<DiscoverSkillSummary[]> {
-  const cacheKey = 'leaderboard:trending';
-  const cached = leaderboardCache.get(cacheKey);
-  if (cached) return cached;
-
-  return dedupeRequest(cacheKey, async () => {
-    const html = await fetchText(parseLeaderboardSource('trending'));
-    const sorted = sortDiscoverSkills(parseLeaderboardHtml(html), { mode: 'browse', sort: 'trending' });
-    leaderboardCache.set(cacheKey, sorted);
-    return sorted;
-  });
-}
-
-async function loadOfficialOwners(): Promise<Set<string>> {
-  const cacheKey = 'official-owners';
-  const cached = officialOwnersCache.get(cacheKey);
+async function loadOfficialCreators(): Promise<Set<string>> {
+  const cacheKey = 'official-creators';
+  const cached = officialCreatorsCache.get(cacheKey);
   if (cached) return cached;
 
   return dedupeRequest(cacheKey, async () => {
     const html = await fetchText(`${LEADERBOARD_BASE}${OFFICIAL_PATH}`);
-    const owners = parseOfficialOwners(html);
-    officialOwnersCache.set(cacheKey, owners);
-    return owners;
+    const creators = parseOfficialOwners(html);
+    officialCreatorsCache.set(cacheKey, creators);
+    return creators;
   });
 }
 
-export async function searchDiscoverSkills(query: string): Promise<DiscoverSkillSummary[]> {
-  const url = `${SEARCH_API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=50`;
-  const data = await fetchJson<{
-    skills: Array<{
-      id: string;
-      name: string;
-      installs: number;
-      source: string;
-      summary?: string;
-      isOfficial?: boolean;
-    }>;
-  }>(url);
-
-  const mapped = data.skills.map((skill) => ({
-    slug: skill.id,
-    name: skill.name,
-    source: skill.source || `https://skills.sh/${skill.id}`,
-    summary: skill.summary,
-    installs: skill.installs,
-    isOfficial: skill.isOfficial ?? false,
-    detailUrl: `https://skills.sh/${skill.id}`,
-  } satisfies DiscoverSkillSummary));
-
-  return sortDiscoverSkills(mapped, { mode: 'browse', sort: 'installs' });
-}
-
-export async function getDiscoverLeaderboard(tab: 'popular' | 'trending' | 'official'): Promise<DiscoverSkillSummary[]> {
-  if (tab === 'popular') return loadPopularLeaderboard();
-  if (tab === 'trending') return loadTrendingLeaderboard();
-
-  const cacheKey = 'leaderboard:official';
+async function loadLeaderboard(tab: DiscoverTab): Promise<DiscoverSkillSummary[]> {
+  const cacheKey = `leaderboard:${tab}`;
   const cached = leaderboardCache.get(cacheKey);
   if (cached) return cached;
 
   return dedupeRequest(cacheKey, async () => {
-    const [officialOwners, popular] = await Promise.all([
-      loadOfficialOwners(),
-      loadPopularLeaderboard(),
+    const [html, officialCreators] = await Promise.all([
+      fetchText(parseLeaderboardSource(tab)),
+      loadOfficialCreators(),
     ]);
 
-    const filtered = popular.filter((skill) => officialOwners.has(extractSourceOwner(skill.source)));
-    const sorted = sortDiscoverSkills(filtered, { mode: 'browse', sort: 'installs' });
-    leaderboardCache.set(cacheKey, sorted);
-    return sorted;
+    const results = parseLeaderboardHtml(html, tab, officialCreators);
+    leaderboardCache.set(cacheKey, results);
+    return results;
   });
+}
+
+function createFallbackSummary(pathOrSlug: string, detailUrl: string): DiscoverSkillSummary {
+  const slug = extractPathParts(pathOrSlug).at(-1) ?? pathOrSlug.replace(/^\/+/, '');
+
+  return {
+    slug,
+    name: slug,
+    source: normalizeSource(pathOrSlug, detailUrl),
+    summary: undefined,
+    installs: undefined,
+    displayMetric: {
+      kind: 'installs',
+      rawText: '0',
+      sortValue: 0,
+    },
+    isOfficial: false,
+    detailUrl,
+  };
+}
+
+export async function searchDiscoverSkills(query: string): Promise<DiscoverSkillSummary[]> {
+  const url = `${SEARCH_API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=${SEARCH_LIMIT}`;
+  const [data, officialCreators] = await Promise.all([
+    fetchJson<SearchApiResponse>(url),
+    loadOfficialCreators(),
+  ]);
+
+  return data.skills.map((skill) => {
+    const detailPath = skill.id.startsWith('/') ? skill.id : `/${skill.id}`;
+    const source = normalizeSource(skill.source, detailPath);
+    const installs = skill.installs;
+
+    return {
+      slug: skill.skillId ?? extractPathParts(skill.id).at(-1) ?? skill.name,
+      name: skill.name,
+      source,
+      summary: skill.summary,
+      installs,
+      displayMetric: {
+        kind: 'installs',
+        rawText: formatDisplayMetricValue(installs),
+        sortValue: installs,
+      },
+      isOfficial: officialCreators.has(extractSourceOwner(source)),
+      detailUrl: toAbsoluteUrl(detailPath),
+    } satisfies DiscoverSkillSummary;
+  });
+}
+
+export async function getDiscoverLeaderboard(tab: DiscoverTab): Promise<DiscoverSkillSummary[]> {
+  return loadLeaderboard(tab);
 }
 
 export async function getDiscoverSkillDetail(pathOrSlug: string): Promise<DiscoverSkillDetail> {
@@ -294,21 +743,8 @@ export async function getDiscoverSkillDetail(pathOrSlug: string): Promise<Discov
 
   return dedupeRequest(`detail:${detailUrl}`, async () => {
     const html = await fetchText(detailUrl);
-    const fallbackReference = buildGithubUrl(pathOrSlug) ?? buildGithubUrl(detailUrl) ?? pathOrSlug;
-    const fallbackRepoUrl = buildGithubUrl(pathOrSlug) ?? buildGithubUrl(detailUrl) ?? detailUrl;
-    const slug = pathOrSlug.replace(/^\/+/, '').split('/').filter(Boolean).at(-1) ?? pathOrSlug;
-    const fallback: DiscoverSkillSummary = {
-      slug,
-      name: slug,
-      source: fallbackReference,
-      summary: undefined,
-      installs: 0,
-      isOfficial: false,
-      detailUrl,
-    };
-
-    const detail = parseDetailHtml(html, fallback);
-    detail.repoUrl = detail.repoUrl ?? fallbackRepoUrl;
+    const detail = parseDetailHtml(html, createFallbackSummary(pathOrSlug, detailUrl));
+    detail.repoUrl = detail.repoUrl ?? buildGithubUrl(detail.source) ?? undefined;
     detailCache.set(detailUrl, detail);
     return detail;
   });

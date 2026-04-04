@@ -6,6 +6,12 @@ import { render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { SkillsPage } from '../SkillsPage';
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+  }),
+}));
+
 const mocks = vi.hoisted(() => ({
   contextState: {
     selectedContext: 'global',

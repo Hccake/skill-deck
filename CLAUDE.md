@@ -143,6 +143,13 @@ SourceStep → SkillsStep → OptionsStep → ConfirmStep → InstallingStep →
 - 切换 context 时 MUST 调用 `fetchSkills()` 重新加载——skills store 通过 `useContextStore.getState().selectedContext` 读取当前 scope
 - 删除当前选中的 project 时，自动回退到 'global'
 
+### Discover Detail Panel
+
+- Discover 详情页在桌面端 MUST 优先展示 overview 和 `SKILL.md` 正文，保持连续阅读流，避免为每个信息块继续堆叠独立 card
+- Repository、Weekly Installs、GitHub Stars 这类摘要元信息应放在 header 区域，而不是挤占正文阅读区
+- Install via CLI 属于低优先级辅助信息，默认折叠，仅在用户主动展开后显示完整命令
+- Security Audits、First Seen、Installed on 应保持在紧凑侧栏中，作为辅助元数据而不是主内容
+
 ## Change Dependencies (MANDATORY)
 
 修改代码时，MUST 检查以下联动关系：

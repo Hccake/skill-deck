@@ -14,6 +14,11 @@ function makeSkill(overrides: Partial<DiscoverSkillSummary>): DiscoverSkillSumma
     source: 'owner/demo',
     summary: 'Demo skill',
     installs: 100,
+    displayMetric: {
+      kind: 'installs',
+      rawText: '100',
+      sortValue: 100,
+    },
     relevanceScore: 10,
     isOfficial: false,
     detailUrl: 'https://skills.sh/owner/demo',
@@ -50,15 +55,79 @@ describe('discover ranking utilities', () => {
 
   it('sorts browse results by installs descending and official first on ties', () => {
     const skills = [
-      makeSkill({ slug: 'b', name: 'B', installs: 20, isOfficial: false }),
-      makeSkill({ slug: 'c', name: 'C', installs: 100, isOfficial: false }),
-      makeSkill({ slug: 'a', name: 'A', installs: 100, isOfficial: true }),
+      makeSkill({
+        slug: 'b',
+        name: 'B',
+        installs: 20,
+        displayMetric: { kind: 'installs', rawText: '20', sortValue: 20 },
+        isOfficial: false,
+      }),
+      makeSkill({
+        slug: 'c',
+        name: 'C',
+        installs: 100,
+        displayMetric: { kind: 'installs', rawText: '100', sortValue: 100 },
+        isOfficial: false,
+      }),
+      makeSkill({
+        slug: 'a',
+        name: 'A',
+        installs: 100,
+        displayMetric: { kind: 'installs', rawText: '100', sortValue: 100 },
+        isOfficial: true,
+      }),
     ];
 
     const sorted = sortDiscoverSkills(skills, { mode: 'browse', sort: 'installs' });
 
     expect(sorted.map((skill) => skill.slug)).toEqual(['a', 'c', 'b']);
     expect(skills.map((skill) => skill.slug)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('sorts browse trending results by display metric instead of installs', () => {
+    const skills = [
+      makeSkill({
+        slug: 'highest-trending',
+        installs: 10,
+        displayMetric: { kind: 'trending-24h', rawText: '13.9K', sortValue: 13900 },
+      }),
+      makeSkill({
+        slug: 'official-tie',
+        installs: 500,
+        isOfficial: true,
+        displayMetric: { kind: 'hot', rawText: '248 +248', sortValue: 248 },
+      }),
+      makeSkill({
+        slug: 'plain-tie',
+        installs: 900,
+        isOfficial: false,
+        displayMetric: { kind: 'hot', rawText: '248 +248', sortValue: 248 },
+      }),
+    ];
+
+    const sorted = sortDiscoverSkills(skills, { mode: 'browse', sort: 'trending' });
+
+    expect(sorted.map((skill) => skill.slug)).toEqual(['highest-trending', 'official-tie', 'plain-tie']);
+    expect(skills.map((skill) => skill.slug)).toEqual(['highest-trending', 'official-tie', 'plain-tie']);
+  });
+
+  it('treats zero display metric as a valid trending sort value', () => {
+    const skills = [
+      makeSkill({
+        slug: 'zero-trending',
+        weeklyInstalls: 999,
+        displayMetric: { kind: 'hot', rawText: '0 +0', sortValue: 0 },
+      }),
+      makeSkill({
+        slug: 'non-zero-trending',
+        weeklyInstalls: 1,
+        displayMetric: { kind: 'hot', rawText: '1 +1', sortValue: 1 },
+      }),
+    ];
+
+    const sorted = sortDiscoverSkills(skills, { mode: 'browse', sort: 'trending' });
+
+    expect(sorted.map((skill) => skill.slug)).toEqual(['non-zero-trending', 'zero-trending']);
   });
 
   it('filters by official, not-installed, and risk', () => {

@@ -237,8 +237,11 @@
 .skill-prose p {
   @apply mb-3.5;
 }
-.skill-prose ul, .skill-prose ol {
-  @apply pl-5 mb-3;
+.skill-prose-with-lists ul {
+  @apply mb-3 list-disc pl-5;
+}
+.skill-prose-with-lists ol {
+  @apply mb-3 list-decimal pl-5;
 }
 .skill-prose li {
   @apply mb-1.5;

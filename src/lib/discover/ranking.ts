@@ -52,6 +52,14 @@ function normalizeRisk(risk?: DiscoverAuditRisk): DiscoverAuditRisk {
   return risk ?? UNKNOWN_RISK;
 }
 
+function getInstallSortValue(skill: DiscoverSkillSummary): number {
+  return skill.installs ?? skill.displayMetric?.sortValue ?? 0;
+}
+
+function getTrendingSortValue(skill: DiscoverSkillSummary): number {
+  return skill.displayMetric?.sortValue ?? skill.weeklyInstalls ?? 0;
+}
+
 export function filterDiscoverSkills(
   skills: ReadonlyArray<DiscoverSkillSummary>,
   options: DiscoverFilterOptions = {},
@@ -86,8 +94,10 @@ export function sortDiscoverSkills(
         if (left.skill.relevanceScore !== right.skill.relevanceScore) {
           return right.skill.relevanceScore! - left.skill.relevanceScore!;
         }
-        if (left.skill.installs !== right.skill.installs) {
-          return right.skill.installs - left.skill.installs;
+        const leftInstallSortValue = getInstallSortValue(left.skill);
+        const rightInstallSortValue = getInstallSortValue(right.skill);
+        if (leftInstallSortValue !== rightInstallSortValue) {
+          return rightInstallSortValue - leftInstallSortValue;
         }
         if (left.skill.isOfficial !== right.skill.isOfficial) {
           return left.skill.isOfficial ? -1 : 1;
@@ -98,14 +108,16 @@ export function sortDiscoverSkills(
     }
 
     if (options.sort === 'trending') {
-      const leftTrend = left.skill.weeklyInstalls ?? 0;
-      const rightTrend = right.skill.weeklyInstalls ?? 0;
+      const leftTrend = getTrendingSortValue(left.skill);
+      const rightTrend = getTrendingSortValue(right.skill);
       if (leftTrend !== rightTrend) {
         return rightTrend - leftTrend;
       }
     } else if (options.sort === 'installs' || options.mode === 'browse') {
-      if (left.skill.installs !== right.skill.installs) {
-        return right.skill.installs - left.skill.installs;
+      const leftInstallSortValue = getInstallSortValue(left.skill);
+      const rightInstallSortValue = getInstallSortValue(right.skill);
+      if (leftInstallSortValue !== rightInstallSortValue) {
+        return rightInstallSortValue - leftInstallSortValue;
       }
     }
 
@@ -117,8 +129,10 @@ export function sortDiscoverSkills(
       return left.index - right.index;
     }
 
-    if (left.skill.installs !== right.skill.installs) {
-      return right.skill.installs - left.skill.installs;
+    const leftInstallSortValue = getInstallSortValue(left.skill);
+    const rightInstallSortValue = getInstallSortValue(right.skill);
+    if (leftInstallSortValue !== rightInstallSortValue) {
+      return rightInstallSortValue - leftInstallSortValue;
     }
 
     return left.index - right.index;

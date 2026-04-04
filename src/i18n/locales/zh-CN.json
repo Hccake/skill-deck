@@ -162,7 +162,41 @@
       "retry": "重试",
       "install": "安装",
       "installed": "已安装",
-      "installs": "{{count}} 次安装"
+      "installs": "{{count}} 次安装",
+      "installsLabel": "安装",
+      "starsLabel": "星标",
+      "tabs": {
+        "popular": "全部",
+        "trending": "趋势",
+        "hot": "热度"
+      },
+      "emptyTitle": "探索 Skill 生态",
+      "emptyDescription": "浏览目录或搜索特定的 agent skills。选择列表中的条目即可预览能力，并安装到你的 agent deck。",
+      "overview": "概览",
+      "skillContent": "Skill 内容",
+      "loadDetailErrorTitle": "加载详细信息失败。",
+      "loadDetailErrorHint": "请检查网络连接，或稍后再试。",
+      "official": "官方",
+      "highlights": "亮点",
+      "installViaCli": "通过 CLI 安装",
+      "weeklyInstalls": "周安装量",
+      "firstSeen": "首次收录",
+      "securityAudits": "安全审计",
+      "installedOn": "已安装于",
+      "riskBadge": {
+        "safe": "安全",
+        "low": "低风险",
+        "medium": "中风险",
+        "high": "高风险",
+        "critical": "高危",
+        "unknown": "风险未知"
+      },
+      "securityStatus": {
+        "pass": "通过",
+        "warn": "警告",
+        "fail": "失败",
+        "unknown": "未知"
+      }
     }
   },
   "settings": {

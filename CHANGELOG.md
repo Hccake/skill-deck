@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Agent 管理** — 为已安装的 Skill 添加或移除 Agent 支持，无需重新安装；SkillCard 和详情面板均提供入口
 - **跨项目复制 Skill** — 一键将项目级 Skill 复制到其他项目，自动标注目标项目中已存在的 Skill 并提示覆盖
 - **单实例运行** — 集成 `tauri-plugin-single-instance`，防止同时打开多个应用进程；重复启动时自动聚焦已有窗口
+- **Discover 双栏详情面板** — Discover 页支持在可调节双栏布局中浏览榜单与搜索结果，并在右侧预览 overview、`SKILL.md` 正文、安全审计、安装分布与 CLI 安装命令
+
+### Changed
+
+- **Discover 对齐 skills.sh 语义** — 榜单切换调整为 All Time / Trending / Hot，搜索结果保留 live API 顺序，official creators 改为内部 metadata 判断，详情解析按页面分区提取真实内容
+
+### Fixed
+
+- **Discover 搜索结果截断** — skills.sh search 请求上限从 50 提升到 100，减少热门关键词搜索时结果过早截断
 
 ## [1.0.0] - 2026-04-03
 

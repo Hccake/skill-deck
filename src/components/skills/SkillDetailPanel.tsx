@@ -228,7 +228,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                   <Skeleton className="h-32 w-full mt-6" />
                 </div>
               ) : content ? (
-                <div className="skill-prose">
+                <div className="skill-prose skill-prose-with-lists">
                   <MarkdownContent content={content} />
                 </div>
               ) : (
