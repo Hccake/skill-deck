@@ -224,7 +224,7 @@ export function ContextSidebar() {
   };
 
   return (
-    <aside className="flex flex-col h-full bg-canvas w-64 flex-shrink-0 border-r border-border/50">
+    <aside className="skills-context-sidebar flex flex-col h-full bg-canvas flex-shrink-0 border-r border-border/50">
       {/* Title */}
       <div className="px-4 pt-5 mb-4">
         <h2 className="font-heading text-lg font-bold text-foreground tracking-tight">

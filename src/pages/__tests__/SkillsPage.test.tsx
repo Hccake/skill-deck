@@ -139,6 +139,12 @@ describe('SkillsPage', () => {
     });
   });
 
+  it('renders the skills page container shell for responsive sidebar sizing', () => {
+    const { container } = render(<SkillsPage />);
+
+    expect(container.querySelector('.skills-page-shell')).toBeTruthy();
+  });
+
   it('updates the panel layout without remounting the group when entering split view', () => {
     const { rerender } = render(<SkillsPage />);
 

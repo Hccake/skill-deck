@@ -200,6 +200,34 @@
     transition: all 200ms ease-in-out;
   }
 
+  .skills-page-shell {
+    container-type: inline-size;
+    container-name: skills-page;
+  }
+
+  .skills-context-sidebar {
+    width: 272px;
+    transition: width 180ms ease-out;
+  }
+
+  @container skills-page (max-width: 1440px) {
+    .skills-context-sidebar {
+      width: 248px;
+    }
+  }
+
+  @container skills-page (max-width: 1180px) {
+    .skills-context-sidebar {
+      width: 224px;
+    }
+  }
+
+  @container skills-page (max-width: 980px) {
+    .skills-context-sidebar {
+      width: 208px;
+    }
+  }
+
   /* Indeterminate progress bar animation */
   .animate-indeterminate {
     animation: indeterminate 1.5s ease-in-out infinite;

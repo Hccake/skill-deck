@@ -102,7 +102,7 @@ export function SkillsPage() {
 
   return (
     <>
-    <div className="flex h-full">
+    <div className="skills-page-shell flex h-full min-w-0">
       {/* Left Sidebar: Context */}
       <ContextSidebar />
 
