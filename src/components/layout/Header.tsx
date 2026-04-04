@@ -32,42 +32,42 @@ export function Header() {
   const { theme, toggleTheme, locale, setLocale } = useSettingsStore();
 
   return (
-    <header className="relative flex h-14 items-center justify-between px-4 sm:px-6 border-b border-border bg-background/95 backdrop-blur flex-shrink-0">
+    <header className="flex h-14 items-center justify-between px-3 sm:px-6 border-b border-border bg-background/95 backdrop-blur flex-shrink-0 gap-2 sm:gap-4 overflow-hidden">
       {/* Left: Logo + Brand */}
-      <div className="flex items-center gap-2 sm:gap-2.5 z-10 box-border">
-        <div className="flex items-center justify-center transition-transform hover:scale-105">
+      <div className="flex items-center gap-2 sm:gap-2.5 flex-1 min-w-0">
+        <div className="flex items-center justify-center transition-transform hover:scale-105 shrink-0">
           <img src={logoUrl} alt="Logo" className="h-7 w-7 sm:h-8 sm:w-8 object-contain" />
         </div>
-        <span className="hidden sm:inline font-heading text-lg font-bold text-primary tracking-tight">
+        <span className="hidden sm:inline font-heading text-lg font-bold text-primary tracking-tight truncate">
           {t('app.name')}
         </span>
       </div>
 
       {/* Center: Segmented Navigation (Capsule Shape for Global Nav) */}
-      <nav className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:flex items-center space-x-1 bg-muted/40 p-1 rounded-full border border-border/50">
+      <nav className="flex items-center space-x-0.5 sm:space-x-1 bg-muted/40 p-1 rounded-full border border-border/50 shrink-0">
         <NavLink to="/" end className={getNavLinkClass}>
-          <Package className="h-4 w-4" />
-          <span>{t('nav.skills')}</span>
+          <Package className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+          <span className="hidden min-[400px]:inline">{t('nav.skills')}</span>
         </NavLink>
         <NavLink to="/discover" className={getNavLinkClass}>
-          <Compass className="h-4 w-4" />
-          <span>{t('nav.discover')}</span>
+          <Compass className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+          <span className="hidden min-[400px]:inline">{t('nav.discover')}</span>
         </NavLink>
         <NavLink to="/settings" className={getNavLinkClass}>
-          <Settings className="h-4 w-4" />
-          <span>{t('nav.settings')}</span>
+          <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+          <span className="hidden min-[400px]:inline">{t('nav.settings')}</span>
         </NavLink>
       </nav>
 
       {/* Right: Tool Buttons */}
-      <div className="flex items-center gap-1 z-10 box-border">
+      <div className="flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 justify-end">
         {/* Language Selector */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="cursor-pointer text-sm font-bold font-mono text-muted-foreground hover:text-foreground transition-colors"
+              className="cursor-pointer text-sm font-bold font-mono text-muted-foreground hover:text-foreground transition-colors shrink-0 h-8 w-8 sm:h-9 sm:w-9"
             >
               {LOCALE_OPTIONS.find((o) => o.value === locale)?.code}
             </Button>
@@ -93,15 +93,15 @@ export function Header() {
         <Button
           variant="ghost"
           size="icon"
-          className="cursor-pointer text-muted-foreground hover:text-foreground"
+          className="cursor-pointer text-muted-foreground hover:text-foreground shrink-0 h-8 w-8 sm:h-9 sm:w-9"
           onClick={toggleTheme}
           aria-label={t(`theme.${theme === 'light' ? 'dark' : 'light'}`)}
           title={t(`theme.${theme === 'light' ? 'dark' : 'light'}`)}
         >
           {theme === 'light' ? (
-            <Sun className="h-5 w-5" />
+            <Sun className="h-4 w-4 sm:h-5 sm:w-5" />
           ) : (
-            <Moon className="h-5 w-5" />
+            <Moon className="h-4 w-4 sm:h-5 sm:w-5" />
           )}
         </Button>
       </div>
