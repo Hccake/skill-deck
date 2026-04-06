@@ -11,7 +11,6 @@ import {
   ChevronDown,
   ChevronRight,
   DownloadCloud,
-  CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,7 +28,7 @@ const PROSE_WITH_LISTS_CLASS_NAME = 'skill-prose skill-prose-with-lists';
 
 interface DiscoverDetailPanelProps {
   skill: DiscoverSkillSummary;
-  isInstalled: boolean;
+  installLocations: string[];
   onClose: () => void;
   onInstall: (skill: DiscoverSkillSummary) => void;
 }
@@ -91,6 +90,12 @@ function getAuditTone(status: DiscoverSecurityAudit['status']) {
   };
 }
 
+/** 从完整路径中提取项目名称（最后一个目录名） */
+function getProjectName(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || path;
+}
+
 function createFallbackDetail(skill: DiscoverSkillSummary): DiscoverSkillDetail {
   return {
     ...skill,
@@ -118,7 +123,7 @@ function HeaderMetaItem({ icon, label, value }: { icon: ReactNode; label: string
 
 export function DiscoverDetailPanel({
   skill,
-  isInstalled,
+  installLocations,
   onClose,
   onInstall,
 }: DiscoverDetailPanelProps) {
@@ -171,10 +176,10 @@ export function DiscoverDetailPanel({
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-surface">
-      <div className="shrink-0 border-b bg-surface px-4 py-5 @sm:px-6 @md:px-8 @lg:px-10 @xl:px-12">
+      <div className="shrink-0 border-b bg-surface px-4 py-4 @sm:px-6 @md:px-8 @lg:px-10 @xl:px-12">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0 flex-1 flex-col gap-2.5">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 pb-1">
               <h2 className="truncate text-xl font-heading font-semibold leading-tight text-foreground">{displayData.name}</h2>
               <RiskBadge risk={displayData.auditRisk} t={t} />
             </div>
@@ -224,23 +229,11 @@ export function DiscoverDetailPanel({
         <div className="flex shrink-0 items-center gap-2">
             <Button
               className="h-8 shrink-0 rounded-full px-4 text-[13px] font-medium tracking-wide shadow-sm transition-transform active:scale-95"
-              variant={isInstalled ? 'secondary' : 'default'}
-              disabled={isInstalled}
-              onClick={() => {
-                if (!isInstalled) onInstall(skill);
-              }}
+              variant="default"
+              onClick={() => onInstall(skill)}
             >
-              {isInstalled ? (
-                <>
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  {t('skills.discover.installed')}
-                </>
-              ) : (
-                <>
-                  <DownloadCloud className="h-3.5 w-3.5" />
-                  {t('skills.discover.install')}
-                </>
-              )}
+              <DownloadCloud className="h-3.5 w-3.5" />
+              {t('skills.discover.install')}
             </Button>
             <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 text-muted-foreground hover:bg-accent hover:text-foreground">
               <X className="h-4 w-4" />
@@ -413,6 +406,29 @@ export function DiscoverDetailPanel({
                           >
                             <span className="truncate text-foreground/88">{entry.agent}</span>
                             <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">{entry.installsText}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {installLocations.length > 0 && (
+                    <section className="space-y-2.5">
+                      <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        {t('skills.discover.installedWorkspaces')}
+                      </div>
+
+                      <div className="space-y-1">
+                        {installLocations.map((location) => (
+                          <div key={location} className="py-1 text-sm">
+                            {location === 'global' ? (
+                              <span className="text-foreground/88">{t('context.global')}</span>
+                            ) : (
+                              <div className="min-w-0">
+                                <div className="truncate text-foreground/88">{getProjectName(location)}</div>
+                                <div className="truncate text-[10px] text-muted-foreground/60">{location}</div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

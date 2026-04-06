@@ -76,7 +76,7 @@ describe('DiscoverDetailPanel', () => {
     render(
       <DiscoverDetailPanel
         skill={makeSkill({})}
-        isInstalled={false}
+        installLocations={[]}
         onClose={() => undefined}
         onInstall={() => undefined}
       />
@@ -131,7 +131,7 @@ describe('DiscoverDetailPanel', () => {
     const { rerender } = render(
       <DiscoverDetailPanel
         skill={makeSkill({})}
-        isInstalled={false}
+        installLocations={[]}
         onClose={() => undefined}
         onInstall={() => undefined}
       />
@@ -150,7 +150,7 @@ describe('DiscoverDetailPanel', () => {
           name: 'other-skill',
           slug: 'other-skill',
         })}
-        isInstalled={false}
+        installLocations={[]}
         onClose={() => undefined}
         onInstall={() => undefined}
       />

@@ -55,7 +55,7 @@ function renderDisplayMetric(metric: DiscoverSkillSummary['displayMetric']) {
 }
 
 interface DiscoverListPanelProps {
-  installedSkillKeys: Set<string>;
+  installedSkillLocations: Map<string, string[]>;
   onSelect: (skill: DiscoverSkillSummary) => void;
   selectedDetailUrl?: string;
   activeTab: DiscoverTab;
@@ -120,7 +120,7 @@ const DiscoverSkillItem = memo(function DiscoverSkillItem({
 });
 
 export function DiscoverListPanel({
-  installedSkillKeys,
+  installedSkillLocations,
   onSelect,
   selectedDetailUrl,
   activeTab,
@@ -296,7 +296,7 @@ export function DiscoverListPanel({
         ) : (
           <div className="py-2">
             {results.map((skill) => {
-              const isInstalled = isSkillInstalled(installedSkillKeys, skill);
+              const isInstalled = isSkillInstalled(installedSkillLocations, skill);
               
               return (
                 <DiscoverSkillItem

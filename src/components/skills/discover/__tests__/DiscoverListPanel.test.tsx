@@ -56,7 +56,7 @@ describe('DiscoverListPanel', () => {
 
     render(
       <DiscoverListPanel
-        installedSkillKeys={new Set()}
+        installedSkillLocations={new Map()}
         onSelect={() => undefined}
         selectedDetailUrl="https://skills.sh/second/skills/find-skills"
         activeTab="popular"
@@ -87,7 +87,7 @@ describe('DiscoverListPanel', () => {
 
     const { rerender } = render(
       <DiscoverListPanel
-        installedSkillKeys={new Set()}
+        installedSkillLocations={new Map()}
         onSelect={() => undefined}
         activeTab="popular"
         onTabChange={() => undefined}
@@ -100,7 +100,7 @@ describe('DiscoverListPanel', () => {
 
     rerender(
       <DiscoverListPanel
-        installedSkillKeys={new Set()}
+        installedSkillLocations={new Map()}
         onSelect={() => undefined}
         activeTab="trending"
         onTabChange={() => undefined}
@@ -128,7 +128,7 @@ describe('DiscoverListPanel', () => {
 
     render(
       <DiscoverListPanel
-        installedSkillKeys={new Set()}
+        installedSkillLocations={new Map()}
         onSelect={() => undefined}
         activeTab="hot"
         onTabChange={() => undefined}

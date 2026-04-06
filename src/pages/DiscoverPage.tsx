@@ -1,12 +1,13 @@
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSkillsDataStore } from '@/stores/skills-data';
+import { useContextStore } from '@/stores/context';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { DiscoverListPanel } from '@/components/skills/discover/DiscoverListPanel';
 import { DiscoverDetailPanel } from '@/components/skills/discover/DiscoverDetailPanel';
 import { Compass } from 'lucide-react';
 import type { DiscoverSkillSummary, DiscoverTab } from '@/lib/discover/types';
-import { isSkillInstalled } from '@/lib/discover-utils';
+import { getSkillInstallLocations } from '@/lib/discover-utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 
 const DISCOVER_PANEL_LAYOUT = {
@@ -24,18 +25,37 @@ const DISCOVER_PANEL_LAYOUT = {
 export function DiscoverPage() {
   const { t } = useTranslation();
   const globalSkills = useSkillsDataStore((s) => s.globalSkills);
-  const projectSkills = useSkillsDataStore((s) => s.projectSkills);
+  const allProjectsSkills = useSkillsDataStore((s) => s.allProjectsSkills);
+  const fetchAllProjectsSkills = useSkillsDataStore((s) => s.fetchAllProjectsSkills);
+  const projects = useContextStore((s) => s.projects);
+  const projectsLoaded = useContextStore((s) => s.projectsLoaded);
   const openAddWithPrefill = useSkillDialogStore((s) => s.openAddWithPrefill);
 
   const [activeTab, setActiveTab] = useState<DiscoverTab>('popular');
   const [selectedSkill, setSelectedSkill] = useState<DiscoverSkillSummary | null>(null);
 
-  const installedSkillKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const s of globalSkills) keys.add(`${s.source ?? ''}::${s.name}`);
-    for (const s of projectSkills) keys.add(`${s.source ?? ''}::${s.name}`);
-    return keys;
-  }, [globalSkills, projectSkills]);
+  useEffect(() => {
+    if (projectsLoaded) {
+      fetchAllProjectsSkills();
+    }
+  }, [projectsLoaded, projects, fetchAllProjectsSkills]);
+
+  const installedSkillLocations = useMemo(() => {
+    const map = new Map<string, string[]>();
+    const addEntry = (key: string, location: string) => {
+      const existing = map.get(key);
+      if (existing) {
+        if (!existing.includes(location)) existing.push(location);
+      } else {
+        map.set(key, [location]);
+      }
+    };
+    for (const s of globalSkills) addEntry(`${s.source ?? ''}::${s.name}`, 'global');
+    for (const [projectPath, skills] of allProjectsSkills) {
+      for (const s of skills) addEntry(`${s.source ?? ''}::${s.name}`, projectPath);
+    }
+    return map;
+  }, [globalSkills, allProjectsSkills]);
 
   const handleInstall = useCallback((skill: DiscoverSkillSummary) => {
     openAddWithPrefill({
@@ -44,7 +64,9 @@ export function DiscoverPage() {
     });
   }, [openAddWithPrefill]);
 
-  const isInstalled = selectedSkill ? isSkillInstalled(installedSkillKeys, selectedSkill) : false;
+  const installLocations = selectedSkill
+    ? getSkillInstallLocations(installedSkillLocations, selectedSkill)
+    : [];
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-background">
@@ -62,7 +84,7 @@ export function DiscoverPage() {
         >
           <div className="h-full w-full min-w-0 flex flex-col overflow-hidden">
             <DiscoverListPanel
-              installedSkillKeys={installedSkillKeys}
+              installedSkillLocations={installedSkillLocations}
               onSelect={setSelectedSkill}
               selectedDetailUrl={selectedSkill?.detailUrl}
               activeTab={activeTab}
@@ -82,7 +104,7 @@ export function DiscoverPage() {
           {selectedSkill ? (
             <DiscoverDetailPanel
               skill={selectedSkill}
-              isInstalled={isInstalled}
+              installLocations={installLocations}
               onClose={() => setSelectedSkill(null)}
               onInstall={handleInstall}
             />

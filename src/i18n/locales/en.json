@@ -182,7 +182,8 @@
       "weeklyInstalls": "Weekly Installs",
       "firstSeen": "First Seen",
       "securityAudits": "Security Audits",
-      "installedOn": "Installed on",
+      "installedOn": "Agent Installs",
+      "installedWorkspaces": "Installed Workspaces",
       "riskBadge": {
         "safe": "Safe Risk",
         "low": "Low Risk",

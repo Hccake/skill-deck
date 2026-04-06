@@ -7,7 +7,7 @@ function makeSkill(source: string, name: string): DiscoverSkillSummary {
     slug: name,
     name,
     source,
-    displayMetric: { type: 'installs', rawText: '100' },
+    displayMetric: { kind: 'installs', rawText: '100', sortValue: 100 },
     isOfficial: false,
     detailUrl: `https://skills.sh/${name}`,
   };

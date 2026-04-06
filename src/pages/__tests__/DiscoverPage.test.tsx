@@ -15,9 +15,15 @@ const mocks = vi.hoisted(() => ({
   skillsDataState: {
     globalSkills: [] as Array<{ name: string; source?: string | null }>,
     projectSkills: [] as Array<{ name: string; source?: string | null }>,
+    allProjectsSkills: new Map<string, Array<{ name: string; source?: string | null }>>(),
+    fetchAllProjectsSkills: vi.fn(),
   },
   skillDialogState: {
     openAddWithPrefill: vi.fn(),
+  },
+  contextState: {
+    projects: [] as string[],
+    projectsLoaded: true,
   },
   resizable: {
     groups: [] as Array<Record<string, unknown>>,
@@ -31,6 +37,10 @@ vi.mock('@/stores/skills-data', () => ({
 
 vi.mock('@/stores/skill-dialog', () => ({
   useSkillDialogStore: (selector: (state: typeof mocks.skillDialogState) => unknown) => selector(mocks.skillDialogState),
+}));
+
+vi.mock('@/stores/context', () => ({
+  useContextStore: (selector: (state: typeof mocks.contextState) => unknown) => selector(mocks.contextState),
 }));
 
 vi.mock('@/components/skills/discover/DiscoverListPanel', () => ({
@@ -57,7 +67,11 @@ describe('DiscoverPage', () => {
   beforeEach(() => {
     mocks.skillsDataState.globalSkills = [];
     mocks.skillsDataState.projectSkills = [];
+    mocks.skillsDataState.allProjectsSkills = new Map();
+    mocks.skillsDataState.fetchAllProjectsSkills.mockReset();
     mocks.skillDialogState.openAddWithPrefill.mockReset();
+    mocks.contextState.projects = [];
+    mocks.contextState.projectsLoaded = true;
     mocks.resizable.groups.length = 0;
     mocks.resizable.panels.length = 0;
   });

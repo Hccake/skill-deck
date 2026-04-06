@@ -182,7 +182,8 @@
       "weeklyInstalls": "周安装量",
       "firstSeen": "首次收录",
       "securityAudits": "安全审计",
-      "installedOn": "已安装于",
+      "installedOn": "Agent 安装量",
+      "installedWorkspaces": "已安装 Workspace",
       "riskBadge": {
         "safe": "安全",
         "low": "低风险",
