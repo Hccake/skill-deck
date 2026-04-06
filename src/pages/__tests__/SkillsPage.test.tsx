@@ -17,15 +17,19 @@ const mocks = vi.hoisted(() => ({
     selectedContext: 'global',
     projects: [] as string[],
   },
-  skillsState: {
+  skillsDataState: {
+    allAgents: [] as Array<{ id: string; name: string }>,
+    updateSkill: vi.fn(),
+  },
+  skillDetailState: {
     selectedSkill: null as null | { name: string; scope: 'global' | 'project' },
     skillContent: null as string | null,
     loadingContent: false,
     deselectSkill: vi.fn(),
     reloadContent: vi.fn(),
-    updateSkill: vi.fn(),
+  },
+  skillDialogState: {
     openDelete: vi.fn(),
-    allAgents: [] as Array<{ id: string; name: string }>,
     openManageAgents: vi.fn(),
     closeManageAgents: vi.fn(),
     saveAgentChanges: vi.fn(),
@@ -50,8 +54,16 @@ vi.mock('@/stores/context', () => ({
   useContextStore: (selector: (state: typeof mocks.contextState) => unknown) => selector(mocks.contextState),
 }));
 
-vi.mock('@/stores/skills', () => ({
-  useSkillsStore: (selector: (state: typeof mocks.skillsState) => unknown) => selector(mocks.skillsState),
+vi.mock('@/stores/skills-data', () => ({
+  useSkillsDataStore: (selector: (state: typeof mocks.skillsDataState) => unknown) => selector(mocks.skillsDataState),
+}));
+
+vi.mock('@/stores/skill-detail', () => ({
+  useSkillDetailStore: (selector: (state: typeof mocks.skillDetailState) => unknown) => selector(mocks.skillDetailState),
+}));
+
+vi.mock('@/stores/skill-dialog', () => ({
+  useSkillDialogStore: (selector: (state: typeof mocks.skillDialogState) => unknown) => selector(mocks.skillDialogState),
 }));
 
 vi.mock('@/components/skills', () => ({
@@ -97,14 +109,14 @@ vi.mock('@/components/ui/resizable', () => ({
 describe('SkillsPage', () => {
   beforeEach(() => {
     mocks.contextState.selectedContext = 'global';
-    mocks.skillsState.selectedSkill = null;
-    mocks.skillsState.skillContent = null;
-    mocks.skillsState.loadingContent = false;
-    mocks.skillsState.deselectSkill.mockReset();
-    mocks.skillsState.reloadContent.mockReset();
-    mocks.skillsState.updateSkill.mockReset();
-    mocks.skillsState.openDelete.mockReset();
-    mocks.skillsState.allAgents = [];
+    mocks.skillsDataState.allAgents = [];
+    mocks.skillsDataState.updateSkill.mockReset();
+    mocks.skillDetailState.selectedSkill = null;
+    mocks.skillDetailState.skillContent = null;
+    mocks.skillDetailState.loadingContent = false;
+    mocks.skillDetailState.deselectSkill.mockReset();
+    mocks.skillDetailState.reloadContent.mockReset();
+    mocks.skillDialogState.openDelete.mockReset();
     mocks.resizable.groups.length = 0;
     mocks.resizable.panels.length = 0;
     mocks.resizable.lifecycle.length = 0;
@@ -115,7 +127,7 @@ describe('SkillsPage', () => {
   });
 
   it('uses percentage-based panel sizes when a skill detail is open', () => {
-    mocks.skillsState.selectedSkill = {
+    mocks.skillDetailState.selectedSkill = {
       name: 'test-skill',
       scope: 'global',
     };
@@ -156,7 +168,7 @@ describe('SkillsPage', () => {
       'skill-detail-panel': 78,
     });
 
-    mocks.skillsState.selectedSkill = {
+    mocks.skillDetailState.selectedSkill = {
       name: 'test-skill',
       scope: 'global',
     };
@@ -181,7 +193,7 @@ describe('SkillsPage', () => {
         'skill-detail-panel': 78,
       });
 
-    mocks.skillsState.selectedSkill = {
+    mocks.skillDetailState.selectedSkill = {
       name: 'test-skill',
       scope: 'global',
     };

@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   contextState: {
     selectedContext: 'global',
   },
-  skillsState: {
+  skillsDataState: {
     globalSkills: [],
     projectSkills: [],
     projectPathExists: true,
@@ -26,16 +26,20 @@ const mocks = vi.hoisted(() => ({
     fetchSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     syncSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     updateSkill: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    auditCache: {},
+    fetchAuditForSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  },
+  skillDetailState: {
     selectSkill: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     deselectSkill: vi.fn(),
     selectedSkill: {
       name: 'brainstorming',
       scope: 'global' as const,
     },
+  },
+  skillDialogState: {
     openDelete: vi.fn(),
     openAdd: vi.fn(),
-    auditCache: {},
-    fetchAuditForSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   },
 }));
 
@@ -50,9 +54,19 @@ vi.mock('@/stores/context', () => ({
     selector ? selector(mocks.contextState) : mocks.contextState,
 }));
 
-vi.mock('@/stores/skills', () => ({
-  useSkillsStore: (selector?: (state: typeof mocks.skillsState) => unknown) =>
-    selector ? selector(mocks.skillsState) : mocks.skillsState,
+vi.mock('@/stores/skills-data', () => ({
+  useSkillsDataStore: (selector?: (state: typeof mocks.skillsDataState) => unknown) =>
+    selector ? selector(mocks.skillsDataState) : mocks.skillsDataState,
+}));
+
+vi.mock('@/stores/skill-detail', () => ({
+  useSkillDetailStore: (selector?: (state: typeof mocks.skillDetailState) => unknown) =>
+    selector ? selector(mocks.skillDetailState) : mocks.skillDetailState,
+}));
+
+vi.mock('@/stores/skill-dialog', () => ({
+  useSkillDialogStore: (selector?: (state: typeof mocks.skillDialogState) => unknown) =>
+    selector ? selector(mocks.skillDialogState) : mocks.skillDialogState,
 }));
 
 vi.mock('../SkillsToolbar', () => ({
@@ -79,61 +93,61 @@ vi.mock('../EmptyStates', () => ({
 describe('SkillsPanel', () => {
   beforeEach(() => {
     mocks.contextState.selectedContext = 'global';
-    mocks.skillsState.globalSkills = [];
-    mocks.skillsState.projectSkills = [];
-    mocks.skillsState.projectPathExists = true;
-    mocks.skillsState.allAgents = [];
-    mocks.skillsState.loading = false;
-    mocks.skillsState.error = null;
-    mocks.skillsState.isSyncing = false;
-    mocks.skillsState.checkingUpdateScopes = new Set();
-    mocks.skillsState.updatingSkills = new Map();
-    mocks.skillsState.syncUpdates.mockClear();
-    mocks.skillsState.forceCheckUpdates.mockClear();
-    mocks.skillsState.updateAllInSection.mockClear();
-    mocks.skillsState.cancelUpdateAll.mockClear();
-    mocks.skillsState.fetchSkills.mockClear();
-    mocks.skillsState.syncSkills.mockClear();
-    mocks.skillsState.updateSkill.mockClear();
-    mocks.skillsState.selectSkill.mockClear();
-    mocks.skillsState.deselectSkill.mockClear();
-    mocks.skillsState.selectedSkill = {
+    mocks.skillsDataState.globalSkills = [];
+    mocks.skillsDataState.projectSkills = [];
+    mocks.skillsDataState.projectPathExists = true;
+    mocks.skillsDataState.allAgents = [];
+    mocks.skillsDataState.loading = false;
+    mocks.skillsDataState.error = null;
+    mocks.skillsDataState.isSyncing = false;
+    mocks.skillsDataState.checkingUpdateScopes = new Set();
+    mocks.skillsDataState.updatingSkills = new Map();
+    mocks.skillsDataState.syncUpdates.mockClear();
+    mocks.skillsDataState.forceCheckUpdates.mockClear();
+    mocks.skillsDataState.updateAllInSection.mockClear();
+    mocks.skillsDataState.cancelUpdateAll.mockClear();
+    mocks.skillsDataState.fetchSkills.mockClear();
+    mocks.skillsDataState.syncSkills.mockClear();
+    mocks.skillsDataState.updateSkill.mockClear();
+    mocks.skillsDataState.auditCache = {};
+    mocks.skillsDataState.fetchAuditForSkills.mockClear();
+    mocks.skillDetailState.selectSkill.mockClear();
+    mocks.skillDetailState.deselectSkill.mockClear();
+    mocks.skillDetailState.selectedSkill = {
       name: 'brainstorming',
       scope: 'global',
     };
-    mocks.skillsState.openDelete.mockClear();
-    mocks.skillsState.openAdd.mockClear();
-    mocks.skillsState.auditCache = {};
-    mocks.skillsState.fetchAuditForSkills.mockClear();
+    mocks.skillDialogState.openDelete.mockClear();
+    mocks.skillDialogState.openAdd.mockClear();
   });
 
   it('does not clear the selected skill when compact mode mounts', async () => {
     render(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsState.fetchSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
     });
 
-    expect(mocks.skillsState.deselectSkill).not.toHaveBeenCalled();
+    expect(mocks.skillDetailState.deselectSkill).not.toHaveBeenCalled();
   });
 
   it('clears the selected skill when the selected context changes', async () => {
     const { rerender } = render(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsState.fetchSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
     });
 
-    mocks.skillsState.deselectSkill.mockClear();
-    mocks.skillsState.fetchSkills.mockClear();
+    mocks.skillDetailState.deselectSkill.mockClear();
+    mocks.skillsDataState.fetchSkills.mockClear();
     mocks.contextState.selectedContext = 'D:\\Code\\project-a';
 
     rerender(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsState.fetchSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
     });
 
-    expect(mocks.skillsState.deselectSkill).toHaveBeenCalledTimes(1);
+    expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);
   });
 });

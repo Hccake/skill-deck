@@ -23,6 +23,7 @@ import { getDiscoverSkillDetail } from '@/lib/discover/api';
 import { formatInstalls } from '@/lib/discover/format';
 import type { DiscoverSkillDetail } from '@/lib/discover/api';
 import type { DiscoverAuditRisk, DiscoverSecurityAudit, DiscoverSkillSummary } from '@/lib/discover/types';
+import { delay } from '@/lib/discover-utils';
 
 const PROSE_WITH_LISTS_CLASS_NAME = 'skill-prose skill-prose-with-lists';
 
@@ -34,10 +35,6 @@ interface DiscoverDetailPanelProps {
 }
 
 const MIN_DETAIL_LOADING_MS = 180;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function RiskBadge({ risk, t }: { risk?: DiscoverAuditRisk; t: (key: string) => string }) {
   const riskKey = risk ?? 'unknown';

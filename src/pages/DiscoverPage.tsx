@@ -1,10 +1,12 @@
 import { useMemo, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSkillsStore } from '@/stores/skills';
+import { useSkillsDataStore } from '@/stores/skills-data';
+import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { DiscoverListPanel } from '@/components/skills/discover/DiscoverListPanel';
 import { DiscoverDetailPanel } from '@/components/skills/discover/DiscoverDetailPanel';
 import { Compass } from 'lucide-react';
 import type { DiscoverSkillSummary, DiscoverTab } from '@/lib/discover/types';
+import { isSkillInstalled } from '@/lib/discover-utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 
 const DISCOVER_PANEL_LAYOUT = {
@@ -19,17 +21,11 @@ const DISCOVER_PANEL_LAYOUT = {
   },
 } as const;
 
-function isInstalledSkill(installedSkillKeys: Set<string>, skill: DiscoverSkillSummary): boolean {
-  const normalizedSource = skill.source.replace('https://github.com/', '');
-  return installedSkillKeys.has(`${skill.source}::${skill.name}`)
-    || installedSkillKeys.has(`${normalizedSource}::${skill.name}`);
-}
-
 export function DiscoverPage() {
   const { t } = useTranslation();
-  const globalSkills = useSkillsStore((s) => s.globalSkills);
-  const projectSkills = useSkillsStore((s) => s.projectSkills);
-  const openAddWithPrefill = useSkillsStore((s) => s.openAddWithPrefill);
+  const globalSkills = useSkillsDataStore((s) => s.globalSkills);
+  const projectSkills = useSkillsDataStore((s) => s.projectSkills);
+  const openAddWithPrefill = useSkillDialogStore((s) => s.openAddWithPrefill);
 
   const [activeTab, setActiveTab] = useState<DiscoverTab>('popular');
   const [selectedSkill, setSelectedSkill] = useState<DiscoverSkillSummary | null>(null);
@@ -48,7 +44,7 @@ export function DiscoverPage() {
     });
   }, [openAddWithPrefill]);
 
-  const isInstalled = selectedSkill ? isInstalledSkill(installedSkillKeys, selectedSkill) : false;
+  const isInstalled = selectedSkill ? isSkillInstalled(installedSkillKeys, selectedSkill) : false;
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden bg-background">

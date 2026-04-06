@@ -10,7 +10,7 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { WizardPage } from '@/pages/WizardPage';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { useSkillsStore } from '@/stores/skills';
+import { useSkillsDataStore } from '@/stores/skills-data';
 import { useUpdaterStore } from '@/stores/updater';
 import { UpdateDialog } from '@/components/update-dialog';
 
@@ -32,7 +32,7 @@ let didInit = false;
 
 function App() {
   const { t } = useTranslation();
-  const fetchSkills = useSkillsStore((s) => s.fetchSkills);
+  const fetchSkills = useSkillsDataStore((s) => s.fetchSkills);
   // rerender-defer-reads: 不订阅 error，减少不必要的 App 重渲染
   const { status, checkForUpdate, shouldAutoCheck } = useUpdaterStore();
 

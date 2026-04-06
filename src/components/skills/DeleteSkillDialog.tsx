@@ -1,7 +1,7 @@
 // src/components/skills/DeleteSkillDialog.tsx
 import { useState, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSkillsStore } from '@/stores/skills';
+import { useSkillDialogStore } from '@/stores/skill-dialog';
 import {
   Dialog,
   DialogContent,
@@ -27,11 +27,11 @@ function buildDefaultSelection(details: SkillAgentDetails | null): Set<AgentType
 
 export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const { t } = useTranslation();
-  const target = useSkillsStore((s) => s.deleteTarget);
-  const agentDetails = useSkillsStore((s) => s.agentDetails);
-  const loadingDetails = useSkillsStore((s) => s.loadingAgentDetails);
-  const closeDelete = useSkillsStore((s) => s.closeDelete);
-  const deleteSkillAction = useSkillsStore((s) => s.deleteSkill);
+  const target = useSkillDialogStore((s) => s.deleteTarget);
+  const agentDetails = useSkillDialogStore((s) => s.agentDetails);
+  const loadingDetails = useSkillDialogStore((s) => s.loadingAgentDetails);
+  const closeDelete = useSkillDialogStore((s) => s.closeDelete);
+  const deleteSkillAction = useSkillDialogStore((s) => s.deleteSkill);
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteCanonical, setDeleteCanonical] = useState(false);

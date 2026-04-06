@@ -17,10 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Discover 对齐 skills.sh 语义** — 榜单切换调整为 All Time / Trending / Hot，搜索结果保留 live API 顺序，official creators 改为内部 metadata 判断，详情解析按页面分区提取真实内容
+- **前端状态管理重构** — Skills 状态管理按职责拆分为数据层、详情面板、对话框三个独立模块，降低模块间耦合；Skill 更新完成后列表刷新不再阻塞 UI 交互
+- **设置页重构** — General、Projects、About 三个标签页拆分为独立组件，提升页面加载效率和可维护性
 
 ### Fixed
 
 - **Discover 搜索结果截断** — skills.sh search 请求上限从 50 提升到 100，减少热门关键词搜索时结果过早截断
+- **About 页技术栈版本标注** — React 版本从 18 修正为 19
 
 ## [1.0.0] - 2026-04-03
 

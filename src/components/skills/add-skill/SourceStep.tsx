@@ -13,7 +13,7 @@ import { formatAppError } from '@/utils/format-app-error';
 import { toAppError } from '@/utils/to-app-error';
 import { SkillSearch } from '../skill-search';
 import type { SearchSkill } from '../skill-search';
-import { useSkillsStore } from '@/stores/skills';
+import { useSkillsDataStore } from '@/stores/skills-data';
 import type { WizardState } from './types';
 
 /** 克隆进度事件 */
@@ -36,8 +36,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
 
   // 已安装 skill key 集合（用于 SkillSearch 组件）
-  const globalSkills = useSkillsStore((s) => s.globalSkills);
-  const projectSkills = useSkillsStore((s) => s.projectSkills);
+  const globalSkills = useSkillsDataStore((s) => s.globalSkills);
+  const projectSkills = useSkillsDataStore((s) => s.projectSkills);
   const installedSkillKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const s of globalSkills) keys.add(`${s.source ?? ''}::${s.name}`);

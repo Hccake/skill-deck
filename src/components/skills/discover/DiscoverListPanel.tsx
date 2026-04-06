@@ -9,19 +9,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getDiscoverLeaderboard, searchDiscoverSkills } from '@/lib/discover/api';
 import type { DiscoverSkillSummary, DiscoverTab } from '@/lib/discover/types';
+import { MIN_LOADING_MS, delay, isSkillInstalled } from '@/lib/discover-utils';
 
-const MIN_LOADING_MS = 180;
 const LEADERBOARD_LOAD_DELAY_MS = 50;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isSkillInstalled(installedSkillKeys: Set<string>, skill: DiscoverSkillSummary): boolean {
-  const normalizedSource = skill.source.replace('https://github.com/', '');
-  return installedSkillKeys.has(`${skill.source}::${skill.name}`)
-    || installedSkillKeys.has(`${normalizedSource}::${skill.name}`);
-}
+const DISCOVER_TAB_LIST_STYLE = { background: 'transparent', boxShadow: 'none' } as const;
+const DISCOVER_TAB_STYLE = { background: 'transparent', boxShadow: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none' } as const;
+const DISCOVER_TAB_CLASS = "px-0 pt-2 pb-1.5 relative text-[13px] font-medium text-muted-foreground/70 bg-transparent rounded-none !border-x-0 !border-t-0 border-b-[2px] border-transparent mb-[-1px] transition-colors hover:text-foreground data-[state=active]:!bg-transparent data-[state=active]:!shadow-none data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:font-semibold outline-none ring-0 !ring-offset-0 focus-visible:ring-0";
 
 function splitHotMetric(rawText: string): { primary: string; delta?: string } {
   const trimmed = rawText.trim();
@@ -236,25 +229,25 @@ export function DiscoverListPanel({
             }}
             className={`col-start-1 row-start-1 transition-opacity duration-300 ${isSearchActive ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
           >
-            <TabsList style={{ background: 'transparent', boxShadow: 'none' }} className="flex w-full justify-start gap-6 p-0 bg-transparent h-auto">
-              <TabsTrigger 
-                value="popular" 
-                style={{ background: 'transparent', boxShadow: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none' }}
-                className="px-0 pt-2 pb-1.5 relative text-[13px] font-medium text-muted-foreground/70 bg-transparent rounded-none !border-x-0 !border-t-0 border-b-[2px] border-transparent mb-[-1px] transition-colors hover:text-foreground data-[state=active]:!bg-transparent data-[state=active]:!shadow-none data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:font-semibold outline-none ring-0 !ring-offset-0 focus-visible:ring-0"
+            <TabsList style={DISCOVER_TAB_LIST_STYLE} className="flex w-full justify-start gap-6 p-0 bg-transparent h-auto">
+              <TabsTrigger
+                value="popular"
+                style={DISCOVER_TAB_STYLE}
+                className={DISCOVER_TAB_CLASS}
               >
                 {t('skills.discover.tabs.popular')}
               </TabsTrigger>
-              <TabsTrigger 
-                value="trending" 
-                style={{ background: 'transparent', boxShadow: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none' }}
-                className="px-0 pt-2 pb-1.5 relative text-[13px] font-medium text-muted-foreground/70 bg-transparent rounded-none !border-x-0 !border-t-0 border-b-[2px] border-transparent mb-[-1px] transition-colors hover:text-foreground data-[state=active]:!bg-transparent data-[state=active]:!shadow-none data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:font-semibold outline-none ring-0 !ring-offset-0 focus-visible:ring-0"
+              <TabsTrigger
+                value="trending"
+                style={DISCOVER_TAB_STYLE}
+                className={DISCOVER_TAB_CLASS}
               >
                 {t('skills.discover.tabs.trending')}
               </TabsTrigger>
-              <TabsTrigger 
-                value="hot" 
-                style={{ background: 'transparent', boxShadow: 'none', borderTop: 'none', borderLeft: 'none', borderRight: 'none' }}
-                className="px-0 pt-2 pb-1.5 relative text-[13px] font-medium text-muted-foreground/70 bg-transparent rounded-none !border-x-0 !border-t-0 border-b-[2px] border-transparent mb-[-1px] transition-colors hover:text-foreground data-[state=active]:!bg-transparent data-[state=active]:!shadow-none data-[state=active]:text-foreground data-[state=active]:border-foreground data-[state=active]:font-semibold outline-none ring-0 !ring-offset-0 focus-visible:ring-0"
+              <TabsTrigger
+                value="hot"
+                style={DISCOVER_TAB_STYLE}
+                className={DISCOVER_TAB_CLASS}
               >
                 {t('skills.discover.tabs.hot')}
               </TabsTrigger>

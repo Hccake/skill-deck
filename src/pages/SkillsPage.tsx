@@ -1,8 +1,10 @@
 // src/pages/SkillsPage.tsx
-import { useCallback, useLayoutEffect, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useGroupRef } from 'react-resizable-panels';
 import { useContextStore } from '@/stores/context';
-import { useSkillsStore } from '@/stores/skills';
+import { useSkillsDataStore } from '@/stores/skills-data';
+import { useSkillDetailStore } from '@/stores/skill-detail';
+import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { ContextSidebar, SkillsPanel, SkillDetailPanel } from '@/components/skills';
 import { ManageAgentsDialog } from '@/components/skills/ManageAgentsDialog';
 import { CopyToProjectDialog } from '@/components/skills/CopyToProjectDialog';
@@ -22,28 +24,31 @@ const LIST_VIEW_LAYOUT = {
 export function SkillsPage() {
   const selectedContext = useContextStore((s) => s.selectedContext);
 
-  const selectedSkill = useSkillsStore((s) => s.selectedSkill);
-  const skillContent = useSkillsStore((s) => s.skillContent);
-  const loadingContent = useSkillsStore((s) => s.loadingContent);
-  const deselectSkill = useSkillsStore((s) => s.deselectSkill);
-  const reloadContent = useSkillsStore((s) => s.reloadContent);
-  const storeUpdateSkill = useSkillsStore((s) => s.updateSkill);
-  const openDelete = useSkillsStore((s) => s.openDelete);
-  const allAgents = useSkillsStore((s) => s.allAgents);
-  const openManageAgents = useSkillsStore((s) => s.openManageAgents);
-  const closeManageAgents = useSkillsStore((s) => s.closeManageAgents);
-  const saveAgentChanges = useSkillsStore((s) => s.saveAgentChanges);
-  const manageAgentsSkill = useSkillsStore((s) => s.manageAgentsSkill);
-  const manageAgentsScope = useSkillsStore((s) => s.manageAgentsScope);
-  const copySkill = useSkillsStore((s) => s.copySkill);
-  const openCopyToProject = useSkillsStore((s) => s.openCopyToProject);
-  const closeCopyToProject = useSkillsStore((s) => s.closeCopyToProject);
-  const executeCopy = useSkillsStore((s) => s.executeCopy);
+  const selectedSkill = useSkillDetailStore((s) => s.selectedSkill);
+  const skillContent = useSkillDetailStore((s) => s.skillContent);
+  const loadingContent = useSkillDetailStore((s) => s.loadingContent);
+  const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
+  const reloadContent = useSkillDetailStore((s) => s.reloadContent);
+  const storeUpdateSkill = useSkillsDataStore((s) => s.updateSkill);
+  const openDelete = useSkillDialogStore((s) => s.openDelete);
+  const allAgents = useSkillsDataStore((s) => s.allAgents);
+  const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
+  const closeManageAgents = useSkillDialogStore((s) => s.closeManageAgents);
+  const saveAgentChanges = useSkillDialogStore((s) => s.saveAgentChanges);
+  const manageAgentsSkill = useSkillDialogStore((s) => s.manageAgentsSkill);
+  const manageAgentsScope = useSkillDialogStore((s) => s.manageAgentsScope);
+  const copySkill = useSkillDialogStore((s) => s.copySkill);
+  const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
+  const closeCopyToProject = useSkillDialogStore((s) => s.closeCopyToProject);
+  const executeCopy = useSkillDialogStore((s) => s.executeCopy);
   const projects = useContextStore((s) => s.projects);
   const layoutRef = useGroupRef();
   const previousSplitViewRef = useRef(Boolean(selectedSkill));
 
-  const agentDisplayNames = new Map(allAgents.map((a) => [a.id, a.name]));
+  const agentDisplayNames = useMemo(
+    () => new Map(allAgents.map((a) => [a.id, a.name])),
+    [allAgents]
+  );
 
   const handleDetailDelete = useCallback((skill: typeof selectedSkill & {}) => {
     if (skill.scope === 'project') {
