@@ -73,6 +73,8 @@ interface SkillsDataState {
   globalSkills: InstalledSkill[];
   projectSkills: InstalledSkill[];
   projectPathExists: boolean;
+  /** Discover 页使用：所有已注册 project 的 skills（key = projectPath） */
+  allProjectsSkills: Map<string, InstalledSkill[]>;
   allAgents: AgentInfo[];
   loading: boolean;
   error: string | null;
@@ -93,6 +95,8 @@ interface SkillsDataState {
   updateSkill: (skillName: string, scope: SkillScope) => Promise<void>;
   updateAllInSection: (scope: SkillScope) => Promise<void>;
   cancelUpdateAll: () => void;
+  /** 加载所有已注册 project 的 skills（供 Discover 页使用） */
+  fetchAllProjectsSkills: () => Promise<void>;
 }
 
 export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
@@ -108,6 +112,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   checkingUpdateScopes: new Set(),
   updatingSkills: new Map(),
   updateAllCancelled: false,
+  allProjectsSkills: new Map(),
 
   fetchSkills: async () => {
     try {
@@ -438,4 +443,28 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   },
 
   cancelUpdateAll: () => { set({ updateAllCancelled: true }); },
+
+  fetchAllProjectsSkills: async () => {
+    const { projects } = useContextStore.getState();
+    if (projects.length === 0) {
+      set({ allProjectsSkills: new Map() });
+      return;
+    }
+
+    try {
+      const results = await Promise.all(
+        projects.map(async (projectPath) => {
+          try {
+            const result = await listSkills({ scope: 'project', projectPath });
+            return [projectPath, result.skills] as const;
+          } catch {
+            return [projectPath, [] as InstalledSkill[]] as const;
+          }
+        })
+      );
+      set({ allProjectsSkills: new Map(results) });
+    } catch {
+      set({ allProjectsSkills: new Map() });
+    }
+  },
 }));
