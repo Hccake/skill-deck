@@ -350,12 +350,26 @@ export function DiscoverDetailPanel({
                 </main>
 
                 <aside className="w-full shrink-0 space-y-6 md:w-[280px] pt-1">
-                  {displayData.firstSeen && (
-                    <section className="space-y-1.5">
+                  {installLocations.length > 0 && (
+                    <section className="space-y-2.5">
                       <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {t('skills.discover.firstSeen')}
+                        {t('skills.discover.installedWorkspaces')}
                       </div>
-                      <div className="text-sm text-foreground/88">{displayData.firstSeen}</div>
+
+                      <div className="space-y-1">
+                        {installLocations.map((location) => (
+                          <div key={location} className="py-1 text-sm">
+                            {location === 'global' ? (
+                              <span className="text-foreground/88">{t('context.global')}</span>
+                            ) : (
+                              <div className="min-w-0">
+                                <div className="truncate text-foreground/88">{getProjectName(location)}</div>
+                                <div className="truncate text-[10px] text-muted-foreground/60">{location}</div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </section>
                   )}
 
@@ -412,26 +426,12 @@ export function DiscoverDetailPanel({
                     </section>
                   )}
 
-                  {installLocations.length > 0 && (
-                    <section className="space-y-2.5">
+                  {displayData.firstSeen && (
+                    <section className="space-y-1.5">
                       <div className="text-[11px] font-heading font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        {t('skills.discover.installedWorkspaces')}
+                        {t('skills.discover.firstSeen')}
                       </div>
-
-                      <div className="space-y-1">
-                        {installLocations.map((location) => (
-                          <div key={location} className="py-1 text-sm">
-                            {location === 'global' ? (
-                              <span className="text-foreground/88">{t('context.global')}</span>
-                            ) : (
-                              <div className="min-w-0">
-                                <div className="truncate text-foreground/88">{getProjectName(location)}</div>
-                                <div className="truncate text-[10px] text-muted-foreground/60">{location}</div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                      <div className="text-sm text-foreground/88">{displayData.firstSeen}</div>
                     </section>
                   )}
                 </aside>
