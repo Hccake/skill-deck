@@ -29,8 +29,25 @@ use std::time::Instant;
 #[serde(rename_all = "camelCase")]
 struct UpdateProgress {
     skill_name: String,
+    scope: Scope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_path: Option<String>,
     /// "cloning" | "installing" | "writing_lock"
     phase: String,
+}
+
+fn update_progress_payload(
+    skill_name: &str,
+    scope: &Scope,
+    project_path: Option<&str>,
+    phase: &str,
+) -> UpdateProgress {
+    UpdateProgress {
+        skill_name: skill_name.to_string(),
+        scope: scope.clone(),
+        project_path: project_path.map(str::to_owned),
+        phase: phase.to_string(),
+    }
 }
 
 /// 更新检测结果
@@ -284,10 +301,10 @@ async fn update_skill_single(
     let parsed = parse_source(&install_url)?;
 
     // 4. 克隆仓库
-    let _ = app.emit("update-progress", &UpdateProgress {
-        skill_name: skill_name.to_string(),
-        phase: "cloning".to_string(),
-    });
+    let _ = app.emit(
+        "update-progress",
+        &update_progress_payload(skill_name, &scope, project_path, "cloning"),
+    );
     let app_clone = app.clone();
     let clone_result = clone_repo_with_progress(
         &parsed.url,
@@ -336,10 +353,10 @@ async fn update_skill_single(
     };
 
     // 9. 执行安装（覆盖现有文件）
-    let _ = app.emit("update-progress", &UpdateProgress {
-        skill_name: skill_name.to_string(),
-        phase: "installing".to_string(),
-    });
+    let _ = app.emit(
+        "update-progress",
+        &update_progress_payload(skill_name, &scope, project_path, "installing"),
+    );
     let per_agent_results = install_skill_to_agents(
         &skill.path, &skill.name, &target_agents,
         &install_scope, project_path, &install_mode,
@@ -355,10 +372,10 @@ async fn update_skill_single(
         .collect();
 
     // 10. 更新 lock 文件（获取新的 hash）
-    let _ = app.emit("update-progress", &UpdateProgress {
-        skill_name: skill_name.to_string(),
-        phase: "writing_lock".to_string(),
-    });
+    let _ = app.emit(
+        "update-progress",
+        &update_progress_payload(skill_name, &scope, project_path, "writing_lock"),
+    );
     let new_hash = if entry_source_type == "github" {
         fetch_skill_folder_hash(
             &entry_source,
@@ -556,10 +573,10 @@ async fn update_skills_batch_inner(
         };
 
         // emit cloning progress for first skill in group
-        let _ = app.emit("update-progress", &UpdateProgress {
-            skill_name: group[0].name.clone(),
-            phase: "cloning".to_string(),
-        });
+        let _ = app.emit(
+            "update-progress",
+            &update_progress_payload(&group[0].name, &scope, project_path, "cloning"),
+        );
 
         let app_clone = app.clone();
         let clone_result = match clone_repo_with_progress(
@@ -611,10 +628,10 @@ async fn update_skills_batch_inner(
         for entry in group {
             let mut warnings = Vec::new();
 
-            let _ = app.emit("update-progress", &UpdateProgress {
-                skill_name: entry.name.clone(),
-                phase: "installing".to_string(),
-            });
+            let _ = app.emit(
+                "update-progress",
+                &update_progress_payload(&entry.name, &scope, project_path, "installing"),
+            );
 
             let skill = match discovered.iter().find(|s| s.name == entry.name) {
                 Some(s) => s,
@@ -668,10 +685,10 @@ async fn update_skills_batch_inner(
                 .collect();
 
             // write lock
-            let _ = app.emit("update-progress", &UpdateProgress {
-                skill_name: entry.name.clone(),
-                phase: "writing_lock".to_string(),
-            });
+            let _ = app.emit(
+                "update-progress",
+                &update_progress_payload(&entry.name, &scope, project_path, "writing_lock"),
+            );
             let new_hash = if entry.source_type == "github" {
                 fetch_skill_folder_hash(
                     &entry.source,

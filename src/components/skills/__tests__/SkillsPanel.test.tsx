@@ -32,7 +32,7 @@ const mocks = vi.hoisted(() => ({
   skillDetailState: {
     selectSkill: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     deselectSkill: vi.fn(),
-    selectedSkill: {
+    selectedSkillRef: {
       name: 'brainstorming',
       scope: 'global' as const,
     },
@@ -113,7 +113,7 @@ describe('SkillsPanel', () => {
     mocks.skillsDataState.fetchAuditForSkills.mockClear();
     mocks.skillDetailState.selectSkill.mockClear();
     mocks.skillDetailState.deselectSkill.mockClear();
-    mocks.skillDetailState.selectedSkill = {
+    mocks.skillDetailState.selectedSkillRef = {
       name: 'brainstorming',
       scope: 'global',
     };

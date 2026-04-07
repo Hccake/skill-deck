@@ -1,16 +1,17 @@
 // src/pages/SkillsPage.tsx
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useGroupRef } from 'react-resizable-panels';
 import { useContextStore } from '@/stores/context';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
+import { findSkillByIdentity, getSkillIdentityKey } from '@/lib/skills/identity';
 import { ContextSidebar, SkillsPanel, SkillDetailPanel } from '@/components/skills';
 import { ManageAgentsDialog } from '@/components/skills/ManageAgentsDialog';
 import { CopyToProjectDialog } from '@/components/skills/CopyToProjectDialog';
 import { checkSkillInProjects } from '@/hooks/useTauriApi';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import type { SkillScope } from '@/bindings';
+import type { InstalledSkill, SkillScope } from '@/bindings';
 
 const SPLIT_VIEW_LAYOUT = {
   'skills-list-panel': 22,
@@ -24,12 +25,17 @@ const LIST_VIEW_LAYOUT = {
 export function SkillsPage() {
   const selectedContext = useContextStore((s) => s.selectedContext);
 
-  const selectedSkill = useSkillDetailStore((s) => s.selectedSkill);
+  const globalSkills = useSkillsDataStore((s) => s.globalSkills);
+  const projectSkills = useSkillsDataStore((s) => s.projectSkills);
+  const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
   const skillContent = useSkillDetailStore((s) => s.skillContent);
   const loadingContent = useSkillDetailStore((s) => s.loadingContent);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const reloadContent = useSkillDetailStore((s) => s.reloadContent);
+  const checkingUpdateScopes = useSkillsDataStore((s) => s.checkingUpdateScopes);
+  const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const storeUpdateSkill = useSkillsDataStore((s) => s.updateSkill);
+  const updatingSkills = useSkillsDataStore((s) => s.updatingSkills);
   const openDelete = useSkillDialogStore((s) => s.openDelete);
   const allAgents = useSkillsDataStore((s) => s.allAgents);
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
@@ -43,14 +49,35 @@ export function SkillsPage() {
   const executeCopy = useSkillDialogStore((s) => s.executeCopy);
   const projects = useContextStore((s) => s.projects);
   const layoutRef = useGroupRef();
+  const previousContextRef = useRef(selectedContext);
+
+  const selectedSkill = useMemo(
+    () => findSkillByIdentity(selectedSkillRef, globalSkills, projectSkills, selectedContext),
+    [globalSkills, projectSkills, selectedContext, selectedSkillRef]
+  );
   const previousSplitViewRef = useRef(Boolean(selectedSkill));
 
   const agentDisplayNames = useMemo(
     () => new Map(allAgents.map((a) => [a.id, a.name])),
     [allAgents]
   );
+  const selectedSkillUpdateStatus = selectedSkillRef
+    ? updatingSkills.get(getSkillIdentityKey(selectedSkillRef))
+    : undefined;
+  const selectedSkillCheckScope = selectedSkill?.scope === 'project' ? selectedContext : 'global';
+  const isCheckingSelectedSkillUpdates = selectedSkill
+    ? checkingUpdateScopes.has(selectedSkillCheckScope)
+    : false;
 
-  const handleDetailDelete = useCallback((skill: typeof selectedSkill & {}) => {
+  useEffect(() => {
+    const contextChanged = previousContextRef.current !== selectedContext;
+    previousContextRef.current = selectedContext;
+
+    if (contextChanged || !selectedSkillRef || selectedSkill) return;
+    deselectSkill();
+  }, [deselectSkill, selectedContext, selectedSkill, selectedSkillRef]);
+
+  const handleDetailDelete = useCallback((skill: InstalledSkill) => {
     if (skill.scope === 'project') {
       openDelete(skill, 'project', selectedContext);
     } else {
@@ -62,12 +89,17 @@ export function SkillsPage() {
     storeUpdateSkill(name, scope);
   }, [storeUpdateSkill]);
 
-  const handleManageAgents = useCallback((skill: typeof selectedSkill & {}) => {
+  const handleManageAgents = useCallback((skill: InstalledSkill) => {
     const scope = skill.scope;
     openManageAgents(skill, scope);
   }, [openManageAgents]);
 
-  const handleCopyToProject = useCallback((skill: typeof selectedSkill & {}) => {
+  const handleDetailCheckUpdates = useCallback(() => {
+    if (!selectedSkill) return Promise.resolve(false);
+    return forceCheckUpdates(selectedSkill.scope);
+  }, [forceCheckUpdates, selectedSkill]);
+
+  const handleCopyToProject = useCallback((skill: InstalledSkill) => {
     openCopyToProject(skill);
   }, [openCopyToProject]);
 
@@ -140,11 +172,16 @@ export function SkillsPage() {
                 className="bg-surface relative"
               >
                 <SkillDetailPanel
+                  key={selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : `${selectedSkill.scope}:${selectedSkill.name}`}
                   skill={selectedSkill}
                   content={skillContent}
                   loading={loadingContent}
                   agentDisplayNames={agentDisplayNames}
+                  updateStatus={selectedSkillUpdateStatus}
+                  isCheckingUpdates={isCheckingSelectedSkillUpdates}
+                  projectPath={selectedSkill.scope === 'project' ? selectedContext : undefined}
                   onClose={deselectSkill}
+                  onCheckUpdates={handleDetailCheckUpdates}
                   onUpdate={handleDetailUpdate}
                   onDelete={handleDetailDelete}
                   onRetry={reloadContent}

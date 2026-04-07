@@ -17,9 +17,47 @@ import {
   updateSkill as apiUpdateSkill,
   updateSkillsBatch as apiUpdateSkillsBatch,
   checkSkillAudit,
-  readSkillContent as apiReadSkillContent,
 } from '@/hooks/useTauriApi';
+import { getSkillIdentity, getSkillIdentityKey, isSameSkillIdentity } from '@/lib/skills/identity';
 import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData } from '@/bindings';
+
+type UpdateCheckResult =
+  | { ok: true; updates: SkillUpdateInfo[] }
+  | { ok: false };
+
+function clearLocalUpdateFlags(
+  skills: InstalledSkill[],
+  scope: SkillScope,
+  skillNames: Set<string>,
+): InstalledSkill[] {
+  let changed = false;
+  const nextSkills = skills.map((skill) => {
+    if (skill.scope !== scope || !skillNames.has(skill.name) || !skill.hasUpdate) {
+      return skill;
+    }
+    changed = true;
+    return {
+      ...skill,
+      hasUpdate: false,
+    };
+  });
+
+  return changed ? nextSkills : skills;
+}
+
+async function checkUpdatesSafely(
+  scope: SkillScope,
+  projectPath?: string,
+): Promise<UpdateCheckResult> {
+  try {
+    return {
+      ok: true,
+      updates: await checkUpdates(scope, projectPath),
+    };
+  } catch {
+    return { ok: false };
+  }
+}
 
 /** 内部共享加载逻辑 — fetchSkills 和 syncSkills 的唯一数据源 */
 async function loadSkillsData(
@@ -90,7 +128,7 @@ interface SkillsDataState {
   fetchSkills: () => Promise<void>;
   syncSkills: () => Promise<void>;
   syncUpdates: () => Promise<void>;
-  forceCheckUpdates: (scope: SkillScope) => Promise<void>;
+  forceCheckUpdates: (scope: SkillScope) => Promise<boolean>;
   fetchAuditForSkills: (skills: InstalledSkill[]) => Promise<void>;
   updateSkill: (skillName: string, scope: SkillScope) => Promise<void>;
   updateAllInSection: (scope: SkillScope) => Promise<void>;
@@ -157,30 +195,42 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
     try {
       if (isProjectSelected) {
-        const [globalUpdates, projectUpdates] = await Promise.all([
+        const [globalResult, projectResult] = await Promise.all([
           globalFresh
-            ? globalCache!.results
-            : checkUpdates('global').catch(() => [] as SkillUpdateInfo[]),
+            ? Promise.resolve({ ok: true, updates: globalCache!.results } satisfies UpdateCheckResult)
+            : checkUpdatesSafely('global'),
           projectFresh
-            ? projectCache!.results
-            : checkUpdates('project', contextAtStart).catch(() => [] as SkillUpdateInfo[]),
+            ? Promise.resolve({ ok: true, updates: projectCache!.results } satisfies UpdateCheckResult)
+            : checkUpdatesSafely('project', contextAtStart),
         ]);
         if (useContextStore.getState().selectedContext !== contextAtStart) return;
-        if (!globalFresh) updateInfoCache.set('global', { results: globalUpdates, checkedAt: now });
-        if (!projectFresh) updateInfoCache.set(contextAtStart, { results: projectUpdates, checkedAt: now });
+        if (!globalFresh && globalResult.ok) {
+          updateInfoCache.set('global', { results: globalResult.updates, checkedAt: now });
+        }
+        if (!projectFresh && projectResult.ok) {
+          updateInfoCache.set(contextAtStart, { results: projectResult.updates, checkedAt: now });
+        }
         set((state) => ({
-          globalSkills: sortSkills(mergeUpdateInfo(state.globalSkills, globalUpdates)),
-          projectSkills: sortSkills(mergeUpdateInfo(state.projectSkills, projectUpdates)),
+          globalSkills: globalResult.ok
+            ? sortSkills(mergeUpdateInfo(state.globalSkills, globalResult.updates))
+            : state.globalSkills,
+          projectSkills: projectResult.ok
+            ? sortSkills(mergeUpdateInfo(state.projectSkills, projectResult.updates))
+            : state.projectSkills,
         }));
       } else {
-        const globalUpdates = globalFresh
-          ? globalCache!.results
-          : await checkUpdates('global').catch(() => [] as SkillUpdateInfo[]);
+        const globalResult = globalFresh
+          ? ({ ok: true, updates: globalCache!.results } satisfies UpdateCheckResult)
+          : await checkUpdatesSafely('global');
         if (useContextStore.getState().selectedContext !== contextAtStart) return;
-        if (!globalFresh) updateInfoCache.set('global', { results: globalUpdates, checkedAt: now });
-        set((state) => ({
-          globalSkills: sortSkills(mergeUpdateInfo(state.globalSkills, globalUpdates)),
-        }));
+        if (!globalFresh && globalResult.ok) {
+          updateInfoCache.set('global', { results: globalResult.updates, checkedAt: now });
+        }
+        if (globalResult.ok) {
+          set((state) => ({
+            globalSkills: sortSkills(mergeUpdateInfo(state.globalSkills, globalResult.updates)),
+          }));
+        }
       }
     } catch {
       // 静默失败 — 更新检测是非关键路径
@@ -196,7 +246,8 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   forceCheckUpdates: async (scope) => {
     const { selectedContext } = useContextStore.getState();
     const isGlobal = scope === 'global';
-    const cacheKey = isGlobal ? 'global' : selectedContext;
+    const contextAtStart = selectedContext;
+    const cacheKey = isGlobal ? 'global' : contextAtStart;
 
     set((state) => {
       const next = new Set(state.checkingUpdateScopes);
@@ -205,8 +256,8 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
 
     try {
-      const projectPath = isGlobal ? undefined : selectedContext;
-      const updates = await checkUpdates(scope, projectPath).catch(() => [] as SkillUpdateInfo[]);
+      const projectPath = isGlobal ? undefined : contextAtStart;
+      const updates = await checkUpdates(scope, projectPath);
       const now = Date.now();
       updateInfoCache.set(cacheKey, { results: updates, checkedAt: now });
 
@@ -214,13 +265,17 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         set((state) => ({
           globalSkills: sortSkills(mergeUpdateInfo(state.globalSkills, updates)),
         }));
-      } else {
+      } else if (useContextStore.getState().selectedContext === contextAtStart) {
         set((state) => ({
           projectSkills: sortSkills(mergeUpdateInfo(state.projectSkills, updates)),
         }));
       }
-    } catch {
-      // 静默失败
+      return true;
+    } catch (e) {
+      toast.error(t('skills.checkUpdatesError', {
+        error: e instanceof Error ? e.message : String(e),
+      }));
+      return false;
     } finally {
       set((state) => {
         const next = new Set(state.checkingUpdateScopes);
@@ -260,14 +315,18 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
   updateSkill: async (skillName, scope) => {
     const { updatingSkills } = get();
-    if (updatingSkills.has(skillName)) return;
-
     const { selectedContext } = useContextStore.getState();
     const projectPath = scope === 'project' ? selectedContext : undefined;
+    const skillIdentity = getSkillIdentity(
+      { name: skillName, scope } as Pick<InstalledSkill, 'name' | 'scope'>,
+      projectPath
+    );
+    const identityKey = getSkillIdentityKey(skillIdentity);
+    if (updatingSkills.has(identityKey)) return;
 
     set((state) => {
       const next = new Map(state.updatingSkills);
-      next.set(skillName, 'updating');
+      next.set(identityKey, 'updating');
       return { updatingSkills: next };
     });
 
@@ -293,47 +352,54 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         toast.warning(t('skills.updateWarning', { name: skillName, count: item.warnings.length, detail: item.warnings[0] }));
       }
 
-      clearUpdateCacheForSkill(skillName, scope);
-
-      // Refresh detail panel content if this skill is selected
-      const { useSkillDetailStore } = await import('./skill-detail');
-      const detailState = useSkillDetailStore.getState();
-      if (detailState.selectedSkill?.name === skillName && detailState.selectedSkill?.scope === scope) {
-        apiReadSkillContent(detailState.selectedSkill.canonicalPath)
-          .then((content) => {
-            if (useSkillDetailStore.getState().selectedSkill?.name === skillName) {
-              useSkillDetailStore.setState({ skillContent: content });
-            }
-          })
-          .catch(() => {});
+      const shouldClearUpdateFlag = !item || item.status === 'success' || item.status === 'partial';
+      if (shouldClearUpdateFlag) {
+        clearUpdateCacheForSkill(skillName, scope, projectPath);
+        set((state) => ({
+          globalSkills: scope === 'global'
+            ? clearLocalUpdateFlags(state.globalSkills, scope, new Set([skillName]))
+            : state.globalSkills,
+          projectSkills: scope === 'project'
+            ? clearLocalUpdateFlags(state.projectSkills, scope, new Set([skillName]))
+            : state.projectSkills,
+        }));
       }
 
       set((state) => {
         const next = new Map(state.updatingSkills);
-        next.set(skillName, 'done');
+        next.set(identityKey, 'done');
         return { updatingSkills: next };
       });
       setTimeout(() => {
         set((state) => {
           const next = new Map(state.updatingSkills);
-          next.delete(skillName);
+          next.delete(identityKey);
           return { updatingSkills: next };
         });
       }, 800);
 
+      const { useSkillDetailStore } = await import('./skill-detail');
+
       // fire-and-forget: 不阻塞等待列表刷新 (async-defer-await)
-      get().syncSkills();
+      get().syncSkills().finally(() => {
+        if (
+          shouldClearUpdateFlag &&
+          isSameSkillIdentity(useSkillDetailStore.getState().selectedSkillRef, skillIdentity)
+        ) {
+          void useSkillDetailStore.getState().reloadContent();
+        }
+      });
     } catch (e) {
       toast.error(t('skills.updateError', { name: skillName, error: e instanceof Error ? e.message : String(e) }));
       set((state) => {
         const next = new Map(state.updatingSkills);
-        next.set(skillName, 'failed');
+        next.set(identityKey, 'failed');
         return { updatingSkills: next };
       });
       setTimeout(() => {
         set((state) => {
           const next = new Map(state.updatingSkills);
-          next.delete(skillName);
+          next.delete(identityKey);
           return { updatingSkills: next };
         });
       }, 2000);
@@ -346,10 +412,15 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     const updatable = skills.filter((s) => s.hasUpdate);
     if (updatable.length === 0) return;
 
+    const { selectedContext } = useContextStore.getState();
+    const projectPath = scope === 'project' ? selectedContext : undefined;
+
     set({ updateAllCancelled: false });
     set((state) => {
       const next = new Map(state.updatingSkills);
-      for (const s of updatable) { next.set(s.name, 'queued'); }
+      for (const s of updatable) {
+        next.set(getSkillIdentityKey({ name: s.name, scope: s.scope, projectPath }), 'queued');
+      }
       return { updatingSkills: next };
     });
 
@@ -364,8 +435,6 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       }
     }
 
-    const { selectedContext } = useContextStore.getState();
-    const projectPath = scope === 'project' ? selectedContext : undefined;
     const results: { name: string; success: boolean }[] = [];
 
     const groupPromises = Array.from(bySource.entries()).map(async ([, group]) => {
@@ -374,7 +443,8 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       set((state) => {
         const next = new Map(state.updatingSkills);
         for (const s of group) {
-          if (next.get(s.name) === 'queued') next.set(s.name, 'updating');
+          const identityKey = getSkillIdentityKey({ name: s.name, scope: s.scope, projectPath });
+          if (next.get(identityKey) === 'queued') next.set(identityKey, 'updating');
         }
         return { updatingSkills: next };
       });
@@ -385,24 +455,42 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
           names: group.map((s) => s.name),
           projectPath,
         });
+        const successfulSkillNames = new Set<string>();
 
         for (const skill of group) {
           const item = response.results.find((r) => r.name === skill.name);
           const success = !item || item.status === 'success' || item.status === 'partial';
           results.push({ name: skill.name, success });
-          if (success) clearUpdateCacheForSkill(skill.name, scope);
+          if (success) {
+            successfulSkillNames.add(skill.name);
+            clearUpdateCacheForSkill(skill.name, scope, projectPath);
+          }
           set((state) => {
             const next = new Map(state.updatingSkills);
-            next.set(skill.name, success ? 'done' : 'failed');
+            next.set(
+              getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }),
+              success ? 'done' : 'failed'
+            );
             return { updatingSkills: next };
           });
+        }
+
+        if (successfulSkillNames.size > 0) {
+          set((state) => ({
+            globalSkills: scope === 'global'
+              ? clearLocalUpdateFlags(state.globalSkills, scope, successfulSkillNames)
+              : state.globalSkills,
+            projectSkills: scope === 'project'
+              ? clearLocalUpdateFlags(state.projectSkills, scope, successfulSkillNames)
+              : state.projectSkills,
+          }));
         }
       } catch {
         for (const skill of group) {
           results.push({ name: skill.name, success: false });
           set((state) => {
             const next = new Map(state.updatingSkills);
-            next.set(skill.name, 'failed');
+            next.set(getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }), 'failed');
             return { updatingSkills: next };
           });
         }

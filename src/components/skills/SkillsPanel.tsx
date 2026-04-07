@@ -59,7 +59,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const fetchAuditForSkills = useSkillsDataStore((s) => s.fetchAuditForSkills);
   const selectSkill = useSkillDetailStore((s) => s.selectSkill);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
-  const selectedSkill = useSkillDetailStore((s) => s.selectedSkill);
+  const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
   const openDelete = useSkillDialogStore((s) => s.openDelete);
   const openAdd = useSkillDialogStore((s) => s.openAdd);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
@@ -92,13 +92,13 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
 
   // Esc 键关闭详情面板
   useEffect(() => {
-    if (!selectedSkill) return;
+    if (!selectedSkillRef) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') deselectSkill();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSkill, deselectSkill]);
+  }, [selectedSkillRef, deselectSkill]);
 
   // ③b 审计数据 — skills 变化后获取（仅对有 source 的 skills 请求）
   useEffect(() => {
@@ -175,11 +175,11 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }, [openAdd]);
 
   const handleCheckProjectUpdates = useCallback(() => {
-    forceCheckUpdates('project');
+    return forceCheckUpdates('project');
   }, [forceCheckUpdates]);
 
   const handleCheckGlobalUpdates = useCallback(() => {
-    forceCheckUpdates('global');
+    return forceCheckUpdates('global');
   }, [forceCheckUpdates]);
 
   // 缓存 emptyState JSX (rerender-memo-with-default-value)
@@ -254,10 +254,10 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
         <CompactSkillList
           globalSkills={filteredGlobalSkills}
           projectSkills={filteredProjectSkills}
-          selectedSkillName={selectedSkill?.name ?? null}
-          selectedSkillScope={selectedSkill?.scope ?? null}
+          selectedSkillRef={selectedSkillRef}
           isProjectSelected={isProjectSelected}
           projectTitle={t('skills.projectSkills')}
+          projectPath={selectedContext}
           pathExists={projectPathExists}
           onAddProject={handleAddProject}
           onAddGlobal={handleAddGlobal}

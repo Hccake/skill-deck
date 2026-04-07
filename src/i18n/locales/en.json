@@ -152,6 +152,7 @@
     "updateDone": "Updated",
     "updateFailed": "Failed",
     "checkUpdates": "Check Updates",
+    "checkUpdatesError": "Failed to check updates: {{error}}",
     "discover": {
       "searchPlaceholder": "Search skills...",
       "minCharsHint": "Type keywords to search online skills",

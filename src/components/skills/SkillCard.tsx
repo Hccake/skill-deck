@@ -2,6 +2,7 @@
 import { useEffect, useRef, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
+import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { cn, formatTime, toTitleCase } from '@/lib/utils';
 import {
   ArrowUpCircle,
@@ -53,6 +54,8 @@ interface SkillCardProps {
   hasConflict?: boolean;
   /** 更新状态（来自 updatingSkills Map） */
   updateStatus?: 'queued' | 'updating' | 'done' | 'failed';
+  /** 当前 project scope 的项目路径 */
+  projectPath?: string;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentType, string>;
   /** 安全审计风险等级 */
@@ -70,6 +73,7 @@ export const SkillCard = memo(function SkillCard({
   displayScope,
   hasConflict = false,
   updateStatus,
+  projectPath,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
   riskLevel,
   onClick,
@@ -79,6 +83,8 @@ export const SkillCard = memo(function SkillCard({
   onManageAgents,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
+  const skillName = skill.name;
+  const skillScope = skill.scope;
 
   // React1: useRef 替代 useState — rerender-use-ref-transient-values
   // updatePhase 频繁更新（Tauri 事件驱动），使用 ref 避免不必要的 re-render
@@ -88,8 +94,13 @@ export const SkillCard = memo(function SkillCard({
   useEffect(() => {
     if (updateStatus !== 'updating') return;
 
-    const unlisten = listen<{ skillName: string; phase: string }>('update-progress', (event) => {
-      if (event.payload.skillName === skill.name) {
+    const currentIdentity = getSkillIdentity({ name: skillName, scope: skillScope }, projectPath);
+    const unlisten = listen<{ skillName: string; scope: SkillScope; projectPath?: string | null; phase: string }>('update-progress', (event) => {
+      if (isSameSkillIdentity(currentIdentity, {
+        name: event.payload.skillName,
+        scope: event.payload.scope,
+        projectPath: event.payload.projectPath,
+      })) {
         const phase = event.payload.phase;
         // 直接操作 DOM — 不触发 React re-render
         if (progressBarRef.current) {
@@ -104,7 +115,7 @@ export const SkillCard = memo(function SkillCard({
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [updateStatus, skill.name, t]);
+  }, [projectPath, skillName, skillScope, t, updateStatus]);
 
   const ScopeIcon = displayScope === 'global' ? Globe : Folder;
   const scopeTooltip = t(`skills.scopeIcon.${displayScope}`);

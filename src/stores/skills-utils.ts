@@ -1,6 +1,5 @@
 // src/stores/skills-utils.ts
 import i18n from '@/i18n';
-import { useContextStore } from './context';
 import type { InstalledSkill, SkillScope, SkillUpdateInfo } from '@/bindings';
 
 /** 按名称排序 skills，保证展示顺序稳定 */
@@ -22,10 +21,9 @@ export const updateInfoCache = new Map<string, { results: SkillUpdateInfo[]; che
 export const UPDATE_CHECK_TTL = 5 * 60 * 1000; // 5 分钟
 
 /** 清除缓存中指定 skill 的 hasUpdate 标记 — 更新成功后调用，防止 syncSkills 恢复旧标记 */
-export function clearUpdateCacheForSkill(skillName: string, scope: SkillScope) {
-  const cacheKey = scope === 'project'
-    ? useContextStore.getState().selectedContext
-    : 'global';
+export function clearUpdateCacheForSkill(skillName: string, scope: SkillScope, projectPath?: string) {
+  const cacheKey = scope === 'project' ? projectPath : 'global';
+  if (!cacheKey) return;
   const cached = updateInfoCache.get(cacheKey);
   if (cached) {
     cached.results = cached.results.map((r) =>

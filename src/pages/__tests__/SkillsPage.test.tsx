@@ -2,9 +2,10 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { SkillsPage } from '../SkillsPage';
+import type { InstalledSkill } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -18,11 +19,16 @@ const mocks = vi.hoisted(() => ({
     projects: [] as string[],
   },
   skillsDataState: {
+    globalSkills: [] as InstalledSkill[],
+    projectSkills: [] as InstalledSkill[],
     allAgents: [] as Array<{ id: string; name: string }>,
+    checkingUpdateScopes: new Set<string>(),
+    updatingSkills: new Map<string, 'queued' | 'updating' | 'done' | 'failed'>(),
+    forceCheckUpdates: vi.fn(),
     updateSkill: vi.fn(),
   },
   skillDetailState: {
-    selectedSkill: null as null | { name: string; scope: 'global' | 'project' },
+    selectedSkillRef: null as null | { name: string; scope: 'global' | 'project'; projectPath?: string | null },
     skillContent: null as string | null,
     loadingContent: false,
     deselectSkill: vi.fn(),
@@ -49,6 +55,19 @@ const mocks = vi.hoisted(() => ({
   },
   skillsPanelLifecycle: [] as string[],
 }));
+
+function makeSkill(name: string, overrides: Partial<InstalledSkill> = {}): InstalledSkill {
+  return {
+    name,
+    description: `${name} description`,
+    path: `/skills/${name}`,
+    canonicalPath: `/canonical/${name}`,
+    scope: 'global',
+    agents: [],
+    hasUpdate: false,
+    ...overrides,
+  };
+}
 
 vi.mock('@/stores/context', () => ({
   useContextStore: (selector: (state: typeof mocks.contextState) => unknown) => selector(mocks.contextState),
@@ -77,7 +96,27 @@ vi.mock('@/components/skills', () => ({
     }, []);
     return <div data-compact={compact ? 'true' : 'false'}>skills-panel</div>;
   },
-  SkillDetailPanel: () => <div>skill-detail-panel</div>,
+  SkillDetailPanel: ({
+    skill,
+    updateStatus,
+    isCheckingUpdates,
+    onCheckUpdates,
+  }: {
+    skill: InstalledSkill;
+    updateStatus?: string;
+    isCheckingUpdates?: boolean;
+    onCheckUpdates?: () => void;
+  }) => (
+    <button
+      type="button"
+      data-skill-name={skill.name}
+      data-update-status={updateStatus ?? 'idle'}
+      data-checking-updates={isCheckingUpdates ? 'true' : 'false'}
+      onClick={onCheckUpdates}
+    >
+      skill-detail-panel
+    </button>
+  ),
 }));
 
 vi.mock('@/components/ui/resizable', () => ({
@@ -109,9 +148,14 @@ vi.mock('@/components/ui/resizable', () => ({
 describe('SkillsPage', () => {
   beforeEach(() => {
     mocks.contextState.selectedContext = 'global';
+    mocks.skillsDataState.globalSkills = [];
+    mocks.skillsDataState.projectSkills = [];
     mocks.skillsDataState.allAgents = [];
+    mocks.skillsDataState.checkingUpdateScopes = new Set();
+    mocks.skillsDataState.updatingSkills = new Map();
+    mocks.skillsDataState.forceCheckUpdates.mockReset();
     mocks.skillsDataState.updateSkill.mockReset();
-    mocks.skillDetailState.selectedSkill = null;
+    mocks.skillDetailState.selectedSkillRef = null;
     mocks.skillDetailState.skillContent = null;
     mocks.skillDetailState.loadingContent = false;
     mocks.skillDetailState.deselectSkill.mockReset();
@@ -127,10 +171,11 @@ describe('SkillsPage', () => {
   });
 
   it('uses percentage-based panel sizes when a skill detail is open', () => {
-    mocks.skillDetailState.selectedSkill = {
+    mocks.skillDetailState.selectedSkillRef = {
       name: 'test-skill',
       scope: 'global',
     };
+    mocks.skillsDataState.globalSkills = [makeSkill('test-skill')];
 
     render(<SkillsPage />);
 
@@ -168,10 +213,11 @@ describe('SkillsPage', () => {
       'skill-detail-panel': 78,
     });
 
-    mocks.skillDetailState.selectedSkill = {
+    mocks.skillDetailState.selectedSkillRef = {
       name: 'test-skill',
       scope: 'global',
     };
+    mocks.skillsDataState.globalSkills = [makeSkill('test-skill')];
 
     rerender(<SkillsPage />);
 
@@ -193,10 +239,11 @@ describe('SkillsPage', () => {
         'skill-detail-panel': 78,
       });
 
-    mocks.skillDetailState.selectedSkill = {
+    mocks.skillDetailState.selectedSkillRef = {
       name: 'test-skill',
       scope: 'global',
     };
+    mocks.skillsDataState.globalSkills = [makeSkill('test-skill')];
 
     rerender(<SkillsPage />);
 
@@ -207,6 +254,65 @@ describe('SkillsPage', () => {
         'skills-list-panel': 22,
         'skill-detail-panel': 78,
       });
+    });
+  });
+
+  it('passes identity-keyed update status to the detail panel', () => {
+    mocks.skillDetailState.selectedSkillRef = {
+      name: 'toolkit',
+      scope: 'global',
+    };
+    mocks.skillsDataState.globalSkills = [makeSkill('toolkit')];
+    mocks.skillsDataState.updatingSkills = new Map([['global:toolkit', 'updating']]);
+
+    const { getByText } = render(<SkillsPage />);
+
+    expect(getByText('skill-detail-panel').getAttribute('data-update-status')).toBe('updating');
+  });
+
+  it('wires detail check-updates to the selected skill scope', () => {
+    mocks.skillDetailState.selectedSkillRef = {
+      name: 'toolkit',
+      scope: 'global',
+    };
+    mocks.skillsDataState.globalSkills = [makeSkill('toolkit')];
+    mocks.skillsDataState.checkingUpdateScopes = new Set(['global']);
+
+    const { getByText } = render(<SkillsPage />);
+    const detailButton = getByText('skill-detail-panel');
+
+    expect(detailButton.getAttribute('data-checking-updates')).toBe('true');
+
+    fireEvent.click(detailButton);
+
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith('global');
+  });
+
+  it('derives the selected skill from the shared skills store', () => {
+    mocks.skillDetailState.selectedSkillRef = {
+      name: 'toolkit',
+      scope: 'global',
+    };
+    mocks.skillsDataState.globalSkills = [
+      makeSkill('toolkit', { updatedAt: '2026-04-07T12:00:00.000Z' }),
+    ];
+
+    const { getByText } = render(<SkillsPage />);
+
+    expect(getByText('skill-detail-panel').getAttribute('data-skill-name')).toBe('toolkit');
+  });
+
+  it('deselects a stale skill identity when it no longer resolves in the current context', async () => {
+    mocks.skillDetailState.selectedSkillRef = {
+      name: 'missing-skill',
+      scope: 'global',
+    };
+    mocks.skillsDataState.globalSkills = [];
+
+    render(<SkillsPage />);
+
+    await waitFor(() => {
+      expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);
     });
   });
 });

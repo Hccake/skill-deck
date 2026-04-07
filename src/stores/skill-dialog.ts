@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import { useContextStore } from './context';
 import { t, type DeleteTarget, type AddDialogPrefill } from './skills-utils';
+import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import {
   removeSkill as apiRemoveSkill,
   getSkillAgentDetails as apiGetAgentDetails,
@@ -21,6 +22,7 @@ interface SkillDialogState {
   // Manage agents dialog
   manageAgentsSkill: InstalledSkill | null;
   manageAgentsScope: SkillScope;
+  manageAgentsProjectPath?: string;
 
   // Copy to project dialog
   copySkill: InstalledSkill | null;
@@ -45,6 +47,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   loadingAgentDetails: false,
   manageAgentsSkill: null,
   manageAgentsScope: 'global' as SkillScope,
+  manageAgentsProjectPath: undefined,
   copySkill: null,
 
   openDelete: (skill, scope, projectPath) => {
@@ -81,7 +84,11 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       // Auto-deselect if the deleted skill was selected
       const { useSkillDetailStore } = await import('./skill-detail');
       const detailState = useSkillDetailStore.getState();
-      if (detailState.selectedSkill && detailState.selectedSkill.name === deleteTarget.skill.name) {
+      const deletedSkillIdentity = getSkillIdentity(
+        deleteTarget.skill,
+        deleteTarget.scope === 'project' ? deleteTarget.projectPath : undefined
+      );
+      if (isSameSkillIdentity(detailState.selectedSkillRef, deletedSkillIdentity)) {
         detailState.deselectSkill();
       }
 
@@ -124,18 +131,19 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   },
 
   openManageAgents: (skill, scope) => {
-    set({ manageAgentsSkill: skill, manageAgentsScope: scope });
+    const manageAgentsProjectPath =
+      scope === 'project' ? useContextStore.getState().selectedContext : undefined;
+    set({ manageAgentsSkill: skill, manageAgentsScope: scope, manageAgentsProjectPath });
   },
 
-  closeManageAgents: () => set({ manageAgentsSkill: null }),
+  closeManageAgents: () => set({ manageAgentsSkill: null, manageAgentsProjectPath: undefined }),
 
   saveAgentChanges: async (addAgents, removeAgents) => {
-    const { manageAgentsSkill, manageAgentsScope } = get();
+    const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath } = get();
     if (!manageAgentsSkill) return;
 
-    const { selectedContext } = useContextStore.getState();
     const scope = manageAgentsScope === 'project' ? 'project' : 'global';
-    const projectPath = scope === 'project' ? selectedContext : undefined;
+    const projectPath = scope === 'project' ? manageAgentsProjectPath : undefined;
 
     try {
       const result = await apiManageSkillAgents({
@@ -152,22 +160,11 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
         toast.success(t('skills.manageAgents.success'));
       }
 
-      set({ manageAgentsSkill: null });
+      set({ manageAgentsSkill: null, manageAgentsProjectPath: undefined });
 
       // Refresh skills list and detail panel
       const { useSkillsDataStore } = await import('./skills-data');
       await useSkillsDataStore.getState().syncSkills();
-
-      const { useSkillDetailStore } = await import('./skill-detail');
-      const { selectedSkill } = useSkillDetailStore.getState();
-      if (selectedSkill) {
-        const { globalSkills, projectSkills } = useSkillsDataStore.getState();
-        const allSkills = [...globalSkills, ...projectSkills];
-        const updated = allSkills.find((s) => s.name === selectedSkill.name && s.scope === selectedSkill.scope);
-        if (updated) {
-          useSkillDetailStore.setState({ selectedSkill: updated });
-        }
-      }
     } catch (e) {
       console.error('[saveAgentChanges] Failed:', e);
       toast.error(String(e));

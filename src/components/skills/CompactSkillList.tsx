@@ -3,16 +3,22 @@ import { useTranslation } from 'react-i18next';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  getSkillIdentity,
+  getSkillIdentityKey,
+  isSameSkillIdentity,
+  type SkillIdentity,
+} from '@/lib/skills/identity';
 import { CompactSkillItem } from './CompactSkillItem';
-import type { InstalledSkill, SkillScope } from '@/bindings';
+import type { InstalledSkill } from '@/bindings';
 
 interface CompactSkillListProps {
   globalSkills: InstalledSkill[];
   projectSkills: InstalledSkill[];
-  selectedSkillName: string | null;
-  selectedSkillScope: SkillScope | null;
+  selectedSkillRef: SkillIdentity | null;
   isProjectSelected: boolean;
   projectTitle: string;
+  projectPath?: string;
   pathExists?: boolean;
   onAddProject?: () => void;
   onAddGlobal?: () => void;
@@ -22,10 +28,10 @@ interface CompactSkillListProps {
 export const CompactSkillList = memo(function CompactSkillList({
   globalSkills,
   projectSkills,
-  selectedSkillName,
-  selectedSkillScope,
+  selectedSkillRef,
   isProjectSelected,
   projectTitle,
+  projectPath,
   pathExists = true,
   onAddProject,
   onAddGlobal,
@@ -53,9 +59,9 @@ export const CompactSkillList = memo(function CompactSkillList({
               </div>
               {projectSkills.map((skill) => (
                 <CompactSkillItem
-                  key={`project:${skill.name}`}
+                  key={getSkillIdentityKey(getSkillIdentity(skill, projectPath))}
                   skill={skill}
-                  isSelected={selectedSkillName === skill.name && selectedSkillScope === 'project'}
+                  isSelected={isSameSkillIdentity(selectedSkillRef, getSkillIdentity(skill, projectPath))}
                   onClick={onSkillClick}
                 />
               ))}
@@ -78,9 +84,9 @@ export const CompactSkillList = memo(function CompactSkillList({
               </div>
               {globalSkills.map((skill) => (
                 <CompactSkillItem
-                  key={`global:${skill.name}`}
+                  key={getSkillIdentityKey(getSkillIdentity(skill))}
                   skill={skill}
-                  isSelected={selectedSkillName === skill.name && selectedSkillScope === 'global'}
+                  isSelected={isSameSkillIdentity(selectedSkillRef, getSkillIdentity(skill))}
                   onClick={onSkillClick}
                 />
               ))}

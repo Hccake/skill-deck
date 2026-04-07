@@ -37,10 +37,10 @@ describe('CompactSkillList', () => {
         <CompactSkillList
           globalSkills={[makeSkill('alpha'), makeSkill('beta')]}
           projectSkills={[]}
-          selectedSkillName="alpha"
-          selectedSkillScope="global"
+          selectedSkillRef={{ name: 'alpha', scope: 'global', projectPath: null }}
           isProjectSelected={false}
           projectTitle="Project Skills"
+          projectPath="global"
           onSkillClick={() => undefined}
         />
       </div>
