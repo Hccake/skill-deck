@@ -168,3 +168,4 @@ Once installed, open the project in the corresponding editor. The Skill will be 
 
 - [vercel-labs/skills](https://github.com/vercel-labs/skills) — The original CLI tool
 - [Tauri](https://tauri.app/) — Cross-platform desktop app framework
+- [Linux.do](https://linux.do/) — Community support and feedback

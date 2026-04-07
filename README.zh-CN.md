@@ -167,3 +167,4 @@ npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 
 - [vercel-labs/skills](https://github.com/vercel-labs/skills) — 原始 CLI 工具
 - [Tauri](https://tauri.app/) — 跨平台桌面应用框架
+- [Linux.do](https://linux.do/) — 社区支持与反馈
