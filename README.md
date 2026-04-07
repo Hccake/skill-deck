@@ -12,8 +12,6 @@
     <img src="https://img.shields.io/badge/skills%20CLI-v1.4.7-green" alt="skills CLI v1.4.7">
   </p>
 
-  <img src="docs/images/screenshot-main.png" alt="Skill Deck Main UI" width="800">
-
   <a href="README.zh-CN.md">中文</a>
 </div>
 
@@ -30,6 +28,45 @@ The goal is simple: make Skills easier to inspect, understand, and apply across 
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/skill_selected.png" alt="Skill detail view" width="900">
+</p>
+<p align="center"><em>Browse installed skills, inspect full details, and quickly check for updates or update skills in one place.</em></p>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/images/skills.png" alt="Skills overview">
+      <br />
+      <em>Global and project skills in a unified view.</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/images/discover.png" alt="Discover page">
+      <br />
+      <em>Discover installable skills with metadata and trust signals.</em>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/images/agent_manage.png" alt="Manage agents">
+      <br />
+      <em>Add or remove agent support without reinstalling.</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/images/copy.png" alt="Copy across projects">
+      <br />
+      <em>Copy project-level skills to other projects quickly.</em>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## ✨ Features
 
 - 🗂 **Unified view** — Browse all installed Skills in one place
@@ -37,6 +74,7 @@ The goal is simple: make Skills easier to inspect, understand, and apply across 
 - 🧠 **Clear visibility** — Understand where each Skill is applied at a glance
 - 🔄 **Multi-editor support** — Auto-detect installed editors (VS Code, Cursor, Windsurf, etc.) and sync Skills across them
 - ✏️ **Agent management** — Add or remove editor support for installed Skills without reinstalling
+- ♻️ **Update detection & upgrade** — Quickly check for available updates and update installed Skills
 - 📦 **Dual install modes** — Choose between Symlink and Copy when installing Skills
 - 🔍 **Discover & install** — Install Skills from GitHub repos or local paths
 - 📋 **Copy across projects** — Quickly copy project-level Skills to other projects with one click

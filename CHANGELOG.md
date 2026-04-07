@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-04-07
+
 ### Added
 
 - **Agent 管理** — 为已安装的 Skill 添加或移除 Agent 支持，无需重新安装；SkillCard 和详情面板均提供入口
@@ -269,6 +271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 深色/浅色主题切换
 - GitHub Actions CI/CD 构建流水线（Windows / macOS / Ubuntu）
 
+[1.1.0]: https://github.com/hccake/skill-deck/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/hccake/skill-deck/compare/v0.11.0...v1.0.0
 [0.11.0]: https://github.com/hccake/skill-deck/compare/v0.10.0...0.11.0
 [0.10.0]: https://github.com/hccake/skill-deck/compare/v0.9.0...0.10.0

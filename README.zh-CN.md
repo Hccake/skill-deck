@@ -12,8 +12,6 @@
     <img src="https://img.shields.io/badge/skills%20CLI-v1.4.7-green" alt="skills CLI v1.4.7">
   </p>
 
-  <img src="docs/images/screenshot-main.png" alt="Skill Deck 主界面" width="800">
-
   <a href="README.md">English</a>
 </div>
 
@@ -30,6 +28,45 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 
 ---
 
+## 界面预览
+
+<p align="center">
+  <img src="docs/images/skill_selected.png" alt="Skill 详情视图" width="900">
+</p>
+<p align="center"><em>在同一界面中浏览已安装 Skills、查看完整详情，并快速检测更新或更新 Skill。</em></p>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/images/skills.png" alt="Skills 总览视图">
+      <br />
+      <em>统一查看全局和项目级 Skills。</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/images/discover.png" alt="发现页">
+      <br />
+      <em>浏览可安装 Skills，并查看元信息与可信信号。</em>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/images/agent_manage.png" alt="Agent 管理功能">
+      <br />
+      <em>无需重新安装即可添加或移除 Agent 支持。</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/images/copy.png" alt="跨项目复制功能">
+      <br />
+      <em>快速将项目级 Skill 复制到其他项目。</em>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## ✨ 特性
 
 - 🗂 **统一视图** — 在一处浏览所有已安装的 Skills
@@ -37,6 +74,7 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 - 🧠 **清晰可见** — 一目了然地了解每个 Skill 的应用位置
 - 🔄 **多编辑器支持** — 自动检测已安装的编辑器（VS Code、Cursor、Windsurf 等），并在多个编辑器间同步 Skills
 - ✏️ **Agent 管理** — 为已安装的 Skill 添加或移除编辑器支持，无需重新安装
+- ♻️ **更新检测与升级** — 快速检查可用更新并更新已安装的 Skill
 - 📦 **双安装模式** — 安装 Skills 时可选择 Symlink（符号链接）或 Copy（文件复制）
 - 🔍 **发现与安装** — 从 GitHub 仓库或本地路径安装 Skills
 - 📋 **跨项目复制** — 一键将项目级 Skill 复制到其他项目
