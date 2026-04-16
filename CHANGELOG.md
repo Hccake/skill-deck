@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-16
+
+### Added
+
+- **GitNexus 项目指引** — 新增 `AGENTS.md`，并在 `CLAUDE.md` 中加入 GitNexus 代码智能工具的使用规范、风险检查流程和索引刷新说明；`.gitignore` 忽略 `.gitnexus` 本地索引目录
+- **Manage Agents 安装模式选择** — 管理已安装 Skill 的 Agent 支持时，可为新增 Agent 选择 Symlink 或 Copy 模式，并在前端弹窗中明确展示两种投放方式
+
+### Fixed
+
+- **Copy 模式保留 canonical 目录** — `copy` 安装不再跳过 `.agents/skills/<skill>`，而是先写入 canonical，再复制到目标 Agent 目录，避免后续管理 Agent 时找不到源目录
+- **Manage Agents 不再静默降级** — 通过 Manage Agents 添加 Agent 时，用户选择 `symlink` 后若链接创建失败会返回明确错误，不再自动 fallback 成 copy
+- **更新流程保留 per-agent 模式** — 单个更新和批量更新改为按 Agent 独立检测并应用原有模式，避免用第一个 Agent 的模式覆盖所有 Agent
+
 ## [1.1.0] - 2026-04-07
 
 ### Added
