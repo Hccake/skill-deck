@@ -95,7 +95,8 @@ function ManageAgentsDialogBody({
     }
   }, [onSave, addAgents, removeAgents, mode]);
 
-  const modeDisabled = saving || addAgents.length === 0;
+  const showMode = addAgents.length > 0;
+  const modeDisabled = saving;
 
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && onClose()}>
@@ -116,6 +117,7 @@ function ManageAgentsDialogBody({
           />
         </div>
 
+        {showMode && (
         <div
           className="mt-4 pt-4 border-t border-border/50 space-y-2"
           aria-disabled={modeDisabled}
@@ -176,6 +178,7 @@ function ManageAgentsDialogBody({
             </Label>
           </RadioGroup>
         </div>
+        )}
 
         <DialogFooter className="mt-4">
           <Button variant="outline" onClick={onClose} disabled={saving}>
