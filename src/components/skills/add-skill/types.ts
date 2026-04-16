@@ -90,7 +90,6 @@ export interface WizardState {
   // Options
   selectedAgents: string[];
   allAgents: AgentInfo[];
-  agentsCollapsed: boolean;
   mode: InstallMode;
   otherAgentsExpanded: boolean;
   otherAgentsSearchQuery: string;

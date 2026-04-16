@@ -59,12 +59,9 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
         );
       }
 
-      const agentsCollapsed = lastSelected.length > 0;
-
       updateStateRef.current({
         allAgents,
         selectedAgents,
-        agentsCollapsed,
       });
     }
 
@@ -74,13 +71,6 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   const handleSelectionChange = useCallback(
     (agents: string[]) => {
       updateState({ selectedAgents: agents });
-    },
-    [updateState]
-  );
-
-  const handleCollapsedChange = useCallback(
-    (collapsed: boolean) => {
-      updateState({ agentsCollapsed: collapsed });
     },
     [updateState]
   );
@@ -95,9 +85,6 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
         selectedAgents={state.selectedAgents}
         allAgents={state.allAgents}
         onSelectionChange={handleSelectionChange}
-        collapsible
-        collapsed={state.agentsCollapsed}
-        onCollapsedChange={handleCollapsedChange}
       />
 
       {/* Mode */}

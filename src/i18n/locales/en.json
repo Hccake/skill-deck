@@ -339,12 +339,13 @@
     },
     "agents": {
       "title": "Install Targets",
-      "detected": "Installed",
-      "detectedSection": "Installed",
-      "otherSection": "More Agents",
-      "otherAgentsTitle": "More Agents",
-      "expand": "Expand",
-      "collapse": "Collapse",
+      "universalTitle": "Universal",
+      "alwaysIncluded": "Always included",
+      "additionalTitle": "Additional agents",
+      "additionalHint": "\"Detected\" = this agent's skills directory was found on your system",
+      "expandOtherAgents": "↓ Show {{count}} more agents",
+      "collapseOtherAgents": "↑ Collapse",
+      "detected": "Detected",
       "noneSelected": "None selected"
     },
     "scope": {

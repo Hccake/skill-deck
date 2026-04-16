@@ -1,12 +1,10 @@
-// src/components/skills/add-skill/AgentSelector.tsx
-import { useMemo, useCallback, memo } from 'react';
+import { useMemo, useCallback, useEffect, useRef, memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { AgentBadges } from './AgentBadges';
-import { UniversalAgentsCard } from './UniversalAgentsCard';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 import type { AgentInfo } from '@/bindings';
 
 interface AgentSelectorProps {
@@ -18,12 +16,6 @@ interface AgentSelectorProps {
   onSelectionChange: (agents: string[]) => void;
   /** 安装范围（用于动态显示 Universal 路径） */
   scope?: 'global' | 'project';
-  /** 是否支持折叠（默认 false） */
-  collapsible?: boolean;
-  /** 默认是否折叠 */
-  collapsed?: boolean;
-  /** 折叠状态变化回调 */
-  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 export function AgentSelector({
@@ -31,13 +23,15 @@ export function AgentSelector({
   allAgents,
   onSelectionChange,
   scope,
-  collapsible = false,
-  collapsed = false,
-  onCollapsedChange,
 }: AgentSelectorProps) {
   const { t } = useTranslation();
+  const selectedAgentsRef = useRef(selectedAgents);
+  const [isExpanded, setIsExpanded] = useState(false);
 
-  // 分组：Universal / 已检测 / 其他
+  useEffect(() => {
+    selectedAgentsRef.current = selectedAgents;
+  }, [selectedAgents]);
+
   const { universalAgents, detectedAgents, otherAgents } = useMemo(() => {
     const universal: AgentInfo[] = [];
     const detected: AgentInfo[] = [];
@@ -45,223 +39,166 @@ export function AgentSelector({
 
     for (const agent of allAgents) {
       if (agent.isUniversal && agent.showInUniversalList) {
-        // Universal Agents（显示在卡片中）
         universal.push(agent);
       } else if (!agent.isUniversal) {
-        // Non-Universal Agents
         if (agent.detected) {
           detected.push(agent);
         } else {
           other.push(agent);
         }
       }
-      // isUniversal && !showInUniversalList 的 agents 不显示（如 Replit）
     }
 
     return { universalAgents: universal, detectedAgents: detected, otherAgents: other };
   }, [allAgents]);
 
-  // 切换单个 agent — useCallback 保证引用稳定
   const toggleAgent = useCallback((agentId: string) => {
-    const isSelected = selectedAgents.includes(agentId);
+    const currentSelection = selectedAgentsRef.current;
+    const isSelected = currentSelection.includes(agentId);
     const newSelection = isSelected
-      ? selectedAgents.filter((id) => id !== agentId)
-      : [...selectedAgents, agentId];
+      ? currentSelection.filter((id) => id !== agentId)
+      : [...currentSelection, agentId];
+    selectedAgentsRef.current = newSelection;
     onSelectionChange(newSelection);
-  }, [selectedAgents, onSelectionChange]);
+  }, [onSelectionChange]);
 
-  // 是否有可选的 agents
   const hasSelectableAgents = detectedAgents.length > 0 || otherAgents.length > 0;
 
-  // 渲染主要内容
-  const renderContent = () => (
-    <div className="space-y-4">
-      {/* Universal Agents 卡片（只读信息） */}
-      <UniversalAgentsCard
-        universalAgents={universalAgents}
-        scope={scope}
-      />
+  const getUniversalPath = () => {
+    if (scope === 'global') return '~/.agents/skills/';
+    if (scope === 'project') return './.agents/skills/';
+    return '.agents/skills/';
+  };
 
-      {/* 可选 Agents */}
+  return (
+    <div className="space-y-6 pt-1">
+      {universalAgents.length > 0 && (
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-2.5">
+            <span className="text-[13px] font-semibold text-foreground tracking-tight">
+              {t('addSkill.agents.universalTitle', 'Universal')}
+            </span>
+            <code className="text-[11px] text-muted-foreground/70 bg-muted/60 px-1.5 py-0.5 rounded font-mono truncate">
+              {getUniversalPath()}
+            </code>
+            <Badge variant="secondary" className="font-normal text-[10px] h-5 px-1.5 rounded-sm bg-accent/60 hover:bg-accent/60 ml-auto">
+              {t('addSkill.agents.alwaysIncluded', 'Always included')}
+            </Badge>
+          </div>
+          <div className="flex flex-wrap gap-x-5 gap-y-2.5 pt-0.5">
+            {universalAgents.map((agent) => (
+              <div key={agent.id} className="text-[13px] text-muted-foreground flex items-center">
+                <span className="bg-emerald-500/80 w-1.5 h-1.5 rounded-full mr-2 shrink-0"></span>
+                <span className="font-medium text-foreground/80">{agent.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {hasSelectableAgents && (
-        <div className="space-y-3">
-          {/* 已检测 Agents */}
-          {detectedAgents.length > 0 && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-medium">
-                  {t('addSkill.agents.detectedSection')}
-                </span>
-                <Separator className="flex-1" />
-              </div>
-              <div className="space-y-1">
-                {detectedAgents.map((agent) => (
-                  <AgentRow
-                    key={agent.id}
-                    agent={agent}
-                    selected={selectedAgents.includes(agent.id)}
-                    onToggle={toggleAgent}
-                    showDetectedBadge
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 pb-1">
+            <span className="text-[13px] font-semibold text-foreground">
+              {t('addSkill.agents.additionalTitle', 'Additional agents')}
+            </span>
+            <span className="text-[11px] text-muted-foreground/70 truncate">
+              {t('addSkill.agents.additionalHint')}
+            </span>
+          </div>
 
-          {/* 其他 Agents */}
+          <div className="flex flex-col space-y-0.5">
+            {detectedAgents.map((agent) => (
+              <AgentRow
+                key={agent.id}
+                agent={agent}
+                selected={selectedAgents.includes(agent.id)}
+                onToggle={toggleAgent}
+                showDetectedBadge
+                scope={scope}
+              />
+            ))}
+          </div>
+
           {otherAgents.length > 0 && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-medium">
-                  {t('addSkill.agents.otherSection')}
-                </span>
-                <Separator className="flex-1" />
-              </div>
-              <div className="space-y-1">
+            <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+              <CollapsibleTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-center text-xs text-muted-foreground/70 hover:bg-accent/40 hover:text-foreground transition-colors h-8"
+                >
+                  {isExpanded
+                    ? t('addSkill.agents.collapseOtherAgents', '↑ Collapse')
+                    : t('addSkill.agents.expandOtherAgents', { count: otherAgents.length })}
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="flex flex-col space-y-0.5 mt-0.5">
                 {otherAgents.map((agent) => (
                   <AgentRow
                     key={agent.id}
                     agent={agent}
                     selected={selectedAgents.includes(agent.id)}
                     onToggle={toggleAgent}
+                    scope={scope}
+                    className="opacity-75 hover:opacity-100"
                   />
                 ))}
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
         </div>
       )}
     </div>
   );
-
-  // 可折叠模式 - Universal Agents 始终显示，只有 Non-Universal 部分可折叠
-  if (collapsible) {
-    return (
-      <div className="space-y-3">
-        <h4 className="text-sm font-medium">{t('addSkill.agents.title')}</h4>
-
-        {/* Universal Agents - 永远显示 */}
-        <UniversalAgentsCard universalAgents={universalAgents} scope={scope} />
-
-        {/* Non-Universal Agents - 可折叠 */}
-        {hasSelectableAgents && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground font-medium">
-                {t('addSkill.agents.otherAgentsTitle')}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onCollapsedChange?.(!collapsed)}
-              >
-                {collapsed
-                  ? t('addSkill.agents.expand')
-                  : t('addSkill.agents.collapse')}
-              </Button>
-            </div>
-
-            {collapsed ? (
-              // 折叠状态：显示已选 agents 的 badges 摘要
-              <div
-                className="p-3 border rounded-md cursor-pointer hover:bg-muted/50"
-                onClick={() => onCollapsedChange?.(false)}
-              >
-                <AgentBadges
-                  selectedAgents={selectedAgents}
-                  allAgents={allAgents}
-                  excludeUniversal
-                />
-              </div>
-            ) : (
-              // 展开状态：显示 Non-Universal agents 列表
-              <div className="space-y-3">
-                {/* 已检测 Agents */}
-                {detectedAgents.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {t('addSkill.agents.detectedSection')}
-                      </span>
-                      <Separator className="flex-1" />
-                    </div>
-                    <div className="space-y-1">
-                      {detectedAgents.map((agent) => (
-                        <AgentRow
-                          key={agent.id}
-                          agent={agent}
-                          selected={selectedAgents.includes(agent.id)}
-                          onToggle={toggleAgent}
-                          showDetectedBadge
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* 其他 Agents */}
-                {otherAgents.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {t('addSkill.agents.otherSection')}
-                      </span>
-                      <Separator className="flex-1" />
-                    </div>
-                    <div className="space-y-1">
-                      {otherAgents.map((agent) => (
-                        <AgentRow
-                          key={agent.id}
-                          agent={agent}
-                          selected={selectedAgents.includes(agent.id)}
-                          onToggle={toggleAgent}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // 非折叠模式（Settings 页面使用）
-  return (
-    <div className="space-y-3">
-      {renderContent()}
-    </div>
-  );
 }
 
-// 单个 agent 行
 const AgentRow = memo(function AgentRow({
   agent,
   selected,
   onToggle,
   showDetectedBadge = false,
+  scope,
+  className,
 }: {
   agent: AgentInfo;
   selected: boolean;
   onToggle: (agentId: string) => void;
   showDetectedBadge?: boolean;
+  scope?: 'global' | 'project';
+  className?: string;
 }) {
   const { t } = useTranslation();
 
+  const pathLabel = scope === 'project'
+    ? './' + agent.skillsDir
+    : scope === 'global'
+      ? (agent.globalSkillsDir || `~/${agent.skillsDir}`)
+      : undefined;
+
   return (
     <div
-      className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
+      className={cn(
+        "flex items-center gap-3 px-3 py-2 cursor-pointer transition-all duration-200 border rounded-md",
+        selected
+          ? "bg-accent/60 border-accent/80"
+          : "hover:bg-accent/40 hover:border-accent/50 border-transparent",
+        className
+      )}
       onClick={() => onToggle(agent.id)}
     >
-      <Checkbox checked={selected} />
-      <div className="flex-1 min-w-0">
-        <span className="text-sm">{agent.name}</span>
+      <Checkbox checked={selected} className="shrink-0" />
+      <div className="flex-1 flex items-center min-w-0 gap-2.5">
+        <span className="text-[13px] font-medium leading-none tracking-tight">{agent.name}</span>
+        {pathLabel && (
+          <code className="text-[11px] text-muted-foreground/70 font-mono truncate">
+            {pathLabel}
+          </code>
+        )}
       </div>
       {showDetectedBadge && agent.detected && (
-        <Badge variant="outline" className="text-xs">
-          {t('addSkill.agents.detected')}
+        <Badge variant="secondary" className="text-[10px] h-5 px-1.5 rounded-sm font-normal bg-accent/60 hover:bg-accent/60">
+          {t('addSkill.agents.detected', 'Detected')}
         </Badge>
       )}
     </div>

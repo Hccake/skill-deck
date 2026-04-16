@@ -73,7 +73,6 @@ function makeState(installResults: InstallResults): WizardState {
     skillSearchQuery: '',
     selectedAgents: [],
     allAgents: [],
-    agentsCollapsed: false,
     mode: 'symlink',
     otherAgentsExpanded: false,
     otherAgentsSearchQuery: '',

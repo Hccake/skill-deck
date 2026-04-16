@@ -339,12 +339,13 @@
     },
     "agents": {
       "title": "安装目标",
-      "detected": "已安装",
-      "detectedSection": "已安装",
-      "otherSection": "更多 Agents",
-      "otherAgentsTitle": "更多 Agents",
-      "expand": "展开",
-      "collapse": "收起",
+      "universalTitle": "通用目录",
+      "alwaysIncluded": "自动支持",
+      "additionalTitle": "独立目录",
+      "additionalHint": "已检测 = 系统中发现此 Agent 的 skills 目录",
+      "expandOtherAgents": "↓ 显示其他 {{count}} 个 Agent",
+      "collapseOtherAgents": "↑ 收起",
+      "detected": "已检测",
       "noneSelected": "未选择"
     },
     "scope": {

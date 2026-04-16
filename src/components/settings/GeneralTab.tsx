@@ -42,8 +42,7 @@ export function GeneralTab() {
     });
   }, []);
 
-  // 检查是否有 Non-Universal agents
-  const hasNonUniversalAgents = allAgents.some((a) => !a.isUniversal);
+  const hasAgents = allAgents.length > 0;
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -74,7 +73,7 @@ export function GeneralTab() {
               </div>
             ))}
           </div>
-        ) : !hasNonUniversalAgents ? (
+        ) : !hasAgents ? (
           <div className="relative overflow-hidden rounded-xl border border-dashed border-border/80 bg-accent/20 p-5 sm:p-6">
             <div className="flex flex-col items-center text-center">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted mb-2.5">
