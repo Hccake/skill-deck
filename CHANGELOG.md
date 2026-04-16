@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Manage Agents 弹窗重设计** — 新增 Agent 的安装方式选项改为 card-style radio（整行点击、选中态高亮），字号体系统一 AgentSelector（13px/11px），通过顶部分隔线与 Agent 列表区分层级；始终渲染且无新增 Agent 时置灰，消除选中/取消 Agent 时弹窗的高度抖动
+- **AgentSelector 中文文案本地化优化** — 调整若干中文术语使其更贴合用户心智：通用目录区标题「基准目录」→「通用目录」、Badge「默认支持的 Agent」→「自动支持」、独立目录区标题「独立目录的 Agent」→「独立目录」；在独立目录标题旁以小字统一解释"已检测"含义，避免多处 Tooltip 堆积
+- **「已检测」Badge 语义明确化** — 独立目录 Agent 的检测标识由「已安装」/"Installed" 改为「已检测」/"Detected"，避免与"skill 已安装到该 Agent"产生歧义（检测仅根据 Agent skills 目录是否存在反推）
+- **GeneralTab 空状态判定修正** — 默认 Agent 设置的空状态判定由 `hasNonUniversalAgents` 改为 `hasAgents`，只检测到 Universal Agent 时不再误显示空状态
+
+### Fixed
+
+- **AgentSelector 路径标签渲染** — `scope` 为 undefined 时不再显示默认路径字符串，避免非 global/project 场景下渲染错位路径
+
+### Removed
+
+- 清理 5 个不再使用的 i18n key：`addSkill.agents.detectedSection` / `otherSection` / `otherAgentsTitle` / `expand` / `collapse`
+
 ## [1.2.0] - 2026-04-16
 
 ### Added

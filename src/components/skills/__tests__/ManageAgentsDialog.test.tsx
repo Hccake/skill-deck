@@ -45,6 +45,62 @@ const skill: InstalledSkill = {
 };
 
 describe('ManageAgentsDialog', () => {
+  it('resets selected separate locations when agent metadata changes', () => {
+    const universalCursor: AgentInfo = {
+      id: 'cursor',
+      name: 'Cursor',
+      skillsDir: '.agents/skills',
+      globalSkillsDir: '~/.cursor/skills',
+      detected: true,
+      isUniversal: true,
+      showInUniversalList: true,
+    };
+    const skillWithCursor: InstalledSkill = {
+      ...skill,
+      agents: ['cursor'],
+    };
+
+    const { rerender } = render(
+      <ManageAgentsDialog
+        skill={skillWithCursor}
+        scope="project"
+        allAgents={[]}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    rerender(
+      <ManageAgentsDialog
+        skill={skillWithCursor}
+        scope="project"
+        allAgents={[universalCursor]}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText('skills.manageAgents.modeTitle')).toBeNull();
+    const saveButton = screen.getByRole('button', {
+      name: 'skills.manageAgents.save',
+    }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+  });
+
+  it('hides the install method until a separate agent location is added', () => {
+    render(
+      <ManageAgentsDialog
+        skill={skill}
+        scope="project"
+        allAgents={allAgents}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText('skills.manageAgents.modeTitle')).toBeNull();
+  });
+
   it('passes selected mode when saving newly added agents', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);

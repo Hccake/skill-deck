@@ -31,11 +31,6 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   onClose,
   onSave,
 }: ManageAgentsDialogProps) {
-  const { t } = useTranslation();
-  const [saving, setSaving] = useState(false);
-  const [mode, setMode] = useState<InstallMode>('symlink');
-
-  // 初始选中的 non-universal agents（从 skill.agents 中过滤掉 universal）
   const initialSelected = useMemo(() => {
     if (!skill) return [] as string[];
     const universalIds = new Set(
@@ -44,18 +39,43 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
     return skill.agents.filter((id) => !universalIds.has(id));
   }, [skill, allAgents]);
 
-  const [selectedAgents, setSelectedAgents] = useState<string[]>(initialSelected);
+  const resetKey = useMemo(() => {
+    const skillKey = skill
+      ? `${skill.scope}:${skill.canonicalPath}:${skill.name}`
+      : 'none';
+    return `${skillKey}:${initialSelected.join('\u001f')}`;
+  }, [skill, initialSelected]);
 
-  // render-time reset: skill 变化时重置
-  const [prevSkill, setPrevSkill] = useState(skill);
-  if (skill !== prevSkill) {
-    setPrevSkill(skill);
-    setMode('symlink');
-    const universalIds = new Set(
-      allAgents.filter((a) => a.isUniversal).map((a) => a.id)
-    );
-    setSelectedAgents(skill ? skill.agents.filter((id) => !universalIds.has(id)) : []);
-  }
+  return (
+    <ManageAgentsDialogBody
+      key={resetKey}
+      skill={skill}
+      scope={scope}
+      allAgents={allAgents}
+      initialSelected={initialSelected}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+});
+
+interface ManageAgentsDialogBodyProps extends ManageAgentsDialogProps {
+  initialSelected: string[];
+}
+
+function ManageAgentsDialogBody({
+  skill,
+  scope,
+  allAgents,
+  initialSelected,
+  onClose,
+  onSave,
+}: ManageAgentsDialogBodyProps) {
+  const { t } = useTranslation();
+  const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState<InstallMode>('symlink');
+
+  const [selectedAgents, setSelectedAgents] = useState<string[]>(initialSelected);
 
   // 计算 diff
   const { addAgents, removeAgents, hasChanges } = useMemo(() => {
@@ -74,6 +94,8 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
       setSaving(false);
     }
   }, [onSave, addAgents, removeAgents, mode]);
+
+  const modeDisabled = saving || addAgents.length === 0;
 
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && onClose()}>
@@ -94,47 +116,64 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
           />
         </div>
 
-        <div className="mt-4 space-y-3">
-          <Label className="text-sm font-medium">
+        <div
+          className="mt-4 pt-4 border-t border-border/50 space-y-2"
+          aria-disabled={modeDisabled}
+        >
+          <Label className="text-[13px] font-semibold text-foreground">
             {t('skills.manageAgents.modeTitle')}
           </Label>
           <RadioGroup
             value={mode}
             onValueChange={(value) => setMode(value as InstallMode)}
-            className="space-y-2"
+            className={`space-y-1 transition-opacity gap-1 ${modeDisabled ? 'opacity-50 pointer-events-none' : ''}`}
           >
-            <div className="flex items-start gap-3">
+            <Label
+              htmlFor="manage-mode-symlink"
+              className={`flex items-start gap-3 px-3 py-2 rounded-md cursor-pointer border transition-colors ${
+                mode === 'symlink'
+                  ? 'bg-accent/50 border-accent/80'
+                  : 'border-transparent hover:bg-accent/30'
+              }`}
+            >
               <RadioGroupItem
                 value="symlink"
                 id="manage-mode-symlink"
-                className="mt-1"
-                disabled={addAgents.length === 0 || saving}
+                className="mt-0.5"
+                disabled={modeDisabled}
               />
-              <div>
-                <Label htmlFor="manage-mode-symlink" className="font-medium">
+              <div className="space-y-0.5 flex-1 min-w-0">
+                <div className="text-[13px] font-medium leading-none">
                   {t('addSkill.mode.symlink')}
-                </Label>
-                <p className="text-xs text-muted-foreground">
+                </div>
+                <p className="text-[11px] text-muted-foreground/70">
                   {t('skills.manageAgents.symlinkHint')}
                 </p>
               </div>
-            </div>
-            <div className="flex items-start gap-3">
+            </Label>
+            <Label
+              htmlFor="manage-mode-copy"
+              className={`flex items-start gap-3 px-3 py-2 rounded-md cursor-pointer border transition-colors ${
+                mode === 'copy'
+                  ? 'bg-accent/50 border-accent/80'
+                  : 'border-transparent hover:bg-accent/30'
+              }`}
+            >
               <RadioGroupItem
                 value="copy"
                 id="manage-mode-copy"
-                className="mt-1"
-                disabled={addAgents.length === 0 || saving}
+                className="mt-0.5"
+                disabled={modeDisabled}
               />
-              <div>
-                <Label htmlFor="manage-mode-copy" className="font-medium">
+              <div className="space-y-0.5 flex-1 min-w-0">
+                <div className="text-[13px] font-medium leading-none">
                   {t('addSkill.mode.copy')}
-                </Label>
-                <p className="text-xs text-muted-foreground">
+                </div>
+                <p className="text-[11px] text-muted-foreground/70">
                   {t('skills.manageAgents.copyHint')}
                 </p>
               </div>
-            </div>
+            </Label>
           </RadioGroup>
         </div>
 
@@ -159,4 +198,4 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
       </DialogContent>
     </Dialog>
   );
-});
+}
