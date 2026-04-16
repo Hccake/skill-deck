@@ -117,6 +117,9 @@
     "manageAgents": {
       "title": "Manage Agents",
       "description": "Configure which agents have access to \"{{name}}\"",
+      "modeTitle": "Install method for new agents",
+      "symlinkHint": "Link to the shared directory so future updates use one source",
+      "copyHint": "Copy files into the agent directory for environments without link support",
       "save": "Save Changes",
       "success": "Agent configuration updated"
     },

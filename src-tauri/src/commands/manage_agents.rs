@@ -5,12 +5,12 @@
 //! - 移除: 复用 uninstaller 的 partial removal
 
 use crate::core::agents::AgentType;
-use crate::core::installer::link_skill_for_agent;
+use crate::core::installer::{copy_skill_for_agent, link_skill_for_agent_without_fallback};
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::core::uninstaller::remove_skill;
 use crate::error::AppError;
-use crate::models::Scope;
+use crate::models::{InstallMode, Scope};
 
 /// 管理 skill 的 agent 支持（添加/移除）
 ///
@@ -20,6 +20,7 @@ use crate::models::Scope;
 /// * `project_path` - Project scope 时的项目路径
 /// * `add_agents` - 要添加的 agent 列表
 /// * `remove_agents` - 要移除的 agent 列表
+/// * `mode` - 添加 agent 时使用的安装模式
 #[tauri::command]
 #[specta::specta]
 pub fn manage_skill_agents(
@@ -28,6 +29,7 @@ pub fn manage_skill_agents(
     project_path: Option<String>,
     add_agents: Vec<AgentType>,
     remove_agents: Vec<AgentType>,
+    mode: InstallMode,
 ) -> Result<ManageAgentsResult, AppError> {
     let is_global = matches!(scope, Scope::Global);
     let cwd = project_path.as_deref().unwrap_or(".");
@@ -43,22 +45,43 @@ pub fn manage_skill_agents(
     }
 
     let mut added: Vec<String> = Vec::new();
+    let mut added_results: Vec<ManageAgentOperationResult> = Vec::new();
     let mut add_errors: Vec<String> = Vec::new();
 
-    // 添加 agents: 从已有 canonical dir 创建 symlink（不重新复制 canonical）
+    // 添加 agents: 从已有 canonical dir 按用户选择投放（不重新复制 canonical）
     for agent in &add_agents {
-        let result = link_skill_for_agent(
-            &canonical_dir,
-            &skill_name,
-            agent,
-            &scope,
-            project_path.as_deref(),
-        );
+        let result = match mode {
+            InstallMode::Symlink => link_skill_for_agent_without_fallback(
+                &canonical_dir,
+                &skill_name,
+                agent,
+                &scope,
+                project_path.as_deref(),
+            ),
+            InstallMode::Copy => copy_skill_for_agent(
+                &canonical_dir,
+                &skill_name,
+                agent,
+                &scope,
+                project_path.as_deref(),
+            ),
+        };
+
+        let error = result.error.clone();
+
         if result.success {
             added.push(agent.to_string());
-        } else if let Some(err) = result.error {
+        } else if let Some(err) = &error {
             add_errors.push(format!("{}: {}", agent, err));
         }
+
+        added_results.push(ManageAgentOperationResult {
+            agent: result.agent,
+            success: result.success,
+            mode: result.mode,
+            path: result.path.to_string_lossy().to_string(),
+            error,
+        });
     }
 
     let mut removed: Vec<String> = Vec::new();
@@ -88,9 +111,22 @@ pub fn manage_skill_agents(
 
     Ok(ManageAgentsResult {
         added,
+        added_results,
         removed,
         errors: [add_errors, remove_errors].concat(),
     })
+}
+
+/// 单个 agent 添加操作结果
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ManageAgentOperationResult {
+    pub agent: String,
+    pub success: bool,
+    pub mode: InstallMode,
+    pub path: String,
+    pub error: Option<String>,
 }
 
 /// Agent 管理操作结果
@@ -100,6 +136,8 @@ pub fn manage_skill_agents(
 pub struct ManageAgentsResult {
     /// 成功添加的 agent IDs
     pub added: Vec<String>,
+    /// 每个新增 agent 的详细结果
+    pub added_results: Vec<ManageAgentOperationResult>,
     /// 成功移除的 agent IDs
     pub removed: Vec<String>,
     /// 错误信息列表
@@ -119,7 +157,8 @@ mod tests {
         fs::write(
             canonical.join("SKILL.md"),
             format!("---\nname: {}\ndescription: test\n---\n# {}", name, name),
-        ).unwrap();
+        )
+        .unwrap();
         canonical
     }
 
@@ -134,6 +173,7 @@ mod tests {
             Some(project_path),
             vec![],
             vec![],
+            crate::models::InstallMode::Symlink,
         );
 
         assert!(result.is_err());
@@ -151,12 +191,17 @@ mod tests {
             Some(project_path),
             vec![AgentType::Cursor],
             vec![],
-        ).unwrap();
+            crate::models::InstallMode::Symlink,
+        )
+        .unwrap();
 
         assert!(result.added.contains(&"cursor".to_string()));
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         // canonical 不应被破坏
-        assert!(canonical.join("SKILL.md").exists(), "canonical must survive");
+        assert!(
+            canonical.join("SKILL.md").exists(),
+            "canonical must survive"
+        );
     }
 
     #[test]
@@ -171,10 +216,69 @@ mod tests {
             Some(project_path),
             vec![],
             vec![],
-        ).unwrap();
+            crate::models::InstallMode::Symlink,
+        )
+        .unwrap();
 
         assert!(result.added.is_empty());
         assert!(result.removed.is_empty());
         assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_manage_skill_agents_add_agent_with_copy() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let canonical = setup_installed_skill(temp.path(), "copy-agent-skill");
+
+        let result = manage_skill_agents(
+            "copy-agent-skill".to_string(),
+            Scope::Project,
+            Some(project_path.clone()),
+            vec![AgentType::ClaudeCode],
+            vec![],
+            crate::models::InstallMode::Copy,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.added_results.len(), 1);
+        assert_eq!(
+            result.added_results[0].mode,
+            crate::models::InstallMode::Copy
+        );
+
+        let agent_copy = temp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("copy-agent-skill");
+        assert!(canonical.join("SKILL.md").exists());
+        assert!(agent_copy.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn test_manage_skill_agents_add_agent_with_symlink() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let canonical = setup_installed_skill(temp.path(), "link-agent-skill");
+
+        let result = manage_skill_agents(
+            "link-agent-skill".to_string(),
+            Scope::Project,
+            Some(project_path.clone()),
+            vec![AgentType::ClaudeCode],
+            vec![],
+            crate::models::InstallMode::Symlink,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.added_results.len(), 1);
+        assert_eq!(
+            result.added_results[0].mode,
+            crate::models::InstallMode::Symlink
+        );
+        assert!(canonical.join("SKILL.md").exists());
     }
 }

@@ -117,6 +117,9 @@
     "manageAgents": {
       "title": "管理 Agents",
       "description": "配置哪些 agents 可以使用 \"{{name}}\"",
+      "modeTitle": "新增 Agent 的安装方式",
+      "symlinkHint": "从通用目录创建链接，后续更新会共享同一份源文件",
+      "copyHint": "复制一份到 Agent 目录，适合不支持链接的环境",
       "save": "保存更改",
       "success": "Agent 配置已更新"
     },

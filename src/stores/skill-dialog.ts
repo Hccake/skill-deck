@@ -11,7 +11,7 @@ import {
   manageSkillAgents as apiManageSkillAgents,
   copySkillToProjects as apiCopySkillToProjects,
 } from '@/hooks/useTauriApi';
-import type { AgentType, InstalledSkill, SkillScope, SkillAgentDetails } from '@/bindings';
+import type { AgentType, InstalledSkill, SkillScope, SkillAgentDetails, InstallMode } from '@/bindings';
 
 interface SkillDialogState {
   // Delete dialog
@@ -35,7 +35,7 @@ interface SkillDialogState {
   openAddWithPrefill: (prefill: AddDialogPrefill) => void;
   openManageAgents: (skill: InstalledSkill, scope: SkillScope) => void;
   closeManageAgents: () => void;
-  saveAgentChanges: (addAgents: string[], removeAgents: string[]) => Promise<void>;
+  saveAgentChanges: (addAgents: string[], removeAgents: string[], mode: InstallMode) => Promise<void>;
   openCopyToProject: (skill: InstalledSkill) => void;
   closeCopyToProject: () => void;
   executeCopy: (targetPaths: string[]) => Promise<void>;
@@ -138,7 +138,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
   closeManageAgents: () => set({ manageAgentsSkill: null, manageAgentsProjectPath: undefined }),
 
-  saveAgentChanges: async (addAgents, removeAgents) => {
+  saveAgentChanges: async (addAgents, removeAgents, mode) => {
     const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath } = get();
     if (!manageAgentsSkill) return;
 
@@ -152,10 +152,16 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
         projectPath,
         addAgents: addAgents as AgentType[],
         removeAgents: removeAgents as AgentType[],
+        mode,
       });
 
-      if (result.errors.length > 0) {
-        toast.error(result.errors.join('\n'));
+      const addResultErrors = result.addedResults
+        .filter((item) => !item.success && item.error)
+        .map((item) => `${item.agent}: ${item.error}`);
+      const errors = result.errors.length > 0 ? result.errors : addResultErrors;
+
+      if (errors.length > 0) {
+        toast.error(errors.join('\n'));
       } else {
         toast.success(t('skills.manageAgents.success'));
       }

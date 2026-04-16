@@ -4,16 +4,17 @@
 //! - check_updates: 检测指定 scope 的 skills 是否有更新
 
 use crate::core::agents::AgentType;
-use crate::core::{fetch_skill_folder_hash, fetch_skill_folder_hashes_batch};
-use crate::core::installer::{detect_install_mode, detect_installed_agents_for_skill, install_skill_to_agents};
+use crate::core::installer::{
+    detect_install_mode, detect_installed_agents_for_skill, install_skill_to_agents_with_modes,
+};
 use crate::core::local_lock::{
     add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
 };
 use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock, SkillLockFile};
 use crate::core::{
-    clone_repo_with_progress, discover_skills, parse_source,
-    CloneProgress, DiscoverOptions,
+    clone_repo_with_progress, discover_skills, parse_source, CloneProgress, DiscoverOptions,
 };
+use crate::core::{fetch_skill_folder_hash, fetch_skill_folder_hashes_batch};
 use crate::error::AppError;
 use crate::models::{
     InstallMode, Scope, UpdateSkillAgentResult, UpdateSkillAgentStatus, UpdateSkillItemResult,
@@ -129,7 +130,8 @@ async fn check_updates_inner(
 
     // 3. 过滤并按 (source, ref_name) 分组
     // value: Vec<(skill_name, skill_path, local_hash)>
-    let mut skills_by_source: HashMap<(String, Option<String>), Vec<(String, String, String)>> = HashMap::new();
+    let mut skills_by_source: HashMap<(String, Option<String>), Vec<(String, String, String)>> =
+        HashMap::new();
 
     for (name, entry) in &lock.skills {
         if entry.skill_folder_hash.is_empty() {
@@ -241,54 +243,60 @@ async fn update_skill_single(
     let mut warnings = Vec::new();
 
     // 1. 根据 scope 读取对应的 lock 文件
-    let (entry_source, entry_source_type, entry_source_url, entry_skill_path, entry_plugin_name, entry_ref_name) =
-        match scope {
-            Scope::Global => {
-                let lock = read_scoped_lock(None)?;
-                let entry =
-                    lock.skills.get(skill_name).ok_or_else(|| AppError::InvalidSource {
-                        value: format!("Skill '{}' not found in lock file", skill_name),
-                    })?;
-                (
-                    entry.source.clone(),
-                    entry.source_type.clone(),
-                    entry.source_url.clone(),
-                    entry.skill_path.clone(),
-                    entry.plugin_name.clone(),
-                    entry.ref_name.clone(),
-                )
-            }
-            Scope::Project => {
-                let pp = project_path.ok_or_else(|| AppError::InvalidSource {
-                    value: "Project path is required for project scope".to_string(),
+    let (
+        entry_source,
+        entry_source_type,
+        entry_source_url,
+        entry_skill_path,
+        entry_plugin_name,
+        entry_ref_name,
+    ) = match scope {
+        Scope::Global => {
+            let lock = read_scoped_lock(None)?;
+            let entry = lock
+                .skills
+                .get(skill_name)
+                .ok_or_else(|| AppError::InvalidSource {
+                    value: format!("Skill '{}' not found in lock file", skill_name),
                 })?;
-                let local_lock = read_local_lock(pp)?;
-                let entry = local_lock
+            (
+                entry.source.clone(),
+                entry.source_type.clone(),
+                entry.source_url.clone(),
+                entry.skill_path.clone(),
+                entry.plugin_name.clone(),
+                entry.ref_name.clone(),
+            )
+        }
+        Scope::Project => {
+            let pp = project_path.ok_or_else(|| AppError::InvalidSource {
+                value: "Project path is required for project scope".to_string(),
+            })?;
+            let local_lock = read_local_lock(pp)?;
+            let entry =
+                local_lock
                     .skills
                     .get(skill_name)
                     .ok_or_else(|| AppError::InvalidSource {
-                        value: format!(
-                            "Skill '{}' not found in project lock file",
-                            skill_name
-                        ),
+                        value: format!("Skill '{}' not found in project lock file", skill_name),
                     })?;
-                let source_url = entry.source_url.clone().unwrap_or_else(|| {
-                    if entry.source_type == "github" {
-                        format!("https://github.com/{}", entry.source)
-                    } else {
-                        entry.source.clone()
-                    }
-                });
-                (
-                    entry.source.clone(),
-                    entry.source_type.clone(),
-                    source_url,
-                    entry.skill_path.clone(),
-                    entry.plugin_name.clone(),
-                    entry.ref_name.clone(),
-                )
-            }
-        };
+            let source_url = entry.source_url.clone().unwrap_or_else(|| {
+                if entry.source_type == "github" {
+                    format!("https://github.com/{}", entry.source)
+                } else {
+                    entry.source.clone()
+                }
+            });
+            (
+                entry.source.clone(),
+                entry.source_type.clone(),
+                source_url,
+                entry.skill_path.clone(),
+                entry.plugin_name.clone(),
+                entry.ref_name.clone(),
+            )
+        }
+    };
 
     // 2. 构造安装 URL（与 CLI runUpdate 逻辑一致）
     let install_url = build_install_url_from_parts(
@@ -332,9 +340,8 @@ async fn update_skill_single(
         Scope::Global => crate::models::Scope::Global,
         Scope::Project => crate::models::Scope::Project,
     };
-    let mut target_agents = detect_installed_agents_for_skill(
-        skill_name, &install_scope, project_path,
-    );
+    let mut target_agents =
+        detect_installed_agents_for_skill(skill_name, &install_scope, project_path);
     if target_agents.is_empty() {
         target_agents = AgentType::detect_installed();
         let universal_agents = AgentType::get_universal_agents();
@@ -345,27 +352,38 @@ async fn update_skill_single(
         }
     }
 
-    // 8. 检测安装模式（通过文件系统检测）
-    let install_mode = if let Some(first_agent) = target_agents.first() {
-        detect_install_mode(skill_name, first_agent, &install_scope, project_path)
-    } else {
-        InstallMode::Symlink
-    };
+    // 8. 按 agent 检测安装模式（通过文件系统检测）
+    let target_agent_modes: Vec<(AgentType, InstallMode)> = target_agents
+        .iter()
+        .map(|agent| {
+            (
+                *agent,
+                detect_install_mode(skill_name, agent, &install_scope, project_path),
+            )
+        })
+        .collect();
 
     // 9. 执行安装（覆盖现有文件）
     let _ = app.emit(
         "update-progress",
         &update_progress_payload(skill_name, &scope, project_path, "installing"),
     );
-    let per_agent_results = install_skill_to_agents(
-        &skill.path, &skill.name, &target_agents,
-        &install_scope, project_path, &install_mode,
+    let per_agent_results = install_skill_to_agents_with_modes(
+        &skill.path,
+        &skill.name,
+        &target_agent_modes,
+        &install_scope,
+        project_path,
     );
     let agent_results: Vec<UpdateSkillAgentResult> = per_agent_results
         .into_iter()
         .map(|r| UpdateSkillAgentResult {
             agent: r.agent,
-            status: if r.success { UpdateSkillAgentStatus::Success } else { UpdateSkillAgentStatus::Failed },
+            status: if r.success {
+                UpdateSkillAgentStatus::Success
+            } else {
+                UpdateSkillAgentStatus::Failed
+            },
             error: r.error,
             duration_ms: r.duration_ms,
         })
@@ -538,7 +556,10 @@ async fn update_skills_batch_inner(
     // 按 source_url 分组
     let mut by_source: HashMap<String, Vec<SkillEntry>> = HashMap::new();
     for entry in entries {
-        by_source.entry(entry.source_url.clone()).or_default().push(entry);
+        by_source
+            .entry(entry.source_url.clone())
+            .or_default()
+            .push(entry);
     }
 
     let mut all_results: Vec<UpdateSkillItemResult> = Vec::new();
@@ -607,22 +628,23 @@ async fn update_skills_batch_inner(
             include_internal: true,
             full_depth: false,
         };
-        let discovered = match discover_skills(&clone_result.repo_path, parsed.subpath.as_deref(), options) {
-            Ok(d) => d,
-            Err(err) => {
-                for entry in group {
-                    all_results.push(UpdateSkillItemResult {
-                        name: entry.name.clone(),
-                        status: UpdateSkillStatus::Failed,
-                        error: Some(err.to_string()),
-                        warnings: Vec::new(),
-                        duration_ms: None,
-                        agent_results: Vec::new(),
-                    });
+        let discovered =
+            match discover_skills(&clone_result.repo_path, parsed.subpath.as_deref(), options) {
+                Ok(d) => d,
+                Err(err) => {
+                    for entry in group {
+                        all_results.push(UpdateSkillItemResult {
+                            name: entry.name.clone(),
+                            status: UpdateSkillStatus::Failed,
+                            error: Some(err.to_string()),
+                            warnings: Vec::new(),
+                            duration_ms: None,
+                            agent_results: Vec::new(),
+                        });
+                    }
+                    continue;
                 }
-                continue;
-            }
-        };
+            };
 
         // 3. 逐个安装该组的 skills（共享同一个 clone）
         for entry in group {
@@ -639,7 +661,10 @@ async fn update_skills_batch_inner(
                     all_results.push(UpdateSkillItemResult {
                         name: entry.name.clone(),
                         status: UpdateSkillStatus::Failed,
-                        error: Some(format!("Skill '{}' not found in cloned repository", entry.name)),
+                        error: Some(format!(
+                            "Skill '{}' not found in cloned repository",
+                            entry.name
+                        )),
                         warnings: Vec::new(),
                         duration_ms: None,
                         agent_results: Vec::new(),
@@ -649,9 +674,8 @@ async fn update_skills_batch_inner(
             };
 
             // detect agents
-            let mut target_agents = detect_installed_agents_for_skill(
-                &entry.name, &install_scope, project_path,
-            );
+            let mut target_agents =
+                detect_installed_agents_for_skill(&entry.name, &install_scope, project_path);
             if target_agents.is_empty() {
                 target_agents = AgentType::detect_installed();
                 let universal_agents = AgentType::get_universal_agents();
@@ -662,23 +686,34 @@ async fn update_skills_batch_inner(
                 }
             }
 
-            // detect install mode
-            let install_mode = if let Some(first_agent) = target_agents.first() {
-                detect_install_mode(&entry.name, first_agent, &install_scope, project_path)
-            } else {
-                InstallMode::Symlink
-            };
+            // detect install mode per agent
+            let target_agent_modes: Vec<(AgentType, InstallMode)> = target_agents
+                .iter()
+                .map(|agent| {
+                    (
+                        *agent,
+                        detect_install_mode(&entry.name, agent, &install_scope, project_path),
+                    )
+                })
+                .collect();
 
             // install
-            let per_agent_results = install_skill_to_agents(
-                &skill.path, &skill.name, &target_agents,
-                &install_scope, project_path, &install_mode,
+            let per_agent_results = install_skill_to_agents_with_modes(
+                &skill.path,
+                &skill.name,
+                &target_agent_modes,
+                &install_scope,
+                project_path,
             );
             let agent_results: Vec<UpdateSkillAgentResult> = per_agent_results
                 .into_iter()
                 .map(|r| UpdateSkillAgentResult {
                     agent: r.agent,
-                    status: if r.success { UpdateSkillAgentStatus::Success } else { UpdateSkillAgentStatus::Failed },
+                    status: if r.success {
+                        UpdateSkillAgentStatus::Success
+                    } else {
+                        UpdateSkillAgentStatus::Failed
+                    },
                     error: r.error,
                     duration_ms: r.duration_ms,
                 })
@@ -721,14 +756,19 @@ async fn update_skills_batch_inner(
                     if let Some(pp) = project_path {
                         let install_dir = crate::core::paths::canonical_skills_dir(false, pp)
                             .join(crate::core::skill::sanitize_name(&entry.name));
-                        let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
+                        let computed_hash =
+                            compute_skill_folder_hash(&install_dir).unwrap_or_default();
                         let lock_entry = LocalSkillLockEntry {
                             source: entry.source.clone(),
                             ref_name: entry.ref_name.clone(),
                             source_type: entry.source_type.clone(),
                             source_url: Some(entry.source_url.clone()),
                             computed_hash,
-                            remote_hash: if new_hash.is_empty() { None } else { Some(new_hash.clone()) },
+                            remote_hash: if new_hash.is_empty() {
+                                None
+                            } else {
+                                Some(new_hash.clone())
+                            },
                             skill_path: entry.skill_path.clone(),
                             plugin_name: entry.plugin_name.clone(),
                         };
@@ -761,7 +801,8 @@ async fn update_skills_batch_inner(
     }
 
     // 对于不在 lock 文件中的 names，标记为 failed
-    let found_names: std::collections::HashSet<String> = all_results.iter().map(|r| r.name.clone()).collect();
+    let found_names: std::collections::HashSet<String> =
+        all_results.iter().map(|r| r.name.clone()).collect();
     for name in names {
         if !found_names.contains(name) {
             all_results.push(UpdateSkillItemResult {
@@ -843,7 +884,11 @@ fn summarize_results(results: &[UpdateSkillItemResult]) -> UpdateSkillSummary {
 /// 1. 基础 URL = source_url
 /// 2. 如果有 skillPath，去掉 SKILL.md 后缀，拼接为 GitHub tree URL（使用 ref_name 分支）
 /// 3. 如果没有 skillPath 但有 ref_name，追加 #ref 片段
-fn build_install_url_from_parts(source_url: &str, skill_path: Option<&str>, ref_name: Option<&str>) -> String {
+fn build_install_url_from_parts(
+    source_url: &str,
+    skill_path: Option<&str>,
+    ref_name: Option<&str>,
+) -> String {
     let mut install_url = source_url.to_string();
 
     if let Some(sp) = skill_path {
@@ -969,20 +1014,24 @@ mod tests {
                 duration_ms: Some(3),
             },
         ];
-        assert_eq!(derive_skill_status(&agent_results), UpdateSkillStatus::Success);
+        assert_eq!(
+            derive_skill_status(&agent_results),
+            UpdateSkillStatus::Success
+        );
     }
 
     #[test]
     fn test_skill_status_failed_when_all_agents_failed() {
-        let agent_results = vec![
-            UpdateSkillAgentResult {
-                agent: "cursor".to_string(),
-                status: UpdateSkillAgentStatus::Failed,
-                error: Some("err".to_string()),
-                duration_ms: None,
-            },
-        ];
-        assert_eq!(derive_skill_status(&agent_results), UpdateSkillStatus::Failed);
+        let agent_results = vec![UpdateSkillAgentResult {
+            agent: "cursor".to_string(),
+            status: UpdateSkillAgentStatus::Failed,
+            error: Some("err".to_string()),
+            duration_ms: None,
+        }];
+        assert_eq!(
+            derive_skill_status(&agent_results),
+            UpdateSkillStatus::Failed
+        );
     }
 
     #[test]
@@ -992,14 +1041,15 @@ mod tests {
 
     #[test]
     fn test_skill_status_skipped_when_all_agents_skipped() {
-        let agent_results = vec![
-            UpdateSkillAgentResult {
-                agent: "cursor".to_string(),
-                status: UpdateSkillAgentStatus::Skipped,
-                error: None,
-                duration_ms: None,
-            },
-        ];
-        assert_eq!(derive_skill_status(&agent_results), UpdateSkillStatus::Skipped);
+        let agent_results = vec![UpdateSkillAgentResult {
+            agent: "cursor".to_string(),
+            status: UpdateSkillAgentStatus::Skipped,
+            error: None,
+            duration_ms: None,
+        }];
+        assert_eq!(
+            derive_skill_status(&agent_results),
+            UpdateSkillStatus::Skipped
+        );
     }
 }

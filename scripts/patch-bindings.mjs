@@ -29,6 +29,13 @@ if (content.includes('function __makeEvents__') && !content.includes('export fun
   patched = true;
 }
 
+// 3. 清理生成文件中的行尾空格，避免 git diff --check 失败
+const trimmedContent = content.replace(/[ \t]+$/gm, '');
+if (trimmedContent !== content) {
+  content = trimmedContent;
+  patched = true;
+}
+
 if (patched) {
   writeFileSync(BINDINGS_PATH, content, 'utf-8');
   console.log('✓ bindings.ts patched');

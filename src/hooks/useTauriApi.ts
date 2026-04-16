@@ -10,6 +10,7 @@ import type {
   SkillUpdateInfo,
   UpdateSkillResponse,
   FetchResult,
+  InstallMode,
   InstallParams,
   InstallResults,
   SkillDeckConfig,
@@ -23,7 +24,7 @@ import type {
 } from '@/bindings';
 
 // 重导出类型供组件使用
-export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallParams, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
+export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode, InstallParams, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
 function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; error: E }): T {
@@ -272,6 +273,7 @@ export async function manageSkillAgents(params: {
   projectPath?: string;
   addAgents: AgentType[];
   removeAgents: AgentType[];
+  mode: InstallMode;
 }): Promise<ManageAgentsResult> {
   return unwrap(
     await commands.manageSkillAgents(
@@ -280,6 +282,7 @@ export async function manageSkillAgents(params: {
       params.projectPath ?? null,
       params.addAgents,
       params.removeAgents,
+      params.mode,
     )
   );
 }

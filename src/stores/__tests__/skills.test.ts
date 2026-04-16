@@ -485,12 +485,12 @@ describe('useSkillsStore', () => {
 
     it('saveAgentChanges calls API and syncs skills', async () => {
       const skill = makeSkill('test');
-      mockManageSkillAgents.mockResolvedValue({ added: ['cursor'], removed: [], errors: [] });
+      mockManageSkillAgents.mockResolvedValue({ added: ['cursor'], addedResults: [], removed: [], errors: [] });
       mockListSkills.mockResolvedValue({ skills: [makeSkill('test', { agents: ['claude-code', 'cursor'] })], pathExists: true });
       mockListAgents.mockResolvedValue([]);
 
       useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
-      await useSkillDialogStore.getState().saveAgentChanges(['cursor'], []);
+      await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'copy');
 
       expect(mockManageSkillAgents).toHaveBeenCalledWith({
         skillName: 'test',
@@ -498,6 +498,7 @@ describe('useSkillsStore', () => {
         projectPath: undefined,
         addAgents: ['cursor'],
         removeAgents: [],
+        mode: 'copy',
       });
       expect(useSkillDialogStore.getState().manageAgentsSkill).toBeNull();
       expect(toast.success).toHaveBeenCalled();
@@ -506,13 +507,13 @@ describe('useSkillsStore', () => {
     it('saveAgentChanges keeps the project path from when the dialog was opened', async () => {
       const skill = makeSkill('test', { scope: 'project' });
       useContextStore.setState({ selectedContext: '/project-a' });
-      mockManageSkillAgents.mockResolvedValue({ added: [], removed: [], errors: [] });
+      mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: [] });
       mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
 
       useSkillDialogStore.getState().openManageAgents(skill, 'project');
       useContextStore.setState({ selectedContext: '/project-b' });
 
-      await useSkillDialogStore.getState().saveAgentChanges(['cursor'], []);
+      await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'symlink');
 
       expect(mockManageSkillAgents).toHaveBeenCalledWith({
         skillName: 'test',
@@ -520,16 +521,17 @@ describe('useSkillsStore', () => {
         projectPath: '/project-a',
         addAgents: ['cursor'],
         removeAgents: [],
+        mode: 'symlink',
       });
     });
 
     it('saveAgentChanges shows error toast on API errors', async () => {
       const skill = makeSkill('test');
-      mockManageSkillAgents.mockResolvedValue({ added: [], removed: [], errors: ['cursor: failed'] });
+      mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: ['cursor: failed'] });
       mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
 
       useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
-      await useSkillDialogStore.getState().saveAgentChanges(['cursor'], []);
+      await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'symlink');
 
       expect(toast.error).toHaveBeenCalled();
     });

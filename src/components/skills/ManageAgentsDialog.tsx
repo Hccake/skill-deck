@@ -11,15 +11,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AgentSelector } from './add-skill/AgentSelector';
-import type { InstalledSkill, SkillScope, AgentInfo } from '@/bindings';
+import type { InstalledSkill, SkillScope, AgentInfo, InstallMode } from '@/bindings';
 
 interface ManageAgentsDialogProps {
   skill: InstalledSkill | null;
   scope: SkillScope;
   allAgents: AgentInfo[];
   onClose: () => void;
-  onSave: (addAgents: string[], removeAgents: string[]) => Promise<void>;
+  onSave: (addAgents: string[], removeAgents: string[], mode: InstallMode) => Promise<void>;
 }
 
 export const ManageAgentsDialog = memo(function ManageAgentsDialog({
@@ -31,6 +33,7 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
 }: ManageAgentsDialogProps) {
   const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState<InstallMode>('symlink');
 
   // 初始选中的 non-universal agents（从 skill.agents 中过滤掉 universal）
   const initialSelected = useMemo(() => {
@@ -47,6 +50,7 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   const [prevSkill, setPrevSkill] = useState(skill);
   if (skill !== prevSkill) {
     setPrevSkill(skill);
+    setMode('symlink');
     const universalIds = new Set(
       allAgents.filter((a) => a.isUniversal).map((a) => a.id)
     );
@@ -65,11 +69,11 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      await onSave(addAgents, removeAgents);
+      await onSave(addAgents, removeAgents, mode);
     } finally {
       setSaving(false);
     }
-  }, [onSave, addAgents, removeAgents]);
+  }, [onSave, addAgents, removeAgents, mode]);
 
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && onClose()}>
@@ -88,6 +92,50 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
             onSelectionChange={setSelectedAgents}
             scope={scope === 'project' ? 'project' : 'global'}
           />
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <Label className="text-sm font-medium">
+            {t('skills.manageAgents.modeTitle')}
+          </Label>
+          <RadioGroup
+            value={mode}
+            onValueChange={(value) => setMode(value as InstallMode)}
+            className="space-y-2"
+          >
+            <div className="flex items-start gap-3">
+              <RadioGroupItem
+                value="symlink"
+                id="manage-mode-symlink"
+                className="mt-1"
+                disabled={addAgents.length === 0 || saving}
+              />
+              <div>
+                <Label htmlFor="manage-mode-symlink" className="font-medium">
+                  {t('addSkill.mode.symlink')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('skills.manageAgents.symlinkHint')}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <RadioGroupItem
+                value="copy"
+                id="manage-mode-copy"
+                className="mt-1"
+                disabled={addAgents.length === 0 || saving}
+              />
+              <div>
+                <Label htmlFor="manage-mode-copy" className="font-medium">
+                  {t('addSkill.mode.copy')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('skills.manageAgents.copyHint')}
+                </p>
+              </div>
+            </div>
+          </RadioGroup>
         </div>
 
         <DialogFooter className="mt-4">

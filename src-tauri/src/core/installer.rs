@@ -119,13 +119,7 @@ fn install_with_symlink(
     is_global: bool,
     cwd: &str,
 ) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
-    // 1. 确定 canonical 目录
-    let canonical_base = canonical_skills_dir(is_global, cwd);
-    let canonical_dir = canonical_base.join(skill_name);
-
-    // 2. 复制到 canonical 目录
-    clean_and_create_directory(&canonical_dir)?;
-    copy_skill_files(skill_path, &canonical_dir)?;
+    let canonical_dir = write_canonical_skill(skill_path, skill_name, is_global, cwd)?;
 
     // 3. 创建 symlink（Universal Agent global 安装跳过）
     symlink_canonical_to_agent(&canonical_dir, skill_name, agent, is_global, cwd)
@@ -152,29 +146,29 @@ fn symlink_canonical_to_agent(
     is_global: bool,
     cwd: &str,
 ) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
-    // Universal Agent 的 global 安装无需 symlink（已在 canonical 目录）
-    if is_global && agent.is_universal() {
-        return Ok((canonical_dir.to_path_buf(), Some(canonical_dir.to_path_buf()), false));
-    }
+    symlink_canonical_to_agent_inner(canonical_dir, skill_name, agent, is_global, cwd, true)
+}
 
-    // 获取 agent 目录
-    let config = agent.config();
-    let agent_base = if is_global {
-        config.global_skills_dir.clone().unwrap()
-    } else {
-        PathBuf::from(cwd).join(&config.skills_dir)
-    };
-    let agent_dir = agent_base.join(skill_name);
+fn symlink_canonical_to_agent_inner(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    is_global: bool,
+    cwd: &str,
+    fallback_to_copy: bool,
+) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+    let agent_dir = resolve_agent_skill_dir(agent, skill_name, is_global, cwd)?;
 
     // 创建 symlink
     let symlink_failed = match create_symlink(canonical_dir, &agent_dir) {
         Ok(_) => false,
-        Err(_) => {
+        Err(_) if fallback_to_copy => {
             // Symlink 失败，fallback 到 copy
             clean_and_create_directory(&agent_dir)?;
             copy_skill_files(canonical_dir, &agent_dir)?;
             true
         }
+        Err(e) => return Err(e),
     };
 
     Ok((agent_dir, Some(canonical_dir.to_path_buf()), symlink_failed))
@@ -188,18 +182,83 @@ fn install_with_copy(
     is_global: bool,
     cwd: &str,
 ) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+    let canonical_dir = write_canonical_skill(skill_path, skill_name, is_global, cwd)?;
+    copy_canonical_to_agent(&canonical_dir, skill_name, agent, is_global, cwd)
+}
+
+fn resolve_agent_base_dir(
+    agent: &AgentType,
+    is_global: bool,
+    cwd: &str,
+) -> Result<PathBuf, AppError> {
+    if agent.is_universal() {
+        return Ok(canonical_skills_dir(is_global, cwd));
+    }
+
     let config = agent.config();
-    let agent_base = if is_global {
-        config.global_skills_dir.clone().unwrap()
+    if is_global {
+        config
+            .global_skills_dir
+            .clone()
+            .ok_or_else(|| AppError::InstallFailed {
+                message: format!(
+                    "{} does not support global skill installation",
+                    config.display_name
+                ),
+            })
     } else {
-        PathBuf::from(cwd).join(&config.skills_dir)
-    };
-    let agent_dir = agent_base.join(skill_name);
+        Ok(PathBuf::from(cwd).join(config.skills_dir))
+    }
+}
+
+fn resolve_agent_skill_dir(
+    agent: &AgentType,
+    skill_name: &str,
+    is_global: bool,
+    cwd: &str,
+) -> Result<PathBuf, AppError> {
+    Ok(resolve_agent_base_dir(agent, is_global, cwd)?.join(skill_name))
+}
+
+fn write_canonical_skill(
+    skill_path: &Path,
+    skill_name: &str,
+    is_global: bool,
+    cwd: &str,
+) -> Result<PathBuf, AppError> {
+    let canonical_dir = canonical_skills_dir(is_global, cwd).join(skill_name);
+    clean_and_create_directory(&canonical_dir)?;
+    copy_skill_files(skill_path, &canonical_dir)?;
+    Ok(canonical_dir)
+}
+
+fn copy_canonical_to_agent(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    is_global: bool,
+    cwd: &str,
+) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+    let agent_dir = resolve_agent_skill_dir(agent, skill_name, is_global, cwd)?;
+    let resolved_canonical = canonical_dir
+        .canonicalize()
+        .unwrap_or_else(|_| canonical_dir.to_path_buf());
+    let resolved_agent = agent_dir
+        .canonicalize()
+        .unwrap_or_else(|_| agent_dir.clone());
+
+    if resolved_canonical == resolved_agent {
+        return Ok((
+            canonical_dir.to_path_buf(),
+            Some(canonical_dir.to_path_buf()),
+            false,
+        ));
+    }
 
     clean_and_create_directory(&agent_dir)?;
-    copy_skill_files(skill_path, &agent_dir)?;
+    copy_skill_files(canonical_dir, &agent_dir)?;
 
-    Ok((agent_dir, None, false))
+    Ok((agent_dir, Some(canonical_dir.to_path_buf()), false))
 }
 
 /// 清理并创建目录（与 CLI cleanAndCreateDirectory 一致）
@@ -211,8 +270,9 @@ fn clean_and_create_directory(path: &Path) -> Result<(), AppError> {
     }
 
     // 创建目录
-    fs::create_dir_all(path)
-        .map_err(|e| AppError::InstallFailed { message: format!("Failed to create dir: {}", e) })?;
+    fs::create_dir_all(path).map_err(|e| AppError::InstallFailed {
+        message: format!("Failed to create dir: {}", e),
+    })?;
 
     Ok(())
 }
@@ -220,12 +280,14 @@ fn clean_and_create_directory(path: &Path) -> Result<(), AppError> {
 /// 复制 skill 文件（排除特定文件，与 CLI copyDirectory 一致）
 fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
     // 确保目标目录存在
-    fs::create_dir_all(dst)
-        .map_err(|e| AppError::InstallFailed { message: format!("Failed to create dir: {}", e) })?;
+    fs::create_dir_all(dst).map_err(|e| AppError::InstallFailed {
+        message: format!("Failed to create dir: {}", e),
+    })?;
 
     // 遍历源目录
-    let entries = fs::read_dir(src)
-        .map_err(|e| AppError::InstallFailed { message: format!("Failed to read dir: {}", e) })?;
+    let entries = fs::read_dir(src).map_err(|e| AppError::InstallFailed {
+        message: format!("Failed to read dir: {}", e),
+    })?;
 
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -274,12 +336,15 @@ fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
 fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
     // 确保父目录存在
     if let Some(parent) = link.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| AppError::InstallFailed { message: format!("Failed to create parent dir: {}", e) })?;
+        fs::create_dir_all(parent).map_err(|e| AppError::InstallFailed {
+            message: format!("Failed to create parent dir: {}", e),
+        })?;
     }
 
     // 检查目标和链接是否相同
-    let resolved_target = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+    let resolved_target = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
     let resolved_link_parent = link
         .parent()
         .and_then(|p| p.canonicalize().ok())
@@ -302,13 +367,18 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
 
     // 计算相对路径
     let relative_target = pathdiff::diff_paths(&resolved_target, &resolved_link_parent)
-        .ok_or_else(|| AppError::InstallFailed { message: "Failed to compute relative path".to_string() })?;
+        .ok_or_else(|| AppError::InstallFailed {
+            message: "Failed to compute relative path".to_string(),
+        })?;
 
     // 创建 symlink
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(&relative_target, link)
-            .map_err(|e| AppError::InstallFailed { message: format!("Failed to create symlink: {}", e) })?;
+        std::os::unix::fs::symlink(&relative_target, link).map_err(|e| {
+            AppError::InstallFailed {
+                message: format!("Failed to create symlink: {}", e),
+            }
+        })?;
     }
 
     #[cfg(windows)]
@@ -316,8 +386,11 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
         // Windows 优先尝试 junction（不需要管理员权限）
         if let Err(_) = junction::create(&resolved_target, link) {
             // Junction 失败，尝试 symlink_dir
-            std::os::windows::fs::symlink_dir(&relative_target, link)
-                .map_err(|e| AppError::InstallFailed { message: format!("Failed to create symlink: {}", e) })?;
+            std::os::windows::fs::symlink_dir(&relative_target, link).map_err(|e| {
+                AppError::InstallFailed {
+                    message: format!("Failed to create symlink: {}", e),
+                }
+            })?;
         }
     }
 
@@ -365,7 +438,11 @@ pub fn link_skill_for_agent(
             success: true,
             path,
             canonical_path,
-            mode: if symlink_failed { InstallMode::Copy } else { InstallMode::Symlink },
+            mode: if symlink_failed {
+                InstallMode::Copy
+            } else {
+                InstallMode::Symlink
+            },
             symlink_failed,
             error: None,
         },
@@ -376,6 +453,127 @@ pub fn link_skill_for_agent(
             path: PathBuf::new(),
             canonical_path: None,
             mode: InstallMode::Symlink,
+            symlink_failed: false,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// 为已安装的 skill 创建到新 agent 的 symlink，失败时不降级为 copy。
+///
+/// 用于 manage_agents 命令：用户显式选择 symlink 时，失败需要暴露给前端。
+pub fn link_skill_for_agent_without_fallback(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    scope: &Scope,
+    project_path: Option<&str>,
+) -> InstallResult {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+
+    // 检查 agent 是否支持 global 安装
+    let config = agent.config();
+    if is_global && config.global_skills_dir.is_none() {
+        return InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: false,
+            path: PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Symlink,
+            symlink_failed: false,
+            error: Some(format!(
+                "{} does not support global skill installation",
+                config.display_name
+            )),
+        };
+    }
+
+    match symlink_canonical_to_agent_inner(
+        canonical_dir,
+        &sanitized_name,
+        agent,
+        is_global,
+        cwd,
+        false,
+    ) {
+        Ok((path, canonical_path, symlink_failed)) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: true,
+            path,
+            canonical_path,
+            mode: if symlink_failed {
+                InstallMode::Copy
+            } else {
+                InstallMode::Symlink
+            },
+            symlink_failed,
+            error: None,
+        },
+        Err(e) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: false,
+            path: PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Symlink,
+            symlink_failed: false,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// 为已安装的 skill 复制一份到新 agent 目录（不重写 canonical）。
+pub fn copy_skill_for_agent(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    scope: &Scope,
+    project_path: Option<&str>,
+) -> InstallResult {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+
+    // 检查 agent 是否支持 global 安装
+    let config = agent.config();
+    if is_global && config.global_skills_dir.is_none() {
+        return InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: false,
+            path: PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            error: Some(format!(
+                "{} does not support global skill installation",
+                config.display_name
+            )),
+        };
+    }
+
+    match copy_canonical_to_agent(canonical_dir, &sanitized_name, agent, is_global, cwd) {
+        Ok((path, canonical_path, symlink_failed)) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: true,
+            path,
+            canonical_path,
+            mode: InstallMode::Copy,
+            symlink_failed,
+            error: None,
+        },
+        Err(e) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: false,
+            path: PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Copy,
             symlink_failed: false,
             error: Some(e.to_string()),
         },
@@ -397,17 +595,15 @@ pub fn install_skill_to_agents(
 
     for agent in agents {
         let started = std::time::Instant::now();
-        let result = install_skill_for_agent(
-            skill_path,
-            skill_name,
-            agent,
-            scope,
-            project_path,
-            mode,
-        );
+        let result =
+            install_skill_for_agent(skill_path, skill_name, agent, scope, project_path, mode);
 
         let elapsed = started.elapsed().as_millis();
-        let duration_ms = if elapsed > u32::MAX as u128 { u32::MAX } else { elapsed as u32 };
+        let duration_ms = if elapsed > u32::MAX as u128 {
+            u32::MAX
+        } else {
+            elapsed as u32
+        };
 
         results.push(PerAgentInstallResult {
             agent: agent.to_string(),
@@ -422,6 +618,80 @@ pub fn install_skill_to_agents(
     }
 
     results
+}
+
+/// Install a single skill to multiple agents, preserving each agent's mode.
+///
+/// Used by update flows where existing agents may be mixed symlink/copy installs.
+pub fn install_skill_to_agents_with_modes(
+    skill_path: &Path,
+    skill_name: &str,
+    agents: &[(AgentType, InstallMode)],
+    scope: &Scope,
+    project_path: Option<&str>,
+) -> Vec<PerAgentInstallResult> {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+
+    let canonical_dir = match write_canonical_skill(skill_path, &sanitized_name, is_global, cwd) {
+        Ok(path) => path,
+        Err(err) => {
+            return agents
+                .iter()
+                .map(|(agent, mode)| PerAgentInstallResult {
+                    agent: agent.to_string(),
+                    success: false,
+                    error: Some(err.to_string()),
+                    duration_ms: None,
+                    symlink_failed: false,
+                    path: PathBuf::new(),
+                    canonical_path: None,
+                    mode: mode.clone(),
+                })
+                .collect();
+        }
+    };
+
+    agents
+        .iter()
+        .map(|(agent, mode)| {
+            let started = std::time::Instant::now();
+            let result = match mode {
+                InstallMode::Symlink => link_skill_for_agent(
+                    &canonical_dir,
+                    &sanitized_name,
+                    agent,
+                    scope,
+                    project_path,
+                ),
+                InstallMode::Copy => copy_skill_for_agent(
+                    &canonical_dir,
+                    &sanitized_name,
+                    agent,
+                    scope,
+                    project_path,
+                ),
+            };
+            let elapsed = started.elapsed().as_millis();
+            let duration_ms = if elapsed > u32::MAX as u128 {
+                u32::MAX
+            } else {
+                elapsed as u32
+            };
+
+            PerAgentInstallResult {
+                agent: agent.to_string(),
+                success: result.success,
+                error: result.error,
+                duration_ms: Some(duration_ms),
+                symlink_failed: result.symlink_failed,
+                path: result.path,
+                canonical_path: result.canonical_path,
+                mode: result.mode,
+            }
+        })
+        .collect()
 }
 
 /// 检查 skill 是否已安装在指定 agent
@@ -442,13 +712,10 @@ pub fn is_skill_installed(
         return false;
     }
 
-    let agent_base = if is_global {
-        config.global_skills_dir.clone().unwrap()
-    } else {
-        PathBuf::from(cwd).join(&config.skills_dir)
+    let skill_dir = match resolve_agent_skill_dir(agent, &sanitized_name, is_global, cwd) {
+        Ok(path) => path,
+        Err(_) => return false,
     };
-
-    let skill_dir = agent_base.join(&sanitized_name);
     skill_dir.exists()
 }
 
@@ -471,17 +738,9 @@ pub fn detect_installed_agents_for_skill(
 
     let mut installed = Vec::new();
     for agent in candidates {
-        let config = agent.config();
-
-        let skill_path = if is_global {
-            match &config.global_skills_dir {
-                Some(global_dir) => global_dir.join(&sanitized_name),
-                None => continue,
-            }
-        } else {
-            PathBuf::from(cwd)
-                .join(&config.skills_dir)
-                .join(&sanitized_name)
+        let skill_path = match resolve_agent_skill_dir(&agent, &sanitized_name, is_global, cwd) {
+            Ok(path) => path,
+            Err(_) => continue,
         };
 
         // Use symlink_metadata to detect even broken symlinks
@@ -504,31 +763,26 @@ pub fn detect_install_mode(
     let is_global = matches!(scope, Scope::Global);
     let cwd = project_path.unwrap_or(".");
     let sanitized_name = sanitize_name(skill_name);
-    let config = agent.config();
-
-    let skill_path = if is_global {
-        match &config.global_skills_dir {
-            Some(global_dir) => global_dir.join(&sanitized_name),
-            None => return InstallMode::Symlink, // default
-        }
-    } else {
-        PathBuf::from(cwd)
-            .join(&config.skills_dir)
-            .join(&sanitized_name)
+    let skill_path = match resolve_agent_skill_dir(agent, &sanitized_name, is_global, cwd) {
+        Ok(path) => path,
+        Err(_) => return InstallMode::Symlink, // default
     };
 
-    let is_symlink = skill_path.symlink_metadata().map(|m| {
-        let symlink = m.file_type().is_symlink();
+    let is_symlink = skill_path
+        .symlink_metadata()
+        .map(|m| {
+            let symlink = m.file_type().is_symlink();
 
-        #[cfg(windows)]
-        let symlink = symlink || {
-            use std::os::windows::fs::MetadataExt;
-            // Junction = directory + reparse point (0x400)
-            m.file_type().is_dir() && m.file_attributes() & 0x400 != 0
-        };
+            #[cfg(windows)]
+            let symlink = symlink || {
+                use std::os::windows::fs::MetadataExt;
+                // Junction = directory + reparse point (0x400)
+                m.file_type().is_dir() && m.file_attributes() & 0x400 != 0
+            };
 
-        symlink
-    }).unwrap_or(false);
+            symlink
+        })
+        .unwrap_or(false);
 
     if is_symlink {
         InstallMode::Symlink
@@ -645,12 +899,94 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_installed_agents_empty_for_nonexistent_skill() {
-        let results = detect_installed_agents_for_skill(
-            "nonexistent-skill-xyz-12345",
-            &Scope::Global,
-            None,
+    fn test_copy_install_writes_canonical_and_agent_copy() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let src = temp.path().join("source-skill");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("SKILL.md"),
+            "---\nname: copy-skill\ndescription: test\n---\n",
+        )
+        .unwrap();
+
+        let result = install_skill_for_agent(
+            &src,
+            "copy-skill",
+            &AgentType::ClaudeCode,
+            &Scope::Project,
+            Some(&project_path),
+            &InstallMode::Copy,
         );
+
+        assert!(
+            result.success,
+            "copy install should succeed: {:?}",
+            result.error
+        );
+
+        let canonical = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("copy-skill");
+        let agent_copy = temp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("copy-skill");
+
+        assert!(
+            canonical.join("SKILL.md").exists(),
+            "canonical must be written"
+        );
+        assert!(
+            agent_copy.join("SKILL.md").exists(),
+            "agent copy must be written"
+        );
+        assert_eq!(result.canonical_path.as_deref(), Some(canonical.as_path()));
+    }
+
+    #[test]
+    fn test_copy_install_same_path_universal_preserves_canonical() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let src = temp.path().join("source-skill");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("SKILL.md"),
+            "---\nname: universal-copy\ndescription: test\n---\n",
+        )
+        .unwrap();
+
+        let result = install_skill_for_agent(
+            &src,
+            "universal-copy",
+            &AgentType::Cursor,
+            &Scope::Project,
+            Some(&project_path),
+            &InstallMode::Copy,
+        );
+
+        assert!(
+            result.success,
+            "same-path copy install should succeed: {:?}",
+            result.error
+        );
+        let canonical = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("universal-copy");
+        assert!(canonical.join("SKILL.md").exists());
+        assert_eq!(result.path, canonical);
+        assert_eq!(result.canonical_path.as_deref(), Some(canonical.as_path()));
+    }
+
+    #[test]
+    fn test_detect_installed_agents_empty_for_nonexistent_skill() {
+        let results =
+            detect_installed_agents_for_skill("nonexistent-skill-xyz-12345", &Scope::Global, None);
         assert!(results.is_empty());
     }
 
@@ -660,7 +996,11 @@ mod tests {
         let project_path = temp.path().to_string_lossy().to_string();
 
         // 创建 canonical dir（模拟已安装的 skill）
-        let canonical_dir = temp.path().join(".agents").join("skills").join("test-skill");
+        let canonical_dir = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("test-skill");
         fs::create_dir_all(&canonical_dir).unwrap();
         fs::write(canonical_dir.join("SKILL.md"), "# Test Skill").unwrap();
         fs::write(canonical_dir.join("config.json"), "{}").unwrap();
@@ -678,7 +1018,10 @@ mod tests {
         assert!(result.success, "link should succeed: {:?}", result.error);
         assert!(result.canonical_path.is_some());
         // canonical dir 应该保持不变
-        assert!(canonical_dir.join("SKILL.md").exists(), "canonical dir should not be destroyed");
+        assert!(
+            canonical_dir.join("SKILL.md").exists(),
+            "canonical dir should not be destroyed"
+        );
         assert!(canonical_dir.join("config.json").exists());
     }
 
@@ -704,6 +1047,51 @@ mod tests {
 
         // 关键断言：canonical dir 内容完好
         let read_content = fs::read_to_string(canonical_dir.join("SKILL.md")).unwrap();
-        assert_eq!(read_content, content, "canonical dir content must survive linking");
+        assert_eq!(
+            read_content, content,
+            "canonical dir content must survive linking"
+        );
+    }
+
+    #[test]
+    fn test_install_skill_to_agents_with_modes_preserves_mixed_modes() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let src = temp.path().join("source-skill");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("SKILL.md"),
+            "---\nname: mixed-skill\ndescription: test\n---\n",
+        )
+        .unwrap();
+
+        let targets = vec![
+            (AgentType::ClaudeCode, InstallMode::Copy),
+            (AgentType::Cursor, InstallMode::Symlink),
+        ];
+
+        let results = install_skill_to_agents_with_modes(
+            &src,
+            "mixed-skill",
+            &targets,
+            &Scope::Project,
+            Some(&project_path),
+        );
+
+        assert!(results.iter().all(|r| r.success), "results: {:?}", results);
+        assert!(temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("mixed-skill")
+            .join("SKILL.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("mixed-skill")
+            .join("SKILL.md")
+            .exists());
     }
 }
