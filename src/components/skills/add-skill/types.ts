@@ -1,6 +1,7 @@
 // src/components/skills/add-skill/types.ts
 
 import type { AgentInfo, AppError, AvailableSkill, InstallMode, InstallResults } from '@/bindings';
+import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
 
 /** 安装错误详情（UI 视图模型，由 parseInstallError 从 AppError 转换而来） */
 export interface InstallError {
@@ -80,6 +81,8 @@ export interface WizardState {
   fetchStatus: 'idle' | 'loading' | 'error' | 'success';
   fetchError: AppError | null;
   gitRef: string | null;
+  riskPolicy: InstallRiskPolicy | null;
+  riskAcknowledged: boolean;
 
   // Skills
   availableSkills: AvailableSkill[];
@@ -107,4 +110,22 @@ export interface WizardState {
   installError?: InstallError;
   retrySkillName?: string;
   retryAgents?: string[];
+}
+
+export function canProceedForStep(state: WizardState): boolean {
+  switch (state.step) {
+    case 'source':
+      return state.fetchStatus === 'success' && state.availableSkills.length > 0;
+    case 'scope':
+      return true;
+    case 'skills':
+      return state.selectedSkills.length > 0;
+    case 'options':
+      return true;
+    case 'confirm':
+      return state.confirmReady
+        && (state.riskPolicy?.kind !== 'require-confirmation' || state.riskAcknowledged);
+    default:
+      return false;
+  }
 }

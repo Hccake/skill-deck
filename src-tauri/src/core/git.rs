@@ -103,8 +103,8 @@ where
     cmd.arg("clone")
         .arg("--depth")
         .arg("1")
-        .arg("--progress")
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .arg("--progress");
+    apply_clone_env(&mut cmd);
 
     // 如果指定了分支/tag
     if let Some(branch) = git_ref {
@@ -151,6 +151,16 @@ where
             });
             Err(e)
         }
+    }
+}
+
+fn clone_env_pairs() -> [(&'static str, &'static str); 2] {
+    [("GIT_TERMINAL_PROMPT", "0"), ("GIT_LFS_SKIP_SMUDGE", "1")]
+}
+
+fn apply_clone_env(cmd: &mut Command) {
+    for (key, value) in clone_env_pairs() {
+        cmd.env(key, value);
     }
 }
 
@@ -377,5 +387,12 @@ mod tests {
     fn test_classify_ssl_error() {
         let err = classify_git_error("SSL certificate problem", "https://github.com");
         assert!(matches!(err, AppError::GitNetworkError { .. }));
+    }
+
+    #[test]
+    fn test_clone_env_pairs_include_lfs_skip_smudge() {
+        let envs = clone_env_pairs();
+        assert!(envs.contains(&("GIT_TERMINAL_PROMPT", "0")));
+        assert!(envs.contains(&("GIT_LFS_SKIP_SMUDGE", "1")));
     }
 }

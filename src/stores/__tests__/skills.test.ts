@@ -135,10 +135,37 @@ describe('useSkillsStore', () => {
   });
 
   describe('forceCheckUpdates', () => {
+    it('merges cannot-check status into skills instead of treating it as up to date', async () => {
+      useSkillsDataStore.setState({
+        globalSkills: [makeSkill('toolkit', { hasUpdate: false, canRunUpdate: true })],
+      });
+      mockCheckUpdates.mockResolvedValue([
+        {
+          name: 'toolkit',
+          source: 'owner/repo',
+          hasUpdate: false,
+          status: 'cannot-check',
+          reason: 'missing-skill-path',
+          gitRef: null,
+        },
+      ]);
+
+      await useSkillsDataStore.getState().forceCheckUpdates('global');
+
+      expect(useSkillsDataStore.getState().globalSkills[0]).toEqual(
+        expect.objectContaining({
+          hasUpdate: false,
+          canRunUpdate: true,
+          updateStatus: 'cannot-check',
+          updateReason: 'missing-skill-path',
+        })
+      );
+    });
+
     it('returns false and preserves cached results when update checking fails', async () => {
       updateInfoCache.set('global', {
         checkedAt: 1,
-        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, gitRef: null }],
+        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
       useSkillsDataStore.setState({
         globalSkills: [makeSkill('toolkit', { hasUpdate: true })],
@@ -150,7 +177,7 @@ describe('useSkillsStore', () => {
       expect(result).toBe(false);
       expect(updateInfoCache.get('global')).toEqual({
         checkedAt: 1,
-        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, gitRef: null }],
+        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
       expect(useSkillsDataStore.getState().globalSkills[0]?.hasUpdate).toBe(true);
     });
@@ -308,11 +335,11 @@ describe('useSkillsStore', () => {
       useContextStore.setState({ selectedContext: '/project-a' });
       updateInfoCache.set('/project-a', {
         checkedAt: Date.now(),
-        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, gitRef: null }],
+        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
       updateInfoCache.set('/project-b', {
         checkedAt: Date.now(),
-        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, gitRef: null }],
+        results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
 
       let resolveUpdate: ((value: unknown) => void) | undefined;
@@ -369,6 +396,50 @@ describe('useSkillsStore', () => {
       await useSkillsDataStore.getState().updateAllInSection('global');
 
       expect(useSkillsDataStore.getState().globalSkills[0]?.hasUpdate).toBe(false);
+    });
+
+    it('batches same-source skills separately when their refs differ', async () => {
+      useSkillsDataStore.setState({
+        globalSkills: [
+          makeSkill('toolkit-main', {
+            hasUpdate: true,
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+          }),
+          makeSkill('toolkit-dev', {
+            hasUpdate: true,
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'dev',
+          }),
+        ],
+        projectSkills: [],
+      });
+      mockListSkills.mockRejectedValue(new Error('sync failed'));
+      mockUpdateSkillsBatch.mockImplementation(async ({ names }: { names: string[] }) => ({
+        results: names.map((name) => ({
+          name,
+          status: 'success',
+          warnings: [],
+          durationMs: 20,
+          agentResults: [],
+        })),
+        summary: {
+          total: names.length,
+          succeeded: names.length,
+          partial: 0,
+          failed: 0,
+          skipped: 0,
+        },
+      }));
+
+      await useSkillsDataStore.getState().updateAllInSection('global');
+
+      expect(mockUpdateSkillsBatch).toHaveBeenCalledTimes(2);
+      expect(
+        mockUpdateSkillsBatch.mock.calls.map(([params]) => params.names)
+      ).toEqual([['toolkit-main'], ['toolkit-dev']]);
     });
   });
 

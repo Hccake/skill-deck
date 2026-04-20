@@ -110,6 +110,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         selectedSkills: preselected,
         skillFilter: result.skillFilter,
         gitRef: result.gitRef ?? null,
+        riskPolicy: result.riskPolicy ?? null,
+        riskAcknowledged: false,
         preSelectedSkills: parsed.skills,
         preSelectedAgents: parsed.agents,
       });
@@ -120,6 +122,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       updateState({
         fetchStatus: 'error',
         fetchError: toAppError(error),
+        riskPolicy: null,
+        riskAcknowledged: false,
       });
     }
   }, [updateState, onNext, t]);

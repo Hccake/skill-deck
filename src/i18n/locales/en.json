@@ -156,6 +156,16 @@
     "updateFailed": "Failed",
     "checkUpdates": "Check Updates",
     "checkUpdatesError": "Failed to check updates: {{error}}",
+    "updateStatus": {
+      "cannotCheck": "Cannot check automatically"
+    },
+    "updateReason": {
+      "missing-skill-path": "Missing skillPath, so remote version comparison is unavailable",
+      "missing-remote-hash": "Missing remote hash, so remote version comparison is unavailable",
+      "unsupported-source-type": "This source type does not support automatic update checks yet",
+      "local-source": "Local path sources do not support automatic update checks",
+      "upstream-unavailable": "The upstream source is currently unavailable for update checks"
+    },
     "discover": {
       "searchPlaceholder": "Search skills...",
       "minCharsHint": "Type keywords to search online skills",
@@ -379,6 +389,11 @@
       "copy": "Copy",
       "copyHint": "Source files copied to each agent directory"
     },
+    "risk": {
+      "openclawTitle": "OpenClaw sources require extra confirmation",
+      "openclawBody": "This source contains unreviewed community submissions. Skills run with full agent permissions and may be unsafe.",
+      "openclawAcknowledge": "I understand the risk and want to continue installing skills from this source"
+    },
     "installing": {
       "title": "Installing...",
       "progress": "Progress: {{completed}}/{{total}}",
@@ -420,6 +435,7 @@
       "invalidSource": "Invalid source format: {{value}}",
       "pathNotFound": "Path not found: {{path}}",
       "installFailed": "Installation failed",
+      "riskConfirmationRequired": "This source requires risk confirmation before installation",
       "parseFailed": "Parse failed",
       "suggestion": {
         "checkSkillName": "Check that the skill name is correct",
@@ -436,6 +452,7 @@
         "checkPermission": "Check write permissions for the target directory",
         "checkAgentName": "Check that the agent name is correct",
         "reselectAgents": "Go back and reselect agents",
+        "reviewRiskAndConfirm": "Go back to the confirmation step, review the risk warning, and confirm manually",
         "retryOrContact": "Check the error details and retry, or check logs if the issue persists"
       },
       "actions": {

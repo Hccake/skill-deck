@@ -10,11 +10,16 @@ use crate::core::installer::{
 use crate::core::local_lock::{
     add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
 };
-use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock, SkillLockFile};
+use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock};
 use crate::core::{
-    clone_repo_with_progress, discover_skills, parse_source, CloneProgress, DiscoverOptions,
+    build_update_group_key, build_update_target, clone_repo_with_progress, discover_skills,
+    CloneProgress, DiscoverOptions, UpdateSourceParts,
 };
 use crate::core::{fetch_skill_folder_hash, fetch_skill_folder_hashes_batch};
+use crate::core::{
+    derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
+};
+use crate::core::wellknown::fetch_wellknown_skills;
 use crate::error::AppError;
 use crate::models::{
     InstallMode, Scope, UpdateSkillAgentResult, UpdateSkillAgentStatus, UpdateSkillItemResult,
@@ -52,6 +57,15 @@ fn update_progress_payload(
 }
 
 /// 更新检测结果
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "kebab-case")]
+#[specta(rename_all = "kebab-case")]
+pub enum SkillUpdateCheckStatus {
+    UpdateAvailable,
+    UpToDate,
+    CannotCheck,
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
@@ -59,6 +73,9 @@ pub struct SkillUpdateInfo {
     pub name: String,
     pub source: String,
     pub has_update: bool,
+    pub status: SkillUpdateCheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
 }
@@ -83,73 +100,70 @@ async fn check_updates_inner(
     scope: Scope,
     project_path: Option<&str>,
 ) -> Result<Vec<SkillUpdateInfo>, AppError> {
-    // 1-2. 根据 scope 读取对应的 lock 文件
-    let lock = match scope {
-        Scope::Global => read_scoped_lock(None)?,
+    let mut skills_by_source: HashMap<(String, Option<String>), Vec<(String, String, String)>> =
+        HashMap::new();
+    let mut results = Vec::new();
+
+    match scope {
+        Scope::Global => {
+            let lock = read_scoped_lock(None)?;
+            for (name, entry) in &lock.skills {
+                let metadata = normalize_global_lock_entry(entry);
+                let capability = derive_update_capability(&metadata);
+
+                if !capability.can_check_for_updates {
+                    results.push(SkillUpdateInfo {
+                        name: name.clone(),
+                        source: metadata.source.clone(),
+                        has_update: false,
+                        status: SkillUpdateCheckStatus::CannotCheck,
+                        reason: capability.reason.clone(),
+                        git_ref: metadata.ref_name.clone(),
+                    });
+                    continue;
+                }
+
+                skills_by_source
+                    .entry((metadata.source.clone(), metadata.ref_name.clone()))
+                    .or_default()
+                    .push((
+                        name.clone(),
+                        metadata.skill_path.unwrap(),
+                        metadata.remote_hash.unwrap(),
+                    ));
+            }
+        }
         Scope::Project => {
             if let Some(pp) = project_path {
                 let local_lock = read_local_lock(pp)?;
-                // 转换 LocalSkillLockFile -> SkillLockFile 用于统一流程
-                let mut skills = HashMap::new();
-                for (name, entry) in local_lock.skills {
-                    let source = entry.source.clone();
-                    let source_type = entry.source_type.clone();
-                    let source_url = entry.source_url.unwrap_or_else(|| {
-                        if source_type == "github" {
-                            format!("https://github.com/{}", source)
-                        } else {
-                            source.clone()
-                        }
-                    });
-                    skills.insert(
-                        name,
-                        crate::core::skill_lock::SkillLockEntry {
-                            source,
-                            source_type,
-                            source_url,
-                            ref_name: entry.ref_name,
-                            skill_path: entry.skill_path,
-                            skill_folder_hash: entry.remote_hash.unwrap_or_default(),
-                            installed_at: String::new(),
-                            updated_at: String::new(),
-                            plugin_name: entry.plugin_name,
-                        },
-                    );
+                for (name, entry) in &local_lock.skills {
+                    let metadata = normalize_local_lock_entry(entry);
+                    let capability = derive_update_capability(&metadata);
+
+                    if !capability.can_check_for_updates {
+                        results.push(SkillUpdateInfo {
+                            name: name.clone(),
+                            source: metadata.source.clone(),
+                            has_update: false,
+                            status: SkillUpdateCheckStatus::CannotCheck,
+                            reason: capability.reason.clone(),
+                            git_ref: metadata.ref_name.clone(),
+                        });
+                        continue;
+                    }
+
+                    skills_by_source
+                        .entry((metadata.source.clone(), metadata.ref_name.clone()))
+                        .or_default()
+                        .push((
+                            name.clone(),
+                            metadata.skill_path.unwrap(),
+                            metadata.remote_hash.unwrap(),
+                        ));
                 }
-                SkillLockFile {
-                    version: 3,
-                    skills,
-                    dismissed: None,
-                    last_selected_agents: None,
-                }
-            } else {
-                read_scoped_lock(None)?
             }
         }
-    };
-
-    // 3. 过滤并按 (source, ref_name) 分组
-    // value: Vec<(skill_name, skill_path, local_hash)>
-    let mut skills_by_source: HashMap<(String, Option<String>), Vec<(String, String, String)>> =
-        HashMap::new();
-
-    for (name, entry) in &lock.skills {
-        if entry.skill_folder_hash.is_empty() {
-            continue;
-        }
-        let skill_path = match &entry.skill_path {
-            Some(p) if !p.is_empty() => p.clone(),
-            _ => continue,
-        };
-
-        skills_by_source
-            .entry((entry.source.clone(), entry.ref_name.clone()))
-            .or_default()
-            .push((name.clone(), skill_path, entry.skill_folder_hash.clone()));
     }
-
-    // 4. 对每组 (source, ref_name) 批量查询 hash（单次 API 请求 per source+ref）
-    let mut results = Vec::new();
 
     for ((source, ref_name), skills) in &skills_by_source {
         let paths: Vec<(String, String)> = skills
@@ -159,17 +173,13 @@ async fn check_updates_inner(
         match fetch_skill_folder_hashes_batch(source, &paths, ref_name.as_deref()).await {
             Ok(hashes) => {
                 for (name, _, local_hash) in skills {
-                    let has_update = hashes
-                        .get(name)
-                        .and_then(|h| h.as_ref())
-                        .map(|remote| remote != local_hash)
-                        .unwrap_or(false);
-                    results.push(SkillUpdateInfo {
-                        name: name.clone(),
-                        source: source.clone(),
-                        has_update,
-                        git_ref: ref_name.clone(),
-                    });
+                    results.push(build_batch_check_result(
+                        name,
+                        source,
+                        ref_name.as_deref(),
+                        local_hash,
+                        hashes.get(name).and_then(|h| h.as_deref()),
+                    ));
                 }
             }
             Err(_) => {
@@ -179,6 +189,8 @@ async fn check_updates_inner(
                         name: name.clone(),
                         source: source.clone(),
                         has_update: false,
+                        status: SkillUpdateCheckStatus::CannotCheck,
+                        reason: Some("upstream-unavailable".to_string()),
                         git_ref: ref_name.clone(),
                     });
                 }
@@ -187,6 +199,40 @@ async fn check_updates_inner(
     }
 
     Ok(results)
+}
+
+fn build_batch_check_result(
+    name: &str,
+    source: &str,
+    ref_name: Option<&str>,
+    local_hash: &str,
+    remote_hash: Option<&str>,
+) -> SkillUpdateInfo {
+    match remote_hash {
+        Some(remote_hash) => {
+            let has_update = remote_hash != local_hash;
+            SkillUpdateInfo {
+                name: name.to_string(),
+                source: source.to_string(),
+                has_update,
+                status: if has_update {
+                    SkillUpdateCheckStatus::UpdateAvailable
+                } else {
+                    SkillUpdateCheckStatus::UpToDate
+                },
+                reason: None,
+                git_ref: ref_name.map(str::to_string),
+            }
+        }
+        None => SkillUpdateInfo {
+            name: name.to_string(),
+            source: source.to_string(),
+            has_update: false,
+            status: SkillUpdateCheckStatus::CannotCheck,
+            reason: Some("upstream-unavailable".to_string()),
+            git_ref: ref_name.map(str::to_string),
+        },
+    }
 }
 
 /// 更新指定 skill
@@ -298,44 +344,66 @@ async fn update_skill_single(
         }
     };
 
-    // 2. 构造安装 URL（与 CLI runUpdate 逻辑一致）
-    let install_url = build_install_url_from_parts(
-        &entry_source_url,
-        entry_skill_path.as_deref(),
-        entry_ref_name.as_deref(),
-    );
+    // 2. 直接从 lock 元数据构造更新目标，避免 round-trip 成 source 字符串后丢失来源类型
+    let update_target = build_update_target(UpdateSourceParts {
+        source_type: entry_source_type.clone(),
+        source_url: if entry_source_url.is_empty() {
+            entry_source.clone()
+        } else {
+            entry_source_url.clone()
+        },
+        ref_name: entry_ref_name.clone(),
+        skill_path: entry_skill_path.clone(),
+    });
 
-    // 3. 解析来源
-    let parsed = parse_source(&install_url)?;
-
-    // 4. 克隆仓库
+    // 3. 获取更新来源
     let _ = app.emit(
         "update-progress",
         &update_progress_payload(skill_name, &scope, project_path, "cloning"),
     );
-    let app_clone = app.clone();
-    let clone_result = clone_repo_with_progress(
-        &parsed.url,
-        parsed.git_ref.as_deref(),
-        move |progress: CloneProgress| {
-            let _ = app_clone.emit("clone-progress", &progress);
-        },
-    )?;
+    let (skills_dir, _clone_result) = match entry_source_type.as_str() {
+        "local" => (std::path::PathBuf::from(&update_target.fetch_source_url), None),
+        "github" | "gitlab" | "git" => {
+            let app_clone = app.clone();
+            let clone_result = clone_repo_with_progress(
+                &update_target.fetch_source_url,
+                update_target.git_ref.as_deref(),
+                move |progress: CloneProgress| {
+                    let _ = app_clone.emit("clone-progress", &progress);
+                },
+            )?;
+            let repo_path = clone_result.repo_path.clone();
+            (repo_path, Some(clone_result))
+        }
+        "well-known" | "wellknown" | "direct-url" => {
+            let result = fetch_wellknown_skills(&update_target.fetch_source_url).await?;
+            (result.repo_path, None)
+        }
+        other => {
+            return Err(AppError::InvalidSource {
+                value: format!("Unsupported update source type: {}", other),
+            });
+        }
+    };
 
-    // 5. 发现 skills
+    // 4. 发现 skills
     let options = DiscoverOptions {
         include_internal: true,
         full_depth: false,
     };
-    let discovered = discover_skills(&clone_result.repo_path, parsed.subpath.as_deref(), options)?;
+    let discovered = discover_skills(
+        &skills_dir,
+        update_target.discover_subpath.as_deref(),
+        options,
+    )?;
 
-    // 6. 找到目标 skill
+    // 5. 找到目标 skill
     let skill = discovered
         .iter()
         .find(|s| s.name == skill_name)
         .ok_or_else(|| AppError::NoSkillsFound)?;
 
-    // 7. 检测已安装的 agents（通过文件系统检测，fallback 到 detect_installed + universal）
+    // 6. 检测已安装的 agents（通过文件系统检测，fallback 到 detect_installed + universal）
     let install_scope = match scope {
         Scope::Global => crate::models::Scope::Global,
         Scope::Project => crate::models::Scope::Project,
@@ -352,7 +420,7 @@ async fn update_skill_single(
         }
     }
 
-    // 8. 按 agent 检测安装模式（通过文件系统检测）
+    // 7. 按 agent 检测安装模式（通过文件系统检测）
     let target_agent_modes: Vec<(AgentType, InstallMode)> = target_agents
         .iter()
         .map(|agent| {
@@ -363,7 +431,7 @@ async fn update_skill_single(
         })
         .collect();
 
-    // 9. 执行安装（覆盖现有文件）
+    // 8. 执行安装（覆盖现有文件）
     let _ = app.emit(
         "update-progress",
         &update_progress_payload(skill_name, &scope, project_path, "installing"),
@@ -389,7 +457,7 @@ async fn update_skill_single(
         })
         .collect();
 
-    // 10. 更新 lock 文件（获取新的 hash）
+    // 9. 更新 lock 文件（获取新的 hash）
     let _ = app.emit(
         "update-progress",
         &update_progress_payload(skill_name, &scope, project_path, "writing_lock"),
@@ -553,11 +621,15 @@ async fn update_skills_batch_inner(
         }
     }
 
-    // 按 source_url 分组
-    let mut by_source: HashMap<String, Vec<SkillEntry>> = HashMap::new();
+    // 按 source_url + ref_name 分组，避免同仓库不同分支共享错误的 clone
+    let mut by_source: HashMap<crate::core::UpdateGroupKey, Vec<SkillEntry>> = HashMap::new();
     for entry in entries {
         by_source
-            .entry(entry.source_url.clone())
+            .entry(build_update_group_key(
+                &entry.source_type,
+                &entry.source_url,
+                entry.ref_name.as_deref(),
+            ))
             .or_default()
             .push(entry);
     }
@@ -569,29 +641,17 @@ async fn update_skills_batch_inner(
     };
 
     // 2. 每组 source 只 clone 一次
-    for (source_url, group) in &by_source {
-        // 用第一个 entry 构造安装 URL（取顶层 URL，不含 skill 子路径，以获取整个仓库）
-        let source_with_ref = match &group[0].ref_name {
-            Some(r) => format!("{}#{}", source_url, r),
-            None => source_url.clone(),
-        };
-        let parsed = match parse_source(&source_with_ref) {
-            Ok(p) => p,
-            Err(err) => {
-                // 整组失败
-                for entry in group {
-                    all_results.push(UpdateSkillItemResult {
-                        name: entry.name.clone(),
-                        status: UpdateSkillStatus::Failed,
-                        error: Some(err.to_string()),
-                        warnings: Vec::new(),
-                        duration_ms: None,
-                        agent_results: Vec::new(),
-                    });
-                }
-                continue;
-            }
-        };
+    for (_group_key, group) in &by_source {
+        let update_target = build_update_target(UpdateSourceParts {
+            source_type: group[0].source_type.clone(),
+            source_url: if group[0].source_url.is_empty() {
+                group[0].source.clone()
+            } else {
+                group[0].source_url.clone()
+            },
+            ref_name: group[0].ref_name.clone(),
+            skill_path: None,
+        });
 
         // emit cloning progress for first skill in group
         let _ = app.emit(
@@ -599,21 +659,60 @@ async fn update_skills_batch_inner(
             &update_progress_payload(&group[0].name, &scope, project_path, "cloning"),
         );
 
-        let app_clone = app.clone();
-        let clone_result = match clone_repo_with_progress(
-            &parsed.url,
-            parsed.git_ref.as_deref(),
-            move |progress: CloneProgress| {
-                let _ = app_clone.emit("clone-progress", &progress);
-            },
-        ) {
-            Ok(r) => r,
-            Err(err) => {
+        let (skills_dir, _clone_result) = match group[0].source_type.as_str() {
+            "local" => (std::path::PathBuf::from(&update_target.fetch_source_url), None),
+            "github" | "gitlab" | "git" => {
+                let app_clone = app.clone();
+                match clone_repo_with_progress(
+                    &update_target.fetch_source_url,
+                    update_target.git_ref.as_deref(),
+                    move |progress: CloneProgress| {
+                        let _ = app_clone.emit("clone-progress", &progress);
+                    },
+                ) {
+                    Ok(clone_result) => {
+                        let repo_path = clone_result.repo_path.clone();
+                        (repo_path, Some(clone_result))
+                    }
+                    Err(err) => {
+                        for entry in group {
+                            all_results.push(UpdateSkillItemResult {
+                                name: entry.name.clone(),
+                                status: UpdateSkillStatus::Failed,
+                                error: Some(err.to_string()),
+                                warnings: Vec::new(),
+                                duration_ms: None,
+                                agent_results: Vec::new(),
+                            });
+                        }
+                        continue;
+                    }
+                }
+            }
+            "well-known" | "wellknown" | "direct-url" => {
+                match fetch_wellknown_skills(&update_target.fetch_source_url).await {
+                    Ok(result) => (result.repo_path, None),
+                    Err(err) => {
+                        for entry in group {
+                            all_results.push(UpdateSkillItemResult {
+                                name: entry.name.clone(),
+                                status: UpdateSkillStatus::Failed,
+                                error: Some(err.to_string()),
+                                warnings: Vec::new(),
+                                duration_ms: None,
+                                agent_results: Vec::new(),
+                            });
+                        }
+                        continue;
+                    }
+                }
+            }
+            other => {
                 for entry in group {
                     all_results.push(UpdateSkillItemResult {
                         name: entry.name.clone(),
                         status: UpdateSkillStatus::Failed,
-                        error: Some(err.to_string()),
+                        error: Some(format!("Unsupported update source type: {}", other)),
                         warnings: Vec::new(),
                         duration_ms: None,
                         agent_results: Vec::new(),
@@ -629,7 +728,7 @@ async fn update_skills_batch_inner(
             full_depth: false,
         };
         let discovered =
-            match discover_skills(&clone_result.repo_path, parsed.subpath.as_deref(), options) {
+            match discover_skills(&skills_dir, update_target.discover_subpath.as_deref(), options) {
                 Ok(d) => d,
                 Err(err) => {
                     for entry in group {
@@ -878,61 +977,111 @@ fn summarize_results(results: &[UpdateSkillItemResult]) -> UpdateSkillSummary {
     summary
 }
 
-/// 从来源信息构造安装 URL
-///
-/// 与 CLI cli.ts runUpdate() 中构造 installUrl 的逻辑一致：
-/// 1. 基础 URL = source_url
-/// 2. 如果有 skillPath，去掉 SKILL.md 后缀，拼接为 GitHub tree URL（使用 ref_name 分支）
-/// 3. 如果没有 skillPath 但有 ref_name，追加 #ref 片段
-fn build_install_url_from_parts(
-    source_url: &str,
-    skill_path: Option<&str>,
-    ref_name: Option<&str>,
-) -> String {
-    let mut install_url = source_url.to_string();
-
-    if let Some(sp) = skill_path {
-        let mut skill_folder = sp.to_string();
-
-        // 去掉 /SKILL.md 或 SKILL.md 后缀
-        if skill_folder.ends_with("/SKILL.md") {
-            skill_folder = skill_folder[..skill_folder.len() - 9].to_string();
-        } else if skill_folder.ends_with("SKILL.md") {
-            skill_folder = skill_folder[..skill_folder.len() - 8].to_string();
-        }
-
-        // 去掉尾部斜杠
-        skill_folder = skill_folder.trim_end_matches('/').to_string();
-
-        if !skill_folder.is_empty() {
-            // 去掉 sourceUrl 的 .git 后缀和尾部斜杠
-            install_url = install_url
-                .trim_end_matches(".git")
-                .trim_end_matches('/')
-                .to_string();
-
-            // 拼接 GitHub tree URL（使用 ref_name，默认 main 分支）
-            let branch = ref_name.unwrap_or("main");
-            install_url = format!("{}/tree/{}/{}", install_url, branch, skill_folder);
-        } else if let Some(r) = ref_name {
-            // 没有子路径但有 ref，追加 #ref 片段
-            if !install_url.contains("/tree/") {
-                install_url = format!("{}#{}", install_url, r);
-            }
-        }
-    } else if let Some(r) = ref_name {
-        // 没有 skillPath 但有 ref_name，追加 #ref 片段
-        if !install_url.contains("/tree/") {
-            install_url = format!("{}#{}", install_url, r);
-        }
-    }
-
-    install_url
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::skill_lock::SkillLockEntry;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_normalize_global_lock_entry_maps_skill_folder_hash_to_remote_hash() {
+        let entry = SkillLockEntry {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: "https://github.com/owner/repo".to_string(),
+            ref_name: Some("main".to_string()),
+            skill_path: Some("skills/demo/SKILL.md".to_string()),
+            skill_folder_hash: "tree123".to_string(),
+            installed_at: "2026-01-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+            plugin_name: None,
+        };
+
+        let normalized = crate::core::normalize_global_lock_entry(&entry);
+        assert_eq!(normalized.remote_hash.as_deref(), Some("tree123"));
+    }
+
+    #[test]
+    fn test_build_update_target_extracts_discover_subpath() {
+        let target = crate::core::build_update_target(crate::core::UpdateSourceParts {
+            source_type: "github".to_string(),
+            source_url: "https://github.com/owner/repo".to_string(),
+            ref_name: Some("feature/my-branch".to_string()),
+            skill_path: Some("skills/demo/SKILL.md".to_string()),
+        });
+
+        assert_eq!(
+            target.discover_subpath.as_deref(),
+            Some("skills/demo")
+        );
+        assert_eq!(target.git_ref.as_deref(), Some("feature/my-branch"));
+    }
+
+    #[test]
+    fn test_capability_downgrades_when_skill_path_missing() {
+        let capability = crate::core::derive_update_capability(
+            &crate::core::NormalizedUpdateMetadata {
+                source: "owner/repo".to_string(),
+                source_type: "github".to_string(),
+                source_url: Some("https://github.com/owner/repo".to_string()),
+                ref_name: None,
+                skill_path: None,
+                remote_hash: Some("tree123".to_string()),
+            },
+        );
+
+        assert!(!capability.can_check_for_updates);
+        assert_eq!(capability.reason.as_deref(), Some("missing-skill-path"));
+    }
+
+    #[test]
+    fn test_check_updates_marks_missing_metadata_as_cannot_check_for_project() {
+        tauri::async_runtime::block_on(async {
+            let temp = tempdir().unwrap();
+            std::fs::write(
+                temp.path().join("skills-lock.json"),
+                r#"{
+  "version": 1,
+  "skills": {
+    "broken-project": {
+      "source": "owner/repo",
+      "ref": "main",
+      "sourceType": "github",
+      "computedHash": "abc123",
+      "remoteHash": "tree123"
+    }
+  }
+}"#,
+            )
+            .unwrap();
+
+            let updates = check_updates_inner(Scope::Project, Some(temp.path().to_str().unwrap()))
+                .await
+                .expect("updates");
+            let item = updates
+                .into_iter()
+                .find(|u| u.name == "broken-project")
+                .expect("item");
+
+            assert_eq!(item.status, SkillUpdateCheckStatus::CannotCheck);
+            assert_eq!(item.reason.as_deref(), Some("missing-skill-path"));
+        });
+    }
+
+    #[test]
+    fn test_batch_hash_result_marks_missing_remote_hash_as_cannot_check() {
+        let item = build_batch_check_result(
+            "demo",
+            "owner/repo",
+            Some("main"),
+            "local-hash",
+            None,
+        );
+
+        assert_eq!(item.status, SkillUpdateCheckStatus::CannotCheck);
+        assert!(!item.has_update);
+        assert_eq!(item.reason.as_deref(), Some("upstream-unavailable"));
+    }
 
     #[test]
     fn test_skill_status_partial_when_some_agents_failed() {

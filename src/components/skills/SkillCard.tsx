@@ -22,7 +22,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { AgentType, InstalledSkill, RiskLevel, SkillScope } from '@/bindings';
+import type { AgentType, InstalledSkill, RiskLevel, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
 import { RiskBadge } from './RiskBadge';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
@@ -47,7 +47,10 @@ function phaseToI18nKey(phase: string | null): string {
 }
 
 interface SkillCardProps {
-  skill: InstalledSkill;
+  skill: InstalledSkill & {
+    updateStatus?: SkillUpdateCheckStatus | null;
+    updateReason?: string | null;
+  };
   /** 当前显示的 scope（用于决定图标） */
   displayScope: SkillScope;
   /** 是否存在冲突（同时在 project 和 global 安装） */
@@ -123,6 +126,8 @@ export const SkillCard = memo(function SkillCard({
     displayScope === 'project'
       ? t('skills.conflict.alsoInGlobal')
       : t('skills.conflict.alsoInProject');
+  const showCannotCheckStatus = skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
+  const canShowUpdateAction = Boolean(skill.hasUpdate || skill.canRunUpdate);
 
   return (
       <Card
@@ -153,6 +158,12 @@ export const SkillCard = memo(function SkillCard({
 
               {/* Risk Badge */}
               {riskLevel ? <RiskBadge risk={riskLevel} /> : null}
+
+              {showCannotCheckStatus ? (
+                <Badge variant="outline" className="text-xs px-1.5 py-0 text-muted-foreground">
+                  {t('skills.updateStatus.cannotCheck')}
+                </Badge>
+              ) : null}
 
               {/* Plugin Name Badge */}
               {skill.pluginName ? (
@@ -196,7 +207,7 @@ export const SkillCard = memo(function SkillCard({
                   {t('skills.updateFailed')}
                 </Badge>
               ) : null}
-              {skill.hasUpdate && !updateStatus ? (
+              {canShowUpdateAction && !updateStatus ? (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -289,6 +300,12 @@ export const SkillCard = memo(function SkillCard({
             ) : null}
             {skill.updatedAt ? (
               <span>{t('skills.updated', { time: formatTime(skill.updatedAt, i18n.language) })}</span>
+            ) : null}
+            {skill.updateReason ? (
+              <>
+                <span className="text-border">·</span>
+                <span>{t(`skills.updateReason.${skill.updateReason}`)}</span>
+              </>
             ) : null}
           </div>
 

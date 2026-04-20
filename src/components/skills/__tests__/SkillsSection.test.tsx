@@ -37,6 +37,7 @@ const makeSkill = (
   scope,
   agents: [],
   hasUpdate: true,
+  canCheckForUpdates: true,
   ...overrides,
 });
 
@@ -140,5 +141,52 @@ describe('SkillsSection', () => {
     await waitFor(() => {
       expect(screen.getByText('skills.updateDone')).toBeTruthy();
     });
+  });
+
+  it('hides the check-updates action when no skills in the section can be checked', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          {
+            ...makeSkill('global', { hasUpdate: false, canCheckForUpdates: false }),
+            updateStatus: 'cannot-check',
+          } as InstalledSkill & { updateStatus?: 'cannot-check' },
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        isCheckingUpdates={false}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={vi.fn(async () => true)}
+      />
+    );
+
+    expect(screen.queryByText('skills.checkUpdates')).toBeNull();
+  });
+
+  it('hides the check-updates action when capability metadata is missing', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', { hasUpdate: false, canCheckForUpdates: undefined })]}
+        scope="global"
+        updatingSkills={new Map()}
+        isCheckingUpdates={false}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={vi.fn(async () => true)}
+      />
+    );
+
+    expect(screen.queryByText('skills.checkUpdates')).toBeNull();
   });
 });

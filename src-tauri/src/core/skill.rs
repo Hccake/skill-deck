@@ -9,6 +9,9 @@ use super::agents::AgentType;
 use super::paths::canonical_skills_dir;
 use super::local_lock::{read_local_lock, LocalSkillLockEntry};
 use super::skill_lock::{get_skill_from_lock, SkillLockEntry};
+use super::update_metadata::{
+    derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
+};
 use crate::error::AppError;
 
 /// Skill 元数据
@@ -142,6 +145,15 @@ pub struct InstalledSkill {
     pub updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_update: Option<bool>,
+    /// 是否可直接执行更新
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_run_update: Option<bool>,
+    /// 是否可自动检查更新
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_check_for_updates: Option<bool>,
+    /// 更新能力缺失原因
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_reason: Option<String>,
     /// 所属 plugin 名称
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_name: Option<String>,
@@ -160,6 +172,11 @@ impl InstalledSkill {
             self.updated_at = Some(e.updated_at.clone());
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
+
+            let capability = derive_update_capability(&normalize_global_lock_entry(e));
+            self.can_run_update = Some(capability.can_run_update);
+            self.can_check_for_updates = Some(capability.can_check_for_updates);
+            self.update_reason = capability.reason;
         }
         self
     }
@@ -177,6 +194,11 @@ impl InstalledSkill {
             });
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
+
+            let capability = derive_update_capability(&normalize_local_lock_entry(e));
+            self.can_run_update = Some(capability.can_run_update);
+            self.can_check_for_updates = Some(capability.can_check_for_updates);
+            self.update_reason = capability.reason;
         }
         self
     }
@@ -354,6 +376,9 @@ pub fn list_installed_skills(
                         installed_at: None,
                         updated_at: None,
                         has_update: None,
+                        can_run_update: None,
+                        can_check_for_updates: None,
+                        update_reason: None,
                         plugin_name: None,
                         git_ref: None,
                     };
@@ -458,6 +483,9 @@ pub fn list_installed_skills(
                     installed_at: None,
                     updated_at: None,
                     has_update: None,
+                    can_run_update: None,
+                    can_check_for_updates: None,
+                    update_reason: None,
                     plugin_name: None,
                     git_ref: None,
                 };
@@ -647,6 +675,9 @@ Content.
             installed_at: None,
             updated_at: None,
             has_update: None,
+            can_run_update: None,
+            can_check_for_updates: None,
+            update_reason: None,
             plugin_name: None,
             git_ref: None,
         }
@@ -656,6 +687,32 @@ Content.
             skill.source_url.as_deref(),
             Some("git@github.com:owner/private-repo.git")
         );
+    }
+
+    #[test]
+    fn test_installed_skill_runtime_update_capabilities_can_be_stored() {
+        let skill = InstalledSkill {
+            name: "demo".to_string(),
+            description: "Demo".to_string(),
+            path: String::new(),
+            canonical_path: String::new(),
+            scope: SkillScope::Global,
+            agents: Vec::new(),
+            source: None,
+            source_url: None,
+            installed_at: None,
+            updated_at: None,
+            has_update: Some(false),
+            can_run_update: Some(true),
+            can_check_for_updates: Some(false),
+            update_reason: Some("missing-skill-path".to_string()),
+            plugin_name: None,
+            git_ref: None,
+        };
+
+        assert_eq!(skill.can_run_update, Some(true));
+        assert_eq!(skill.can_check_for_updates, Some(false));
+        assert_eq!(skill.update_reason.as_deref(), Some("missing-skill-path"));
     }
 
     #[test]

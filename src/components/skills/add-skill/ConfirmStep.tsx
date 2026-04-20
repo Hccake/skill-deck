@@ -129,6 +129,31 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
 
   return (
     <div className="space-y-4">
+      {state.riskPolicy?.kind === 'require-confirmation' && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-3 space-y-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-warning" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                {t('addSkill.risk.openclawTitle')}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {t('addSkill.risk.openclawBody')}
+              </p>
+            </div>
+          </div>
+          <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={state.riskAcknowledged}
+              onChange={(event) => updateState({ riskAcknowledged: event.target.checked })}
+            />
+            <span>{t('addSkill.risk.openclawAcknowledge')}</span>
+          </label>
+        </div>
+      )}
+
       {/* 集中覆盖警告条 */}
       {state.confirmReady && overwriteCount > 0 && (
         <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-md text-sm text-amber-700 dark:text-amber-400">

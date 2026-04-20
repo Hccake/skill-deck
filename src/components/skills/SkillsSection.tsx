@@ -72,7 +72,7 @@ export const SkillsSection = memo(function SkillsSection({
   let completedCount = 0;
   let totalUpdating = 0;
   for (const skill of skills) {
-    if (skill.hasUpdate) updatesCount++;
+    if ((skill as InstalledSkill & { updateStatus?: string | null }).updateStatus === 'update-available' || (!('updateStatus' in skill) && skill.hasUpdate)) updatesCount++;
     const status = updatingSkills.get(
       getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath })
     );
@@ -85,6 +85,7 @@ export const SkillsSection = memo(function SkillsSection({
       }
     }
   }
+  const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
 
   // 检测 isCheckingUpdates true → false 转换，短暂显示完成态
   const [checkDone, setCheckDone] = useState(false);
@@ -161,7 +162,7 @@ export const SkillsSection = memo(function SkillsSection({
         
         {/* Right Actions: Check Updates + Add Skill */}
         <div className="flex items-center gap-1.5">
-          {!isAnyUpdating && onCheckUpdates && skills.length > 0 && (
+          {!isAnyUpdating && onCheckUpdates && skills.length > 0 && checkableCount > 0 && (
             checkDone && updatesCount === 0 ? (
               <span className="inline-flex items-center justify-center h-7 px-2.5 text-xs text-success font-medium gap-1.5">
                 <Check className="h-3.5 w-3.5" />

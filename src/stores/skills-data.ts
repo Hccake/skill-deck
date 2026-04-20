@@ -8,6 +8,7 @@ import {
   updateInfoCache,
   UPDATE_CHECK_TTL,
   clearUpdateCacheForSkill,
+  type SkillListItem,
   t,
 } from './skills-utils';
 import {
@@ -26,10 +27,10 @@ type UpdateCheckResult =
   | { ok: false };
 
 function clearLocalUpdateFlags(
-  skills: InstalledSkill[],
+  skills: SkillListItem[],
   scope: SkillScope,
   skillNames: Set<string>,
-): InstalledSkill[] {
+): SkillListItem[] {
   let changed = false;
   const nextSkills = skills.map((skill) => {
     if (skill.scope !== scope || !skillNames.has(skill.name) || !skill.hasUpdate) {
@@ -39,6 +40,8 @@ function clearLocalUpdateFlags(
     return {
       ...skill,
       hasUpdate: false,
+      updateStatus: 'up-to-date' as const,
+      updateReason: null,
     };
   });
 
@@ -108,11 +111,11 @@ async function loadSkillsData(
 
 interface SkillsDataState {
   // Data
-  globalSkills: InstalledSkill[];
-  projectSkills: InstalledSkill[];
+  globalSkills: SkillListItem[];
+  projectSkills: SkillListItem[];
   projectPathExists: boolean;
   /** Discover 页使用：所有已注册 project 的 skills（key = projectPath） */
-  allProjectsSkills: Map<string, InstalledSkill[]>;
+  allProjectsSkills: Map<string, SkillListItem[]>;
   allAgents: AgentInfo[];
   loading: boolean;
   error: string | null;
@@ -129,7 +132,7 @@ interface SkillsDataState {
   syncSkills: () => Promise<void>;
   syncUpdates: () => Promise<void>;
   forceCheckUpdates: (scope: SkillScope) => Promise<boolean>;
-  fetchAuditForSkills: (skills: InstalledSkill[]) => Promise<void>;
+  fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
   updateSkill: (skillName: string, scope: SkillScope) => Promise<void>;
   updateAllInSection: (scope: SkillScope) => Promise<void>;
   cancelUpdateAll: () => void;
@@ -426,7 +429,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
     const bySource = new Map<string, typeof updatable>();
     for (const skill of updatable) {
-      const key = skill.source ?? '__no_source__';
+      const key = `${skill.sourceUrl ?? skill.source ?? '__no_source__'}::${skill.gitRef ?? ''}`;
       const group = bySource.get(key);
       if (group) {
         group.push(skill);

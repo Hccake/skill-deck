@@ -10,7 +10,10 @@ pub mod skill;
 pub mod local_lock;
 pub mod plugin_manifest;
 pub mod skill_lock;
+pub mod source_policy;
 pub mod source_parser;
+pub mod update_metadata;
+pub mod update_source;
 pub mod uninstaller;
 pub mod wellknown;
 
@@ -18,4 +21,7 @@ pub use discovery::*;
 pub use git::*;
 pub use github_api::*;
 pub use installer::*;
+pub use source_policy::*;
 pub use source_parser::*;
+pub use update_metadata::*;
+pub use update_source::*;

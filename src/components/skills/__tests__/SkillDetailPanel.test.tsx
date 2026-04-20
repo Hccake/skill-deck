@@ -35,6 +35,7 @@ const makeSkill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => (
   scope: 'global',
   agents: [],
   hasUpdate: true,
+  canCheckForUpdates: true,
   ...overrides,
 });
 
@@ -89,6 +90,91 @@ describe('SkillDetailPanel', () => {
     fireEvent.click(screen.getByTitle('skills.checkUpdates'));
 
     expect(onCheckUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows cannot-check status and reason while keeping update action when canRunUpdate is true', () => {
+    const onUpdate = vi.fn();
+
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={{
+            ...makeSkill({
+              hasUpdate: false,
+              canRunUpdate: true,
+              updateReason: 'missing-skill-path',
+            }),
+            updateStatus: 'cannot-check',
+          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={onUpdate}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('skills.updateStatus.cannotCheck')).toBeTruthy();
+    expect(screen.getByText('skills.updateReason.missing-skill-path')).toBeTruthy();
+    fireEvent.click(screen.getByTitle('skills.actions.update'));
+    expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
+  });
+
+  it('shows update action for manual-only sources before any update check runs', () => {
+    const onUpdate = vi.fn();
+
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({
+            hasUpdate: false,
+            canRunUpdate: true,
+            canCheckForUpdates: false,
+            updateReason: 'unsupported-source-type',
+          })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={onUpdate}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByTitle('skills.actions.update'));
+    expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
+  });
+
+  it('hides the check-updates action when update-check capability metadata is missing', () => {
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({
+            hasUpdate: false,
+            canRunUpdate: false,
+            canCheckForUpdates: undefined,
+          })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+          onCheckUpdates={vi.fn(async () => true) as never}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.queryByTitle('skills.checkUpdates')).toBeNull();
   });
 
   it('renders the description outside the title row so it keeps full width', () => {

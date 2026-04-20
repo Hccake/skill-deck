@@ -156,6 +156,16 @@
     "updateFailed": "更新失败",
     "checkUpdates": "检查更新",
     "checkUpdatesError": "检查更新失败：{{error}}",
+    "updateStatus": {
+      "cannotCheck": "无法自动检查"
+    },
+    "updateReason": {
+      "missing-skill-path": "缺少 skillPath，无法自动比较远端版本",
+      "missing-remote-hash": "缺少远端哈希，无法自动比较远端版本",
+      "unsupported-source-type": "该来源类型暂不支持自动检查更新",
+      "local-source": "本地路径来源不支持自动检查更新",
+      "upstream-unavailable": "上游暂不可访问，当前无法完成更新检查"
+    },
     "discover": {
       "searchPlaceholder": "搜索 Skills...",
       "minCharsHint": "输入关键词搜索在线 Skills",
@@ -379,6 +389,11 @@
       "copy": "复制",
       "copyHint": "源文件复制到各 Agent 目录"
     },
+    "risk": {
+      "openclawTitle": "OpenClaw 来源需要额外确认",
+      "openclawBody": "该来源包含未经审核的社区提交内容。Skill 拥有完整 agent 权限，可能带来安全风险。",
+      "openclawAcknowledge": "我已理解风险，并允许继续安装此来源中的 Skill"
+    },
     "installing": {
       "title": "安装中...",
       "progress": "进度: {{completed}}/{{total}}",
@@ -420,6 +435,7 @@
       "invalidSource": "无效的来源格式: {{value}}",
       "pathNotFound": "路径未找到: {{path}}",
       "installFailed": "安装失败",
+      "riskConfirmationRequired": "该来源需要先确认风险后才能安装",
       "parseFailed": "解析失败",
       "suggestion": {
         "checkSkillName": "检查 skill 名称是否正确",
@@ -436,6 +452,7 @@
         "checkPermission": "检查目标目录的写入权限",
         "checkAgentName": "检查 agent 名称是否正确",
         "reselectAgents": "返回上一步重新选择 agents",
+        "reviewRiskAndConfirm": "请返回确认步骤，阅读风险提示并手动确认",
         "retryOrContact": "请检查错误信息并重试，如果问题持续请查看日志"
       },
       "actions": {

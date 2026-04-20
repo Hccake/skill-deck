@@ -56,10 +56,11 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
     selectedAgents: state.selectedAgents,
     retrySkillName: state.retrySkillName,
     retryAgents: state.retryAgents ?? [],
-        mode: getEffectiveInstallMode(state),
-        availableSkills: state.availableSkills,
-        scope,
-        projectPath,
+    riskAcknowledged: state.riskAcknowledged,
+    mode: getEffectiveInstallMode(state),
+    availableSkills: state.availableSkills,
+    scope,
+    projectPath,
   });
   useEffect(() => {
     installParamsRef.current = {
@@ -68,10 +69,11 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       selectedAgents: state.selectedAgents,
       retrySkillName: state.retrySkillName,
       retryAgents: state.retryAgents ?? [],
-        mode: getEffectiveInstallMode(state),
-        availableSkills: state.availableSkills,
-        scope,
-        projectPath,
+      riskAcknowledged: state.riskAcknowledged,
+      mode: getEffectiveInstallMode(state),
+      availableSkills: state.availableSkills,
+      scope,
+      projectPath,
     };
   });
 
@@ -107,6 +109,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
         selectedAgents,
         retrySkillName,
         retryAgents,
+        riskAcknowledged,
         mode,
         scope: installScope,
         projectPath: installProjectPath,
@@ -124,6 +127,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
         projectPath: installScope === 'project' ? (installProjectPath ?? null) : null,
         mode,
         retry: isRetry,
+        acknowledgeRisk: riskAcknowledged,
       };
 
       try {

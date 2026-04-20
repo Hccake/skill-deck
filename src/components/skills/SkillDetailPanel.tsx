@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { formatTime } from '@/lib/utils';
-import type { InstalledSkill, SkillScope } from '@/bindings';
+import type { InstalledSkill, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
 
 type SkillUpdateStatus = 'queued' | 'updating' | 'done' | 'failed';
 
@@ -26,7 +26,10 @@ function phaseToI18nKey(phase: string | null): string {
 }
 
 interface SkillDetailPanelProps {
-  skill: InstalledSkill;
+  skill: InstalledSkill & {
+    updateStatus?: SkillUpdateCheckStatus | null;
+    updateReason?: string | null;
+  };
   content: string | null;
   loading: boolean;
   agentDisplayNames: Map<string, string>;
@@ -117,6 +120,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
   const isUpdateInProgress = updateStatus === 'queued' || updateStatus === 'updating';
   const showCheckDone = checkDone && !isCheckingUpdates && !skill.hasUpdate;
+  const showCannotCheckStatus = skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
+  const canShowUpdateAction = Boolean(skill.hasUpdate || skill.canRunUpdate);
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-surface">
@@ -150,7 +155,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       {t('skills.updateFailed')}
                     </Badge>
                   ) : null}
-                  {skill.hasUpdate && !updateStatus ? (
+                  {canShowUpdateAction && !updateStatus ? (
                       <Button
                           variant="ghost"
                           size="icon"
@@ -161,7 +166,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                         <ArrowUpCircle className="h-4 w-4" />
                       </Button>
                   ) : null}
-                  {!isUpdateInProgress && onCheckUpdates ? (
+                  {!isUpdateInProgress && onCheckUpdates && skill.canCheckForUpdates === true ? (
                     showCheckDone ? (
                       <div
                         className="flex h-8 w-8 items-center justify-center text-success"
@@ -243,6 +248,18 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 <Link2 className="h-3.5 w-3.5" />
                 {skill.source}
               </a>
+            ) : null}
+            {showCannotCheckStatus ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="text-xs text-muted-foreground">
+                  {t('skills.updateStatus.cannotCheck')}
+                </Badge>
+                {skill.updateReason ? (
+                  <span className="text-xs text-muted-foreground">
+                    {t(`skills.updateReason.${skill.updateReason}`)}
+                  </span>
+                ) : null}
+              </div>
             ) : null}
 
             {/* Metadata grid */}

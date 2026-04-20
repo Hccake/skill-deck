@@ -1,18 +1,30 @@
 // src/stores/skills-utils.ts
 import i18n from '@/i18n';
-import type { InstalledSkill, SkillScope, SkillUpdateInfo } from '@/bindings';
+import type {
+  InstalledSkill,
+  SkillScope,
+  SkillUpdateCheckStatus,
+  SkillUpdateInfo,
+} from '@/bindings';
+
+export type SkillListItem = InstalledSkill & {
+  updateStatus?: SkillUpdateCheckStatus | null;
+  updateReason?: string | null;
+};
 
 /** 按名称排序 skills，保证展示顺序稳定 */
-export function sortSkills(skills: InstalledSkill[]): InstalledSkill[] {
+export function sortSkills(skills: SkillListItem[]): SkillListItem[] {
   return [...skills].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** 将 check_updates 结果合并到 skills 列表 */
-export function mergeUpdateInfo(skills: InstalledSkill[], updates: SkillUpdateInfo[]): InstalledSkill[] {
-  const updateMap = new Map(updates.map((u) => [u.name, u.hasUpdate]));
+export function mergeUpdateInfo(skills: SkillListItem[], updates: SkillUpdateInfo[]): SkillListItem[] {
+  const updateMap = new Map(updates.map((u) => [u.name, u]));
   return skills.map((s) => ({
     ...s,
-    hasUpdate: updateMap.get(s.name) ?? false,
+    hasUpdate: updateMap.get(s.name)?.hasUpdate ?? false,
+    updateStatus: updateMap.get(s.name)?.status ?? s.updateStatus ?? null,
+    updateReason: updateMap.get(s.name)?.reason ?? null,
   }));
 }
 
@@ -27,7 +39,9 @@ export function clearUpdateCacheForSkill(skillName: string, scope: SkillScope, p
   const cached = updateInfoCache.get(cacheKey);
   if (cached) {
     cached.results = cached.results.map((r) =>
-      r.name === skillName ? { ...r, hasUpdate: false } : r
+      r.name === skillName
+        ? { ...r, hasUpdate: false, status: 'up-to-date', reason: null }
+        : r
     );
   }
 }
@@ -38,7 +52,7 @@ export function t(key: string, options?: Record<string, unknown>): string {
 }
 
 export interface DeleteTarget {
-  skill: InstalledSkill;
+  skill: SkillListItem;
   scope: SkillScope;
   projectPath?: string;
 }

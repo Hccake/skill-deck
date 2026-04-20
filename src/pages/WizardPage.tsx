@@ -17,7 +17,7 @@ import { ConfirmStep } from '@/components/skills/add-skill/ConfirmStep';
 import { InstallingStep } from '@/components/skills/add-skill/InstallingStep';
 import { CompleteStep } from '@/components/skills/add-skill/CompleteStep';
 import { ErrorStep } from '@/components/skills/add-skill/ErrorStep';
-import { getStepFlow } from '@/components/skills/add-skill/types';
+import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
 import type {
   EntryPoint,
   CoreStep,
@@ -49,6 +49,8 @@ function createInitialState(params: {
     fetchStatus: 'idle',
     fetchError: null,
     gitRef: null,
+    riskPolicy: null,
+    riskAcknowledged: false,
     availableSkills: [],
     selectedSkills: [],
     skillFilter: null,
@@ -162,22 +164,7 @@ export function WizardPage() {
   }, [closeWizard]);
 
   // 验证是否可以进入下一步
-  const canProceed = useMemo(() => {
-    switch (state.step) {
-      case 'source':
-        return state.fetchStatus === 'success' && state.availableSkills.length > 0;
-      case 'scope':
-        return true;
-      case 'skills':
-        return state.selectedSkills.length > 0;
-      case 'options':
-        return true;
-      case 'confirm':
-        return state.confirmReady;
-      default:
-        return false;
-    }
-  }, [state.step, state.fetchStatus, state.availableSkills.length, state.selectedSkills.length, state.confirmReady]);
+  const canProceed = useMemo(() => canProceedForStep(state), [state]);
 
   // 是否为结果态
   const isResultState = state.step === 'installing' || state.step === 'complete' || state.step === 'error';

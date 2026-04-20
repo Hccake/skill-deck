@@ -9,9 +9,9 @@ import type {
   RemoveResult,
   SkillUpdateInfo,
   UpdateSkillResponse,
-  FetchResult,
+  FetchResult as RawFetchResult,
   InstallMode,
-  InstallParams,
+  InstallParams as RawInstallParams,
   InstallResults,
   SkillDeckConfig,
   Scope,
@@ -23,8 +23,21 @@ import type {
   ProjectSkillStatus,
 } from '@/bindings';
 
+export interface InstallRiskPolicy {
+  kind: 'none' | 'require-confirmation';
+  code?: string | null;
+}
+
+export type FetchResult = RawFetchResult & {
+  riskPolicy?: InstallRiskPolicy | null;
+};
+
+export type InstallParams = RawInstallParams & {
+  acknowledgeRisk?: boolean;
+};
+
 // 重导出类型供组件使用
-export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode, InstallParams, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
+export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, InstallMode, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
 function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; error: E }): T {
@@ -102,14 +115,14 @@ export async function saveLastSelectedAgents(agents: string[]): Promise<void> {
  * 从来源获取可用的 skills 列表
  */
 export async function fetchAvailable(source: string): Promise<FetchResult> {
-  return unwrap(await commands.fetchAvailable(source));
+  return unwrap(await commands.fetchAvailable(source)) as FetchResult;
 }
 
 /**
  * 安装选中的 skills
  */
 export async function installSkills(params: InstallParams): Promise<InstallResults> {
-  return unwrap(await commands.installSkills(params));
+  return unwrap(await commands.installSkills(params as RawInstallParams));
 }
 
 /**

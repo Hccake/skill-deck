@@ -9,8 +9,9 @@ use crate::core::local_lock::{add_skill_to_local_lock, compute_skill_folder_hash
 use crate::core::skill_lock::{add_skill_to_lock, save_selected_agents};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
-    clone_repo_with_progress, discover_skills, fetch_skill_folder_hash, get_owner_repo,
-    install_skill_to_agents, parse_source, CloneProgress, DiscoverOptions,
+    clone_repo_with_progress, discover_skills, ensure_install_risk_acknowledged,
+    fetch_skill_folder_hash, get_owner_repo, install_skill_to_agents, parse_source,
+    source_risk_policy, CloneProgress, DiscoverOptions,
 };
 use crate::error::AppError;
 use crate::models::{
@@ -124,6 +125,7 @@ fn discover_and_build_result(
         source_url: parsed.url.clone(),
         git_ref: parsed.git_ref.clone(),
         skill_filter: parsed.skill_filter.clone(),
+        risk_policy: source_risk_policy(parsed),
         skills,
     })
 }
@@ -146,6 +148,8 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
 
     // 1. 解析来源
     let parsed = parse_source(&params.source)?;
+    let risk_policy = source_risk_policy(&parsed);
+    ensure_install_risk_acknowledged(&risk_policy, params.acknowledge_risk)?;
 
     // 2. 克隆或获取本地路径
     let (skills_dir, _clone_result) = match parsed.source_type {
@@ -420,5 +424,40 @@ mod tests {
         let result = discover_and_build_result(&parsed, temp.path()).unwrap();
         assert_eq!(result.skills.len(), 1);
         assert_eq!(result.skills[0].name, "normal");
+    }
+
+    #[test]
+    fn test_discover_and_build_result_includes_openclaw_risk_policy() {
+        let temp = tempdir().unwrap();
+        let skill_dir = temp.path().join("my-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo skill\n---\n",
+        )
+        .unwrap();
+
+        let parsed = parse_source("openclaw/community-skills").unwrap();
+        let result = discover_and_build_result(&parsed, temp.path()).unwrap();
+
+        assert_eq!(result.risk_policy.kind, crate::models::InstallRiskKind::RequireConfirmation);
+        assert_eq!(result.risk_policy.code.as_deref(), Some("openclaw"));
+    }
+
+    #[test]
+    fn test_install_risk_acknowledgement_rejects_unconfirmed_guarded_source() {
+        let error = crate::core::ensure_install_risk_acknowledged(
+            &crate::models::InstallRiskPolicy {
+                kind: crate::models::InstallRiskKind::RequireConfirmation,
+                code: Some("openclaw".to_string()),
+            },
+            false,
+        )
+        .expect_err("risk confirmation should be required");
+
+        assert!(matches!(
+            error,
+            AppError::InstallRiskConfirmationRequired { .. }
+        ));
     }
 }

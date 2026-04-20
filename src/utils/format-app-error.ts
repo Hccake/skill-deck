@@ -29,6 +29,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.error.pathNotFound', { path: error.data.path });
     case 'installFailed':
       return error.data.message;
+    case 'installRiskConfirmationRequired':
+      return t('addSkill.error.riskConfirmationRequired');
     case 'io':
     case 'yaml':
     case 'json':

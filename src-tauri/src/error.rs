@@ -52,6 +52,9 @@ pub enum AppError {
     #[error("Install failed: {message}")]
     InstallFailed { message: String },
 
+    #[error("Installation requires explicit risk confirmation: {code}")]
+    InstallRiskConfirmationRequired { code: String },
+
     #[error("No skills found")]
     NoSkillsFound,
 

@@ -67,6 +67,8 @@ function makeState(installResults: InstallResults): WizardState {
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
+    riskPolicy: null,
+    riskAcknowledged: false,
     availableSkills: [],
     selectedSkills: [],
     skillFilter: null,
