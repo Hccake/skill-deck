@@ -5,6 +5,12 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **对齐 skills CLI v1.5.1** — 同步安装风险确认、更新来源解析、更新能力判定与相关界面提示，兼容最新 CLI 语义
+
 ## [1.3.0] - 2026-04-17
 
 ### Changed

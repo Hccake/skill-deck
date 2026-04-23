@@ -9,7 +9,7 @@
   <p>
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-v1.4.7-green" alt="skills CLI v1.4.7">
+    <img src="https://img.shields.io/badge/skills%20CLI-v1.5.1-green" alt="skills CLI v1.5.1">
   </p>
 
   <a href="README.md">English</a>
