@@ -40,8 +40,11 @@ pub enum AppError {
         ref_name: String,
     },
 
-    #[error("Git operation timed out")]
-    GitTimeout,
+    #[error("Git operation timed out after {timeout_secs} seconds")]
+    GitTimeout {
+        #[serde(rename = "timeoutSecs")]
+        timeout_secs: u32,
+    },
 
     #[error("Git network error: {message}")]
     GitNetworkError { message: String },

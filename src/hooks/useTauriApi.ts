@@ -13,7 +13,7 @@ import type {
   InstallMode,
   InstallParams as RawInstallParams,
   InstallResults,
-  SkillDeckConfig,
+  SkillDeckConfig as RawSkillDeckConfig,
   Scope,
   SkillAuditData,
   SkillAgentDetails,
@@ -36,8 +36,12 @@ export type InstallParams = RawInstallParams & {
   acknowledgeRisk?: boolean;
 };
 
+export type SkillDeckConfig = RawSkillDeckConfig & {
+  gitCloneTimeoutSecs?: number;
+};
+
 // 重导出类型供组件使用
-export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, InstallMode, InstallResults, SkillDeckConfig, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
+export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, InstallMode, InstallResults, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
 function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; error: E }): T {
@@ -83,14 +87,14 @@ export async function readSkillContent(canonicalPath: string): Promise<string> {
  * 获取应用配置
  */
 export async function getConfig(): Promise<SkillDeckConfig> {
-  return unwrap(await commands.getConfig());
+  return unwrap(await commands.getConfig()) as SkillDeckConfig;
 }
 
 /**
  * 保存应用配置
  */
 export async function saveConfig(config: SkillDeckConfig): Promise<void> {
-  unwrap(await commands.saveConfig(config));
+  unwrap(await commands.saveConfig(config as RawSkillDeckConfig));
 }
 
 // ============ Agent 选择相关 API ============

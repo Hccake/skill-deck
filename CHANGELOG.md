@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **远程拉取超时设置** — 在 `Settings > General` 新增 Git 仓库拉取超时配置，支持常用预设和自定义秒数，并持久化到应用配置中，安装与更新流程会统一读取该值
+
 ### Changed
 
 - **对齐 skills CLI v1.5.1** — 同步安装风险确认、更新来源解析、更新能力判定与相关界面提示，兼容最新 CLI 语义
+
+### Fixed
+
+- **启动时的 TypeScript 绑定导出崩溃** — 修复 `tauri-specta` 在导出包含超时字段的类型时触发的 `BigIntForbidden` panic，恢复桌面端正常启动
+- **超时设置交互一致性** — 修复自定义超时编辑区在折叠状态下仍可聚焦的问题，并修复预设值保存失败后选中态不会回滚的问题
 
 ## [1.3.0] - 2026-04-17
 

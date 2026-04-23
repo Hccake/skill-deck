@@ -1,5 +1,6 @@
 // src-tauri/src/core/mod.rs
 pub mod agents;
+pub mod app_config;
 pub mod audit;
 pub mod discovery;
 pub mod git;
@@ -21,6 +22,7 @@ pub use discovery::*;
 pub use git::*;
 pub use github_api::*;
 pub use installer::*;
+pub use app_config::*;
 pub use source_policy::*;
 pub use source_parser::*;
 pub use update_metadata::*;

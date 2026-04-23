@@ -11,7 +11,9 @@ export function formatAppError(error: AppError, t: TFunction): string {
     case 'noSkillsFound':
       return t('addSkill.source.error.noSkills');
     case 'gitTimeout':
-      return t('addSkill.source.error.timeout');
+      return t('addSkill.source.error.timeout', {
+        timeout: (error as { kind: 'gitTimeout'; data?: { timeoutSecs?: number } }).data?.timeoutSecs ?? 120,
+      });
     case 'gitAuthFailed':
       return t('addSkill.source.error.auth');
     case 'gitRepoNotFound':

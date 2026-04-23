@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { listAgents, getLastSelectedAgents, saveLastSelectedAgents } from '@/hooks/useTauriApi';
 import { AgentSelector } from '@/components/skills/add-skill/AgentSelector';
 import type { AgentInfo } from '@/bindings';
+import { GitCloneTimeoutSection } from './GitCloneTimeoutSection';
 
 export function GeneralTab() {
   const { t } = useTranslation();
@@ -104,6 +105,8 @@ export function GeneralTab() {
           </div>
         )}
       </section>
+
+      <GitCloneTimeoutSection />
     </div>
   );
 }

@@ -14,8 +14,12 @@ use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// Git 克隆超时时间（秒）- 增加到 120 秒以支持大仓库和慢网络
-const CLONE_TIMEOUT_SECS: u64 = 120;
+/// Git 克隆默认超时时间（秒）
+pub const DEFAULT_CLONE_TIMEOUT_SECS: u64 = 120;
+/// 允许的最小自定义超时时间（秒）
+pub const MIN_CLONE_TIMEOUT_SECS: u64 = 30;
+/// 允许的最大自定义超时时间（秒）
+pub const MAX_CLONE_TIMEOUT_SECS: u64 = 3600;
 
 /// 克隆进度阶段
 #[derive(Debug, Clone, serde::Serialize)]
@@ -84,11 +88,13 @@ pub fn clone_repo_with_progress<F>(
 where
     F: Fn(CloneProgress),
 {
+    let timeout_secs = resolve_clone_timeout_secs();
+
     // 发送连接中状态
     on_progress(CloneProgress {
         phase: ClonePhase::Connecting,
         elapsed_secs: 0,
-        timeout_secs: CLONE_TIMEOUT_SECS,
+        timeout_secs,
         message: None,
     });
 
@@ -116,7 +122,7 @@ where
     // 执行克隆
     let result = execute_with_timeout_and_progress(
         &mut cmd,
-        Duration::from_secs(CLONE_TIMEOUT_SECS),
+        Duration::from_secs(timeout_secs),
         &on_progress,
     );
 
@@ -126,7 +132,7 @@ where
                 on_progress(CloneProgress {
                     phase: ClonePhase::Done,
                     elapsed_secs: output.elapsed_secs,
-                    timeout_secs: CLONE_TIMEOUT_SECS,
+                    timeout_secs,
                     message: None,
                 });
                 Ok(CloneResult { temp_dir, repo_path })
@@ -136,22 +142,36 @@ where
                 on_progress(CloneProgress {
                     phase: ClonePhase::Error,
                     elapsed_secs: output.elapsed_secs,
-                    timeout_secs: CLONE_TIMEOUT_SECS,
+                    timeout_secs,
                     message: Some(error.to_string()),
                 });
                 Err(error)
             }
         }
         Err(e) => {
-            on_progress(CloneProgress {
-                phase: ClonePhase::Error,
-                elapsed_secs: CLONE_TIMEOUT_SECS,
-                timeout_secs: CLONE_TIMEOUT_SECS,
-                message: Some(e.to_string()),
-            });
-            Err(e)
+                on_progress(CloneProgress {
+                    phase: ClonePhase::Error,
+                    elapsed_secs: timeout_secs,
+                    timeout_secs,
+                    message: Some(e.to_string()),
+                });
+                Err(e)
+            }
         }
+}
+
+fn normalize_clone_timeout_secs(value: u64) -> u64 {
+    if value == 0 {
+        DEFAULT_CLONE_TIMEOUT_SECS
+    } else {
+        value.clamp(MIN_CLONE_TIMEOUT_SECS, MAX_CLONE_TIMEOUT_SECS)
     }
+}
+
+fn resolve_clone_timeout_secs() -> u64 {
+    crate::core::read_config()
+        .map(|config| normalize_clone_timeout_secs(config.git_clone_timeout_secs.into()))
+        .unwrap_or(DEFAULT_CLONE_TIMEOUT_SECS)
 }
 
 fn clone_env_pairs() -> [(&'static str, &'static str); 2] {
@@ -231,7 +251,9 @@ where
                     // 超时，杀死进程
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(AppError::GitTimeout);
+                    return Err(AppError::GitTimeout {
+                        timeout_secs: timeout.as_secs() as u32,
+                    });
                 }
 
                 // 每秒发送一次进度更新
@@ -394,5 +416,28 @@ mod tests {
         let envs = clone_env_pairs();
         assert!(envs.contains(&("GIT_TERMINAL_PROMPT", "0")));
         assert!(envs.contains(&("GIT_LFS_SKIP_SMUDGE", "1")));
+    }
+
+    #[test]
+    fn test_normalize_clone_timeout_uses_default_when_zero() {
+        assert_eq!(normalize_clone_timeout_secs(0), 120);
+    }
+
+    #[test]
+    fn test_normalize_clone_timeout_clamps_small_values() {
+        assert_eq!(normalize_clone_timeout_secs(5), 30);
+    }
+
+    #[test]
+    fn test_normalize_clone_timeout_clamps_large_values() {
+        assert_eq!(normalize_clone_timeout_secs(7200), 3600);
+    }
+
+    #[test]
+    fn test_git_timeout_error_includes_timeout_secs() {
+        assert!(matches!(
+            AppError::GitTimeout { timeout_secs: 300 },
+            AppError::GitTimeout { timeout_secs: 300 }
+        ));
     }
 }

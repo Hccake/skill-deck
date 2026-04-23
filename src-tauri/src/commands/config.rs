@@ -1,40 +1,13 @@
-use crate::core::skill_lock;
+use crate::core::{read_config, skill_lock, write_config};
 use crate::error::AppError;
 use crate::models::SkillDeckConfig;
-use std::fs;
-use std::path::PathBuf;
-
-/// 获取配置文件路径: ~/.skill-deck/config.json
-fn get_config_path() -> Result<PathBuf, AppError> {
-    let home = dirs::home_dir().ok_or(AppError::Path { message: "无法获取用户主目录".to_string() })?;
-    Ok(home.join(".skill-deck").join("config.json"))
-}
 
 /// 获取配置
 /// 文件不存在或解析失败时返回默认配置
 #[tauri::command]
 #[specta::specta]
 pub fn get_config() -> Result<SkillDeckConfig, AppError> {
-    let path = get_config_path()?;
-
-    if !path.exists() {
-        log::info!("配置文件不存在，返回默认配置");
-        return Ok(SkillDeckConfig::default());
-    }
-
-    let content = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("读取配置文件失败: {}，返回默认配置", e);
-            return Ok(SkillDeckConfig::default());
-        }
-    };
-
-    // 解析失败时返回默认配置，而非错误
-    Ok(serde_json::from_str(&content).unwrap_or_else(|e| {
-        log::warn!("解析配置文件失败: {}，返回默认配置", e);
-        SkillDeckConfig::default()
-    }))
+    read_config()
 }
 
 /// 保存配置
@@ -42,19 +15,7 @@ pub fn get_config() -> Result<SkillDeckConfig, AppError> {
 #[tauri::command]
 #[specta::specta]
 pub fn save_config(config: SkillDeckConfig) -> Result<(), AppError> {
-    let path = get_config_path()?;
-
-    // 确保目录存在
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let content = serde_json::to_string_pretty(&config)?;
-
-    fs::write(&path, content)?;
-
-    log::info!("配置已保存到: {:?}", path);
-    Ok(())
+    write_config(&config)
 }
 
 /// 获取上次选择的 agents

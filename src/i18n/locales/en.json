@@ -232,6 +232,30 @@
       "noResults": "No agents found",
       "cliShared": "This setting is shared with skills CLI"
     },
+    "cloneTimeout": {
+      "title": "Remote Fetch Timeout",
+      "description": "Controls how long remote Git installs and updates can wait before timing out. ",
+      "currentValue": "Current: {{seconds}}s",
+      "custom": "Custom",
+      "customLabel": "Custom timeout",
+      "customHint": "Suggested range: 30–3600 seconds",
+      "secondsUnit": "seconds",
+      "saveButton": "Save",
+      "restoreDefault": "Restore default",
+      "saved": "Saved",
+      "saveError": "Failed to save timeout setting",
+      "presets": {
+        "60": "1 min",
+        "120": "2 min",
+        "300": "5 min",
+        "600": "10 min"
+      },
+      "errors": {
+        "invalidNumber": "Enter a valid number",
+        "tooSmall": "Must be at least 30 seconds",
+        "tooLarge": "Cannot exceed 3600 seconds"
+      }
+    },
     "detected": "Installed",
     "projects": "Projects",
     "projectsHint": "Saved project paths for quick access to project-level skills",
@@ -332,7 +356,7 @@
         "notFound": "Repository not found",
         "noSkills": "No skills found in this source",
         "network": "Network error, please check your connection",
-        "timeout": "Clone timed out. The repository may be too large or network is slow.",
+        "timeout": "Clone timed out after {{timeout}}s. The repository may be too large or the network may be slow.",
         "auth": "Authentication failed. Check your credentials or repository access.",
         "refNotFound": "Branch or tag not found",
         "invalidSource": "Invalid source format: {{value}}"
@@ -430,6 +454,7 @@
       "repoNotFound": "Repository not found",
       "refNotFound": "Branch or tag not found",
       "cloneTimeout": "Clone timed out",
+      "cloneTimeoutDetails": "Repository fetch exceeded the current timeout setting ({{timeout}} seconds).",
       "ioFailed": "File operation failed",
       "invalidAgent": "Invalid agent: {{agent}}",
       "invalidSource": "Invalid source format: {{value}}",
@@ -448,6 +473,7 @@
         "checkRef": "Check that the branch or tag name is correct",
         "useDefaultBranch": "Try using the default branch",
         "retryLater": "The repository may be too large, try again later",
+        "adjustCloneTimeout": "Increase the timeout in Settings > General > Remote Fetch Timeout",
         "runAsAdmin": "Try running the app with administrator privileges",
         "checkPermission": "Check write permissions for the target directory",
         "checkAgentName": "Check that the agent name is correct",

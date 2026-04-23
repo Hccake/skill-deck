@@ -232,6 +232,30 @@
       "noResults": "未找到 Agent",
       "cliShared": "此设置与 skills CLI 共享"
     },
+    "cloneTimeout": {
+      "title": "远程拉取超时",
+      "description": "控制从远程 Git 仓库安装或更新 Skill 时的最长等待时间。",
+      "currentValue": "当前：{{seconds}} 秒",
+      "custom": "自定义",
+      "customLabel": "自定义超时",
+      "customHint": "建议范围：30–3600 秒",
+      "secondsUnit": "秒",
+      "saveButton": "保存",
+      "restoreDefault": "恢复默认",
+      "saved": "已保存",
+      "saveError": "保存超时设置失败",
+      "presets": {
+        "60": "1 分钟",
+        "120": "2 分钟",
+        "300": "5 分钟",
+        "600": "10 分钟"
+      },
+      "errors": {
+        "invalidNumber": "请输入有效数字",
+        "tooSmall": "不能小于 30 秒",
+        "tooLarge": "不能超过 3600 秒"
+      }
+    },
     "detected": "已安装",
     "projects": "项目",
     "projectsHint": "已保存的项目路径，方便快速查看项目级 Skills",
@@ -332,7 +356,7 @@
         "notFound": "未找到仓库",
         "noSkills": "该来源中未找到 Skills",
         "network": "网络错误，请检查网络连接",
-        "timeout": "克隆超时。仓库可能太大或网络较慢。",
+        "timeout": "在 {{timeout}} 秒内未完成克隆。仓库可能过大，或当前网络较慢。",
         "auth": "认证失败。请检查凭据或仓库访问权限。",
         "refNotFound": "未找到指定的分支或标签",
         "invalidSource": "无效的来源格式: {{value}}"
@@ -430,6 +454,7 @@
       "repoNotFound": "仓库未找到",
       "refNotFound": "分支/标签未找到",
       "cloneTimeout": "克隆超时",
+      "cloneTimeoutDetails": "仓库拉取超过了当前超时设置（{{timeout}} 秒）。",
       "ioFailed": "文件操作失败",
       "invalidAgent": "无效的 Agent: {{agent}}",
       "invalidSource": "无效的来源格式: {{value}}",
@@ -448,6 +473,7 @@
         "checkRef": "检查分支或标签名称是否正确",
         "useDefaultBranch": "尝试使用默认分支",
         "retryLater": "仓库可能过大，请稍后重试",
+        "adjustCloneTimeout": "可前往 Settings > General > 远程拉取超时 调大等待时间",
         "runAsAdmin": "尝试使用管理员权限运行应用",
         "checkPermission": "检查目标目录的写入权限",
         "checkAgentName": "检查 agent 名称是否正确",

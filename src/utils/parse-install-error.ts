@@ -29,6 +29,12 @@ type ErrorWithRiskCode = Extract<
   { kind: 'installRiskConfirmationRequired'; data: { code: string } }
 >;
 type CustomError = Extract<AppError, { kind: 'custom'; data: { message: string } }>;
+type ErrorWithTimeout = {
+  kind: 'gitTimeout';
+  data?: {
+    timeoutSecs?: number;
+  };
+};
 
 /**
  * 将结构化 AppError 转换为用户友好的 InstallError 视图模型
@@ -104,9 +110,12 @@ export function parseInstallError(
     case 'gitTimeout':
       return {
         message: t('addSkill.error.cloneTimeout'),
+        details: t('addSkill.error.cloneTimeoutDetails', {
+          timeout: (error as ErrorWithTimeout).data?.timeoutSecs ?? 120,
+        }),
         suggestions: [
+          t('addSkill.error.suggestion.adjustCloneTimeout'),
           t('addSkill.error.suggestion.checkNetwork'),
-          t('addSkill.error.suggestion.retryLater'),
         ],
       };
 
