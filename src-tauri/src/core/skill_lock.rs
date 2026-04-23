@@ -151,13 +151,6 @@ pub fn get_skill_from_lock(skill_name: &str) -> Result<Option<SkillLockEntry>, A
     Ok(lock.skills.get(skill_name).cloned())
 }
 
-/// 获取所有 locked skills
-/// 对应 CLI: getAllLockedSkills (skill-lock.ts:271-274)
-pub fn get_all_locked_skills() -> Result<HashMap<String, SkillLockEntry>, AppError> {
-    let lock = read_skill_lock()?;
-    Ok(lock.skills)
-}
-
 /// 写入 skill-lock.json
 /// 对应 CLI: writeSkillLock (skill-lock.ts:99-108)
 pub fn write_skill_lock(lock: &SkillLockFile) -> Result<(), AppError> {
@@ -180,6 +173,7 @@ pub fn write_skill_lock(lock: &SkillLockFile) -> Result<(), AppError> {
 }
 
 /// 写入指定 scope 的 skill-lock.json
+#[allow(dead_code)]
 pub fn write_scoped_lock(
     lock: &SkillLockFile,
     project_path: Option<&str>,
@@ -247,57 +241,6 @@ pub fn remove_skill_from_lock(skill_name: &str) -> Result<bool, AppError> {
     }
 
     write_skill_lock(&lock)?;
-    Ok(true)
-}
-
-/// 添加或更新 skill 到指定 scope 的 lock 文件
-pub fn add_skill_to_scoped_lock(
-    skill_name: &str,
-    source: &str,
-    source_type: &str,
-    source_url: &str,
-    ref_name: Option<&str>,
-    skill_path: Option<&str>,
-    skill_folder_hash: &str,
-    project_path: Option<&str>,
-    plugin_name: Option<&str>,
-) -> Result<(), AppError> {
-    let mut lock =
-        read_scoped_lock(project_path).unwrap_or_else(|_| SkillLockFile::empty());
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-
-    let installed_at = lock
-        .skills
-        .get(skill_name)
-        .map(|e| e.installed_at.clone())
-        .unwrap_or_else(|| now.clone());
-
-    let entry = SkillLockEntry {
-        source: source.to_string(),
-        source_type: source_type.to_string(),
-        source_url: source_url.to_string(),
-        ref_name: ref_name.map(|s| s.to_string()),
-        skill_path: skill_path.map(|s| s.to_string()),
-        skill_folder_hash: skill_folder_hash.to_string(),
-        installed_at,
-        updated_at: now,
-        plugin_name: plugin_name.map(|s| s.to_string()),
-    };
-
-    lock.skills.insert(skill_name.to_string(), entry);
-    write_scoped_lock(&lock, project_path)
-}
-
-/// 从指定 scope 的 lock 文件移除 skill
-pub fn remove_skill_from_scoped_lock(
-    skill_name: &str,
-    project_path: Option<&str>,
-) -> Result<bool, AppError> {
-    let mut lock = read_scoped_lock(project_path)?;
-    if lock.skills.remove(skill_name).is_none() {
-        return Ok(false);
-    }
-    write_scoped_lock(&lock, project_path)?;
     Ok(true)
 }
 

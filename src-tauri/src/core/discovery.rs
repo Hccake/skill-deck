@@ -36,7 +36,6 @@ pub struct DiscoveredSkill {
     pub description: String,
     pub path: PathBuf,
     pub relative_path: String,
-    pub is_internal: bool,
     /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
     pub plugin_name: Option<String>,
 }
@@ -324,7 +323,6 @@ fn try_parse_skill(
         description: parsed.description,
         path: skill_dir.to_path_buf(),
         relative_path: relative_skill_path,
-        is_internal,
         plugin_name: None,
     }))
 }
@@ -411,7 +409,7 @@ mod tests {
         let skills = discover_skills(temp.path(), None, options).unwrap();
 
         assert_eq!(skills.len(), 1);
-        assert!(skills[0].is_internal);
+        assert_eq!(skills[0].description, "Internal skill");
     }
 
     #[test]

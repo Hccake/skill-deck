@@ -10,6 +10,7 @@ use std::path::PathBuf;
 /// 对应 CLI: AgentConfig (types.ts:51-60)
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
+    #[allow(dead_code)]
     pub name: &'static str,
     pub display_name: &'static str,
     pub skills_dir: &'static str,
@@ -678,14 +679,6 @@ impl AgentType {
                 let config = agent.config();
                 config.skills_dir == ".agents/skills" && config.show_in_universal_list
             })
-            .collect()
-    }
-
-    /// 获取 Non-Universal Agents
-    /// 对应 CLI: getNonUniversalAgents (agents.ts:409-413)
-    pub fn get_non_universal_agents() -> Vec<AgentType> {
-        Self::all()
-            .filter(|agent| agent.config().skills_dir != ".agents/skills")
             .collect()
     }
 

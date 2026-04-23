@@ -51,27 +51,9 @@ pub struct CloneProgress {
 /// 克隆结果，包含临时目录和仓库路径
 pub struct CloneResult {
     /// 临时目录（drop 时自动清理）
-    pub temp_dir: TempDir,
+    pub _temp_dir: TempDir,
     /// 仓库路径
     pub repo_path: PathBuf,
-}
-
-/// 克隆仓库到临时目录（无进度回调版本，兼容现有调用）
-///
-/// # Arguments
-/// * `url` - 仓库 URL（支持 HTTPS 和 SSH）
-/// * `git_ref` - 可选的分支或 tag
-///
-/// # Returns
-/// * `Ok(CloneResult)` - 包含临时目录和仓库路径
-/// * `Err(AppError)` - 克隆失败，错误已分类
-///
-/// # 行为
-/// - 使用 `--depth 1` 浅克隆
-/// - 120 秒超时
-/// - 失败时自动清理临时目录
-pub fn clone_repo(url: &str, git_ref: Option<&str>) -> Result<CloneResult, AppError> {
-    clone_repo_with_progress(url, git_ref, |_| {})
 }
 
 /// 克隆仓库到临时目录（带进度回调）
@@ -135,7 +117,7 @@ where
                     timeout_secs,
                     message: None,
                 });
-                Ok(CloneResult { temp_dir, repo_path })
+                Ok(CloneResult { _temp_dir: temp_dir, repo_path })
             } else {
                 // 分类错误
                 let error = classify_git_error(&output.stderr, url);

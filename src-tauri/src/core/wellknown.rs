@@ -37,6 +37,7 @@ pub struct WellKnownSkillEntry {
 #[derive(Debug, Clone)]
 pub struct WellKnownFetchResult {
     pub repo_path: PathBuf,
+    #[allow(dead_code)]
     pub source_identifier: String,
 }
 
@@ -47,6 +48,7 @@ pub struct WellKnownFetchResult {
 struct IndexUrlCandidate {
     index_url: String,
     base_url: String,
+    #[allow(dead_code)]
     well_known_path: String,
 }
 
