@@ -121,7 +121,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const isUpdateInProgress = updateStatus === 'queued' || updateStatus === 'updating';
   const showCheckDone = checkDone && !isCheckingUpdates && !skill.hasUpdate;
   const showCannotCheckStatus = skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
-  const canShowUpdateAction = Boolean(skill.hasUpdate || skill.canRunUpdate);
+  const canShowUpdateAction = skill.hasUpdate === true;
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-surface">

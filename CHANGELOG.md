@@ -17,8 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **启动时的 TypeScript 绑定导出崩溃** — 修复 `tauri-specta` 在导出包含超时字段的类型时触发的 `BigIntForbidden` panic，恢复桌面端正常启动
-- **超时设置交互一致性** — 修复自定义超时编辑区在折叠状态下仍可聚焦的问题，并修复预设值保存失败后选中态不会回滚的问题
+- **更新按钮显示语义** — 仅在检测到可用更新时显示 Skill 更新按钮；更新成功后会在列表卡片和详情面板中同步隐藏
 
 ## [1.3.0] - 2026-04-17
 

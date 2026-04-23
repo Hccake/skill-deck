@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { SkillCard } from '../SkillCard';
@@ -70,9 +70,7 @@ describe('SkillCard', () => {
     expect(screen.getByText('skills.updatePhaseCloning')).toBeTruthy();
   });
 
-  it('shows cannot-check status and still allows update when canRunUpdate is true', () => {
-    const onUpdate = vi.fn();
-
+  it('shows cannot-check status without exposing update action when no update is available', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -85,19 +83,15 @@ describe('SkillCard', () => {
             updateStatus: 'cannot-check',
           } as InstalledSkill & { updateStatus?: 'cannot-check' }}
           displayScope="global"
-          onUpdate={onUpdate}
         />
       </TooltipProvider>
     );
 
     expect(screen.getByText('skills.updateStatus.cannotCheck')).toBeTruthy();
-    fireEvent.click(screen.getByTitle('skills.actions.update'));
-    expect(onUpdate).toHaveBeenCalledWith('toolkit');
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
-  it('shows update action for manual-only sources before any update check runs', () => {
-    const onUpdate = vi.fn();
-
+  it('hides update action for manual-only sources when no update is available', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -108,12 +102,10 @@ describe('SkillCard', () => {
             updateReason: 'unsupported-source-type',
           })}
           displayScope="global"
-          onUpdate={onUpdate}
         />
       </TooltipProvider>
     );
 
-    fireEvent.click(screen.getByTitle('skills.actions.update'));
-    expect(onUpdate).toHaveBeenCalledWith('toolkit');
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 });

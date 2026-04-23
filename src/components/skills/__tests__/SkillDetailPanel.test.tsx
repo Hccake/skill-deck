@@ -92,9 +92,7 @@ describe('SkillDetailPanel', () => {
     expect(onCheckUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it('shows cannot-check status and reason while keeping update action when canRunUpdate is true', () => {
-    const onUpdate = vi.fn();
-
+  it('shows cannot-check status and reason without exposing update action when no update is available', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -110,7 +108,7 @@ describe('SkillDetailPanel', () => {
           loading={false}
           agentDisplayNames={new Map()}
           onClose={vi.fn()}
-          onUpdate={onUpdate}
+          onUpdate={vi.fn()}
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
@@ -120,13 +118,10 @@ describe('SkillDetailPanel', () => {
 
     expect(screen.getByText('skills.updateStatus.cannotCheck')).toBeTruthy();
     expect(screen.getByText('skills.updateReason.missing-skill-path')).toBeTruthy();
-    fireEvent.click(screen.getByTitle('skills.actions.update'));
-    expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
-  it('shows update action for manual-only sources before any update check runs', () => {
-    const onUpdate = vi.fn();
-
+  it('hides update action for manual-only sources when no update is available', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -140,7 +135,7 @@ describe('SkillDetailPanel', () => {
           loading={false}
           agentDisplayNames={new Map()}
           onClose={vi.fn()}
-          onUpdate={onUpdate}
+          onUpdate={vi.fn()}
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
@@ -148,8 +143,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    fireEvent.click(screen.getByTitle('skills.actions.update'));
-    expect(onUpdate).toHaveBeenCalledWith('brainstorming', 'global');
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
   it('hides the check-updates action when update-check capability metadata is missing', () => {

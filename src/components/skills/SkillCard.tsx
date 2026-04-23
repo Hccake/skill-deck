@@ -127,7 +127,7 @@ export const SkillCard = memo(function SkillCard({
       ? t('skills.conflict.alsoInGlobal')
       : t('skills.conflict.alsoInProject');
   const showCannotCheckStatus = skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
-  const canShowUpdateAction = Boolean(skill.hasUpdate || skill.canRunUpdate);
+  const canShowUpdateAction = skill.hasUpdate === true;
 
   return (
       <Card
