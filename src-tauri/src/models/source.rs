@@ -92,24 +92,6 @@ impl ParsedSource {
             skill_filter: None,
         }
     }
-
-    /// 设置子路径
-    pub fn with_subpath(mut self, subpath: String) -> Self {
-        self.subpath = Some(subpath);
-        self
-    }
-
-    /// 设置 Git ref
-    pub fn with_ref(mut self, git_ref: String) -> Self {
-        self.git_ref = Some(git_ref);
-        self
-    }
-
-    /// 设置 skill 过滤器
-    pub fn with_skill_filter(mut self, filter: String) -> Self {
-        self.skill_filter = Some(filter);
-        self
-    }
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **更新按钮显示语义** — 仅在检测到可用更新时显示 Skill 更新按钮；更新成功后会在列表卡片和详情面板中同步隐藏
+- **批量更新来源更准确** — 使用 Update All 更新来自仓库子目录的 Skill 时，会沿用安装时记录的原始目录，避免同一仓库存在同名 Skill 或非默认目录结构时更新到错误内容
 
 ## [1.3.0] - 2026-04-17
 
