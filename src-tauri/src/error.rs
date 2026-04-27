@@ -49,6 +49,11 @@ pub enum AppError {
     #[error("Git network error: {message}")]
     GitNetworkError { message: String },
 
+    /// GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
+    /// reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
+    #[error("GitHub API error ({reason}): {message}")]
+    GitHubApiError { reason: String, message: String },
+
     #[error("Path not found: {path}")]
     PathNotFound { path: String },
 

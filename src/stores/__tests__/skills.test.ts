@@ -276,6 +276,19 @@ describe('useSkillsStore', () => {
         summary: { total: 1, succeeded: 0, partial: 1, failed: 0, skipped: 0 },
       });
 
+      // 提前 seed cache,模拟前一次 check_updates 的结果
+      updateInfoCache.set('global', {
+        results: [{
+          name: 'toolkit',
+          source: 'owner/repo',
+          hasUpdate: true,
+          status: 'update-available',
+          reason: null,
+          gitRef: 'main',
+        }],
+        checkedAt: Date.now(),
+      });
+
       await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
 
       expect(mockUpdateSkill).toHaveBeenCalledWith({
@@ -286,6 +299,12 @@ describe('useSkillsStore', () => {
       expect(toast.warning).toHaveBeenCalledTimes(2);
       expect(toast.success).not.toHaveBeenCalled();
       expect(toast.error).not.toHaveBeenCalled();
+
+      // Fix 2 回归:partial 不应清缓存,失败 agent 信息应留在 UI
+      expect(updateInfoCache.get('global')?.results[0]?.hasUpdate).toBe(true);
+      expect(updateInfoCache.get('global')?.results[0]?.status).toBe('update-available');
+      // 列表里的 hasUpdate 也应保留
+      expect(useSkillsDataStore.getState().globalSkills[0]?.hasUpdate).toBe(true);
     });
 
     it('refreshes selected skill content after a successful update while keeping identity selection', async () => {

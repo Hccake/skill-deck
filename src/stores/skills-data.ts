@@ -355,7 +355,9 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         toast.warning(t('skills.updateWarning', { name: skillName, count: item.warnings.length, detail: item.warnings[0] }));
       }
 
-      const shouldClearUpdateFlag = !item || item.status === 'success' || item.status === 'partial';
+      // Partial / Failed 不清缓存:后端在这两个状态下不会更新 lock,
+      // 保留 hasUpdate 让用户能再次点击重试,避免失败信息被吞掉。
+      const shouldClearUpdateFlag = !item || item.status === 'success';
       if (shouldClearUpdateFlag) {
         const skillsList = scope === 'global' ? get().globalSkills : get().projectSkills;
         const target = skillsList.find((s) => s.name === skillName);
@@ -466,9 +468,13 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
         for (const skill of group) {
           const item = response.results.find((r) => r.name === skill.name);
-          const success = !item || item.status === 'success' || item.status === 'partial';
-          results.push({ name: skill.name, success });
-          if (success) {
+          // 完成态 (spinner 退出) 与 "可清缓存" 是两个维度:
+          //   - partial: spinner 退出 (done),但 hasUpdate 保留,允许用户重试
+          //   - failed: spinner 标失败 (failed)
+          const finished = !item || item.status === 'success' || item.status === 'partial';
+          const fullySucceeded = !item || item.status === 'success';
+          results.push({ name: skill.name, success: finished });
+          if (fullySucceeded) {
             successfulSkillNames.add(skill.name);
             if (skill.canCheckForUpdates !== false) {
               clearUpdateCacheForSkill(skill.name, scope, projectPath);
@@ -478,7 +484,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             const next = new Map(state.updatingSkills);
             next.set(
               getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }),
-              success ? 'done' : 'failed'
+              finished ? 'done' : 'failed'
             );
             return { updatingSkills: next };
           });

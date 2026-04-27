@@ -13,8 +13,8 @@ use crate::core::local_lock::{
 use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
-    build_update_group_key, build_update_target, clone_repo_with_progress, discover_skills,
-    CloneProgress, DiscoverOptions, UpdateSourceParts,
+    build_update_group_key, build_update_target, clone_repo_with_progress, compute_local_tree_sha,
+    discover_skills, CloneProgress, DiscoverOptions, UpdateSourceParts,
 };
 use crate::core::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
@@ -28,6 +28,7 @@ use crate::models::{
 use serde::Serialize;
 use specta::Type;
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Instant;
 
 /// 更新进度事件（发送到前端）
@@ -182,15 +183,21 @@ async fn check_updates_inner(
                     ));
                 }
             }
-            Err(_) => {
-                // API 失败，不误报
+            Err(err) => {
+                // API 失败,不误报。reason 优先走 GitHubApiError 自带的精细分类
+                // (`rate-limited` / `auth` / `network-error` / `http-<code>`),
+                // 让前端能针对性提示用户(例如 rate-limited 时引导设置 GITHUB_TOKEN)。
+                let reason = match &err {
+                    AppError::GitHubApiError { reason, .. } => reason.clone(),
+                    _ => "upstream-unavailable".to_string(),
+                };
                 for (name, _, _) in skills {
                     results.push(SkillUpdateInfo {
                         name: name.clone(),
                         source: source.clone(),
                         has_update: false,
                         status: SkillUpdateCheckStatus::CannotCheck,
-                        reason: Some("upstream-unavailable".to_string()),
+                        reason: Some(reason.clone()),
                         git_ref: ref_name.clone(),
                     });
                 }
@@ -437,7 +444,11 @@ async fn update_skill_single(
         .find(|s| s.name == skill_name)
         .ok_or_else(|| AppError::NoSkillsFound)?;
 
-    // 6. 检测已安装的 agents（通过文件系统检测，fallback 到 detect_installed + universal）
+    // 6. 检测已安装的 agents (通过文件系统检测,fallback 仅保留 universal agents)。
+    //    注意:fallback 故意不再合并 `AgentType::detect_installed()` —— 否则会把 skill
+    //    装到从未链接过的 agent 上 (例如用户原本只装在 cursor、之后手动卸了 cursor 时)。
+    //    canonical 已经被 install_skill_to_agents_with_modes 写为新内容,universal agents
+    //    直接读 canonical 即可。
     let install_scope = match scope {
         Scope::Global => crate::models::Scope::Global,
         Scope::Project => crate::models::Scope::Project,
@@ -445,13 +456,7 @@ async fn update_skill_single(
     let mut target_agents =
         detect_installed_agents_for_skill(skill_name, &install_scope, project_path);
     if target_agents.is_empty() {
-        target_agents = AgentType::detect_installed();
-        let universal_agents = AgentType::get_universal_agents();
-        for ua in universal_agents {
-            if !target_agents.contains(&ua) {
-                target_agents.push(ua);
-            }
-        }
+        target_agents = AgentType::get_universal_agents();
     }
 
     // 7. 按 agent 检测安装模式（通过文件系统检测）
@@ -491,66 +496,73 @@ async fn update_skill_single(
         })
         .collect();
 
-    // 9. 更新 lock 文件（获取新的 hash）
+    // 9. 仅当所有 agent 都成功时,才把新 hash 写入 lock。
+    //    Partial / Failed 时保留旧 hash —— 这样下次 check_updates 仍会提示 update-available,
+    //    用户重试只会重装失败的 agent,失败信息不会从 UI 上彻底消失。
+    let status = derive_skill_status(&agent_results);
     let _ = app.emit(
         "update-progress",
         &update_progress_payload(skill_name, &scope, project_path, "writing_lock"),
     );
-    let new_hash = if entry_source_type == "github" {
-        fetch_skill_folder_hash(
-            &entry_source,
-            entry_skill_path.as_deref().unwrap_or(""),
-            entry_ref_name.as_deref(),
-        )
-        .await
-        .unwrap_or(None)
-        .unwrap_or_default()
-    } else {
-        String::new()
-    };
 
-    match scope {
-        Scope::Global => {
-            if let Err(err) = add_skill_to_lock(
-                skill_name,
-                &entry_source,
-                &entry_source_type,
-                &entry_source_url,
-                entry_ref_name.as_deref(),
-                entry_skill_path.as_deref(),
-                &new_hash,
-                entry_plugin_name.as_deref(),
-            ) {
-                warnings.push(format!("Failed to write global lock: {}", err));
-            }
+    if matches!(status, UpdateSkillStatus::Success) {
+        let (final_hash, hash_warning) = resolve_post_update_hash(
+            &scope,
+            skill_name,
+            project_path,
+            &entry_source_type,
+            &entry_source,
+            entry_skill_path.as_deref(),
+            entry_ref_name.as_deref(),
+            Some(skills_dir.as_path()),
+        )
+        .await;
+        if let Some(w) = hash_warning {
+            warnings.push(w);
         }
-        Scope::Project => {
-            if let Some(pp) = project_path {
-                let install_dir = crate::core::paths::canonical_skills_dir(false, pp)
-                    .join(crate::core::skill::sanitize_name(skill_name));
-                let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
-                let entry = LocalSkillLockEntry {
-                    source: entry_source.clone(),
-                    ref_name: entry_ref_name.clone(),
-                    source_type: entry_source_type.clone(),
-                    source_url: Some(entry_source_url.clone()),
-                    computed_hash,
-                    remote_hash: if new_hash.is_empty() {
-                        None
-                    } else {
-                        Some(new_hash.clone())
-                    },
-                    skill_path: entry_skill_path.clone(),
-                    plugin_name: entry_plugin_name.clone(),
-                };
-                if let Err(err) = add_skill_to_local_lock(skill_name, entry, pp) {
-                    warnings.push(format!("Failed to write project lock: {}", err));
+
+        match scope {
+            Scope::Global => {
+                if let Err(err) = add_skill_to_lock(
+                    skill_name,
+                    &entry_source,
+                    &entry_source_type,
+                    &entry_source_url,
+                    entry_ref_name.as_deref(),
+                    entry_skill_path.as_deref(),
+                    &final_hash,
+                    entry_plugin_name.as_deref(),
+                ) {
+                    warnings.push(format!("Failed to write global lock: {}", err));
+                }
+            }
+            Scope::Project => {
+                if let Some(pp) = project_path {
+                    let install_dir = crate::core::paths::canonical_skills_dir(false, pp)
+                        .join(crate::core::skill::sanitize_name(skill_name));
+                    let computed_hash =
+                        compute_skill_folder_hash(&install_dir).unwrap_or_default();
+                    let entry = LocalSkillLockEntry {
+                        source: entry_source.clone(),
+                        ref_name: entry_ref_name.clone(),
+                        source_type: entry_source_type.clone(),
+                        source_url: Some(entry_source_url.clone()),
+                        computed_hash,
+                        remote_hash: if final_hash.is_empty() {
+                            None
+                        } else {
+                            Some(final_hash.clone())
+                        },
+                        skill_path: entry_skill_path.clone(),
+                        plugin_name: entry_plugin_name.clone(),
+                    };
+                    if let Err(err) = add_skill_to_local_lock(skill_name, entry, pp) {
+                        warnings.push(format!("Failed to write project lock: {}", err));
+                    }
                 }
             }
         }
     }
-
-    let status = derive_skill_status(&agent_results);
     let error = match status {
         UpdateSkillStatus::Failed | UpdateSkillStatus::Partial => agent_results
             .iter()
@@ -812,17 +824,11 @@ async fn update_skills_batch_inner(
                 }
             };
 
-            // detect agents
+            // detect agents (fallback 仅保留 universal agents,见单个 update 路径的注释)
             let mut target_agents =
                 detect_installed_agents_for_skill(&entry.name, &install_scope, project_path);
             if target_agents.is_empty() {
-                target_agents = AgentType::detect_installed();
-                let universal_agents = AgentType::get_universal_agents();
-                for ua in universal_agents {
-                    if !target_agents.contains(&ua) {
-                        target_agents.push(ua);
-                    }
-                }
+                target_agents = AgentType::get_universal_agents();
             }
 
             // detect install mode per agent
@@ -858,67 +864,74 @@ async fn update_skills_batch_inner(
                 })
                 .collect();
 
-            // write lock
+            // 仅当所有 agent 都成功时,才把新 hash 写入 lock。
+            // Partial / Failed 时保留旧 hash —— 与单个 update 路径行为一致,
+            // 让用户重试只重装失败的 agent。
+            let status = derive_skill_status(&agent_results);
             let _ = app.emit(
                 "update-progress",
                 &update_progress_payload(&entry.name, &scope, project_path, "writing_lock"),
             );
-            let new_hash = if entry.source_type == "github" {
-                fetch_skill_folder_hash(
-                    &entry.source,
-                    entry.skill_path.as_deref().unwrap_or(""),
-                    entry.ref_name.as_deref(),
-                )
-                .await
-                .unwrap_or(None)
-                .unwrap_or_default()
-            } else {
-                String::new()
-            };
 
-            match scope {
-                Scope::Global => {
-                    if let Err(err) = add_skill_to_lock(
-                        &entry.name,
-                        &entry.source,
-                        &entry.source_type,
-                        &entry.source_url,
-                        entry.ref_name.as_deref(),
-                        entry.skill_path.as_deref(),
-                        &new_hash,
-                        entry.plugin_name.as_deref(),
-                    ) {
-                        warnings.push(format!("Failed to write global lock: {}", err));
-                    }
+            if matches!(status, UpdateSkillStatus::Success) {
+                let (final_hash, hash_warning) = resolve_post_update_hash(
+                    &scope,
+                    &entry.name,
+                    project_path,
+                    &entry.source_type,
+                    &entry.source,
+                    entry.skill_path.as_deref(),
+                    entry.ref_name.as_deref(),
+                    Some(skills_dir.as_path()),
+                )
+                .await;
+                if let Some(w) = hash_warning {
+                    warnings.push(w);
                 }
-                Scope::Project => {
-                    if let Some(pp) = project_path {
-                        let install_dir = crate::core::paths::canonical_skills_dir(false, pp)
-                            .join(crate::core::skill::sanitize_name(&entry.name));
-                        let computed_hash =
-                            compute_skill_folder_hash(&install_dir).unwrap_or_default();
-                        let lock_entry = LocalSkillLockEntry {
-                            source: entry.source.clone(),
-                            ref_name: entry.ref_name.clone(),
-                            source_type: entry.source_type.clone(),
-                            source_url: Some(entry.source_url.clone()),
-                            computed_hash,
-                            remote_hash: if new_hash.is_empty() {
-                                None
-                            } else {
-                                Some(new_hash.clone())
-                            },
-                            skill_path: entry.skill_path.clone(),
-                            plugin_name: entry.plugin_name.clone(),
-                        };
-                        if let Err(err) = add_skill_to_local_lock(&entry.name, lock_entry, pp) {
-                            warnings.push(format!("Failed to write project lock: {}", err));
+
+                match scope {
+                    Scope::Global => {
+                        if let Err(err) = add_skill_to_lock(
+                            &entry.name,
+                            &entry.source,
+                            &entry.source_type,
+                            &entry.source_url,
+                            entry.ref_name.as_deref(),
+                            entry.skill_path.as_deref(),
+                            &final_hash,
+                            entry.plugin_name.as_deref(),
+                        ) {
+                            warnings.push(format!("Failed to write global lock: {}", err));
+                        }
+                    }
+                    Scope::Project => {
+                        if let Some(pp) = project_path {
+                            let install_dir = crate::core::paths::canonical_skills_dir(false, pp)
+                                .join(crate::core::skill::sanitize_name(&entry.name));
+                            let computed_hash =
+                                compute_skill_folder_hash(&install_dir).unwrap_or_default();
+                            let lock_entry = LocalSkillLockEntry {
+                                source: entry.source.clone(),
+                                ref_name: entry.ref_name.clone(),
+                                source_type: entry.source_type.clone(),
+                                source_url: Some(entry.source_url.clone()),
+                                computed_hash,
+                                remote_hash: if final_hash.is_empty() {
+                                    None
+                                } else {
+                                    Some(final_hash.clone())
+                                },
+                                skill_path: entry.skill_path.clone(),
+                                plugin_name: entry.plugin_name.clone(),
+                            };
+                            if let Err(err) = add_skill_to_local_lock(&entry.name, lock_entry, pp) {
+                                warnings.push(format!("Failed to write project lock: {}", err));
+                            }
                         }
                     }
                 }
             }
 
-            let status = derive_skill_status(&agent_results);
             let error = match status {
                 UpdateSkillStatus::Failed | UpdateSkillStatus::Partial => agent_results
                     .iter()
@@ -994,6 +1007,87 @@ fn derive_skill_status(agent_results: &[UpdateSkillAgentResult]) -> UpdateSkillS
     } else {
         UpdateSkillStatus::Skipped
     }
+}
+
+/// 读取 lock 中已有的远端 hash（global 用 `skill_folder_hash`，project 用 `remote_hash`）。
+/// 用于 update 后远端 hash 抓取失败时保留旧值，避免写入空串导致 capability 永久降级。
+fn read_existing_hash(
+    scope: &Scope,
+    skill_name: &str,
+    project_path: Option<&str>,
+) -> Option<String> {
+    match scope {
+        Scope::Global => {
+            let lock = read_scoped_lock(None).ok()?;
+            let entry = lock.skills.get(skill_name)?;
+            if entry.skill_folder_hash.is_empty() {
+                None
+            } else {
+                Some(entry.skill_folder_hash.clone())
+            }
+        }
+        Scope::Project => {
+            let pp = project_path?;
+            let lock = read_local_lock(pp).ok()?;
+            let entry = lock.skills.get(skill_name)?;
+            entry.remote_hash.clone().filter(|s| !s.is_empty())
+        }
+    }
+}
+
+/// 解析 update 完成后要写入 lock 的 `skill_folder_hash`。
+///
+/// 优先级（每一级失败才进入下一级）：
+///   1. 从本地新 clone 的仓库直接 `git rev-parse` 计算 tree SHA — 零额外网络调用
+///   2. 远端 GitHub Trees API — 兜底（例如 local source 没有 clone_result）
+///   3. 保留 lock 中已有的旧 hash — 绝不写入空串
+///
+/// 返回 `(final_hash, warning)`，只有当 1 / 2 都失败、且需要保留旧 hash 时才会附带 warning。
+async fn resolve_post_update_hash(
+    scope: &Scope,
+    skill_name: &str,
+    project_path: Option<&str>,
+    source_type: &str,
+    source: &str,
+    skill_path: Option<&str>,
+    ref_name: Option<&str>,
+    clone_repo_path: Option<&Path>,
+) -> (String, Option<String>) {
+    if source_type != "github" {
+        return (String::new(), None);
+    }
+    let path_str = skill_path.unwrap_or("");
+
+    // 1. 本地 git 仓库
+    if let Some(repo_path) = clone_repo_path {
+        if let Some(sha) = compute_local_tree_sha(repo_path, path_str) {
+            return (sha, None);
+        }
+    }
+
+    // 2. 远端 API 兜底
+    if let Ok(Some(sha)) = fetch_skill_folder_hash(source, path_str, ref_name).await {
+        return (sha, None);
+    }
+
+    // 3. 保留旧 hash
+    if let Some(old) = read_existing_hash(scope, skill_name, project_path) {
+        return (
+            old,
+            Some(format!(
+                "Could not refresh remote hash for '{}', kept previous value",
+                skill_name
+            )),
+        );
+    }
+
+    (
+        String::new(),
+        Some(format!(
+            "Could not refresh remote hash for '{}'; lock entry will lack a remote hash",
+            skill_name
+        )),
+    )
 }
 
 fn summarize_results(results: &[UpdateSkillItemResult]) -> UpdateSkillSummary {
@@ -1257,5 +1351,159 @@ mod tests {
             derive_skill_status(&agent_results),
             UpdateSkillStatus::Skipped
         );
+    }
+
+    /// 在 tempdir 里写一份合法的 project lock 文件。
+    fn write_project_lock(tmp: &std::path::Path, skill_name: &str, remote_hash: Option<&str>) {
+        let hash_field = match remote_hash {
+            Some(h) => format!(",\n      \"remoteHash\": \"{}\"", h),
+            None => String::new(),
+        };
+        let content = format!(
+            r#"{{
+  "version": 1,
+  "skills": {{
+    "{name}": {{
+      "source": "owner/repo",
+      "ref": "main",
+      "sourceType": "github",
+      "computedHash": "abc123",
+      "skillPath": "skills/{name}/SKILL.md"{hash_field}
+    }}
+  }}
+}}"#,
+            name = skill_name,
+            hash_field = hash_field
+        );
+        std::fs::write(tmp.join("skills-lock.json"), content).unwrap();
+    }
+
+    #[test]
+    fn test_read_existing_hash_returns_remote_hash_for_project_scope() {
+        let tmp = tempdir().unwrap();
+        write_project_lock(tmp.path(), "demo", Some("tree-old"));
+        let result =
+            read_existing_hash(&Scope::Project, "demo", Some(tmp.path().to_str().unwrap()));
+        assert_eq!(result.as_deref(), Some("tree-old"));
+    }
+
+    #[test]
+    fn test_read_existing_hash_returns_none_when_remote_hash_missing() {
+        let tmp = tempdir().unwrap();
+        write_project_lock(tmp.path(), "demo", None);
+        let result =
+            read_existing_hash(&Scope::Project, "demo", Some(tmp.path().to_str().unwrap()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_read_existing_hash_returns_none_when_skill_missing() {
+        let tmp = tempdir().unwrap();
+        write_project_lock(tmp.path(), "demo", Some("tree-old"));
+        let result = read_existing_hash(
+            &Scope::Project,
+            "not-installed",
+            Some(tmp.path().to_str().unwrap()),
+        );
+        assert_eq!(result, None);
+    }
+
+    /// 关键回归:本地 git 算不出来 + API 也失败时,绝不能返回空串覆盖旧 hash。
+    /// 没有 clone_repo_path 时本地路径直接 short-circuit;API 走真实网络可能仍成功,
+    /// 这里用一个不存在的 repo 来强制失败。
+    #[test]
+    fn test_resolve_post_update_hash_keeps_existing_hash_when_refresh_fails() {
+        tauri::async_runtime::block_on(async {
+            let tmp = tempdir().unwrap();
+            write_project_lock(tmp.path(), "demo", Some("tree-old"));
+            let (final_hash, warning) = resolve_post_update_hash(
+                &Scope::Project,
+                "demo",
+                Some(tmp.path().to_str().unwrap()),
+                "github",
+                // 不存在的 repo:确保 fetch_skill_folder_hash 拿不到内容
+                "this-org-does-not-exist-skill-deck/no-repo",
+                Some("skills/demo/SKILL.md"),
+                Some("nonexistent-branch-xyz"),
+                None,
+            )
+            .await;
+            // 必须保留旧 hash,绝不写空串
+            assert_eq!(final_hash, "tree-old");
+            assert!(warning.is_some(), "应当 push 一条 warning 提示用户");
+        });
+    }
+
+    #[test]
+    fn test_resolve_post_update_hash_returns_empty_for_non_github_source() {
+        tauri::async_runtime::block_on(async {
+            let (final_hash, warning) = resolve_post_update_hash(
+                &Scope::Project,
+                "demo",
+                None,
+                "local",
+                "/some/path",
+                None,
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(final_hash, "");
+            assert!(warning.is_none());
+        });
+    }
+
+    /// Fix 1 核心:本地 clone 的 git 仓库可以直接算 tree SHA,不再发 API。
+    #[test]
+    fn test_resolve_post_update_hash_uses_local_git_when_clone_path_provided() {
+        tauri::async_runtime::block_on(async {
+            // 在 tempdir 构造一个真实 git 仓库
+            let repo_dir = tempdir().unwrap();
+            let repo = repo_dir.path();
+            let run = |args: &[&str]| -> bool {
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(repo)
+                    .args(args)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            };
+            if !run(&["init", "-q"]) {
+                eprintln!("git not available, skipping");
+                return;
+            }
+            run(&["config", "user.email", "test@example.com"]);
+            run(&["config", "user.name", "Test"]);
+            run(&["config", "commit.gpgsign", "false"]);
+            std::fs::create_dir_all(repo.join("skills/demo")).unwrap();
+            std::fs::write(repo.join("skills/demo/SKILL.md"), "x").unwrap();
+            run(&["add", "-A"]);
+            run(&["commit", "-q", "-m", "init"]);
+
+            let expected = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(["rev-parse", "HEAD:skills/demo"])
+                .output()
+                .unwrap();
+            let expected_sha = String::from_utf8_lossy(&expected.stdout).trim().to_string();
+
+            // 即使 source 写一个不存在的 repo,只要本地 clone 在,就走本地路径,不发 API
+            let lock_dir = tempdir().unwrap();
+            let (final_hash, warning) = resolve_post_update_hash(
+                &Scope::Project,
+                "demo",
+                Some(lock_dir.path().to_str().unwrap()),
+                "github",
+                "this-does-not-matter/because-local-wins",
+                Some("skills/demo/SKILL.md"),
+                Some("nonexistent"),
+                Some(repo),
+            )
+            .await;
+            assert_eq!(final_hash, expected_sha);
+            assert!(warning.is_none());
+        });
     }
 }

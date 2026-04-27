@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { formatTime } from '@/lib/utils';
 import type { InstalledSkill, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
+import { resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
 
 type SkillUpdateStatus = 'queued' | 'updating' | 'done' | 'failed';
 
@@ -254,11 +255,14 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 <Badge variant="outline" className="text-xs text-muted-foreground">
                   {t('skills.updateStatus.cannotCheck')}
                 </Badge>
-                {skill.updateReason ? (
-                  <span className="text-xs text-muted-foreground">
-                    {t(`skills.updateReason.${skill.updateReason}`)}
-                  </span>
-                ) : null}
+                {(() => {
+                  const reasonKey = resolveUpdateReasonI18nKey(skill.updateReason);
+                  return reasonKey ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t(reasonKey)}
+                    </span>
+                  ) : null;
+                })()}
               </div>
             ) : null}
 

@@ -23,6 +23,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import type { AgentType, InstalledSkill, RiskLevel, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
+import { resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
 import { RiskBadge } from './RiskBadge';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
@@ -301,12 +302,15 @@ export const SkillCard = memo(function SkillCard({
             {skill.updatedAt ? (
               <span>{t('skills.updated', { time: formatTime(skill.updatedAt, i18n.language) })}</span>
             ) : null}
-            {skill.updateReason ? (
-              <>
-                <span className="text-border">·</span>
-                <span>{t(`skills.updateReason.${skill.updateReason}`)}</span>
-              </>
-            ) : null}
+            {(() => {
+              const reasonKey = resolveUpdateReasonI18nKey(skill.updateReason);
+              return reasonKey ? (
+                <>
+                  <span className="text-border">·</span>
+                  <span>{t(reasonKey)}</span>
+                </>
+              ) : null;
+            })()}
           </div>
 
           {/* Row 4: Agents */}

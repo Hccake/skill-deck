@@ -164,7 +164,11 @@
       "missing-remote-hash": "缺少远端哈希，无法自动比较远端版本",
       "unsupported-source-type": "该来源类型暂不支持自动检查更新",
       "local-source": "本地路径来源不支持自动检查更新",
-      "upstream-unavailable": "上游暂不可访问，当前无法完成更新检查"
+      "upstream-unavailable": "上游暂不可访问，当前无法完成更新检查",
+      "rate-limited": "GitHub API 速率受限，建议设置 GITHUB_TOKEN 提升配额",
+      "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN 是否有效",
+      "network-error": "网络异常，无法访问 GitHub API",
+      "http-error": "GitHub API 返回错误，稍后可重试"
     },
     "discover": {
       "searchPlaceholder": "搜索 Skills...",

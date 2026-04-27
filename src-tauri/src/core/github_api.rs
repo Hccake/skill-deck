@@ -10,6 +10,25 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Command;
 
+/// 规范化 skill 路径：去除 `SKILL.md` 后缀、统一斜杠、去除首尾斜杠。
+///
+/// Lock 中 `skill_path` 通常是 `skills/foo/SKILL.md`，但在向 GitHub Trees API 或
+/// 本地 `git rev-parse` 提供子目录时只能用 `skills/foo`。该函数同时被
+/// `fetch_skill_folder_hash` / `fetch_skill_folder_hashes_batch` /
+/// `compute_local_tree_sha` 复用，避免三处实现走偏。
+pub fn normalize_skill_folder_path(skill_path: &str) -> String {
+    // 统一斜杠 + 先 trim 尾随 /,这样 `skills/demo/SKILL.md/` 也能正确剥掉 SKILL.md
+    let trimmed = skill_path.replace('\\', "/");
+    let trimmed = trimmed.trim_end_matches('/');
+    if trimmed == "SKILL.md" {
+        return String::new();
+    }
+    if let Some(stripped) = trimmed.strip_suffix("/SKILL.md") {
+        return stripped.trim_end_matches('/').to_string();
+    }
+    trimmed.to_string()
+}
+
 /// GitHub Trees API 响应
 #[derive(Debug, Deserialize)]
 struct TreesResponse {
@@ -80,18 +99,7 @@ pub async fn fetch_skill_folder_hash(
     skill_path: &str,
     git_ref: Option<&str>,
 ) -> Result<Option<String>, AppError> {
-    // 规范化路径
-    let mut folder_path = skill_path.replace('\\', "/");
-
-    // 移除 SKILL.md 后缀
-    if folder_path.ends_with("/SKILL.md") {
-        folder_path = folder_path[..folder_path.len() - 9].to_string();
-    } else if folder_path.ends_with("SKILL.md") {
-        folder_path = folder_path[..folder_path.len() - 8].to_string();
-    }
-
-    // 移除尾部斜杠
-    folder_path = folder_path.trim_end_matches('/').to_string();
+    let folder_path = normalize_skill_folder_path(skill_path);
 
     let token = get_github_token();
     let client = Client::new();
@@ -142,6 +150,52 @@ pub async fn fetch_skill_folder_hash(
     Ok(None)
 }
 
+/// 把 reqwest 响应分类为 `AppError::GitHubApiError`,reason 字段决定前端文案。
+///
+/// reason 取值优先级 (高 → 低): `rate-limited` > `auth` > `http-<code>` > `network-error`。
+/// 对于"换 ref 可能解决"的 404,调用方会继续尝试下一个分支;其他错误立即返回。
+fn classify_github_response(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    url: &str,
+) -> AppError {
+    if status.as_u16() == 403 {
+        let remaining = headers
+            .get("X-RateLimit-Remaining")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u32>().ok());
+        if matches!(remaining, Some(0)) {
+            return AppError::GitHubApiError {
+                reason: "rate-limited".into(),
+                message: format!("GitHub API rate limit reached at {}", url),
+            };
+        }
+        // 403 但还有配额 → 多半是 token 权限不足
+        return AppError::GitHubApiError {
+            reason: "auth".into(),
+            message: format!("GitHub API forbidden at {}", url),
+        };
+    }
+    if status.as_u16() == 401 {
+        return AppError::GitHubApiError {
+            reason: "auth".into(),
+            message: format!("GitHub API authentication required at {}", url),
+        };
+    }
+    AppError::GitHubApiError {
+        reason: format!("http-{}", status.as_u16()),
+        message: format!("HTTP {} from GitHub Trees API at {}", status, url),
+    }
+}
+
+/// 仅 404 (ref 不存在) 视为"换个 branch 可能能成功",其他错误立刻返回。
+fn is_ref_specific_error(err: &AppError) -> bool {
+    matches!(
+        err,
+        AppError::GitHubApiError { reason, .. } if reason == "http-404"
+    )
+}
+
 /// 批量获取同源多个 skill 文件夹的 hash（单次 API 请求）
 ///
 /// 与 `fetch_skill_folder_hash` 的区别：
@@ -149,13 +203,13 @@ pub async fn fetch_skill_folder_hash(
 /// - 从返回的完整 tree 中查找所有 skill_paths 对应的 hash
 /// - N 个同源 skills 从 N 次 API 降为 1 次
 ///
-/// # Arguments
-/// * `owner_repo` - 格式为 "owner/repo"
-/// * `skill_paths` - 每个元素为 (skill_name, folder_path)
-/// * `git_ref` - 可选的分支/tag
+/// # 错误返回语义
 ///
-/// # Returns
-/// * skill_name → Option<hash> 的映射
+/// - 网络错误 / HTTP 4xx/5xx → `Err(AppError::GitHubApiError { reason, .. })`,
+///   其中 reason 在 UI 决定具体文案 (`rate-limited` / `auth` / ...)
+/// - HTTP 2xx 但 tree 中找不到对应 path → `Ok(map_with_None_for_that_skill)`
+///
+/// 这样调用方 (`check_updates_inner`) 才能区分"远端真没这个 skill"和"网都没通"。
 pub async fn fetch_skill_folder_hashes_batch(
     owner_repo: &str,
     skill_paths: &[(String, String)],
@@ -164,16 +218,7 @@ pub async fn fetch_skill_folder_hashes_batch(
     // 预处理所有 skill_path：规范化路径
     let normalized: Vec<(String, String)> = skill_paths
         .iter()
-        .map(|(name, path)| {
-            let mut folder_path = path.replace('\\', "/");
-            if folder_path.ends_with("/SKILL.md") {
-                folder_path = folder_path[..folder_path.len() - 9].to_string();
-            } else if folder_path.ends_with("SKILL.md") {
-                folder_path = folder_path[..folder_path.len() - 8].to_string();
-            }
-            folder_path = folder_path.trim_end_matches('/').to_string();
-            (name.clone(), folder_path)
-        })
+        .map(|(name, path)| (name.clone(), normalize_skill_folder_path(path)))
         .collect();
 
     let token = get_github_token();
@@ -183,6 +228,8 @@ pub async fn fetch_skill_folder_hashes_batch(
         Some(r) => vec![r],
         None => vec!["main", "master"],
     };
+
+    let mut last_err: Option<AppError> = None;
 
     for branch in branches {
         let url = format!(
@@ -199,48 +246,166 @@ pub async fn fetch_skill_folder_hashes_batch(
             request = request.header("Authorization", format!("Bearer {}", t));
         }
 
-        let response = request.send().await;
-
-        match response {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(data) = resp.json::<TreesResponse>().await {
-                    // 构建 path → sha 的查找 Map（仅 tree 类型）
-                    let tree_map: HashMap<&str, &str> = data
-                        .tree
-                        .iter()
-                        .filter(|e| e.entry_type == "tree")
-                        .map(|e| (e.path.as_str(), e.sha.as_str()))
-                        .collect();
-
-                    let mut results = HashMap::new();
-                    for (name, folder_path) in &normalized {
-                        if folder_path.is_empty() {
-                            // 空路径 → 返回根 tree SHA
-                            results.insert(name.clone(), Some(data.sha.clone()));
-                        } else if let Some(sha) = tree_map.get(folder_path.as_str()) {
-                            results.insert(name.clone(), Some(sha.to_string()));
-                        } else {
-                            results.insert(name.clone(), None);
-                        }
-                    }
-                    return Ok(results);
-                }
+        let response = match request.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                last_err = Some(AppError::GitHubApiError {
+                    reason: "network-error".into(),
+                    message: e.to_string(),
+                });
+                continue;
             }
-            _ => continue,
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            let err = classify_github_response(status, response.headers(), &url);
+            // 仅 404 继续尝试下一个 branch;rate-limit / auth 等立即返回
+            if !is_ref_specific_error(&err) {
+                return Err(err);
+            }
+            last_err = Some(err);
+            continue;
         }
+
+        // HTTP 2xx
+        let data = match response.json::<TreesResponse>().await {
+            Ok(d) => d,
+            Err(e) => {
+                last_err = Some(AppError::GitHubApiError {
+                    reason: "network-error".into(),
+                    message: format!("Failed to parse Trees response: {}", e),
+                });
+                continue;
+            }
+        };
+
+        let tree_map: HashMap<&str, &str> = data
+            .tree
+            .iter()
+            .filter(|e| e.entry_type == "tree")
+            .map(|e| (e.path.as_str(), e.sha.as_str()))
+            .collect();
+
+        let mut results = HashMap::new();
+        for (name, folder_path) in &normalized {
+            if folder_path.is_empty() {
+                results.insert(name.clone(), Some(data.sha.clone()));
+            } else if let Some(sha) = tree_map.get(folder_path.as_str()) {
+                results.insert(name.clone(), Some(sha.to_string()));
+            } else {
+                results.insert(name.clone(), None);
+            }
+        }
+        return Ok(results);
     }
 
-    // 所有分支都失败，返回全 None
-    let mut results = HashMap::new();
-    for (name, _) in &normalized {
-        results.insert(name.clone(), None);
-    }
-    Ok(results)
+    // 所有 branch 都失败:把最后一个错误抛出来给调用方分类
+    Err(last_err.unwrap_or_else(|| AppError::GitHubApiError {
+        reason: "network-error".into(),
+        message: format!("Failed to fetch tree for {}", owner_repo),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use reqwest::header::HeaderMap;
+    use reqwest::StatusCode;
+
+    fn header_map(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                v.parse().unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn test_classify_response_403_with_zero_remaining_is_rate_limited() {
+        let err = classify_github_response(
+            StatusCode::FORBIDDEN,
+            &header_map(&[("X-RateLimit-Remaining", "0")]),
+            "https://api.github.com/repos/x/y/git/trees/main",
+        );
+        match err {
+            AppError::GitHubApiError { reason, .. } => assert_eq!(reason, "rate-limited"),
+            _ => panic!("expected GitHubApiError"),
+        }
+    }
+
+    #[test]
+    fn test_classify_response_403_with_remaining_quota_is_auth() {
+        let err = classify_github_response(
+            StatusCode::FORBIDDEN,
+            &header_map(&[("X-RateLimit-Remaining", "100")]),
+            "https://example.com",
+        );
+        match err {
+            AppError::GitHubApiError { reason, .. } => assert_eq!(reason, "auth"),
+            _ => panic!("expected GitHubApiError"),
+        }
+    }
+
+    #[test]
+    fn test_classify_response_401_is_auth() {
+        let err = classify_github_response(
+            StatusCode::UNAUTHORIZED,
+            &HeaderMap::new(),
+            "https://example.com",
+        );
+        match err {
+            AppError::GitHubApiError { reason, .. } => assert_eq!(reason, "auth"),
+            _ => panic!("expected GitHubApiError"),
+        }
+    }
+
+    #[test]
+    fn test_classify_response_404_is_recoverable_with_other_ref() {
+        let err = classify_github_response(
+            StatusCode::NOT_FOUND,
+            &HeaderMap::new(),
+            "https://example.com",
+        );
+        match &err {
+            AppError::GitHubApiError { reason, .. } => assert_eq!(reason, "http-404"),
+            _ => panic!("expected GitHubApiError"),
+        }
+        assert!(is_ref_specific_error(&err));
+    }
+
+    #[test]
+    fn test_classify_response_500_is_not_ref_specific() {
+        let err = classify_github_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &HeaderMap::new(),
+            "https://example.com",
+        );
+        assert!(!is_ref_specific_error(&err));
+    }
+
+    #[test]
+    fn test_normalize_skill_folder_path_strips_skill_md_and_slashes() {
+        assert_eq!(
+            normalize_skill_folder_path("skills/demo/SKILL.md"),
+            "skills/demo"
+        );
+        assert_eq!(
+            normalize_skill_folder_path("skills/demo/SKILL.md/"),
+            "skills/demo"
+        );
+        assert_eq!(
+            normalize_skill_folder_path("skills\\demo\\SKILL.md"),
+            "skills/demo"
+        );
+        assert_eq!(normalize_skill_folder_path("skills/demo/"), "skills/demo");
+        assert_eq!(normalize_skill_folder_path("/"), "");
+        assert_eq!(normalize_skill_folder_path(""), "");
+    }
 
     #[test]
     fn test_get_github_token_from_env() {

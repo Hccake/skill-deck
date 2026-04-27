@@ -8,8 +8,9 @@
 //!
 //! 与 CLI git.ts 行为一致
 
+use crate::core::github_api::normalize_skill_folder_path;
 use crate::error::AppError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -272,6 +273,47 @@ where
     }
 }
 
+/// 在已 clone 的仓库里计算指定子目录的 tree SHA。
+///
+/// 等价于 GitHub Trees API 返回的 `sha` 字段——它们指向同一个 git tree object。
+/// 让 update 流程可以直接复用 `clone_repo_with_progress` 已经下载的仓库，
+/// 省掉一次 Trees API 调用，同时避免 API 偶发失败导致 lock 写入空 hash。
+///
+/// 失败返回 `None`：不在 git 仓库中、git 不可用、ref 不存在、目录不存在等。
+pub fn compute_local_tree_sha(repo_path: &Path, folder_path: &str) -> Option<String> {
+    let normalized = normalize_skill_folder_path(folder_path);
+    let spec = if normalized.is_empty() {
+        "HEAD^{tree}".to_string()
+    } else {
+        format!("HEAD:{}", normalized)
+    };
+
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(repo_path)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg(&spec);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if sha.is_empty() {
+        None
+    } else {
+        Some(sha)
+    }
+}
+
 /// 分类 Git 错误（与 CLI 行为一致）
 fn classify_git_error(stderr: &str, url: &str) -> AppError {
     let stderr_lower = stderr.to_lowercase();
@@ -430,6 +472,81 @@ mod tests {
             AppError::GitTimeout { timeout_secs: 300 },
             AppError::GitTimeout { timeout_secs: 300 }
         ));
+    }
+
+    /// 创建一个最小 git 仓库,在 `subdir/SKILL.md` 写入内容并 commit。
+    /// 返回 (tempdir, repo_path, expected_subdir_tree_sha)。
+    fn make_repo_with_skill(content: &str) -> Option<(TempDir, PathBuf, String)> {
+        let tmp = TempDir::new().ok()?;
+        let repo = tmp.path().to_path_buf();
+        let run = |args: &[&str]| -> Option<()> {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .ok()?;
+            if status.success() {
+                Some(())
+            } else {
+                None
+            }
+        };
+        run(&["init", "-q"])?;
+        run(&["config", "user.email", "test@example.com"])?;
+        run(&["config", "user.name", "Test"])?;
+        run(&["config", "commit.gpgsign", "false"])?;
+        std::fs::create_dir_all(repo.join("skills/demo")).ok()?;
+        std::fs::write(repo.join("skills/demo/SKILL.md"), content).ok()?;
+        run(&["add", "-A"])?;
+        run(&["commit", "-q", "-m", "init"])?;
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["rev-parse", "HEAD:skills/demo"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Some((tmp, repo, sha))
+    }
+
+    #[test]
+    fn test_compute_local_tree_sha_matches_git_rev_parse() {
+        let Some((_tmp, repo, expected)) = make_repo_with_skill("hello") else {
+            eprintln!("git not available, skipping");
+            return;
+        };
+        let actual = compute_local_tree_sha(&repo, "skills/demo/SKILL.md");
+        assert_eq!(actual.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn test_compute_local_tree_sha_strips_skill_md_suffix() {
+        // 同一目录,带与不带 SKILL.md 应得到同一个 tree SHA
+        let Some((_tmp, repo, expected)) = make_repo_with_skill("hello") else {
+            return;
+        };
+        let with_suffix = compute_local_tree_sha(&repo, "skills/demo/SKILL.md");
+        let without_suffix = compute_local_tree_sha(&repo, "skills/demo");
+        assert_eq!(with_suffix.as_deref(), Some(expected.as_str()));
+        assert_eq!(without_suffix.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn test_compute_local_tree_sha_returns_none_for_missing_path() {
+        let Some((_tmp, repo, _)) = make_repo_with_skill("hello") else {
+            return;
+        };
+        assert_eq!(compute_local_tree_sha(&repo, "skills/nope"), None);
+    }
+
+    #[test]
+    fn test_compute_local_tree_sha_returns_none_outside_git_repo() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(compute_local_tree_sha(tmp.path(), "skills/demo"), None);
     }
 
     #[test]

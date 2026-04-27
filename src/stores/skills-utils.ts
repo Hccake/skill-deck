@@ -51,6 +51,19 @@ export function t(key: string, options?: Record<string, unknown>): string {
   return i18n.t(key, options);
 }
 
+/**
+ * 把后端返回的 update reason 映射到 i18n key。
+ *
+ * 后端会返回:capability 派生的静态 reason (如 `missing-skill-path`),
+ * 或 check_updates 时拿到的 GitHub API reason (如 `rate-limited`/`http-404`)。
+ * `http-<code>` 是动态值,这里折叠到通用的 `http-error` key,避免 i18n 字典爆炸。
+ */
+export function resolveUpdateReasonI18nKey(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  if (reason.startsWith('http-')) return 'skills.updateReason.http-error';
+  return `skills.updateReason.${reason}`;
+}
+
 export interface DeleteTarget {
   skill: SkillListItem;
   scope: SkillScope;
