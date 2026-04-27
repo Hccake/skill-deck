@@ -72,21 +72,15 @@ pub fn check_project_path(path: String) -> bool {
 pub fn open_in_explorer(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(&path)
-            .spawn()?;
+        std::process::Command::new("explorer").arg(&path).spawn()?;
     }
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg(&path)
-            .spawn()?;
+        std::process::Command::new("open").arg(&path).spawn()?;
     }
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()?;
+        std::process::Command::new("xdg-open").arg(&path).spawn()?;
     }
     Ok(())
 }

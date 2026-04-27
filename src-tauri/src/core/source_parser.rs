@@ -23,9 +23,8 @@ use url::Url;
 
 /// Source 别名映射
 /// 对应 CLI: source-parser.ts SOURCE_ALIASES
-const SOURCE_ALIASES: &[(&str, &str)] = &[
-    ("coinbase/agentWallet", "coinbase/agentic-wallet-skills"),
-];
+const SOURCE_ALIASES: &[(&str, &str)] =
+    &[("coinbase/agentWallet", "coinbase/agentic-wallet-skills")];
 
 /// 解析 source 别名
 fn resolve_alias(source: &str) -> String {
@@ -51,8 +50,7 @@ static GITHUB_PATH_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^/[^/]+/[^/]+(?:\.git)?(?:/tree/[^/]+(?:/.*)?)?/?$").unwrap());
 static GITLAB_PATH_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^/.+?/[^/]+(?:\.git)?(?:/-/tree/[^/]+(?:/.*)?)?/?$").unwrap());
-static GIT_URL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\.git(?:$|\?|/)").unwrap());
+static GIT_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.git(?:$|\?|/)").unwrap());
 static SHORTHAND_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[^/]+/[^/]+(?:/(.+)|@(.+))?$").unwrap());
 
@@ -60,10 +58,7 @@ static SHORTHAND_RE: Lazy<Regex> =
 /// 只有 git-like 来源才应将 # 后的内容解释为分支 ref
 fn looks_like_git_source(input: &str) -> bool {
     // 前缀检查
-    if input.starts_with("github:")
-        || input.starts_with("gitlab:")
-        || input.starts_with("git@")
-    {
+    if input.starts_with("github:") || input.starts_with("gitlab:") || input.starts_with("git@") {
         return true;
     }
     // HTTP(S) URL
@@ -174,8 +169,11 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
 
     // 4. github: 前缀简写 → 复用 shorthand 解析（携带 fragment ref）
     if let Some(rest) = input.strip_prefix("github:") {
-        let recursive_input =
-            append_fragment_ref(rest, fragment_ref.as_deref(), fragment_skill_filter.as_deref());
+        let recursive_input = append_fragment_ref(
+            rest,
+            fragment_ref.as_deref(),
+            fragment_skill_filter.as_deref(),
+        );
         return parse_source(&recursive_input);
     }
 
@@ -230,7 +228,10 @@ fn is_local_path(input: &str) -> bool {
     // Windows 绝对路径 (C:\, D:\, C:/, D:/, etc.)
     if input.len() >= 3 {
         let chars: Vec<char> = input.chars().collect();
-        if chars[0].is_ascii_alphabetic() && chars[1] == ':' && (chars[2] == '\\' || chars[2] == '/') {
+        if chars[0].is_ascii_alphabetic()
+            && chars[1] == ':'
+            && (chars[2] == '\\' || chars[2] == '/')
+        {
             return true;
         }
     }
@@ -262,10 +263,7 @@ fn url_has_path_traversal(url_str: &str) -> bool {
 fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
     if url_has_path_traversal(input) {
         return Err(AppError::InvalidSource {
-            value: format!(
-                "Unsafe URL: \"{}\" contains path traversal segments",
-                input
-            ),
+            value: format!("Unsafe URL: \"{}\" contains path traversal segments", input),
         });
     }
 
@@ -463,10 +461,7 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
         SourceType::GitHub => {
             // 从 https://github.com/owner/repo 提取 owner/repo
             if let Ok(url) = Url::parse(&parsed.url) {
-                let path = url
-                    .path()
-                    .trim_start_matches('/')
-                    .trim_end_matches(".git");
+                let path = url.path().trim_start_matches('/').trim_end_matches(".git");
                 let parts: Vec<&str> = path.split('/').take(2).collect();
                 if parts.len() == 2 {
                     return Some(format!("{}/{}", parts[0], parts[1]));
@@ -477,18 +472,14 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
         SourceType::GitLab => {
             // 从 https://gitlab.com/group/repo 提取 group/repo
             if let Ok(url) = Url::parse(&parsed.url) {
-                let path = url
-                    .path()
-                    .trim_start_matches('/')
-                    .trim_end_matches(".git");
+                let path = url.path().trim_start_matches('/').trim_end_matches(".git");
                 return Some(path.to_string());
             }
             None
         }
         SourceType::Git => {
             // git@host:owner/repo.git → owner/repo
-            static SSH_RE: Lazy<Regex> =
-                Lazy::new(|| Regex::new(r"^git@[^:]+:(.+)$").unwrap());
+            static SSH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^git@[^:]+:(.+)$").unwrap());
             if let Some(caps) = SSH_RE.captures(&parsed.url) {
                 let path = caps[1].trim_end_matches(".git");
                 if path.contains('/') {
@@ -685,7 +676,10 @@ mod tests {
     #[test]
     fn test_get_owner_repo_ssh_subgroups() {
         let parsed = parse_source("git@gitlab.com:group/subgroup/repo.git").unwrap();
-        assert_eq!(get_owner_repo(&parsed), Some("group/subgroup/repo".to_string()));
+        assert_eq!(
+            get_owner_repo(&parsed),
+            Some("group/subgroup/repo".to_string())
+        );
     }
 
     #[test]

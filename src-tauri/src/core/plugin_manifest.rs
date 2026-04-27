@@ -74,7 +74,10 @@ pub fn get_plugin_groupings(base_path: &Path) -> HashMap<PathBuf, String> {
     let marketplace_path = base_path.join(".claude-plugin/marketplace.json");
     if let Ok(content) = std::fs::read_to_string(&marketplace_path) {
         if let Ok(manifest) = serde_json::from_str::<MarketplaceManifest>(&content) {
-            let plugin_root = manifest.metadata.as_ref().and_then(|m| m.plugin_root.clone());
+            let plugin_root = manifest
+                .metadata
+                .as_ref()
+                .and_then(|m| m.plugin_root.clone());
 
             // 验证 pluginRoot 以 "./" 开头（如果提供）
             let valid_plugin_root = match &plugin_root {
@@ -162,9 +165,7 @@ pub fn normalize_path(path: &Path) -> PathBuf {
             if path.is_absolute() {
                 path.to_path_buf()
             } else {
-                std::env::current_dir()
-                    .unwrap_or_default()
-                    .join(path)
+                std::env::current_dir().unwrap_or_default().join(path)
             }
         }
     }

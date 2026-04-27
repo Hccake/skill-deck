@@ -30,22 +30,13 @@ pub async fn open_install_wizard(
         format!("scope={}", scope),
     ];
     if let Some(ref path) = project_path {
-        query_parts.push(format!(
-            "projectPath={}",
-            urlencoding::encode(path)
-        ));
+        query_parts.push(format!("projectPath={}", urlencoding::encode(path)));
     }
     if let Some(ref source) = prefill_source {
-        query_parts.push(format!(
-            "prefillSource={}",
-            urlencoding::encode(source)
-        ));
+        query_parts.push(format!("prefillSource={}", urlencoding::encode(source)));
     }
     if let Some(ref name) = prefill_skill_name {
-        query_parts.push(format!(
-            "prefillSkillName={}",
-            urlencoding::encode(name)
-        ));
+        query_parts.push(format!("prefillSkillName={}", urlencoding::encode(name)));
     }
     let query = query_parts.join("&");
     let url = WebviewUrl::App(format!("/wizard?{}", query).into());

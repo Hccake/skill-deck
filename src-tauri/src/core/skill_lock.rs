@@ -174,10 +174,7 @@ pub fn write_skill_lock(lock: &SkillLockFile) -> Result<(), AppError> {
 
 /// 写入指定 scope 的 skill-lock.json
 #[allow(dead_code)]
-pub fn write_scoped_lock(
-    lock: &SkillLockFile,
-    project_path: Option<&str>,
-) -> Result<(), AppError> {
+pub fn write_scoped_lock(lock: &SkillLockFile, project_path: Option<&str>) -> Result<(), AppError> {
     let lock_path = get_scoped_lock_path(project_path);
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -205,7 +202,9 @@ pub fn add_skill_to_lock(
 ) -> Result<(), AppError> {
     let mut lock = read_skill_lock().unwrap_or_else(|_| SkillLockFile::empty());
 
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let now = chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string();
 
     // 保留原有的 installed_at
     let installed_at = lock
@@ -361,7 +360,10 @@ mod tests {
 
         let lock_path = temp.path().join(".agents").join(".skill-lock.json");
         let content = std::fs::read_to_string(&lock_path).unwrap();
-        assert!(content.ends_with('\n'), "skill-lock should end with newline");
+        assert!(
+            content.ends_with('\n'),
+            "skill-lock should end with newline"
+        );
     }
 
     #[test]

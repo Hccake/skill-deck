@@ -155,10 +155,7 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
 ///
 /// - BTreeMap 自动按 key 排序
 /// - 尾部添加换行符
-pub fn write_local_lock(
-    lock: &LocalSkillLockFile,
-    project_path: &str,
-) -> Result<(), AppError> {
+pub fn write_local_lock(lock: &LocalSkillLockFile, project_path: &str) -> Result<(), AppError> {
     let lock_path = get_local_lock_path(project_path);
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent)?;
@@ -302,7 +299,10 @@ mod tests {
         let json = serde_json::to_string_pretty(&lock).unwrap();
         let a_pos = json.find("a-skill").unwrap();
         let z_pos = json.find("z-skill").unwrap();
-        assert!(a_pos < z_pos, "Skills should be sorted alphabetically (BTreeMap)");
+        assert!(
+            a_pos < z_pos,
+            "Skills should be sorted alphabetically (BTreeMap)"
+        );
     }
 
     #[test]
@@ -318,8 +318,14 @@ mod tests {
             plugin_name: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
-        assert!(!json.contains("remoteHash"), "None remote_hash should not be serialized");
-        assert!(!json.contains("skillPath"), "None skill_path should not be serialized");
+        assert!(
+            !json.contains("remoteHash"),
+            "None remote_hash should not be serialized"
+        );
+        assert!(
+            !json.contains("skillPath"),
+            "None skill_path should not be serialized"
+        );
 
         let entry_with_hash = LocalSkillLockEntry {
             remote_hash: Some("tree-sha".to_string()),
@@ -327,8 +333,14 @@ mod tests {
             ..entry
         };
         let json = serde_json::to_string(&entry_with_hash).unwrap();
-        assert!(json.contains("remoteHash"), "Some remote_hash should be serialized");
-        assert!(json.contains("skillPath"), "Some skill_path should be serialized");
+        assert!(
+            json.contains("remoteHash"),
+            "Some remote_hash should be serialized"
+        );
+        assert!(
+            json.contains("skillPath"),
+            "Some skill_path should be serialized"
+        );
     }
 
     #[test]
@@ -492,7 +504,10 @@ mod tests {
         let deserialized: LocalSkillLockEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.ref_name, Some("feature-branch".to_string()));
 
-        let entry_no_ref = LocalSkillLockEntry { ref_name: None, ..entry.clone() };
+        let entry_no_ref = LocalSkillLockEntry {
+            ref_name: None,
+            ..entry.clone()
+        };
         let json_no_ref = serde_json::to_string(&entry_no_ref).unwrap();
         assert!(!json_no_ref.contains("ref"));
     }

@@ -5,7 +5,9 @@
 
 use crate::core::agents::AgentType;
 use crate::core::installer::install_skill_to_agents;
-use crate::core::local_lock::{add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock};
+use crate::core::local_lock::{
+    add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock,
+};
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::error::AppError;
@@ -24,9 +26,7 @@ pub fn check_skill_in_projects(
     project_paths
         .into_iter()
         .map(|path| {
-            let exists = canonical_skills_dir(false, &path)
-                .join(&sanitized)
-                .exists();
+            let exists = canonical_skills_dir(false, &path).join(&sanitized).exists();
             ProjectSkillStatus {
                 project_path: path,
                 has_skill: exists,
@@ -190,7 +190,8 @@ mod tests {
         fs::write(
             canonical.join("SKILL.md"),
             format!("---\nname: {}\ndescription: test\n---\n", name),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -219,17 +220,30 @@ mod tests {
             source.path().to_string_lossy().to_string(),
             vec![target.path().to_string_lossy().to_string()],
             vec!["cursor".to_string()],
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(result.results.len(), 1);
-        assert!(result.results[0].success, "copy should succeed: {:?}", result.results[0].error);
+        assert!(
+            result.results[0].success,
+            "copy should succeed: {:?}",
+            result.results[0].error
+        );
 
         // 目标项目的 canonical dir 应该存在
-        let target_canonical = target.path().join(".agents").join("skills").join("my-skill");
+        let target_canonical = target
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("my-skill");
         assert!(target_canonical.join("SKILL.md").exists());
 
         // 源项目的 canonical dir 不应受影响
-        let source_canonical = source.path().join(".agents").join("skills").join("my-skill");
+        let source_canonical = source
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("my-skill");
         assert!(source_canonical.join("SKILL.md").exists());
     }
 
@@ -240,7 +254,11 @@ mod tests {
         setup_source_skill(source.path(), "my-skill");
 
         // 在目标项目先安装一个旧版本
-        let target_canonical = target.path().join(".agents").join("skills").join("my-skill");
+        let target_canonical = target
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("my-skill");
         fs::create_dir_all(&target_canonical).unwrap();
         fs::write(target_canonical.join("SKILL.md"), "old content").unwrap();
         fs::write(target_canonical.join("old-file.txt"), "should be gone").unwrap();
@@ -250,12 +268,16 @@ mod tests {
             source.path().to_string_lossy().to_string(),
             vec![target.path().to_string_lossy().to_string()],
             vec!["cursor".to_string()],
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.results[0].success);
         // 新内容应覆盖旧内容
         let content = fs::read_to_string(target_canonical.join("SKILL.md")).unwrap();
-        assert!(content.contains("name: my-skill"), "should have new content");
+        assert!(
+            content.contains("name: my-skill"),
+            "should have new content"
+        );
         // 旧文件应被清理
         assert!(!target_canonical.join("old-file.txt").exists());
     }
@@ -275,7 +297,8 @@ mod tests {
                 target_b.path().to_string_lossy().to_string(),
             ],
             vec!["cursor".to_string()],
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(result.results.len(), 2);
         assert!(result.results.iter().all(|r| r.success));

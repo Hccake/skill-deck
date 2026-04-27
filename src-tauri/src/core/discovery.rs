@@ -147,13 +147,25 @@ pub fn discover_skills(
     let priority_dirs = get_priority_search_dirs(&search_path);
     for priority_dir in priority_dirs {
         if priority_dir.exists() {
-            discover_in_dir(&priority_dir, base_path, &options, &mut skills, &mut seen_names)?;
+            discover_in_dir(
+                &priority_dir,
+                base_path,
+                &options,
+                &mut skills,
+                &mut seen_names,
+            )?;
         }
     }
 
     // 3. 如果未找到或启用 fullDepth，进行递归搜索
     if skills.is_empty() || options.full_depth {
-        discover_recursive(&search_path, base_path, &options, &mut skills, &mut seen_names)?;
+        discover_recursive(
+            &search_path,
+            base_path,
+            &options,
+            &mut skills,
+            &mut seen_names,
+        )?;
     }
 
     // 为 skills 填充 plugin_name
@@ -361,7 +373,11 @@ mod tests {
         fs::create_dir_all(&skill_dir).unwrap();
 
         let skill_md = skill_dir.join("SKILL.md");
-        fs::write(&skill_md, "---\nname: nested-skill\ndescription: Nested\n---\n").unwrap();
+        fs::write(
+            &skill_md,
+            "---\nname: nested-skill\ndescription: Nested\n---\n",
+        )
+        .unwrap();
 
         let options = DiscoverOptions::default();
         let skills = discover_skills(temp.path(), None, options).unwrap();

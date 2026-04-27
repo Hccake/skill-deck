@@ -11,9 +11,9 @@
 //! - 错误收集：CLI 用 `results` 数组收集批量结果，GUI 是单个删除返回 `RemoveResult`
 
 use crate::core::agents::AgentType;
+use crate::core::local_lock::remove_skill_from_local_lock;
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
-use crate::core::local_lock::remove_skill_from_local_lock;
 use crate::core::skill_lock::{get_skill_from_lock, remove_skill_from_lock};
 use crate::error::AppError;
 use crate::models::{RemoveResult, Scope};
@@ -76,11 +76,7 @@ pub fn remove_skill(
         if let Err(e) = remove_path(&skill_path) {
             // 对应 CLI: remove.ts:162-166
             // 单个 agent 删除失败不影响整体流程，仅 warn
-            log::warn!(
-                "Could not remove skill from {}: {}",
-                config.display_name,
-                e
-            );
+            log::warn!("Could not remove skill from {}: {}", config.display_name, e);
         } else if skill_path.exists() || skill_path.symlink_metadata().is_ok() {
             // 路径存在但删除后仍然存在，说明删除失败
         } else {

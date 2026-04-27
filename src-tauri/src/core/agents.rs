@@ -615,11 +615,11 @@ impl AgentType {
             Self::Codebuddy => {
                 cwd.join(".codebuddy").exists() || PATHS.home.join(".codebuddy").exists()
             }
-            Self::Codex => {
-                PATHS.codex_home.exists() || std::path::Path::new("/etc/codex").exists()
-            }
+            Self::Codex => PATHS.codex_home.exists() || std::path::Path::new("/etc/codex").exists(),
             Self::CommandCode => PATHS.home.join(".commandcode").exists(),
-            Self::Continue => cwd.join(".continue").exists() || PATHS.home.join(".continue").exists(),
+            Self::Continue => {
+                cwd.join(".continue").exists() || PATHS.home.join(".continue").exists()
+            }
             Self::Crush => PATHS.config_home.join("crush").exists(),
             Self::Cursor => PATHS.home.join(".cursor").exists(),
             Self::Deepagents => PATHS.home.join(".deepagents").exists(),
@@ -709,7 +709,10 @@ mod tests {
     #[test]
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
-        assert_eq!(count, 45, "Should have 45 agent types after adding bob and firebender");
+        assert_eq!(
+            count, 45,
+            "Should have 45 agent types after adding bob and firebender"
+        );
     }
 
     #[test]

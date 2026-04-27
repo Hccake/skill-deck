@@ -31,5 +31,11 @@ pub async fn remove_skill(
     let full = full_removal.unwrap_or(true);
     let target_agents = agents.filter(|a| !a.is_empty());
 
-    uninstaller::remove_skill(&name, &scope, project_path.as_deref(), full, target_agents.as_deref())
+    uninstaller::remove_skill(
+        &name,
+        &scope,
+        project_path.as_deref(),
+        full,
+        target_agents.as_deref(),
+    )
 }

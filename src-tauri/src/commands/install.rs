@@ -5,7 +5,9 @@
 //! - install_skills: 安装选中的 skills
 
 use crate::core::agents::AgentType;
-use crate::core::local_lock::{add_skill_to_local_lock, compute_skill_folder_hash, LocalSkillLockEntry};
+use crate::core::local_lock::{
+    add_skill_to_local_lock, compute_skill_folder_hash, LocalSkillLockEntry,
+};
 use crate::core::skill_lock::{add_skill_to_lock, save_selected_agents};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
@@ -75,7 +77,9 @@ async fn fetch_available_inner(app: &AppHandle, source: &str) -> Result<FetchRes
             let path = parsed
                 .local_path
                 .as_ref()
-                .ok_or_else(|| AppError::InvalidSource { value: "Missing local path".to_string() })?;
+                .ok_or_else(|| AppError::InvalidSource {
+                    value: "Missing local path".to_string(),
+                })?;
             (path.clone(), None)
         }
         SourceType::GitHub | SourceType::GitLab | SourceType::Git => {
@@ -139,11 +143,17 @@ fn discover_and_build_result(
 /// * `InstallResults` - 安装结果汇总
 #[tauri::command]
 #[specta::specta]
-pub async fn install_skills(app: AppHandle, params: InstallParams) -> Result<InstallResults, AppError> {
+pub async fn install_skills(
+    app: AppHandle,
+    params: InstallParams,
+) -> Result<InstallResults, AppError> {
     install_skills_inner(&app, params).await
 }
 
-async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<InstallResults, AppError> {
+async fn install_skills_inner(
+    app: &AppHandle,
+    params: InstallParams,
+) -> Result<InstallResults, AppError> {
     let behavior = compute_install_behavior(params.retry);
 
     // 1. 解析来源
@@ -157,7 +167,9 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
             let path = parsed
                 .local_path
                 .as_ref()
-                .ok_or_else(|| AppError::InvalidSource { value: "Missing local path".to_string() })?;
+                .ok_or_else(|| AppError::InvalidSource {
+                    value: "Missing local path".to_string(),
+                })?;
             (path.clone(), None)
         }
         SourceType::GitHub | SourceType::GitLab | SourceType::Git => {
@@ -213,7 +225,9 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
         .iter()
         .map(|s| s.parse::<AgentType>())
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::InvalidAgent { agent: "parse failed".to_string() })?;
+        .map_err(|_| AppError::InvalidAgent {
+            agent: "parse failed".to_string(),
+        })?;
 
     // 7. 执行安装
     let mut successful = Vec::new();
@@ -223,12 +237,15 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
 
     for (idx, skill) in selected_skills.iter().enumerate() {
         // 发送安装进度事件
-        let _ = app.emit("install-progress", &InstallProgress {
-            phase: "installing".to_string(),
-            current_skill: skill.name.clone(),
-            completed: idx,
-            total: total_skills,
-        });
+        let _ = app.emit(
+            "install-progress",
+            &InstallProgress {
+                phase: "installing".to_string(),
+                current_skill: skill.name.clone(),
+                completed: idx,
+                total: total_skills,
+            },
+        );
 
         let per_agent_results = install_skill_to_agents(
             &skill.path,
@@ -264,12 +281,15 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
 
     // 8. 写入 lock 文件
     if !successful.is_empty() {
-        let _ = app.emit("install-progress", &InstallProgress {
-            phase: "writing_lock".to_string(),
-            current_skill: String::new(),
-            completed: total_skills,
-            total: total_skills,
-        });
+        let _ = app.emit(
+            "install-progress",
+            &InstallProgress {
+                phase: "writing_lock".to_string(),
+                current_skill: String::new(),
+                completed: total_skills,
+                total: total_skills,
+            },
+        );
 
         let owner_repo = get_owner_repo(&parsed);
 
@@ -307,19 +327,24 @@ async fn install_skills_inner(app: &AppHandle, params: InstallParams) -> Result<
             match params.scope {
                 crate::models::Scope::Global => {
                     let _ = add_skill_to_lock(
-                        &skill.name, &source, source_type_str, source_url,
+                        &skill.name,
+                        &source,
+                        source_type_str,
+                        source_url,
                         parsed.git_ref.as_deref(),
-                        skill_path, &skill_folder_hash,
+                        skill_path,
+                        &skill_folder_hash,
                         skill.plugin_name.as_deref(),
                     );
                 }
                 crate::models::Scope::Project => {
                     if let Some(ref project_path) = params.project_path {
                         // 计算安装后的本地文件 SHA-256
-                        let install_dir = crate::core::paths::canonical_skills_dir(false, project_path)
-                            .join(crate::core::skill::sanitize_name(&skill.name));
-                        let computed_hash = compute_skill_folder_hash(&install_dir)
-                            .unwrap_or_default();
+                        let install_dir =
+                            crate::core::paths::canonical_skills_dir(false, project_path)
+                                .join(crate::core::skill::sanitize_name(&skill.name));
+                        let computed_hash =
+                            compute_skill_folder_hash(&install_dir).unwrap_or_default();
 
                         let entry = LocalSkillLockEntry {
                             source: source.clone(),
@@ -440,7 +465,10 @@ mod tests {
         let parsed = parse_source("openclaw/community-skills").unwrap();
         let result = discover_and_build_result(&parsed, temp.path()).unwrap();
 
-        assert_eq!(result.risk_policy.kind, crate::models::InstallRiskKind::RequireConfirmation);
+        assert_eq!(
+            result.risk_policy.kind,
+            crate::models::InstallRiskKind::RequireConfirmation
+        );
         assert_eq!(result.risk_policy.code.as_deref(), Some("openclaw"));
     }
 

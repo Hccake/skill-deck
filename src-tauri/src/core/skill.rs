@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::agents::AgentType;
-use super::paths::canonical_skills_dir;
 use super::local_lock::{read_local_lock, LocalSkillLockEntry};
+use super::paths::canonical_skills_dir;
 use super::skill_lock::{get_skill_from_lock, SkillLockEntry};
 use super::update_metadata::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
@@ -46,10 +46,8 @@ pub fn parse_skill_md(path: &Path) -> Result<SkillFrontmatter, AppError> {
 
     // 找到第二个 ---
     let rest = &content[3..];
-    let end_pos = rest.find("---").ok_or_else(|| {
-        AppError::InvalidSkillMd {
-            message: "Unclosed frontmatter delimiter".to_string(),
-        }
+    let end_pos = rest.find("---").ok_or_else(|| AppError::InvalidSkillMd {
+        message: "Unclosed frontmatter delimiter".to_string(),
     })?;
 
     // 提取 YAML 部分（跳过开头的换行符）
@@ -270,7 +268,10 @@ pub fn list_installed_skills(
             };
 
             // 避免重复路径
-            if !scopes.iter().any(|s| s.path == agent_dir && s.global == *is_global) {
+            if !scopes
+                .iter()
+                .any(|s| s.path == agent_dir && s.global == *is_global)
+            {
                 scopes.push(ScanScope {
                     global: *is_global,
                     path: agent_dir,
@@ -301,7 +302,10 @@ pub fn list_installed_skills(
                 continue;
             }
 
-            if !scopes.iter().any(|s| s.path == agent_dir && s.global == *is_global) {
+            if !scopes
+                .iter()
+                .any(|s| s.path == agent_dir && s.global == *is_global)
+            {
                 scopes.push(ScanScope {
                     global: *is_global,
                     path: agent_dir,
@@ -350,7 +354,11 @@ pub fn list_installed_skills(
                 continue;
             }
 
-            let scope_key = if scope_info.global { "global" } else { "project" };
+            let scope_key = if scope_info.global {
+                "global"
+            } else {
+                "project"
+            };
             let skill_key = format!("{}:{}", scope_key, frontmatter.name);
 
             // 如果是 agent 特定目录，直接归属于该 agent
@@ -388,7 +396,8 @@ pub fn list_installed_skills(
                         let lock_entry = get_skill_from_lock(&frontmatter.name).ok().flatten();
                         skill.with_lock_entry(lock_entry.as_ref())
                     } else {
-                        let local_entry = local_lock.as_ref()
+                        let local_entry = local_lock
+                            .as_ref()
                             .and_then(|l| l.skills.get(&frontmatter.name));
                         skill.with_local_lock_entry(local_entry)
                     };
@@ -419,10 +428,7 @@ pub fn list_installed_skills(
 
                 // 尝试多种目录名匹配
                 // 对应 CLI: installer.ts 第 925-947 行
-                let possible_names: Vec<&str> = vec![
-                    &dir_name,
-                    &sanitized_name,
-                ];
+                let possible_names: Vec<&str> = vec![&dir_name, &sanitized_name];
 
                 let mut found = false;
                 for possible_name in &possible_names {
@@ -495,7 +501,8 @@ pub fn list_installed_skills(
                     let lock_entry = get_skill_from_lock(&frontmatter.name).ok().flatten();
                     skill.with_lock_entry(lock_entry.as_ref())
                 } else {
-                    let local_entry = local_lock.as_ref()
+                    let local_entry = local_lock
+                        .as_ref()
                         .and_then(|l| l.skills.get(&frontmatter.name));
                     skill.with_local_lock_entry(local_entry)
                 };
@@ -717,7 +724,8 @@ Content.
 
     #[test]
     fn test_read_skill_content_returns_body_without_frontmatter() {
-        let content = "---\nname: test\ndescription: A test\n---\n\n# Test Skill\n\nBody content here.\n";
+        let content =
+            "---\nname: test\ndescription: A test\n---\n\n# Test Skill\n\nBody content here.\n";
         let dir = tempdir().unwrap();
         let skill_dir = dir.path().join("test-skill");
         fs::create_dir(&skill_dir).unwrap();
@@ -742,7 +750,11 @@ Content.
         let dir = tempdir().unwrap();
         let skill_dir = dir.path().join("plain");
         fs::create_dir(&skill_dir).unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "# Just content\n\nNo frontmatter.").unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "# Just content\n\nNo frontmatter.",
+        )
+        .unwrap();
 
         let result = read_skill_content(&skill_dir.to_string_lossy()).unwrap();
         assert!(result.starts_with("# Just content"));

@@ -28,11 +28,11 @@ pub fn list_skills(params: ListSkillsParams) -> Result<ListSkillsResult, AppErro
         _ => None,
     };
 
-    let cwd = params
-        .project_path
-        .unwrap_or_else(|| std::env::current_dir()
+    let cwd = params.project_path.unwrap_or_else(|| {
+        std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| ".".to_string()));
+            .unwrap_or_else(|_| ".".to_string())
+    });
 
     // 检查路径存在性
     let path_exists = match scope {

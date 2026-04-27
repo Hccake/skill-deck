@@ -30,16 +30,12 @@ pub async fn check_overwrites(
         let mut overwritten_agents = Vec::new();
 
         for agent_str in &agents {
-            let agent: AgentType = agent_str
-                .parse()
-                .map_err(|_| AppError::InvalidAgent { agent: agent_str.clone() })?;
+            let agent: AgentType = agent_str.parse().map_err(|_| AppError::InvalidAgent {
+                agent: agent_str.clone(),
+            })?;
 
-            let is_installed = is_skill_installed(
-                skill_name,
-                &agent,
-                &scope,
-                project_path.as_deref(),
-            );
+            let is_installed =
+                is_skill_installed(skill_name, &agent, &scope, project_path.as_deref());
 
             if is_installed {
                 overwritten_agents.push(agent_str.clone());

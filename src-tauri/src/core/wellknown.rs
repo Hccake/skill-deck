@@ -211,9 +211,12 @@ pub async fn fetch_wellknown_skills(url: &str) -> Result<WellKnownFetchResult, A
                 fs::create_dir_all(parent)?;
             }
 
-            let bytes = response.bytes().await.map_err(|e| AppError::GitNetworkError {
-                message: e.to_string(),
-            })?;
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|e| AppError::GitNetworkError {
+                    message: e.to_string(),
+                })?;
             fs::write(&target_path, &bytes)?;
         }
 
@@ -231,10 +234,7 @@ pub async fn fetch_wellknown_skills(url: &str) -> Result<WellKnownFetchResult, A
 /// Try each candidate index URL in order; return the first that responds with
 /// a non-empty skills list, together with its `base_url` (which already
 /// includes the matched well-known path, e.g. `.well-known/agent-skills`).
-async fn fetch_index(
-    client: &Client,
-    url: &str,
-) -> Result<(WellKnownIndex, String), AppError> {
+async fn fetch_index(client: &Client, url: &str) -> Result<(WellKnownIndex, String), AppError> {
     let candidates = build_index_urls(url);
     if candidates.is_empty() {
         return Err(AppError::InvalidSource {
@@ -491,7 +491,9 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         assert!(
-            agent_skills_indices.iter().all(|&a| legacy_indices.iter().all(|&l| a < l)),
+            agent_skills_indices
+                .iter()
+                .all(|&a| legacy_indices.iter().all(|&l| a < l)),
             "agent-skills candidates must come before legacy skills candidates"
         );
     }

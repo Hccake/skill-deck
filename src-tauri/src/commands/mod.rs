@@ -11,4 +11,3 @@ pub mod remove_details;
 pub mod skills;
 pub mod update;
 pub mod wizard;
-

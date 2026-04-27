@@ -11,15 +11,15 @@ use crate::core::local_lock::{
     add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
 };
 use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock};
+use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
     build_update_group_key, build_update_target, clone_repo_with_progress, discover_skills,
     CloneProgress, DiscoverOptions, UpdateSourceParts,
 };
-use crate::core::{fetch_skill_folder_hash, fetch_skill_folder_hashes_batch};
 use crate::core::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
 };
-use crate::core::wellknown::fetch_wellknown_skills;
+use crate::core::{fetch_skill_folder_hash, fetch_skill_folder_hashes_batch};
 use crate::error::AppError;
 use crate::models::{
     InstallMode, Scope, UpdateSkillAgentResult, UpdateSkillAgentStatus, UpdateSkillItemResult,
@@ -362,7 +362,10 @@ async fn update_skill_single(
         &update_progress_payload(skill_name, &scope, project_path, "cloning"),
     );
     let (skills_dir, _clone_result) = match entry_source_type.as_str() {
-        "local" => (std::path::PathBuf::from(&update_target.fetch_source_url), None),
+        "local" => (
+            std::path::PathBuf::from(&update_target.fetch_source_url),
+            None,
+        ),
         "github" | "gitlab" | "git" => {
             let app_clone = app.clone();
             let clone_result = clone_repo_with_progress(
@@ -660,7 +663,10 @@ async fn update_skills_batch_inner(
         );
 
         let (skills_dir, _clone_result) = match group[0].source_type.as_str() {
-            "local" => (std::path::PathBuf::from(&update_target.fetch_source_url), None),
+            "local" => (
+                std::path::PathBuf::from(&update_target.fetch_source_url),
+                None,
+            ),
             "github" | "gitlab" | "git" => {
                 let app_clone = app.clone();
                 match clone_repo_with_progress(
@@ -727,23 +733,26 @@ async fn update_skills_batch_inner(
             include_internal: true,
             full_depth: false,
         };
-        let discovered =
-            match discover_skills(&skills_dir, update_target.discover_subpath.as_deref(), options) {
-                Ok(d) => d,
-                Err(err) => {
-                    for entry in group {
-                        all_results.push(UpdateSkillItemResult {
-                            name: entry.name.clone(),
-                            status: UpdateSkillStatus::Failed,
-                            error: Some(err.to_string()),
-                            warnings: Vec::new(),
-                            duration_ms: None,
-                            agent_results: Vec::new(),
-                        });
-                    }
-                    continue;
+        let discovered = match discover_skills(
+            &skills_dir,
+            update_target.discover_subpath.as_deref(),
+            options,
+        ) {
+            Ok(d) => d,
+            Err(err) => {
+                for entry in group {
+                    all_results.push(UpdateSkillItemResult {
+                        name: entry.name.clone(),
+                        status: UpdateSkillStatus::Failed,
+                        error: Some(err.to_string()),
+                        warnings: Vec::new(),
+                        duration_ms: None,
+                        agent_results: Vec::new(),
+                    });
                 }
-            };
+                continue;
+            }
+        };
 
         // 3. 逐个安装该组的 skills（共享同一个 clone）
         for entry in group {
@@ -1010,25 +1019,21 @@ mod tests {
             skill_path: Some("skills/demo/SKILL.md".to_string()),
         });
 
-        assert_eq!(
-            target.discover_subpath.as_deref(),
-            Some("skills/demo")
-        );
+        assert_eq!(target.discover_subpath.as_deref(), Some("skills/demo"));
         assert_eq!(target.git_ref.as_deref(), Some("feature/my-branch"));
     }
 
     #[test]
     fn test_capability_downgrades_when_skill_path_missing() {
-        let capability = crate::core::derive_update_capability(
-            &crate::core::NormalizedUpdateMetadata {
+        let capability =
+            crate::core::derive_update_capability(&crate::core::NormalizedUpdateMetadata {
                 source: "owner/repo".to_string(),
                 source_type: "github".to_string(),
                 source_url: Some("https://github.com/owner/repo".to_string()),
                 ref_name: None,
                 skill_path: None,
                 remote_hash: Some("tree123".to_string()),
-            },
-        );
+            });
 
         assert!(!capability.can_check_for_updates);
         assert_eq!(capability.reason.as_deref(), Some("missing-skill-path"));
@@ -1070,13 +1075,7 @@ mod tests {
 
     #[test]
     fn test_batch_hash_result_marks_missing_remote_hash_as_cannot_check() {
-        let item = build_batch_check_result(
-            "demo",
-            "owner/repo",
-            Some("main"),
-            "local-hash",
-            None,
-        );
+        let item = build_batch_check_result("demo", "owner/repo", Some("main"), "local-hash", None);
 
         assert_eq!(item.status, SkillUpdateCheckStatus::CannotCheck);
         assert!(!item.has_update);
