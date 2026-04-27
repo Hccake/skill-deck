@@ -10,7 +10,7 @@ pub fn source_risk_policy(parsed: &ParsedSource) -> InstallRiskPolicy {
         .as_deref()
         .and_then(|owner_repo| owner_repo.split('/').next());
 
-    if owner == Some("openclaw") {
+    if owner.is_some_and(|owner| owner.eq_ignore_ascii_case("openclaw")) {
         return InstallRiskPolicy {
             kind: InstallRiskKind::RequireConfirmation,
             code: Some("openclaw".to_string()),
@@ -48,6 +48,15 @@ mod tests {
     #[test]
     fn test_openclaw_repo_requires_explicit_confirmation() {
         let parsed = parse_source("openclaw/community-skills").expect("parse source");
+        let policy = source_risk_policy(&parsed);
+
+        assert_eq!(policy.kind, InstallRiskKind::RequireConfirmation);
+        assert_eq!(policy.code.as_deref(), Some("openclaw"));
+    }
+
+    #[test]
+    fn test_openclaw_owner_match_is_case_insensitive() {
+        let parsed = parse_source("OpenClaw/community-skills").expect("parse source");
         let policy = source_risk_policy(&parsed);
 
         assert_eq!(policy.kind, InstallRiskKind::RequireConfirmation);

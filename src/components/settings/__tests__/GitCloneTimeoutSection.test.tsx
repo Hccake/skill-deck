@@ -184,4 +184,29 @@ describe('GitCloneTimeoutSection', () => {
     expect(screen.getByRole('combobox').textContent).toContain('2 min');
     expect(screen.getByText('Failed to save timeout setting')).toBeTruthy();
   });
+
+  it('reloads config before saving after the initial load fails', async () => {
+    mockGetConfig
+      .mockRejectedValueOnce(new Error('load failed'))
+      .mockResolvedValueOnce({
+        projects: ['/demo'],
+        gitCloneTimeoutSecs: 120,
+      });
+    mockSaveConfig.mockResolvedValue(undefined);
+
+    render(<GitCloneTimeoutSection />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox').textContent).toContain('2 min');
+    });
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(screen.getByRole('option', { name: '10 min' }));
+
+    await waitFor(() => {
+      expect(mockSaveConfig).toHaveBeenCalledWith({
+        projects: ['/demo'],
+        gitCloneTimeoutSecs: 600,
+      });
+    });
+  });
 });

@@ -92,11 +92,7 @@ export function GitCloneTimeoutSection() {
         setCustomValue(String(nextTimeout));
       } catch (error) {
         console.error('Failed to load git clone timeout config:', error);
-        const fallbackConfig: SkillDeckConfig = {
-          projects: [],
-          gitCloneTimeoutSecs: DEFAULT_TIMEOUT_SECS,
-        };
-        setConfig(fallbackConfig);
+        setConfig(null);
         setCurrentTimeoutSecs(DEFAULT_TIMEOUT_SECS);
         setSelectedOption('120');
         setCustomValue(String(DEFAULT_TIMEOUT_SECS));
@@ -115,17 +111,17 @@ export function GitCloneTimeoutSection() {
       revertToCurrentOnError?: boolean;
     }
   ) => {
-    if (!config) return;
-
     const normalized = normalizeTimeout(nextTimeoutSecs);
-    const nextConfig: SkillDeckConfig = {
-      ...config,
-      gitCloneTimeoutSecs: normalized,
-    };
 
     try {
       setSaving(true);
       setSaveError(null);
+      const baseConfig = config ?? await getConfig();
+      const nextConfig: SkillDeckConfig = {
+        ...baseConfig,
+        gitCloneTimeoutSecs: normalized,
+      };
+
       await saveConfig(nextConfig);
       setConfig(nextConfig);
       setCurrentTimeoutSecs(normalized);

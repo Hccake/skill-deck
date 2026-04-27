@@ -143,6 +143,8 @@ pub struct SkillUpdateInfo {
 
 **批量更新优化**（[update.rs:577-962](../src-tauri/src/commands/update.rs#L577-L962)）：按 `UpdateGroupKey(source_type, source_url, ref)` 分组，**每组只 clone 一次**仓库，然后从同一 clone 中安装组内所有 skill。N 个同源 skill 的 clone 次数从 N 降为 1。
 
+批量更新只共享 clone 结果，不共享 skill 定位信息。组内每个 lock entry 仍使用自己的 `skill_path` 推导 `discover_subpath`，并优先按 `relative_path == skill_path` 精确匹配；只有旧 lock 缺少 `skill_path` 时才退回按 skill name 匹配。这保证从非标准子路径安装的 skill，或同仓库里存在同名 skill 时，Update All 与单个 Update 使用同一个来源目录。
+
 ### 3.3 状态归并
 
 每个 agent 的安装结果汇成 `UpdateSkillItemResult.status`（[update.rs:973-997](../src-tauri/src/commands/update.rs#L973-L997)）：
@@ -270,10 +272,11 @@ User clicks "Update"
 
 ### Rust ([src-tauri/src/commands/update.rs:1020-1260](../src-tauri/src/commands/update.rs#L1020-L1260))
 
-12 个单元测试，覆盖：
+单元测试覆盖：
 - `normalize_global_lock_entry` / `normalize_local_lock_entry` 字段映射
 - `derive_update_capability` 各分支（local / unsupported / missing-skill-path / 完整）
 - `build_update_target` 解析 `skill_path` 切出 `discover_subpath`
+- 批量更新按 lock 中的 `skill_path` 发现并匹配非标准子路径 / 同名 skill
 - `check_updates_inner` 在缺元数据时打 `cannot-check`
 - `ensure_can_run_update` 拒绝 local / 接受 github
 - `derive_skill_status` / `summarize_results` 多 agent 场景的状态归并

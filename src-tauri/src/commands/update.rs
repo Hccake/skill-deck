@@ -14,7 +14,7 @@ use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
     build_update_group_key, build_update_target, clone_repo_with_progress, compute_local_tree_sha,
-    discover_skills, CloneProgress, DiscoverOptions, UpdateSourceParts,
+    discover_skills, CloneProgress, DiscoverOptions, DiscoveredSkill, UpdateSourceParts,
 };
 use crate::core::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
@@ -209,9 +209,7 @@ async fn check_updates_inner(
 }
 
 /// 入口校验：仅当 metadata 满足"可执行更新"时返回 Ok，否则给出具体原因
-fn ensure_can_run_update(
-    metadata: &crate::core::NormalizedUpdateMetadata,
-) -> Result<(), AppError> {
+fn ensure_can_run_update(metadata: &crate::core::NormalizedUpdateMetadata) -> Result<(), AppError> {
     let capability = crate::core::derive_update_capability(metadata);
     if !capability.can_run_update {
         return Err(AppError::InstallFailed {
@@ -256,6 +254,48 @@ fn build_batch_check_result(
             git_ref: ref_name.map(str::to_string),
         },
     }
+}
+
+fn normalize_skill_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn find_update_skill<'a>(
+    discovered: &'a [DiscoveredSkill],
+    name: &str,
+    skill_path: Option<&str>,
+) -> Option<&'a DiscoveredSkill> {
+    if let Some(skill_path) = skill_path {
+        let normalized_skill_path = normalize_skill_path(skill_path);
+        return discovered.iter().find(|skill| {
+            skill.name == name
+                && normalize_skill_path(&skill.relative_path) == normalized_skill_path
+        });
+    }
+
+    discovered.iter().find(|skill| skill.name == name)
+}
+
+fn discover_update_candidates(
+    skills_dir: &Path,
+    skill_path: Option<&str>,
+) -> Result<Vec<DiscoveredSkill>, AppError> {
+    let update_target = build_update_target(UpdateSourceParts {
+        source_type: String::new(),
+        source_url: String::new(),
+        ref_name: None,
+        skill_path: skill_path.map(str::to_string),
+    });
+    let options = DiscoverOptions {
+        include_internal: true,
+        full_depth: false,
+    };
+
+    discover_skills(
+        skills_dir,
+        update_target.discover_subpath.as_deref(),
+        options,
+    )
 }
 
 /// 更新指定 skill
@@ -540,8 +580,7 @@ async fn update_skill_single(
                 if let Some(pp) = project_path {
                     let install_dir = crate::core::paths::canonical_skills_dir(false, pp)
                         .join(crate::core::skill::sanitize_name(skill_name));
-                    let computed_hash =
-                        compute_skill_folder_hash(&install_dir).unwrap_or_default();
+                    let computed_hash = compute_skill_folder_hash(&install_dir).unwrap_or_default();
                     let entry = LocalSkillLockEntry {
                         source: entry_source.clone(),
                         ref_name: entry_ref_name.clone(),
@@ -771,32 +810,6 @@ async fn update_skills_batch_inner(
             }
         };
 
-        // discover all skills from the clone
-        let options = DiscoverOptions {
-            include_internal: true,
-            full_depth: false,
-        };
-        let discovered = match discover_skills(
-            &skills_dir,
-            update_target.discover_subpath.as_deref(),
-            options,
-        ) {
-            Ok(d) => d,
-            Err(err) => {
-                for entry in group {
-                    all_results.push(UpdateSkillItemResult {
-                        name: entry.name.clone(),
-                        status: UpdateSkillStatus::Failed,
-                        error: Some(err.to_string()),
-                        warnings: Vec::new(),
-                        duration_ms: None,
-                        agent_results: Vec::new(),
-                    });
-                }
-                continue;
-            }
-        };
-
         // 3. 逐个安装该组的 skills（共享同一个 clone）
         for entry in group {
             let mut warnings = Vec::new();
@@ -806,23 +819,40 @@ async fn update_skills_batch_inner(
                 &update_progress_payload(&entry.name, &scope, project_path, "installing"),
             );
 
-            let skill = match discovered.iter().find(|s| s.name == entry.name) {
-                Some(s) => s,
-                None => {
-                    all_results.push(UpdateSkillItemResult {
-                        name: entry.name.clone(),
-                        status: UpdateSkillStatus::Failed,
-                        error: Some(format!(
-                            "Skill '{}' not found in cloned repository",
-                            entry.name
-                        )),
-                        warnings: Vec::new(),
-                        duration_ms: None,
-                        agent_results: Vec::new(),
-                    });
-                    continue;
-                }
-            };
+            let discovered =
+                match discover_update_candidates(&skills_dir, entry.skill_path.as_deref()) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        all_results.push(UpdateSkillItemResult {
+                            name: entry.name.clone(),
+                            status: UpdateSkillStatus::Failed,
+                            error: Some(err.to_string()),
+                            warnings: Vec::new(),
+                            duration_ms: None,
+                            agent_results: Vec::new(),
+                        });
+                        continue;
+                    }
+                };
+
+            let skill =
+                match find_update_skill(&discovered, &entry.name, entry.skill_path.as_deref()) {
+                    Some(s) => s,
+                    None => {
+                        all_results.push(UpdateSkillItemResult {
+                            name: entry.name.clone(),
+                            status: UpdateSkillStatus::Failed,
+                            error: Some(format!(
+                                "Skill '{}' not found in cloned repository",
+                                entry.name
+                            )),
+                            warnings: Vec::new(),
+                            duration_ms: None,
+                            agent_results: Vec::new(),
+                        });
+                        continue;
+                    }
+                };
 
             // detect agents (fallback 仅保留 universal agents,见单个 update 路径的注释)
             let mut target_agents =
@@ -1146,6 +1176,54 @@ mod tests {
 
         assert_eq!(target.discover_subpath.as_deref(), Some("skills/demo"));
         assert_eq!(target.git_ref.as_deref(), Some("feature/my-branch"));
+    }
+
+    #[test]
+    fn test_find_update_skill_prefers_locked_skill_path_over_duplicate_name() {
+        let priority_skill = crate::core::DiscoveredSkill {
+            name: "demo".to_string(),
+            description: "Priority".to_string(),
+            path: std::path::PathBuf::from("skills/demo"),
+            relative_path: "skills/demo/SKILL.md".to_string(),
+            plugin_name: None,
+        };
+        let locked_skill = crate::core::DiscoveredSkill {
+            name: "demo".to_string(),
+            description: "Locked".to_string(),
+            path: std::path::PathBuf::from("examples/demo"),
+            relative_path: "examples/demo/SKILL.md".to_string(),
+            plugin_name: None,
+        };
+        let discovered = vec![priority_skill, locked_skill];
+
+        let selected = find_update_skill(&discovered, "demo", Some("examples/demo/SKILL.md"))
+            .expect("locked skill path should match");
+
+        assert_eq!(selected.relative_path, "examples/demo/SKILL.md");
+    }
+
+    #[test]
+    fn test_discover_update_candidates_uses_locked_nonstandard_subpath() {
+        let temp = tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("skills/other")).unwrap();
+        std::fs::write(
+            temp.path().join("skills/other/SKILL.md"),
+            "---\nname: other\ndescription: Priority dir\n---\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(temp.path().join("examples/demo")).unwrap();
+        std::fs::write(
+            temp.path().join("examples/demo/SKILL.md"),
+            "---\nname: demo\ndescription: Nonstandard dir\n---\n",
+        )
+        .unwrap();
+
+        let discovered = discover_update_candidates(temp.path(), Some("examples/demo/SKILL.md"))
+            .expect("discover locked skill path");
+
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].name, "demo");
+        assert_eq!(discovered[0].relative_path, "examples/demo/SKILL.md");
     }
 
     #[test]
