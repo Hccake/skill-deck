@@ -357,7 +357,11 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
       const shouldClearUpdateFlag = !item || item.status === 'success' || item.status === 'partial';
       if (shouldClearUpdateFlag) {
-        clearUpdateCacheForSkill(skillName, scope, projectPath);
+        const skillsList = scope === 'global' ? get().globalSkills : get().projectSkills;
+        const target = skillsList.find((s) => s.name === skillName);
+        if (target?.canCheckForUpdates !== false) {
+          clearUpdateCacheForSkill(skillName, scope, projectPath);
+        }
         set((state) => ({
           globalSkills: scope === 'global'
             ? clearLocalUpdateFlags(state.globalSkills, scope, new Set([skillName]))
@@ -466,7 +470,9 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
           results.push({ name: skill.name, success });
           if (success) {
             successfulSkillNames.add(skill.name);
-            clearUpdateCacheForSkill(skill.name, scope, projectPath);
+            if (skill.canCheckForUpdates !== false) {
+              clearUpdateCacheForSkill(skill.name, scope, projectPath);
+            }
           }
           set((state) => {
             const next = new Map(state.updatingSkills);

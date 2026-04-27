@@ -3,6 +3,7 @@
 import '@/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { WizardState } from '../types';
 import { ConfirmStep } from '../ConfirmStep';
 
@@ -61,5 +62,21 @@ describe('ConfirmStep', () => {
 
     expect(screen.getByText('addSkill.risk.openclawTitle')).toBeTruthy();
     expect(screen.getByText('addSkill.risk.openclawAcknowledge')).toBeTruthy();
+  });
+
+  it('toggles riskAcknowledged when the shadcn checkbox is clicked', async () => {
+    const updateState = vi.fn();
+    render(
+      <ConfirmStep
+        state={createState()}
+        updateState={updateState}
+        scope="global"
+      />
+    );
+
+    const checkbox = screen.getByRole('checkbox');
+    await userEvent.click(checkbox);
+
+    expect(updateState).toHaveBeenCalledWith({ riskAcknowledged: true });
   });
 });

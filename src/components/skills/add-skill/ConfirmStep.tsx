@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Tooltip,
@@ -143,11 +144,10 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
             </div>
           </div>
           <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              className="mt-1"
+            <Checkbox
               checked={state.riskAcknowledged}
-              onChange={(event) => updateState({ riskAcknowledged: event.target.checked })}
+              onCheckedChange={(checked) => updateState({ riskAcknowledged: checked === true })}
+              className="mt-0.5"
             />
             <span>{t('addSkill.risk.openclawAcknowledge')}</span>
           </label>

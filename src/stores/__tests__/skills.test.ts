@@ -333,6 +333,11 @@ describe('useSkillsStore', () => {
 
     it('clears the original project update cache even if context changes before completion', async () => {
       useContextStore.setState({ selectedContext: '/project-a' });
+      useSkillsDataStore.setState({
+        projectSkills: [
+          makeSkill('toolkit', { scope: 'project', canCheckForUpdates: true }),
+        ],
+      });
       updateInfoCache.set('/project-a', {
         checkedAt: Date.now(),
         results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
@@ -371,6 +376,43 @@ describe('useSkillsStore', () => {
 
       expect(updateInfoCache.get('/project-a')?.results[0]?.hasUpdate).toBe(false);
       expect(updateInfoCache.get('/project-b')?.results[0]?.hasUpdate).toBe(true);
+    });
+
+    it('preserves cannot-check cache status when the skill cannot be checked for updates', async () => {
+      useSkillsDataStore.setState({
+        globalSkills: [
+          makeSkill('toolkit', { canCheckForUpdates: false }),
+        ],
+        projectSkills: [],
+      });
+      updateInfoCache.set('global', {
+        checkedAt: Date.now(),
+        results: [{
+          name: 'toolkit',
+          source: 'owner/repo',
+          hasUpdate: false,
+          status: 'cannot-check',
+          reason: 'missing-skill-path',
+          gitRef: null,
+        }],
+      });
+
+      mockUpdateSkill.mockResolvedValue({
+        results: [{
+          name: 'toolkit',
+          status: 'success',
+          warnings: [],
+          durationMs: 20,
+          agentResults: [],
+        }],
+        summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
+      });
+
+      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+
+      const cached = updateInfoCache.get('global');
+      expect(cached?.results[0]?.status).toBe('cannot-check');
+      expect(cached?.results[0]?.reason).toBe('missing-skill-path');
     });
   });
 

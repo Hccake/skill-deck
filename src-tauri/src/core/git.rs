@@ -71,6 +71,7 @@ where
     F: Fn(CloneProgress),
 {
     let timeout_secs = resolve_clone_timeout_secs();
+    let started_at = std::time::Instant::now();
 
     // 发送连接中状态
     on_progress(CloneProgress {
@@ -81,17 +82,15 @@ where
     });
 
     // 创建临时目录
-    let temp_dir = TempDir::new()
-        .map_err(|e| AppError::GitCloneFailed { message: format!("Failed to create temp dir: {}", e) })?;
+    let temp_dir = TempDir::new().map_err(|e| AppError::GitCloneFailed {
+        message: format!("Failed to create temp dir: {}", e),
+    })?;
 
     let repo_path = temp_dir.path().to_path_buf();
 
     // 构建 git clone 命令，添加 --progress 以便 git 输出进度
     let mut cmd = Command::new("git");
-    cmd.arg("clone")
-        .arg("--depth")
-        .arg("1")
-        .arg("--progress");
+    cmd.arg("clone").arg("--depth").arg("1").arg("--progress");
     apply_clone_env(&mut cmd);
 
     // 如果指定了分支/tag
@@ -117,7 +116,10 @@ where
                     timeout_secs,
                     message: None,
                 });
-                Ok(CloneResult { _temp_dir: temp_dir, repo_path })
+                Ok(CloneResult {
+                    _temp_dir: temp_dir,
+                    repo_path,
+                })
             } else {
                 // 分类错误
                 let error = classify_git_error(&output.stderr, url);
@@ -131,15 +133,23 @@ where
             }
         }
         Err(e) => {
-                on_progress(CloneProgress {
-                    phase: ClonePhase::Error,
-                    elapsed_secs: timeout_secs,
-                    timeout_secs,
-                    message: Some(e.to_string()),
-                });
-                Err(e)
-            }
+            on_progress(build_error_progress(started_at, timeout_secs, &e));
+            Err(e)
         }
+    }
+}
+
+fn build_error_progress(
+    started_at: std::time::Instant,
+    timeout_secs: u64,
+    err: &AppError,
+) -> CloneProgress {
+    CloneProgress {
+        phase: ClonePhase::Error,
+        elapsed_secs: started_at.elapsed().as_secs(),
+        timeout_secs,
+        message: Some(err.to_string()),
+    }
 }
 
 fn normalize_clone_timeout_secs(value: u64) -> u64 {
@@ -195,9 +205,9 @@ where
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| AppError::GitCloneFailed { message: format!("Failed to spawn git: {}", e) })?;
+    let mut child = cmd.spawn().map_err(|e| AppError::GitCloneFailed {
+        message: format!("Failed to spawn git: {}", e),
+    })?;
 
     // 等待进程完成或超时
     let start = std::time::Instant::now();
@@ -333,9 +343,7 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
     }
 
     // 仓库不存在
-    if stderr_lower.contains("repository not found")
-        || stderr_lower.contains("does not exist")
-    {
+    if stderr_lower.contains("repository not found") || stderr_lower.contains("does not exist") {
         return AppError::GitRepoNotFound {
             repo: url.to_string(),
         };
@@ -421,5 +429,18 @@ mod tests {
             AppError::GitTimeout { timeout_secs: 300 },
             AppError::GitTimeout { timeout_secs: 300 }
         ));
+    }
+
+    #[test]
+    fn test_build_error_progress_uses_real_elapsed_not_timeout() {
+        let started = std::time::Instant::now();
+        let err = AppError::GitCloneFailed {
+            message: "boom".into(),
+        };
+        let progress = build_error_progress(started, 120, &err);
+        assert!(progress.elapsed_secs < 120);
+        assert!(matches!(progress.phase, ClonePhase::Error));
+        assert_eq!(progress.timeout_secs, 120);
+        assert_eq!(progress.message, Some(err.to_string()));
     }
 }
