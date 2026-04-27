@@ -7,6 +7,7 @@ import { SkillCard } from './SkillCard';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
 import type { AgentType, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
+import type { SkillListItem } from '@/stores/skills-utils';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
@@ -15,7 +16,7 @@ const EMPTY_AUDIT_CACHE: Record<string, SkillAuditData> = {};
 
 interface SkillsSectionProps {
   title: string;
-  skills: InstalledSkill[];
+  skills: SkillListItem[];
   scope: SkillScope;
   conflictSkillNames?: Set<string>;
   /** 项目目录是否存在（仅 project scope） */
@@ -72,13 +73,14 @@ export const SkillsSection = memo(function SkillsSection({
   let completedCount = 0;
   let totalUpdating = 0;
   for (const skill of skills) {
-    if ((skill as InstalledSkill & { updateStatus?: string | null }).updateStatus === 'update-available' || (!('updateStatus' in skill) && skill.hasUpdate)) updatesCount++;
-    const status = updatingSkills.get(
+    const status = skill.updateStatus;
+    if (status === 'update-available' || (!status && skill.hasUpdate)) updatesCount++;
+    const updatingStatus = updatingSkills.get(
       getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath })
     );
-    if (status) {
+    if (updatingStatus) {
       totalUpdating++;
-      if (status === 'queued' || status === 'updating') {
+      if (updatingStatus === 'queued' || updatingStatus === 'updating') {
         isAnyUpdating = true;
       } else {
         completedCount++;

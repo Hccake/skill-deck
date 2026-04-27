@@ -2,46 +2,22 @@
 // 使用 tauri-specta 生成的类型安全绑定
 import { commands } from '@/bindings';
 import type {
-  AgentInfo,
-  AgentType,
-  ListSkillsResult,
-  SkillScope,
-  RemoveResult,
-  SkillUpdateInfo,
-  UpdateSkillResponse,
-  FetchResult as RawFetchResult,
-  InstallMode,
-  InstallParams as RawInstallParams,
-  InstallResults,
-  SkillDeckConfig as RawSkillDeckConfig,
-  Scope,
-  SkillAuditData,
-  SkillAgentDetails,
-  ManageAgentsResult,
-  CopySkillResult,
-  CopyProjectResult,
-  ProjectSkillStatus,
+  AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult,
+  SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode,
+  InstallParams, InstallResults, SkillDeckConfig, Scope,
+  SkillAuditData, SkillAgentDetails, ManageAgentsResult,
+  CopySkillResult, CopyProjectResult, ProjectSkillStatus,
+  InstallRiskPolicy, InstallRiskKind,
 } from '@/bindings';
 
-export interface InstallRiskPolicy {
-  kind: 'none' | 'require-confirmation';
-  code?: string | null;
-}
-
-export type FetchResult = RawFetchResult & {
-  riskPolicy?: InstallRiskPolicy | null;
+export type {
+  AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult,
+  SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode,
+  InstallParams, InstallResults, SkillDeckConfig,
+  SkillAuditData, SkillAgentDetails, ManageAgentsResult,
+  CopySkillResult, CopyProjectResult, ProjectSkillStatus,
+  InstallRiskPolicy, InstallRiskKind,
 };
-
-export type InstallParams = RawInstallParams & {
-  acknowledgeRisk?: boolean;
-};
-
-export type SkillDeckConfig = RawSkillDeckConfig & {
-  gitCloneTimeoutSecs?: number;
-};
-
-// 重导出类型供组件使用
-export type { AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult, SkillUpdateInfo, UpdateSkillResponse, InstallMode, InstallResults, SkillAuditData, SkillAgentDetails, ManageAgentsResult, CopySkillResult, CopyProjectResult, ProjectSkillStatus };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
 function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; error: E }): T {
@@ -87,14 +63,14 @@ export async function readSkillContent(canonicalPath: string): Promise<string> {
  * 获取应用配置
  */
 export async function getConfig(): Promise<SkillDeckConfig> {
-  return unwrap(await commands.getConfig()) as SkillDeckConfig;
+  return unwrap(await commands.getConfig());
 }
 
 /**
  * 保存应用配置
  */
 export async function saveConfig(config: SkillDeckConfig): Promise<void> {
-  unwrap(await commands.saveConfig(config as RawSkillDeckConfig));
+  unwrap(await commands.saveConfig(config));
 }
 
 // ============ Agent 选择相关 API ============
@@ -119,14 +95,14 @@ export async function saveLastSelectedAgents(agents: string[]): Promise<void> {
  * 从来源获取可用的 skills 列表
  */
 export async function fetchAvailable(source: string): Promise<FetchResult> {
-  return unwrap(await commands.fetchAvailable(source)) as FetchResult;
+  return unwrap(await commands.fetchAvailable(source));
 }
 
 /**
  * 安装选中的 skills
  */
 export async function installSkills(params: InstallParams): Promise<InstallResults> {
-  return unwrap(await commands.installSkills(params as RawInstallParams));
+  return unwrap(await commands.installSkills(params));
 }
 
 /**

@@ -12,7 +12,7 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.source.error.noSkills');
     case 'gitTimeout':
       return t('addSkill.source.error.timeout', {
-        timeout: (error as { kind: 'gitTimeout'; data?: { timeoutSecs?: number } }).data?.timeoutSecs ?? 120,
+        timeout: error.data.timeoutSecs,
       });
     case 'gitAuthFailed':
       return t('addSkill.source.error.auth');

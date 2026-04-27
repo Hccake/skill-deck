@@ -14,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { AgentType, InstalledSkill } from '@/bindings';
 
 /** 按搜索关键词 + agent 筛选过滤 skills — 单次遍历 (js-combine-iterations) */
-function filterSkills(skills: InstalledSkill[], searchQuery: string, agentFilter: string): InstalledSkill[] {
+function filterSkills<T extends InstalledSkill>(skills: T[], searchQuery: string, agentFilter: string): T[] {
   if (!searchQuery && agentFilter === 'all') return skills;
   const query = searchQuery ? searchQuery.toLowerCase() : '';
   return skills.filter((s) => {
