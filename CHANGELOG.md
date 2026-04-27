@@ -5,15 +5,17 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-04-27
 
 ### Added
 
-- **远程拉取超时设置** — 在 `Settings > General` 新增 Git 仓库拉取超时配置，支持常用预设和自定义秒数，并持久化到应用配置中，安装与更新流程会统一读取该值
+- **远程拉取超时设置** — 在 `Settings > General` 新增 Git 仓库拉取超时配置，可选 1 / 2 / 5 / 10 分钟预设或在 30–3600 秒内自定义，安装与更新流程统一读取该值
+- **风险来源安装确认** — 安装来自 OpenClaw 等高风险来源的 skill 时，在确认页要求显式勾选确认后才能继续
+- **「无法检查更新」状态展示** — 来源不支持远端检查（本地路径、缺失 skill 路径等）的 skill 在卡片和详情面板上明确标注，不再误显示为「已是最新」
 
 ### Changed
 
-- **对齐 skills CLI v1.5.1** — 同步安装风险确认、更新来源解析、更新能力判定与相关界面提示，兼容最新 CLI 语义
+- **对齐 skills CLI v1.5.1** — 同步安装/更新流程的语义：批量更新按 (来源 + 分支) 分组，避免同仓库不同分支共用错误的 clone；克隆失败时错误提示包含实际超时秒数；克隆过程跳过 LFS smudge 加快速度
 
 ### Fixed
 
