@@ -8,19 +8,33 @@ import { GitCloneTimeoutSection } from '../GitCloneTimeoutSection';
 const mockGetConfig = vi.fn();
 const mockSaveConfig = vi.fn();
 
+import enLocale from '@/i18n/locales/en.json';
+
+function lookupLocaleKey(key: string): string | undefined {
+  const segments = key.split('.');
+  let cursor: unknown = enLocale;
+  for (const segment of segments) {
+    if (cursor && typeof cursor === 'object' && segment in (cursor as Record<string, unknown>)) {
+      cursor = (cursor as Record<string, unknown>)[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return typeof cursor === 'string' ? cursor : undefined;
+}
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, defaultValueOrOptions?: string | Record<string, unknown>) => {
-      if (key === 'settings.cloneTimeout.currentValue') {
-        const options = typeof defaultValueOrOptions === 'object' ? defaultValueOrOptions : undefined;
-        return `Current: ${options?.seconds}s`;
+    t: (key: string, options?: Record<string, unknown>) => {
+      const value = lookupLocaleKey(key);
+      if (value === undefined) return key;
+      if (options && typeof options === 'object') {
+        return value.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
+          const replacement = options[name];
+          return replacement === undefined ? `{{${name}}}` : String(replacement);
+        });
       }
-
-      if (typeof defaultValueOrOptions === 'string') {
-        return defaultValueOrOptions;
-      }
-
-      return key;
+      return value;
     },
   }),
 }));

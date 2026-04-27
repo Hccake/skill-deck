@@ -50,7 +50,8 @@ pub struct CloneProgress {
 
 /// 克隆结果，包含临时目录和仓库路径
 pub struct CloneResult {
-    /// 临时目录（drop 时自动清理）
+    /// RAII guard：drop 时自动清理临时目录。前缀下划线表示外部不应直接访问，
+    /// 仅用于延长生命周期至 `repo_path` 使用结束。
     pub _temp_dir: TempDir,
     /// 仓库路径
     pub repo_path: PathBuf,

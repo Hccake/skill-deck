@@ -201,6 +201,22 @@ async fn check_updates_inner(
     Ok(results)
 }
 
+/// 入口校验：仅当 metadata 满足"可执行更新"时返回 Ok，否则给出具体原因
+fn ensure_can_run_update(
+    metadata: &crate::core::NormalizedUpdateMetadata,
+) -> Result<(), AppError> {
+    let capability = crate::core::derive_update_capability(metadata);
+    if !capability.can_run_update {
+        return Err(AppError::InstallFailed {
+            message: format!(
+                "Skill cannot be updated: {}",
+                capability.reason.unwrap_or_else(|| "unknown".to_string())
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn build_batch_check_result(
     name: &str,
     source: &str,
@@ -344,7 +360,22 @@ async fn update_skill_single(
         }
     };
 
-    // 2. 直接从 lock 元数据构造更新目标，避免 round-trip 成 source 字符串后丢失来源类型
+    // 2. 入口校验：提前拒绝不可执行的更新（如 local 类型、缺失 skillPath 等）
+    let metadata = crate::core::NormalizedUpdateMetadata {
+        source: entry_source.clone(),
+        source_type: entry_source_type.clone(),
+        source_url: if entry_source_url.is_empty() {
+            None
+        } else {
+            Some(entry_source_url.clone())
+        },
+        ref_name: entry_ref_name.clone(),
+        skill_path: entry_skill_path.clone(),
+        remote_hash: None,
+    };
+    ensure_can_run_update(&metadata)?;
+
+    // 3. 直接从 lock 元数据构造更新目标，避免 round-trip 成 source 字符串后丢失来源类型
     let update_target = build_update_target(UpdateSourceParts {
         source_type: entry_source_type.clone(),
         source_url: if entry_source_url.is_empty() {
@@ -1080,6 +1111,33 @@ mod tests {
         assert_eq!(item.status, SkillUpdateCheckStatus::CannotCheck);
         assert!(!item.has_update);
         assert_eq!(item.reason.as_deref(), Some("upstream-unavailable"));
+    }
+
+    #[test]
+    fn test_ensure_can_run_update_rejects_local_source() {
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: "/some/local/path".to_string(),
+            source_type: "local".to_string(),
+            source_url: None,
+            ref_name: None,
+            skill_path: None,
+            remote_hash: None,
+        };
+        let result = ensure_can_run_update(&metadata);
+        assert!(matches!(result, Err(AppError::InstallFailed { .. })));
+    }
+
+    #[test]
+    fn test_ensure_can_run_update_accepts_github_with_skill_path() {
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo".to_string()),
+            ref_name: Some("main".to_string()),
+            skill_path: Some("skills/demo/SKILL.md".to_string()),
+            remote_hash: Some("abc123".to_string()),
+        };
+        assert!(ensure_can_run_update(&metadata).is_ok());
     }
 
     #[test]

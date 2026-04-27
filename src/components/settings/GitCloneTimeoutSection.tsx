@@ -36,13 +36,13 @@ function getOptionForTimeout(value: number): TimeoutOption {
 function presetLabel(seconds: typeof PRESETS[number], t: ReturnType<typeof useTranslation>['t']): string {
   switch (seconds) {
     case 60:
-      return t('settings.cloneTimeout.presets.60', '1 min');
+      return t('settings.cloneTimeout.presets.60');
     case 120:
-      return t('settings.cloneTimeout.presets.120', '2 min');
+      return t('settings.cloneTimeout.presets.120');
     case 300:
-      return t('settings.cloneTimeout.presets.300', '5 min');
+      return t('settings.cloneTimeout.presets.300');
     case 600:
-      return t('settings.cloneTimeout.presets.600', '10 min');
+      return t('settings.cloneTimeout.presets.600');
     default:
       return `${seconds}s`;
   }
@@ -138,7 +138,7 @@ export function GitCloneTimeoutSection() {
       if (options?.revertToCurrentOnError) {
         setSelectedOption(getOptionForTimeout(currentTimeoutSecs));
       }
-      setSaveError(t('settings.cloneTimeout.saveError', 'Failed to save timeout setting'));
+      setSaveError(t('settings.cloneTimeout.saveError'));
     } finally {
       setSaving(false);
     }
@@ -155,17 +155,17 @@ export function GitCloneTimeoutSection() {
     const parsed = Number(customValue);
 
     if (!Number.isFinite(parsed)) {
-      setValidationError(t('settings.cloneTimeout.errors.invalidNumber', 'Enter a valid number'));
+      setValidationError(t('settings.cloneTimeout.errors.invalidNumber'));
       return;
     }
 
     if (parsed < MIN_TIMEOUT_SECS) {
-      setValidationError(t('settings.cloneTimeout.errors.tooSmall', 'Must be at least 30 seconds'));
+      setValidationError(t('settings.cloneTimeout.errors.tooSmall'));
       return;
     }
 
     if (parsed > MAX_TIMEOUT_SECS) {
-      setValidationError(t('settings.cloneTimeout.errors.tooLarge', 'Cannot exceed 3600 seconds'));
+      setValidationError(t('settings.cloneTimeout.errors.tooLarge'));
       return;
     }
 
@@ -201,7 +201,7 @@ export function GitCloneTimeoutSection() {
     );
   }
 
-  const statusMessage = saveError ?? validationError ?? (saved ? t('settings.cloneTimeout.saved', 'Saved') : null);
+  const statusMessage = saveError ?? validationError ?? (saved ? t('settings.cloneTimeout.saved') : null);
 
   return (
     <section>
@@ -212,13 +212,10 @@ export function GitCloneTimeoutSection() {
           </div>
           <div className="min-w-0">
             <h2 className="text-sm font-heading font-bold text-foreground">
-              {t('settings.cloneTimeout.title', 'Remote Fetch Timeout')}
+              {t('settings.cloneTimeout.title')}
             </h2>
             <p className="text-xs text-muted-foreground">
-              {t(
-                'settings.cloneTimeout.description',
-                'Controls how long remote Git installs and updates can wait before timing out. Local paths are not affected.'
-              )}
+              {t('settings.cloneTimeout.description')}
             </p>
           </div>
         </div>
@@ -240,7 +237,7 @@ export function GitCloneTimeoutSection() {
           >
             {!saveError ? <Check className="h-3.5 w-3.5" /> : null}
             <span className="hidden sm:inline whitespace-nowrap">
-              {saveError ?? t('settings.cloneTimeout.saved', 'Saved')}
+              {saveError ?? t('settings.cloneTimeout.saved')}
             </span>
           </div>
 
@@ -267,7 +264,7 @@ export function GitCloneTimeoutSection() {
                 </SelectItem>
               ))}
               <SelectItem value="custom">
-                {t('settings.cloneTimeout.custom', 'Custom')}
+                {t('settings.cloneTimeout.custom')}
               </SelectItem>
             </SelectContent>
           </Select>
@@ -286,7 +283,7 @@ export function GitCloneTimeoutSection() {
             onClick={() => {
               void persistTimeout(DEFAULT_TIMEOUT_SECS);
             }}
-            title={t('settings.cloneTimeout.restoreDefault', 'Restore default')}
+            title={t('settings.cloneTimeout.restoreDefault')}
           >
             <RotateCcw className="h-4 w-4" />
           </Button>
@@ -300,12 +297,12 @@ export function GitCloneTimeoutSection() {
             className="flex items-center gap-2 ml-9"
           >
             <label htmlFor="git-clone-timeout-custom" className="sr-only">
-              {t('settings.cloneTimeout.customLabel', 'Custom timeout')}
+              {t('settings.cloneTimeout.customLabel')}
             </label>
             <div className="relative w-40 sm:w-48">
               <Input
                 id="git-clone-timeout-custom"
-                aria-label={t('settings.cloneTimeout.customLabel', 'Custom timeout')}
+                aria-label={t('settings.cloneTimeout.customLabel')}
                 inputMode="numeric"
                 value={customValue}
                 className="h-8 rounded-md bg-background pr-12 text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
@@ -316,7 +313,7 @@ export function GitCloneTimeoutSection() {
                 }}
               />
               <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted-foreground">
-                {t('settings.cloneTimeout.secondsUnit', 'sec')}
+                {t('settings.cloneTimeout.secondsUnit')}
               </span>
             </div>
             <Button
@@ -326,7 +323,7 @@ export function GitCloneTimeoutSection() {
               onClick={handleCustomSave}
               className="h-8 rounded-md px-4 text-xs cursor-pointer shadow-sm"
             >
-              {t('settings.cloneTimeout.saveButton', 'Save')}
+              {t('settings.cloneTimeout.saveButton')}
             </Button>
 
             {/* 内联状态信息 (仅在自定义模式下可见) */}
@@ -345,7 +342,7 @@ export function GitCloneTimeoutSection() {
               <span className="truncate max-w-[150px] sm:max-w-[200px]">
                 {statusMessage
                   ?? (selectedOption === 'custom'
-                    ? t('settings.cloneTimeout.customHint', 'Range: 30–3600')
+                    ? t('settings.cloneTimeout.customHint')
                     : '\u00A0')}
               </span>
             </div>

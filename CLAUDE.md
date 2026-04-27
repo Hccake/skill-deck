@@ -150,6 +150,19 @@ SourceStep → SkillsStep → OptionsStep → ConfirmStep → InstallingStep →
 - Install via CLI 属于低优先级辅助信息，默认折叠，仅在用户主动展开后显示完整命令
 - Security Audits、First Seen、Installed on 应保持在紧凑侧栏中，作为辅助元数据而不是主内容
 
+### Skill Update Capability vs Status
+
+更新能力来自两个 source of truth，需明确区分：
+
+- **`InstalledSkill.canCheckForUpdates`**：lock 元数据派生的"能力位"
+  - 由 `derive_update_capability` 计算（github + 有 skillPath + 有 hash）
+  - 反映 skill 本身是否支持远端检查
+- **`SkillUpdateInfo.status`**：`check_updates` 接口的"运行结果"
+  - 取值：`update-available` / `up-to-date` / `cannot-check`
+  - 当 capability=true 但 upstream 暂时不可达时，status=cannot-check
+- **UI 规则**：`showCannotCheckStatus = updateStatus === 'cannot-check' || canCheckForUpdates === false`
+- **缓存写入规则**：删除/更新成功后，仅当 `canCheckForUpdates !== false` 时才将缓存标记为 `up-to-date`，未知或确认可检查的 skill 才清缓存
+
 ## Change Dependencies (MANDATORY)
 
 修改代码时，MUST 检查以下联动关系：
@@ -196,7 +209,7 @@ pnpm test && pnpm lint && pnpm build
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **skill-deck** (1426 symbols, 3622 relationships, 115 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **skill-deck** (1546 symbols, 3927 relationships, 126 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
