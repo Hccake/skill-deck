@@ -1,23 +1,26 @@
 # Skill 更新机制设计文档
 
-本文档梳理 **vercel-labs/skills CLI** 与 **Skill Deck 桌面端** 在"skill 更新"这条链路上的实现，以及二者的差异和已知问题，帮助后续开发者快速 onboard。
+本文档描述 vercel-skills CLI 与 Skill Deck 桌面端在“skill 更新”链路上的当前设计、差异边界和维护注意事项。
 
-> 配套阅读：根目录 [CLAUDE.md](../CLAUDE.md) 中"Skill Update Capability vs Status"段落 / [docs/cli-gui-sync-guide.md](./cli-gui-sync-guide.md)。
+配套阅读：[CLI ↔ GUI 同步指南](./cli-gui-sync-guide.md)。
 
 ---
 
-## 1. 一句话总结
+## 1. 当前设计摘要
 
-| 维度 | vercel-skills CLI | Skill Deck (Tauri) |
+| 维度 | vercel-skills CLI | Skill Deck GUI |
 | --- | --- | --- |
-| **更新检测依据** | Global lock 中的 GitHub tree SHA（`skillFolderHash`） | 同上 + 项目 lock 扩展字段 `remoteHash` |
-| **检测方式** | GitHub Trees API（`/repos/{repo}/git/trees/{ref}?recursive=1`） | 同上，按 `(source_url, ref)` 分组**批量**调用 |
-| **更新执行** | `spawnSync('npx skills add ...')` 重新走一次 install 流程 | 同样是"重新安装"语义，但是用 Rust 直接 clone → discover → install，不再 fork 子进程 |
-| **可检查/可执行二分** | 不区分（不可检查时直接打印 skip 行） | 显式建模为 `canCheckForUpdates` / `canRunUpdate` 两位 + `updateReason` |
-| **缓存** | 无 | 5 分钟 TTL 的进程内缓存（`updateInfoCache`） |
-| **进度反馈** | stderr 进度条 | Tauri event：`update-progress`（`cloning` / `installing` / `writing_lock`） |
+| 更新语义 | 重新执行安装流程 | 同样是重新安装语义，由 Rust 内联执行 |
+| 全局更新检测 | GitHub tree SHA | GitHub tree SHA |
+| 项目更新检测 | 有 `skillPath` 的 entry 可定点 reinstall/update；legacy entry 仅提示刷新来源 | 在 CLI 语义上增加远端检测能力，当前主要使用 `skillPath` + GUI 扩展的 `remoteHash` 判断 GitHub 项目 skill 是否有更新 |
+| 不可检查状态 | CLI 输出 skip/reason | 类型化为 capability 和 check status |
+| 缓存 | 无 | 进程内 TTL 缓存 |
+| 进度反馈 | 终端输出 | Tauri event + 前端局部状态 |
+| 批量优化 | 按 CLI 流程逐项处理 | 同源同 ref 的 skill 可共享 clone/API 调用 |
 
-**核心设计哲学**：更新 = 重新安装。不存在"增量更新"，只有"用最新仓库内容覆盖现有 skill 目录"。
+核心语义：更新 = 重新安装。不存在增量更新，也不应该只 patch 某几个文件。
+
+GUI 的职责是让这个语义更可见、更可恢复、更少重复操作，并可以提供 CLI 没有的检测、计划和修复体验；不是发明与 CLI 不兼容的安装/lock 规则。
 
 ---
 
@@ -25,397 +28,257 @@
 
 ### 2.1 Lock 文件
 
-| 文件 | 路径 | 用途 | 关键字段 |
-| --- | --- | --- | --- |
-| **Global lock** | `~/.agents/.skill-lock.json`（v3） | 全局已安装 skill 元数据 | `skillFolderHash`（必填 string） |
-| **Project lock** | `<project>/skills-lock.json`（v1） | 项目级，进 git | `computedHash`（SHA-256 本地内容） + `remoteHash?`（GUI 扩展） + `skillPath?`（GUI 扩展） |
+全局 lock 和项目 lock 的字段同步规则见 [cli-gui-sync-guide.md](./cli-gui-sync-guide.md)。
 
-**Global lock 条目** ([src-tauri/src/core/skill_lock.rs:18-42](../src-tauri/src/core/skill_lock.rs#L18-L42))：
+项目 lock 需要区分 CLI 共享契约字段和 GUI 增强字段：
 
-```rust
-pub struct SkillLockEntry {
-    pub source: String,            // "owner/repo"
-    pub source_type: String,       // "github" | "gitlab" | "git" | "local" | "well-known"
-    pub source_url: String,        // 原始 URL
-    pub ref_name: Option<String>,  // 分支/tag
-    pub skill_path: Option<String>,// 仓库内子路径（含 SKILL.md）
-    pub skill_folder_hash: String, // GitHub tree SHA
-    pub installed_at: String,
-    pub updated_at: String,
-    pub plugin_name: Option<String>,
-}
-```
+- CLI 共享契约字段：`source`、`ref`、`sourceType`、`skillPath`、`computedHash`。
+- GUI 增强字段：`sourceUrl`、`remoteHash`、`pluginName`。
 
-**Project lock 条目** ([src-tauri/src/core/local_lock.rs:32-62](../src-tauri/src/core/local_lock.rs#L32-L62))：
+GUI 增强字段可以让项目级更新体验更强，例如提前检查 GitHub 远端是否变化、保留 SSH/private repo 原始 URL、展示 plugin 来源。但这些字段不是 CLI project update 的必要条件。CLI 重新执行 project update 后可能只写回共享契约字段，导致 GUI 增强字段丢失；GUI 必须降级处理，而不是把 lock 判坏。
+
+更新链路只依赖标准化后的元数据：
 
 ```rust
-pub struct LocalSkillLockEntry {
+pub struct NormalizedUpdateMetadata {
     pub source: String,
-    pub ref_name: Option<String>,
     pub source_type: String,
     pub source_url: Option<String>,
-    pub computed_hash: String,           // SHA-256 of files (CLI 兼容)
-    pub remote_hash: Option<String>,     // ★ GUI 扩展：tree SHA，CLI 会忽略
-    pub skill_path: Option<String>,      // ★ GUI 扩展：repo 内子路径
-    pub plugin_name: Option<String>,
+    pub ref_name: Option<String>,
+    pub skill_path: Option<String>,
+    pub remote_hash: Option<String>,
 }
 ```
 
-> **注意**：CLI 的 `LocalSkillLockEntry` 只有前 4 个字段；GUI 新增 `remote_hash` / `skill_path` / `source_url` 是**向前兼容**地写入（CLI 读时用 `unknown field` 策略忽略）。这是 GUI 能在 project scope 下检测更新、而 CLI 不能的关键。
+来源：
 
-### 2.2 Capability vs Status（核心抽象）
+- Global lock：`skillFolderHash` 标准化为 `remote_hash`。GitHub 来源通常是远端 tree SHA；非 GitHub 来源可能是安装来源/本地内容 hash，只有存在对应远端检测器时才可用于自动比较。
+- Project lock：GUI 扩展的 `remoteHash` 标准化为 `remote_hash`。当前主要用于 GitHub 远端检测；`computedHash` 仅表示本地内容 hash。
+- `skillPath` 是 update 定位上游目录的关键字段，规范形态是仓库内 `SKILL.md` 文件路径。缺失时不要按 skill name 猜测路径。
 
-GUI 把"能否更新"拆成两个正交概念：
+### 2.2 Capability vs Status
 
-| 概念 | 来源 | 类型 | 意义 |
+GUI 把“理论上能不能检查/执行更新”和“一次检查的运行结果”拆开。
+
+| 概念 | 来源 | 典型字段 | 意义 |
 | --- | --- | --- | --- |
-| **Capability** | 静态派生自 lock 元数据 | `bool / bool / Option<String>` | 这个 skill 在原理上能否检查 / 能否执行更新 |
-| **Status** | 一次 `check_updates` 调用的运行结果 | `update-available` / `up-to-date` / `cannot-check` | 当前这次检查得出的结论 |
+| Capability | lock 元数据静态派生 | `canRunUpdate`、`canCheckForUpdates`、`updateReason` | 这个 skill 原理上是否支持 update/check |
+| Check status | `check_updates` 运行结果 | `update-available`、`up-to-date`、`cannot-check` | 本次检查得到的结果 |
 
-二者的关系：`Capability.can_check_for_updates == false` 一定得到 `Status::CannotCheck`；反之 capability 为 true 时仍可能因为网络失败得到 `cannot-check`。
-
-`UpdateCapability` 的派生规则 ([src-tauri/src/core/update_metadata.rs:53-93](../src-tauri/src/core/update_metadata.rs#L53-L93))：
+当前 capability 派生规则：
 
 | 条件 | `can_run_update` | `can_check_for_updates` | `reason` |
 | --- | --- | --- | --- |
-| `source_type == "local"` 或 `source` 为空 | false | false | `"local-source"` |
-| `source_type != "github"` | true | false | `"unsupported-source-type"` |
-| 缺 `skill_path` | true | false | `"missing-skill-path"` |
-| 缺 `remote_hash` | true | false | `"missing-remote-hash"` |
-| 满足全部条件 | true | true | `None` |
+| `source` 为空或 `source_type == "local"` | false | false | `local-source` |
+| 可重装来源缺 `skill_path` | false | false | `missing-skill-path` |
+| `source_type != "github"` 且有 `skill_path`、但没有对应远端检测器 | true | false | `unsupported-source-type` |
+| 来源支持远端检测但缺 `remote_hash` | true | false | `missing-remote-hash` |
+| 元数据完整且来源有远端检测器 | true | true | `None` |
 
-> 派生只看元数据，不发网络。这意味着 `listSkills()` 返回的每个 `InstalledSkill` 都已经携带 capability 字段，**首屏就能渲染 cannot-check 徽章而无需等待网络**。
+这个派生过程不发网络请求。`listSkills()` 返回的 skill 已经带有 capability，首屏可以直接展示 cannot-check 状态或修复入口。
+
+可重装来源包括 `github`、`gitlab`、`git`、`well-known`、`wellknown` 和 `direct-url`。这些来源的普通 update 都依赖 lock 中的 `skillPath` 精确定位目录；缺失时只能走“修复来源/重新安装”流程。远端检测器是 GUI 可扩展点：新增 source type 检测能力时，应先定义 hash 语义、错误 reason 和缓存 identity，再把 capability 从 `unsupported-source-type` 提升为可检查。
 
 ---
 
-## 3. 后端：检测 → 执行
+## 3. CLI Project Update 基线
 
-### 3.1 检测：`check_updates`
+CLI project update 是 GUI 必须兼容的基线语义。它不依赖 `sourceUrl` 或 `remoteHash`，也不会先判断远端是否真的变化。
 
-入口 [src-tauri/src/commands/update.rs:90-202](../src-tauri/src/commands/update.rs#L90-L202)。流程：
+流程：
 
-1. **读 lock**：按 `Scope` 分别读 global / project lock。
-2. **能力过滤**：对每个 entry 调用 `derive_update_capability`；不可检查的直接生成一条 `CannotCheck` 结果，**不发网络请求**。
-3. **按 `(source, ref_name)` 分组**：同仓库同分支的多个 skill 合并为一组（[update.rs:126-133, 155-162](../src-tauri/src/commands/update.rs#L126-L162)）。
-4. **批量拉远端 hash**：每组调用 `fetch_skill_folder_hashes_batch(owner_repo, paths, ref)`，**单次 GitHub Trees API** 拿到该仓库的整棵 tree，再按 skill 子路径切出每个 skill 的 tree SHA。
-5. **比对**：远端 hash != 本地 hash → `UpdateAvailable`；相等 → `UpToDate`；远端缺失 → `CannotCheck { reason: "upstream-unavailable" }`。
-6. **整组 API 失败**：组内每个 skill 都标记 `cannot-check / upstream-unavailable`（[update.rs:185-197](../src-tauri/src/commands/update.rs#L185-L197)）。
+1. 读取 `<project>/skills-lock.json`。
+2. 过滤出非 `node_modules`、非 `local` 的 project skill。
+3. 按 `skillPath` 分成两类：
+   - 有 `skillPath`：可定点 reinstall/update。
+   - 缺 `skillPath`：legacy entry，不能安全自动 update，只打印重新安装提示。
+4. 对每个可更新 entry，调用 `buildLocalUpdateSource(entry)` 构造安装源。
+5. `buildLocalUpdateSource` 从 `skillPath` 去掉 `SKILL.md` 后缀，把目录拼回 `source`，并追加 `#ref`。例如 `source=owner/repo`、`skillPath=skills/foo/SKILL.md`、`ref=main` 会得到 `owner/repo/skills/foo#main`。
+6. CLI 执行 `skills add <installUrl> --skill <name> -y`。没有 `-g`，所以仍是 project scope；`--skill` 确保只安装该 skill。
+7. `add` 重新 clone/fetch、discover、安装到项目目录，并重新写 `skills-lock.json`。写回内容包含共享契约字段和新的 `computedHash`。
 
-GitHub token 优先级（[src-tauri/src/core/github_api.rs](../src-tauri/src/core/github_api.rs)）：`GITHUB_TOKEN` 环境变量 → `GH_TOKEN` 环境变量 → `gh auth token` CLI → 公网 60 req/h 限额。
+因此，CLI project update 的能力是“定点刷新”，不是“远端更新检测”。GUI 的 `remoteHash` 检测是在这个基线上增加的可视化判断；缺失 `remoteHash` 时仍可执行 reinstall，只是不能提前告诉用户远端是否变化。
 
-**`SkillUpdateInfo` 类型** ([update.rs:69-81](../src-tauri/src/commands/update.rs#L69-L81))：
+---
 
-```rust
-pub struct SkillUpdateInfo {
-    pub name: String,
-    pub source: String,
-    pub has_update: bool,
-    pub status: SkillUpdateCheckStatus,  // update-available | up-to-date | cannot-check
-    pub reason: Option<String>,
-    pub git_ref: Option<String>,
-}
-```
+## 4. 后端检测流程
 
-### 3.2 执行：`update_skill` / `update_skills_batch`
+入口：`src-tauri/src/commands/update.rs` 中的 `check_updates` / `check_updates_inner`。
 
-入口 [src-tauri/src/commands/update.rs:258-295（单个）/ 577-962（批量）](../src-tauri/src/commands/update.rs#L258-L962)。
+流程：
 
-单个 skill 流程（9 步）：
+1. 按 scope 读取 global lock 或 project lock。
+2. 将 lock entry 标准化为 `NormalizedUpdateMetadata`。
+3. 派生 `UpdateCapability`。
+4. `can_check_for_updates == false` 的 entry 直接返回 `cannot-check`，不发网络请求。
+5. 可检查的 GitHub skill 按 `(source, ref)` 分组。
+6. 每组调用 GitHub Trees API 获取远端 tree 信息，再按各自的 `skillPath` 切出 skill 目录 hash。
+7. 远端 hash 与本地记录 hash 不同则 `update-available`，相同则 `up-to-date`。
+8. 上游不存在、限流、认证失败或网络错误时返回 `cannot-check`，并保留机器可读 reason。
 
-1. **读 lock 拿来源** —— 提取 `source / source_type / source_url / skill_path / ref_name / plugin_name`。
-2. **入口校验** —— `ensure_can_run_update(metadata)`；`local-source` 直接返回 `Err`。
-3. **构造更新目标** —— `build_update_target(UpdateSourceParts {...})`，从 `skill_path` 推导 `discover_subpath`。
-4. **获取源**：
-   - `local`：直接用本地路径
-   - `github` / `gitlab` / `git`：`clone_repo_with_progress`（git2 浅 clone）
-   - `well-known` / `direct-url`：`fetch_wellknown_skills` 拉 manifest 并落到临时目录
-   - 期间 emit `update-progress { phase: "cloning" }`
-5. **discover** —— 在 clone 出来的目录里找 SKILL.md 并解析。
-6. **检测已安装的 agents**：
-   - 优先 `detect_installed_agents_for_skill`（扫描每个 agent 目录看现状）
-   - 为空则 fallback 到 `AgentType::detect_installed()` + universal agents
-7. **检测每个 agent 的安装模式**（symlink / junction / copy）—— `detect_install_mode`，**保留用户原本的安装模式**。
-8. **覆盖安装** —— `install_skill_to_agents_with_modes`，先写 canonical 目录（`~/.agents/{name}` 或 `<project>/.agents/{name}`），再为每个 agent 重建 symlink 或 copy。emit `update-progress { phase: "installing" }`。
-9. **写 lock**：
-   - emit `update-progress { phase: "writing_lock" }`
-   - 重新拉一次 `fetch_skill_folder_hash` 拿到最新 tree SHA
-   - Global → `add_skill_to_lock`；Project → 用本地 `compute_skill_folder_hash` 算 SHA-256 + `remote_hash` 一起写
+设计约束：
 
-**批量更新优化**（[update.rs:577-962](../src-tauri/src/commands/update.rs#L577-L962)）：按 `UpdateGroupKey(source_type, source_url, ref)` 分组，**每组只 clone 一次**仓库，然后从同一 clone 中安装组内所有 skill。N 个同源 skill 的 clone 次数从 N 降为 1。
+- 同仓库多个 skill 应优先共享远端 tree 请求。
+- 检查失败不能改 lock。
+- `mergeUpdateInfo` 合并缓存时必须保留后端已有 `updateReason`，避免没有命中本次检查结果时把 cannot-check 原因清空。
+- `check_updates` 结果必须携带足够身份信息供前端合并，不能长期只依赖 skill name。推荐 identity 为 `scope + projectPath + name + source/sourceUrl + ref + skillPath`。
 
-批量更新只共享 clone 结果，不共享 skill 定位信息。组内每个 lock entry 仍使用自己的 `skill_path` 推导 `discover_subpath`，并优先按 `relative_path == skill_path` 精确匹配；只有旧 lock 缺少 `skill_path` 时才退回按 skill name 匹配。这保证从非标准子路径安装的 skill，或同仓库里存在同名 skill 时，Update All 与单个 Update 使用同一个来源目录。
+---
 
-### 3.3 状态归并
+## 5. 后端执行流程
 
-每个 agent 的安装结果汇成 `UpdateSkillItemResult.status`（[update.rs:973-997](../src-tauri/src/commands/update.rs#L973-L997)）：
+入口：`update_skill` / `update_skills_batch`。
 
-| 后端状态 | 触发条件 |
+单个 skill 更新流程：
+
+1. 从 lock 读取来源、ref、skillPath、pluginName 等元数据。
+2. 调用 `ensure_can_run_update`；不可执行时返回 `skipped` 结果，而不是进入 clone/install。
+3. 构造 update target，使用 `skillPath` 推导 discover 子路径。
+4. 获取来源内容：GitHub/GitLab/git 走 clone，well-known/direct-url 走 well-known fetch，本地来源不走普通 update。
+5. discover skill，并优先按 lock 中的 `skillPath` 精确匹配。
+6. 检测当前已经安装到哪些 agent。
+7. 检测每个 agent 现有安装模式，尽量保留 symlink、junction 或 copy。
+8. 覆盖安装 canonical 目录，再为各 agent 重建链接或复制。
+9. 写回 lock：全局写 `skillFolderHash`，项目写本地 `computedHash`，并在 GUI 能取得可比较的远端版本 hash 时写扩展 `remoteHash`。如果该 skill 是由 CLI project update 刚刚写回，GUI 增强字段可能不存在，后续 list/check 应降级为 `missing-remote-hash` 或缺少展示元数据。
+
+批量更新流程：
+
+- 按 `(source_type, source_url, ref)` 分组。
+- 每组只 clone/fetch 一次。
+- 组内每个 skill 仍使用自己的 `skillPath` 定位和写回，不能用同名 skill 猜测。
+
+Agent 结果语义：
+
+| Agent 状态 | 说明 |
 | --- | --- |
-| `Success` | 全部 agent 成功 |
-| `Partial` | 至少一个成功 + 至少一个失败 |
-| `Failed` | 全部失败 |
-| `Skipped` | agent 列表为空 / 全 skipped |
+| `success` | 该 agent 安装或更新成功 |
+| `failed` | 该 agent 安装失败，错误应暴露给前端 |
+| `skipped` | 按规则未安装到该 agent，例如项目级缺少非 universal agent 根目录 |
+
+Skill 总状态归并：
+
+| Skill 状态 | 触发条件 |
+| --- | --- |
+| `success` | 所有实际目标 agent 成功；只允许包含“不属于实际目标”的 skipped |
+| `partial` | 至少一个成功且至少一个失败，或请求目标中存在未处理的 skipped |
+| `failed` | 有目标 agent，但全部失败 |
+| `skipped` | 没有可执行目标，或所有 agent 都是 skipped |
+
+`skipped` 是独立状态，不能计入成功覆盖率，也不能写成 failed。实现必须区分两类 skipped：一种是“规则上不属于实际目标”，可以不阻止整体 success；另一种是“用户请求的目标未被处理”，必须保留重试入口，不能清除 update 标记。
 
 ---
 
-## 4. 前端：缓存 + UI 规则
+## 6. 前端缓存与 UI 规则
 
-### 4.1 缓存层
+### 5.1 更新检测缓存
 
-[src/stores/skills-utils.ts:31-47](../src/stores/skills-utils.ts#L31-L47)
+`src/stores/skills-utils.ts` 维护进程内缓存：
 
 ```ts
-export const updateInfoCache = new Map<string, { results: SkillUpdateInfo[]; checkedAt: number }>();
-export const UPDATE_CHECK_TTL = 5 * 60 * 1000;
-
-export function clearUpdateCacheForSkill(skillName, scope, projectPath?) {
-  const cacheKey = scope === 'project' ? projectPath : 'global';
-  const cached = updateInfoCache.get(cacheKey);
-  if (cached) {
-    cached.results = cached.results.map(r =>
-      r.name === skillName
-        ? { ...r, hasUpdate: false, status: 'up-to-date', reason: null }
-        : r,
-    );
-  }
-}
+updateInfoCache: Map<string, { results: SkillUpdateInfo[]; checkedAt: number }>
 ```
 
-**Cache key**：global 用字符串 `'global'`，project 用项目绝对路径。  
-**生命周期**：进程内 Map，无持久化；Tauri 重启即丢。  
-**写入时机**：`syncUpdates` 拿到结果后写整组（[skills-data.ts:264-265](../src/stores/skills-data.ts#L264-L265)）。  
-**读取时机**：`fetchSkills` / `syncSkills` 把 listSkills 的原始结果通过 `mergeUpdateInfo(skills, cache.results)` 套用缓存里的 `hasUpdate` / `status` / `reason`，避免列表刷新一次就回到 unknown 状态（[skills-data.ts:80-99](../src/stores/skills-data.ts#L80-L99)）。  
-**过期策略**：TTL 5 分钟，硬过期；用户手动刷新走 `forceCheckUpdates` 直接绕开 TTL。  
-**清缓存的关键规则**（[skills-data.ts:362-364](../src/stores/skills-data.ts#L362-L364)）：
+规则：
+
+- global scope 的 cache key 是 `global`。
+- project scope 的 cache key 是项目绝对路径。
+- cache value 中的单条更新结果必须用稳定 identity 合并，至少包含 `name`、`source/sourceUrl`、`gitRef` 和 `skillPath`。只按 skill name 合并会污染修复来源、换 ref 或同名 skill 场景。
+- TTL 是短期进程内缓存，应用重启后丢失。
+- 手动刷新应绕过 TTL。
+- update 完整成功后才能清除该 skill 的 update 标记。
+- partial、failed、skipped 不应把缓存强写为 `up-to-date`，否则用户会失去重试入口。
+
+### 5.2 列表状态合并
+
+`mergeUpdateInfo` 将 `check_updates` 结果合并到 `listSkills` 返回的基础列表。
+
+合并规则：
+
+- 命中本次检查结果时，以检查结果的 `hasUpdate`、`status`、`reason` 为准。命中必须基于稳定 identity，而不是只基于 skill name。
+- 未命中时，保留已有 `updateStatus` 和 `updateReason`。
+- `hasUpdate` 未命中时默认为 false，避免旧缓存误标新列表项。
+
+### 5.3 UI 状态展示
+
+展示 cannot-check 的统一规则：
 
 ```ts
-if (target?.canCheckForUpdates !== false) {
-  clearUpdateCacheForSkill(skillName, scope, projectPath);
-}
-```
-
-> 仅当 capability 不是 `false` 时（即 `true` 或 `null`）才清缓存。能力本身为 `false` 的 skill（local 等）若清掉就会被 `clearUpdateCacheForSkill` 强写为 `up-to-date`，掩盖"它本来就不能检查"的真实状态。
-
-### 4.2 UI 规则
-
-UI 中"是否展示『无法检查更新』徽章"用一条统一规则，写在两个组件里：
-
-[src/components/skills/SkillCard.tsx:129](../src/components/skills/SkillCard.tsx#L129) 和 [src/components/skills/SkillDetailPanel.tsx:123](../src/components/skills/SkillDetailPanel.tsx#L123)：
-
-```ts
-const showCannotCheckStatus =
-  skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
+skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 ```
 
 含义：
-- **本次检查**结果是 `cannot-check`（capability 可能是 true，但网络失败）→ 显示
-- **能力**是 `false`（永远没法检查）→ 显示
-- 两者都不是（包括 `null`，未初始化）→ 不显示
 
-**批量"检查更新"按钮**只在 scope 内有 `canCheckForUpdates === true` 的 skill 时才出现（[SkillsSection.tsx:90](../src/components/skills/SkillsSection.tsx#L90)）。
+- 本次检查失败或不可检查时展示 cannot-check。
+- 静态 capability 已知不可检查时，即使尚未发起网络检查，也展示 cannot-check。
+- `canCheckForUpdates == null` 表示未知，不应直接展示 cannot-check。
 
-### 4.3 状态机：`updateStatus`（前端临时态）
+更新按钮和批量按钮应优先读取 capability：
 
-`SkillCard` / `SkillDetailPanel` 用一个 *前端瞬时* 的 `updateStatus`（`'queued' | 'updating' | 'done' | 'failed'`）管理点击更新到结果出来的过渡（[SkillCard.tsx:59](../src/components/skills/SkillCard.tsx#L59)），与 `SkillUpdateCheckStatus`（持久化在 cache）是两个不同的字段，靠类型签名区分。Update 进度条直接监听 Tauri 的 `update-progress` event 并改 DOM ref，不触发 React re-render（[SkillCard.tsx:97-121](../src/components/skills/SkillCard.tsx#L97-L121)）。
+- `canRunUpdate == false`：不要执行普通 update，展示修复或禁用状态。
+- `canCheckForUpdates == false`：不参与“检查更新”批量入口。
+- reason 应映射为可本地化文案，不要直接把机器字符串作为主要 UI 文案。
 
----
+### 5.4 安装完成页
 
-## 5. 调用链总览
+安装或修复来源流程中的完成页需要区分 successful、failed、skipped：
 
-### 5.1 检测
-
-```
-Page mount
-  └─ SkillsPage useEffect
-       ├─ fetchSkills()                      [skills-data.ts]
-       │   └─ listSkills(scope) → bindings → list_skills (Rust)
-       │       └─ 每个 InstalledSkill 携带 capability 字段
-       └─ syncUpdates()                      [skills-data.ts]
-           ├─ TTL 检查 → 命中则跳过
-           └─ checkUpdates(scope, projectPath) → bindings
-               └─ check_updates_inner        [update.rs:99]
-                   ├─ read_scoped_lock / read_local_lock
-                   ├─ derive_update_capability  → 不可检查直接 cannot-check
-                   ├─ 按 (source, ref) 分组
-                   └─ fetch_skill_folder_hashes_batch  [github_api.rs]
-                       └─ GET /repos/{repo}/git/trees/{ref}?recursive=1
-```
-
-### 5.2 执行
-
-```
-User clicks "Update"
-  └─ skillsStore.updateSkill(name, scope)    [skills-data.ts:319]
-      └─ apiUpdateSkill → bindings → update_skill (Rust)
-          └─ update_skill_single             [update.rs:297]
-              ├─ read lock entry
-              ├─ ensure_can_run_update          ← 失败直接 reject
-              ├─ build_update_target
-              ├─ clone_repo_with_progress       [emit "cloning"]
-              ├─ discover_skills
-              ├─ detect_installed_agents_for_skill (+ fallback)
-              ├─ detect_install_mode (per agent)
-              ├─ install_skill_to_agents_with_modes  [emit "installing"]
-              ├─ fetch_skill_folder_hash        ← 拿新 hash
-              └─ add_skill_to_lock / add_skill_to_local_lock  [emit "writing_lock"]
-
-完成后 (前端) ：
-  ├─ toast(success/partial/failed)
-  ├─ if (canCheckForUpdates !== false) clearUpdateCacheForSkill(name)
-  ├─ clearLocalUpdateFlags(state, scope, {name})  ← 把列表里的 hasUpdate 标记清掉
-  └─ syncSkills() (fire-and-forget) ← 后台刷新一次列表与详情
-```
+- successful 计入成功覆盖率。
+- failed 展示错误。
+- skipped 展示“已跳过”的 agent 列表。
+- 覆盖率分母可以包含 skipped，用来说明目标集合；分子不能包含 skipped。
 
 ---
 
-## 6. 测试覆盖
+## 7. CLI 与 GUI 的稳定差异
 
-### Rust ([src-tauri/src/commands/update.rs:1020-1260](../src-tauri/src/commands/update.rs#L1020-L1260))
-
-单元测试覆盖：
-- `normalize_global_lock_entry` / `normalize_local_lock_entry` 字段映射
-- `derive_update_capability` 各分支（local / unsupported / missing-skill-path / 完整）
-- `build_update_target` 解析 `skill_path` 切出 `discover_subpath`
-- 批量更新按 lock 中的 `skill_path` 发现并匹配非标准子路径 / 同名 skill
-- `check_updates_inner` 在缺元数据时打 `cannot-check`
-- `ensure_can_run_update` 拒绝 local / 接受 github
-- `derive_skill_status` / `summarize_results` 多 agent 场景的状态归并
-
-### TypeScript
-
-- [src/stores/__tests__/skills.test.ts](../src/stores/__tests__/skills.test.ts) — `updateSkill` 状态转移、partial/warning、批量、并发隔离
-- [src/components/skills/\_\_tests\_\_/SkillCard.test.tsx](../src/components/skills/__tests__/SkillCard.test.tsx) / [SkillDetailPanel.test.tsx](../src/components/skills/__tests__/SkillDetailPanel.test.tsx) — `cannot-check` 徽章、`canCheckForUpdates` 各值
-- [src/components/skills/\_\_tests\_\_/SkillsSection.test.tsx](../src/components/skills/__tests__/SkillsSection.test.tsx) — 批量按钮的可见性条件
-
----
-
-## 7. 与 vercel-skills CLI 的差异速查
-
-`update / upgrade / check` 是 CLI 同一个命令的三个别名（[vercel-skills/src/cli.ts:900-903](../vercel-skills/src/cli.ts#L900-L903)），核心实现在 [`updateGlobalSkills`](../vercel-skills/src/cli.ts#L589) / [`updateProjectSkills`](../vercel-skills/src/cli.ts#L712)。
+这些差异是 GUI 的体验优化，但必须以 CLI 语义为基础。
 
 | 能力 | CLI | GUI |
 | --- | --- | --- |
-| 不可检查的 skill 标记 | `getSkipReason()` 返回字符串，`printSkippedSkills` 列出来（[cli.ts:494-561](../vercel-skills/src/cli.ts#L494-L561)） | 类型化 `UpdateCapability { can_check, can_run, reason }`，UI 直接读 |
-| Project lock 检测远端更新 | ❌（CLI 项目级 update 直接重新跑 `add`，**不查远端 hash**） | ✅（用 GUI 扩展的 `remoteHash` + `skillPath` 字段） |
-| 同仓库多 skill 的 API 调用 | N skills × N 次（[cli.ts:630-649](../vercel-skills/src/cli.ts#L630-L649)，循环里逐个 `fetchSkillFolderHash`） | 1 次 / 组（`fetch_skill_folder_hashes_batch`） |
-| 进度反馈 | stderr `\r` 行刷新（"Checking 1/N..."） | Tauri event：`clone-progress` + `update-progress { phase }` |
-| 更新执行的进程模型 | `spawnSync(node, [cli.mjs, 'add', url, '-g', '-y'])` —— 重新走 install 子进程 | Rust 内联调用 install 模块，无子进程 |
-| 多 agent 安装模式保留 | 由 install 流程决定（每次都重新选 agent） | 显式 `detect_install_mode` 保留每个 agent 的 symlink/copy 选择 |
-| 缓存 | 无 | 5 分钟 TTL，按 scope 分桶 |
+| Project scope 更新检测 | 有 `skillPath` 时可定点 reinstall/update，但不一定提前判断远端是否变化 | 用 `remoteHash` 和检测器补充可视化检测 |
+| 批量更新 | 按 CLI 命令流程处理 | 同源同 ref 的 skill 可共享 clone/fetch |
+| 状态表达 | 终端输出文本 | 结构化 capability、status、reason、agent results |
+| 进度反馈 | 终端进度 | `update-progress` event |
+| 错误提示 | 文本输出 | reason → i18n 文案、toast、修复入口 |
+| Agent 选择 | CLI install/update 规则 | 保持规则，同时展示 skipped/partial |
 
-> CLI 项目级"更新"实际只是 `npx skills add <source> -y` 重跑一次，因此 CLI 用户在 project scope 下**永远不会被告知"有新版本可用"**——只能盲目 reinstall。GUI 通过扩展 lock 字段填补了这个能力空缺。
+不允许的差异：
 
----
-
-## 8. 已知限制与改进建议
-
-> 下列条目按"建议优先级"排序，前面的更值得优先处理。
->
-> **修复状态总览（2026-04-27）** ——详见 [docs/plans/2026-04-27-skill-update-fixes-impl.md](./plans/2026-04-27-skill-update-fixes-impl.md)：
->
-> | # | 描述 | 状态 |
-> | --- | --- | --- |
-> | 8.1 | partial 时 cache 强写 up-to-date | ✅ 已修复（仅 `success` 才清缓存 / 写 lock） |
-> | 8.2 | hash 抓失败 → lock 写空 hash | ✅ 已修复（本地 git 优先 + 旧 hash 兜底） |
-> | 8.3 | local-source reason 与触发条件不一致 | ⏳ 未修（cosmetic） |
-> | 8.4 | GitHub token 缺失时静默限流 | ✅ 已修复（识别 `rate-limited` / `auth` / `network-error` 并 UI 区分文案） |
-> | 8.5 | global vs project 的 hash 字段口径不一致 | ⏳ 维持现状（CLI 兼容设计，已在文档中说明） |
-> | 8.6 | well-known update 路径缺测试 | ⏳ 未修 |
-> | 8.7 | Windows symlink 失败回退 | ⏳ 未修 |
-> | 8.8 | `AppError::to_string()` 信息损失 | 🟡 部分修（新增 `GitHubApiError { reason }`,但其他 variant 没动） |
-> | 8.9 | batch group 失败样板代码重复 | ⏳ 未修 |
-> | — | update 时 agent fallback 包含 `detect_installed()`,会装到从未链接过的 agent | ✅ 已修复（fallback 仅保留 universal agents） |
-
-### 8.1 ⚠️ `clearUpdateCacheForSkill` 的 partial 失败处理过于激进
-
-[skills-utils.ts:41-43](../src/stores/skills-utils.ts#L41-L43) 把缓存里该 skill 的 status 直接强写为 `up-to-date`：
-
-```ts
-? { ...r, hasUpdate: false, status: 'up-to-date', reason: null }
-```
-
-但调用方在 [skills-data.ts:362](../src/stores/skills-data.ts#L362) 是**只要 `canCheckForUpdates !== false` 就调**——即使 update 本身是 `Partial`（部分 agent 失败），也会把 cache 写成 up-to-date。这在 UI 上可能误导：用户看到"部分 agent 安装失败"的 toast，列表里的更新徽章却消失了。
-
-**建议**：在 `Partial / Failed` 路径下不要清缓存；或新增一个 `status: 'partial'` 走专门的徽章。
-
-### 8.2 Update 之后立刻 `fetch_skill_folder_hash` 失败 → lock 里写空 hash
-
-[update.rs:499-510](../src-tauri/src/commands/update.rs#L499-L510)：
-
-```rust
-let new_hash = if entry_source_type == "github" {
-    fetch_skill_folder_hash(...)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_default()  // ← 失败 → ""
-} else { String::new() };
-```
-
-如果安装成功但抓 hash 失败（限流/网断），lock 会写入空字符串。这之后 `derive_update_capability` 会判定为 `missing-remote-hash`，下次刷新该 skill 直接 cannot-check。等于一次"伪降级"。
-
-**建议**：失败时**保留旧 hash**而不是写空；或者把 hash 抓取放到 install 之前（已经 clone 过 tree，本地就能算）。
-
-### 8.3 `local` 类型的 reason 字符串与触发条件不一致
-
-[update_metadata.rs:54-62](../src-tauri/src/core/update_metadata.rs#L54-L62) 中：
-
-```rust
-let can_run_update = !metadata.source.is_empty() && metadata.source_type != "local";
-if !can_run_update {
-    return UpdateCapability { reason: Some("local-source".to_string()), ... };
-}
-```
-
-`source` 为空字符串时也会走这个分支，但 reason 仍是 `"local-source"`，让前端 i18n 文案不准确。
-
-**建议**：分两个 reason：`empty-source` / `local-source`。
-
-### 8.4 GitHub token 缺失时的限流体验
-
-[github_api.rs](../src-tauri/src/core/github_api.rs) 当所有 token 来源都拿不到时静默走公网 60 req/h。一个项目装 70 个 skill 的用户首次 sync 就直接打满。前端没有任何提示。
-
-**建议**：在 settings 里显式提示当前是否有 token；或在 `cannot-check` 的 reason 里加 `"rate-limited"` 一种新的细分。
-
-### 8.5 Hash 计算口径在 global 与 project 不同
-
-- Global：lock 里的 `skill_folder_hash` 是 GitHub tree SHA（远端的）
-- Project：lock 里有两个：`computed_hash`（本地 SHA-256） + `remote_hash`（远端 tree SHA）
-
-后者是有意为之（CLI 兼容 + 升级路径），但读代码时极容易误会。`compute_skill_folder_hash` 还会跳过 `.git` / `node_modules` 但**不会**跳过 git submodule 的内部目录（[local_lock.rs](../src-tauri/src/core/local_lock.rs)），含 submodule 的 skill 可能虚假触发"本地内容变了"。
-
-**建议**：在 `compute_skill_folder_hash` 上注释清楚约束；或扩成跳过所有 `.git*` 前缀。
-
-### 8.6 `well-known` / `direct-url` 类型的更新链路缺测试
-
-[update.rs:412-414](../src-tauri/src/commands/update.rs#L412-L414) 调 `fetch_wellknown_skills`，但当前测试套件里没有针对 well-known 的 update 集成测试。如果未来 well-known endpoint 的协议变化或返回结构调整，这条路径很可能默默坏掉。
-
-**建议**：补一个 mock-server 的集成测试。
-
-### 8.7 Windows 上 symlink 的失败回退
-
-[installer.rs](../src-tauri/src/core/installer.rs) 在 Windows 上创建 directory symlink 需要开发者模式或 admin。当前更新流程会保留原始模式，但若原本是 symlink、用户后来关掉了开发者模式，更新时会失败。
-
-**建议**：symlink 创建失败时降级到 copy 并 emit 一条 warning；UI 里在该 skill 上标注"已切换为 copy 模式"。
-
-### 8.8 错误信息在跨边界传递时被压扁
-
-[update.rs:277-286](../src-tauri/src/commands/update.rs#L277-L286) 把 `AppError` 一律 `to_string()` 进 `error: Some(...)`。前端的 toast 文案是 `t('skills.updateError', { name, error })`，对于多层嵌套的网络错误信息可读性较差。
-
-**建议**：为 `AppError` 增加 `kind()`（机器可读）+ `display()`（人类友好），前端按 `kind` 分别渲染。
-
-### 8.9 `update_skills_batch` 内 group 失败的写法散落
-
-[update.rs:714-786](../src-tauri/src/commands/update.rs#L714-L786) 在每个 source-type 分支里都重复写"group 全部失败"的样板代码（push N 条 Failed result）。可以抽个 helper。
+- 缺 `skillPath` 时猜测远端目录并普通 update。
+- 只按 skill name 合并更新检测缓存。
+- 把 partial 或 failed 的更新标记清掉。
+- 把请求目标中的 skipped agent 当成 success。
+- GUI 写回 lock 时丢失 CLI 字段。
+- GUI 扩展字段改变 CLI 已定义字段的含义，例如把 `computedHash` 当成远端 hash，或让 CLI 读取后产生不同安装目标。
+- GUI 把 `remoteHash` 当作执行 project reinstall 的必要条件。它只能控制“能否提前检测”，不能控制“能否按 CLI 语义刷新”。
+- 放宽 CLI 的 source、well-known 或文件路径安全校验。
 
 ---
 
-## 9. Onboarding Checklist（给新人）
+## 8. 当前限制与维护注意事项
 
-修改 update 链路前请走一遍：
+这些是当前设计需要持续关注的点，不是历史修复记录：
 
-- [ ] 读完 [`update_metadata.rs`](../src-tauri/src/core/update_metadata.rs)（最短，先理解 capability 派生）
-- [ ] 读 [`commands/update.rs`](../src-tauri/src/commands/update.rs) 的 `check_updates_inner` + `update_skill_single`
-- [ ] 读前端 [`stores/skills-utils.ts`](../src/stores/skills-utils.ts)（缓存层）+ [`stores/skills-data.ts`](../src/stores/skills-data.ts) 中 `updateSkill` / `syncUpdates`
-- [ ] 看 [`SkillCard.tsx`](../src/components/skills/SkillCard.tsx) 第 129 行那条 UI 规则
-- [ ] 跑 `cargo test -p skill-deck commands::update::tests` + `pnpm test -- skills.test`
-- [ ] 改完 capability / status 任一定义后 → 同步更新本文档第 2 节
+- `source` 为空和 local source 当前都会得到 `local-source` reason。如果要细分文案，需要先扩展后端 reason，再同步前端 i18n。
+- Project lock 的 `computedHash` 是本地内容 hash；GUI 的 `remoteHash` 是额外的远端/来源版本追踪字段。新增非 GitHub 远端检测时，必须先明确该字段与 source type 的 hash 语义。
+- CLI project `add/update` 可能覆盖 GUI 增强字段。GUI 遇到缺 `sourceUrl`、`remoteHash` 或 `pluginName` 时应降级展示和检测能力，而不是阻断 reinstall。
+- well-known/direct-url update 路径需要持续保持测试覆盖，避免协议或校验调整时只覆盖 install 不覆盖 update。
+- Windows symlink、junction、copy 的 fallback 行为需要明确暴露给 UI，不能让用户误以为所有 agent 都成功更新。
+- GitHub API 错误应尽量保留机器可读 reason，前端按 reason 渲染可理解文案。
+- 批量更新的 group 失败处理要保持和单个 update 一致，避免同一错误在不同入口下表现不同。
+
+---
+
+## 9. 修改更新链路前的检查清单
+
+- [ ] 先阅读 [cli-gui-sync-guide.md](./cli-gui-sync-guide.md)，确认这次变更是否涉及 CLI 同步点。
+- [ ] 检查 `src-tauri/src/core/update_metadata.rs`，确认 capability 派生是否需要调整。
+- [ ] 检查 `src-tauri/src/commands/update.rs`，确认检测和执行流程是否都要改。
+- [ ] 检查 lock 模型：`skill_lock.rs`、`local_lock.rs`、bindings、前端类型是否一致。
+- [ ] 检查 lock 读写是否保留未知字段，避免 GUI 版本落后于 CLI 时丢字段。
+- [ ] 检查前端缓存：`src/stores/skills-utils.ts`、`src/stores/skills-data.ts`。
+- [ ] 检查 UI：SkillCard、SkillDetailPanel、SkillsSection、安装完成页是否需要同步状态展示。
+- [ ] 修改后补 Rust 单元测试和前端 store/component 测试。
+- [ ] 验证 `skipped`、`partial`、`cannot-check` 和 reason 不会被误归并成 success 或 up-to-date。
+- [ ] 验证更新检测缓存不会只按 skill name 命中新来源、新 ref 或新 `skillPath` 的安装项。
+- [ ] 最后更新本文档，让它继续描述新的当前状态。

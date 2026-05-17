@@ -29,5 +29,8 @@ vercel-skills
 /.tauri
 /.worktrees
 /docs/plans
+/docs/superpowers
 /skills-lock.json
 .gitnexus
+.pnpm-store
+.superpowers
