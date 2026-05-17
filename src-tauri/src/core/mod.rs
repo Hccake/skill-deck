@@ -11,6 +11,7 @@ pub mod paths;
 pub mod plugin_manifest;
 pub mod skill;
 pub mod skill_lock;
+pub mod skill_paths;
 pub mod source_parser;
 pub mod source_policy;
 pub mod uninstaller;

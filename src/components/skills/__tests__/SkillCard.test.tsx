@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { SkillCard } from '../SkillCard';
@@ -70,7 +70,7 @@ describe('SkillCard', () => {
     expect(screen.getByText('skills.updatePhaseCloning')).toBeTruthy();
   });
 
-  it('shows cannot-check status without exposing update action when no update is available', () => {
+  it('shows cannot-check hint without duplicating it in the title row when no update is available', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -87,7 +87,137 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatus.cannotCheck')).toBeTruthy();
+    expect(screen.queryByText('skills.updateStatusLabel.needsSourceInfo')).toBeNull();
+    expect(screen.getByText('skills.updateHint.missing-skill-path')).toBeTruthy();
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+  });
+
+  it('keeps the single skill update action as the primary action when an update is available', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            hasUpdate: true,
+            canRunUpdate: true,
+          })}
+          displayScope="global"
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByTitle('skills.actions.update')).toBeTruthy();
+    expect(screen.getByText('skills.updateStatusLabel.available')).toBeTruthy();
+  });
+
+  it('keeps agent badges visible when showing a maintenance hint', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({
+              hasUpdate: false,
+              canRunUpdate: true,
+              canCheckForUpdates: false,
+              updateReason: 'missing-remote-hash',
+              agents: ['claude-code', 'codex'],
+            }),
+            updateStatus: 'cannot-check',
+          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.queryByText('skills.updateStatusLabel.versionUnknown')).toBeNull();
+    const hint = screen.getByText('skills.updateHint.missing-remote-hash');
+    expect(hint).toBeTruthy();
+    expect(hint.className).toContain('bg-muted/25');
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
+  });
+
+  it('shows repair source action for missing skill path metadata', () => {
+    const onRepairSource = vi.fn();
+
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({
+              hasUpdate: false,
+              canRunUpdate: false,
+              canCheckForUpdates: false,
+              source: 'owner/repo',
+              sourceUrl: 'https://github.com/owner/repo',
+              updateReason: 'missing-skill-path',
+            }),
+            updateStatus: 'cannot-check',
+          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+          displayScope="global"
+          onRepairSource={onRepairSource}
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByTitle('skills.actions.repairSource'));
+
+    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
+  });
+
+  it('uses direct reinstall for missing version metadata', () => {
+    const onUpdate = vi.fn();
+    const onRepairSource = vi.fn();
+
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({
+              hasUpdate: false,
+              canRunUpdate: true,
+              canCheckForUpdates: false,
+              source: 'owner/repo',
+              sourceUrl: 'https://github.com/owner/repo',
+              updateReason: 'missing-remote-hash',
+            }),
+            updateStatus: 'cannot-check',
+          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+          displayScope="global"
+          onUpdate={onUpdate}
+          onRepairSource={onRepairSource}
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByTitle('skills.actions.reinstall'));
+
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByText('skills.reinstallConfirm.title')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'skills.reinstallConfirm.confirm' }));
+
+    expect(onUpdate).toHaveBeenCalledWith('toolkit');
+    expect(onRepairSource).not.toHaveBeenCalled();
+  });
+
+  it('hides ordinary update action when update cannot run even if stale update state is present', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            hasUpdate: true,
+            canRunUpdate: false,
+            updateReason: 'missing-skill-path',
+          })}
+          displayScope="global"
+        />
+      </TooltipProvider>
+    );
+
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
 
@@ -107,5 +237,26 @@ describe('SkillCard', () => {
     );
 
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+  });
+
+  it.each([
+    ['rate-limited', 'skills.updateHint.rate-limited'],
+    ['auth', 'skills.updateHint.auth'],
+    ['network-error', 'skills.updateHint.network-error'],
+    ['http-404', 'skills.updateHint.http-error'],
+  ])('shows GitHub update reason %s', (reason, expectedKey) => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            hasUpdate: false,
+            updateReason: reason,
+          })}
+          displayScope="global"
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText(expectedKey)).toBeTruthy();
   });
 });

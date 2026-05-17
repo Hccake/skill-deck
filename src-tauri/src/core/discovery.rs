@@ -8,6 +8,7 @@
 //! 与 CLI skills.ts 行为一致
 
 use crate::core::skill::parse_skill_md;
+use crate::core::skill_paths::{find_skill_md_case_insensitive, relative_skill_path};
 use crate::error::AppError;
 use crate::models::AvailableSkill;
 use std::collections::HashSet;
@@ -47,6 +48,11 @@ impl From<DiscoveredSkill> for AvailableSkill {
             description: skill.description,
             relative_path: skill.relative_path,
             plugin_name: skill.plugin_name,
+            well_known_version: None,
+            well_known_entry_type: None,
+            artifact_url_host: None,
+            digest_verified: None,
+            trust_reason: None,
         }
     }
 }
@@ -130,8 +136,7 @@ pub fn discover_skills(
     let mut seen_names: HashSet<String> = HashSet::new();
 
     // 1. 检查 searchPath 本身是否是 skill
-    let skill_md = search_path.join("SKILL.md");
-    if skill_md.exists() {
+    if let Some(skill_md) = find_skill_md_case_insensitive(&search_path) {
         if let Some(skill) = try_parse_skill(&skill_md, base_path, &options)? {
             seen_names.insert(skill.name.clone());
             skills.push(skill);
@@ -187,16 +192,23 @@ fn get_priority_search_dirs(search_path: &Path) -> Vec<PathBuf> {
         search_path.join("skills/.curated"),
         search_path.join("skills/.experimental"),
         search_path.join("skills/.system"),
+        search_path.join(".aider-desk/skills"),
         search_path.join(".agents/skills"),
         search_path.join(".claude/skills"),
         search_path.join(".cline/skills"),
+        search_path.join(".codeartsdoer/skills"),
         search_path.join(".codebuddy/skills"),
+        search_path.join(".codemaker/skills"),
+        search_path.join(".codestudio/skills"),
         search_path.join(".codex/skills"),
         search_path.join(".commandcode/skills"),
         search_path.join(".continue/skills"),
         search_path.join(".cursor/skills"),
+        search_path.join(".devin/skills"),
+        search_path.join(".forge/skills"),
         search_path.join(".github/skills"),
         search_path.join(".goose/skills"),
+        search_path.join(".hermes/skills"),
         search_path.join(".iflow/skills"),
         search_path.join(".junie/skills"),
         search_path.join(".kilocode/skills"),
@@ -207,7 +219,9 @@ fn get_priority_search_dirs(search_path: &Path) -> Vec<PathBuf> {
         search_path.join(".openhands/skills"),
         search_path.join(".pi/skills"),
         search_path.join(".qoder/skills"),
+        search_path.join(".rovodev/skills"),
         search_path.join(".roo/skills"),
+        search_path.join(".tabnine/agent/skills"),
         search_path.join(".trae/skills"),
         search_path.join(".windsurf/skills"),
         search_path.join(".zencoder/skills"),
@@ -230,8 +244,7 @@ fn discover_in_dir(
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
-            let skill_md = path.join("SKILL.md");
-            if skill_md.exists() {
+            if let Some(skill_md) = find_skill_md_case_insensitive(&path) {
                 if let Some(skill) = try_parse_skill(&skill_md, root, options)? {
                     if !seen_names.contains(&skill.name) {
                         seen_names.insert(skill.name.clone());
@@ -270,7 +283,10 @@ fn discover_recursive(
         let path = entry.path();
         if path.is_file() {
             if let Some(file_name) = path.file_name() {
-                if file_name.to_str() == Some("SKILL.md") {
+                if file_name
+                    .to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                {
                     if let Some(skill) = try_parse_skill(path, root, options)? {
                         if !seen_names.contains(&skill.name) {
                             seen_names.insert(skill.name.clone());
@@ -318,17 +334,7 @@ fn try_parse_skill(
 
     // 计算相对路径
     let skill_dir = skill_md.parent().unwrap_or(skill_md);
-    let relative_path = skill_dir
-        .strip_prefix(root)
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| skill_dir.to_string_lossy().to_string());
-
-    // 使用 SKILL.md 路径格式
-    let relative_skill_path = if relative_path.is_empty() {
-        "SKILL.md".to_string()
-    } else {
-        format!("{}/SKILL.md", relative_path)
-    };
+    let relative_skill_path = relative_skill_path(root, skill_md);
 
     Ok(Some(DiscoveredSkill {
         name: parsed.name,
@@ -384,6 +390,50 @@ mod tests {
 
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "nested-skill");
+    }
+
+    #[test]
+    fn test_priority_search_dirs_include_cli_1_5_7_agent_dirs() {
+        let temp = tempdir().unwrap();
+        let dirs = get_priority_search_dirs(temp.path());
+        let expected = [
+            ".aider-desk/skills",
+            ".codeartsdoer/skills",
+            ".codemaker/skills",
+            ".codestudio/skills",
+            ".devin/skills",
+            ".forge/skills",
+            ".hermes/skills",
+            ".rovodev/skills",
+            ".tabnine/agent/skills",
+        ];
+
+        for dir in expected {
+            assert!(
+                dirs.contains(&temp.path().join(dir)),
+                "priority dirs should include {dir}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_discover_skills_preserves_actual_skill_md_casing() {
+        let temp = tempdir().unwrap();
+        let skill_dir = temp.path().join("skills/lowercase");
+        fs::create_dir_all(&skill_dir).unwrap();
+
+        fs::write(
+            skill_dir.join("skill.md"),
+            "---\nname: lowercase-skill\ndescription: Lowercase\n---\n",
+        )
+        .unwrap();
+
+        let options = DiscoverOptions::default();
+        let skills = discover_skills(temp.path(), None, options).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "lowercase-skill");
+        assert_eq!(skills[0].relative_path, "skills/lowercase/skill.md");
     }
 
     #[test]

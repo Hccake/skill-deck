@@ -6,7 +6,7 @@ import { useSkillsDataStore } from '../skills-data';
 import { useSkillDetailStore } from '../skill-detail';
 import { useSkillDialogStore } from '../skill-dialog';
 import { useContextStore } from '../context';
-import { updateInfoCache } from '../skills-utils';
+import { buildUpdatePlan, mergeUpdateInfo, updateInfoCache } from '../skills-utils';
 
 const mockListSkills = vi.fn();
 const mockListAgents = vi.fn();
@@ -58,6 +58,7 @@ describe('useSkillsStore', () => {
     useContextStore.setState({ selectedContext: 'global' });
     mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
     mockCheckUpdates.mockResolvedValue([]);
+    mockOpenInstallWizard.mockResolvedValue(undefined);
     updateInfoCache.clear();
     mockUpdateSkillsBatch.mockReset();
     useSkillsDataStore.setState({
@@ -72,6 +73,9 @@ describe('useSkillsStore', () => {
       checkingUpdateScopes: new Set(),
       updatingSkills: new Map(),
       updateAllCancelled: false,
+      lastUpdatePlan: null,
+      lastUpdateResults: null,
+      lastFailedUpdateNames: [],
     });
     useSkillDetailStore.setState({
       selectedSkillRef: null,
@@ -86,6 +90,25 @@ describe('useSkillsStore', () => {
       manageAgentsScope: 'global',
       manageAgentsProjectPath: undefined,
       copySkill: null,
+    });
+  });
+
+  describe('mergeUpdateInfo', () => {
+    it('preserves backend update reason when cached updates have no matching record', () => {
+      const skills = [
+        makeSkill('legacy', {
+          canRunUpdate: false,
+          canCheckForUpdates: false,
+          updateReason: 'missing-skill-path',
+        }),
+      ];
+
+      const merged = mergeUpdateInfo(skills, []);
+
+      expect(merged[0]).toEqual(expect.objectContaining({
+        hasUpdate: false,
+        updateReason: 'missing-skill-path',
+      }));
     });
   });
 
@@ -192,6 +215,23 @@ describe('useSkillsStore', () => {
   });
 
   describe('dialog state', () => {
+    it('openAddWithPrefill opens a project-scoped install wizard when repair metadata includes project context', () => {
+      useSkillDialogStore.getState().openAddWithPrefill({
+        source: 'https://github.com/owner/repo#main',
+        skillName: 'toolkit',
+        scope: 'project',
+        projectPath: 'D:\\Code\\project-a',
+      });
+
+      expect(mockOpenInstallWizard).toHaveBeenCalledWith({
+        entryPoint: 'discovery',
+        scope: 'project',
+        projectPath: 'D:\\Code\\project-a',
+        prefillSource: 'https://github.com/owner/repo#main',
+        prefillSkillName: 'toolkit',
+      });
+    });
+
     it('openDelete sets deleteTarget and fetches agent details', async () => {
       const skill = makeSkill('test-skill');
       const details: SkillAgentDetails = { skillName: 'test-skill', scope: 'global', canonicalPath: '/tmp', universalAgents: [], independentAgents: [] };
@@ -433,9 +473,138 @@ describe('useSkillsStore', () => {
       expect(cached?.results[0]?.status).toBe('cannot-check');
       expect(cached?.results[0]?.reason).toBe('missing-skill-path');
     });
+
+    it('clears missing version metadata after a successful direct reinstall', async () => {
+      useSkillsDataStore.setState({
+        globalSkills: [
+          {
+            ...makeSkill('toolkit', {
+              canCheckForUpdates: false,
+              canRunUpdate: true,
+              updateReason: 'missing-remote-hash',
+            }),
+            updateStatus: 'cannot-check',
+          },
+        ],
+        projectSkills: [],
+      });
+      updateInfoCache.set('global', {
+        checkedAt: Date.now(),
+        results: [{
+          name: 'toolkit',
+          source: 'owner/repo',
+          hasUpdate: false,
+          status: 'cannot-check',
+          reason: 'missing-remote-hash',
+          gitRef: null,
+        }],
+      });
+
+      mockUpdateSkill.mockResolvedValue({
+        results: [{
+          name: 'toolkit',
+          status: 'success',
+          warnings: [],
+          durationMs: 20,
+          agentResults: [],
+        }],
+        summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
+      });
+
+      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+
+      const cached = updateInfoCache.get('global');
+      expect(cached?.results[0]).toEqual(expect.objectContaining({
+        hasUpdate: false,
+        status: 'up-to-date',
+        reason: null,
+      }));
+      expect(useSkillsDataStore.getState().globalSkills[0]).toEqual(expect.objectContaining({
+        hasUpdate: false,
+        updateStatus: 'up-to-date',
+        updateReason: null,
+      }));
+    });
   });
 
   describe('updateAllInSection', () => {
+    it('builds an update plan with grouped updatable and repairable legacy skills', () => {
+      const plan = buildUpdatePlan([
+        makeSkill('toolkit', {
+          hasUpdate: true,
+          source: 'owner/repo',
+          sourceUrl: 'https://github.com/owner/repo',
+          gitRef: 'main',
+        }),
+        makeSkill('legacy', {
+          hasUpdate: false,
+          canRunUpdate: false,
+          updateReason: 'missing-skill-path',
+          source: 'owner/repo',
+          sourceUrl: 'https://github.com/owner/repo',
+          gitRef: 'main',
+        }),
+      ], 'project', 'D:\\Code\\project-a');
+
+      expect(plan.total).toBe(2);
+      expect(plan.updatableCount).toBe(1);
+      expect(plan.repairableCount).toBe(1);
+      expect(plan.groups).toHaveLength(1);
+      expect(plan.groups[0]?.skillNames).toEqual(['toolkit']);
+      expect(plan.groups[0]?.agents).toEqual(['claude-code']);
+      expect(plan.repairable[0]).toEqual(expect.objectContaining({
+        name: 'legacy',
+        reason: 'missing-skill-path',
+        repairSource: 'https://github.com/owner/repo#main',
+      }));
+    });
+
+    it('stores the last update plan and item results for update-all inspection', async () => {
+      useSkillsDataStore.setState({
+        globalSkills: [makeSkill('toolkit', { hasUpdate: true, canRunUpdate: true })],
+        projectSkills: [],
+      });
+      mockListSkills.mockRejectedValue(new Error('sync failed'));
+      mockUpdateSkillsBatch.mockResolvedValue({
+        results: [{
+          name: 'toolkit',
+          status: 'success',
+          warnings: [],
+          durationMs: 20,
+          agentResults: [],
+        }],
+        summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
+      });
+
+      await useSkillsDataStore.getState().updateAllInSection('global');
+
+      expect(useSkillsDataStore.getState().lastUpdatePlan?.updatableCount).toBe(1);
+      expect(useSkillsDataStore.getState().lastUpdateResults?.[0]).toEqual(
+        expect.objectContaining({ name: 'toolkit', status: 'success' })
+      );
+    });
+
+    it('records repairable legacy skills in the update plan without calling batch update', async () => {
+      useSkillsDataStore.setState({
+        globalSkills: [
+          makeSkill('legacy', {
+            hasUpdate: false,
+            canRunUpdate: false,
+            updateReason: 'missing-skill-path',
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+          }),
+        ],
+        projectSkills: [],
+      });
+
+      await useSkillsDataStore.getState().updateAllInSection('global');
+
+      expect(mockUpdateSkillsBatch).not.toHaveBeenCalled();
+      expect(useSkillsDataStore.getState().lastUpdatePlan?.repairableCount).toBe(1);
+      expect(useSkillsDataStore.getState().globalSkills[0]?.updateReason).toBe('missing-skill-path');
+    });
+
     it('optimistically clears local hasUpdate flags after successful batch updates', async () => {
       useSkillsDataStore.setState({
         globalSkills: [makeSkill('toolkit', { hasUpdate: true })],

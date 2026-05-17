@@ -72,7 +72,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
     if metadata.skill_path.as_deref().unwrap_or("").is_empty() {
         return UpdateCapability {
             can_check_for_updates: false,
-            can_run_update: true,
+            can_run_update: false,
             reason: Some("missing-skill-path".to_string()),
         };
     }

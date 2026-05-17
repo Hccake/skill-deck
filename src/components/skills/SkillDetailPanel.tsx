@@ -4,16 +4,17 @@ import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput } from 'lucide-react';
+import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PopConfirm } from '@/components/ui/pop-confirm';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { formatTime } from '@/lib/utils';
 import type { InstalledSkill, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
-import { resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
+import { resolveSkillMaintenanceAction, resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
 
 type SkillUpdateStatus = 'queued' | 'updating' | 'done' | 'failed';
 
@@ -44,6 +45,7 @@ interface SkillDetailPanelProps {
   onRetry: () => void;
   onManageAgents: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
+  onRepairSource?: (skill: InstalledSkill) => void;
 }
 
 export const SkillDetailPanel = memo(function SkillDetailPanel({
@@ -61,6 +63,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onRetry,
   onManageAgents,
   onCopyToProject,
+  onRepairSource,
 }: SkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -101,6 +104,10 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     onCopyToProject?.(skill);
   }, [onCopyToProject, skill]);
 
+  const handleRepairSource = useCallback(() => {
+    onRepairSource?.(skill);
+  }, [onRepairSource, skill]);
+
   const handleCheckUpdates = useCallback(async () => {
     if (!onCheckUpdates || isCheckingUpdates) return;
 
@@ -122,7 +129,10 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const isUpdateInProgress = updateStatus === 'queued' || updateStatus === 'updating';
   const showCheckDone = checkDone && !isCheckingUpdates && !skill.hasUpdate;
   const showCannotCheckStatus = skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
-  const canShowUpdateAction = skill.hasUpdate === true;
+  const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false;
+  const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
+  const canShowDirectReinstallAction = maintenanceAction === 'direct-reinstall';
+  const canShowRepairAction = maintenanceAction === 'repair-source' && Boolean(onRepairSource);
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-surface">
@@ -166,6 +176,36 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       >
                         <ArrowUpCircle className="h-4 w-4" />
                       </Button>
+                  ) : null}
+                  {canShowDirectReinstallAction ? (
+                    <PopConfirm
+                      title={t('skills.reinstallConfirm.title')}
+                      description={t('skills.reinstallConfirm.description')}
+                      confirmLabel={t('skills.reinstallConfirm.confirm')}
+                      cancelLabel={t('common.cancel')}
+                      onConfirm={handleUpdate}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
+                        title={t('skills.actions.reinstall')}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <Wrench className="h-4 w-4" />
+                      </Button>
+                    </PopConfirm>
+                  ) : null}
+                  {canShowRepairAction ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
+                      title={t('skills.actions.repairSource')}
+                      onClick={handleRepairSource}
+                    >
+                      <Wrench className="h-4 w-4" />
+                    </Button>
                   ) : null}
                   {!isUpdateInProgress && onCheckUpdates && skill.canCheckForUpdates === true ? (
                     showCheckDone ? (

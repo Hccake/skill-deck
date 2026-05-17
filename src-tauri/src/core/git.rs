@@ -8,7 +8,7 @@
 //!
 //! 与 CLI git.ts 行为一致
 
-use crate::core::github_api::normalize_skill_folder_path;
+use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -533,6 +533,15 @@ mod tests {
         let without_suffix = compute_local_tree_sha(&repo, "skills/demo");
         assert_eq!(with_suffix.as_deref(), Some(expected.as_str()));
         assert_eq!(without_suffix.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn test_compute_local_tree_sha_strips_lowercase_skill_md_suffix() {
+        let Some((_tmp, repo, expected)) = make_repo_with_skill("hello") else {
+            return;
+        };
+        let with_suffix = compute_local_tree_sha(&repo, "skills/demo/skill.md");
+        assert_eq!(with_suffix.as_deref(), Some(expected.as_str()));
     }
 
     #[test]

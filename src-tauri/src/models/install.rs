@@ -68,6 +68,8 @@ pub struct InstallResult {
     pub mode: InstallMode,
     /// symlink 是否失败并降级为 copy
     pub symlink_failed: bool,
+    /// project scope 中因目标 agent 根目录不存在而跳过
+    pub skipped: bool,
     /// 错误信息
     pub error: Option<String>,
 }
@@ -99,6 +101,21 @@ pub struct AvailableSkill {
     /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_name: Option<String>,
+    /// Well-known discovery protocol version, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub well_known_version: Option<String>,
+    /// Well-known entry type: legacy, skill-md, or archive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub well_known_entry_type: Option<String>,
+    /// Hostname of the fetched artifact URL for v2 entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_url_host: Option<String>,
+    /// Whether the v2 artifact digest was verified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest_verified: Option<bool>,
+    /// Compact trust reason for UI display.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_reason: Option<String>,
 }
 
 /// 非 Universal Agent 的安装详情

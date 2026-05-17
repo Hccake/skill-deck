@@ -30,7 +30,8 @@ pub struct SkillLockEntry {
     /// 仓库内的子路径
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_path: Option<String>,
-    /// GitHub tree SHA（用于更新检测）
+    /// 来源版本追踪 hash。GitHub 来源通常是远端 tree SHA；
+    /// 非 GitHub git 来源可能是安装来源目录的内容 hash。
     pub skill_folder_hash: String,
     /// 安装时间 (ISO 格式)
     pub installed_at: String,

@@ -119,9 +119,16 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   },
 
   openAddWithPrefill: (prefill) => {
+    const scope = prefill.scope ?? 'global';
+    const selectedContext = useContextStore.getState().selectedContext;
+    const projectPath =
+      scope === 'project'
+        ? prefill.projectPath ?? (selectedContext !== 'global' ? selectedContext : undefined)
+        : undefined;
     openInstallWizard({
       entryPoint: 'discovery',
-      scope: 'global',
+      scope,
+      projectPath,
       prefillSource: prefill.source,
       prefillSkillName: prefill.skillName,
     }).catch((e) => {

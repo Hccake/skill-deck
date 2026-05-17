@@ -51,7 +51,9 @@
       "update": "更新",
       "delete": "删除",
       "moreOptions": "更多选项",
-      "copyToProject": "复制到项目"
+      "copyToProject": "复制到项目",
+      "repairSource": "补全来源",
+      "reinstall": "重新安装"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -142,33 +144,79 @@
     "updateWarning": "「{{name}}」更新完成，但有 {{count}} 条告警：{{detail}}",
     "updateFailedUnknown": "未知错误",
     "updateError": "更新「{{name}}」失败：{{error}}",
-    "checking": "检测中...",
+    "checking": "正在检查...",
     "updateAll": "全部更新",
-    "updateAllProgress": "{{completed}}/{{total}} 更新中...",
-    "updateAllSummary": "{{total}} 个 skill 已更新：{{succeeded}} 个成功{{failedPart}}",
+    "updateAllProgress": "正在更新 {{completed}}/{{total}}",
+    "updateAllSummary": "{{total}} 个 Skill 已更新：{{succeeded}} 个成功{{failedPart}}",
     "updateAllFailed": "，{{failed}} 个失败（{{failedNames}}）",
     "queued": "排队中",
     "cancel": "取消",
     "updatePhaseCloning": "正在获取最新版本...",
-    "updatePhaseInstalling": "正在安装到 agents...",
+    "updatePhaseInstalling": "正在安装到 Agent...",
     "updatePhaseWritingLock": "正在保存配置...",
     "updateDone": "已更新",
     "updateFailed": "更新失败",
     "checkUpdates": "检查更新",
     "checkUpdatesError": "检查更新失败：{{error}}",
+    "upToDate": "全部已是最新",
+    "needsAttentionCount": "{{count}} 个需要处理",
+    "maintenanceNotice": "有 {{count}} 个 Skill 暂不能检查更新，请查看对应 Skill 的说明。",
+    "viewMaintenanceItems": "查看处理项",
     "updateStatus": {
-      "cannotCheck": "无法自动检查"
+      "cannotCheck": "暂不能检查更新"
+    },
+    "reinstallConfirm": {
+      "title": "重新安装此 Skill？",
+      "description": "将从安装来源重新拉取并覆盖当前 Skill，完成后会恢复版本检查。",
+      "confirm": "重新安装"
+    },
+    "updateStatusLabel": {
+      "available": "可更新",
+      "needsSourceInfo": "来源信息不完整",
+      "versionUnknown": "暂不能检查更新",
+      "upstreamUnavailable": "来源暂不可用",
+      "localSource": "本地 Skill"
+    },
+    "updateHint": {
+      "missing-skill-path": "缺少来源位置记录，暂不能定位远端 Skill。补全来源后可恢复检查。",
+      "missing-remote-hash": "缺少版本记录，暂不能判断是否有更新。重新安装后可恢复检查。",
+      "unsupported-source-type": "当前安装来源不支持自动检查更新，请根据原来源手动确认。",
+      "local-source": "本地 Skill 不支持在线更新，请在本地文件中维护内容。",
+      "upstream-unavailable": "暂时无法访问安装来源，请稍后重试。",
+      "rate-limited": "GitHub 请求次数已达上限，配置 GITHUB_TOKEN 后可继续检查。",
+      "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN。",
+      "network-error": "网络异常，暂时无法访问安装来源。",
+      "http-error": "检查更新失败，请稍后重试。"
     },
     "updateReason": {
-      "missing-skill-path": "缺少 skillPath，无法自动比较远端版本",
-      "missing-remote-hash": "缺少远端哈希，无法自动比较远端版本",
-      "unsupported-source-type": "该来源类型暂不支持自动检查更新",
-      "local-source": "本地路径来源不支持自动检查更新",
-      "upstream-unavailable": "上游暂不可访问，当前无法完成更新检查",
-      "rate-limited": "GitHub API 速率受限，建议设置 GITHUB_TOKEN 提升配额",
-      "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN 是否有效",
-      "network-error": "网络异常，无法访问 GitHub API",
-      "http-error": "GitHub API 返回错误，稍后可重试"
+      "missing-skill-path": "缺少来源位置记录，暂不能定位远端 Skill。补全来源后可恢复检查。",
+      "missing-remote-hash": "缺少版本记录，暂不能判断是否有更新。重新安装后可恢复检查。",
+      "unsupported-source-type": "当前安装来源不支持自动检查更新，请根据原来源手动确认。",
+      "local-source": "本地 Skill 不支持在线更新，请在本地文件中维护内容。",
+      "upstream-unavailable": "暂时无法访问安装来源，请稍后重试。",
+      "rate-limited": "GitHub 请求次数已达上限，配置 GITHUB_TOKEN 后可继续检查。",
+      "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN。",
+      "network-error": "网络异常，暂时无法访问安装来源。",
+      "http-error": "检查更新失败，请稍后重试。"
+    },
+    "updatePlan": {
+      "title": "更新计划",
+      "description": "开始前检查分组更新和需要修复的条目。",
+      "updatable": "可更新",
+      "needsRepair": "需修复",
+      "skipped": "跳过",
+      "readyTitle": "即将更新 {{count}} 个 Skill",
+      "readyDescription": "将按安装来源分组更新，并保留每个 Skill 当前关联的 Agent。",
+      "groupNotice": "本次将从 {{count}} 个安装来源拉取最新内容并重新安装。",
+      "skillCount": "{{count}} 个 Skill",
+      "confirm": "开始更新",
+      "targetAgents": "目标 Agents",
+      "retryFailed": "重试失败项",
+      "resultTitle": "更新结果",
+      "resultSuccess": "成功：{{count}}",
+      "resultPartial": "部分成功：{{count}}",
+      "resultFailed": "失败：{{count}}",
+      "resultSkipped": "跳过：{{count}}"
     },
     "discover": {
       "searchPlaceholder": "搜索 Skills...",
@@ -415,7 +463,13 @@
       "symlink": "符号链接",
       "symlinkHint": "各 Agent 引用通用目录源文件",
       "copy": "复制",
-      "copyHint": "源文件复制到各 Agent 目录"
+      "copyHint": "源文件复制到各 Agent 目录",
+      "trust": {
+        "legacy": "Legacy",
+        "skillMd": "skill-md",
+        "archive": "archive",
+        "digestVerified": "摘要已验证"
+      }
     },
     "risk": {
       "openclawTitle": "OpenClaw 来源需要额外确认",
@@ -443,6 +497,7 @@
       "hideFailures": "收起失败明细",
       "symlinked": "已链接",
       "copied": "已复制",
+      "skipped": "已跳过: {{agents}}",
       "symlinkFailed": "符号链接失败: {{agents}}",
       "symlinkFailedHint": "已改为复制文件。在 Windows 上，启用开发者模式可支持符号链接。"
     },

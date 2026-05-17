@@ -36,6 +36,9 @@ vi.mock('react-i18next', () => ({
       if (key === 'addSkill.complete.failedCount') {
         return `Failed: ${options?.count}`;
       }
+      if (key === 'addSkill.complete.skipped') {
+        return `Skipped: ${options?.agents}`;
+      }
       if (key === 'addSkill.error.unknown') {
         return 'Unknown error';
       }
@@ -53,6 +56,7 @@ function makeInstallResult(partial?: Partial<InstallResult>): InstallResult {
     canonicalPath: '/tmp/.agents/skill-a',
     mode: 'symlink',
     symlinkFailed: false,
+    skipped: false,
     error: null,
     ...partial,
   };
@@ -116,6 +120,22 @@ describe('CompleteStep', () => {
 
     expect(screen.getByText('2/3 agents')).toBeDefined();
     expect(screen.queryByText('permission denied')).toBeNull();
+  });
+
+  it('does not count skipped project agents as installed coverage', () => {
+    const installResults: InstallResults = {
+      successful: [
+        makeInstallResult({ skillName: 'skill-a', agent: 'claude-code' }),
+        makeInstallResult({ skillName: 'skill-a', agent: 'windsurf', skipped: true }),
+      ],
+      failed: [],
+      symlinkFallbackAgents: [],
+    };
+
+    render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
+
+    expect(screen.getByText('1/2 agents')).toBeDefined();
+    expect(screen.getByText('Skipped: windsurf')).toBeDefined();
   });
 
   it('retries one failed skill with only failed agents', () => {

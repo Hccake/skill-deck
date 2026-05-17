@@ -5,7 +5,7 @@
 //! - 项目根目录 skills-lock.json，便于 git 版本控制
 //! - SHA-256 本地文件哈希（非 GitHub tree SHA）
 //! - BTreeMap 按 key 排序，最小化 git diff
-//! - GUI 扩展字段 remote_hash 用于更新检测
+//! - GUI 可用 remote_hash/source_url/plugin_name 扩展项目级检测和展示
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -27,8 +27,8 @@ const LOCAL_LOCK_FILENAME: &str = "skills-lock.json";
 const LEGACY_PROJECT_LOCK_PATH: &str = ".agents/.skill-lock.json";
 
 /// Local Skill Lock 条目
-/// 对应 CLI: LocalSkillLockEntry (local-lock.ts:8-12)
-/// GUI 扩展了 remote_hash 和 skill_path 字段（CLI 会忽略未知字段）
+/// 对应 CLI: LocalSkillLockEntry；共享字段必须保持 CLI 语义。
+/// GUI 额外建模 source_url、remote_hash 和 plugin_name，用于增强检测和展示。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalSkillLockEntry {
@@ -45,18 +45,17 @@ pub struct LocalSkillLockEntry {
     /// SHA-256 本地文件内容哈希
     pub computed_hash: String,
 
-    /// GUI 扩展字段：GitHub tree SHA（用于更新检测）
-    /// CLI 会忽略此字段
+    /// GUI 扩展字段：远端/来源版本追踪 hash，用于项目级更新检测
+    /// CLI project update 不依赖此字段；缺失时 GUI 应降级为可重装但不可提前检测。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_hash: Option<String>,
 
-    /// GUI 扩展字段：仓库内的 skill 子路径（用于更新检测）
-    /// CLI 会忽略此字段
+    /// CLI/GUI 共享字段：仓库内的 SKILL.md 相对路径
+    /// CLI project update 依赖它构造定点 reinstall source。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_path: Option<String>,
 
-    /// 所属 plugin 名称
-    /// 对应 CLI: SkillLockEntry.pluginName
+    /// GUI 扩展字段：所属 plugin 名称
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_name: Option<String>,
 }

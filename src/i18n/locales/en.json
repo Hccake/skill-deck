@@ -51,7 +51,9 @@
       "update": "Update",
       "delete": "Delete",
       "moreOptions": "More options",
-      "copyToProject": "Copy to Project"
+      "copyToProject": "Copy to Project",
+      "repairSource": "Restore source",
+      "reinstall": "Reinstall"
     },
     "agent": {
       "enable": "Enable {{name}}",
@@ -142,10 +144,10 @@
     "updateWarning": "\"{{name}}\" updated with {{count}} warning(s): {{detail}}",
     "updateFailedUnknown": "Unknown error",
     "updateError": "Failed to update \"{{name}}\": {{error}}",
-    "checking": "checking...",
+    "checking": "Checking...",
     "updateAll": "Update All",
-    "updateAllProgress": "{{completed}}/{{total}} updating...",
-    "updateAllSummary": "{{total}} skills updated: {{succeeded}} succeeded{{failedPart}}",
+    "updateAllProgress": "Updating {{completed}}/{{total}}",
+    "updateAllSummary": "{{total}} Skill(s) updated: {{succeeded}} succeeded{{failedPart}}",
     "updateAllFailed": ", {{failed}} failed ({{failedNames}})",
     "queued": "Queued",
     "cancel": "Cancel",
@@ -156,19 +158,65 @@
     "updateFailed": "Failed",
     "checkUpdates": "Check Updates",
     "checkUpdatesError": "Failed to check updates: {{error}}",
+    "upToDate": "Everything is up to date",
+    "needsAttentionCount": "{{count}} need attention",
+    "maintenanceNotice": "{{count}} Skill(s) cannot check for updates right now. Open the matching Skill for details.",
+    "viewMaintenanceItems": "View items",
     "updateStatus": {
-      "cannotCheck": "Cannot check automatically"
+      "cannotCheck": "Cannot check for updates"
+    },
+    "reinstallConfirm": {
+      "title": "Reinstall this Skill?",
+      "description": "This will fetch the Skill from its install source again and overwrite the current copy. Update checks will resume after it finishes.",
+      "confirm": "Reinstall"
+    },
+    "updateStatusLabel": {
+      "available": "Update available",
+      "needsSourceInfo": "Source info incomplete",
+      "versionUnknown": "Cannot check for updates",
+      "upstreamUnavailable": "Source unavailable",
+      "localSource": "Local Skill"
+    },
+    "updateHint": {
+      "missing-skill-path": "The source location record is missing, so the remote Skill cannot be located. Restore the source to resume update checks.",
+      "missing-remote-hash": "The version record is missing, so updates cannot be checked. Reinstall to restore update checks.",
+      "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
+      "local-source": "Local Skills cannot be updated online. Maintain the local files directly.",
+      "upstream-unavailable": "The install source is unavailable right now. Try again later.",
+      "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
+      "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
+      "network-error": "Network error. The install source cannot be reached right now.",
+      "http-error": "Update check failed. Try again later."
     },
     "updateReason": {
-      "missing-skill-path": "Missing skillPath, so remote version comparison is unavailable",
-      "missing-remote-hash": "Missing remote hash, so remote version comparison is unavailable",
-      "unsupported-source-type": "This source type does not support automatic update checks yet",
-      "local-source": "Local path sources do not support automatic update checks",
-      "upstream-unavailable": "The upstream source is currently unavailable for update checks",
-      "rate-limited": "GitHub API rate limit reached — set GITHUB_TOKEN to raise the cap",
-      "auth": "GitHub authentication failed — check that GITHUB_TOKEN is valid",
-      "network-error": "Network error reaching GitHub API",
-      "http-error": "GitHub API returned an error; please retry later"
+      "missing-skill-path": "The source location record is missing, so the remote Skill cannot be located. Restore the source to resume update checks.",
+      "missing-remote-hash": "The version record is missing, so updates cannot be checked. Reinstall to restore update checks.",
+      "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
+      "local-source": "Local Skills cannot be updated online. Maintain the local files directly.",
+      "upstream-unavailable": "The install source is unavailable right now. Try again later.",
+      "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
+      "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
+      "network-error": "Network error. The install source cannot be reached right now.",
+      "http-error": "Update check failed. Try again later."
+    },
+    "updatePlan": {
+      "title": "Update plan",
+      "description": "Review grouped updates and items that need repair before starting.",
+      "updatable": "Updatable",
+      "needsRepair": "Needs repair",
+      "skipped": "Skipped",
+      "readyTitle": "Update {{count}} Skill(s)",
+      "readyDescription": "Updates run by install source and keep each Skill's current Agent assignments.",
+      "groupNotice": "This will fetch the latest content from {{count}} install source(s) and reinstall.",
+      "skillCount": "{{count}} Skill(s)",
+      "confirm": "Start update",
+      "targetAgents": "Target agents",
+      "retryFailed": "Retry failed",
+      "resultTitle": "Update results",
+      "resultSuccess": "Success: {{count}}",
+      "resultPartial": "Partial: {{count}}",
+      "resultFailed": "Failed: {{count}}",
+      "resultSkipped": "Skipped: {{count}}"
     },
     "discover": {
       "searchPlaceholder": "Search skills...",
@@ -415,7 +463,13 @@
       "symlink": "Symlink",
       "symlinkHint": "Agents reference source files in universal directory",
       "copy": "Copy",
-      "copyHint": "Source files copied to each agent directory"
+      "copyHint": "Source files copied to each agent directory",
+      "trust": {
+        "legacy": "Legacy",
+        "skillMd": "skill-md",
+        "archive": "archive",
+        "digestVerified": "digest verified"
+      }
     },
     "risk": {
       "openclawTitle": "OpenClaw sources require extra confirmation",
@@ -443,6 +497,7 @@
       "hideFailures": "Hide failures",
       "symlinked": "symlinked",
       "copied": "copied",
+      "skipped": "Skipped: {{agents}}",
       "symlinkFailed": "Symlinks failed for: {{agents}}",
       "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support."
     },

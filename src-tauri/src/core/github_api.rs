@@ -4,30 +4,15 @@
 //! - 获取 GitHub token（环境变量 + gh CLI）
 //! - 调用 GitHub Trees API 获取 skillFolderHash
 
+pub use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::error::AppError;
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// 规范化 skill 路径：去除 `SKILL.md` 后缀、统一斜杠、去除首尾斜杠。
-///
-/// Lock 中 `skill_path` 通常是 `skills/foo/SKILL.md`，但在向 GitHub Trees API 或
-/// 本地 `git rev-parse` 提供子目录时只能用 `skills/foo`。该函数同时被
-/// `fetch_skill_folder_hash` / `fetch_skill_folder_hashes_batch` /
-/// `compute_local_tree_sha` 复用，避免三处实现走偏。
-pub fn normalize_skill_folder_path(skill_path: &str) -> String {
-    // 统一斜杠 + 先 trim 尾随 /,这样 `skills/demo/SKILL.md/` 也能正确剥掉 SKILL.md
-    let trimmed = skill_path.replace('\\', "/");
-    let trimmed = trimmed.trim_end_matches('/');
-    if trimmed == "SKILL.md" {
-        return String::new();
-    }
-    if let Some(stripped) = trimmed.strip_suffix("/SKILL.md") {
-        return stripped.trim_end_matches('/').to_string();
-    }
-    trimmed.to_string()
-}
+static GITHUB_RATE_LIMITED: AtomicBool = AtomicBool::new(false);
 
 /// GitHub Trees API 响应
 #[derive(Debug, Deserialize)]
@@ -44,29 +29,20 @@ struct TreeEntry {
     sha: String,
 }
 
-/// 获取 GitHub token
-///
-/// 优先级：
-/// 1. GITHUB_TOKEN 环境变量
-/// 2. GH_TOKEN 环境变量
-/// 3. gh auth token 命令
-pub fn get_github_token() -> Option<String> {
-    // 1. 检查 GITHUB_TOKEN
+fn get_github_env_token() -> Option<String> {
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
-        if !token.is_empty() {
+        if !token.trim().is_empty() {
             return Some(token);
         }
     }
 
-    // 2. 检查 GH_TOKEN
     if let Ok(token) = std::env::var("GH_TOKEN") {
-        if !token.is_empty() {
+        if !token.trim().is_empty() {
             return Some(token);
         }
     }
 
-    // 3. 尝试 gh auth token
-    get_gh_cli_token()
+    None
 }
 
 /// 通过 gh CLI 获取 token
@@ -83,12 +59,156 @@ fn get_gh_cli_token() -> Option<String> {
     None
 }
 
+fn refs_to_try(git_ref: Option<&str>) -> Vec<String> {
+    match git_ref.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(r) => vec![r.to_string()],
+        None => ["HEAD", "main", "master"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+    }
+}
+
+fn build_trees_url(owner_repo: &str, git_ref: &str) -> String {
+    let encoded_ref = urlencoding::encode(git_ref);
+    format!(
+        "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
+        owner_repo, encoded_ref
+    )
+}
+
+#[derive(Debug, Clone)]
+struct GithubAuthState {
+    env_token: Option<String>,
+    cli_token: Option<String>,
+    prefer_cli_token: bool,
+}
+
+impl GithubAuthState {
+    fn from_env() -> Self {
+        Self::new(
+            get_github_env_token(),
+            GITHUB_RATE_LIMITED.load(Ordering::Relaxed),
+        )
+    }
+
+    fn new(env_token: Option<String>, prefer_cli_token: bool) -> Self {
+        Self {
+            env_token,
+            cli_token: None,
+            prefer_cli_token,
+        }
+    }
+
+    fn token_for_initial_request<F>(&mut self, resolve_cli_token: F) -> Option<String>
+    where
+        F: FnOnce() -> Option<String>,
+    {
+        if let Some(token) = &self.env_token {
+            return Some(token.clone());
+        }
+
+        if self.prefer_cli_token {
+            if self.cli_token.is_none() {
+                self.cli_token = resolve_cli_token();
+            }
+            return self.cli_token.clone();
+        }
+
+        None
+    }
+
+    fn retry_token_after_error<F>(
+        &mut self,
+        err: &AppError,
+        request_had_token: bool,
+        resolve_cli_token: F,
+    ) -> Option<String>
+    where
+        F: FnOnce() -> Option<String>,
+    {
+        if request_had_token || !is_rate_limited_error(err) {
+            return None;
+        }
+
+        self.prefer_cli_token = true;
+        GITHUB_RATE_LIMITED.store(true, Ordering::Relaxed);
+        if self.cli_token.is_none() {
+            self.cli_token = resolve_cli_token();
+        }
+        self.cli_token.clone()
+    }
+}
+
+fn is_rate_limited_error(err: &AppError) -> bool {
+    matches!(
+        err,
+        AppError::GitHubApiError { reason, .. } if reason == "rate-limited"
+    )
+}
+
+async fn send_tree_request(
+    client: &Client,
+    url: &str,
+    token: Option<&str>,
+) -> Result<TreesResponse, AppError> {
+    let mut request = client
+        .get(url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .header("User-Agent", "skill-deck");
+
+    if let Some(t) = token {
+        request = request.header("Authorization", format!("Bearer {}", t));
+    }
+
+    let response = request.send().await.map_err(|e| AppError::GitHubApiError {
+        reason: "network-error".into(),
+        message: e.to_string(),
+    })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(classify_github_response(status, response.headers(), url));
+    }
+
+    response
+        .json::<TreesResponse>()
+        .await
+        .map_err(|e| AppError::GitHubApiError {
+            reason: "network-error".into(),
+            message: format!("Failed to parse Trees response: {}", e),
+        })
+}
+
+async fn fetch_tree_for_ref(
+    client: &Client,
+    owner_repo: &str,
+    git_ref: &str,
+    auth: &mut GithubAuthState,
+) -> Result<TreesResponse, AppError> {
+    let url = build_trees_url(owner_repo, git_ref);
+    let token = auth.token_for_initial_request(get_gh_cli_token);
+    let result = send_tree_request(client, &url, token.as_deref()).await;
+
+    match result {
+        Ok(data) => Ok(data),
+        Err(err) => {
+            if let Some(retry_token) =
+                auth.retry_token_after_error(&err, token.is_some(), get_gh_cli_token)
+            {
+                return send_tree_request(client, &url, Some(&retry_token)).await;
+            }
+            Err(err)
+        }
+    }
+}
+
 /// 获取 skill 文件夹的 hash（通过 GitHub Trees API）
 ///
 /// # Arguments
 /// * `owner_repo` - 格式为 "owner/repo"
 /// * `skill_path` - 文件夹路径，如 "skills/my-skill/SKILL.md"
-/// * `git_ref` - 可选的分支/tag，默认尝试 main 和 master
+/// * `git_ref` - 可选的分支/tag，默认尝试 HEAD、main 和 master
 ///
 /// # Returns
 /// * `Ok(Some(hash))` - 成功获取 hash
@@ -101,49 +221,25 @@ pub async fn fetch_skill_folder_hash(
 ) -> Result<Option<String>, AppError> {
     let folder_path = normalize_skill_folder_path(skill_path);
 
-    let token = get_github_token();
     let client = Client::new();
+    let mut auth = GithubAuthState::from_env();
 
-    // 如果指定了 git_ref，只尝试该分支；否则尝试 main 和 master
-    let branches: Vec<&str> = match git_ref {
-        Some(r) => vec![r],
-        None => vec!["main", "master"],
-    };
+    for git_ref in refs_to_try(git_ref) {
+        match fetch_tree_for_ref(&client, owner_repo, &git_ref, &mut auth).await {
+            Ok(data) => {
+                if folder_path.is_empty() {
+                    return Ok(Some(data.sha));
+                }
 
-    for branch in branches {
-        let url = format!(
-            "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
-            owner_repo, branch
-        );
-
-        let mut request = client
-            .get(&url)
-            .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "skill-deck");
-
-        if let Some(ref t) = token {
-            request = request.header("Authorization", format!("Bearer {}", t));
-        }
-
-        let response = request.send().await;
-
-        match response {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(data) = resp.json::<TreesResponse>().await {
-                    // 如果 folder_path 为空，返回根 tree SHA
-                    if folder_path.is_empty() {
-                        return Ok(Some(data.sha));
-                    }
-
-                    // 查找对应的 tree entry
-                    for entry in data.tree {
-                        if entry.entry_type == "tree" && entry.path == folder_path {
-                            return Ok(Some(entry.sha));
-                        }
+                for entry in data.tree {
+                    if entry.entry_type == "tree" && entry.path == folder_path {
+                        return Ok(Some(entry.sha));
                     }
                 }
+                return Ok(None);
             }
-            _ => continue,
+            Err(err) if is_ref_specific_error(&err) => continue,
+            Err(err) => return Err(err),
         }
     }
 
@@ -221,61 +317,20 @@ pub async fn fetch_skill_folder_hashes_batch(
         .map(|(name, path)| (name.clone(), normalize_skill_folder_path(path)))
         .collect();
 
-    let token = get_github_token();
     let client = Client::new();
-
-    let branches: Vec<&str> = match git_ref {
-        Some(r) => vec![r],
-        None => vec!["main", "master"],
-    };
+    let mut auth = GithubAuthState::from_env();
 
     let mut last_err: Option<AppError> = None;
 
-    for branch in branches {
-        let url = format!(
-            "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
-            owner_repo, branch
-        );
-
-        let mut request = client
-            .get(&url)
-            .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "skill-deck");
-
-        if let Some(ref t) = token {
-            request = request.header("Authorization", format!("Bearer {}", t));
-        }
-
-        let response = match request.send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                last_err = Some(AppError::GitHubApiError {
-                    reason: "network-error".into(),
-                    message: e.to_string(),
-                });
-                continue;
-            }
-        };
-
-        let status = response.status();
-        if !status.is_success() {
-            let err = classify_github_response(status, response.headers(), &url);
-            // 仅 404 继续尝试下一个 branch;rate-limit / auth 等立即返回
-            if !is_ref_specific_error(&err) {
-                return Err(err);
-            }
-            last_err = Some(err);
-            continue;
-        }
-
-        // HTTP 2xx
-        let data = match response.json::<TreesResponse>().await {
-            Ok(d) => d,
-            Err(e) => {
-                last_err = Some(AppError::GitHubApiError {
-                    reason: "network-error".into(),
-                    message: format!("Failed to parse Trees response: {}", e),
-                });
+    for git_ref in refs_to_try(git_ref) {
+        let data = match fetch_tree_for_ref(&client, owner_repo, &git_ref, &mut auth).await {
+            Ok(data) => data,
+            Err(err) => {
+                // 仅 404 继续尝试下一个 ref;rate-limit / auth 等立即返回
+                if !is_ref_specific_error(&err) {
+                    return Err(err);
+                }
+                last_err = Some(err);
                 continue;
             }
         };
@@ -336,6 +391,73 @@ mod tests {
             AppError::GitHubApiError { reason, .. } => assert_eq!(reason, "rate-limited"),
             _ => panic!("expected GitHubApiError"),
         }
+    }
+
+    #[test]
+    fn test_refs_to_try_defaults_to_head_main_master() {
+        assert_eq!(refs_to_try(None), vec!["HEAD", "main", "master"]);
+        assert_eq!(refs_to_try(Some("feature/foo")), vec!["feature/foo"]);
+    }
+
+    #[test]
+    fn test_build_trees_url_encodes_git_ref() {
+        assert_eq!(
+            build_trees_url("owner/repo", "feature/foo"),
+            "https://api.github.com/repos/owner/repo/git/trees/feature%2Ffoo?recursive=1"
+        );
+    }
+
+    #[test]
+    fn test_github_auth_state_starts_anonymous_without_env_token() {
+        let mut auth = GithubAuthState::new(None, false);
+        let mut resolver_called = false;
+
+        let token = auth.token_for_initial_request(|| {
+            resolver_called = true;
+            Some("cli-token".to_string())
+        });
+
+        assert_eq!(token, None);
+        assert!(!resolver_called);
+    }
+
+    #[test]
+    fn test_github_auth_state_retries_with_cli_token_after_rate_limit() {
+        let mut auth = GithubAuthState::new(None, false);
+        let err = classify_github_response(
+            StatusCode::FORBIDDEN,
+            &header_map(&[("X-RateLimit-Remaining", "0")]),
+            "https://example.com",
+        );
+        let mut resolver_calls = 0;
+
+        let token = auth.retry_token_after_error(&err, false, || {
+            resolver_calls += 1;
+            Some("cli-token".to_string())
+        });
+
+        assert_eq!(token, Some("cli-token".to_string()));
+        assert_eq!(resolver_calls, 1);
+        assert_eq!(
+            auth.token_for_initial_request(|| panic!("token should be cached")),
+            Some("cli-token".to_string())
+        );
+    }
+
+    #[test]
+    fn test_github_auth_state_does_not_retry_auth_errors() {
+        let mut auth = GithubAuthState::new(None, false);
+        let err = classify_github_response(
+            StatusCode::UNAUTHORIZED,
+            &HeaderMap::new(),
+            "https://example.com",
+        );
+
+        let token = auth.retry_token_after_error(&err, false, || {
+            panic!("auth errors should not resolve a CLI token");
+        });
+
+        assert_eq!(token, None);
     }
 
     #[test]
@@ -402,19 +524,28 @@ mod tests {
             normalize_skill_folder_path("skills\\demo\\SKILL.md"),
             "skills/demo"
         );
+        assert_eq!(
+            normalize_skill_folder_path("skills/demo/skill.md"),
+            "skills/demo"
+        );
+        assert_eq!(
+            normalize_skill_folder_path("skills\\demo\\Skill.md"),
+            "skills/demo"
+        );
+        assert_eq!(normalize_skill_folder_path("skill.md"), "");
         assert_eq!(normalize_skill_folder_path("skills/demo/"), "skills/demo");
         assert_eq!(normalize_skill_folder_path("/"), "");
         assert_eq!(normalize_skill_folder_path(""), "");
     }
 
     #[test]
-    fn test_get_github_token_from_env() {
+    fn test_get_github_env_token_from_env() {
         // 保存原始值
         let original = std::env::var("GITHUB_TOKEN").ok();
 
         // 设置测试值
         std::env::set_var("GITHUB_TOKEN", "test-token");
-        assert_eq!(get_github_token(), Some("test-token".to_string()));
+        assert_eq!(get_github_env_token(), Some("test-token".to_string()));
 
         // 恢复原始值
         match original {

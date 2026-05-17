@@ -8,7 +8,9 @@ import {
   updateInfoCache,
   UPDATE_CHECK_TTL,
   clearUpdateCacheForSkill,
+  buildUpdatePlan,
   type SkillListItem,
+  type UpdatePlan,
   t,
 } from './skills-utils';
 import {
@@ -20,7 +22,7 @@ import {
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
 import { getSkillIdentity, getSkillIdentityKey, isSameSkillIdentity } from '@/lib/skills/identity';
-import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData } from '@/bindings';
+import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData, UpdateSkillItemResult } from '@/bindings';
 
 type UpdateCheckResult =
   | { ok: true; updates: SkillUpdateInfo[] }
@@ -30,10 +32,12 @@ function clearLocalUpdateFlags(
   skills: SkillListItem[],
   scope: SkillScope,
   skillNames: Set<string>,
+  options: { clearCannotCheck?: boolean } = {},
 ): SkillListItem[] {
   let changed = false;
   const nextSkills = skills.map((skill) => {
-    if (skill.scope !== scope || !skillNames.has(skill.name) || !skill.hasUpdate) {
+    const shouldClear = skill.hasUpdate || options.clearCannotCheck;
+    if (skill.scope !== scope || !skillNames.has(skill.name) || !shouldClear) {
       return skill;
     }
     changed = true;
@@ -126,6 +130,9 @@ interface SkillsDataState {
   checkingUpdateScopes: Set<string>;
   updatingSkills: Map<string, 'queued' | 'updating' | 'done' | 'failed'>;
   updateAllCancelled: boolean;
+  lastUpdatePlan: UpdatePlan | null;
+  lastUpdateResults: UpdateSkillItemResult[] | null;
+  lastFailedUpdateNames: string[];
 
   // Actions
   fetchSkills: () => Promise<void>;
@@ -153,6 +160,9 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   checkingUpdateScopes: new Set(),
   updatingSkills: new Map(),
   updateAllCancelled: false,
+  lastUpdatePlan: null,
+  lastUpdateResults: null,
+  lastFailedUpdateNames: [],
   allProjectsSkills: new Map(),
 
   fetchSkills: async () => {
@@ -361,15 +371,22 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       if (shouldClearUpdateFlag) {
         const skillsList = scope === 'global' ? get().globalSkills : get().projectSkills;
         const target = skillsList.find((s) => s.name === skillName);
-        if (target?.canCheckForUpdates !== false) {
-          clearUpdateCacheForSkill(skillName, scope, projectPath);
+        const shouldClearCannotCheck = target?.updateReason === 'missing-remote-hash';
+        if (target?.canCheckForUpdates !== false || shouldClearCannotCheck) {
+          clearUpdateCacheForSkill(skillName, scope, projectPath, {
+            clearCannotCheck: shouldClearCannotCheck,
+          });
         }
         set((state) => ({
           globalSkills: scope === 'global'
-            ? clearLocalUpdateFlags(state.globalSkills, scope, new Set([skillName]))
+            ? clearLocalUpdateFlags(state.globalSkills, scope, new Set([skillName]), {
+              clearCannotCheck: shouldClearCannotCheck,
+            })
             : state.globalSkills,
           projectSkills: scope === 'project'
-            ? clearLocalUpdateFlags(state.projectSkills, scope, new Set([skillName]))
+            ? clearLocalUpdateFlags(state.projectSkills, scope, new Set([skillName]), {
+              clearCannotCheck: shouldClearCannotCheck,
+            })
             : state.projectSkills,
         }));
       }
@@ -418,11 +435,14 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   updateAllInSection: async (scope) => {
     const { globalSkills, projectSkills } = get();
     const skills = scope === 'project' ? projectSkills : globalSkills;
-    const updatable = skills.filter((s) => s.hasUpdate);
-    if (updatable.length === 0) return;
-
     const { selectedContext } = useContextStore.getState();
     const projectPath = scope === 'project' ? selectedContext : undefined;
+    const plan = buildUpdatePlan(skills, scope, projectPath);
+    const updatableNames = new Set(plan.groups.flatMap((group) => group.skillNames));
+    const updatable = skills.filter((s) => updatableNames.has(s.name));
+
+    set({ lastUpdatePlan: plan, lastUpdateResults: null, lastFailedUpdateNames: [] });
+    if (updatable.length === 0) return;
 
     set({ updateAllCancelled: false });
     set((state) => {
@@ -445,6 +465,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     }
 
     const results: { name: string; success: boolean }[] = [];
+    const itemResults: UpdateSkillItemResult[] = [];
 
     const groupPromises = Array.from(bySource.entries()).map(async ([, group]) => {
       if (get().updateAllCancelled) return;
@@ -464,6 +485,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
           names: group.map((s) => s.name),
           projectPath,
         });
+        itemResults.push(...response.results);
         const successfulSkillNames = new Set<string>();
 
         for (const skill of group) {
@@ -503,6 +525,13 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       } catch {
         for (const skill of group) {
           results.push({ name: skill.name, success: false });
+          itemResults.push({
+            name: skill.name,
+            status: 'failed',
+            error: t('skills.updateFailedUnknown'),
+            warnings: [],
+            agentResults: [],
+          });
           set((state) => {
             const next = new Map(state.updatingSkills);
             next.set(getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }), 'failed');
@@ -526,6 +555,12 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
     const succeeded = results.filter((r) => r.success).length;
     const failedItems = results.filter((r) => !r.success);
+    set({
+      lastUpdateResults: itemResults,
+      lastFailedUpdateNames: itemResults
+        .filter((item) => item.status === 'failed' || item.status === 'partial')
+        .map((item) => item.name),
+    });
     const failedPart = failedItems.length > 0
       ? t('skills.updateAllFailed', { failed: failedItems.length, failedNames: failedItems.map((r) => r.name).join(', ') })
       : '';

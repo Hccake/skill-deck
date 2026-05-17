@@ -84,10 +84,10 @@ pub struct SkillUpdateInfo {
 /// 检测指定 scope 的 skills 是否有更新
 ///
 /// 流程：
-/// 1. 读取对应 scope 的 .skill-lock.json
-/// 2. 过滤出 sourceType == "github" 且有 skillFolderHash 和 skillPath 的 skills
-/// 3. 按 source 分组，对每组调用 GitHub Trees API
-/// 4. 比对本地 hash 与远程 hash
+/// 1. 读取对应 scope 的 lock 文件
+/// 2. 从 lock entry 派生更新能力；不可检查的 entry 直接返回 cannot-check
+/// 3. 对可检查的来源按 source/ref 分组，目前 GitHub 走 Trees API
+/// 4. 比对记录的版本 hash 与远端 hash
 #[tauri::command]
 #[specta::specta]
 pub async fn check_updates(
@@ -222,6 +222,26 @@ fn ensure_can_run_update(metadata: &crate::core::NormalizedUpdateMetadata) -> Re
     Ok(())
 }
 
+fn build_skipped_update_result(
+    name: &str,
+    metadata: &crate::core::NormalizedUpdateMetadata,
+    reason: &str,
+) -> UpdateSkillItemResult {
+    UpdateSkillItemResult {
+        name: name.to_string(),
+        status: UpdateSkillStatus::Skipped,
+        error: Some(reason.to_string()),
+        reason: Some(reason.to_string()),
+        source: Some(metadata.source.clone()),
+        source_url: metadata.source_url.clone(),
+        git_ref: metadata.ref_name.clone(),
+        skill_path: metadata.skill_path.clone(),
+        warnings: Vec::new(),
+        duration_ms: None,
+        agent_results: Vec::new(),
+    }
+}
+
 fn build_batch_check_result(
     name: &str,
     source: &str,
@@ -327,6 +347,11 @@ async fn update_skill_inner(
             name: skill_name.to_string(),
             status: UpdateSkillStatus::Failed,
             error: Some(err.to_string()),
+            reason: None,
+            source: None,
+            source_url: None,
+            git_ref: None,
+            skill_path: None,
             warnings: Vec::new(),
             duration_ms: None,
             agent_results: Vec::new(),
@@ -420,7 +445,14 @@ async fn update_skill_single(
         skill_path: entry_skill_path.clone(),
         remote_hash: None,
     };
-    ensure_can_run_update(&metadata)?;
+    if ensure_can_run_update(&metadata).is_err() {
+        let capability = crate::core::derive_update_capability(&metadata);
+        return Ok(build_skipped_update_result(
+            skill_name,
+            &metadata,
+            capability.reason.as_deref().unwrap_or("cannot-update"),
+        ));
+    }
 
     // 3. 直接从 lock 元数据构造更新目标，避免 round-trip 成 source 字符串后丢失来源类型
     let update_target = build_update_target(UpdateSourceParts {
@@ -479,9 +511,7 @@ async fn update_skill_single(
     )?;
 
     // 5. 找到目标 skill
-    let skill = discovered
-        .iter()
-        .find(|s| s.name == skill_name)
+    let skill = find_update_skill(&discovered, skill_name, entry_skill_path.as_deref())
         .ok_or_else(|| AppError::NoSkillsFound)?;
 
     // 6. 检测已安装的 agents (通过文件系统检测,fallback 仅保留 universal agents)。
@@ -526,11 +556,14 @@ async fn update_skill_single(
         .into_iter()
         .map(|r| UpdateSkillAgentResult {
             agent: r.agent,
-            status: if r.success {
+            status: if r.skipped {
+                UpdateSkillAgentStatus::Skipped
+            } else if r.success {
                 UpdateSkillAgentStatus::Success
             } else {
                 UpdateSkillAgentStatus::Failed
             },
+            mode: Some(r.mode),
             error: r.error,
             duration_ms: r.duration_ms,
         })
@@ -615,6 +648,15 @@ async fn update_skill_single(
         name: skill_name.to_string(),
         status,
         error,
+        reason: None,
+        source: Some(entry_source.clone()),
+        source_url: if entry_source_url.is_empty() {
+            None
+        } else {
+            Some(entry_source_url.clone())
+        },
+        git_ref: entry_ref_name.clone(),
+        skill_path: entry_skill_path.clone(),
         warnings,
         duration_ms: None,
         agent_results,
@@ -659,12 +701,23 @@ async fn update_skills_batch_inner(
 
     let names_set: std::collections::HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
     let mut entries: Vec<SkillEntry> = Vec::new();
+    let mut all_results: Vec<UpdateSkillItemResult> = Vec::new();
 
     match scope {
         Scope::Global => {
             if let Ok(lock) = read_scoped_lock(None) {
                 for (name, entry) in &lock.skills {
                     if names_set.contains(name.as_str()) {
+                        let metadata = normalize_global_lock_entry(entry);
+                        let capability = derive_update_capability(&metadata);
+                        if !capability.can_run_update {
+                            all_results.push(build_skipped_update_result(
+                                name,
+                                &metadata,
+                                capability.reason.as_deref().unwrap_or("cannot-update"),
+                            ));
+                            continue;
+                        }
                         entries.push(SkillEntry {
                             name: name.clone(),
                             source: entry.source.clone(),
@@ -683,6 +736,16 @@ async fn update_skills_batch_inner(
                 if let Ok(local_lock) = read_local_lock(pp) {
                     for (name, entry) in &local_lock.skills {
                         if names_set.contains(name.as_str()) {
+                            let metadata = normalize_local_lock_entry(entry);
+                            let capability = derive_update_capability(&metadata);
+                            if !capability.can_run_update {
+                                all_results.push(build_skipped_update_result(
+                                    name,
+                                    &metadata,
+                                    capability.reason.as_deref().unwrap_or("cannot-update"),
+                                ));
+                                continue;
+                            }
                             let source_url = entry.source_url.clone().unwrap_or_else(|| {
                                 if entry.source_type == "github" {
                                     format!("https://github.com/{}", entry.source)
@@ -719,7 +782,6 @@ async fn update_skills_batch_inner(
             .push(entry);
     }
 
-    let mut all_results: Vec<UpdateSkillItemResult> = Vec::new();
     let install_scope = match scope {
         Scope::Global => crate::models::Scope::Global,
         Scope::Project => crate::models::Scope::Project,
@@ -768,6 +830,11 @@ async fn update_skills_batch_inner(
                                 name: entry.name.clone(),
                                 status: UpdateSkillStatus::Failed,
                                 error: Some(err.to_string()),
+                                reason: None,
+                                source: Some(entry.source.clone()),
+                                source_url: Some(entry.source_url.clone()),
+                                git_ref: entry.ref_name.clone(),
+                                skill_path: entry.skill_path.clone(),
                                 warnings: Vec::new(),
                                 duration_ms: None,
                                 agent_results: Vec::new(),
@@ -786,6 +853,11 @@ async fn update_skills_batch_inner(
                                 name: entry.name.clone(),
                                 status: UpdateSkillStatus::Failed,
                                 error: Some(err.to_string()),
+                                reason: None,
+                                source: Some(entry.source.clone()),
+                                source_url: Some(entry.source_url.clone()),
+                                git_ref: entry.ref_name.clone(),
+                                skill_path: entry.skill_path.clone(),
                                 warnings: Vec::new(),
                                 duration_ms: None,
                                 agent_results: Vec::new(),
@@ -801,6 +873,11 @@ async fn update_skills_batch_inner(
                         name: entry.name.clone(),
                         status: UpdateSkillStatus::Failed,
                         error: Some(format!("Unsupported update source type: {}", other)),
+                        reason: Some("unsupported-source-type".to_string()),
+                        source: Some(entry.source.clone()),
+                        source_url: Some(entry.source_url.clone()),
+                        git_ref: entry.ref_name.clone(),
+                        skill_path: entry.skill_path.clone(),
                         warnings: Vec::new(),
                         duration_ms: None,
                         agent_results: Vec::new(),
@@ -827,6 +904,11 @@ async fn update_skills_batch_inner(
                             name: entry.name.clone(),
                             status: UpdateSkillStatus::Failed,
                             error: Some(err.to_string()),
+                            reason: None,
+                            source: Some(entry.source.clone()),
+                            source_url: Some(entry.source_url.clone()),
+                            git_ref: entry.ref_name.clone(),
+                            skill_path: entry.skill_path.clone(),
                             warnings: Vec::new(),
                             duration_ms: None,
                             agent_results: Vec::new(),
@@ -846,6 +928,11 @@ async fn update_skills_batch_inner(
                                 "Skill '{}' not found in cloned repository",
                                 entry.name
                             )),
+                            reason: Some("skill-not-found".to_string()),
+                            source: Some(entry.source.clone()),
+                            source_url: Some(entry.source_url.clone()),
+                            git_ref: entry.ref_name.clone(),
+                            skill_path: entry.skill_path.clone(),
                             warnings: Vec::new(),
                             duration_ms: None,
                             agent_results: Vec::new(),
@@ -884,11 +971,14 @@ async fn update_skills_batch_inner(
                 .into_iter()
                 .map(|r| UpdateSkillAgentResult {
                     agent: r.agent,
-                    status: if r.success {
+                    status: if r.skipped {
+                        UpdateSkillAgentStatus::Skipped
+                    } else if r.success {
                         UpdateSkillAgentStatus::Success
                     } else {
                         UpdateSkillAgentStatus::Failed
                     },
+                    mode: Some(r.mode),
                     error: r.error,
                     duration_ms: r.duration_ms,
                 })
@@ -975,6 +1065,11 @@ async fn update_skills_batch_inner(
                 name: entry.name.clone(),
                 status,
                 error,
+                reason: None,
+                source: Some(entry.source.clone()),
+                source_url: Some(entry.source_url.clone()),
+                git_ref: entry.ref_name.clone(),
+                skill_path: entry.skill_path.clone(),
                 warnings,
                 duration_ms: Some(elapsed_ms(&start)),
                 agent_results,
@@ -991,6 +1086,11 @@ async fn update_skills_batch_inner(
                 name: name.clone(),
                 status: UpdateSkillStatus::Failed,
                 error: Some(format!("Skill '{}' not found in lock file", name)),
+                reason: Some("missing-lock-entry".to_string()),
+                source: None,
+                source_url: None,
+                git_ref: None,
+                skill_path: None,
                 warnings: Vec::new(),
                 duration_ms: None,
                 agent_results: Vec::new(),
@@ -1039,8 +1139,8 @@ fn derive_skill_status(agent_results: &[UpdateSkillAgentResult]) -> UpdateSkillS
     }
 }
 
-/// 读取 lock 中已有的远端 hash（global 用 `skill_folder_hash`，project 用 `remote_hash`）。
-/// 用于 update 后远端 hash 抓取失败时保留旧值，避免写入空串导致 capability 永久降级。
+/// 读取 lock 中已有的版本追踪 hash（global 用 `skill_folder_hash`，project 用 GUI 扩展 `remote_hash`）。
+/// 用于 update 后 hash 刷新失败时保留旧值，避免写入空串导致 capability 永久降级。
 fn read_existing_hash(
     scope: &Scope,
     skill_name: &str,
@@ -1065,11 +1165,11 @@ fn read_existing_hash(
     }
 }
 
-/// 解析 update 完成后要写入 lock 的 `skill_folder_hash`。
+/// 解析 update 完成后要写入 lock 的版本追踪 hash。
 ///
 /// 优先级（每一级失败才进入下一级）：
 ///   1. 从本地新 clone 的仓库直接 `git rev-parse` 计算 tree SHA — 零额外网络调用
-///   2. 远端 GitHub Trees API — 兜底（例如 local source 没有 clone_result）
+///   2. 远端 GitHub Trees API — 兜底
 ///   3. 保留 lock 中已有的旧 hash — 绝不写入空串
 ///
 /// 返回 `(final_hash, warning)`，只有当 1 / 2 都失败、且需要保留旧 hash 时才会附带 warning。
@@ -1239,6 +1339,7 @@ mod tests {
             });
 
         assert!(!capability.can_check_for_updates);
+        assert!(!capability.can_run_update);
         assert_eq!(capability.reason.as_deref(), Some("missing-skill-path"));
     }
 
@@ -1300,6 +1401,20 @@ mod tests {
     }
 
     #[test]
+    fn test_ensure_can_run_update_rejects_missing_skill_path() {
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo".to_string()),
+            ref_name: Some("main".to_string()),
+            skill_path: None,
+            remote_hash: Some("abc123".to_string()),
+        };
+        let result = ensure_can_run_update(&metadata);
+        assert!(matches!(result, Err(AppError::InstallFailed { .. })));
+    }
+
+    #[test]
     fn test_ensure_can_run_update_accepts_github_with_skill_path() {
         let metadata = crate::core::NormalizedUpdateMetadata {
             source: "owner/repo".to_string(),
@@ -1313,17 +1428,43 @@ mod tests {
     }
 
     #[test]
+    fn test_skipped_update_result_carries_repair_metadata() {
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo".to_string()),
+            ref_name: Some("main".to_string()),
+            skill_path: None,
+            remote_hash: Some("tree123".to_string()),
+        };
+
+        let result = build_skipped_update_result("demo", &metadata, "missing-skill-path");
+
+        assert_eq!(result.status, UpdateSkillStatus::Skipped);
+        assert_eq!(result.reason.as_deref(), Some("missing-skill-path"));
+        assert_eq!(result.error.as_deref(), Some("missing-skill-path"));
+        assert_eq!(result.source.as_deref(), Some("owner/repo"));
+        assert_eq!(
+            result.source_url.as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert_eq!(result.git_ref.as_deref(), Some("main"));
+    }
+
+    #[test]
     fn test_skill_status_partial_when_some_agents_failed() {
         let agent_results = vec![
             UpdateSkillAgentResult {
                 agent: "cursor".to_string(),
                 status: UpdateSkillAgentStatus::Success,
+                mode: None,
                 error: None,
                 duration_ms: Some(5),
             },
             UpdateSkillAgentResult {
                 agent: "claude-code".to_string(),
                 status: UpdateSkillAgentStatus::Failed,
+                mode: None,
                 error: Some("copy failed".to_string()),
                 duration_ms: Some(7),
             },
@@ -1339,6 +1480,11 @@ mod tests {
                 name: "a".to_string(),
                 status: UpdateSkillStatus::Success,
                 error: None,
+                reason: None,
+                source: None,
+                source_url: None,
+                git_ref: None,
+                skill_path: None,
                 warnings: vec![],
                 duration_ms: None,
                 agent_results: vec![],
@@ -1347,6 +1493,11 @@ mod tests {
                 name: "b".to_string(),
                 status: UpdateSkillStatus::Partial,
                 error: None,
+                reason: None,
+                source: None,
+                source_url: None,
+                git_ref: None,
+                skill_path: None,
                 warnings: vec![],
                 duration_ms: None,
                 agent_results: vec![],
@@ -1355,6 +1506,11 @@ mod tests {
                 name: "c".to_string(),
                 status: UpdateSkillStatus::Failed,
                 error: Some("x".to_string()),
+                reason: None,
+                source: None,
+                source_url: None,
+                git_ref: None,
+                skill_path: None,
                 warnings: vec![],
                 duration_ms: None,
                 agent_results: vec![],
@@ -1363,6 +1519,11 @@ mod tests {
                 name: "d".to_string(),
                 status: UpdateSkillStatus::Skipped,
                 error: None,
+                reason: None,
+                source: None,
+                source_url: None,
+                git_ref: None,
+                skill_path: None,
                 warnings: vec![],
                 duration_ms: None,
                 agent_results: vec![],
@@ -1382,12 +1543,14 @@ mod tests {
             UpdateSkillAgentResult {
                 agent: "cursor".to_string(),
                 status: UpdateSkillAgentStatus::Success,
+                mode: None,
                 error: None,
                 duration_ms: Some(5),
             },
             UpdateSkillAgentResult {
                 agent: "claude-code".to_string(),
                 status: UpdateSkillAgentStatus::Success,
+                mode: None,
                 error: None,
                 duration_ms: Some(3),
             },
@@ -1403,6 +1566,7 @@ mod tests {
         let agent_results = vec![UpdateSkillAgentResult {
             agent: "cursor".to_string(),
             status: UpdateSkillAgentStatus::Failed,
+            mode: None,
             error: Some("err".to_string()),
             duration_ms: None,
         }];
@@ -1422,6 +1586,7 @@ mod tests {
         let agent_results = vec![UpdateSkillAgentResult {
             agent: "cursor".to_string(),
             status: UpdateSkillAgentStatus::Skipped,
+            mode: None,
             error: None,
             duration_ms: None,
         }];

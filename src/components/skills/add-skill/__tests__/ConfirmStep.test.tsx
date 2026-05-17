@@ -50,6 +50,26 @@ function createState(): WizardState {
   };
 }
 
+function createTrustState(
+  trustFields: Record<string, unknown>,
+  source = 'https://example.com'
+): WizardState {
+  return {
+    ...createState(),
+    source,
+    riskPolicy: { kind: 'none', code: null },
+    availableSkills: [
+      {
+        name: 'demo',
+        description: 'Demo',
+        relativePath: 'demo/SKILL.md',
+        pluginName: null,
+        ...trustFields,
+      } as never,
+    ],
+  };
+}
+
 describe('ConfirmStep', () => {
   it('renders guarded-source risk confirmation UI', () => {
     render(
@@ -78,5 +98,42 @@ describe('ConfirmStep', () => {
     await userEvent.click(checkbox);
 
     expect(updateState).toHaveBeenCalledWith({ riskAcknowledged: true });
+  });
+
+  it('shows legacy well-known trust metadata without digest verification', () => {
+    render(
+      <ConfirmStep
+        state={createTrustState({
+          wellKnownVersion: '0.1.0',
+          wellKnownEntryType: 'legacy',
+          trustReason: 'legacy',
+        })}
+        updateState={vi.fn()}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByText('addSkill.confirm.trust.legacy')).toBeTruthy();
+    expect(screen.queryByText('addSkill.confirm.trust.digestVerified')).toBeNull();
+  });
+
+  it('shows v2 well-known artifact host, type, and digest verification', () => {
+    render(
+      <ConfirmStep
+        state={createTrustState({
+          wellKnownVersion: '0.2.0',
+          wellKnownEntryType: 'skill-md',
+          artifactUrlHost: 'assets.example.com',
+          digestVerified: true,
+          trustReason: 'digest-verified',
+        })}
+        updateState={vi.fn()}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByText('addSkill.confirm.trust.skillMd')).toBeTruthy();
+    expect(screen.getByText('assets.example.com')).toBeTruthy();
+    expect(screen.getByText('addSkill.confirm.trust.digestVerified')).toBeTruthy();
   });
 });

@@ -1,6 +1,7 @@
 // src/stores/skills-utils.ts
 import i18n from '@/i18n';
 import type {
+  AgentType,
   InstalledSkill,
   SkillScope,
   SkillUpdateCheckStatus,
@@ -24,7 +25,7 @@ export function mergeUpdateInfo(skills: SkillListItem[], updates: SkillUpdateInf
     ...s,
     hasUpdate: updateMap.get(s.name)?.hasUpdate ?? false,
     updateStatus: updateMap.get(s.name)?.status ?? s.updateStatus ?? null,
-    updateReason: updateMap.get(s.name)?.reason ?? null,
+    updateReason: updateMap.get(s.name)?.reason ?? s.updateReason ?? null,
   }));
 }
 
@@ -33,13 +34,18 @@ export const updateInfoCache = new Map<string, { results: SkillUpdateInfo[]; che
 export const UPDATE_CHECK_TTL = 5 * 60 * 1000; // 5 分钟
 
 /** 清除缓存中指定 skill 的 hasUpdate 标记 — 更新成功后调用，防止 syncSkills 恢复旧标记 */
-export function clearUpdateCacheForSkill(skillName: string, scope: SkillScope, projectPath?: string) {
+export function clearUpdateCacheForSkill(
+  skillName: string,
+  scope: SkillScope,
+  projectPath?: string,
+  options: { clearCannotCheck?: boolean } = {},
+) {
   const cacheKey = scope === 'project' ? projectPath : 'global';
   if (!cacheKey) return;
   const cached = updateInfoCache.get(cacheKey);
   if (cached) {
     cached.results = cached.results.map((r) =>
-      r.name === skillName
+      r.name === skillName && (r.hasUpdate || options.clearCannotCheck)
         ? { ...r, hasUpdate: false, status: 'up-to-date', reason: null }
         : r
     );
@@ -64,6 +70,39 @@ export function resolveUpdateReasonI18nKey(reason: string | null | undefined): s
   return `skills.updateReason.${reason}`;
 }
 
+export function resolveUpdateStatusLabelI18nKey(
+  skill: Pick<InstalledSkill, 'hasUpdate' | 'canRunUpdate' | 'canCheckForUpdates'> & {
+    updateStatus?: SkillUpdateCheckStatus | null;
+    updateReason?: string | null;
+  }
+): string | null {
+  if (skill.hasUpdate === true && skill.canRunUpdate !== false) {
+    return 'skills.updateStatusLabel.available';
+  }
+  if (skill.updateReason === 'missing-skill-path') {
+    return 'skills.updateStatusLabel.needsSourceInfo';
+  }
+  if (skill.updateReason === 'missing-remote-hash') {
+    return 'skills.updateStatusLabel.versionUnknown';
+  }
+  if (skill.updateReason === 'local-source') {
+    return 'skills.updateStatusLabel.localSource';
+  }
+  if (skill.updateReason === 'upstream-unavailable' || skill.updateReason === 'network-error') {
+    return 'skills.updateStatusLabel.upstreamUnavailable';
+  }
+  if (skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false) {
+    return 'skills.updateStatusLabel.versionUnknown';
+  }
+  return null;
+}
+
+export function resolveUpdateHintI18nKey(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  if (reason.startsWith('http-')) return 'skills.updateHint.http-error';
+  return `skills.updateHint.${reason}`;
+}
+
 export interface DeleteTarget {
   skill: SkillListItem;
   scope: SkillScope;
@@ -73,4 +112,164 @@ export interface DeleteTarget {
 export interface AddDialogPrefill {
   source: string;
   skillName: string;
+  scope?: SkillScope;
+  projectPath?: string;
+  gitRef?: string | null;
+}
+
+function normalizeRepairSource(source: string | null | undefined): string | null {
+  if (!source) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) return source;
+  if (/^[^\s/]+\/[^\s/]+$/.test(source)) return `https://github.com/${source}`;
+  return null;
+}
+
+export function buildRepairSource(
+  skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { gitRef?: string | null }
+): string | null {
+  const baseSource = skill.sourceUrl || normalizeRepairSource(skill.source);
+  if (!baseSource) return null;
+  if (skill.gitRef && !baseSource.includes('#')) return `${baseSource}#${skill.gitRef}`;
+  return baseSource;
+}
+
+export function canRepairMissingSkillPath(
+  skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { updateReason?: string | null; gitRef?: string | null }
+): boolean {
+  return skill.updateReason === 'missing-skill-path' && buildRepairSource(skill) !== null;
+}
+
+export type SkillMaintenanceAction = 'direct-reinstall' | 'repair-source' | 'none';
+
+export function resolveSkillMaintenanceAction(
+  skill: Pick<InstalledSkill, 'source' | 'sourceUrl' | 'canRunUpdate'> & {
+    updateReason?: string | null;
+    gitRef?: string | null;
+  }
+): SkillMaintenanceAction {
+  if (skill.updateReason === 'missing-remote-hash' && skill.canRunUpdate !== false) {
+    return 'direct-reinstall';
+  }
+  if (canRepairMissingSkillPath(skill)) {
+    return 'repair-source';
+  }
+  return 'none';
+}
+
+export function createSkillRepairPrefill(
+  skill: Pick<InstalledSkill, 'name' | 'source' | 'sourceUrl'> & { gitRef?: string | null },
+  scope: SkillScope,
+  projectPath?: string
+): AddDialogPrefill | null {
+  const source = buildRepairSource(skill);
+  if (!source) return null;
+  return {
+    source,
+    skillName: skill.name,
+    scope,
+    projectPath: scope === 'project' ? projectPath : undefined,
+    gitRef: skill.gitRef ?? null,
+  };
+}
+
+export interface UpdatePlanItem {
+  name: string;
+  source?: string | null;
+  sourceUrl?: string | null;
+  gitRef?: string | null;
+  reason?: string | null;
+  repairSource?: string | null;
+}
+
+export interface UpdatePlanGroup {
+  id: string;
+  source: string;
+  sourceUrl?: string | null;
+  gitRef?: string | null;
+  skillNames: string[];
+  agents: AgentType[];
+  skillRows: Array<{
+    name: string;
+    agents: AgentType[];
+  }>;
+}
+
+export interface UpdatePlan {
+  scope: SkillScope;
+  projectPath?: string;
+  total: number;
+  updatableCount: number;
+  repairableCount: number;
+  skippedCount: number;
+  groups: UpdatePlanGroup[];
+  repairable: UpdatePlanItem[];
+  skipped: UpdatePlanItem[];
+}
+
+export function buildUpdatePlan(
+  skills: SkillListItem[],
+  scope: SkillScope,
+  projectPath?: string
+): UpdatePlan {
+  const groups = new Map<string, UpdatePlanGroup>();
+  const repairable: UpdatePlanItem[] = [];
+  const skipped: UpdatePlanItem[] = [];
+
+  for (const skill of skills) {
+    const source = skill.sourceUrl ?? skill.source ?? 'manual';
+    const groupKey = `${source}::${skill.gitRef ?? ''}`;
+    const isUpdatable = skill.hasUpdate === true && skill.canRunUpdate !== false;
+
+    if (isUpdatable) {
+      const group = groups.get(groupKey) ?? {
+        id: groupKey,
+        source: skill.source ?? source,
+        sourceUrl: skill.sourceUrl,
+        gitRef: skill.gitRef,
+        skillNames: [],
+        agents: [],
+        skillRows: [],
+      };
+      group.skillNames.push(skill.name);
+      group.skillRows.push({ name: skill.name, agents: skill.agents });
+      group.agents = Array.from(new Set([...group.agents, ...skill.agents]));
+      groups.set(groupKey, group);
+      continue;
+    }
+
+    if (canRepairMissingSkillPath(skill)) {
+      repairable.push({
+        name: skill.name,
+        source: skill.source,
+        sourceUrl: skill.sourceUrl,
+        gitRef: skill.gitRef,
+        reason: skill.updateReason,
+        repairSource: buildRepairSource(skill),
+      });
+      continue;
+    }
+
+    if (skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false) {
+      skipped.push({
+        name: skill.name,
+        source: skill.source,
+        sourceUrl: skill.sourceUrl,
+        gitRef: skill.gitRef,
+        reason: skill.updateReason,
+      });
+    }
+  }
+
+  const updateGroups = Array.from(groups.values());
+  return {
+    scope,
+    projectPath: scope === 'project' ? projectPath : undefined,
+    total: skills.length,
+    updatableCount: updateGroups.reduce((total, group) => total + group.skillNames.length, 0),
+    repairableCount: repairable.length,
+    skippedCount: skipped.length,
+    groups: updateGroups,
+    repairable,
+    skipped,
+  };
 }

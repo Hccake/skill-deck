@@ -13,17 +13,23 @@ import {
   AlertTriangle,
   FolderOutput,
   Pencil,
+  Wrench,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { PopConfirm } from '@/components/ui/pop-confirm';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import type { AgentType, InstalledSkill, RiskLevel, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
-import { resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
+import {
+  resolveUpdateHintI18nKey,
+  resolveUpdateStatusLabelI18nKey,
+  resolveSkillMaintenanceAction,
+} from '@/stores/skills-utils';
 import { RiskBadge } from './RiskBadge';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
@@ -70,6 +76,7 @@ interface SkillCardProps {
   onDelete?: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onManageAgents?: (skill: InstalledSkill) => void;
+  onRepairSource?: (skill: InstalledSkill) => void;
 }
 
 export const SkillCard = memo(function SkillCard({
@@ -85,6 +92,7 @@ export const SkillCard = memo(function SkillCard({
   onDelete,
   onCopyToProject,
   onManageAgents,
+  onRepairSource,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
   const skillName = skill.name;
@@ -127,8 +135,12 @@ export const SkillCard = memo(function SkillCard({
     displayScope === 'project'
       ? t('skills.conflict.alsoInGlobal')
       : t('skills.conflict.alsoInProject');
-  const showCannotCheckStatus = skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
-  const canShowUpdateAction = skill.hasUpdate === true;
+  const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false;
+  const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
+  const canShowDirectReinstallAction = maintenanceAction === 'direct-reinstall' && Boolean(onUpdate);
+  const canShowRepairAction = maintenanceAction === 'repair-source' && Boolean(onRepairSource);
+  const updateStatusLabelKey = skill.hasUpdate ? resolveUpdateStatusLabelI18nKey(skill) : null;
+  const updateHintKey = !skill.hasUpdate ? resolveUpdateHintI18nKey(skill.updateReason) : null;
 
   return (
       <Card
@@ -160,9 +172,12 @@ export const SkillCard = memo(function SkillCard({
               {/* Risk Badge */}
               {riskLevel ? <RiskBadge risk={riskLevel} /> : null}
 
-              {showCannotCheckStatus ? (
-                <Badge variant="outline" className="text-xs px-1.5 py-0 text-muted-foreground">
-                  {t('skills.updateStatus.cannotCheck')}
+              {updateStatusLabelKey ? (
+                <Badge
+                  variant="outline"
+                  className={cn("text-xs px-1.5 py-0", skill.hasUpdate ? "text-warning" : "text-muted-foreground")}
+                >
+                  {t(updateStatusLabelKey)}
                 </Badge>
               ) : null}
 
@@ -221,6 +236,43 @@ export const SkillCard = memo(function SkillCard({
                   }}
                 >
                   <ArrowUpCircle className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+              {canShowDirectReinstallAction ? (
+                <PopConfirm
+                  title={t('skills.reinstallConfirm.title')}
+                  description={t('skills.reinstallConfirm.description')}
+                  confirmLabel={t('skills.reinstallConfirm.confirm')}
+                  cancelLabel={t('common.cancel')}
+                  onConfirm={() => onUpdate?.(skill.name)}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
+                    aria-label={t('skills.actions.reinstall')}
+                    title={t('skills.actions.reinstall')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                    }}
+                  >
+                    <Wrench className="h-3.5 w-3.5" />
+                  </Button>
+                </PopConfirm>
+              ) : null}
+              {canShowRepairAction ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
+                  aria-label={t('skills.actions.repairSource')}
+                  title={t('skills.actions.repairSource')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRepairSource?.(skill);
+                  }}
+                >
+                  <Wrench className="h-3.5 w-3.5" />
                 </Button>
               ) : null}
               {displayScope === 'project' && onCopyToProject ? (
@@ -302,16 +354,13 @@ export const SkillCard = memo(function SkillCard({
             {skill.updatedAt ? (
               <span>{t('skills.updated', { time: formatTime(skill.updatedAt, i18n.language) })}</span>
             ) : null}
-            {(() => {
-              const reasonKey = resolveUpdateReasonI18nKey(skill.updateReason);
-              return reasonKey ? (
-                <>
-                  <span className="text-border">·</span>
-                  <span>{t(reasonKey)}</span>
-                </>
-              ) : null;
-            })()}
           </div>
+
+          {updateHintKey ? (
+            <div className="mb-3 rounded-md border border-border/60 bg-muted/25 px-2.5 py-1.5 text-xs leading-relaxed text-muted-foreground">
+              {t(updateHintKey)}
+            </div>
+          ) : null}
 
           {/* Row 4: Agents */}
           <div className="flex items-center gap-2 flex-wrap">

@@ -16,12 +16,17 @@ vi.mock('../SkillCard', () => ({
   SkillCard: ({
     skill,
     updateStatus,
+    onRepairSource,
   }: {
     skill: InstalledSkill;
     updateStatus?: 'queued' | 'updating' | 'done' | 'failed';
+    onRepairSource?: (skill: InstalledSkill) => void;
   }) => (
     <div data-testid={`skill-card:${skill.scope}:${skill.name}`}>
-      {updateStatus ?? 'idle'}
+      <span data-testid={`status:${skill.scope}:${skill.name}`}>{updateStatus ?? 'idle'}</span>
+      <button type="button" data-testid={`repair:${skill.scope}:${skill.name}`} onClick={() => onRepairSource?.(skill)}>
+        repair
+      </button>
     </div>
   ),
 }));
@@ -58,7 +63,7 @@ describe('SkillsSection', () => {
       />
     );
 
-    expect(screen.getByTestId('skill-card:global:toolkit').textContent).toBe('updating');
+    expect(screen.getByTestId('status:global:toolkit').textContent).toBe('updating');
   });
 
   it('does not show a completed check state after external polling finishes', async () => {
@@ -188,5 +193,138 @@ describe('SkillsSection', () => {
     );
 
     expect(screen.queryByText('skills.checkUpdates')).toBeNull();
+  });
+
+  it('passes repair source actions to skill cards', () => {
+    const onRepairSource = vi.fn();
+
+    render(
+      <SkillsSection
+        title="Project"
+        skills={[makeSkill('project', { hasUpdate: false, updateReason: 'missing-skill-path' })]}
+        scope="project"
+        projectPath="D:\\Code\\project-a"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onRepairSource={onRepairSource}
+        onAdd={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('repair:project:toolkit'));
+
+    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project', name: 'toolkit' }));
+  });
+
+  it('opens an update plan before running update all', async () => {
+    const onUpdateAll = vi.fn(async () => undefined);
+
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          makeSkill('global', {
+            hasUpdate: true,
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+          }),
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={onUpdateAll}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByText('skills.updateAll'));
+
+    expect(screen.getByText('skills.updatePlan.readyTitle')).toBeTruthy();
+    expect(onUpdateAll).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('skills.updatePlan.confirm'));
+
+    await waitFor(() => {
+      expect(onUpdateAll).toHaveBeenCalledWith('global');
+    });
+  });
+
+  it('does not show update all when the section only has maintenance items', () => {
+    render(
+      <SkillsSection
+        title="Project"
+        skills={[
+          makeSkill('project', {
+            hasUpdate: false,
+            canRunUpdate: false,
+            canCheckForUpdates: false,
+            updateReason: 'missing-skill-path',
+            updateStatus: 'cannot-check',
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+          } as Partial<InstalledSkill>),
+        ]}
+        scope="project"
+        projectPath="D:\\Code\\project-a"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onRepairSource={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText('skills.updateAll')).toBeNull();
+    expect(screen.queryByText('skills.needsAttentionCount')).toBeNull();
+    expect(screen.getByText('skills.maintenanceNotice')).toBeTruthy();
+  });
+
+  it('shows update all only for directly updatable skills', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          makeSkill('global', {
+            hasUpdate: true,
+            canRunUpdate: true,
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+          }),
+          makeSkill('global', {
+            name: 'legacy-toolkit',
+            hasUpdate: false,
+            canRunUpdate: false,
+            canCheckForUpdates: false,
+            updateStatus: 'cannot-check',
+            updateReason: 'missing-skill-path',
+          } as Partial<InstalledSkill>),
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.updateAll')).toBeTruthy();
+    expect(screen.queryByText('skills.needsAttentionCount')).toBeNull();
+    expect(screen.getByText('skills.maintenanceNotice')).toBeTruthy();
   });
 });

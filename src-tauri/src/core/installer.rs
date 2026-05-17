@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 pub struct PerAgentInstallResult {
     pub agent: String,
     pub success: bool,
+    pub skipped: bool,
     pub error: Option<String>,
     pub duration_ms: Option<u32>,
     pub symlink_failed: bool,
@@ -69,6 +70,7 @@ pub fn install_skill_for_agent(
             canonical_path: None,
             mode: mode.clone(),
             symlink_failed: false,
+            skipped: false,
             error: Some(format!(
                 "{} does not support global skill installation",
                 config.display_name
@@ -84,7 +86,7 @@ pub fn install_skill_for_agent(
     };
 
     match result {
-        Ok((path, canonical_path, symlink_failed)) => InstallResult {
+        Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
             success: true,
@@ -96,6 +98,7 @@ pub fn install_skill_for_agent(
                 mode.clone()
             },
             symlink_failed,
+            skipped,
             error: None,
         },
         Err(e) => InstallResult {
@@ -106,6 +109,7 @@ pub fn install_skill_for_agent(
             canonical_path: None,
             mode: mode.clone(),
             symlink_failed: false,
+            skipped: false,
             error: Some(e.to_string()),
         },
     }
@@ -118,7 +122,7 @@ fn install_with_symlink(
     agent: &AgentType,
     is_global: bool,
     cwd: &str,
-) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
     let canonical_dir = write_canonical_skill(skill_path, skill_name, is_global, cwd)?;
 
     // 3. 创建 symlink（Universal Agent global 安装跳过）
@@ -134,7 +138,7 @@ fn link_from_canonical(
     agent: &AgentType,
     is_global: bool,
     cwd: &str,
-) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
     symlink_canonical_to_agent(canonical_dir, skill_name, agent, is_global, cwd)
 }
 
@@ -145,8 +149,8 @@ fn symlink_canonical_to_agent(
     agent: &AgentType,
     is_global: bool,
     cwd: &str,
-) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
-    symlink_canonical_to_agent_inner(canonical_dir, skill_name, agent, is_global, cwd, true)
+) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
+    symlink_canonical_to_agent_inner(canonical_dir, skill_name, agent, is_global, cwd, true, true)
 }
 
 fn symlink_canonical_to_agent_inner(
@@ -156,7 +160,17 @@ fn symlink_canonical_to_agent_inner(
     is_global: bool,
     cwd: &str,
     fallback_to_copy: bool,
-) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+    skip_missing_project_agent_root: bool,
+) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
+    if skip_missing_project_agent_root && should_skip_project_agent_symlink(agent, is_global, cwd) {
+        return Ok((
+            canonical_dir.to_path_buf(),
+            Some(canonical_dir.to_path_buf()),
+            false,
+            true,
+        ));
+    }
+
     let agent_dir = resolve_agent_skill_dir(agent, skill_name, is_global, cwd)?;
 
     // 创建 symlink
@@ -171,7 +185,12 @@ fn symlink_canonical_to_agent_inner(
         Err(e) => return Err(e),
     };
 
-    Ok((agent_dir, Some(canonical_dir.to_path_buf()), symlink_failed))
+    Ok((
+        agent_dir,
+        Some(canonical_dir.to_path_buf()),
+        symlink_failed,
+        false,
+    ))
 }
 
 /// Copy 模式安装
@@ -181,9 +200,22 @@ fn install_with_copy(
     agent: &AgentType,
     is_global: bool,
     cwd: &str,
-) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
     let canonical_dir = write_canonical_skill(skill_path, skill_name, is_global, cwd)?;
     copy_canonical_to_agent(&canonical_dir, skill_name, agent, is_global, cwd)
+}
+
+fn should_skip_project_agent_symlink(agent: &AgentType, is_global: bool, cwd: &str) -> bool {
+    if is_global || agent.is_universal() {
+        return false;
+    }
+
+    let config = agent.config();
+    let Some(root) = config.skills_dir.split('/').next() else {
+        return false;
+    };
+
+    !PathBuf::from(cwd).join(root).exists()
 }
 
 fn resolve_agent_base_dir(
@@ -238,7 +270,7 @@ fn copy_canonical_to_agent(
     agent: &AgentType,
     is_global: bool,
     cwd: &str,
-) -> Result<(PathBuf, Option<PathBuf>, bool), AppError> {
+) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
     let agent_dir = resolve_agent_skill_dir(agent, skill_name, is_global, cwd)?;
     let resolved_canonical = canonical_dir
         .canonicalize()
@@ -252,13 +284,14 @@ fn copy_canonical_to_agent(
             canonical_dir.to_path_buf(),
             Some(canonical_dir.to_path_buf()),
             false,
+            false,
         ));
     }
 
     clean_and_create_directory(&agent_dir)?;
     copy_skill_files(canonical_dir, &agent_dir)?;
 
-    Ok((agent_dir, Some(canonical_dir.to_path_buf()), false))
+    Ok((agent_dir, Some(canonical_dir.to_path_buf()), false, false))
 }
 
 /// 清理并创建目录（与 CLI cleanAndCreateDirectory 一致）
@@ -297,11 +330,6 @@ fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
         if EXCLUDE_FILES.contains(&file_name) {
             continue;
         }
-        // 仅跳过 dotfile / dotdir（CLI 不再排除 underscore 文件）
-        if file_name.starts_with('.') {
-            continue;
-        }
-
         let dst_path = dst.join(file_name);
 
         if path.is_dir() {
@@ -424,6 +452,7 @@ pub fn link_skill_for_agent(
             canonical_path: None,
             mode: InstallMode::Symlink,
             symlink_failed: false,
+            skipped: false,
             error: Some(format!(
                 "{} does not support global skill installation",
                 config.display_name
@@ -432,7 +461,7 @@ pub fn link_skill_for_agent(
     }
 
     match link_from_canonical(canonical_dir, &sanitized_name, agent, is_global, cwd) {
-        Ok((path, canonical_path, symlink_failed)) => InstallResult {
+        Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
             success: true,
@@ -444,6 +473,7 @@ pub fn link_skill_for_agent(
                 InstallMode::Symlink
             },
             symlink_failed,
+            skipped,
             error: None,
         },
         Err(e) => InstallResult {
@@ -454,6 +484,7 @@ pub fn link_skill_for_agent(
             canonical_path: None,
             mode: InstallMode::Symlink,
             symlink_failed: false,
+            skipped: false,
             error: Some(e.to_string()),
         },
     }
@@ -484,6 +515,7 @@ pub fn link_skill_for_agent_without_fallback(
             canonical_path: None,
             mode: InstallMode::Symlink,
             symlink_failed: false,
+            skipped: false,
             error: Some(format!(
                 "{} does not support global skill installation",
                 config.display_name
@@ -498,8 +530,9 @@ pub fn link_skill_for_agent_without_fallback(
         is_global,
         cwd,
         false,
+        false,
     ) {
-        Ok((path, canonical_path, symlink_failed)) => InstallResult {
+        Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
             success: true,
@@ -511,6 +544,7 @@ pub fn link_skill_for_agent_without_fallback(
                 InstallMode::Symlink
             },
             symlink_failed,
+            skipped,
             error: None,
         },
         Err(e) => InstallResult {
@@ -521,6 +555,7 @@ pub fn link_skill_for_agent_without_fallback(
             canonical_path: None,
             mode: InstallMode::Symlink,
             symlink_failed: false,
+            skipped: false,
             error: Some(e.to_string()),
         },
     }
@@ -549,6 +584,7 @@ pub fn copy_skill_for_agent(
             canonical_path: None,
             mode: InstallMode::Copy,
             symlink_failed: false,
+            skipped: false,
             error: Some(format!(
                 "{} does not support global skill installation",
                 config.display_name
@@ -557,7 +593,7 @@ pub fn copy_skill_for_agent(
     }
 
     match copy_canonical_to_agent(canonical_dir, &sanitized_name, agent, is_global, cwd) {
-        Ok((path, canonical_path, symlink_failed)) => InstallResult {
+        Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
             success: true,
@@ -565,6 +601,7 @@ pub fn copy_skill_for_agent(
             canonical_path,
             mode: InstallMode::Copy,
             symlink_failed,
+            skipped,
             error: None,
         },
         Err(e) => InstallResult {
@@ -575,6 +612,7 @@ pub fn copy_skill_for_agent(
             canonical_path: None,
             mode: InstallMode::Copy,
             symlink_failed: false,
+            skipped: false,
             error: Some(e.to_string()),
         },
     }
@@ -608,6 +646,7 @@ pub fn install_skill_to_agents(
         results.push(PerAgentInstallResult {
             agent: agent.to_string(),
             success: result.success,
+            skipped: result.skipped,
             error: result.error,
             duration_ms: Some(duration_ms),
             symlink_failed: result.symlink_failed,
@@ -642,6 +681,7 @@ pub fn install_skill_to_agents_with_modes(
                 .map(|(agent, mode)| PerAgentInstallResult {
                     agent: agent.to_string(),
                     success: false,
+                    skipped: false,
                     error: Some(err.to_string()),
                     duration_ms: None,
                     symlink_failed: false,
@@ -683,6 +723,7 @@ pub fn install_skill_to_agents_with_modes(
             PerAgentInstallResult {
                 agent: agent.to_string(),
                 success: result.success,
+                skipped: result.skipped,
                 error: result.error,
                 duration_ms: Some(duration_ms),
                 symlink_failed: result.symlink_failed,
@@ -823,6 +864,8 @@ mod tests {
         fs::write(src.path().join("metadata.json"), "{}").unwrap();
         fs::write(src.path().join("_internal.md"), "internal").unwrap();
         fs::write(src.path().join(".env"), "secret").unwrap();
+        fs::create_dir(src.path().join(".rules")).unwrap();
+        fs::write(src.path().join(".rules/config.md"), "rules").unwrap();
         fs::create_dir(src.path().join(".git")).unwrap();
         fs::write(src.path().join(".git/config"), "git config").unwrap();
         fs::create_dir(src.path().join("__pycache__")).unwrap();
@@ -838,9 +881,11 @@ mod tests {
         assert!(dst.path().join("README.md").exists());
         // underscore 文件现在应该被保留
         assert!(dst.path().join("_internal.md").exists());
+        // dotfiles / dotdirs 应该被保留，除非是显式排除项
+        assert!(dst.path().join(".env").exists());
+        assert!(dst.path().join(".rules/config.md").exists());
         // 这些应该被排除
         assert!(!dst.path().join("metadata.json").exists());
-        assert!(!dst.path().join(".env").exists());
         assert!(!dst.path().join(".git").exists());
         assert!(!dst.path().join("__pycache__").exists());
         assert!(!dst.path().join("__pypackages__").exists());
@@ -984,6 +1029,51 @@ mod tests {
     }
 
     #[test]
+    fn test_project_symlink_install_skips_non_universal_agent_when_root_missing() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let src = temp.path().join("source-skill");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("SKILL.md"),
+            "---\nname: cursor-skill\ndescription: test\n---\n",
+        )
+        .unwrap();
+
+        let result = install_skill_for_agent(
+            &src,
+            "cursor-skill",
+            &AgentType::Windsurf,
+            &Scope::Project,
+            Some(&project_path),
+            &InstallMode::Symlink,
+        );
+
+        let canonical = temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("cursor-skill");
+
+        assert!(
+            result.success,
+            "canonical install should succeed: {:?}",
+            result.error
+        );
+        assert!(
+            result.skipped,
+            "missing project agent root should be skipped"
+        );
+        assert_eq!(result.path, canonical);
+        assert_eq!(result.canonical_path.as_deref(), Some(canonical.as_path()));
+        assert!(canonical.join("SKILL.md").exists());
+        assert!(
+            !temp.path().join(".windsurf").exists(),
+            "project install should not create unused agent roots"
+        );
+    }
+
+    #[test]
     fn test_detect_installed_agents_empty_for_nonexistent_skill() {
         let results =
             detect_installed_agents_for_skill("nonexistent-skill-xyz-12345", &Scope::Global, None);
@@ -1007,6 +1097,7 @@ mod tests {
 
         // 用一个 non-universal agent 测试
         let agent = AgentType::Cursor;
+        fs::create_dir_all(temp.path().join(".cursor")).unwrap();
         let result = link_skill_for_agent(
             &canonical_dir,
             "test-skill",
@@ -1064,6 +1155,7 @@ mod tests {
             "---\nname: mixed-skill\ndescription: test\n---\n",
         )
         .unwrap();
+        fs::create_dir_all(temp.path().join(".cursor")).unwrap();
 
         let targets = vec![
             (AgentType::ClaudeCode, InstallMode::Copy),

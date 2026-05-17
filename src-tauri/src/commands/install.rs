@@ -11,14 +11,15 @@ use crate::core::local_lock::{
 use crate::core::skill_lock::{add_skill_to_lock, save_selected_agents};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
-    clone_repo_with_progress, discover_skills, ensure_install_risk_acknowledged,
-    fetch_skill_folder_hash, get_owner_repo, install_skill_to_agents, parse_source,
-    source_risk_policy, CloneProgress, DiscoverOptions,
+    clone_repo_with_progress, compute_local_tree_sha, discover_skills,
+    ensure_install_risk_acknowledged, fetch_skill_folder_hash, get_owner_repo,
+    install_skill_to_agents, parse_source, source_risk_policy, CloneProgress, DiscoverOptions,
 };
 use crate::error::AppError;
 use crate::models::{
     AvailableSkill, FetchResult, InstallParams, InstallResult, InstallResults, SourceType,
 };
+use std::path::Path;
 use tauri::{AppHandle, Emitter};
 
 /// 安装进度事件（发送到前端）
@@ -52,6 +53,42 @@ fn compute_install_behavior(retry: bool) -> InstallBehavior {
             persist_selected_agents: true,
         }
     }
+}
+
+async fn resolve_install_hash(
+    repo_path: Option<&Path>,
+    source_type: &SourceType,
+    owner_repo: Option<&str>,
+    skill_path: &str,
+    git_ref: Option<&str>,
+    installed_skill_dir: Option<&Path>,
+) -> String {
+    if source_type == &SourceType::GitHub {
+        if let Some(repo_path) = repo_path {
+            if let Some(sha) = compute_local_tree_sha(repo_path, skill_path) {
+                return sha;
+            }
+        }
+
+        if let Some(repo) = owner_repo {
+            if let Ok(Some(sha)) = fetch_skill_folder_hash(repo, skill_path, git_ref).await {
+                return sha;
+            }
+        }
+
+        return String::new();
+    }
+
+    if matches!(
+        source_type,
+        SourceType::Git | SourceType::GitLab | SourceType::Local | SourceType::WellKnown
+    ) {
+        if let Some(dir) = installed_skill_dir {
+            return compute_skill_folder_hash(dir).unwrap_or_default();
+        }
+    }
+
+    String::new()
 }
 
 /// 从来源获取可用的 skills 列表
@@ -98,7 +135,9 @@ async fn fetch_available_inner(app: &AppHandle, source: &str) -> Result<FetchRes
         }
         SourceType::WellKnown => {
             let result = fetch_wellknown_skills(&parsed.url).await?;
-            return discover_and_build_result(&parsed, &result.repo_path);
+            let mut fetch_result = discover_and_build_result(&parsed, &result.repo_path)?;
+            apply_wellknown_trust_metadata(&mut fetch_result, &result.trust_metadata);
+            return Ok(fetch_result);
         }
     };
 
@@ -132,6 +171,21 @@ fn discover_and_build_result(
         risk_policy: source_risk_policy(parsed),
         skills,
     })
+}
+
+fn apply_wellknown_trust_metadata(
+    result: &mut FetchResult,
+    metadata: &std::collections::HashMap<String, crate::core::wellknown::WellKnownTrustMetadata>,
+) {
+    for skill in &mut result.skills {
+        if let Some(meta) = metadata.get(&skill.name) {
+            skill.well_known_version = meta.well_known_version.clone();
+            skill.well_known_entry_type = meta.well_known_entry_type.clone();
+            skill.artifact_url_host = meta.artifact_url_host.clone();
+            skill.digest_verified = meta.digest_verified;
+            skill.trust_reason = meta.trust_reason.clone();
+        }
+    }
 }
 
 /// 安装选中的 skills
@@ -265,6 +319,7 @@ async fn install_skills_inner(
                 canonical_path: par.canonical_path,
                 mode: par.mode,
                 symlink_failed: par.symlink_failed,
+                skipped: par.skipped,
                 error: par.error,
             };
 
@@ -299,20 +354,6 @@ async fn install_skills_inner(
                 continue;
             }
 
-            // 获取 skill folder hash（仅 GitHub 来源）
-            let skill_folder_hash = if parsed.source_type == SourceType::GitHub {
-                if let Some(ref repo) = owner_repo {
-                    fetch_skill_folder_hash(repo, &skill.relative_path, parsed.git_ref.as_deref())
-                        .await
-                        .unwrap_or(None)
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            };
-
             let source = if parsed.source_type == SourceType::WellKnown {
                 crate::core::wellknown::extract_hostname(&parsed.url)
                     .unwrap_or_else(|| params.source.clone())
@@ -322,6 +363,30 @@ async fn install_skills_inner(
             let source_type_str = &parsed.source_type.to_string();
             let source_url = &parsed.url;
             let skill_path = Some(skill.relative_path.as_str());
+            let installed_skill_dir = match params.scope {
+                crate::models::Scope::Global => crate::core::paths::canonical_skills_dir(true, "")
+                    .join(crate::core::skill::sanitize_name(&skill.name)),
+                crate::models::Scope::Project => params
+                    .project_path
+                    .as_ref()
+                    .map(|project_path| {
+                        crate::core::paths::canonical_skills_dir(false, project_path)
+                            .join(crate::core::skill::sanitize_name(&skill.name))
+                    })
+                    .unwrap_or_else(|| {
+                        crate::core::paths::canonical_skills_dir(false, "")
+                            .join(crate::core::skill::sanitize_name(&skill.name))
+                    }),
+            };
+            let skill_folder_hash = resolve_install_hash(
+                Some(skills_dir.as_path()),
+                &parsed.source_type,
+                owner_repo.as_deref(),
+                &skill.relative_path,
+                parsed.git_ref.as_deref(),
+                Some(installed_skill_dir.as_path()),
+            )
+            .await;
 
             // 根据 scope 写入对应的 lock 文件
             match params.scope {
@@ -340,11 +405,8 @@ async fn install_skills_inner(
                 crate::models::Scope::Project => {
                     if let Some(ref project_path) = params.project_path {
                         // 计算安装后的本地文件 SHA-256
-                        let install_dir =
-                            crate::core::paths::canonical_skills_dir(false, project_path)
-                                .join(crate::core::skill::sanitize_name(&skill.name));
                         let computed_hash =
-                            compute_skill_folder_hash(&install_dir).unwrap_or_default();
+                            compute_skill_folder_hash(&installed_skill_dir).unwrap_or_default();
 
                         let entry = LocalSkillLockEntry {
                             source: source.clone(),
@@ -487,5 +549,94 @@ mod tests {
             error,
             AppError::InstallRiskConfirmationRequired { .. }
         ));
+    }
+
+    fn make_git_repo_with_skill() -> Option<(tempfile::TempDir, std::path::PathBuf, String)> {
+        let temp = tempdir().ok()?;
+        let repo = temp.path().to_path_buf();
+        let run = |args: &[&str]| -> Option<()> {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .ok()?;
+            status.success().then_some(())
+        };
+
+        run(&["init", "-q"])?;
+        run(&["config", "user.email", "test@example.com"])?;
+        run(&["config", "user.name", "Test"])?;
+        run(&["config", "commit.gpgsign", "false"])?;
+        run(&["config", "core.autocrlf", "false"])?;
+        fs::create_dir_all(repo.join("skills/demo")).ok()?;
+        fs::write(
+            repo.join("skills/demo/SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .ok()?;
+        run(&["add", "-A"])?;
+        run(&["commit", "-q", "-m", "init"])?;
+
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["rev-parse", "HEAD:skills/demo"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Some((temp, repo, sha))
+    }
+
+    #[test]
+    fn test_resolve_install_hash_prefers_local_tree_sha_for_github() {
+        tauri::async_runtime::block_on(async {
+            let Some((_temp, repo, expected_sha)) = make_git_repo_with_skill() else {
+                eprintln!("git not available, skipping");
+                return;
+            };
+
+            let hash = resolve_install_hash(
+                Some(repo.as_path()),
+                &SourceType::GitHub,
+                Some("this-owner-should-not-be-used/this-repo-should-not-be-used"),
+                "skills/demo/SKILL.md",
+                Some("missing-ref"),
+                None,
+            )
+            .await;
+
+            assert_eq!(hash, expected_sha);
+        });
+    }
+
+    #[test]
+    fn test_resolve_install_hash_uses_content_hash_for_non_github_git_source() {
+        tauri::async_runtime::block_on(async {
+            let temp = tempdir().unwrap();
+            let skill_dir = temp.path().join("demo");
+            fs::create_dir_all(&skill_dir).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                "---\nname: demo\ndescription: Demo\n---\n",
+            )
+            .unwrap();
+            let expected_hash = compute_skill_folder_hash(&skill_dir).unwrap();
+
+            let hash = resolve_install_hash(
+                None,
+                &SourceType::Git,
+                None,
+                "skills/demo/SKILL.md",
+                None,
+                Some(skill_dir.as_path()),
+            )
+            .await;
+
+            assert_eq!(hash, expected_hash);
+        });
     }
 }

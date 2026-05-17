@@ -9,6 +9,7 @@ use super::agents::AgentType;
 use super::local_lock::{read_local_lock, LocalSkillLockEntry};
 use super::paths::canonical_skills_dir;
 use super::skill_lock::{get_skill_from_lock, SkillLockEntry};
+use super::skill_paths::find_skill_md_case_insensitive;
 use super::update_metadata::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
 };
@@ -331,12 +332,9 @@ pub fn list_installed_skills(
                 continue;
             }
 
-            let skill_md_path = path.join("SKILL.md");
-
-            // 检查 SKILL.md 是否存在
-            if !skill_md_path.exists() {
+            let Some(skill_md_path) = find_skill_md_case_insensitive(&path) else {
                 continue;
-            }
+            };
 
             // 解析 SKILL.md
             let frontmatter = match parse_skill_md(&skill_md_path) {
@@ -449,7 +447,11 @@ pub fn list_installed_skills(
                                 continue;
                             }
 
-                            let candidate_skill_md = candidate_path.join("SKILL.md");
+                            let Some(candidate_skill_md) =
+                                find_skill_md_case_insensitive(&candidate_path)
+                            else {
+                                continue;
+                            };
                             if let Ok(candidate_frontmatter) = parse_skill_md(&candidate_skill_md) {
                                 if candidate_frontmatter.name == frontmatter.name {
                                     found = true;
@@ -518,7 +520,9 @@ pub fn list_installed_skills(
 /// Read the markdown body of SKILL.md, stripping YAML frontmatter.
 /// Takes the skill's canonical directory path.
 pub fn read_skill_content(canonical_path: &str) -> Result<String, AppError> {
-    let skill_md = std::path::Path::new(canonical_path).join("SKILL.md");
+    let canonical_dir = std::path::Path::new(canonical_path);
+    let skill_md = find_skill_md_case_insensitive(canonical_dir)
+        .unwrap_or_else(|| canonical_dir.join("SKILL.md"));
     let content = std::fs::read_to_string(&skill_md).map_err(|_| AppError::PathNotFound {
         path: skill_md.to_string_lossy().to_string(),
     })?;

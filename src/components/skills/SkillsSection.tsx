@@ -1,13 +1,14 @@
 // src/components/skills/SkillsSection.tsx
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, AlertTriangle, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
+import { UpdatePlanDialog } from './UpdatePlanDialog';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
 import type { AgentType, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
-import type { SkillListItem } from '@/stores/skills-utils';
+import { buildUpdatePlan, type SkillListItem, type UpdatePlan } from '@/stores/skills-utils';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
@@ -38,6 +39,7 @@ interface SkillsSectionProps {
   onDelete: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onManageAgents?: (skill: InstalledSkill) => void;
+  onRepairSource?: (skill: InstalledSkill) => void;
   onAdd: () => void;
   onCheckUpdates?: () => Promise<boolean>;
   emptyState?: React.ReactNode;
@@ -61,20 +63,20 @@ export const SkillsSection = memo(function SkillsSection({
   onDelete,
   onCopyToProject,
   onManageAgents,
+  onRepairSource,
   onAdd,
   onCheckUpdates,
   emptyState,
 }: SkillsSectionProps) {
   const { t } = useTranslation();
+  const [updatePlanOpen, setUpdatePlanOpen] = useState(false);
+  const [updatePlan, setUpdatePlan] = useState<UpdatePlan | null>(null);
 
   // 单次遍历派生所有更新相关状态（js-combine-iterations）— 仅统计当前 section 的 skills
-  let updatesCount = 0;
   let isAnyUpdating = false;
   let completedCount = 0;
   let totalUpdating = 0;
   for (const skill of skills) {
-    const status = skill.updateStatus;
-    if (status === 'update-available' || (!status && skill.hasUpdate)) updatesCount++;
     const updatingStatus = updatingSkills.get(
       getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath })
     );
@@ -87,6 +89,12 @@ export const SkillsSection = memo(function SkillsSection({
       }
     }
   }
+  const updatePlanPreview = useMemo(
+    () => buildUpdatePlan(skills, scope, scope === 'project' ? projectPath : undefined),
+    [projectPath, scope, skills]
+  );
+  const updatesCount = updatePlanPreview.updatableCount;
+  const maintenanceCount = updatePlanPreview.repairableCount + updatePlanPreview.skippedCount;
   const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
 
   // 检测 isCheckingUpdates true → false 转换，短暂显示完成态
@@ -119,7 +127,18 @@ export const SkillsSection = memo(function SkillsSection({
     showCheckDone();
   }, [isCheckingUpdates, onCheckUpdates, showCheckDone]);
 
+  const handleOpenUpdatePlan = useCallback(() => {
+    if (updatePlanPreview.updatableCount === 0) return;
+    setUpdatePlan(updatePlanPreview);
+    setUpdatePlanOpen(true);
+  }, [updatePlanPreview]);
+
+  const handleConfirmUpdatePlan = useCallback(async () => {
+    await onUpdateAll(scope);
+  }, [onUpdateAll, scope]);
+
   return (
+    <>
     <section className="mb-6">
       {/* Section Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
@@ -152,12 +171,20 @@ export const SkillsSection = memo(function SkillsSection({
             <>
               <span className="text-muted-foreground/50">·</span>
               <span className="text-xs font-medium text-warning">
-                {updatesCount} {t(updatesCount === 1 ? 'skills.update' : 'skills.updates')}
+                {`${updatesCount} ${t(updatesCount === 1 ? 'skills.update' : 'skills.updates')}`}
               </span>
               <Button variant="outline" size="sm" className="h-5 px-1.5 text-xs cursor-pointer"
-                onClick={() => onUpdateAll(scope)}>
+                onClick={handleOpenUpdatePlan}>
                 {t('skills.updateAll')}
               </Button>
+            </>
+          ) : null}
+          {!isAnyUpdating && updatesCount === 0 && maintenanceCount === 0 && !isCheckingUpdates ? (
+            <>
+              <span className="text-muted-foreground/50">·</span>
+              <span className="text-xs font-medium text-success">
+                {t('skills.upToDate')}
+              </span>
             </>
           ) : null}
         </div>
@@ -207,6 +234,12 @@ export const SkillsSection = memo(function SkillsSection({
         </div>
       )}
 
+      {pathExists && maintenanceCount > 0 ? (
+        <div className="flex items-center justify-between gap-3 p-2.5 mb-3 rounded-md border border-border/70 bg-muted/25 text-xs text-muted-foreground">
+          <span>{t('skills.maintenanceNotice', { count: maintenanceCount })}</span>
+        </div>
+      ) : null}
+
       {/* Skills List */}
       {pathExists && (
         <>
@@ -233,6 +266,7 @@ export const SkillsSection = memo(function SkillsSection({
                     onDelete={onDelete}
                     onCopyToProject={onCopyToProject}
                     onManageAgents={onManageAgents}
+                    onRepairSource={onRepairSource}
                   />
                 );
               })}
@@ -241,5 +275,14 @@ export const SkillsSection = memo(function SkillsSection({
         </>
       )}
     </section>
+      <UpdatePlanDialog
+        open={updatePlanOpen}
+        plan={updatePlan}
+        agentDisplayNames={agentDisplayNames}
+        onOpenChange={setUpdatePlanOpen}
+        onConfirm={handleConfirmUpdatePlan}
+        onRetryFailed={handleConfirmUpdatePlan}
+      />
+    </>
   );
 });

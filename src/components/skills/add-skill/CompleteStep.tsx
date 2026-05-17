@@ -16,6 +16,7 @@ interface CompleteStepProps {
 interface SkillGroup {
   skillName: string;
   successful: InstallResult[];
+  skipped: InstallResult[];
   failed: InstallResult[];
 }
 
@@ -35,12 +36,14 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
     }
 
     const successMap = new Map<string, InstallResult[]>();
+    const skippedMap = new Map<string, InstallResult[]>();
     const failedMap = new Map<string, InstallResult[]>();
 
     for (const r of results.successful) {
-      const existing = successMap.get(r.skillName) ?? [];
+      const targetMap = r.skipped ? skippedMap : successMap;
+      const existing = targetMap.get(r.skillName) ?? [];
       existing.push(r);
-      successMap.set(r.skillName, existing);
+      targetMap.set(r.skillName, existing);
     }
 
     for (const r of results.failed) {
@@ -49,12 +52,13 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
       failedMap.set(r.skillName, existing);
     }
 
-    const allSkillNames = Array.from(new Set([...successMap.keys(), ...failedMap.keys()])).sort(
-      (a, b) => a.localeCompare(b)
-    );
+    const allSkillNames = Array.from(
+      new Set([...successMap.keys(), ...skippedMap.keys(), ...failedMap.keys()])
+    ).sort((a, b) => a.localeCompare(b));
     const grouped = allSkillNames.map((skillName) => ({
       skillName,
       successful: successMap.get(skillName) ?? [],
+      skipped: skippedMap.get(skillName) ?? [],
       failed: failedMap.get(skillName) ?? [],
     }));
 
@@ -111,7 +115,7 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
       <div className="border rounded-md p-3 space-y-2">
         {groups.map((group) => {
           const successCount = group.successful.length;
-          const totalCount = group.successful.length + group.failed.length;
+          const totalCount = group.successful.length + group.skipped.length + group.failed.length;
           const hasSkillFailures = group.failed.length > 0;
           const expanded = expandedSkills[group.skillName] === true;
 
@@ -138,6 +142,13 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
                       total: totalCount,
                     })}
                   </div>
+                  {group.skipped.length > 0 && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {t('addSkill.complete.skipped', {
+                        agents: group.skipped.map((item) => item.agent).join(', '),
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {hasSkillFailures && (

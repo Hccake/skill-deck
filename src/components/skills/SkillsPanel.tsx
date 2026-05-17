@@ -5,6 +5,7 @@ import { useContextStore } from '@/stores/context';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
+import { createSkillRepairPrefill } from '@/stores/skills-utils';
 import { SkillsToolbar } from './SkillsToolbar';
 import { SkillsSection } from './SkillsSection';
 import { CompactSkillList } from './CompactSkillList';
@@ -62,6 +63,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
   const openDelete = useSkillDialogStore((s) => s.openDelete);
   const openAdd = useSkillDialogStore((s) => s.openAdd);
+  const openAddWithPrefill = useSkillDialogStore((s) => s.openAddWithPrefill);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
 
@@ -173,6 +175,16 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const handleAddProject = useCallback(() => {
     openAdd('project');
   }, [openAdd]);
+
+  const handleRepairGlobal = useCallback((skill: InstalledSkill) => {
+    const prefill = createSkillRepairPrefill(skill, 'global');
+    if (prefill) openAddWithPrefill(prefill);
+  }, [openAddWithPrefill]);
+
+  const handleRepairProject = useCallback((skill: InstalledSkill) => {
+    const prefill = createSkillRepairPrefill(skill, 'project', selectedContext);
+    if (prefill) openAddWithPrefill(prefill);
+  }, [openAddWithPrefill, selectedContext]);
 
   const handleCheckProjectUpdates = useCallback(() => {
     return forceCheckUpdates('project');
@@ -286,6 +298,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               onDelete={handleDeleteProject}
               onCopyToProject={openCopyToProject}
               onManageAgents={handleManageAgentsProject}
+              onRepairSource={handleRepairProject}
               onAdd={handleAddProject}
               onCheckUpdates={handleCheckProjectUpdates}
               emptyState={projectEmptyState}
@@ -308,6 +321,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             onCancelUpdateAll={cancelUpdateAll}
             onDelete={handleDeleteGlobal}
             onManageAgents={handleManageAgentsGlobal}
+            onRepairSource={handleRepairGlobal}
             onAdd={handleAddGlobal}
             onCheckUpdates={handleCheckGlobalUpdates}
             emptyState={globalEmptyState}

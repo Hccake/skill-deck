@@ -215,10 +215,10 @@ async getSkillAgentDetails(scope: Scope, name: string, projectPath: string | nul
  * 检测指定 scope 的 skills 是否有更新
  *
  * 流程：
- * 1. 读取对应 scope 的 .skill-lock.json
- * 2. 过滤出 sourceType == "github" 且有 skillFolderHash 和 skillPath 的 skills
- * 3. 按 source 分组，对每组调用 GitHub Trees API
- * 4. 比对本地 hash 与远程 hash
+ * 1. 读取对应 scope 的 lock 文件
+ * 2. 从 lock entry 派生更新能力；不可检查的 entry 直接返回 cannot-check
+ * 3. 对可检查的来源按 source/ref 分组，目前 GitHub 走 Trees API
+ * 4. 比对记录的版本 hash 与远端 hash
  */
 async checkUpdates(scope: Scope, projectPath: string | null) : Promise<Result<SkillUpdateInfo[], AppError>> {
     try {
@@ -357,7 +357,7 @@ showInUniversalList: boolean }
  * Agent 类型枚举
  * 完整对应 CLI: types.ts AgentType
  */
-export type AgentType = "amp" | "antigravity" | "augment" | "bob" | "claude-code" | "openclaw" | "cline" | "codebuddy" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "droid" | "firebender" | "gemini-cli" | "github-copilot" | "goose" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "roo" | "trae" | "trae-cn" | "warp" | "windsurf" | "zencoder" | "pochi" | "adal" | "cortex" | "universal"
+export type AgentType = "aider-desk" | "amp" | "antigravity" | "augment" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zencoder" | "pochi" | "adal" | "cortex" | "universal"
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
@@ -383,7 +383,27 @@ relativePath: string;
 /**
  * 所属 plugin 名称（来自 .claude-plugin/ manifest）
  */
-pluginName?: string | null }
+pluginName?: string | null;
+/**
+ * Well-known discovery protocol version, if applicable.
+ */
+wellKnownVersion?: string | null;
+/**
+ * Well-known entry type: legacy, skill-md, or archive.
+ */
+wellKnownEntryType?: string | null;
+/**
+ * Hostname of the fetched artifact URL for v2 entries.
+ */
+artifactUrlHost?: string | null;
+/**
+ * Whether the v2 artifact digest was verified.
+ */
+digestVerified?: boolean | null;
+/**
+ * Compact trust reason for UI display.
+ */
+trustReason?: string | null }
 /**
  * 单个目标项目的复制结果
  */
@@ -524,6 +544,10 @@ mode: InstallMode;
  * symlink 是否失败并降级为 copy
  */
 symlinkFailed: boolean;
+/**
+ * project scope 中因目标 agent 根目录不存在而跳过
+ */
+skipped: boolean;
 /**
  * 错误信息
  */
@@ -716,7 +740,7 @@ export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean
 /**
  * agent 级更新结果
  */
-export type UpdateSkillAgentResult = { agent: string; status: UpdateSkillAgentStatus; error?: string | null; durationMs?: number | null }
+export type UpdateSkillAgentResult = { agent: string; status: UpdateSkillAgentStatus; mode?: InstallMode | null; error?: string | null; durationMs?: number | null }
 /**
  * 单个 agent 的更新状态
  */
@@ -724,7 +748,7 @@ export type UpdateSkillAgentStatus = "success" | "failed" | "skipped"
 /**
  * skill 级更新结果
  */
-export type UpdateSkillItemResult = { name: string; status: UpdateSkillStatus; error?: string | null; warnings?: string[]; durationMs?: number | null; agentResults?: UpdateSkillAgentResult[] }
+export type UpdateSkillItemResult = { name: string; status: UpdateSkillStatus; error?: string | null; reason?: string | null; source?: string | null; sourceUrl?: string | null; gitRef?: string | null; skillPath?: string | null; warnings?: string[]; durationMs?: number | null; agentResults?: UpdateSkillAgentResult[] }
 /**
  * 更新命令返回结果
  */

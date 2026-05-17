@@ -36,15 +36,7 @@ pub fn build_update_group_key(
 }
 
 fn strip_skill_md_suffix(path: &str) -> Option<String> {
-    let mut skill_folder = path.replace('\\', "/");
-
-    if skill_folder.ends_with("/SKILL.md") {
-        skill_folder.truncate(skill_folder.len() - 9);
-    } else if skill_folder.ends_with("SKILL.md") {
-        skill_folder.truncate(skill_folder.len() - 8);
-    }
-
-    let skill_folder = skill_folder.trim_end_matches('/').to_string();
+    let skill_folder = normalize_skill_folder_path(path);
     if skill_folder.is_empty() {
         None
     } else {
@@ -77,4 +69,17 @@ mod tests {
             build_update_group_key("github", "https://github.com/owner/repo", Some("dev"))
         );
     }
+
+    #[test]
+    fn test_build_update_target_strips_lowercase_skill_md_suffix() {
+        let target = build_update_target(UpdateSourceParts {
+            source_type: "github".to_string(),
+            source_url: "https://github.com/owner/repo".to_string(),
+            ref_name: None,
+            skill_path: Some("skills/demo/skill.md".to_string()),
+        });
+
+        assert_eq!(target.discover_subpath.as_deref(), Some("skills/demo"));
+    }
 }
+use crate::core::skill_paths::normalize_skill_folder_path;

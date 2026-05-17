@@ -70,16 +70,19 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     () => Object.values(state.overwrites).filter((agents) => agents.length > 0).length,
     [state.overwrites]
   );
+  const availableSkillMap = useMemo(
+    () => new Map(state.availableSkills.map((s) => [s.name, s])),
+    [state.availableSkills]
+  );
 
   // 按 plugin 分组选中的 skills — js-combine-iterations
   const groupedSelectedSkills = useMemo(() => {
-    const skillMap = new Map(state.availableSkills.map((s) => [s.name, s]));
     const groups: Record<string, string[]> = {};
     const ungrouped: string[] = [];
     let hasAnyPlugin = false;
 
     for (const name of state.selectedSkills) {
-      const pluginName = skillMap.get(name)?.pluginName;
+      const pluginName = availableSkillMap.get(name)?.pluginName;
       if (pluginName) {
         hasAnyPlugin = true;
         if (!groups[pluginName]) groups[pluginName] = [];
@@ -90,7 +93,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     }
 
     return hasAnyPlugin ? { groups, ungrouped } : null;
-  }, [state.selectedSkills, state.availableSkills]);
+  }, [state.selectedSkills, availableSkillMap]);
 
   // 已选的非 universal agents 信息（用于目录列表）
   const selectedNonUniversalAgents = useMemo(() => {
@@ -102,8 +105,16 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
   const universalDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
 
   const renderSkillRow = (skillName: string) => {
+    const skill = availableSkillMap.get(skillName);
     const overwriteAgents = state.overwrites[skillName] ?? [];
     const hasOverwrite = overwriteAgents.length > 0;
+    const trustTypeKey = skill?.wellKnownEntryType === 'legacy'
+      ? 'addSkill.confirm.trust.legacy'
+      : skill?.wellKnownEntryType === 'skill-md'
+        ? 'addSkill.confirm.trust.skillMd'
+        : skill?.wellKnownEntryType === 'archive'
+          ? 'addSkill.confirm.trust.archive'
+          : null;
     return (
       <div key={skillName} className="flex items-center justify-between gap-2 px-3 py-2">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -120,6 +131,21 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
           <span className="font-mono text-[13px] text-foreground truncate">
             {skillName}
           </span>
+          {trustTypeKey ? (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground">
+              {t(trustTypeKey)}
+            </Badge>
+          ) : null}
+          {skill?.artifactUrlHost ? (
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+              {skill.artifactUrlHost}
+            </Badge>
+          ) : null}
+          {skill?.digestVerified ? (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-success">
+              {t('addSkill.confirm.trust.digestVerified')}
+            </Badge>
+          ) : null}
         </div>
         {auditData[skillName] && (
           <RiskBadge risk={auditData[skillName].risk} />
