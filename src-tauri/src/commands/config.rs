@@ -26,12 +26,20 @@ pub fn get_last_selected_agents() -> Vec<String> {
     skill_lock::get_last_selected_agents().unwrap_or_default()
 }
 
-/// 保存选择的 agents
-/// 写入 ~/.agents/.skill-lock.json 中的 lastSelectedAgents
+/// 获取 GUI scope-aware 默认安装目标
 #[tauri::command]
 #[specta::specta]
-pub fn save_last_selected_agents(agents: Vec<String>) -> Result<(), AppError> {
-    skill_lock::save_selected_agents(&agents)?;
+pub fn get_default_target_agents() -> Option<skill_lock::DefaultTargetAgents> {
+    skill_lock::get_default_target_agents()
+}
+
+/// 保存 GUI scope-aware 默认安装目标
+#[tauri::command]
+#[specta::specta]
+pub fn save_default_target_agents(
+    defaults: skill_lock::DefaultTargetAgents,
+) -> Result<(), AppError> {
+    skill_lock::save_default_target_agents(defaults)?;
     Ok(())
 }
 

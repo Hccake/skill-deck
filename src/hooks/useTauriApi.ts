@@ -8,6 +8,7 @@ import type {
   SkillAuditData, SkillAgentDetails, ManageAgentsResult,
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
   InstallRiskPolicy, InstallRiskKind,
+  DefaultTargetAgents,
 } from '@/bindings';
 
 export type {
@@ -16,7 +17,7 @@ export type {
   InstallParams, InstallResults, SkillDeckConfig,
   SkillAuditData, SkillAgentDetails, ManageAgentsResult,
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
-  InstallRiskPolicy, InstallRiskKind,
+  InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -83,10 +84,17 @@ export async function getLastSelectedAgents(): Promise<string[]> {
 }
 
 /**
- * 保存选择的 agents
+ * 获取 GUI scope-aware 默认安装目标
  */
-export async function saveLastSelectedAgents(agents: string[]): Promise<void> {
-  unwrap(await commands.saveLastSelectedAgents(agents));
+export async function getDefaultTargetAgents(): Promise<DefaultTargetAgents | null> {
+  return await commands.getDefaultTargetAgents();
+}
+
+/**
+ * 保存 GUI scope-aware 默认安装目标
+ */
+export async function saveDefaultTargetAgents(defaults: DefaultTargetAgents): Promise<void> {
+  unwrap(await commands.saveDefaultTargetAgents(defaults));
 }
 
 // ============ 安装相关 API ============

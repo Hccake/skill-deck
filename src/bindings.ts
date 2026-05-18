@@ -74,12 +74,17 @@ async getLastSelectedAgents() : Promise<string[]> {
     return await TAURI_INVOKE("get_last_selected_agents");
 },
 /**
- * 保存选择的 agents
- * 写入 ~/.agents/.skill-lock.json 中的 lastSelectedAgents
+ * 获取 GUI scope-aware 默认安装目标
  */
-async saveLastSelectedAgents(agents: string[]) : Promise<Result<null, AppError>> {
+async getDefaultTargetAgents() : Promise<DefaultTargetAgents | null> {
+    return await TAURI_INVOKE("get_default_target_agents");
+},
+/**
+ * 保存 GUI scope-aware 默认安装目标
+ */
+async saveDefaultTargetAgents(defaults: DefaultTargetAgents) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_last_selected_agents", { agents }) };
+    return { status: "ok", data: await TAURI_INVOKE("save_default_target_agents", { defaults }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -201,7 +206,7 @@ async removeSkill(scope: Scope, name: string, projectPath: string | null, agents
 /**
  * 查询 skill 的 agent 安装详情
  *
- * 对话框挂载时调用，返回 universal/non-universal 分组信息
+ * 对话框挂载时调用，返回自动应用/独立安装分组信息
  */
 async getSkillAgentDetails(scope: Scope, name: string, projectPath: string | null) : Promise<Result<SkillAgentDetails, AppError>> {
     try {
@@ -344,20 +349,22 @@ async checkSkillInProjects(skillName: string, projectPaths: string[]) : Promise<
  */
 export type AgentInfo = { id: AgentType; name: string; skillsDir: string; globalSkillsDir: string; detected: boolean;
 /**
- * 是否是 Universal Agent（安装逻辑用）
- * 对应 CLI: isUniversalAgent()
+ * 按安装范围计算后的目标能力
  */
-isUniversal: boolean;
+targets: AgentTargets }
 /**
- * 是否在 Universal 列表显示（UI 显示用）
- * 对应 CLI: getUniversalAgents() 的过滤条件
+ * Agent 在单个安装范围下的目标能力
  */
-showInUniversalList: boolean }
+export type AgentScopeTarget = { supported: boolean; automatic: boolean; path: string }
+/**
+ * Agent 在全局和项目两个安装范围下的目标能力
+ */
+export type AgentTargets = { global: AgentScopeTarget; project: AgentScopeTarget }
 /**
  * Agent 类型枚举
  * 完整对应 CLI: types.ts AgentType
  */
-export type AgentType = "aider-desk" | "amp" | "antigravity" | "augment" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zencoder" | "pochi" | "adal" | "cortex" | "universal"
+export type AgentType = "aider-desk" | "amp" | "antigravity" | "augment" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zencoder" | "pochi" | "adal" | "cortex"
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
@@ -425,6 +432,10 @@ error: string | null }
  */
 export type CopySkillResult = { results: CopyProjectResult[] }
 /**
+ * GUI 使用的 scope-aware 默认安装目标
+ */
+export type DefaultTargetAgents = { global: string[]; project: string[] }
+/**
  * fetch_available 返回结果
  */
 export type FetchResult = {
@@ -453,7 +464,7 @@ riskPolicy: InstallRiskPolicy;
  */
 skills: AvailableSkill[] }
 /**
- * 非 Universal Agent 的安装详情
+ * 需要独立安装记录的 Agent 详情
  */
 export type IndependentAgentInfo = {
 /**
@@ -704,11 +715,11 @@ scope: Scope;
  */
 canonicalPath: string;
 /**
- * 共享 canonical 的 Universal Agents（带显示名称）
+ * 自动读取 shared canonical 目录的 Agents（带显示名称）
  */
-universalAgents: ([AgentType, string])[];
+automaticAgents: ([AgentType, string])[];
 /**
- * 有独立 symlink 的 Non-Universal Agents
+ * 有独立 symlink 或 copy 的 Agents
  */
 independentAgents: IndependentAgentInfo[] }
 /**

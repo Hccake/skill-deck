@@ -1,6 +1,7 @@
 // .skill-lock.json 读取
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -51,6 +52,15 @@ pub struct DismissedPrompts {
     pub find_skills_prompt: Option<bool>,
 }
 
+/// GUI 使用的 scope-aware 默认安装目标
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct DefaultTargetAgents {
+    pub global: Vec<String>,
+    pub project: Vec<String>,
+}
+
 /// Skill Lock 文件结构
 /// 对应 CLI: SkillLockFile (skill-lock.ts:46-55)
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -62,6 +72,8 @@ pub struct SkillLockFile {
     pub dismissed: Option<DismissedPrompts>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_selected_agents: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_target_agents: Option<DefaultTargetAgents>,
 }
 
 impl SkillLockFile {
@@ -73,6 +85,7 @@ impl SkillLockFile {
             skills: HashMap::new(),
             dismissed: None,
             last_selected_agents: None,
+            default_target_agents: None,
         }
     }
 }
@@ -244,12 +257,30 @@ pub fn remove_skill_from_lock(skill_name: &str) -> Result<bool, AppError> {
     Ok(true)
 }
 
-/// 保存最后选择的 agents
-/// 对应 CLI: saveLastSelectedAgents (skill-lock.ts:282-287)
-pub fn save_selected_agents(agents: &[String]) -> Result<(), AppError> {
+/// 应用 GUI 的 scope-aware 默认安装目标，并同步 CLI 兼容字段
+pub fn apply_default_target_agents(lock: &mut SkillLockFile, defaults: DefaultTargetAgents) {
+    let mut union = Vec::<String>::new();
+    for id in defaults.global.iter().chain(defaults.project.iter()) {
+        if !union.contains(id) {
+            union.push(id.clone());
+        }
+    }
+    lock.default_target_agents = Some(defaults);
+    lock.last_selected_agents = Some(union);
+}
+
+/// 保存 GUI scope-aware 默认安装目标
+pub fn save_default_target_agents(defaults: DefaultTargetAgents) -> Result<(), AppError> {
     let mut lock = read_skill_lock().unwrap_or_else(|_| SkillLockFile::empty());
-    lock.last_selected_agents = Some(agents.to_vec());
+    apply_default_target_agents(&mut lock, defaults);
     write_skill_lock(&lock)
+}
+
+/// 获取 GUI scope-aware 默认安装目标
+pub fn get_default_target_agents() -> Option<DefaultTargetAgents> {
+    read_skill_lock()
+        .ok()
+        .and_then(|lock| lock.default_target_agents)
 }
 
 /// 获取最后选择的 agents
@@ -338,6 +369,45 @@ mod tests {
         assert_eq!(lock.version, 3);
         assert_eq!(lock.skills.len(), 1);
         assert!(lock.skills.contains_key("test-skill"));
+    }
+
+    #[test]
+    fn test_deserialize_default_target_agents() {
+        let json = r#"{
+            "version": 3,
+            "skills": {},
+            "lastSelectedAgents": ["claude-code"],
+            "defaultTargetAgents": {
+                "global": ["cursor"],
+                "project": ["opencode"]
+            }
+        }"#;
+
+        let lock: SkillLockFile = serde_json::from_str(json).unwrap();
+        let defaults = lock.default_target_agents.unwrap();
+
+        assert_eq!(defaults.global, vec!["cursor"]);
+        assert_eq!(defaults.project, vec!["opencode"]);
+    }
+
+    #[test]
+    fn test_apply_default_target_agents_syncs_last_selected_union() {
+        let mut lock = SkillLockFile::empty();
+        let defaults = DefaultTargetAgents {
+            global: vec!["cursor".to_string(), "claude-code".to_string()],
+            project: vec!["opencode".to_string(), "claude-code".to_string()],
+        };
+
+        apply_default_target_agents(&mut lock, defaults);
+
+        assert_eq!(
+            lock.default_target_agents.as_ref().unwrap().global,
+            vec!["cursor", "claude-code"]
+        );
+        assert_eq!(
+            lock.last_selected_agents.unwrap(),
+            vec!["cursor", "claude-code", "opencode"]
+        );
     }
 
     #[test]

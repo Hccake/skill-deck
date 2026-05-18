@@ -1,13 +1,16 @@
 // src/stores/__tests__/settings.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { AgentInfo } from '@/bindings';
 
 const mockGetLastSelectedAgents = vi.fn();
-const mockSaveLastSelectedAgents = vi.fn();
+const mockGetDefaultTargetAgents = vi.fn();
+const mockSaveDefaultTargetAgents = vi.fn();
 const mockListAgents = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   getLastSelectedAgents: (...args: unknown[]) => mockGetLastSelectedAgents(...args),
-  saveLastSelectedAgents: (...args: unknown[]) => mockSaveLastSelectedAgents(...args),
+  getDefaultTargetAgents: (...args: unknown[]) => mockGetDefaultTargetAgents(...args),
+  saveDefaultTargetAgents: (...args: unknown[]) => mockSaveDefaultTargetAgents(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
 }));
 
@@ -17,7 +20,7 @@ describe('useSettingsStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useSettingsStore.setState({
-      defaultAgents: [],
+      defaultTargetAgents: { global: [], project: [] },
       agentsLoaded: false,
     });
   });
@@ -45,50 +48,113 @@ describe('useSettingsStore', () => {
     });
   });
 
-  describe('toggleAgent', () => {
-    it('adds agent when not selected', () => {
-      useSettingsStore.setState({ defaultAgents: ['claude-code'] });
-      mockSaveLastSelectedAgents.mockResolvedValue(undefined);
+  describe('scope-aware defaults', () => {
+    const agents: AgentInfo[] = [
+      {
+        id: 'antigravity',
+        name: 'Antigravity',
+        skillsDir: '.agents/skills',
+        globalSkillsDir: '~/.gemini/antigravity/skills',
+        detected: true,
+        targets: {
+          global: {
+            supported: true,
+            automatic: false,
+            path: '~/.gemini/antigravity/skills',
+          },
+          project: {
+            supported: true,
+            automatic: true,
+            path: '.agents/skills',
+          },
+        },
+      },
+      {
+        id: 'claude-code',
+        name: 'Claude Code',
+        skillsDir: '.claude/skills',
+        globalSkillsDir: '~/.claude/skills',
+        detected: true,
+        targets: {
+          global: {
+            supported: true,
+            automatic: false,
+            path: '~/.claude/skills',
+          },
+          project: {
+            supported: true,
+            automatic: false,
+            path: '.claude/skills',
+          },
+        },
+      },
+    ];
 
-      useSettingsStore.getState().toggleAgent('opencode');
+    it('loads persisted defaultTargetAgents when available', async () => {
+      mockListAgents.mockResolvedValue(agents);
+      mockGetDefaultTargetAgents.mockResolvedValue({
+        global: ['antigravity', 'claude-code'],
+        project: ['antigravity', 'claude-code'],
+      });
+      mockGetLastSelectedAgents.mockResolvedValue(['ignored']);
 
-      expect(useSettingsStore.getState().defaultAgents).toContain('opencode');
-      expect(useSettingsStore.getState().defaultAgents).toContain('claude-code');
+      await useSettingsStore.getState().loadDefaultTargetAgents();
+
+      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
+        global: ['antigravity', 'claude-code'],
+        project: ['claude-code'],
+      });
+      expect(useSettingsStore.getState().agentsLoaded).toBe(true);
+      expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
     });
 
-    it('removes agent when already selected', () => {
-      useSettingsStore.setState({ defaultAgents: ['claude-code', 'opencode'] });
-      mockSaveLastSelectedAgents.mockResolvedValue(undefined);
+    it('migrates lastSelectedAgents independently per scope', async () => {
+      mockListAgents.mockResolvedValue(agents);
+      mockGetDefaultTargetAgents.mockResolvedValue(null);
+      mockGetLastSelectedAgents.mockResolvedValue(['antigravity', 'claude-code']);
 
-      useSettingsStore.getState().toggleAgent('opencode');
+      await useSettingsStore.getState().loadDefaultTargetAgents();
 
-      expect(useSettingsStore.getState().defaultAgents).not.toContain('opencode');
-      expect(useSettingsStore.getState().defaultAgents).toContain('claude-code');
+      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
+        global: ['antigravity', 'claude-code'],
+        project: ['claude-code'],
+      });
     });
 
-    it('rolls back on save failure', async () => {
-      useSettingsStore.setState({ defaultAgents: ['claude-code'] });
-      mockSaveLastSelectedAgents.mockRejectedValue(new Error('save failed'));
+    it('falls back to lastSelectedAgents when scoped defaults fail to load', async () => {
+      mockListAgents.mockResolvedValue(agents);
+      mockGetDefaultTargetAgents.mockRejectedValue(new Error('read failed'));
+      mockGetLastSelectedAgents.mockResolvedValue(['antigravity', 'claude-code']);
 
-      useSettingsStore.getState().toggleAgent('opencode');
+      await useSettingsStore.getState().loadDefaultTargetAgents();
 
-      expect(useSettingsStore.getState().defaultAgents).toContain('opencode');
+      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
+        global: ['antigravity', 'claude-code'],
+        project: ['claude-code'],
+      });
+    });
 
-      await vi.waitFor(() => {
-        expect(useSettingsStore.getState().defaultAgents).toEqual(['claude-code']);
+    it('saves one scope without losing the other scope', () => {
+      mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
+      useSettingsStore.setState({
+        allAgents: agents,
+        defaultTargetAgents: {
+          global: ['antigravity'],
+          project: ['claude-code'],
+        },
+      });
+
+      useSettingsStore.getState().setDefaultTargetAgents('global', ['claude-code']);
+
+      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
+        global: ['claude-code'],
+        project: ['claude-code'],
+      });
+      expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith({
+        global: ['claude-code'],
+        project: ['claude-code'],
       });
     });
   });
 
-  describe('isAgentSelected', () => {
-    it('returns true for selected agent', () => {
-      useSettingsStore.setState({ defaultAgents: ['claude-code'] });
-      expect(useSettingsStore.getState().isAgentSelected('claude-code')).toBe(true);
-    });
-
-    it('returns false for unselected agent', () => {
-      useSettingsStore.setState({ defaultAgents: ['claude-code'] });
-      expect(useSettingsStore.getState().isAgentSelected('opencode')).toBe(false);
-    });
-  });
 });

@@ -1,7 +1,19 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import i18n from '@/i18n';
-import { getLastSelectedAgents, saveLastSelectedAgents, listAgents } from '@/hooks/useTauriApi';
+import {
+  getDefaultTargetAgents,
+  getLastSelectedAgents,
+  listAgents,
+  saveDefaultTargetAgents,
+} from '@/hooks/useTauriApi';
+import type { AgentInfo, DefaultTargetAgents } from '@/hooks/useTauriApi';
+import {
+  EMPTY_DEFAULT_TARGET_AGENTS,
+  filterAdditionalAgentIds,
+  migrateDefaultTargetAgents,
+  type InstallScope,
+} from '@/lib/agentTargets';
 
 export type Theme = 'light' | 'dark';
 export type Locale = 'en' | 'zh-CN';
@@ -18,12 +30,13 @@ interface SettingsState {
   toggleTheme: () => void;
 
   // 默认安装目标（读写 ~/.agents/.skill-lock.json）
-  defaultAgents: string[];
+  allAgents: AgentInfo[];
+  defaultTargetAgents: DefaultTargetAgents;
   agentsLoaded: boolean;
-  loadDefaultAgents: () => Promise<void>;
-  setDefaultAgents: (agents: string[]) => void;
-  toggleAgent: (agentId: string) => void;
-  isAgentSelected: (agentId: string) => boolean;
+  loadDefaultTargetAgents: () => Promise<void>;
+  setDefaultTargetAgents: (scope: InstallScope, agents: string[]) => void;
+  toggleDefaultTargetAgent: (scope: InstallScope, agentId: string) => void;
+  isDefaultTargetAgentSelected: (scope: InstallScope, agentId: string) => boolean;
 }
 
 const applyTheme = (theme: Theme) => {
@@ -58,90 +71,92 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       // ========== 默认安装目标 ==========
-      defaultAgents: [],
+      allAgents: [],
+      defaultTargetAgents: EMPTY_DEFAULT_TARGET_AGENTS,
       agentsLoaded: false,
 
-      loadDefaultAgents: async () => {
+      loadDefaultTargetAgents: async () => {
         try {
-          // 并行获取 lastSelectedAgents 和 agents 列表
-          const [lastSelected, agents] = await Promise.all([
+          const agents = await listAgents();
+          const [targetDefaultsResult, lastSelectedResult] = await Promise.allSettled([
+            getDefaultTargetAgents(),
             getLastSelectedAgents(),
-            listAgents(),
           ]);
 
-          const detectedIds = new Set<string>(
-            agents.filter((a) => a.detected).map((a) => a.id)
-          );
+          const targetDefaults = targetDefaultsResult.status === 'fulfilled'
+            ? targetDefaultsResult.value
+            : null;
+          const lastSelected = lastSelectedResult.status === 'fulfilled'
+            ? lastSelectedResult.value
+            : [];
 
-          let defaultAgents = lastSelected;
+          const migratedDefaults = lastSelected.length > 0
+            ? migrateDefaultTargetAgents(lastSelected, agents)
+            : migrateDefaultTargetAgents(DEFAULT_AGENTS, agents);
 
-          // 如果没有历史记录，使用 CLI 默认值（过滤为已检测到的）
-          if (defaultAgents.length === 0) {
-            defaultAgents = DEFAULT_AGENTS.filter((id) => detectedIds.has(id));
+          const defaultTargetAgents = targetDefaults
+            ? {
+                global: filterAdditionalAgentIds(targetDefaults.global, agents, 'global'),
+                project: filterAdditionalAgentIds(targetDefaults.project, agents, 'project'),
+              }
+            : migratedDefaults;
 
-            // 后台保存默认配置，不阻塞 UI
-            if (defaultAgents.length > 0) {
-              saveLastSelectedAgents(defaultAgents).catch((err) =>
-                console.error('保存默认 agents 失败:', err)
-              );
-            }
-          }
-
-          set({ defaultAgents, agentsLoaded: true });
+          set({
+            allAgents: agents,
+            defaultTargetAgents,
+            agentsLoaded: true,
+          });
         } catch (error) {
           console.error('加载默认 agents 失败:', error);
 
-          // 降级处理：使用 CLI 默认值
           try {
             const agents = await listAgents();
-            const detectedIds = new Set<string>(
-              agents.filter((a) => a.detected).map((a) => a.id)
-            );
-            const defaultAgents = DEFAULT_AGENTS.filter((id) =>
-              detectedIds.has(id)
-            );
-            set({ defaultAgents, agentsLoaded: true });
+            const defaultTargetAgents = migrateDefaultTargetAgents(DEFAULT_AGENTS, agents);
+            set({
+              allAgents: agents,
+              defaultTargetAgents,
+              agentsLoaded: true,
+            });
           } catch {
-            // 完全失败，仅标记加载完成
             set({ agentsLoaded: true });
           }
         }
       },
 
-      setDefaultAgents: (agents: string[]) => {
-        set({ defaultAgents: agents });
+      setDefaultTargetAgents: (scope, agents) => {
+        const { allAgents, defaultTargetAgents } = get();
+        const nextDefaults = {
+          ...defaultTargetAgents,
+          [scope]: filterAdditionalAgentIds(agents, allAgents, scope),
+        };
 
-        // 异步保存
-        saveLastSelectedAgents(agents).catch((error) => {
-          console.error('保存默认 agents 失败:', error);
+        set({
+          defaultTargetAgents: nextDefaults,
         });
-      },
 
-      toggleAgent: (agentId: string) => {
-        const { defaultAgents } = get();
-        const isSelected = defaultAgents.includes(agentId);
-
-        // 乐观更新
-        const newDefaultAgents = isSelected
-          ? defaultAgents.filter((id) => id !== agentId)
-          : [...defaultAgents, agentId];
-
-        set({ defaultAgents: newDefaultAgents });
-
-        // 异步保存，失败时回滚
-        saveLastSelectedAgents(newDefaultAgents).catch((error) => {
+        saveDefaultTargetAgents(nextDefaults).catch((error) => {
           console.error('保存默认 agents 失败，回滚状态:', error);
-          set({ defaultAgents }); // 回滚
+          set({
+            defaultTargetAgents,
+          });
         });
       },
 
-      isAgentSelected: (agentId: string) => {
-        return get().defaultAgents.includes(agentId);
+      toggleDefaultTargetAgent: (scope, agentId) => {
+        const current = get().defaultTargetAgents[scope];
+        const nextAgents = current.includes(agentId)
+          ? current.filter((id) => id !== agentId)
+          : [...current, agentId];
+        get().setDefaultTargetAgents(scope, nextAgents);
+      },
+
+      isDefaultTargetAgentSelected: (scope, agentId) => {
+        return get().defaultTargetAgents[scope].includes(agentId);
       },
     }),
     {
       name: 'skill-deck-settings',
-      // 只持久化 theme 和 locale，不持久化 defaultAgents（后端持久化）
+      // 只持久化 theme 和 locale；默认安装目标由后端 lock 文件持久化。
       partialize: (state) => ({
         theme: state.theme,
         locale: state.locale,
