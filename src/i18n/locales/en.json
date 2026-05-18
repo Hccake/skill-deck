@@ -89,7 +89,7 @@
       "description": "Description",
       "source": "Source",
       "path": "Source Path",
-      "pathHint": "Source files in the universal directory. Non-universal agents reference via symlink or copy.",
+      "pathHint": "Source files in the shared directory. Agents with separate directories reference via symlink or copy.",
       "installed": "Installed",
       "updated": "Updated",
       "installPath": "Install Path",
@@ -105,7 +105,7 @@
     "deleteConfirm": {
       "title": "Delete Skill",
       "description": "Choose which agents to remove this skill from",
-      "sharedDirSection": "Universal Directory",
+      "sharedDirSection": "Shared Directory",
       "deleteCanonical": "Delete source files and install records",
       "canonicalWarning": "All agents will lose access to this skill",
       "independentSection": "Independent installs",
@@ -268,21 +268,48 @@
   },
   "settings": {
     "title": "Settings",
+    "nav": {
+      "sectionLabel": "Settings section",
+      "general": "Appearance",
+      "installPreferences": "Default Install Targets",
+      "git": "Git",
+      "projects": "Projects",
+      "about": "About"
+    },
     "tabs": {
       "general": "General",
       "projects": "Projects",
       "about": "About"
     },
-    "defaultAgents": {
+    "general": {
+      "title": "Appearance",
+      "description": "Tune how Skill Deck looks and behaves day to day.",
+      "appearanceTitle": "Theme",
+      "appearanceDescription": "Choose the display style that fits your current workspace.",
+      "languageTitle": "Language",
+      "languageDescription": "Choose the interface language."
+    },
+    "installPreferences": {
       "title": "Default Install Targets",
-      "description": "Agents selected by default when installing skills",
-      "universalHint": "Skill source files are stored in the universal directory (~/.agents/skills/). Agents that support this directory will have automatic access.",
-      "empty": "No agents detected",
-      "emptyHint": "Install AI coding agents like Claude Code, Cursor, or Windsurf",
-      "addMore": "Add more agents",
-      "searchPlaceholder": "Search agents...",
-      "noResults": "No agents found",
-      "cliShared": "This setting is shared with skills CLI"
+      "description": "Choose which agents a Skill should apply to by default. Global and project installs are saved separately.",
+      "globalTitle": "Global Default",
+      "globalAutomaticPath": "Shared directory: ~/.agents/skills/",
+      "projectTitle": "Project Default",
+      "projectAutomaticPath": "Shared directory: ./.agents/skills/",
+      "automaticSection": "Automatically Applied Agents",
+      "additionalSection": "Agents You Select Manually",
+      "selectAll": "Select All",
+      "selectedCount": "{{count}} selected",
+      "automaticDetectionSummary": "{{detected}} installed, {{undetected}} not installed",
+      "otherAgentsToggle": "Show {{count}} more optional agents",
+      "otherAutomaticAgentsToggle": "Show {{count}} more supported agents that are not installed",
+      "noAutomaticAgents": "There are no automatically applied agents for this scope.",
+      "noAdditionalAgents": "There are no manually selectable agents for this scope.",
+      "noVisibleAdditionalAgents": "There are no installed or selected optional agents."
+    },
+    "git": {
+      "title": "Git",
+      "description": "Adjust how Skill Deck installs and updates skills from Git sources."
     },
     "cloneTimeout": {
       "title": "Remote Fetch Timeout",
@@ -309,6 +336,7 @@
       }
     },
     "detected": "Installed",
+    "notDetected": "Not installed",
     "projects": "Projects",
     "projectsHint": "Saved project paths for quick access to project-level skills",
     "projectsEmpty": "No projects added",
@@ -425,13 +453,11 @@
     },
     "agents": {
       "title": "Install Targets",
-      "universalTitle": "Universal",
-      "alwaysIncluded": "Always included",
-      "additionalTitle": "Additional agents",
-      "additionalHint": "\"Detected\" = this agent's skills directory was found on your system",
+      "automaticTitle": "Applied automatically",
+      "additionalTitle": "Manual selection",
+      "additionalHint": "Choose agents that need an extra install target",
       "expandOtherAgents": "↓ Show {{count}} more agents",
       "collapseOtherAgents": "↑ Collapse",
-      "detected": "Detected",
       "noneSelected": "None selected"
     },
     "scope": {
@@ -458,10 +484,10 @@
     "confirm": {
       "overwriteCount": "{{count}} skills already exist and will be overwritten",
       "willOverwrite": "Overwrites: {{agents}}",
-      "universal": "universal",
+      "shared": "shared",
       "directories": "Install directories",
       "symlink": "Symlink",
-      "symlinkHint": "Agents reference source files in universal directory",
+      "symlinkHint": "Agents reference source files in shared directory",
       "copy": "Copy",
       "copyHint": "Source files copied to each agent directory",
       "trust": {
@@ -532,7 +558,7 @@
         "checkRef": "Check that the branch or tag name is correct",
         "useDefaultBranch": "Try using the default branch",
         "retryLater": "The repository may be too large, try again later",
-        "adjustCloneTimeout": "Increase the timeout in Settings > General > Remote Fetch Timeout",
+        "adjustCloneTimeout": "Increase the timeout in Settings > Git > Remote Fetch Timeout",
         "runAsAdmin": "Try running the app with administrator privileges",
         "checkPermission": "Check write permissions for the target directory",
         "checkAgentName": "Check that the agent name is correct",

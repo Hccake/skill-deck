@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next';
-import { FolderOpen, Trash2, Plus, Briefcase } from 'lucide-react';
+import { FolderOpen, Trash2, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useContextStore } from '@/stores/context';
 
@@ -14,9 +13,9 @@ function ProjectRow({ path, onRemove }: ProjectRowProps) {
   const basename = path.split(/[/\\]/).pop() || path;
 
   return (
-    <div className="flex items-center justify-between py-2.5 px-3 sm:px-4 group hover:bg-muted/30 transition-colors">
+    <div className="group flex items-center justify-between px-4 py-3 my-0.5 mx-1.5 rounded-md transition-colors hover:bg-muted/30">
       <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
-        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px] bg-muted/60 text-muted-foreground group-hover:bg-background group-hover:text-foreground transition-colors border border-border/40 shadow-sm">
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-muted/45 text-muted-foreground transition-colors group-hover:text-foreground">
           <FolderOpen className="h-4 w-4" />
         </div>
         <div className="flex flex-col min-w-0">
@@ -56,57 +55,50 @@ export function ProjectsTab() {
   };
 
   return (
-    <div className="space-y-5 sm:space-y-6">
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2 sm:gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent">
-              <Briefcase className="h-4 w-4 text-accent-foreground" />
-            </div>
-            <div>
-              <h2 className="text-sm font-heading font-bold text-foreground">
-                {t('settings.projects')}
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                {t('settings.projectsHint')}
-              </p>
-            </div>
-          </div>
-          <Button
-            size="sm"
-            className="gap-1.5 cursor-pointer shadow-sm font-medium h-8 bg-primary/10 text-primary hover:bg-primary/20 transition-all"
-            onClick={handleAddProject}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t('settings.addProject')}
-          </Button>
+    <div className="space-y-5">
+      <header className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">
+            {t('settings.projects')}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {t('settings.projectsHint')}
+          </p>
         </div>
+        <Button
+          size="sm"
+          className="h-8 cursor-pointer gap-1.5 px-3 text-xs font-medium"
+          onClick={handleAddProject}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t('settings.addProject')}
+        </Button>
+      </header>
 
-        <Card className="py-0 gap-0 overflow-hidden shadow-sm border-border/60">
-          {projects.length === 0 ? (
-            <div className="relative bg-muted/10 p-8 sm:p-10 flex flex-col items-center text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mb-4 shadow-sm border border-border/50 ring-4 ring-muted/20">
-                <FolderOpen className="h-7 w-7 text-muted-foreground/70" />
-              </div>
-              <p className="text-[15px] font-semibold text-foreground mb-1.5">
-                {t('settings.projectsEmpty')}
-              </p>
-              <p className="text-xs text-muted-foreground max-w-[240px]">
-                {t('settings.projectsEmptyHint')}
-              </p>
+      <section className="overflow-hidden rounded-lg border border-border/60 bg-background">
+        {projects.length === 0 ? (
+          <div className="flex flex-col items-center px-6 py-10 text-center">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
+              <FolderOpen className="h-5 w-5" />
             </div>
-          ) : (
-            <CardContent className="p-0 divide-y divide-border/40">
-              {projects.map((path) => (
-                <ProjectRow
-                  key={path}
-                  path={path}
-                  onRemove={(path) => removeProject(path)}
-                />
-              ))}
-            </CardContent>
-          )}
-        </Card>
+            <p className="mb-1 text-sm font-medium text-foreground">
+              {t('settings.projectsEmpty')}
+            </p>
+            <p className="max-w-[260px] text-xs leading-5 text-muted-foreground">
+              {t('settings.projectsEmptyHint')}
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border/50">
+            {projects.map((path) => (
+              <ProjectRow
+                key={path}
+                path={path}
+                onRemove={(path) => removeProject(path)}
+              />
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

@@ -268,21 +268,48 @@
   },
   "settings": {
     "title": "设置",
+    "nav": {
+      "sectionLabel": "设置分类",
+      "general": "外观与语言",
+      "installPreferences": "默认安装目标",
+      "git": "Git",
+      "projects": "项目",
+      "about": "关于"
+    },
     "tabs": {
       "general": "通用",
       "projects": "项目",
       "about": "关于"
     },
-    "defaultAgents": {
+    "general": {
+      "title": "外观与语言",
+      "description": "调整 Skill Deck 的显示方式和常用偏好。",
+      "appearanceTitle": "外观",
+      "appearanceDescription": "选择适合当前工作环境的显示主题。",
+      "languageTitle": "语言",
+      "languageDescription": "切换界面语言。"
+    },
+    "installPreferences": {
       "title": "默认安装目标",
-      "description": "安装 Skill 时默认选中的 Agents",
-      "universalHint": "Skill 源文件存储在通用目录 (~/.agents/skills/)，支持此目录的 Agent 自动可用",
-      "empty": "未检测到 Agent",
-      "emptyHint": "请安装 Claude Code、Cursor 或 Windsurf 等 AI Agent",
-      "addMore": "添加更多 Agents",
-      "searchPlaceholder": "搜索 Agents...",
-      "noResults": "未找到 Agent",
-      "cliShared": "此设置与 skills CLI 共享"
+      "description": "选择安装 Skill 时默认应用到哪些 Agent。全局和项目分别保存。",
+      "globalTitle": "全局默认",
+      "globalAutomaticPath": "共享目录：~/.agents/skills/",
+      "projectTitle": "项目默认",
+      "projectAutomaticPath": "共享目录：./.agents/skills/",
+      "automaticSection": "自动应用的 Agent",
+      "additionalSection": "需要手动选择的 Agent",
+      "selectAll": "全选",
+      "selectedCount": "已选 {{count}} 个",
+      "automaticDetectionSummary": "已安装 {{detected}} 个，未安装 {{undetected}} 个",
+      "otherAgentsToggle": "显示其他 {{count}} 个未安装的可选 Agent",
+      "otherAutomaticAgentsToggle": "显示其他 {{count}} 个未安装但支持自动应用的 Agent",
+      "noAutomaticAgents": "当前范围内没有自动应用的 Agent。",
+      "noAdditionalAgents": "当前范围内没有可手动选择的 Agent。",
+      "noVisibleAdditionalAgents": "没有已安装或已选择的可选 Agent。"
+    },
+    "git": {
+      "title": "Git",
+      "description": "调整从 Git 来源安装和更新 Skill 时的行为。"
     },
     "cloneTimeout": {
       "title": "远程拉取超时",
@@ -309,6 +336,7 @@
       }
     },
     "detected": "已安装",
+    "notDetected": "未安装",
     "projects": "项目",
     "projectsHint": "已保存的项目路径，方便快速查看项目级 Skills",
     "projectsEmpty": "暂无已添加的项目",
@@ -425,13 +453,11 @@
     },
     "agents": {
       "title": "安装目标",
-      "universalTitle": "通用目录",
-      "alwaysIncluded": "自动支持",
-      "additionalTitle": "独立目录",
-      "additionalHint": "已检测 = 系统中发现此 Agent 的 skills 目录",
+      "automaticTitle": "自动应用",
+      "additionalTitle": "手动选择",
+      "additionalHint": "选择需要额外安装到的 Agent",
       "expandOtherAgents": "↓ 显示其他 {{count}} 个 Agent",
       "collapseOtherAgents": "↑ 收起",
-      "detected": "已检测",
       "noneSelected": "未选择"
     },
     "scope": {
@@ -458,7 +484,7 @@
     "confirm": {
       "overwriteCount": "{{count}} 个 Skills 已存在，安装后将被覆盖",
       "willOverwrite": "将覆盖: {{agents}}",
-      "universal": "通用",
+      "shared": "共享",
       "directories": "安装目录",
       "symlink": "符号链接",
       "symlinkHint": "各 Agent 引用通用目录源文件",
@@ -532,7 +558,7 @@
         "checkRef": "检查分支或标签名称是否正确",
         "useDefaultBranch": "尝试使用默认分支",
         "retryLater": "仓库可能过大，请稍后重试",
-        "adjustCloneTimeout": "可前往 Settings > General > 远程拉取超时 调大等待时间",
+        "adjustCloneTimeout": "可前往 设置 > Git > 远程拉取超时 调大等待时间",
         "runAsAdmin": "尝试使用管理员权限运行应用",
         "checkPermission": "检查目标目录的写入权限",
         "checkAgentName": "检查 agent 名称是否正确",

@@ -287,7 +287,7 @@ export function GitCloneTimeoutSection() {
       </div>
 
       {selectedOption === 'custom' ? (
-        <div className="mt-3">
+        <div className="mt-3 animate-in slide-in-from-top-2 fade-in duration-200">
           <div
             data-testid="clone-timeout-advanced"
             className="flex items-center gap-2 ml-9"

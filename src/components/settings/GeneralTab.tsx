@@ -1,112 +1,124 @@
-import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Target, Info } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
-import { listAgents, getLastSelectedAgents, saveLastSelectedAgents } from '@/hooks/useTauriApi';
-import { AgentSelector } from '@/components/skills/add-skill/AgentSelector';
-import type { AgentInfo } from '@/bindings';
-import { GitCloneTimeoutSection } from './GitCloneTimeoutSection';
+import { Moon, Sun } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useSettingsStore } from '@/stores/settings';
+import type { Locale, Theme } from '@/stores/settings';
+import { cn } from '@/lib/utils';
+
+const THEME_OPTIONS: Array<{ value: Theme; icon: typeof Sun; labelKey: string }> = [
+  { value: 'light', icon: Sun, labelKey: 'theme.light' },
+  { value: 'dark', icon: Moon, labelKey: 'theme.dark' },
+];
+
+const LOCALE_OPTIONS: Array<{ value: Locale; label: string }> = [
+  { value: 'zh-CN', label: '简体中文' },
+  { value: 'en', label: 'English' },
+];
 
 export function GeneralTab() {
   const { t } = useTranslation();
-
-  const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
-  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // 加载 agents 数据和默认选择
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoading(true);
-        const [agentsData, lastSelected] = await Promise.all([
-          listAgents(),
-          getLastSelectedAgents(),
-        ]);
-        setAllAgents(agentsData);
-        setSelectedAgents(lastSelected);
-      } catch (e) {
-        console.error('Failed to load data:', e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchData();
-  }, []);
-
-  // 处理 agents 选择变化
-  const handleSelectionChange = useCallback((agents: string[]) => {
-    setSelectedAgents(agents);
-    // 异步保存
-    saveLastSelectedAgents(agents).catch((error) => {
-      console.error('Failed to save agents:', error);
-    });
-  }, []);
-
-  const hasAgents = allAgents.length > 0;
+  const { theme, setTheme, locale, setLocale } = useSettingsStore();
 
   return (
-    <div className="space-y-5 sm:space-y-6">
-      <section>
-        <div className="flex items-center gap-2 sm:gap-2.5 mb-3">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent">
-            <Target className="h-4 w-4 text-accent-foreground" />
-          </div>
-          <div>
-            <h2 className="text-sm font-heading font-bold text-foreground">
-              {t('settings.defaultAgents.title')}
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {t('settings.defaultAgents.description')}
-            </p>
-          </div>
-        </div>
+    <div className="space-y-5">
+      <header className="space-y-1">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+          {t('settings.general.title')}
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t('settings.general.description')}
+        </p>
+      </header>
 
-        {loading ? (
-          <div className="space-y-2 sm:space-y-3 animate-in fade-in duration-300">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 sm:p-4 rounded-xl border border-border/40 bg-accent/10">
-                <Skeleton className="h-10 w-10 rounded-lg shrink-0" />
-                <div className="flex-1 space-y-2">
-                  <Skeleton className="h-4 w-1/3 max-w-[120px]" />
-                  <Skeleton className="h-3 w-1/2 max-w-[200px]" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : !hasAgents ? (
-          <div className="relative overflow-hidden rounded-xl border border-dashed border-border/80 bg-accent/20 p-5 sm:p-6">
-            <div className="flex flex-col items-center text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted mb-2.5">
-                <Target className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium text-foreground mb-1">
-                {t('settings.defaultAgents.empty')}
+      <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60 bg-background">
+        <section className="grid gap-4 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                {t('settings.general.appearanceTitle')}
               </p>
-              <p className="text-xs text-muted-foreground max-w-[220px]">
-                {t('settings.defaultAgents.emptyHint')}
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t('settings.general.appearanceDescription')}
               </p>
             </div>
           </div>
-        ) : (
-          <div className="space-y-3">
-            {/* 复用 AgentSelector 组件 */}
-            <AgentSelector
-              selectedAgents={selectedAgents}
-              allAgents={allAgents}
-              onSelectionChange={handleSelectionChange}
+
+          <div className="relative grid grid-cols-2 rounded-md border border-border/60 bg-muted/25 p-1">
+            <div
+              className={cn(
+                "absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded bg-background shadow-sm transition-transform duration-200 ease-out",
+                theme === 'dark' ? "translate-x-full" : "translate-x-0"
+              )}
             />
+            {THEME_OPTIONS.map((option) => {
+              const Icon = option.icon;
+              const selected = theme === option.value;
 
-            {/* CLI 共享提示 */}
-            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <Info className="h-3 w-3" />
-              {t('settings.defaultAgents.cliShared')}
-            </p>
+              return (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setTheme(option.value)}
+                  className={cn(
+                    'relative z-10 h-8 gap-1.5 px-3 text-xs',
+                    selected
+                      ? 'text-foreground hover:bg-transparent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-transparent'
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {t(option.labelKey)}
+                </Button>
+              );
+            })}
           </div>
-        )}
-      </section>
+        </section>
 
-      <GitCloneTimeoutSection />
+        <section className="grid gap-4 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                {t('settings.general.languageTitle')}
+              </p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t('settings.general.languageDescription')}
+              </p>
+            </div>
+          </div>
+
+          <div className="relative grid grid-cols-2 rounded-md border border-border/60 bg-muted/25 p-1">
+            <div
+              className={cn(
+                "absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded bg-background shadow-sm transition-transform duration-200 ease-out",
+                locale === 'en' ? "translate-x-full" : "translate-x-0"
+              )}
+            />
+            {LOCALE_OPTIONS.map((option) => {
+              const selected = locale === option.value;
+
+              return (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setLocale(option.value)}
+                  className={cn(
+                    'relative z-10 h-8 px-3 text-xs',
+                    selected
+                      ? 'text-foreground hover:bg-transparent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-transparent'
+                  )}
+                >
+                  {option.label}
+                </Button>
+              );
+            })}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
