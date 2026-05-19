@@ -11,7 +11,7 @@ context.ts ← skills.ts 通过 getState() 读取 selectedContext
 
 - `stores/context.ts`: 管理当前 scope（`'global'` 或项目路径），项目列表。调用后端 config API
 - `stores/skills.ts`: 通过 `useContextStore.getState()` 读取当前 context。NEVER 在 skills store 中使用 `useContextStore` hook（会导致无限循环）
-- `stores/settings.ts`: theme/locale 通过 zustand `persist` 中间件持久化到 localStorage（`partialize` 只存 theme + locale）。defaultAgents 通过后端 API 持久化
+- `stores/settings.ts`: theme/locale 通过 zustand `persist` 中间件持久化到 localStorage（`partialize` 只存 theme + locale）。默认安装目标通过后端 lock 文件持久化
 
 ## Component Conventions
 

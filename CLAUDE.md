@@ -125,7 +125,7 @@ SourceStep → SkillsStep → OptionsStep → ConfirmStep → InstallingStep →
 
 - **SourceStep**: 用户输入 skill 来源，后端 `source_parser.rs` 解析 9 种格式（git URL、GitHub shorthand `owner/repo`、local path 等）
 - **SkillsStep**: 一个 source 可能包含多个 skill（monorepo），调用 `fetchAvailable()` 获取列表，用户选择要安装哪些
-- **OptionsStep**: 选择安装到哪些 agents。auto-detect 系统中已安装的 agents（38+ 种），默认选中上次的选择（持久化在 `~/.agents/.skill-lock.json`）
+- **OptionsStep**: 选择安装到哪些 agents。auto-detect 系统中已安装的 agents（38+ 种），按当前 scope 读取默认安装目标（持久化在 `~/.agents/.skill-lock.json`）
 - **ConfirmStep**: 展示最终确认摘要，按 agent 分组显示将安装的 skills。调用 `checkOverwrites()` 检测是否有同名 skill 已存在
 - **InstallingStep**: 调用 `installSkills()` 执行安装，支持 overwrite 已存在的 skill
 - **CompleteStep/ErrorStep**: 展示安装结果
@@ -134,7 +134,7 @@ SourceStep → SkillsStep → OptionsStep → ConfirmStep → InstallingStep →
 
 - **单个 skill 删除**: 调用 `getSkillAgentDetails()` 获取该 skill 安装在哪些 agents 上，用户逐个勾选要从哪些 agent 移除。支持 `fullRemoval`（完全删除）和部分移除（只从选中的 agents 移除 symlink）
 - **批量删除**: 展示所有选中 skills 的 agent 分布，统一操作
-- **Universal agent 分组**: 分组逻辑 MUST 与 install wizard 的 ConfirmStep 一致（见 commit fd597f6）。Universal agents 作为独立分组展示
+- **自动应用 Agent 分组**: 分组逻辑 MUST 与 install wizard 的 ConfirmStep 一致。自动应用的 agents 读取当前 scope 的共享目录，独立目录 agents 才需要用户选择或部分移除
 
 ### Context System (global vs project scope)
 
@@ -209,7 +209,7 @@ pnpm test && pnpm lint && pnpm build
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **skill-deck** (2698 symbols, 6049 relationships, 230 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **skill-deck** (3020 symbols, 6769 relationships, 259 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
