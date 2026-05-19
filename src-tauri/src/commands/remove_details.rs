@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// 查询 skill 的 agent 安装详情
 ///
-/// 对话框挂载时调用，返回 universal/non-universal 分组信息
+/// 对话框挂载时调用，返回自动应用/独立安装分组信息
 #[tauri::command]
 #[specta::specta]
 pub async fn get_skill_agent_details(
@@ -36,8 +36,8 @@ pub async fn get_skill_agent_details(
         }
     };
 
-    // 3. 遍历 agents，分组为 universal / independent
-    let mut universal_agents: Vec<(AgentType, String)> = Vec::new();
+    // 3. 遍历 agents，分组为 automatic / independent
+    let mut automatic_agents: Vec<(AgentType, String)> = Vec::new();
     let mut independent_agents: Vec<IndependentAgentInfo> = Vec::new();
 
     for agent in &detected_agents {
@@ -61,13 +61,9 @@ pub async fn get_skill_agent_details(
             continue;
         }
 
-        if agent.is_universal() {
-            // 仅展示 show_in_universal_list 的 agent，与安装向导保持一致
-            // Replit/Universal 等隐藏的 universal agent 不参与展示
-            if config.show_in_universal_list {
-                universal_agents.push((*agent, config.display_name.to_string()));
-            }
-            // universal agent 不能放入 independent（删除其目录 = 删除 canonical）
+        if agent.is_automatic_for_scope(is_global, cwd) {
+            automatic_agents.push((*agent, config.display_name.to_string()));
+            // automatic agent 读取 canonical，不能放入 independent（删除其目录 = 删除 canonical）
             continue;
         } else {
             // 检查是否是 symlink
@@ -102,7 +98,7 @@ pub async fn get_skill_agent_details(
         skill_name: name,
         scope,
         canonical_path: canonical_path.to_string_lossy().to_string(),
-        universal_agents,
+        automatic_agents,
         independent_agents,
     })
 }

@@ -2,6 +2,7 @@
 
 import type { AgentInfo, AppError, AvailableSkill, InstallMode, InstallResults } from '@/bindings';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
+import { getAgentTarget, isAutomaticAgent, isAdditionalAgent, type InstallScope } from '@/lib/agentTargets';
 
 /** 安装错误详情（UI 视图模型，由 parseInstallError 从 AppError 转换而来） */
 export interface InstallError {
@@ -30,22 +31,26 @@ export function getStepFlow(_entryPoint?: EntryPoint): CoreStep[] {
   return STEP_FLOW;
 }
 
-type InstallModeState = Pick<WizardState, 'allAgents' | 'selectedAgents' | 'mode'>;
+type InstallModeState = Pick<WizardState, 'allAgents' | 'selectedAgents' | 'mode' | 'scope'>;
 
 /** 是否需要显示安装方式选择 */
-export function shouldShowInstallModeSelection(state: Pick<WizardState, 'allAgents' | 'selectedAgents'>): boolean {
+export function shouldShowInstallModeSelection(
+  state: Pick<WizardState, 'allAgents' | 'selectedAgents'> & { scope?: InstallScope },
+): boolean {
   if (state.allAgents.length === 0) {
     return true;
   }
 
   const effectiveDirs = new Set<string>();
   const selectedSet = new Set(state.selectedAgents);
+  const scope = state.scope ?? 'global';
 
   for (const agent of state.allAgents) {
-    if (agent.isUniversal && agent.showInUniversalList) {
-      effectiveDirs.add(agent.skillsDir);
-    } else if (!agent.isUniversal && selectedSet.has(agent.id)) {
-      effectiveDirs.add(agent.skillsDir);
+    const target = getAgentTarget(agent, scope);
+    if (isAutomaticAgent(agent, scope)) {
+      effectiveDirs.add(target.path);
+    } else if (isAdditionalAgent(agent, scope) && selectedSet.has(agent.id)) {
+      effectiveDirs.add(target.path);
     }
   }
 

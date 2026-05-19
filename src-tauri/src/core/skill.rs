@@ -626,7 +626,7 @@ Content.
             .find(|agent| {
                 !detected.contains(agent) && agent.config().skills_dir != ".agents/skills"
             })
-            .expect("expected at least one undetected non-universal agent");
+            .expect("expected at least one undetected agent with a separate skill directory");
 
         let agent_dir = project
             .path()

@@ -125,7 +125,7 @@ fn install_with_symlink(
 ) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
     let canonical_dir = write_canonical_skill(skill_path, skill_name, is_global, cwd)?;
 
-    // 3. 创建 symlink（Universal Agent global 安装跳过）
+    // 3. 创建 symlink（自动应用的 global agent 跳过）
     symlink_canonical_to_agent(&canonical_dir, skill_name, agent, is_global, cwd)
 }
 
@@ -206,7 +206,7 @@ fn install_with_copy(
 }
 
 fn should_skip_project_agent_symlink(agent: &AgentType, is_global: bool, cwd: &str) -> bool {
-    if is_global || agent.is_universal() {
+    if is_global || agent.is_automatic_for_scope(false, cwd) {
         return false;
     }
 
@@ -223,7 +223,7 @@ fn resolve_agent_base_dir(
     is_global: bool,
     cwd: &str,
 ) -> Result<PathBuf, AppError> {
-    if agent.is_universal() {
+    if agent.is_automatic_for_scope(is_global, cwd) {
         return Ok(canonical_skills_dir(is_global, cwd));
     }
 
@@ -993,20 +993,20 @@ mod tests {
     }
 
     #[test]
-    fn test_copy_install_same_path_universal_preserves_canonical() {
+    fn test_copy_install_same_path_automatic_agent_preserves_canonical() {
         let temp = tempdir().unwrap();
         let project_path = temp.path().to_string_lossy().to_string();
         let src = temp.path().join("source-skill");
         fs::create_dir_all(&src).unwrap();
         fs::write(
             src.join("SKILL.md"),
-            "---\nname: universal-copy\ndescription: test\n---\n",
+            "---\nname: shared-copy\ndescription: test\n---\n",
         )
         .unwrap();
 
         let result = install_skill_for_agent(
             &src,
-            "universal-copy",
+            "shared-copy",
             &AgentType::Cursor,
             &Scope::Project,
             Some(&project_path),
@@ -1022,14 +1022,34 @@ mod tests {
             .path()
             .join(".agents")
             .join("skills")
-            .join("universal-copy");
+            .join("shared-copy");
         assert!(canonical.join("SKILL.md").exists());
         assert_eq!(result.path, canonical);
         assert_eq!(result.canonical_path.as_deref(), Some(canonical.as_path()));
     }
 
     #[test]
-    fn test_project_symlink_install_skips_non_universal_agent_when_root_missing() {
+    fn test_project_automatic_agent_resolves_to_project_canonical() {
+        let temp = tempdir().unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+
+        let base = resolve_agent_base_dir(&AgentType::Antigravity, false, &cwd).unwrap();
+
+        assert_eq!(base, temp.path().join(".agents").join("skills"));
+    }
+
+    #[test]
+    fn test_global_antigravity_resolves_to_agent_specific_global_dir() {
+        let base = resolve_agent_base_dir(&AgentType::Antigravity, true, ".").unwrap();
+        let base_str = base.to_string_lossy();
+
+        assert!(base_str.contains(".gemini"));
+        assert!(base_str.contains("antigravity"));
+        assert!(!base_str.ends_with(".agents/skills"));
+    }
+
+    #[test]
+    fn test_project_symlink_install_skips_separate_agent_when_root_missing() {
         let temp = tempdir().unwrap();
         let project_path = temp.path().to_string_lossy().to_string();
         let src = temp.path().join("source-skill");
@@ -1095,7 +1115,7 @@ mod tests {
         fs::write(canonical_dir.join("SKILL.md"), "# Test Skill").unwrap();
         fs::write(canonical_dir.join("config.json"), "{}").unwrap();
 
-        // 用一个 non-universal agent 测试
+        // 用一个独立目录 agent 测试
         let agent = AgentType::Cursor;
         fs::create_dir_all(temp.path().join(".cursor")).unwrap();
         let result = link_skill_for_agent(

@@ -234,7 +234,7 @@ describe('useSkillsStore', () => {
 
     it('openDelete sets deleteTarget and fetches agent details', async () => {
       const skill = makeSkill('test-skill');
-      const details: SkillAgentDetails = { skillName: 'test-skill', scope: 'global', canonicalPath: '/tmp', universalAgents: [], independentAgents: [] };
+      const details: SkillAgentDetails = { skillName: 'test-skill', scope: 'global', canonicalPath: '/tmp', automaticAgents: [], independentAgents: [] };
       mockGetAgentDetails.mockResolvedValue(details);
 
       useSkillDialogStore.getState().openDelete(skill, 'global');
@@ -252,7 +252,7 @@ describe('useSkillsStore', () => {
     it('closeDelete clears all delete state', () => {
       useSkillDialogStore.setState({
         deleteTarget: { skill: makeSkill('x'), scope: 'global' },
-        agentDetails: { skillName: 'x', scope: 'global', canonicalPath: '/tmp', universalAgents: [], independentAgents: [] } satisfies SkillAgentDetails,
+        agentDetails: { skillName: 'x', scope: 'global', canonicalPath: '/tmp', automaticAgents: [], independentAgents: [] } satisfies SkillAgentDetails,
         loadingAgentDetails: true,
       });
 

@@ -3,11 +3,12 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { listAgents, getLastSelectedAgents } from '@/hooks/useTauriApi';
+import { listAgents, getDefaultTargetAgents, getLastSelectedAgents } from '@/hooks/useTauriApi';
+import { filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
 import { AgentSelector } from './AgentSelector';
 import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
 
-// CLI 默认选中的 Non-Universal agents
+// CLI 默认选中的手动安装目标
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
 
 interface OptionsStepProps {
@@ -17,6 +18,7 @@ interface OptionsStepProps {
 
 export function OptionsStep({ state, updateState }: OptionsStepProps) {
   const { t } = useTranslation();
+  const scope = state.scope;
 
   // 使用 ref 保存 updateState，避免将其作为 useEffect 依赖（advanced-event-handler-refs）
   const updateStateRef = useRef(updateState);
@@ -33,29 +35,35 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
         listAgents(),
         getLastSelectedAgents(),
       ]);
-
-      // js-set-map-lookups 规则
-      const detectedNonUniversalIds = new Set<string>(
-        allAgents
-          .filter((a) => a.detected && !a.isUniversal)
-          .map((a) => a.id)
-      );
+      const targetDefaults = await getDefaultTargetAgents().catch(() => null);
 
       let selectedAgents: string[];
 
       // 优先使用从 CLI 命令解析出的 preSelectedAgents
       if (preSelectedAgentsRef.current.length > 0) {
-        const matched = preSelectedAgentsRef.current.filter((id) =>
-          allAgents.some((a) => a.id === id && !a.isUniversal)
+        const matched = filterAdditionalAgentIds(
+          preSelectedAgentsRef.current,
+          allAgents,
+          scope,
         );
         selectedAgents = matched.length > 0 ? matched : [];
-      } else if (lastSelected.length > 0) {
-        selectedAgents = lastSelected.filter(
-          (id) => allAgents.some((a) => a.id === id && !a.isUniversal)
+      } else if (targetDefaults) {
+        selectedAgents = filterAdditionalAgentIds(
+          targetDefaults[scope],
+          allAgents,
+          scope,
         );
+      } else if (lastSelected.length > 0) {
+        selectedAgents = migrateDefaultTargetAgents(
+          lastSelected,
+          allAgents,
+        )[scope];
       } else {
-        selectedAgents = DEFAULT_NON_UNIVERSAL_AGENTS.filter((id) =>
-          detectedNonUniversalIds.has(id)
+        selectedAgents = migrateDefaultTargetAgents(
+          DEFAULT_NON_UNIVERSAL_AGENTS,
+          allAgents,
+        )[scope].filter((id) =>
+          allAgents.some((agent) => agent.id === id && agent.detected)
         );
       }
 
@@ -66,7 +74,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
     }
 
     initAgents();
-  }, []);
+  }, [scope]);
 
   const handleSelectionChange = useCallback(
     (agents: string[]) => {
@@ -85,6 +93,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
         selectedAgents={state.selectedAgents}
         allAgents={state.allAgents}
         onSelectionChange={handleSelectionChange}
+        scope={state.scope}
       />
 
       {/* Mode */}

@@ -14,25 +14,42 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+function makeAgent(agent: Omit<AgentInfo, 'targets'> & {
+  globalAutomatic?: boolean;
+  projectAutomatic?: boolean;
+}): AgentInfo {
+  return {
+    ...agent,
+    targets: {
+      global: {
+        supported: true,
+        automatic: agent.globalAutomatic ?? false,
+        path: agent.globalSkillsDir,
+      },
+      project: {
+        supported: true,
+        automatic: agent.projectAutomatic ?? false,
+        path: agent.skillsDir,
+      },
+    },
+  };
+}
+
 const allAgents: AgentInfo[] = [
-  {
+  makeAgent({
     id: 'claude-code',
     name: 'Claude Code',
     skillsDir: '.claude/skills',
     globalSkillsDir: '~/.claude/skills',
     detected: true,
-    isUniversal: false,
-    showInUniversalList: false,
-  },
-  {
+  }),
+  makeAgent({
     id: 'cursor',
     name: 'Cursor',
     skillsDir: '.cursor/skills',
     globalSkillsDir: '~/.cursor/skills',
     detected: true,
-    isUniversal: false,
-    showInUniversalList: false,
-  },
+  }),
 ];
 
 const skill: InstalledSkill = {
@@ -46,15 +63,14 @@ const skill: InstalledSkill = {
 
 describe('ManageAgentsDialog', () => {
   it('resets selected separate locations when agent metadata changes', () => {
-    const universalCursor: AgentInfo = {
+    const automaticCursor: AgentInfo = makeAgent({
       id: 'cursor',
       name: 'Cursor',
       skillsDir: '.agents/skills',
       globalSkillsDir: '~/.cursor/skills',
       detected: true,
-      isUniversal: true,
-      showInUniversalList: true,
-    };
+      projectAutomatic: true,
+    });
     const skillWithCursor: InstalledSkill = {
       ...skill,
       agents: ['cursor'],
@@ -74,7 +90,7 @@ describe('ManageAgentsDialog', () => {
       <ManageAgentsDialog
         skill={skillWithCursor}
         scope="project"
-        allAgents={[universalCursor]}
+        allAgents={[automaticCursor]}
         onClose={vi.fn()}
         onSave={vi.fn()}
       />

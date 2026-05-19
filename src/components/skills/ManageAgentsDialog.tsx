@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { isAutomaticAgent } from '@/lib/agentTargets';
 import { AgentSelector } from './add-skill/AgentSelector';
 import type { InstalledSkill, SkillScope, AgentInfo, InstallMode } from '@/bindings';
 
@@ -33,11 +34,12 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
 }: ManageAgentsDialogProps) {
   const initialSelected = useMemo(() => {
     if (!skill) return [] as string[];
-    const universalIds = new Set(
-      allAgents.filter((a) => a.isUniversal).map((a) => a.id)
+    const installScope = scope === 'project' ? 'project' : 'global';
+    const automaticIds = new Set(
+      allAgents.filter((agent) => isAutomaticAgent(agent, installScope)).map((agent) => agent.id)
     );
-    return skill.agents.filter((id) => !universalIds.has(id));
-  }, [skill, allAgents]);
+    return skill.agents.filter((id) => !automaticIds.has(id));
+  }, [skill, allAgents, scope]);
 
   const resetKey = useMemo(() => {
     const skillKey = skill

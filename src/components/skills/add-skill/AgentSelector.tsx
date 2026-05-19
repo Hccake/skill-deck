@@ -4,6 +4,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { getAgentTarget, isAdditionalAgent, isAutomaticAgent } from '@/lib/agentTargets';
 import { cn } from '@/lib/utils';
 import type { AgentInfo } from '@/bindings';
 
@@ -14,7 +15,7 @@ interface AgentSelectorProps {
   allAgents: AgentInfo[];
   /** 选择变化回调 */
   onSelectionChange: (agents: string[]) => void;
-  /** 安装范围（用于动态显示 Universal 路径） */
+  /** 安装范围（用于动态显示自动应用路径） */
   scope?: 'global' | 'project';
 }
 
@@ -22,7 +23,7 @@ export function AgentSelector({
   selectedAgents,
   allAgents,
   onSelectionChange,
-  scope,
+  scope = 'global',
 }: AgentSelectorProps) {
   const { t } = useTranslation();
   const selectedAgentsRef = useRef(selectedAgents);
@@ -32,15 +33,15 @@ export function AgentSelector({
     selectedAgentsRef.current = selectedAgents;
   }, [selectedAgents]);
 
-  const { universalAgents, detectedAgents, otherAgents } = useMemo(() => {
-    const universal: AgentInfo[] = [];
+  const { automaticAgents, detectedAgents, otherAgents } = useMemo(() => {
+    const automatic: AgentInfo[] = [];
     const detected: AgentInfo[] = [];
     const other: AgentInfo[] = [];
 
     for (const agent of allAgents) {
-      if (agent.isUniversal && agent.showInUniversalList) {
-        universal.push(agent);
-      } else if (!agent.isUniversal) {
+      if (isAutomaticAgent(agent, scope)) {
+        automatic.push(agent);
+      } else if (isAdditionalAgent(agent, scope)) {
         if (agent.detected) {
           detected.push(agent);
         } else {
@@ -49,8 +50,8 @@ export function AgentSelector({
       }
     }
 
-    return { universalAgents: universal, detectedAgents: detected, otherAgents: other };
-  }, [allAgents]);
+    return { automaticAgents: automatic, detectedAgents: detected, otherAgents: other };
+  }, [allAgents, scope]);
 
   const toggleAgent = useCallback((agentId: string) => {
     const currentSelection = selectedAgentsRef.current;
@@ -64,7 +65,7 @@ export function AgentSelector({
 
   const hasSelectableAgents = detectedAgents.length > 0 || otherAgents.length > 0;
 
-  const getUniversalPath = () => {
+  const getAutomaticPath = () => {
     if (scope === 'global') return '~/.agents/skills/';
     if (scope === 'project') return './.agents/skills/';
     return '.agents/skills/';
@@ -72,21 +73,18 @@ export function AgentSelector({
 
   return (
     <div className="space-y-6 pt-1">
-      {universalAgents.length > 0 && (
+      {automaticAgents.length > 0 && (
         <div className="space-y-2.5">
           <div className="flex items-center gap-2.5">
             <span className="text-[13px] font-semibold text-foreground tracking-tight">
-              {t('addSkill.agents.universalTitle', 'Universal')}
+              {t('addSkill.agents.automaticTitle', 'Applied automatically')}
             </span>
             <code className="text-[11px] text-muted-foreground/70 bg-muted/60 px-1.5 py-0.5 rounded font-mono truncate">
-              {getUniversalPath()}
+              {getAutomaticPath()}
             </code>
-            <Badge variant="secondary" className="font-normal text-[10px] h-5 px-1.5 rounded-sm bg-accent/60 hover:bg-accent/60 ml-auto">
-              {t('addSkill.agents.alwaysIncluded', 'Always included')}
-            </Badge>
           </div>
           <div className="flex flex-wrap gap-x-5 gap-y-2.5 pt-0.5">
-            {universalAgents.map((agent) => (
+            {automaticAgents.map((agent) => (
               <div key={agent.id} className="text-[13px] text-muted-foreground flex items-center">
                 <span className="bg-emerald-500/80 w-1.5 h-1.5 rounded-full mr-2 shrink-0"></span>
                 <span className="font-medium text-foreground/80">{agent.name}</span>
@@ -100,7 +98,7 @@ export function AgentSelector({
         <div className="space-y-2">
           <div className="flex items-center gap-2 pb-1">
             <span className="text-[13px] font-semibold text-foreground">
-              {t('addSkill.agents.additionalTitle', 'Additional agents')}
+              {t('addSkill.agents.additionalTitle', 'Manual selection')}
             </span>
             <span className="text-[11px] text-muted-foreground/70 truncate">
               {t('addSkill.agents.additionalHint')}
@@ -170,11 +168,12 @@ const AgentRow = memo(function AgentRow({
 }) {
   const { t } = useTranslation();
 
-  const pathLabel = scope === 'project'
-    ? './' + agent.skillsDir
-    : scope === 'global'
-      ? (agent.globalSkillsDir || `~/${agent.skillsDir}`)
-      : undefined;
+  const target = scope ? getAgentTarget(agent, scope) : null;
+  const pathLabel = target
+    ? scope === 'project'
+      ? `./${target.path}`
+      : target.path
+    : undefined;
 
   return (
     <div
@@ -198,7 +197,7 @@ const AgentRow = memo(function AgentRow({
       </div>
       {showDetectedBadge && agent.detected && (
         <Badge variant="secondary" className="text-[10px] h-5 px-1.5 rounded-sm font-normal bg-accent/60 hover:bg-accent/60">
-          {t('addSkill.agents.detected', 'Detected')}
+          {t('settings.detected', 'Installed')}
         </Badge>
       )}
     </div>

@@ -46,9 +46,9 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   }
 
   // 直接计算的 derived state
-  const hasUniversal = (agentDetails?.universalAgents?.length ?? 0) > 0;
+  const hasAutomatic = (agentDetails?.automaticAgents?.length ?? 0) > 0;
   const hasIndependent = (agentDetails?.independentAgents?.length ?? 0) > 0;
-  const hasAnyAgent = hasUniversal || hasIndependent;
+  const hasAnyAgent = hasAutomatic || hasIndependent;
   const selectedCount = selectedAgents.size;
   const canConfirm = hasAnyAgent ? (deleteCanonical || selectedCount > 0) : true;
 
@@ -128,7 +128,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
         ) : agentDetails && hasAnyAgent ? (
           <div className="mt-4 space-y-3">
             {/* Shared Directory Section */}
-            {hasUniversal && (
+            {hasAutomatic && (
               <div className={cn(
                 'rounded-lg border p-3 space-y-2.5 transition-colors',
                 deleteCanonical && 'border-destructive/30 bg-destructive/5'
@@ -149,7 +149,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
                 </div>
 
                 <div className="flex flex-wrap gap-1 pl-6">
-                  {agentDetails.universalAgents.map(([agentId, name]) => (
+                  {agentDetails.automaticAgents.map(([agentId, name]) => (
                     <Badge key={agentId} variant="secondary" className="text-xs">
                       {name}
                     </Badge>

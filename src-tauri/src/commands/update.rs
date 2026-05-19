@@ -514,11 +514,11 @@ async fn update_skill_single(
     let skill = find_update_skill(&discovered, skill_name, entry_skill_path.as_deref())
         .ok_or_else(|| AppError::NoSkillsFound)?;
 
-    // 6. 检测已安装的 agents (通过文件系统检测,fallback 仅保留 universal agents)。
+    // 6. 检测已安装的 agents (通过文件系统检测,fallback 仅保留当前 scope 自动应用的 agents)。
     //    注意:fallback 故意不再合并 `AgentType::detect_installed()` —— 否则会把 skill
     //    装到从未链接过的 agent 上 (例如用户原本只装在 cursor、之后手动卸了 cursor 时)。
-    //    canonical 已经被 install_skill_to_agents_with_modes 写为新内容,universal agents
-    //    直接读 canonical 即可。
+    //    canonical 已经被 install_skill_to_agents_with_modes 写为新内容，自动应用 agents
+    //    直接读对应 scope 的 canonical 即可。
     let install_scope = match scope {
         Scope::Global => crate::models::Scope::Global,
         Scope::Project => crate::models::Scope::Project,
@@ -526,7 +526,9 @@ async fn update_skill_single(
     let mut target_agents =
         detect_installed_agents_for_skill(skill_name, &install_scope, project_path);
     if target_agents.is_empty() {
-        target_agents = AgentType::get_universal_agents();
+        let is_global = matches!(install_scope, crate::models::Scope::Global);
+        let cwd = project_path.unwrap_or(".");
+        target_agents = AgentType::get_automatic_agents_for_scope(is_global, cwd);
     }
 
     // 7. 按 agent 检测安装模式（通过文件系统检测）
@@ -941,11 +943,13 @@ async fn update_skills_batch_inner(
                     }
                 };
 
-            // detect agents (fallback 仅保留 universal agents,见单个 update 路径的注释)
+            // detect agents (fallback 仅保留当前 scope 自动应用的 agents,见单个 update 路径的注释)
             let mut target_agents =
                 detect_installed_agents_for_skill(&entry.name, &install_scope, project_path);
             if target_agents.is_empty() {
-                target_agents = AgentType::get_universal_agents();
+                let is_global = matches!(install_scope, crate::models::Scope::Global);
+                let cwd = project_path.unwrap_or(".");
+                target_agents = AgentType::get_automatic_agents_for_scope(is_global, cwd);
             }
 
             // detect install mode per agent

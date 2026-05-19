@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import type { AgentInfo } from '@/bindings';
@@ -15,16 +15,71 @@ vi.mock('react-i18next', () => ({
 }));
 
 const listAgentsMock = vi.fn<() => Promise<AgentInfo[]>>();
+const getDefaultTargetAgentsMock = vi.fn();
 const getLastSelectedAgentsMock = vi.fn<() => Promise<string[]>>();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listAgents: () => listAgentsMock(),
+  getDefaultTargetAgents: () => getDefaultTargetAgentsMock(),
   getLastSelectedAgents: () => getLastSelectedAgentsMock(),
 }));
 
 vi.mock('../AgentSelector', () => ({
-  AgentSelector: () => <div>agent-selector</div>,
+  AgentSelector: ({ selectedAgents, scope }: { selectedAgents: string[]; scope: string }) => (
+    <div>
+      agent-selector:{scope}:{selectedAgents.join(',')}
+    </div>
+  ),
 }));
+
+function makeAgent(agent: Omit<AgentInfo, 'targets'> & {
+  globalAutomatic?: boolean;
+  projectAutomatic?: boolean;
+}): AgentInfo {
+  return {
+    ...agent,
+    targets: {
+      global: {
+        supported: true,
+        automatic: agent.globalAutomatic ?? false,
+        path: agent.globalSkillsDir,
+      },
+      project: {
+        supported: true,
+        automatic: agent.projectAutomatic ?? false,
+        path: agent.skillsDir,
+      },
+    },
+  };
+}
+
+function makeAutomaticGlobalAgent(agent: Omit<AgentInfo, 'targets'>): AgentInfo {
+  return {
+    ...agent,
+    targets: {
+      global: {
+        supported: true,
+        automatic: true,
+        path: '~/.agents/skills',
+      },
+      project: {
+        supported: true,
+        automatic: agent.skillsDir === '.agents/skills',
+        path: agent.skillsDir,
+      },
+    },
+  };
+}
+
+function makeScopeAwareAgent(
+  agent: Omit<AgentInfo, 'targets'>,
+  targets: AgentInfo['targets'],
+): AgentInfo {
+  return {
+    ...agent,
+    targets,
+  };
+}
 
 function createState(): WizardState {
   return {
@@ -68,30 +123,42 @@ function Harness() {
   );
 }
 
+function ProjectHarness() {
+  const [state, setState] = useState<WizardState>(() => ({
+    ...createState(),
+    scope: 'project',
+  }));
+  return (
+    <OptionsStep
+      state={state}
+      updateState={(updates) => setState((current) => ({ ...current, ...updates }))}
+    />
+  );
+}
+
 describe('OptionsStep', () => {
+  beforeEach(() => {
+    getDefaultTargetAgentsMock.mockResolvedValue(null);
+    getLastSelectedAgentsMock.mockResolvedValue([]);
+  });
+
   it('hides mode radios when only the shared directory is relevant', async () => {
     listAgentsMock.mockResolvedValue([
-      {
+      makeAutomaticGlobalAgent({
         id: 'amp',
         name: 'Amp',
         skillsDir: '.agents/skills',
         globalSkillsDir: '~/.config/agents/skills',
         detected: true,
-        isUniversal: true,
-        showInUniversalList: true,
-      },
-      {
+      }),
+      makeAutomaticGlobalAgent({
         id: 'warp',
         name: 'Warp',
         skillsDir: '.agents/skills',
         globalSkillsDir: '~/.agents/skills',
         detected: true,
-        isUniversal: true,
-        showInUniversalList: true,
-      },
+      }),
     ]);
-    getLastSelectedAgentsMock.mockResolvedValue([]);
-
     render(<Harness />);
 
     await waitFor(() => {
@@ -99,5 +166,45 @@ describe('OptionsStep', () => {
     });
 
     expect(screen.queryByText('addSkill.mode.title')).toBeNull();
+  });
+
+  it('passes scope to the agent selector and uses persisted defaults for that scope', async () => {
+    listAgentsMock.mockResolvedValue([
+      makeScopeAwareAgent({
+        id: 'antigravity',
+        name: 'Antigravity',
+        skillsDir: '.agents/skills',
+        globalSkillsDir: '~/.gemini/antigravity/skills',
+        detected: true,
+      }, {
+        global: {
+          supported: true,
+          automatic: false,
+          path: '~/.gemini/antigravity/skills',
+        },
+        project: {
+          supported: true,
+          automatic: true,
+          path: '.agents/skills',
+        },
+      }),
+      makeAgent({
+        id: 'claude-code',
+        name: 'Claude Code',
+        skillsDir: '.claude/skills',
+        globalSkillsDir: '~/.claude/skills',
+        detected: true,
+      }),
+    ]);
+    getDefaultTargetAgentsMock.mockResolvedValue({
+      global: ['antigravity', 'claude-code'],
+      project: ['antigravity', 'claude-code'],
+    });
+
+    render(<ProjectHarness />);
+
+    await waitFor(() => {
+      expect(screen.getByText('agent-selector:project:claude-code')).toBeDefined();
+    });
   });
 });

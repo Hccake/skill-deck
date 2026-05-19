@@ -8,7 +8,7 @@ use crate::core::agents::AgentType;
 use crate::core::local_lock::{
     add_skill_to_local_lock, compute_skill_folder_hash, LocalSkillLockEntry,
 };
-use crate::core::skill_lock::{add_skill_to_lock, save_selected_agents};
+use crate::core::skill_lock::add_skill_to_lock;
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
     clone_repo_with_progress, compute_local_tree_sha, discover_skills,
@@ -37,20 +37,17 @@ struct InstallProgress {
 
 #[derive(Debug, Clone, Copy)]
 struct InstallBehavior {
-    autofill_universal: bool,
-    persist_selected_agents: bool,
+    autofill_automatic_agents: bool,
 }
 
 fn compute_install_behavior(retry: bool) -> InstallBehavior {
     if retry {
         InstallBehavior {
-            autofill_universal: false,
-            persist_selected_agents: false,
+            autofill_automatic_agents: false,
         }
     } else {
         InstallBehavior {
-            autofill_universal: true,
-            persist_selected_agents: true,
+            autofill_automatic_agents: true,
         }
     }
 }
@@ -261,12 +258,14 @@ async fn install_skills_inner(
         return Err(AppError::NoSkillsFound);
     }
 
-    // 5. 确保包含 Universal Agents（动态获取）
+    // 5. 确保包含当前 scope 下会自动读取共享目录的 Agents（动态获取）
     let mut target_agents = params.agents.clone();
-    if behavior.autofill_universal {
-        let universal_agents = AgentType::get_universal_agents();
+    if behavior.autofill_automatic_agents {
+        let is_global = matches!(params.scope, crate::models::Scope::Global);
+        let cwd = params.project_path.as_deref().unwrap_or(".");
+        let automatic_agents = AgentType::get_automatic_agents_for_scope(is_global, cwd);
 
-        for ua in universal_agents {
+        for ua in automatic_agents {
             let ua_str = ua.to_string();
             if !target_agents.contains(&ua_str) {
                 target_agents.push(ua_str);
@@ -429,11 +428,6 @@ async fn install_skills_inner(
         }
     }
 
-    // 9. 保存选择的 agents
-    if behavior.persist_selected_agents {
-        let _ = save_selected_agents(&target_agents);
-    }
-
     Ok(InstallResults {
         successful,
         failed,
@@ -448,17 +442,30 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_retry_mode_disables_universal_autofill_and_agent_persistence() {
+    fn test_retry_mode_disables_automatic_agent_autofill_and_agent_persistence() {
         let behavior = compute_install_behavior(true);
-        assert!(!behavior.autofill_universal);
-        assert!(!behavior.persist_selected_agents);
+        assert!(!behavior.autofill_automatic_agents);
     }
 
     #[test]
-    fn test_default_mode_keeps_universal_autofill_and_agent_persistence() {
+    fn test_default_mode_keeps_automatic_autofill_without_agent_persistence() {
         let behavior = compute_install_behavior(false);
-        assert!(behavior.autofill_universal);
-        assert!(behavior.persist_selected_agents);
+        assert!(behavior.autofill_automatic_agents);
+    }
+
+    #[test]
+    fn test_default_install_behavior_uses_scope_automatic_agents() {
+        let automatic_global = AgentType::get_automatic_agents_for_scope(true, ".");
+        let automatic_project = AgentType::get_automatic_agents_for_scope(false, ".");
+
+        assert!(
+            !automatic_global.contains(&AgentType::Antigravity),
+            "Antigravity global target is agent-specific, so it must be selectable"
+        );
+        assert!(
+            automatic_project.contains(&AgentType::Antigravity),
+            "Antigravity project target is .agents/skills, so it is automatic"
+        );
     }
 
     #[test]

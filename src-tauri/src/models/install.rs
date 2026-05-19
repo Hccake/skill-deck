@@ -118,7 +118,7 @@ pub struct AvailableSkill {
     pub trust_reason: Option<String>,
 }
 
-/// 非 Universal Agent 的安装详情
+/// 需要独立安装记录的 Agent 详情
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
@@ -144,9 +144,9 @@ pub struct SkillAgentDetails {
     pub scope: Scope,
     /// Canonical 目录路径
     pub canonical_path: String,
-    /// 共享 canonical 的 Universal Agents（带显示名称）
-    pub universal_agents: Vec<(AgentType, String)>,
-    /// 有独立 symlink 的 Non-Universal Agents
+    /// 自动读取 shared canonical 目录的 Agents（带显示名称）
+    pub automatic_agents: Vec<(AgentType, String)>,
+    /// 有独立 symlink 或 copy 的 Agents
     pub independent_agents: Vec<IndependentAgentInfo>,
     // 注意：不设 has_independent_agents 字段，前端直接用 independent_agents.length > 0 推导（YAGNI）
 }

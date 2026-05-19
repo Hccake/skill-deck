@@ -10,6 +10,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { getAgentTarget, isAdditionalAgent } from '@/lib/agentTargets';
 import { toTitleCase } from '@/lib/utils';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
@@ -95,14 +96,16 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     return hasAnyPlugin ? { groups, ungrouped } : null;
   }, [state.selectedSkills, availableSkillMap]);
 
-  // 已选的非 universal agents 信息（用于目录列表）
-  const selectedNonUniversalAgents = useMemo(() => {
+  // 已选的手动安装目标信息（用于目录列表）
+  const selectedAdditionalAgents = useMemo(() => {
     const selectedSet = new Set(state.selectedAgents);
-    return state.allAgents.filter((a) => selectedSet.has(a.id) && !a.isUniversal);
-  }, [state.selectedAgents, state.allAgents]);
+    return state.allAgents.filter((agent) =>
+      selectedSet.has(agent.id) && isAdditionalAgent(agent, scope)
+    );
+  }, [state.selectedAgents, state.allAgents, scope]);
   const effectiveMode = getEffectiveInstallMode(state);
 
-  const universalDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
+  const sharedDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
 
   const renderSkillRow = (skillName: string) => {
     const skill = availableSkillMap.get(skillName);
@@ -229,15 +232,15 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
         <div className="border rounded-md">
           <div className="flex items-center justify-between gap-2 px-3 py-2">
             <code className="font-mono text-[13px] text-foreground truncate">
-              {universalDir}
+              {sharedDir}
             </code>
             <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
-              {t('addSkill.confirm.universal')}
+              {t('addSkill.confirm.shared')}
             </Badge>
           </div>
         </div>
         {/* 关系标注 + Agent 目录 */}
-        {selectedNonUniversalAgents.length > 0 && (
+        {selectedAdditionalAgents.length > 0 && (
           <>
             <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
               <span>↓</span>
@@ -254,10 +257,10 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
               </span>
             </div>
             <div className="border rounded-md divide-y divide-border/50">
-              {selectedNonUniversalAgents.map((agent) => (
+              {selectedAdditionalAgents.map((agent) => (
                 <div key={agent.id} className="flex items-center justify-between gap-2 px-3 py-2">
                   <code className="font-mono text-[13px] text-foreground truncate">
-                    {scope === 'global' ? agent.globalSkillsDir : agent.skillsDir}
+                    {getAgentTarget(agent, scope).path}
                   </code>
                   <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
                     {agent.name}
