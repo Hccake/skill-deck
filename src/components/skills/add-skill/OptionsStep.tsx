@@ -31,11 +31,15 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   // 初始化 agents 数据 — async-parallel 规则
   useEffect(() => {
     async function initAgents() {
-      const [allAgents, lastSelected] = await Promise.all([
-        listAgents(),
-        getLastSelectedAgents(),
+      const agentsPromise = listAgents();
+      const lastSelectedPromise = getLastSelectedAgents();
+      const targetDefaultsPromise = getDefaultTargetAgents().catch(() => null);
+
+      const [allAgents, lastSelected, targetDefaults] = await Promise.all([
+        agentsPromise,
+        lastSelectedPromise,
+        targetDefaultsPromise,
       ]);
-      const targetDefaults = await getDefaultTargetAgents().catch(() => null);
 
       let selectedAgents: string[];
 

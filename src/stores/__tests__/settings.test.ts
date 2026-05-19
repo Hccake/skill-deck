@@ -134,6 +134,29 @@ describe('useSettingsStore', () => {
       });
     });
 
+    it('starts default target requests without waiting for agents to finish loading', async () => {
+      let resolveAgents!: (value: AgentInfo[]) => void;
+      mockListAgents.mockReturnValue(new Promise<AgentInfo[]>((resolve) => {
+        resolveAgents = resolve;
+      }));
+      mockGetDefaultTargetAgents.mockResolvedValue({
+        global: ['claude-code'],
+        project: ['claude-code'],
+      });
+      mockGetLastSelectedAgents.mockResolvedValue([]);
+
+      const loadPromise = useSettingsStore.getState().loadDefaultTargetAgents();
+
+      await Promise.resolve();
+
+      expect(mockListAgents).toHaveBeenCalledTimes(1);
+      expect(mockGetDefaultTargetAgents).toHaveBeenCalledTimes(1);
+      expect(mockGetLastSelectedAgents).toHaveBeenCalledTimes(1);
+
+      resolveAgents(agents);
+      await loadPromise;
+    });
+
     it('saves one scope without losing the other scope', () => {
       mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
       useSettingsStore.setState({

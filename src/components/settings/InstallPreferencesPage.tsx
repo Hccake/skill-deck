@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -23,6 +24,16 @@ const SCOPE_META: Record<InstallScope, {
     automaticPathKey: 'settings.installPreferences.projectAutomaticPath',
   },
 };
+
+interface ScopeAgentGroups {
+  detectedAutomatic: AgentInfo[];
+  undetectedAutomatic: AgentInfo[];
+  detectedSelectableAgents: AgentInfo[];
+  visibleSelectableAgents: AgentInfo[];
+  hiddenSelectableAgents: AgentInfo[];
+  selectableCount: number;
+  isAllSelected: boolean;
+}
 
 export function InstallPreferencesPage() {
   const { t } = useTranslation();
@@ -86,24 +97,66 @@ function ScopePreferencePanel({
 }) {
   const { t } = useTranslation();
   const meta = SCOPE_META[scope];
+  const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
+  const agentGroups = useMemo<ScopeAgentGroups>(() => {
+    const detectedAutomatic: AgentInfo[] = [];
+    const undetectedAutomatic: AgentInfo[] = [];
+    const detectedSelectableAgents: AgentInfo[] = [];
+    const visibleSelectableAgents: AgentInfo[] = [];
+    const hiddenSelectableAgents: AgentInfo[] = [];
+    let selectableCount = 0;
+
+    for (const agent of agents) {
+      const target = getAgentTarget(agent, scope);
+      if (!target.supported) continue;
+
+      if (target.automatic) {
+        if (agent.detected) {
+          detectedAutomatic.push(agent);
+        } else {
+          undetectedAutomatic.push(agent);
+        }
+        continue;
+      }
+
+      selectableCount += 1;
+
+      if (agent.detected) {
+        detectedSelectableAgents.push(agent);
+      }
+
+      if (agent.detected || selectedAgentIds.has(agent.id)) {
+        visibleSelectableAgents.push(agent);
+      } else {
+        hiddenSelectableAgents.push(agent);
+      }
+    }
+
+    return {
+      detectedAutomatic,
+      undetectedAutomatic,
+      detectedSelectableAgents,
+      visibleSelectableAgents,
+      hiddenSelectableAgents,
+      selectableCount,
+      isAllSelected: detectedSelectableAgents.length > 0
+        && detectedSelectableAgents.every((agent) => selectedAgentIds.has(agent.id)),
+    };
+  }, [agents, scope, selectedAgentIds]);
 
   if (!loaded) {
     return <LoadingRows />;
   }
 
-  const supportedAgents = agents.filter((agent) => getAgentTarget(agent, scope).supported);
-  const automaticAgents = supportedAgents.filter((agent) => getAgentTarget(agent, scope).automatic);
-  const selectableAgents = supportedAgents.filter((agent) => !getAgentTarget(agent, scope).automatic);
-  const detectedSelectableAgents = selectableAgents.filter((agent) => agent.detected);
-
-  const detectedAutomatic = automaticAgents.filter((agent) => agent.detected);
-  const undetectedAutomatic = automaticAgents.filter((agent) => !agent.detected);
-
-  const visibleSelectableAgents = selectableAgents.filter((agent) => agent.detected || selectedAgents.includes(agent.id));
-  const hiddenSelectableAgents = selectableAgents.filter((agent) => !agent.detected && !selectedAgents.includes(agent.id));
-
-  const isAllSelected = detectedSelectableAgents.length > 0
-    && detectedSelectableAgents.every((agent) => selectedAgents.includes(agent.id));
+  const {
+    detectedAutomatic,
+    undetectedAutomatic,
+    detectedSelectableAgents,
+    visibleSelectableAgents,
+    hiddenSelectableAgents,
+    selectableCount,
+    isAllSelected,
+  } = agentGroups;
 
   return (
     <div className="space-y-3">
@@ -183,7 +236,7 @@ function ScopePreferencePanel({
           </div>
         </div>
 
-        {selectableAgents.length > 0 ? (
+        {selectableCount > 0 ? (
           <div className="space-y-2">
             {visibleSelectableAgents.length > 0 ? (
               <div className="flex flex-col gap-1.5">
@@ -192,7 +245,7 @@ function ScopePreferencePanel({
                     key={agent.id}
                     agent={agent}
                     scope={scope}
-                    selected={selectedAgents.includes(agent.id)}
+                    selected={selectedAgentIds.has(agent.id)}
                     onToggle={onToggle}
                   />
                 ))}
@@ -215,7 +268,7 @@ function ScopePreferencePanel({
                       key={agent.id}
                       agent={agent}
                       scope={scope}
-                      selected={selectedAgents.includes(agent.id)}
+                      selected={selectedAgentIds.has(agent.id)}
                       onToggle={onToggle}
                       muted
                     />

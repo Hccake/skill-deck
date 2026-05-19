@@ -77,18 +77,15 @@ export const useSettingsStore = create<SettingsState>()(
 
       loadDefaultTargetAgents: async () => {
         try {
-          const agents = await listAgents();
-          const [targetDefaultsResult, lastSelectedResult] = await Promise.allSettled([
-            getDefaultTargetAgents(),
-            getLastSelectedAgents(),
-          ]);
+          const agentsPromise = listAgents();
+          const targetDefaultsPromise = getDefaultTargetAgents().catch(() => null);
+          const lastSelectedPromise = getLastSelectedAgents().catch(() => []);
 
-          const targetDefaults = targetDefaultsResult.status === 'fulfilled'
-            ? targetDefaultsResult.value
-            : null;
-          const lastSelected = lastSelectedResult.status === 'fulfilled'
-            ? lastSelectedResult.value
-            : [];
+          const [agents, targetDefaults, lastSelected] = await Promise.all([
+            agentsPromise,
+            targetDefaultsPromise,
+            lastSelectedPromise,
+          ]);
 
           const migratedDefaults = lastSelected.length > 0
             ? migrateDefaultTargetAgents(lastSelected, agents)

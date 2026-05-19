@@ -33,6 +33,8 @@ export function AgentSelector({
     selectedAgentsRef.current = selectedAgents;
   }, [selectedAgents]);
 
+  const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
+
   const { automaticAgents, detectedAgents, otherAgents } = useMemo(() => {
     const automatic: AgentInfo[] = [];
     const detected: AgentInfo[] = [];
@@ -110,7 +112,7 @@ export function AgentSelector({
               <AgentRow
                 key={agent.id}
                 agent={agent}
-                selected={selectedAgents.includes(agent.id)}
+                selected={selectedAgentIds.has(agent.id)}
                 onToggle={toggleAgent}
                 showDetectedBadge
                 scope={scope}
@@ -136,7 +138,7 @@ export function AgentSelector({
                   <AgentRow
                     key={agent.id}
                     agent={agent}
-                    selected={selectedAgents.includes(agent.id)}
+                    selected={selectedAgentIds.has(agent.id)}
                     onToggle={toggleAgent}
                     scope={scope}
                     className="opacity-75 hover:opacity-100"

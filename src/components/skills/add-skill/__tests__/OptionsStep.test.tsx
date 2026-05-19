@@ -138,6 +138,7 @@ function ProjectHarness() {
 
 describe('OptionsStep', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     getDefaultTargetAgentsMock.mockResolvedValue(null);
     getLastSelectedAgentsMock.mockResolvedValue([]);
   });
@@ -205,6 +206,40 @@ describe('OptionsStep', () => {
 
     await waitFor(() => {
       expect(screen.getByText('agent-selector:project:claude-code')).toBeDefined();
+    });
+  });
+
+  it('starts persisted default loading without waiting for agents to finish loading', async () => {
+    let resolveAgents!: (value: AgentInfo[]) => void;
+    listAgentsMock.mockReturnValue(new Promise<AgentInfo[]>((resolve) => {
+      resolveAgents = resolve;
+    }));
+    getDefaultTargetAgentsMock.mockResolvedValue({
+      global: ['claude-code'],
+      project: ['claude-code'],
+    });
+    getLastSelectedAgentsMock.mockResolvedValue([]);
+
+    render(<Harness />);
+
+    await waitFor(() => {
+      expect(listAgentsMock).toHaveBeenCalledTimes(1);
+      expect(getDefaultTargetAgentsMock).toHaveBeenCalledTimes(1);
+      expect(getLastSelectedAgentsMock).toHaveBeenCalledTimes(1);
+    });
+
+    resolveAgents([
+      makeAgent({
+        id: 'claude-code',
+        name: 'Claude Code',
+        skillsDir: '.claude/skills',
+        globalSkillsDir: '~/.claude/skills',
+        detected: true,
+      }),
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByText('agent-selector:global:claude-code')).toBeDefined();
     });
   });
 });
