@@ -309,31 +309,31 @@ impl AgentType {
                 name: "aider-desk",
                 display_name: "AiderDesk",
                 skills_dir: ".aider-desk/skills",
-                global_skills_dir: Some(PATHS.home.join(".aider-desk/skills")),
+                global_skills_dir: Some(PATHS.home.join(".aider-desk").join("skills")),
             },
             Self::Amp => AgentConfig {
                 name: "amp",
                 display_name: "Amp",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.config_home.join("agents/skills")),
+                global_skills_dir: Some(PATHS.config_home.join("agents").join("skills")),
             },
             Self::Antigravity => AgentConfig {
                 name: "antigravity",
                 display_name: "Antigravity",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".gemini/antigravity/skills")),
+                global_skills_dir: Some(PATHS.home.join(".gemini").join("antigravity").join("skills")),
             },
             Self::Augment => AgentConfig {
                 name: "augment",
                 display_name: "Augment",
                 skills_dir: ".augment/skills",
-                global_skills_dir: Some(PATHS.home.join(".augment/skills")),
+                global_skills_dir: Some(PATHS.home.join(".augment").join("skills")),
             },
             Self::Bob => AgentConfig {
                 name: "bob",
                 display_name: "IBM Bob",
                 skills_dir: ".bob/skills",
-                global_skills_dir: Some(PATHS.home.join(".bob/skills")),
+                global_skills_dir: Some(PATHS.home.join(".bob").join("skills")),
             },
             Self::ClaudeCode => AgentConfig {
                 name: "claude-code",
@@ -357,25 +357,25 @@ impl AgentType {
                 name: "codearts-agent",
                 display_name: "CodeArts Agent",
                 skills_dir: ".codeartsdoer/skills",
-                global_skills_dir: Some(PATHS.home.join(".codeartsdoer/skills")),
+                global_skills_dir: Some(PATHS.home.join(".codeartsdoer").join("skills")),
             },
             Self::Codebuddy => AgentConfig {
                 name: "codebuddy",
                 display_name: "CodeBuddy",
                 skills_dir: ".codebuddy/skills",
-                global_skills_dir: Some(PATHS.home.join(".codebuddy/skills")),
+                global_skills_dir: Some(PATHS.home.join(".codebuddy").join("skills")),
             },
             Self::Codemaker => AgentConfig {
                 name: "codemaker",
                 display_name: "Codemaker",
                 skills_dir: ".codemaker/skills",
-                global_skills_dir: Some(PATHS.home.join(".codemaker/skills")),
+                global_skills_dir: Some(PATHS.home.join(".codemaker").join("skills")),
             },
             Self::Codestudio => AgentConfig {
                 name: "codestudio",
                 display_name: "Code Studio",
                 skills_dir: ".codestudio/skills",
-                global_skills_dir: Some(PATHS.home.join(".codestudio/skills")),
+                global_skills_dir: Some(PATHS.home.join(".codestudio").join("skills")),
             },
             Self::Codex => AgentConfig {
                 name: "codex",
@@ -387,127 +387,127 @@ impl AgentType {
                 name: "command-code",
                 display_name: "Command Code",
                 skills_dir: ".commandcode/skills",
-                global_skills_dir: Some(PATHS.home.join(".commandcode/skills")),
+                global_skills_dir: Some(PATHS.home.join(".commandcode").join("skills")),
             },
             Self::Continue => AgentConfig {
                 name: "continue",
                 display_name: "Continue",
                 skills_dir: ".continue/skills",
-                global_skills_dir: Some(PATHS.home.join(".continue/skills")),
+                global_skills_dir: Some(PATHS.home.join(".continue").join("skills")),
             },
             Self::Crush => AgentConfig {
                 name: "crush",
                 display_name: "Crush",
                 skills_dir: ".crush/skills",
-                global_skills_dir: Some(PATHS.config_home.join("crush/skills")),
+                global_skills_dir: Some(PATHS.config_home.join("crush").join("skills")),
             },
             Self::Cursor => AgentConfig {
                 name: "cursor",
                 display_name: "Cursor",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".cursor/skills")),
+                global_skills_dir: Some(PATHS.home.join(".cursor").join("skills")),
             },
             Self::Deepagents => AgentConfig {
                 name: "deepagents",
                 display_name: "Deep Agents",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".deepagents/agent/skills")),
+                global_skills_dir: Some(PATHS.home.join(".deepagents").join("agent").join("skills")),
             },
             Self::Devin => AgentConfig {
                 name: "devin",
                 display_name: "Devin for Terminal",
                 skills_dir: ".devin/skills",
-                global_skills_dir: Some(PATHS.config_home.join("devin/skills")),
+                global_skills_dir: Some(PATHS.config_home.join("devin").join("skills")),
             },
             Self::Dexto => AgentConfig {
                 name: "dexto",
                 display_name: "Dexto",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".agents/skills")),
+                global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
             },
             Self::Droid => AgentConfig {
                 name: "droid",
                 display_name: "Droid",
                 skills_dir: ".factory/skills",
-                global_skills_dir: Some(PATHS.home.join(".factory/skills")),
+                global_skills_dir: Some(PATHS.home.join(".factory").join("skills")),
             },
             Self::Firebender => AgentConfig {
                 name: "firebender",
                 display_name: "Firebender",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".firebender/skills")),
+                global_skills_dir: Some(PATHS.home.join(".firebender").join("skills")),
             },
             Self::Forgecode => AgentConfig {
                 name: "forgecode",
                 display_name: "ForgeCode",
                 skills_dir: ".forge/skills",
-                global_skills_dir: Some(PATHS.home.join(".forge/skills")),
+                global_skills_dir: Some(PATHS.home.join(".forge").join("skills")),
             },
             Self::GeminiCli => AgentConfig {
                 name: "gemini-cli",
                 display_name: "Gemini CLI",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".gemini/skills")),
+                global_skills_dir: Some(PATHS.home.join(".gemini").join("skills")),
             },
             Self::GithubCopilot => AgentConfig {
                 name: "github-copilot",
                 display_name: "GitHub Copilot",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".copilot/skills")),
+                global_skills_dir: Some(PATHS.home.join(".copilot").join("skills")),
             },
             Self::Goose => AgentConfig {
                 name: "goose",
                 display_name: "Goose",
                 skills_dir: ".goose/skills",
-                global_skills_dir: Some(PATHS.config_home.join("goose/skills")),
+                global_skills_dir: Some(PATHS.config_home.join("goose").join("skills")),
             },
             Self::HermesAgent => AgentConfig {
                 name: "hermes-agent",
                 display_name: "Hermes Agent",
                 skills_dir: ".hermes/skills",
-                global_skills_dir: Some(PATHS.home.join(".hermes/skills")),
+                global_skills_dir: Some(PATHS.home.join(".hermes").join("skills")),
             },
             Self::IflowCli => AgentConfig {
                 name: "iflow-cli",
                 display_name: "iFlow CLI",
                 skills_dir: ".iflow/skills",
-                global_skills_dir: Some(PATHS.home.join(".iflow/skills")),
+                global_skills_dir: Some(PATHS.home.join(".iflow").join("skills")),
             },
             Self::Junie => AgentConfig {
                 name: "junie",
                 display_name: "Junie",
                 skills_dir: ".junie/skills",
-                global_skills_dir: Some(PATHS.home.join(".junie/skills")),
+                global_skills_dir: Some(PATHS.home.join(".junie").join("skills")),
             },
             Self::Kilo => AgentConfig {
                 name: "kilo",
                 display_name: "Kilo Code",
                 skills_dir: ".kilocode/skills",
-                global_skills_dir: Some(PATHS.home.join(".kilocode/skills")),
+                global_skills_dir: Some(PATHS.home.join(".kilocode").join("skills")),
             },
             Self::KimiCli => AgentConfig {
                 name: "kimi-cli",
                 display_name: "Kimi Code CLI",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.config_home.join("agents/skills")),
+                global_skills_dir: Some(PATHS.config_home.join("agents").join("skills")),
             },
             Self::KiroCli => AgentConfig {
                 name: "kiro-cli",
                 display_name: "Kiro CLI",
                 skills_dir: ".kiro/skills",
-                global_skills_dir: Some(PATHS.home.join(".kiro/skills")),
+                global_skills_dir: Some(PATHS.home.join(".kiro").join("skills")),
             },
             Self::Kode => AgentConfig {
                 name: "kode",
                 display_name: "Kode",
                 skills_dir: ".kode/skills",
-                global_skills_dir: Some(PATHS.home.join(".kode/skills")),
+                global_skills_dir: Some(PATHS.home.join(".kode").join("skills")),
             },
             Self::Mcpjam => AgentConfig {
                 name: "mcpjam",
                 display_name: "MCPJam",
                 skills_dir: ".mcpjam/skills",
-                global_skills_dir: Some(PATHS.home.join(".mcpjam/skills")),
+                global_skills_dir: Some(PATHS.home.join(".mcpjam").join("skills")),
             },
             Self::MistralVibe => AgentConfig {
                 name: "mistral-vibe",
@@ -519,109 +519,109 @@ impl AgentType {
                 name: "mux",
                 display_name: "Mux",
                 skills_dir: ".mux/skills",
-                global_skills_dir: Some(PATHS.home.join(".mux/skills")),
+                global_skills_dir: Some(PATHS.home.join(".mux").join("skills")),
             },
             Self::Neovate => AgentConfig {
                 name: "neovate",
                 display_name: "Neovate",
                 skills_dir: ".neovate/skills",
-                global_skills_dir: Some(PATHS.home.join(".neovate/skills")),
+                global_skills_dir: Some(PATHS.home.join(".neovate").join("skills")),
             },
             Self::Opencode => AgentConfig {
                 name: "opencode",
                 display_name: "OpenCode",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.config_home.join("opencode/skills")),
+                global_skills_dir: Some(PATHS.config_home.join("opencode").join("skills")),
             },
             Self::Openhands => AgentConfig {
                 name: "openhands",
                 display_name: "OpenHands",
                 skills_dir: ".openhands/skills",
-                global_skills_dir: Some(PATHS.home.join(".openhands/skills")),
+                global_skills_dir: Some(PATHS.home.join(".openhands").join("skills")),
             },
             Self::Pi => AgentConfig {
                 name: "pi",
                 display_name: "Pi",
                 skills_dir: ".pi/skills",
-                global_skills_dir: Some(PATHS.home.join(".pi/agent/skills")),
+                global_skills_dir: Some(PATHS.home.join(".pi").join("agent").join("skills")),
             },
             Self::Qoder => AgentConfig {
                 name: "qoder",
                 display_name: "Qoder",
                 skills_dir: ".qoder/skills",
-                global_skills_dir: Some(PATHS.home.join(".qoder/skills")),
+                global_skills_dir: Some(PATHS.home.join(".qoder").join("skills")),
             },
             Self::QwenCode => AgentConfig {
                 name: "qwen-code",
                 display_name: "Qwen Code",
                 skills_dir: ".qwen/skills",
-                global_skills_dir: Some(PATHS.home.join(".qwen/skills")),
+                global_skills_dir: Some(PATHS.home.join(".qwen").join("skills")),
             },
             Self::Replit => AgentConfig {
                 name: "replit",
                 display_name: "Replit",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.config_home.join("agents/skills")),
+                global_skills_dir: Some(PATHS.config_home.join("agents").join("skills")),
             },
             Self::Rovodev => AgentConfig {
                 name: "rovodev",
                 display_name: "Rovo Dev",
                 skills_dir: ".rovodev/skills",
-                global_skills_dir: Some(PATHS.home.join(".rovodev/skills")),
+                global_skills_dir: Some(PATHS.home.join(".rovodev").join("skills")),
             },
             Self::Roo => AgentConfig {
                 name: "roo",
                 display_name: "Roo Code",
                 skills_dir: ".roo/skills",
-                global_skills_dir: Some(PATHS.home.join(".roo/skills")),
+                global_skills_dir: Some(PATHS.home.join(".roo").join("skills")),
             },
             Self::TabnineCli => AgentConfig {
                 name: "tabnine-cli",
                 display_name: "Tabnine CLI",
                 skills_dir: ".tabnine/agent/skills",
-                global_skills_dir: Some(PATHS.home.join(".tabnine/agent/skills")),
+                global_skills_dir: Some(PATHS.home.join(".tabnine").join("agent").join("skills")),
             },
             Self::Trae => AgentConfig {
                 name: "trae",
                 display_name: "Trae",
                 skills_dir: ".trae/skills",
-                global_skills_dir: Some(PATHS.home.join(".trae/skills")),
+                global_skills_dir: Some(PATHS.home.join(".trae").join("skills")),
             },
             Self::TraeCn => AgentConfig {
                 name: "trae-cn",
                 display_name: "Trae CN",
                 skills_dir: ".trae/skills",
-                global_skills_dir: Some(PATHS.home.join(".trae-cn/skills")),
+                global_skills_dir: Some(PATHS.home.join(".trae-cn").join("skills")),
             },
             Self::Warp => AgentConfig {
                 name: "warp",
                 display_name: "Warp",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".agents/skills")),
+                global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
             },
             Self::Windsurf => AgentConfig {
                 name: "windsurf",
                 display_name: "Windsurf",
                 skills_dir: ".windsurf/skills",
-                global_skills_dir: Some(PATHS.home.join(".codeium/windsurf/skills")),
+                global_skills_dir: Some(PATHS.home.join(".codeium").join("windsurf").join("skills")),
             },
             Self::Zencoder => AgentConfig {
                 name: "zencoder",
                 display_name: "Zencoder",
                 skills_dir: ".zencoder/skills",
-                global_skills_dir: Some(PATHS.home.join(".zencoder/skills")),
+                global_skills_dir: Some(PATHS.home.join(".zencoder").join("skills")),
             },
             Self::Pochi => AgentConfig {
                 name: "pochi",
                 display_name: "Pochi",
                 skills_dir: ".pochi/skills",
-                global_skills_dir: Some(PATHS.home.join(".pochi/skills")),
+                global_skills_dir: Some(PATHS.home.join(".pochi").join("skills")),
             },
             Self::Adal => AgentConfig {
                 name: "adal",
                 display_name: "AdaL",
                 skills_dir: ".adal/skills",
-                global_skills_dir: Some(PATHS.home.join(".adal/skills")),
+                global_skills_dir: Some(PATHS.home.join(".adal").join("skills")),
             },
             // Cortex Code: Snowflake 的 AI 编码助手
             // 对应 CLI: agents.ts cortex 配置
@@ -629,7 +629,7 @@ impl AgentType {
                 name: "cortex",
                 display_name: "Cortex Code",
                 skills_dir: ".cortex/skills",
-                global_skills_dir: Some(PATHS.home.join(".snowflake/cortex/skills")),
+                global_skills_dir: Some(PATHS.home.join(".snowflake").join("cortex").join("skills")),
             },
         }
     }
@@ -638,13 +638,13 @@ impl AgentType {
     /// 对应 CLI: agents.ts 第 56-60 行
     fn openclaw_global_dir() -> PathBuf {
         if PATHS.home.join(".openclaw").exists() {
-            PATHS.home.join(".openclaw/skills")
+            PATHS.home.join(".openclaw").join("skills")
         } else if PATHS.home.join(".clawdbot").exists() {
-            PATHS.home.join(".clawdbot/skills")
+            PATHS.home.join(".clawdbot").join("skills")
         } else if PATHS.home.join(".moltbot").exists() {
-            PATHS.home.join(".moltbot/skills")
+            PATHS.home.join(".moltbot").join("skills")
         } else {
-            PATHS.home.join(".openclaw/skills")
+            PATHS.home.join(".openclaw").join("skills")
         }
     }
 
@@ -665,7 +665,7 @@ impl AgentType {
         match self {
             Self::AiderDesk => PATHS.home.join(".aider-desk").exists(),
             Self::Amp => PATHS.config_home.join("amp").exists(),
-            Self::Antigravity => PATHS.home.join(".gemini/antigravity").exists(),
+            Self::Antigravity => PATHS.home.join(".gemini").join("antigravity").exists(),
             Self::Augment => PATHS.home.join(".augment").exists(),
             Self::Bob => PATHS.home.join(".bob").exists(),
             Self::ClaudeCode => PATHS.claude_home.exists(),
@@ -710,7 +710,7 @@ impl AgentType {
             Self::Neovate => PATHS.home.join(".neovate").exists(),
             Self::Opencode => PATHS.config_home.join("opencode").exists(),
             Self::Openhands => PATHS.home.join(".openhands").exists(),
-            Self::Pi => PATHS.home.join(".pi/agent").exists(),
+            Self::Pi => PATHS.home.join(".pi").join("agent").exists(),
             Self::Qoder => PATHS.home.join(".qoder").exists(),
             Self::QwenCode => PATHS.home.join(".qwen").exists(),
             Self::Replit => cwd.join(".replit").exists(),
@@ -720,11 +720,11 @@ impl AgentType {
             Self::Trae => PATHS.home.join(".trae").exists(),
             Self::TraeCn => PATHS.home.join(".trae-cn").exists(),
             Self::Warp => PATHS.home.join(".warp").exists(),
-            Self::Windsurf => PATHS.home.join(".codeium/windsurf").exists(),
+            Self::Windsurf => PATHS.home.join(".codeium").join("windsurf").exists(),
             Self::Zencoder => PATHS.home.join(".zencoder").exists(),
             Self::Pochi => PATHS.home.join(".pochi").exists(),
             Self::Adal => PATHS.home.join(".adal").exists(),
-            Self::Cortex => PATHS.home.join(".snowflake/cortex").exists(),
+            Self::Cortex => PATHS.home.join(".snowflake").join("cortex").exists(),
         }
     }
 

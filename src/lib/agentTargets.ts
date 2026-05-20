@@ -51,3 +51,29 @@ export function migrateDefaultTargetAgents(
     project: filterAdditionalAgentIds(lastSelectedAgents, agents, 'project'),
   };
 }
+
+function detectDisplayPlatform(): 'win32' | 'posix' {
+  if (typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('win')) {
+    return 'win32';
+  }
+
+  return 'posix';
+}
+
+export function formatAgentTargetPath(path: string, platform: 'win32' | 'posix' = detectDisplayPlatform()) {
+  if (!path) return path;
+
+  const normalizedPath = path.replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+  if (!normalizedPath) return path;
+
+  const isAbsolutePath = /^[A-Za-z]:\/|^\/|^\\\\/.test(normalizedPath);
+  if (!isAbsolutePath) {
+    return normalizedPath;
+  }
+
+  if (platform === 'win32') {
+    return normalizedPath.replace(/\//g, '\\');
+  }
+
+  return normalizedPath;
+}
