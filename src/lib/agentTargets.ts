@@ -30,6 +30,63 @@ export function isAdditionalAgent(agent: AgentInfo, scope: InstallScope): boolea
   return target.supported && !target.automatic;
 }
 
+export interface ScopedAgentGroups {
+  detectedAutomatic: AgentInfo[];
+  undetectedAutomatic: AgentInfo[];
+  detectedSelectableAgents: AgentInfo[];
+  visibleSelectableAgents: AgentInfo[];
+  hiddenSelectableAgents: AgentInfo[];
+  selectableCount: number;
+}
+
+export function groupAgentsByScopedTarget(
+  agents: AgentInfo[],
+  scope: InstallScope,
+  selectedAgentIds: ReadonlySet<string> = new Set(),
+): ScopedAgentGroups {
+  const detectedAutomatic: AgentInfo[] = [];
+  const undetectedAutomatic: AgentInfo[] = [];
+  const detectedSelectableAgents: AgentInfo[] = [];
+  const visibleSelectableAgents: AgentInfo[] = [];
+  const hiddenSelectableAgents: AgentInfo[] = [];
+  let selectableCount = 0;
+
+  for (const agent of agents) {
+    const target = getAgentTarget(agent, scope);
+    if (!target.supported) continue;
+
+    if (target.automatic) {
+      if (agent.detected) {
+        detectedAutomatic.push(agent);
+      } else {
+        undetectedAutomatic.push(agent);
+      }
+      continue;
+    }
+
+    selectableCount += 1;
+
+    if (agent.detected) {
+      detectedSelectableAgents.push(agent);
+    }
+
+    if (agent.detected || selectedAgentIds.has(agent.id)) {
+      visibleSelectableAgents.push(agent);
+    } else {
+      hiddenSelectableAgents.push(agent);
+    }
+  }
+
+  return {
+    detectedAutomatic,
+    undetectedAutomatic,
+    detectedSelectableAgents,
+    visibleSelectableAgents,
+    hiddenSelectableAgents,
+    selectableCount,
+  };
+}
+
 export function filterAdditionalAgentIds(
   ids: string[],
   agents: AgentInfo[],

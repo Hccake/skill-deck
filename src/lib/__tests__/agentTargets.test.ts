@@ -4,6 +4,7 @@ import {
   filterAdditionalAgentIds,
   formatAgentTargetPath,
   getSharedSkillDirectory,
+  groupAgentsByScopedTarget,
   migrateDefaultTargetAgents,
 } from '../agentTargets';
 
@@ -73,6 +74,39 @@ describe('agent target helpers', () => {
 
     expect(filterAdditionalAgentIds(['unsupported', 'missing'], [unsupported], 'global'))
       .toEqual([]);
+  });
+
+  it('groups scoped targets by automatic, visible selectable, and hidden selectable state', () => {
+    const automaticDetected = makeAgent('automatic-detected', true, true);
+    const automaticUndetected = makeAgent('automatic-undetected', true, true, false);
+    const selectableDetected = makeAgent('selectable-detected', false, false);
+    const selectableSelected = makeAgent('selectable-selected', false, false, false);
+    const selectableHidden = makeAgent('selectable-hidden', false, false, false);
+    const unsupported = makeAgent('unsupported', false, false);
+    unsupported.targets.global.supported = false;
+
+    const groups = groupAgentsByScopedTarget(
+      [
+        automaticDetected,
+        automaticUndetected,
+        selectableDetected,
+        selectableSelected,
+        selectableHidden,
+        unsupported,
+      ],
+      'global',
+      new Set(['selectable-selected'])
+    );
+
+    expect(groups.detectedAutomatic.map((agent) => agent.id)).toEqual(['automatic-detected']);
+    expect(groups.undetectedAutomatic.map((agent) => agent.id)).toEqual(['automatic-undetected']);
+    expect(groups.detectedSelectableAgents.map((agent) => agent.id)).toEqual(['selectable-detected']);
+    expect(groups.visibleSelectableAgents.map((agent) => agent.id)).toEqual([
+      'selectable-detected',
+      'selectable-selected',
+    ]);
+    expect(groups.hiddenSelectableAgents.map((agent) => agent.id)).toEqual(['selectable-hidden']);
+    expect(groups.selectableCount).toBe(3);
   });
 
   it('normalizes local target paths for display on Windows', () => {

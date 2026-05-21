@@ -11,6 +11,7 @@ import {
   formatAgentTargetPath,
   getAgentTarget,
   getSharedSkillDirectory,
+  groupAgentsByScopedTarget,
   type InstallScope,
 } from '@/lib/agentTargets';
 import { useSettingsStore } from '@/stores/settings';
@@ -89,48 +90,12 @@ function ScopePreferencePanel({
   const { t } = useTranslation();
   const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
   const agentGroups = useMemo<ScopeAgentGroups>(() => {
-    const detectedAutomatic: AgentInfo[] = [];
-    const undetectedAutomatic: AgentInfo[] = [];
-    const detectedSelectableAgents: AgentInfo[] = [];
-    const visibleSelectableAgents: AgentInfo[] = [];
-    const hiddenSelectableAgents: AgentInfo[] = [];
-    let selectableCount = 0;
-
-    for (const agent of agents) {
-      const target = getAgentTarget(agent, scope);
-      if (!target.supported) continue;
-
-      if (target.automatic) {
-        if (agent.detected) {
-          detectedAutomatic.push(agent);
-        } else {
-          undetectedAutomatic.push(agent);
-        }
-        continue;
-      }
-
-      selectableCount += 1;
-
-      if (agent.detected) {
-        detectedSelectableAgents.push(agent);
-      }
-
-      if (agent.detected || selectedAgentIds.has(agent.id)) {
-        visibleSelectableAgents.push(agent);
-      } else {
-        hiddenSelectableAgents.push(agent);
-      }
-    }
+    const groups = groupAgentsByScopedTarget(agents, scope, selectedAgentIds);
 
     return {
-      detectedAutomatic,
-      undetectedAutomatic,
-      detectedSelectableAgents,
-      visibleSelectableAgents,
-      hiddenSelectableAgents,
-      selectableCount,
-      isAllSelected: detectedSelectableAgents.length > 0
-        && detectedSelectableAgents.every((agent) => selectedAgentIds.has(agent.id)),
+      ...groups,
+      isAllSelected: groups.detectedSelectableAgents.length > 0
+        && groups.detectedSelectableAgents.every((agent) => selectedAgentIds.has(agent.id)),
     };
   }, [agents, scope, selectedAgentIds]);
 

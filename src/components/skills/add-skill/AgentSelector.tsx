@@ -7,10 +7,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   formatAgentTargetPath,
+  groupAgentsByScopedTarget,
   getAgentTarget,
   getSharedSkillDirectory,
-  isAdditionalAgent,
-  isAutomaticAgent,
 } from '@/lib/agentTargets';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { cn } from '@/lib/utils';
@@ -43,35 +42,15 @@ export function AgentSelector({
 
   const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
 
-  const { detectedAutomatic, undetectedAutomatic, detectedAgents, otherAgents } = useMemo(() => {
-    const dAuto: AgentInfo[] = [];
-    const uAuto: AgentInfo[] = [];
-    const detected: AgentInfo[] = [];
-    const other: AgentInfo[] = [];
-
-    for (const agent of allAgents) {
-      if (isAutomaticAgent(agent, scope)) {
-        if (agent.detected) {
-          dAuto.push(agent);
-        } else {
-          uAuto.push(agent);
-        }
-      } else if (isAdditionalAgent(agent, scope)) {
-        if (agent.detected) {
-          detected.push(agent);
-        } else {
-          other.push(agent);
-        }
-      }
-    }
-
-    return {
-      detectedAutomatic: dAuto,
-      undetectedAutomatic: uAuto,
-      detectedAgents: detected,
-      otherAgents: other,
-    };
-  }, [allAgents, scope]);
+  const {
+    detectedAutomatic,
+    undetectedAutomatic,
+    visibleSelectableAgents: detectedAgents,
+    hiddenSelectableAgents: otherAgents,
+  } = useMemo(
+    () => groupAgentsByScopedTarget(allAgents, scope),
+    [allAgents, scope]
+  );
 
   const toggleAgent = useCallback((agentId: string) => {
     const currentSelection = selectedAgentsRef.current;
