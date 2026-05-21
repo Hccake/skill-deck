@@ -583,16 +583,16 @@ async fn update_skill_single(
     );
 
     if matches!(status, UpdateSkillStatus::Success) {
-        let (final_hash, hash_warning) = resolve_post_update_hash(
-            &scope,
+        let (final_hash, hash_warning) = resolve_post_update_hash(PostUpdateHashRequest {
+            scope: &scope,
             skill_name,
             project_path,
-            &entry_source_type,
-            &entry_source,
-            entry_skill_path.as_deref(),
-            entry_ref_name.as_deref(),
-            Some(skills_dir.as_path()),
-        )
+            source_type: &entry_source_type,
+            source: &entry_source,
+            skill_path: entry_skill_path.as_deref(),
+            ref_name: entry_ref_name.as_deref(),
+            clone_repo_path: Some(skills_dir.as_path()),
+        })
         .await;
         if let Some(w) = hash_warning {
             warnings.push(w);
@@ -1000,16 +1000,16 @@ async fn update_skills_batch_inner(
             );
 
             if matches!(status, UpdateSkillStatus::Success) {
-                let (final_hash, hash_warning) = resolve_post_update_hash(
-                    &scope,
-                    &entry.name,
+                let (final_hash, hash_warning) = resolve_post_update_hash(PostUpdateHashRequest {
+                    scope: &scope,
+                    skill_name: &entry.name,
                     project_path,
-                    &entry.source_type,
-                    &entry.source,
-                    entry.skill_path.as_deref(),
-                    entry.ref_name.as_deref(),
-                    Some(skills_dir.as_path()),
-                )
+                    source_type: &entry.source_type,
+                    source: &entry.source,
+                    skill_path: entry.skill_path.as_deref(),
+                    ref_name: entry.ref_name.as_deref(),
+                    clone_repo_path: Some(skills_dir.as_path()),
+                })
                 .await;
                 if let Some(w) = hash_warning {
                     warnings.push(w);
@@ -1171,6 +1171,17 @@ fn read_existing_hash(
     }
 }
 
+struct PostUpdateHashRequest<'a> {
+    scope: &'a Scope,
+    skill_name: &'a str,
+    project_path: Option<&'a str>,
+    source_type: &'a str,
+    source: &'a str,
+    skill_path: Option<&'a str>,
+    ref_name: Option<&'a str>,
+    clone_repo_path: Option<&'a Path>,
+}
+
 /// 解析 update 完成后要写入 lock 的版本追踪 hash。
 ///
 /// 优先级（每一级失败才进入下一级）：
@@ -1179,41 +1190,32 @@ fn read_existing_hash(
 ///   3. 保留 lock 中已有的旧 hash — 绝不写入空串
 ///
 /// 返回 `(final_hash, warning)`，只有当 1 / 2 都失败、且需要保留旧 hash 时才会附带 warning。
-#[allow(clippy::too_many_arguments)]
-async fn resolve_post_update_hash(
-    scope: &Scope,
-    skill_name: &str,
-    project_path: Option<&str>,
-    source_type: &str,
-    source: &str,
-    skill_path: Option<&str>,
-    ref_name: Option<&str>,
-    clone_repo_path: Option<&Path>,
-) -> (String, Option<String>) {
-    if source_type != "github" {
+async fn resolve_post_update_hash(request: PostUpdateHashRequest<'_>) -> (String, Option<String>) {
+    if request.source_type != "github" {
         return (String::new(), None);
     }
-    let path_str = skill_path.unwrap_or("");
+    let path_str = request.skill_path.unwrap_or("");
 
     // 1. 本地 git 仓库
-    if let Some(repo_path) = clone_repo_path {
+    if let Some(repo_path) = request.clone_repo_path {
         if let Some(sha) = compute_local_tree_sha(repo_path, path_str) {
             return (sha, None);
         }
     }
 
     // 2. 远端 API 兜底
-    if let Ok(Some(sha)) = fetch_skill_folder_hash(source, path_str, ref_name).await {
+    if let Ok(Some(sha)) = fetch_skill_folder_hash(request.source, path_str, request.ref_name).await
+    {
         return (sha, None);
     }
 
     // 3. 保留旧 hash
-    if let Some(old) = read_existing_hash(scope, skill_name, project_path) {
+    if let Some(old) = read_existing_hash(request.scope, request.skill_name, request.project_path) {
         return (
             old,
             Some(format!(
                 "Could not refresh remote hash for '{}', kept previous value",
-                skill_name
+                request.skill_name
             )),
         );
     }
@@ -1222,7 +1224,7 @@ async fn resolve_post_update_hash(
         String::new(),
         Some(format!(
             "Could not refresh remote hash for '{}'; lock entry will lack a remote hash",
-            skill_name
+            request.skill_name
         )),
     )
 }
@@ -1666,17 +1668,17 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let tmp = tempdir().unwrap();
             write_project_lock(tmp.path(), "demo", Some("tree-old"));
-            let (final_hash, warning) = resolve_post_update_hash(
-                &Scope::Project,
-                "demo",
-                Some(tmp.path().to_str().unwrap()),
-                "github",
+            let (final_hash, warning) = resolve_post_update_hash(PostUpdateHashRequest {
+                scope: &Scope::Project,
+                skill_name: "demo",
+                project_path: Some(tmp.path().to_str().unwrap()),
+                source_type: "github",
                 // 不存在的 repo:确保 fetch_skill_folder_hash 拿不到内容
-                "this-org-does-not-exist-skill-deck/no-repo",
-                Some("skills/demo/SKILL.md"),
-                Some("nonexistent-branch-xyz"),
-                None,
-            )
+                source: "this-org-does-not-exist-skill-deck/no-repo",
+                skill_path: Some("skills/demo/SKILL.md"),
+                ref_name: Some("nonexistent-branch-xyz"),
+                clone_repo_path: None,
+            })
             .await;
             // 必须保留旧 hash,绝不写空串
             assert_eq!(final_hash, "tree-old");
@@ -1687,16 +1689,16 @@ mod tests {
     #[test]
     fn test_resolve_post_update_hash_returns_empty_for_non_github_source() {
         tauri::async_runtime::block_on(async {
-            let (final_hash, warning) = resolve_post_update_hash(
-                &Scope::Project,
-                "demo",
-                None,
-                "local",
-                "/some/path",
-                None,
-                None,
-                None,
-            )
+            let (final_hash, warning) = resolve_post_update_hash(PostUpdateHashRequest {
+                scope: &Scope::Project,
+                skill_name: "demo",
+                project_path: None,
+                source_type: "local",
+                source: "/some/path",
+                skill_path: None,
+                ref_name: None,
+                clone_repo_path: None,
+            })
             .await;
             assert_eq!(final_hash, "");
             assert!(warning.is_none());
@@ -1741,16 +1743,16 @@ mod tests {
 
             // 即使 source 写一个不存在的 repo,只要本地 clone 在,就走本地路径,不发 API
             let lock_dir = tempdir().unwrap();
-            let (final_hash, warning) = resolve_post_update_hash(
-                &Scope::Project,
-                "demo",
-                Some(lock_dir.path().to_str().unwrap()),
-                "github",
-                "this-does-not-matter/because-local-wins",
-                Some("skills/demo/SKILL.md"),
-                Some("nonexistent"),
-                Some(repo),
-            )
+            let (final_hash, warning) = resolve_post_update_hash(PostUpdateHashRequest {
+                scope: &Scope::Project,
+                skill_name: "demo",
+                project_path: Some(lock_dir.path().to_str().unwrap()),
+                source_type: "github",
+                source: "this-does-not-matter/because-local-wins",
+                skill_path: Some("skills/demo/SKILL.md"),
+                ref_name: Some("nonexistent"),
+                clone_repo_path: Some(repo),
+            })
             .await;
             assert_eq!(final_hash, expected_sha);
             assert!(warning.is_none());
