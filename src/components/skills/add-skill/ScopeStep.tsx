@@ -1,9 +1,18 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe, Folder } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Globe, Folder, Check } from 'lucide-react';
 import { useContextStore } from '@/stores/context';
+import { getSharedSkillDirectory } from '@/lib/agentTargets';
 import type { SkillScope } from '@/bindings';
+import type { WizardState } from './types';
+
+type ScopeOption = {
+  scope: SkillScope;
+  projectPath?: string;
+  label: string;
+  hint: string;
+  icon: typeof Globe;
+};
 
 /** 从完整路径中提取项目名称 */
 function getProjectName(path: string): string {
@@ -12,42 +21,69 @@ function getProjectName(path: string): string {
 }
 
 interface ScopeStepProps {
-  defaultScope?: SkillScope;
-  defaultProjectPath?: string;
-  onSelect: (scope: SkillScope, projectPath?: string) => void;
+  state: WizardState;
+  updateState: (updates: Partial<WizardState>) => void;
 }
 
-export function ScopeStep({ defaultScope, defaultProjectPath, onSelect }: ScopeStepProps) {
+export function ScopeStep({ state, updateState }: ScopeStepProps) {
   const { t } = useTranslation();
   const projects = useContextStore((s) => s.projects);
-  const [selected, setSelected] = useState<{ scope: SkillScope; projectPath?: string }>({
-    scope: defaultScope ?? 'global',
-    projectPath: defaultProjectPath,
-  });
 
-  const options = useMemo(() => {
-    const items: Array<{ scope: SkillScope; projectPath?: string; label: string; hint: string; icon: typeof Globe }> = [
-      {
-        scope: 'global',
-        label: t('addSkill.scopeSelect.global'),
-        hint: t('addSkill.scopeSelect.globalHint'),
-        icon: Globe,
-      },
-      ...projects.map((path) => ({
-        scope: 'project' as SkillScope,
-        projectPath: path,
-        label: getProjectName(path),
-        hint: path,
-        icon: Folder,
-      })),
-    ];
-    return items;
-  }, [projects, t]);
+  const globalOption: ScopeOption = {
+    scope: 'global' as SkillScope,
+    label: t('addSkill.scopeSelect.global'),
+    hint: t('addSkill.scopeSelect.globalHint', { path: getSharedSkillDirectory('global') }),
+    icon: Globe,
+  };
+
+  const projectOptions = useMemo<ScopeOption[]>(() => {
+    return projects.map((path) => ({
+      scope: 'project' as SkillScope,
+      projectPath: path,
+      label: getProjectName(path),
+      hint: path,
+      icon: Folder,
+    }));
+  }, [projects]);
+
+  const renderRow = (option: ScopeOption, isSelected: boolean) => {
+    const Icon = option.icon;
+    return (
+      <button
+        key={option.projectPath || 'global'}
+        type="button"
+        className={`w-full flex items-center gap-4 px-4 py-3 transition-colors cursor-pointer text-left relative ${
+          isSelected ? 'bg-primary/5' : 'hover:bg-muted/50'
+        }`}
+        onClick={() => updateState({ scope: option.scope, projectPath: option.projectPath })}
+      >
+        {/* 左侧图标 */}
+        <div className={`p-2 rounded-md ${isSelected ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+          <Icon className="h-5 w-5 shrink-0" />
+        </div>
+
+        {/* 中间文字 */}
+        <div className="min-w-0 flex-1 text-left">
+          <div className={`text-sm font-medium transition-colors ${isSelected ? 'text-primary' : 'text-foreground'}`}>
+            {option.label}
+          </div>
+          <div className="text-xs text-muted-foreground truncate mt-0.5">{option.hint}</div>
+        </div>
+
+        {/* 右侧 Checkmark */}
+        {isSelected && (
+          <div className="shrink-0 pl-4 animate-in fade-in zoom-in-50 duration-200">
+            <Check className="h-5 w-5 text-primary" />
+          </div>
+        )}
+      </button>
+    );
+  };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="space-y-2">
-        <label className="text-sm font-medium">
+        <label className="text-base font-semibold">
           {t('addSkill.scopeSelect.title')}
         </label>
         <p className="text-sm text-muted-foreground">
@@ -55,37 +91,25 @@ export function ScopeStep({ defaultScope, defaultProjectPath, onSelect }: ScopeS
         </p>
       </div>
 
-      <div className="space-y-2">
-        {options.map((option) => {
-          const key = option.projectPath || 'global';
-          const isSelected = selected.scope === option.scope && selected.projectPath === option.projectPath;
-          const Icon = option.icon;
+      <div className="space-y-6">
+        {/* 全局安装：独立的组 */}
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          {renderRow(globalOption, state.scope === 'global')}
+        </div>
 
-          return (
-            <button
-              key={key}
-              type="button"
-              className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors cursor-pointer ${
-                isSelected
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:border-primary/50'
-              }`}
-              onClick={() => setSelected({ scope: option.scope, projectPath: option.projectPath })}
-            >
-              <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{option.label}</div>
-                <div className="text-xs text-muted-foreground truncate">{option.hint}</div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="flex justify-end pt-2">
-        <Button onClick={() => onSelect(selected.scope, selected.projectPath)}>
-          {t('addSkill.actions.next')}
-        </Button>
+        {/* 项目级安装：带细线分割的列表组 */}
+        {projectOptions.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pl-1">
+              {t('addSkill.scopeSelect.localProjects')}
+            </h3>
+            <div className="rounded-xl border bg-card shadow-sm overflow-hidden divide-y divide-border">
+              {projectOptions.map((option) =>
+                renderRow(option, state.scope === 'project' && state.projectPath === option.projectPath)
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

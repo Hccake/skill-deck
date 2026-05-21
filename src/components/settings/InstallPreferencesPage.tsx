@@ -7,23 +7,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { cn } from '@/lib/utils';
-import { getAgentTarget, type InstallScope } from '@/lib/agentTargets';
+import {
+  formatAgentTargetPath,
+  getAgentTarget,
+  getSharedSkillDirectory,
+  type InstallScope,
+} from '@/lib/agentTargets';
 import { useSettingsStore } from '@/stores/settings';
 import type { AgentInfo } from '@/hooks/useTauriApi';
-
-const SCOPE_META: Record<InstallScope, {
-  titleKey: string;
-  automaticPathKey: string;
-}> = {
-  global: {
-    titleKey: 'settings.installPreferences.globalTitle',
-    automaticPathKey: 'settings.installPreferences.globalAutomaticPath',
-  },
-  project: {
-    titleKey: 'settings.installPreferences.projectTitle',
-    automaticPathKey: 'settings.installPreferences.projectAutomaticPath',
-  },
-};
 
 interface ScopeAgentGroups {
   detectedAutomatic: AgentInfo[];
@@ -96,7 +87,6 @@ function ScopePreferencePanel({
   onSelectAll: (agents: string[]) => void;
 }) {
   const { t } = useTranslation();
-  const meta = SCOPE_META[scope];
   const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
   const agentGroups = useMemo<ScopeAgentGroups>(() => {
     const detectedAutomatic: AgentInfo[] = [];
@@ -161,17 +151,19 @@ function ScopePreferencePanel({
   return (
     <div className="space-y-3">
       <section className="rounded-lg border border-border/60 bg-background p-3.5">
-        <div className="mb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+        <div className="mb-3 space-y-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <h3 className="text-[13px] font-semibold tracking-tight text-foreground">
                 {t('settings.installPreferences.automaticSection')}
-              </h3>
-              <code className="rounded bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground/60">
-                {t(meta.automaticPathKey)}
-              </code>
+                </h3>
+                <span className="text-xs leading-5 text-muted-foreground">
+                  {t('settings.installPreferences.automaticHint', { path: getSharedSkillDirectory(scope) })}
+                </span>
+              </div>
             </div>
-            <span className="text-xs text-muted-foreground">
+            <span className="shrink-0 text-xs text-muted-foreground">
               {t('settings.installPreferences.automaticDetectionSummary', {
                 detected: detectedAutomatic.length,
                 undetected: undetectedAutomatic.length,
@@ -326,7 +318,7 @@ function SelectableAgentRow({
       </span>
       <div className="min-w-0 flex justify-end pr-2">
         <code className="truncate font-mono text-[11px] leading-tight text-muted-foreground/50">
-          {target.path}
+          {formatAgentTargetPath(target.path)}
         </code>
       </div>
       <AgentDetectionStatus detected={agent.detected} />

@@ -14,20 +14,20 @@
     "settings": "Settings"
   },
   "context": {
-    "title": "Workspace",
+    "title": "Available Scope",
     "global": "Global",
-    "globalSubtitle": "Available to all projects",
+    "globalSubtitle": "Available in every project",
     "projects": "Projects",
     "addProject": "Add Project",
     "manageInSettings": "Manage in Settings",
     "sectionGlobal": "Global",
     "sectionProjects": "Projects",
-    "noProjects": "No projects added",
+    "noProjects": "No projects",
     "openInExplorer": "Open in Explorer",
     "remove": "Remove",
     "removeConfirm": {
       "title": "Remove Project",
-      "description": "Are you sure you want to remove \"{{name}}\" from the list? This will not delete the project files.",
+      "description": "Remove \"{{name}}\" from Skill Deck? This will not delete local files.",
       "cancel": "Cancel",
       "confirm": "Remove"
     }
@@ -83,7 +83,7 @@
       "alsoInGlobal": "Also installed globally",
       "alsoInProject": "Also installed in this project"
     },
-    "projectNotFound": "Project directory not found: {{path}}",
+    "projectNotFound": "Project path not found: {{path}}",
     "detail": {
       "title": "Skill Details",
       "description": "Description",
@@ -271,7 +271,7 @@
     "nav": {
       "sectionLabel": "Settings section",
       "general": "Appearance",
-      "installPreferences": "Default Install Targets",
+      "installPreferences": "Default Install Settings",
       "git": "Git",
       "projects": "Projects",
       "about": "About"
@@ -290,22 +290,21 @@
       "languageDescription": "Choose the interface language."
     },
     "installPreferences": {
-      "title": "Default Install Targets",
-      "description": "Choose which agents a Skill should apply to by default. Global and project installs are saved separately.",
-      "globalTitle": "Global Default",
-      "globalAutomaticPath": "Shared directory: ~/.agents/skills/",
-      "projectTitle": "Project Default",
-      "projectAutomaticPath": "Shared directory: ./.agents/skills/",
-      "automaticSection": "Automatically Applied Agents",
-      "additionalSection": "Agents You Select Manually",
+      "title": "Default Install Settings",
+      "description": "Set which additional agents are selected by default when installing Skills. Global and project defaults are saved separately.",
+      "globalTitle": "Global",
+      "projectTitle": "Project",
+      "automaticSection": "Available automatically",
+      "automaticHint": "Skills are installed to the shared directory ({{path}}) by default. Compatible agents can read them directly.",
+      "additionalSection": "Additional agents",
       "selectAll": "Select All",
       "selectedCount": "{{count}} selected",
-      "automaticDetectionSummary": "{{detected}} installed, {{undetected}} not installed",
-      "otherAgentsToggle": "Show {{count}} more optional agents",
-      "otherAutomaticAgentsToggle": "Show {{count}} more supported agents that are not installed",
-      "noAutomaticAgents": "There are no automatically applied agents for this scope.",
-      "noAdditionalAgents": "There are no manually selectable agents for this scope.",
-      "noVisibleAdditionalAgents": "There are no installed or selected optional agents."
+      "automaticDetectionSummary": "{{detected}} installed, {{undetected}} not detected",
+      "otherAgentsToggle": "Show {{count}} additional agents that are not detected",
+      "otherAutomaticAgentsToggle": "Show {{count}} compatible agents that are not detected",
+      "noAutomaticAgents": "No related agents were detected.",
+      "noAdditionalAgents": "No additional agents available.",
+      "noVisibleAdditionalAgents": "There are no installed or selected additional agents."
     },
     "git": {
       "title": "Git",
@@ -336,7 +335,7 @@
       }
     },
     "detected": "Installed",
-    "notDetected": "Not installed",
+    "notDetected": "Not detected",
     "projects": "Projects",
     "projectsHint": "Saved project paths for quick access to project-level skills",
     "projectsEmpty": "No projects added",
@@ -407,30 +406,36 @@
     }
   },
   "addSkill": {
-    "title": "Add Skill",
+    "title": "Install Skills",
     "steps": {
-      "scope": "Location",
+      "scope": "Usage Scope",
       "source": "Source",
       "skills": "Skills",
-      "options": "Install Options",
-      "confirm": "Confirm"
+      "options": "Targets",
+      "confirm": "Review"
     },
     "source": {
       "label": "Source",
       "placeholder": "e.g. vercel-labs/agent-skills",
       "hint": "Supports GitHub (owner/repo), URLs, local paths, or skills install commands",
-      "fetch": "Fetch Skills",
-      "fetching": "Fetching skills...",
-      "cloning": "Cloning repository...",
-      "connecting": "Connecting...",
-      "cloningWithTime": "Cloning... ({{elapsed}}s / {{timeout}}s)",
-      "cloneDone": "Clone complete",
       "tabs": {
-        "search": "Search Online",
-        "manual": "Enter URL"
+        "search": "Search online",
+        "manual": "Manual"
       },
-      "refBadge": "branch: {{ref}}",
-      "skillFilterBadge": "skill: {{filter}}",
+      "actions": {
+        "fetch": "Fetch Skills"
+      },
+      "status": {
+        "fetching": "Reading source...",
+        "cloning": "Fetching source content...",
+        "connecting": "Connecting to source...",
+        "cloningWithTime": "Fetching source content... ({{elapsed}}s / {{timeout}}s)",
+        "cloneDone": "Source loaded"
+      },
+      "badges": {
+        "ref": "branch: {{ref}}",
+        "skillFilter": "skill: {{filter}}"
+      },
       "error": {
         "empty": "Please enter a source",
         "notFound": "Repository not found",
@@ -443,59 +448,77 @@
       }
     },
     "skills": {
-      "title": "Select Skills",
-      "selected": "Selected: {{count}} of {{total}}",
+      "title": "Select skills",
+      "selected": "{{count}} of {{total}} selected",
       "search": "Search skills...",
-      "selectAll": "Select All",
+      "selectAll": "Select all",
       "clear": "Clear",
-      "empty": "No skills match your search",
-      "required": "Please select at least one skill"
+      "empty": "No matching skills",
+      "required": "Select at least one skill"
     },
     "agents": {
       "title": "Install Targets",
-      "automaticTitle": "Applied automatically",
-      "additionalTitle": "Manual selection",
-      "additionalHint": "Choose agents that need an extra install target",
-      "expandOtherAgents": "↓ Show {{count}} more agents",
-      "collapseOtherAgents": "↑ Collapse",
-      "noneSelected": "None selected"
+      "automaticTitle": "Available automatically",
+      "automaticHint": "Skills are installed to the shared directory ({{path}}). Compatible agents can read them directly.",
+      "additionalTitle": "Additional agents",
+      "additionalHint": "Create links or copies for agents that use separate directories",
+      "targetTitle": "Target agents",
+      "expandOtherAgents": "Show {{count}} additional agents that are not detected",
+      "collapseOtherAgents": "Collapse additional agents",
+      "noneSelected": "None selected",
+      "moreUndetected": "+ {{count}} not detected",
+      "undetectedListPrefix": "These agents are also compatible with the shared directory, but were not detected",
+      "viewUndetectedInfo": "View {{count}} compatible agents that were not detected",
+      "detected": "Installed",
+      "notDetected": "Not detected",
+      "noAutomaticAgents": "No related agents were detected."
     },
     "scope": {
-      "title": "Install Location",
+      "title": "Usage Scope",
       "project": "Project",
-      "projectHint": "Install in current project directory",
+      "projectHint": "Use only in the current project",
       "global": "Global",
-      "globalHint": "Install globally (available everywhere)"
+      "globalHint": "Available in every project"
     },
     "scopeSelect": {
-      "title": "Install Location",
-      "hint": "Choose where to install this skill",
+      "title": "Usage Scope",
+      "hint": "Choose where this Skill can be used.",
       "global": "Global",
-      "globalHint": "Available everywhere (~/.agents/skills/)"
+      "globalHint": "Available in every project · {{path}}",
+      "localProjects": "Projects"
     },
     "mode": {
       "title": "Installation Method",
       "symlink": "Symlink",
-      "symlinkHint": "Recommended - Single source of truth",
+      "symlinkHint": "Keep a single source for easier updates",
+      "recommended": "Recommended",
       "copy": "Copy",
-      "copyHint": "Independent copies for each agent",
-      "singleDirectoryHint": "All effective targets resolve to the same skill directory, so the installation method is handled automatically."
+      "copyHint": "Create a separate Skill copy for each agent",
+      "singleDirectoryTitle": "Shared directory only",
+      "singleDirectoryHint": "If no additional agents are selected, the Skill is installed only to the shared directory."
     },
     "confirm": {
+      "summary": "Will install {{count}} skills. {{overwriteCount}} will overwrite existing content.",
+      "summaryNoOverwrite": "Will install {{count}} skills.",
+      "itemsTitle": "Install contents",
       "overwriteCount": "{{count}} skills already exist and will be overwritten",
       "willOverwrite": "Overwrites: {{agents}}",
-      "shared": "shared",
-      "directories": "Install directories",
+      "shared": "Shared directory",
+      "directories": "Install locations",
+      "directoryHint": "Skills are installed to the shared directory. Additional agents are handled using the selected method.",
       "symlink": "Symlink",
-      "symlinkHint": "Agents reference source files in shared directory",
+      "symlinkHint": "Create symlinks from additional agents to the shared directory.",
       "copy": "Copy",
-      "copyHint": "Source files copied to each agent directory",
+      "copyHint": "Copy the Skill into each additional agent directory.",
       "trust": {
         "legacy": "Legacy",
         "skillMd": "skill-md",
         "archive": "archive",
         "digestVerified": "digest verified"
-      }
+      },
+      "conflictZone": "Conflict & Overwrite",
+      "freshZone": "New Installs",
+      "overwriteGroup": "Overwrite"
     },
     "risk": {
       "openclawTitle": "OpenClaw sources require extra confirmation",
@@ -579,7 +602,8 @@
       "install": "Install",
       "retry": "Retry",
       "retrySkill": "Retry Skill",
-      "done": "Done"
+      "done": "Done",
+      "installWithOverwrite": "Overwrite & Install"
     }
   }
 }

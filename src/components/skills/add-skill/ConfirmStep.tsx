@@ -1,21 +1,21 @@
 // src/components/skills/add-skill/ConfirmStep.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CornerDownRight, FolderGit2, Box, Folder, Package } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import { getAgentTarget, isAdditionalAgent } from '@/lib/agentTargets';
-import { toTitleCase } from '@/lib/utils';
+import { getAgentTarget, getSharedSkillDirectory, isAdditionalAgent, isAutomaticAgent } from '@/lib/agentTargets';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
 import { RiskBadge } from '../RiskBadge';
 import { getEffectiveInstallMode, type WizardState } from './types';
+
+function formatPath(path: string) {
+  return path
+    .replace(/^([A-Z]:\\Users\\[^\\]+|^\/Users\/[^/]+|^\/home\/[^/]+)/i, '~')
+    .replace(/[\\/]+$/, '');
+}
 
 interface ConfirmStepProps {
   state: WizardState;
@@ -29,72 +29,78 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
 
   const updateStateRef = useRef(updateState);
   useEffect(() => { updateStateRef.current = updateState; });
+  const confirmRequestIdRef = useRef(0);
 
   // 审计数据（组件级 state，不影响 wizard 流程）
   const [auditData, setAuditData] = useState<Partial<Record<string, SkillAuditData>>>({});
 
   // 并行检测覆盖 + 获取审计数据
   useEffect(() => {
-    if (state.selectedAgents.length === 0 || state.selectedSkills.length === 0) return;
+    const requestId = ++confirmRequestIdRef.current;
+    let cancelled = false;
+
+    if (state.selectedSkills.length === 0) {
+      updateStateRef.current({ overwrites: {}, confirmReady: true });
+      return;
+    }
 
     updateStateRef.current({ confirmReady: false });
 
-    const overwritePromise = checkOverwrites(
-      state.selectedSkills,
-      state.selectedAgents,
-      scope,
-      scope === 'project' ? projectPath : undefined
-    );
+    const overwriteAgentIds = Array.from(new Set([
+      ...state.selectedAgents,
+      ...state.allAgents
+        .filter((agent) => isAutomaticAgent(agent, scope))
+        .map((agent) => agent.id),
+    ]));
+
+    const overwritePromise: Promise<Record<string, string[]>> = overwriteAgentIds.length > 0
+      ? checkOverwrites(
+          state.selectedSkills,
+          overwriteAgentIds,
+          scope,
+          scope === 'project' ? projectPath : undefined
+        )
+      : Promise.resolve({});
 
     const auditPromise = state.source
       ? checkSkillAudit(state.source, state.selectedSkills).catch(() => null)
       : Promise.resolve(null);
 
     Promise.all([overwritePromise, auditPromise]).then(([overwriteResult, auditResult]) => {
+      if (cancelled || requestId !== confirmRequestIdRef.current) return;
+
       const overwrites: Record<string, string[]> = {};
       for (const [key, value] of Object.entries(overwriteResult)) {
         if (value) overwrites[key] = value;
       }
-      updateStateRef.current({ overwrites, confirmReady: true });
 
-      if (auditResult) {
-        setAuditData(auditResult);
-      }
+      setAuditData((current) =>
+        auditResult ?? (Object.keys(current).length > 0 ? {} : current)
+      );
+      updateStateRef.current({ overwrites, confirmReady: true });
     }).catch((error) => {
+      if (cancelled || requestId !== confirmRequestIdRef.current) return;
+
       console.error('Failed to check overwrites/audit:', error);
+      setAuditData((current) => Object.keys(current).length > 0 ? {} : current);
       updateStateRef.current({ overwrites: {}, confirmReady: true });
     });
-  }, [state.selectedSkills, state.selectedAgents, state.source, scope, projectPath]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.selectedSkills, state.selectedAgents, state.allAgents, state.source, scope, projectPath]);
 
   // 覆盖统计
-  const overwriteCount = useMemo(
-    () => Object.values(state.overwrites).filter((agents) => agents.length > 0).length,
-    [state.overwrites]
-  );
   const availableSkillMap = useMemo(
     () => new Map(state.availableSkills.map((s) => [s.name, s])),
     [state.availableSkills]
   );
 
-  // 按 plugin 分组选中的 skills — js-combine-iterations
-  const groupedSelectedSkills = useMemo(() => {
-    const groups: Record<string, string[]> = {};
-    const ungrouped: string[] = [];
-    let hasAnyPlugin = false;
-
-    for (const name of state.selectedSkills) {
-      const pluginName = availableSkillMap.get(name)?.pluginName;
-      if (pluginName) {
-        hasAnyPlugin = true;
-        if (!groups[pluginName]) groups[pluginName] = [];
-        groups[pluginName].push(name);
-      } else {
-        ungrouped.push(name);
-      }
-    }
-
-    return hasAnyPlugin ? { groups, ungrouped } : null;
-  }, [state.selectedSkills, availableSkillMap]);
+  const overwriteCount = useMemo(
+    () => state.selectedSkills.filter((name) => (state.overwrites[name] ?? []).length > 0).length,
+    [state.selectedSkills, state.overwrites]
+  );
 
   // 已选的手动安装目标信息（用于目录列表）
   const selectedAdditionalAgents = useMemo(() => {
@@ -105,7 +111,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
   }, [state.selectedAgents, state.allAgents, scope]);
   const effectiveMode = getEffectiveInstallMode(state);
 
-  const sharedDir = scope === 'global' ? '~/.agents/skills/' : '.agents/skills/';
+  const sharedDir = getSharedSkillDirectory(scope);
 
   const renderSkillRow = (skillName: string) => {
     const skill = availableSkillMap.get(skillName);
@@ -118,41 +124,45 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
         : skill?.wellKnownEntryType === 'archive'
           ? 'addSkill.confirm.trust.archive'
           : null;
+
     return (
-      <div key={skillName} className="flex items-center justify-between gap-2 px-3 py-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {hasOverwrite && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('addSkill.confirm.willOverwrite', { agents: overwriteAgents.join(', ') })}
-              </TooltipContent>
-            </Tooltip>
-          )}
-          <span className="font-mono text-[13px] text-foreground truncate">
-            {skillName}
-          </span>
-          {trustTypeKey ? (
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground">
-              {t(trustTypeKey)}
-            </Badge>
-          ) : null}
-          {skill?.artifactUrlHost ? (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              {skill.artifactUrlHost}
-            </Badge>
-          ) : null}
-          {skill?.digestVerified ? (
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-success">
-              {t('addSkill.confirm.trust.digestVerified')}
-            </Badge>
-          ) : null}
+      <div key={skillName}>
+        <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <Package className="w-4 h-4 text-muted-foreground/70 shrink-0" />
+            <span className="min-w-0 max-w-[280px] truncate font-mono text-[13px] text-foreground" title={skillName}>
+              {skillName}
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {hasOverwrite && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400">
+                  {t('addSkill.confirm.overwriteGroup')}
+                </Badge>
+              )}
+              {trustTypeKey && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground bg-muted/20">
+                  {t(trustTypeKey)}
+                </Badge>
+              )}
+              {skill?.artifactUrlHost && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 inline-flex items-center gap-1" title={skill.artifactUrlHost}>
+                  <Box className="w-2.5 h-2.5 opacity-60" />
+                  <span className="truncate max-w-[80px]">{skill.artifactUrlHost}</span>
+                </Badge>
+              )}
+              {skill?.digestVerified && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/5">
+                  {t('addSkill.confirm.trust.digestVerified')}
+                </Badge>
+              )}
+            </div>
+          </div>
+          <div className="flex-shrink-0 flex items-center gap-2">
+            {auditData[skillName] && (
+              <RiskBadge risk={auditData[skillName].risk} />
+            )}
+          </div>
         </div>
-        {auditData[skillName] && (
-          <RiskBadge risk={auditData[skillName].risk} />
-        )}
       </div>
     );
   };
@@ -183,92 +193,101 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
         </div>
       )}
 
-      {/* 集中覆盖警告条 */}
-      {state.confirmReady && overwriteCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-md text-sm text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>{t('addSkill.confirm.overwriteCount', { count: overwriteCount })}</span>
+      <div className="space-y-2">
+        <div className="space-y-0.5" data-install-contents-section>
+          <span className="text-sm font-semibold text-foreground" data-skill-list-heading>
+            {t('addSkill.confirm.itemsTitle')}
+          </span>
+          {state.confirmReady && (
+            <p className="text-xs leading-5 text-muted-foreground">
+              {overwriteCount > 0
+                ? t('addSkill.confirm.summary', {
+                    count: state.selectedSkills.length,
+                    overwriteCount,
+                  })
+                : t('addSkill.confirm.summaryNoOverwrite', {
+                    count: state.selectedSkills.length,
+                  })}
+            </p>
+          )}
         </div>
-      )}
-
-      {/* Skills 列表 */}
-      <div className="border rounded-md divide-y divide-border/50">
         {!state.confirmReady ? (
-          // 统一骨架屏
-          state.selectedSkills.map((_, idx) => (
-            <div key={idx} className="flex items-center justify-between gap-2 px-3 py-2">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-5 w-14 rounded-full" />
-            </div>
-          ))
-        ) : groupedSelectedSkills ? (
-          <>
-            {Object.keys(groupedSelectedSkills.groups).sort().map((groupName) => (
-              <div key={groupName}>
-                <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted/30">
-                  {toTitleCase(groupName)}
-                </div>
-                {groupedSelectedSkills.groups[groupName].map(renderSkillRow)}
+          <div className="border rounded-md divide-y divide-border/50 bg-card">
+            {state.selectedSkills.map((_, idx) => (
+              <div key={idx} className="flex items-center justify-between gap-2 px-3 py-3">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-5 w-14 rounded-full" />
               </div>
             ))}
-            {groupedSelectedSkills.ungrouped.length > 0 && (
-              <div>
-                <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted/30">
-                  {t('skills.pluginGroup.general')}
-                </div>
-                {groupedSelectedSkills.ungrouped.map(renderSkillRow)}
-              </div>
-            )}
-          </>
+          </div>
         ) : (
-          state.selectedSkills.map(renderSkillRow)
+          <div className="overflow-hidden rounded-md border border-border/60 bg-card">
+            <div className="divide-y divide-border/50">
+              {state.selectedSkills.map(renderSkillRow)}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* 安装目录 — 通用目录始终存储原始文件，Agent 目录根据 mode 符号链接或复制 */}
-      <div className="space-y-1.5">
-        <span className="text-sm text-muted-foreground">{t('addSkill.confirm.directories')}</span>
-        {/* 通用目录 — 原始文件所在 */}
-        <div className="border rounded-md">
-          <div className="flex items-center justify-between gap-2 px-3 py-2">
-            <code className="font-mono text-[13px] text-foreground truncate">
-              {sharedDir}
-            </code>
-            <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
+      {/* 物理安装路径拓扑树 */}
+      <div className="space-y-2 pt-3">
+        <div className="space-y-0.5">
+          <span className="text-sm font-semibold text-foreground">{t('addSkill.confirm.directories')}</span>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {t('addSkill.confirm.directoryHint')}
+          </p>
+        </div>
+
+        <div className="mt-2 overflow-x-auto rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[13px]">
+          {/* 共享源目录 */}
+          <div className="flex items-center gap-2 text-foreground relative z-10">
+            <Folder className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0" />
+            <span className="font-semibold">{formatPath(sharedDir)}</span>
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-1 opacity-80 leading-none flex items-center">
               {t('addSkill.confirm.shared')}
             </Badge>
           </div>
+
+          {/* 目标 Agent 依赖节点 */}
+          {selectedAdditionalAgents.length > 0 && (
+            <div className="mt-1 flex flex-col relative ml-2.5">
+              {selectedAdditionalAgents.map((agent, idx) => {
+                const isLast = idx === selectedAdditionalAgents.length - 1;
+                return (
+                  <div key={agent.id} className="relative flex items-center py-1">
+                    <div className="absolute left-0 top-0 bottom-0 w-[14px]">
+                       <div className="absolute left-0 top-0 w-full h-[50%] border-l-2 border-b-2 border-border/60 rounded-bl-sm" />
+                       {!isLast && <div className="absolute left-0 top-[50%] bottom-0 border-l-2 border-border/60" />}
+                    </div>
+                    <div className="flex items-center gap-2 ml-[22px] mt-px text-muted-foreground w-full">
+                      {effectiveMode === 'symlink' ? (
+                        <CornerDownRight className="h-3.5 w-3.5 text-orange-500/80 shrink-0" />
+                      ) : (
+                        <FolderGit2 className="h-3.5 w-3.5 text-emerald-500/80 shrink-0" />
+                      )}
+                      <span className="truncate">{formatPath(getAgentTarget(agent, scope).path)}</span>
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-[18px] bg-background border-border/80 text-muted-foreground whitespace-nowrap leading-none flex items-center">
+                        {agent.name}
+                      </Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-        {/* 关系标注 + Agent 目录 */}
+
+        {/* 模式图例提示 */}
         {selectedAdditionalAgents.length > 0 && (
-          <>
-            <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-              <span>↓</span>
-              <span>
-                {effectiveMode === 'symlink'
-                  ? t('addSkill.confirm.symlink')
-                  : t('addSkill.confirm.copy')}
-              </span>
-              <span className="text-muted-foreground/50">—</span>
-              <span className="text-muted-foreground/60">
-                {effectiveMode === 'symlink'
-                  ? t('addSkill.confirm.symlinkHint')
-                  : t('addSkill.confirm.copyHint')}
-              </span>
-            </div>
-            <div className="border rounded-md divide-y divide-border/50">
-              {selectedAdditionalAgents.map((agent) => (
-                <div key={agent.id} className="flex items-center justify-between gap-2 px-3 py-2">
-                  <code className="font-mono text-[13px] text-foreground truncate">
-                    {getAgentTarget(agent, scope).path}
-                  </code>
-                  <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
-                    {agent.name}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </>
+          <div className="text-[11px] text-muted-foreground/70 flex items-center gap-1.5 mt-1 px-1">
+            {effectiveMode === 'symlink'
+              ? <CornerDownRight className="h-3 w-3" />
+              : <FolderGit2 className="h-3 w-3" />
+            }
+            {effectiveMode === 'symlink'
+              ? t('addSkill.confirm.symlinkHint')
+              : t('addSkill.confirm.copyHint')}
+          </div>
         )}
       </div>
     </div>

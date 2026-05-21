@@ -8,7 +8,19 @@ import type { AgentInfo } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, options?: string | { count?: number; path?: string }) => {
+      if (key === 'addSkill.agents.expandOtherAgents') {
+        return `Show ${typeof options === 'object' ? options.count ?? 0 : 0} more agents`;
+      }
+      if (key === 'addSkill.agents.collapseOtherAgents') {
+        if (typeof options === 'string') return options;
+        return 'Collapse options';
+      }
+      if (key === 'addSkill.agents.automaticHint') {
+        return `Automatic hint: ${typeof options === 'object' ? options.path ?? '' : ''}`;
+      }
+      return key;
+    },
   }),
 }));
 
@@ -106,12 +118,32 @@ describe('AgentSelector', () => {
     );
 
     expect(screen.getByText('addSkill.agents.automaticTitle')).toBeDefined();
-    expect(screen.getByText('./.agents/skills/')).toBeDefined();
+    expect(screen.getByText('Automatic hint: ./.agents/skills')).toBeDefined();
     expect(screen.getByText('Codex')).toBeDefined();
     expect(screen.getByText('Cursor')).toBeDefined();
     expect(screen.getByText('addSkill.agents.additionalTitle')).toBeDefined();
     expect(screen.getByText('Claude Code')).toBeDefined();
-    expect(screen.getByText('addSkill.agents.expandOtherAgents')).toBeDefined();
+    expect(screen.getByText('Show 1 more agents')).toBeDefined();
+  });
+
+  it('keeps expand and collapse labels free of arrow glyphs', async () => {
+    const { userEvent } = await import('@testing-library/user-event');
+    render(
+      <AgentSelector
+        selectedAgents={[]}
+        allAgents={agents}
+        onSelectionChange={vi.fn()}
+        scope="project"
+      />
+    );
+
+    const expandButton = screen.getByRole('button', { name: /Show 1 more agents/i });
+    expect(expandButton.textContent).not.toMatch(/[↓↑∧]/);
+
+    await userEvent.click(expandButton);
+
+    const collapseButton = screen.getByRole('button', { name: /Collapse options/i });
+    expect(collapseButton.textContent).not.toMatch(/[↓↑∧]/);
   });
 
   it('uses global target metadata when global scope is selected', () => {

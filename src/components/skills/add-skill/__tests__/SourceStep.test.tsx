@@ -1,11 +1,13 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import type { WizardState } from '../types';
 import { SourceStep } from '../SourceStep';
+import type { SearchSkill } from '../../skill-search/SkillSearch';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -29,6 +31,32 @@ vi.mock('@/stores/skills-data', () => ({
       globalSkills: [],
       projectSkills: [],
     }),
+}));
+
+function SearchResultStub({ onInstall }: { onInstall: (skill: SearchSkill) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        onInstall({
+          name: 'demo',
+          slug: 'demo',
+          source: 'openclaw/community-skills',
+          installs: 10,
+        })
+      }
+    >
+      install search result
+    </button>
+  );
+}
+
+vi.mock('../../skill-search', () => ({
+  SkillSearch: SearchResultStub,
+}));
+
+vi.mock('../../skill-search/SkillSearch', () => ({
+  SkillSearch: SearchResultStub,
 }));
 
 function createState(): WizardState {
@@ -78,6 +106,10 @@ function Harness({ onNext }: { onNext: () => void }) {
 }
 
 describe('SourceStep', () => {
+  beforeEach(() => {
+    fetchAvailableMock.mockReset();
+  });
+
   it('stores risk policy from fetchAvailable', async () => {
     const onNext = vi.fn();
 
@@ -102,6 +134,31 @@ describe('SourceStep', () => {
     await waitFor(() => {
       expect(onNext).toHaveBeenCalled();
       expect(screen.getByTestId('risk-policy').textContent).toBe('require-confirmation');
+    });
+  });
+
+  it('fetches a selected search result without waiting for a timer tick', async () => {
+    const user = userEvent.setup();
+    const onNext = vi.fn();
+
+    fetchAvailableMock.mockResolvedValue({
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/openclaw/community-skills',
+      gitRef: null,
+      skillFilter: 'demo',
+      riskPolicy: { kind: 'none', code: null },
+      skills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
+    });
+
+    render(<Harness onNext={onNext} />);
+
+    await user.click(screen.getByRole('tab', { name: 'addSkill.source.tabs.search' }));
+    await user.click(await screen.findByText('install search result'));
+
+    expect(fetchAvailableMock).toHaveBeenCalledWith('openclaw/community-skills@demo');
+
+    await waitFor(() => {
+      expect(onNext).toHaveBeenCalled();
     });
   });
 });

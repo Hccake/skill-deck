@@ -63,31 +63,31 @@ const SearchResultItem = memo(function SearchResultItem({
   t: TFunction;
 }) {
   return (
-    <div className="flex items-center justify-between py-2.5 px-1">
+    <div className="flex items-center justify-between py-3 px-4 mb-2 bg-card/40 hover:bg-card border border-transparent hover:border-border/50 rounded-xl transition-all shadow-sm">
       <div className="min-w-0 flex-1">
         <div className="font-heading font-semibold text-sm tracking-tight truncate">
           {skill.name}
         </div>
-        <div className="text-xs text-muted-foreground truncate">
+        <div className="text-xs text-muted-foreground truncate mt-0.5">
           {skill.source}
         </div>
       </div>
-      <div className="flex items-center gap-3 ml-4 shrink-0">
+      <div className="flex items-center gap-4 ml-4 shrink-0">
         {skill.installs > 0 ? (
-          <span className="text-xs text-muted-foreground">
-            <Download className="inline h-3 w-3 mr-1" />
+          <span className="text-xs text-muted-foreground flex items-center">
+            <Download className="inline h-3.5 w-3.5 mr-1.5 opacity-70" />
             {formatInstalls(skill.installs)}
           </span>
         ) : null}
         {isInstalled ? (
-          <Badge variant="secondary" className="text-xs">
+          <Badge variant="secondary" className="text-xs font-medium bg-secondary/50">
             {t('skills.discover.installed')}
           </Badge>
         ) : (
           <Button
             variant="default"
             size="sm"
-            className="h-7 text-xs"
+            className="h-8 px-4 text-xs font-medium shadow-sm"
             onClick={() => onInstall(skill)}
           >
             {t('skills.discover.install')}
@@ -105,12 +105,15 @@ export function SkillSearch({ installedSkillKeys, onInstall }: SkillSearchProps)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const searchRequestIdRef = useRef(0);
   // [rerender-move-effect-to-event] 用 retryCount 驱动 effect 重新搜索，
   // 避免 handleRetry 捕获 query 闭包 (rerender-defer-reads)
   const [retryCount, setRetryCount] = useState(0);
 
   // 防抖搜索 — retryCount 变化也会触发重新搜索
   useEffect(() => {
+    const requestId = ++searchRequestIdRef.current;
+
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
@@ -128,13 +131,19 @@ export function SkillSearch({ installedSkillKeys, onInstall }: SkillSearchProps)
     debounceRef.current = setTimeout(async () => {
       try {
         const data = await searchSkillsAPI(query);
+        if (requestId !== searchRequestIdRef.current) return;
+
         setResults(data);
         setError(false);
       } catch {
+        if (requestId !== searchRequestIdRef.current) return;
+
         setResults([]);
         setError(true);
       } finally {
-        setLoading(false);
+        if (requestId === searchRequestIdRef.current) {
+          setLoading(false);
+        }
       }
     }, 300);
 
@@ -153,14 +162,14 @@ export function SkillSearch({ installedSkillKeys, onInstall }: SkillSearchProps)
   return (
     <div className="flex flex-col h-full">
       {/* 搜索框 */}
-      <div className="relative mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="relative mb-6 shrink-0">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
         <Input
           type="text"
           placeholder={t('skills.discover.searchPlaceholder')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="pl-9 h-9"
+          className="pl-12 h-14 text-lg bg-card/80 backdrop-blur-sm border-muted-foreground/20 shadow-sm focus-visible:shadow-md focus-visible:ring-primary/20 rounded-2xl transition-all"
         />
       </div>
 

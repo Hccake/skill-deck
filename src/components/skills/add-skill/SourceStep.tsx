@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
+import { Info } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,8 +12,8 @@ import { fetchAvailable } from '@/hooks/useTauriApi';
 import { parseSkillsCommand } from '@/utils/parse-skills-command';
 import { formatAppError } from '@/utils/format-app-error';
 import { toAppError } from '@/utils/to-app-error';
-import { SkillSearch } from '../skill-search';
-import type { SearchSkill } from '../skill-search';
+import { SkillSearch } from '../skill-search/SkillSearch';
+import type { SearchSkill } from '../skill-search/SkillSearch';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import type { WizardState } from './types';
 
@@ -136,19 +137,19 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   // 回退再进入时 fetchStatus 已非 idle，不会重复触发，用户可自由修改 source
   useEffect(() => {
     if (autoFetch && state.fetchStatus === 'idle' && state.source) {
-      requestAnimationFrame(() => {
-        handleFetch();
+      const frameId = requestAnimationFrame(() => {
+        handleFetchWithSource(state.source);
       });
+
+      return () => cancelAnimationFrame(frameId);
     }
-  }, [autoFetch, state.fetchStatus, state.source, handleFetch]);
+  }, [autoFetch, state.fetchStatus, state.source, handleFetchWithSource]);
 
   // 搜索结果选中处理（用于 SkillSearch 组件）
   const handleSearchSelect = useCallback((skill: SearchSkill) => {
     const newSource = `${skill.source}@${skill.name}`;
     updateState({ source: newSource });
-    setTimeout(() => {
-      handleFetchWithSource(newSource);
-    }, 0);
+    handleFetchWithSource(newSource);
   }, [updateState, handleFetchWithSource]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -166,55 +167,57 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
 
   // 获取阶段文字
   const getPhaseText = () => {
-    if (!cloneProgress) return t('addSkill.source.cloning');
+    if (!cloneProgress) return t('addSkill.source.status.cloning');
     switch (cloneProgress.phase) {
       case 'connecting':
-        return t('addSkill.source.connecting');
+        return t('addSkill.source.status.connecting');
       case 'cloning':
-        return t('addSkill.source.cloningWithTime', {
+        return t('addSkill.source.status.cloningWithTime', {
           elapsed: cloneProgress.elapsed_secs,
           timeout: cloneProgress.timeout_secs,
         });
       case 'done':
-        return t('addSkill.source.cloneDone');
+        return t('addSkill.source.status.cloneDone');
       default:
-        return t('addSkill.source.cloning');
+        return t('addSkill.source.status.cloning');
     }
   };
 
   return (
     <div className="flex flex-col gap-4 h-full">
       <Tabs defaultValue="manual" className="flex flex-col flex-1 min-h-0">
-        <TabsList className="w-full">
-          <TabsTrigger value="search" className="flex-1" disabled={isLoading}>
-            {t('addSkill.source.tabs.search')}
-          </TabsTrigger>
-          <TabsTrigger value="manual" className="flex-1" disabled={isLoading}>
-            {t('addSkill.source.tabs.manual')}
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex justify-center mb-6">
+          <TabsList className="w-full max-w-sm grid grid-cols-2 p-1 bg-muted/50 rounded-xl">
+            <TabsTrigger value="search" className="rounded-lg" disabled={isLoading}>
+              {t('addSkill.source.tabs.search')}
+            </TabsTrigger>
+            <TabsTrigger value="manual" className="rounded-lg" disabled={isLoading}>
+              {t('addSkill.source.tabs.manual')}
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         {isLoading ? (
           /* 统一加载视图 — 替换所有 Tab 内容，无论从哪个 tab 触发都可见 */
-          <div className="flex flex-col items-center justify-center flex-1 space-y-3">
-            <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin" />
-            <div className="text-center space-y-1.5">
-              <p className="text-sm text-muted-foreground">{getPhaseText()}</p>
-              <p className="text-xs text-muted-foreground/70 font-mono truncate max-w-xs">
+          <div className="flex flex-col items-center justify-center flex-1 space-y-4 animate-in fade-in zoom-in-95 duration-300">
+            <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+            <div className="text-center space-y-2">
+              <p className="text-sm font-medium text-foreground">{getPhaseText()}</p>
+              <p className="text-xs text-muted-foreground font-mono truncate max-w-[280px] bg-muted/30 px-2 py-1 rounded-md">
                 {state.source.replace(/@[^@]+$/, '')}
               </p>
             </div>
             {cloneProgress && cloneProgress.phase === 'cloning' && (
-              <div className="w-full max-w-xs">
-                <Progress value={progressPercent} className="h-1" />
+              <div className="w-full max-w-[280px] mt-4">
+                <Progress value={progressPercent} className="h-1.5" />
               </div>
             )}
           </div>
         ) : (
-          <>
+          <div className="flex-1 animate-in fade-in duration-300 flex flex-col">
             {/* 搜索 Tab */}
-            <TabsContent value="search" className="flex-1 min-h-0">
-              <div className="h-full">
+            <TabsContent value="search" className="flex-1 min-h-0 m-0">
+              <div className="h-full px-2">
                 <SkillSearch
                   installedSkillKeys={installedSkillKeys}
                   onInstall={handleSearchSelect}
@@ -223,44 +226,45 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
             </TabsContent>
 
             {/* 手动输入 Tab */}
-            <TabsContent value="manual">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  {t('addSkill.source.label')}
-                </label>
-                <div className="flex gap-2">
-                  <Input
-                    value={state.source}
-                    onChange={(e) => updateState({ source: e.target.value })}
-                    onKeyDown={handleKeyDown}
-                    placeholder={t('addSkill.source.placeholder')}
-                    className="flex-1"
-                  />
+            <TabsContent value="manual" className="m-0 px-2 mt-2">
+              <div className="relative group">
+                <Input
+                  value={state.source}
+                  onChange={(e) => updateState({ source: e.target.value })}
+                  onKeyDown={handleKeyDown}
+                  placeholder={t('addSkill.source.placeholder')}
+                  className="w-full h-14 pl-5 pr-[120px] text-base bg-card/80 backdrop-blur-sm border-muted-foreground/20 shadow-sm group-focus-within:shadow-md focus-visible:ring-primary/20 rounded-2xl transition-all"
+                />
+                <div className="absolute right-1.5 top-1.5 bottom-1.5">
                   <Button
                     onClick={handleFetch}
                     disabled={!state.source.trim()}
+                    className="h-full px-6 shadow-sm rounded-xl font-medium"
                   >
-                    {t('addSkill.source.fetch')}
+                    {t('addSkill.source.actions.fetch')}
                   </Button>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  {t('addSkill.source.hint')}
-                </p>
-                {state.gitRef ? (
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant="secondary">
-                      {t('addSkill.source.refBadge', { ref: state.gitRef })}
-                    </Badge>
-                    {state.skillFilter ? (
-                      <Badge variant="outline">
-                        {t('addSkill.source.skillFilterBadge', { filter: state.skillFilter })}
-                      </Badge>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
+
+              <div className="flex items-center gap-2 mt-4 ml-1 text-xs text-muted-foreground/70">
+                <Info className="h-4 w-4 shrink-0" />
+                <p>{t('addSkill.source.hint')}</p>
+              </div>
+
+              {state.gitRef ? (
+                <div className="flex items-center gap-2 mt-4 ml-1">
+                  <Badge variant="secondary" className="bg-secondary/50 font-medium">
+                    {t('addSkill.source.badges.ref', { ref: state.gitRef })}
+                  </Badge>
+                  {state.skillFilter ? (
+                    <Badge variant="outline" className="border-primary/20 font-medium">
+                      {t('addSkill.source.badges.skillFilter', { filter: state.skillFilter })}
+                    </Badge>
+                  ) : null}
+                </div>
+              ) : null}
             </TabsContent>
-          </>
+          </div>
         )}
       </Tabs>
 

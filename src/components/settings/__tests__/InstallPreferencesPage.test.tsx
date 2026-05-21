@@ -131,7 +131,17 @@ describe('InstallPreferencesPage', () => {
     render(<InstallPreferencesPage />);
 
     expect(screen.getAllByText('Amp').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Automatically Applied Agents').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Available automatically').length).toBeGreaterThan(0);
+    expect(screen.getByText(/shared directory/)).toBeDefined();
+  });
+
+  it('uses global and project labels instead of workspace labels', () => {
+    expect(enLocale.settings.installPreferences.globalTitle).toBe('Global');
+    expect(enLocale.settings.installPreferences.projectTitle).toBe('Project');
+    expect(enLocale.settings.installPreferences.description).toContain('Global and project defaults');
+    expect(enLocale.settings.installPreferences.description).not.toContain('workspaces');
+    expect(Object.hasOwn(enLocale.settings.installPreferences, 'globalAutomaticPath')).toBe(false);
+    expect(Object.hasOwn(enLocale.settings.installPreferences, 'projectAutomaticPath')).toBe(false);
   });
 
   it('toggles an additional global agent from the default target list', () => {

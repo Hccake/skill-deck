@@ -7,6 +7,8 @@ import { listAgents, getDefaultTargetAgents, getLastSelectedAgents } from '@/hoo
 import { filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
 import { AgentSelector } from './AgentSelector';
 import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
+import { Copy, Info, Link2, type LucideIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 // CLI 默认选中的手动安装目标
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
@@ -93,53 +95,119 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   return (
     <div className="space-y-6 py-4">
       {/* Agents */}
-      <AgentSelector
-        selectedAgents={state.selectedAgents}
-        allAgents={state.allAgents}
-        onSelectionChange={handleSelectionChange}
-        scope={state.scope}
-      />
+      <div className="space-y-3">
+        <Label className="text-base font-semibold">{t('addSkill.agents.targetTitle')}</Label>
+        <AgentSelector
+          selectedAgents={state.selectedAgents}
+          allAgents={state.allAgents}
+          onSelectionChange={handleSelectionChange}
+          scope={state.scope}
+        />
+      </div>
 
       {/* Mode */}
       {shouldShowModeSelection ? (
         <div className="space-y-3">
-          <Label className="text-sm font-medium">{t('addSkill.mode.title')}</Label>
+          <Label className="text-base font-semibold">{t('addSkill.mode.title')}</Label>
           <RadioGroup
             value={effectiveMode}
             onValueChange={(value) =>
               updateState({ mode: value as 'symlink' | 'copy' })
             }
-            className="space-y-2"
+            className="grid grid-cols-2 gap-2"
           >
-            <div className="flex items-start gap-3">
-              <RadioGroupItem value="symlink" id="mode-symlink" className="mt-1" />
-              <div>
-                <Label htmlFor="mode-symlink" className="font-medium">
-                  {t('addSkill.mode.symlink')}
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  {t('addSkill.mode.symlinkHint')}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <RadioGroupItem value="copy" id="mode-copy" className="mt-1" />
-              <div>
-                <Label htmlFor="mode-copy" className="font-medium">
-                  {t('addSkill.mode.copy')}
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  {t('addSkill.mode.copyHint')}
-                </p>
-              </div>
-            </div>
+            <InstallModeOption
+              value="symlink"
+              selected={effectiveMode === 'symlink'}
+              icon={Link2}
+              title={t('addSkill.mode.symlink')}
+              description={t('addSkill.mode.symlinkHint')}
+              badge={t('addSkill.mode.recommended')}
+            />
+            <InstallModeOption
+              value="copy"
+              selected={effectiveMode === 'copy'}
+              icon={Copy}
+              title={t('addSkill.mode.copy')}
+              description={t('addSkill.mode.copyHint')}
+            />
           </RadioGroup>
         </div>
       ) : (
-        <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-          {t('addSkill.mode.singleDirectoryHint')}
+        <div className="space-y-3">
+          <Label className="text-base font-semibold">{t('addSkill.mode.title')}</Label>
+          <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-muted/20 px-3.5 py-3">
+            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/50 bg-background text-muted-foreground">
+              <Info className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 space-y-1">
+              <p className="text-[13px] font-medium text-foreground">
+                {t('addSkill.mode.singleDirectoryTitle')}
+              </p>
+              <p className="text-[13px] text-muted-foreground leading-relaxed">
+                {t('addSkill.mode.singleDirectoryHint')}
+              </p>
+            </div>
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+interface InstallModeOptionProps {
+  value: 'symlink' | 'copy';
+  selected: boolean;
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  badge?: string;
+}
+
+function InstallModeOption({
+  value,
+  selected,
+  icon: Icon,
+  title,
+  description,
+  badge,
+}: InstallModeOptionProps) {
+  const id = `mode-${value}`;
+
+  return (
+    <div className="relative min-w-0">
+      <Label
+        htmlFor={id}
+        className={cn(
+          'flex h-full min-h-[68px] cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-3 text-left transition-colors duration-200',
+          selected
+            ? 'border-primary/60 bg-primary/5'
+            : 'border-border/50 bg-background hover:bg-muted/30 hover:border-border shadow-sm'
+        )}
+      >
+        <RadioGroupItem
+          value={value}
+          id={id}
+          className="mt-0.5 shrink-0"
+        />
+
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <Icon className={cn("h-4 w-4 shrink-0 focus:outline-none", selected ? "text-primary" : "text-muted-foreground")} />
+            <span className={cn('truncate text-[13px] font-medium leading-none', selected ? 'text-foreground' : 'text-foreground/90')}>
+              {title}
+            </span>
+            {badge ? (
+              <span className="shrink-0 rounded border border-border/50 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground delay-0">
+                {badge}
+              </span>
+            ) : null}
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </Label>
     </div>
   );
 }

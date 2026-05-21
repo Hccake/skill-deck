@@ -225,15 +225,8 @@ export function ContextSidebar() {
 
   return (
     <aside className="skills-context-sidebar flex flex-col h-full bg-canvas flex-shrink-0 border-r border-border/50">
-      {/* Title */}
-      <div className="px-4 pt-5 mb-4">
-        <h2 className="font-heading text-lg font-bold text-foreground tracking-tight">
-          {t('context.title')}
-        </h2>
-      </div>
-
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto space-y-4">
+      <div data-testid="context-sidebar-scroll" className="flex-1 overflow-y-auto space-y-4 pt-5">
         {/* Global Section */}
         <div>
           <h3 className="px-4 mb-2 text-xs font-semibold text-muted-foreground/80">

@@ -7,6 +7,15 @@ export const EMPTY_DEFAULT_TARGET_AGENTS: DefaultTargetAgents = {
   project: [],
 };
 
+const SHARED_SKILL_DIRECTORIES: Record<InstallScope, string> = {
+  global: '~/.agents/skills',
+  project: './.agents/skills',
+};
+
+export function getSharedSkillDirectory(scope: InstallScope) {
+  return SHARED_SKILL_DIRECTORIES[scope];
+}
+
 export function getAgentTarget(agent: AgentInfo, scope: InstallScope) {
   return agent.targets[scope];
 }

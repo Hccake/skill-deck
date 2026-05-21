@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentInfo } from '@/bindings';
-import { filterAdditionalAgentIds, migrateDefaultTargetAgents } from '../agentTargets';
+import {
+  filterAdditionalAgentIds,
+  formatAgentTargetPath,
+  getSharedSkillDirectory,
+  migrateDefaultTargetAgents,
+} from '../agentTargets';
 
 function makeAgent(
   id: string,
@@ -30,6 +35,11 @@ function makeAgent(
 }
 
 describe('agent target helpers', () => {
+  it('provides normalized shared skill directory display paths', () => {
+    expect(getSharedSkillDirectory('global')).toBe('~/.agents/skills');
+    expect(getSharedSkillDirectory('project')).toBe('./.agents/skills');
+  });
+
   it('filters automatic agents from additional defaults per scope', () => {
     const agents = [
       makeAgent('antigravity', false, true),
@@ -63,5 +73,19 @@ describe('agent target helpers', () => {
 
     expect(filterAdditionalAgentIds(['unsupported', 'missing'], [unsupported], 'global'))
       .toEqual([]);
+  });
+
+  it('normalizes local target paths for display on Windows', () => {
+    expect(formatAgentTargetPath('C:\\Users\\cheng\\.gemini/antigravity/skills', 'win32'))
+      .toBe('C:\\Users\\cheng\\.gemini\\antigravity\\skills');
+    expect(formatAgentTargetPath('./.agents/skills/', 'win32'))
+      .toBe('./.agents/skills');
+  });
+
+  it('keeps Unix-style target paths readable on non-Windows platforms', () => {
+    expect(formatAgentTargetPath('C:\\Users\\cheng\\.gemini/antigravity/skills', 'posix'))
+      .toBe('C:/Users/cheng/.gemini/antigravity/skills');
+    expect(formatAgentTargetPath('./.agents/skills/', 'posix'))
+      .toBe('./.agents/skills');
   });
 });

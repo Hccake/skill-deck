@@ -6,7 +6,6 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useContextStore } from '@/stores/context';
 import { emit } from '@tauri-apps/api/event';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
 import { StepIndicator } from '@/components/skills/add-skill/StepIndicator';
 import { ScopeBadge } from '@/components/skills/add-skill/ScopeBadge';
 import { ScopeStep } from '@/components/skills/add-skill/ScopeStep';
@@ -170,6 +169,22 @@ export function WizardPage() {
   const isResultState = state.step === 'installing' || state.step === 'complete' || state.step === 'error';
   // 是否显示 Scope badge（从 step 2 Source 开始显示）
   const showScopeBadge = currentStepIndex >= 1 || isResultState;
+  const hasOverwrites = useMemo(
+    () => Object.values(state.overwrites).some((agents) => agents.length > 0),
+    [state.overwrites]
+  );
+
+  const handleStepClick = useCallback((step: CoreStep) => {
+    const clickedIndex = steps.indexOf(step);
+    if (clickedIndex < currentStepIndex) {
+      goToStep(step);
+    }
+  }, [steps, currentStepIndex, goToStep]);
+
+  const handleScopeBadgeClick = useMemo(
+    () => currentStepIndex > 0 ? () => goToStep(steps[0]) : undefined,
+    [currentStepIndex, goToStep, steps]
+  );
 
   // 渲染当前步骤内容
   const renderContent = () => {
@@ -177,15 +192,8 @@ export function WizardPage() {
       case 'scope':
         return (
           <ScopeStep
-            defaultScope={state.scope}
-            defaultProjectPath={state.projectPath}
-            onSelect={(selectedScope, selectedProjectPath) => {
-              updateState({
-                scope: selectedScope,
-                projectPath: selectedProjectPath,
-              });
-              goNext();
-            }}
+            state={state}
+            updateState={updateState}
           />
         );
       case 'source':
@@ -254,44 +262,48 @@ export function WizardPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground">
-      {/* 标题 + 步骤指示器 — 固定顶部 */}
-      <div className="flex-shrink-0">
-        <div className="flex items-center justify-between px-5 pt-4 pb-2">
-          <h1 className="text-lg font-semibold">{t('addSkill.title')}</h1>
-          {showScopeBadge && (
-            <ScopeBadge
-              scope={state.scope}
-              projectPath={state.projectPath}
-              onClick={currentStepIndex > 0 ? () => goToStep(steps[0]) : undefined}
+    <div className="flex h-screen bg-background text-foreground">
+      {/* 左侧向导栏 (Sidebar) */}
+      <div className="w-52 flex-shrink-0 bg-muted/10 border-r flex flex-col relative z-10">
+        <div className="px-6 pt-8 pb-4">
+          <h1 className="text-xl font-bold tracking-tight">{t('addSkill.title')}</h1>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2 pb-4">
+          {!isResultState && (
+            <StepIndicator
+              entryPoint={state.entryPoint}
+              currentStep={state.step}
+              orientation="vertical"
+              onStepClick={handleStepClick}
             />
           )}
         </div>
+
+        {/* 底部 Scope 徽章区域 */}
+        <div className="px-4 h-[72px] mt-auto border-t bg-muted/5 flex items-center justify-center">
+          {showScopeBadge && (
+              <ScopeBadge
+                scope={state.scope}
+                projectPath={state.projectPath}
+                onClick={handleScopeBadgeClick}
+              />
+          )}
+        </div>
+      </div>
+
+      {/* 右侧主内容区 (Main Content) */}
+      <div className="flex-1 flex flex-col min-w-0 bg-background relative">
+        {/* 内容滚动区 */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-8">
+          <div key={state.step} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-500">
+            {renderContent()}
+          </div>
+        </div>
+
+        {/* 底部操作栏 */}
         {!isResultState && (
-          <StepIndicator
-            entryPoint={state.entryPoint}
-            currentStep={state.step}
-            onStepClick={(step) => {
-              const clickedIndex = steps.indexOf(step);
-              if (clickedIndex < currentStepIndex) {
-                goToStep(step);
-              }
-            }}
-          />
-        )}
-        <Separator />
-      </div>
-
-      {/* 内容区 — 弹性高度，独立滚动 */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
-        {renderContent()}
-      </div>
-
-      {/* 底部操作栏 — 固定底部 */}
-      {!isResultState && state.step !== 'scope' && (
-        <>
-          <Separator />
-          <div className="flex-shrink-0 flex justify-end gap-2 px-5 py-3">
+          <div className="flex-shrink-0 h-[72px] border-t bg-background/80 backdrop-blur-sm px-8 flex items-center justify-end gap-3 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.02)]">
             <Button variant="outline" onClick={closeWizard}>
               {t('addSkill.actions.cancel')}
             </Button>
@@ -301,17 +313,25 @@ export function WizardPage() {
               </Button>
             )}
             {state.step === 'confirm' ? (
-              <Button onClick={() => goToStep('installing')} disabled={!canProceed}>
-                {t('addSkill.actions.install')}
+              <Button
+                onClick={() => goToStep('installing')}
+                disabled={!canProceed}
+                className="min-w-[100px]"
+              >
+                {hasOverwrites ? (
+                  t('addSkill.actions.installWithOverwrite')
+                ) : (
+                  t('addSkill.actions.install')
+                )}
               </Button>
             ) : (
-              <Button onClick={goNext} disabled={!canProceed}>
+              <Button onClick={goNext} disabled={!canProceed} className="min-w-[100px]">
                 {t('addSkill.actions.next')}
               </Button>
             )}
           </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }

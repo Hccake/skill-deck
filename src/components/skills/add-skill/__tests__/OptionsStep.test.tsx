@@ -166,7 +166,9 @@ describe('OptionsStep', () => {
       expect(screen.getByText('addSkill.mode.singleDirectoryHint')).toBeDefined();
     });
 
-    expect(screen.queryByText('addSkill.mode.title')).toBeNull();
+    expect(screen.getByText('addSkill.mode.title')).toBeDefined();
+    expect(screen.queryByText('addSkill.mode.symlink')).toBeNull();
+    expect(screen.queryByText('addSkill.mode.copy')).toBeNull();
   });
 
   it('passes scope to the agent selector and uses persisted defaults for that scope', async () => {
@@ -241,5 +243,35 @@ describe('OptionsStep', () => {
     await waitFor(() => {
       expect(screen.getByText('agent-selector:global:claude-code')).toBeDefined();
     });
+  });
+
+  it('shows install mode choices with a distinct recommended badge', async () => {
+    listAgentsMock.mockResolvedValue([
+      makeAutomaticGlobalAgent({
+        id: 'warp',
+        name: 'Warp',
+        skillsDir: '.agents/skills',
+        globalSkillsDir: '~/.agents/skills',
+        detected: true,
+      }),
+      makeAgent({
+        id: 'claude-code',
+        name: 'Claude Code',
+        skillsDir: '.claude/skills',
+        globalSkillsDir: '~/.claude/skills',
+        detected: true,
+      }),
+    ]);
+
+    render(<Harness />);
+
+    await waitFor(() => {
+      expect(screen.getByText('agent-selector:global:claude-code')).toBeDefined();
+    });
+
+    expect(screen.getByText('addSkill.mode.title')).toBeDefined();
+    expect(screen.getByText('addSkill.mode.symlink')).toBeDefined();
+    expect(screen.getByText('addSkill.mode.copy')).toBeDefined();
+    expect(screen.getByText('addSkill.mode.recommended')).toBeDefined();
   });
 });

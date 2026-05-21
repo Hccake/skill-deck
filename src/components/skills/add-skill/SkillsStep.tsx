@@ -1,12 +1,10 @@
 // src/components/skills/add-skill/SkillsStep.tsx
 import { useMemo, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { toTitleCase } from '@/lib/utils';
+import { toTitleCase, cn } from '@/lib/utils';
 import type { AvailableSkill } from '@/bindings';
 import type { WizardState } from './types';
 
@@ -61,12 +59,6 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
     }));
   }, [updateState]);
 
-  const removeSkill = useCallback((skillName: string) => {
-    updateState((prev) => ({
-      selectedSkills: prev.selectedSkills.filter((s) => s !== skillName),
-    }));
-  }, [updateState]);
-
   const selectAll = useCallback(() => {
     updateState((prev) => ({
       selectedSkills: prev.availableSkills.map((s) => s.name),
@@ -79,74 +71,48 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
 
   return (
     <div className="flex flex-col h-full gap-3">
-      {/* 已选 Skills 区域 — 固定不滚动 */}
-      <div className="flex-shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-medium">{t('addSkill.skills.title')}</h3>
-          {state.selectedSkills.length === 0 ? (
-            <span className="text-sm text-destructive">
-              {t('addSkill.skills.required')}
-            </span>
-          ) : (
-            <span className="text-sm text-muted-foreground">
-              {t('addSkill.skills.selected', {
-                count: state.selectedSkills.length,
-                total: state.availableSkills.length,
-              })}
-            </span>
-          )}
-        </div>
-
-        {/* 已选 chips */}
-        <div className="min-h-[32px] flex flex-wrap gap-1.5 p-2 bg-muted/30 rounded-md border border-dashed">
-          {state.selectedSkills.length === 0 ? (
-            <span className="text-xs text-muted-foreground py-0.5">
-              {t('addSkill.skills.required')}
-            </span>
-          ) : (
-            state.selectedSkills.map((name) => (
-              <Badge
-                key={name}
-                variant="secondary"
-                className="gap-1 cursor-pointer hover:bg-destructive/10"
-                onClick={() => removeSkill(name)}
-              >
-                {name}
-                <X className="w-3 h-3" />
-              </Badge>
-            ))
-          )}
-        </div>
+      {/* 头部标题与汇总 — 固定不滚动 */}
+      <div className="flex-shrink-0 flex items-center justify-between mb-1">
+        <h3 className="text-sm font-medium">{t('addSkill.skills.title')}</h3>
+        <span className="text-sm text-muted-foreground font-medium">
+          {t('addSkill.skills.selected', {
+            count: state.selectedSkills.length,
+            total: state.availableSkills.length,
+          })}
+        </span>
       </div>
 
-      {/* 搜索工具栏 — 固定不滚动 */}
-      <div className="flex-shrink-0 flex items-center gap-2">
+      {/* 搜索工具栏 — 极简融合设计 */}
+      <div className="flex-shrink-0 flex items-center gap-3 relative mb-3">
         <Input
           value={state.skillSearchQuery}
           onChange={(e) => updateState({ skillSearchQuery: e.target.value })}
           placeholder={t('addSkill.skills.search')}
-          className="flex-1"
+          className="flex-1 h-11 bg-card/80 backdrop-blur-sm shadow-sm transition-all rounded-xl border-muted-foreground/20"
         />
-        <Button variant="outline" size="sm" onClick={selectAll}>
-          {t('addSkill.skills.selectAll')}
-        </Button>
-        <Button variant="outline" size="sm" onClick={clearSelection}>
-          {t('addSkill.skills.clear')}
-        </Button>
+        <div className="flex items-center gap-1 shrink-0 px-1">
+          <Button variant="ghost" size="sm" onClick={selectAll} className="text-muted-foreground hover:text-foreground px-2 h-8">
+            {t('addSkill.skills.selectAll')}
+          </Button>
+          <div className="w-px h-3.5 bg-border mx-1" />
+          <Button variant="ghost" size="sm" onClick={clearSelection} className="text-muted-foreground hover:text-foreground px-2 h-8">
+            {t('addSkill.skills.clear')}
+          </Button>
+        </div>
       </div>
 
-      {/* 可用 Skills 列表 — 独立滚动 */}
-      <div className="flex-1 min-h-0 overflow-y-auto border rounded-md p-2 space-y-1">
+      {/* 可用 Skills 列表 — 彻底打碎外框，采用独立的悬浮卡片 */}
+      <div className="flex-1 min-h-0 overflow-y-auto pr-2 space-y-3 pb-2">
         {filteredSkills.length === 0 ? (
-          <div className="p-4 text-center text-sm text-muted-foreground">
+          <div className="p-8 text-center text-sm text-muted-foreground">
             {t('addSkill.skills.empty')}
           </div>
         ) : groupedSkills ? (
           /* 按 plugin 分组展示 */
           <>
             {Object.keys(groupedSkills.groups).sort().map((groupName) => (
-              <div key={groupName}>
-                <div className="px-2 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              <div key={groupName} className="space-y-2">
+                <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   {toTitleCase(groupName)}
                 </div>
                 {groupedSkills.groups[groupName].map((skill) => (
@@ -160,8 +126,8 @@ export function SkillsStep({ state, updateState }: SkillsStepProps) {
               </div>
             ))}
             {groupedSkills.ungrouped.length > 0 && (
-              <div>
-                <div className="px-2 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              <div className="space-y-2 pt-2">
+                <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   {t('skills.pluginGroup.general')}
                 </div>
                 {groupedSkills.ungrouped.map((skill) => (
@@ -202,13 +168,20 @@ const SkillItem = memo(function SkillItem({
 }) {
   return (
     <div
-      className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
+      className={cn(
+        "flex items-start gap-4 p-4 transition-all cursor-pointer rounded-xl border shadow-sm hover:shadow-md",
+        selected
+          ? "bg-primary/5 border-primary/30 shadow-primary/5"
+          : "bg-card/60 backdrop-blur-sm border-transparent hover:border-border/50 hover:bg-card"
+      )}
       onClick={() => onToggle(skill.name)}
     >
-      <Checkbox checked={selected} className="mt-1" />
+      <Checkbox checked={selected} className="mt-0.5 transition-transform shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-sm">{skill.name}</div>
-        <div className="text-xs text-muted-foreground line-clamp-2">
+        <div className={cn("font-medium text-sm transition-colors", selected ? "text-primary" : "text-foreground")}>
+          {skill.name}
+        </div>
+        <div className="text-xs text-muted-foreground line-clamp-2 mt-1 leading-relaxed">
           {skill.description}
         </div>
       </div>
