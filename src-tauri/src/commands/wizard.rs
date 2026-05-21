@@ -1,6 +1,11 @@
 // src-tauri/src/commands/wizard.rs
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
+const INSTALL_WIZARD_WIDTH: f64 = 680.0;
+const INSTALL_WIZARD_HEIGHT: f64 = 560.0;
+const INSTALL_WIZARD_MIN_WIDTH: f64 = 620.0;
+const INSTALL_WIZARD_MIN_HEIGHT: f64 = 480.0;
+
 /// 打开安装向导独立窗口
 ///
 /// 必须为 async —— 同步 command 在主线程执行，
@@ -49,8 +54,8 @@ pub async fn open_install_wizard(
 
     let _wizard_window = WebviewWindowBuilder::new(&app, "install-wizard", url)
         .title("Add Skills")
-        .inner_size(620.0, 560.0)
-        .min_inner_size(560.0, 480.0)
+        .inner_size(INSTALL_WIZARD_WIDTH, INSTALL_WIZARD_HEIGHT)
+        .min_inner_size(INSTALL_WIZARD_MIN_WIDTH, INSTALL_WIZARD_MIN_HEIGHT)
         .resizable(true)
         .maximizable(false)
         .minimizable(false)
@@ -65,4 +70,17 @@ pub async fn open_install_wizard(
         })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_wizard_uses_wider_default_window() {
+        assert_eq!(INSTALL_WIZARD_WIDTH, 680.0);
+        assert_eq!(INSTALL_WIZARD_HEIGHT, 560.0);
+        assert_eq!(INSTALL_WIZARD_MIN_WIDTH, 620.0);
+        assert_eq!(INSTALL_WIZARD_MIN_HEIGHT, 480.0);
+    }
 }
