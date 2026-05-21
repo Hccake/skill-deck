@@ -51,7 +51,7 @@ pub async fn get_skill_agent_details(
             }
         } else {
             PathBuf::from(cwd)
-                .join(&config.skills_dir)
+                .join(config.skills_dir)
                 .join(&sanitized_name)
         };
 

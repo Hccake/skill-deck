@@ -1,7 +1,6 @@
 // src/components/skills/SkillDetailPanel.tsx
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench } from 'lucide-react';
@@ -11,21 +10,16 @@ import { PopConfirm } from '@/components/ui/pop-confirm';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { formatTime } from '@/lib/utils';
 import type { InstalledSkill, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
 import { resolveSkillMaintenanceAction, resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
+import {
+  phaseToI18nKey,
+  type SkillUpdatePhase,
+  useSkillUpdateProgressListener,
+} from './update-progress';
 
 type SkillUpdateStatus = 'queued' | 'updating' | 'done' | 'failed';
-
-function phaseToI18nKey(phase: string | null): string {
-  switch (phase) {
-    case 'cloning': return 'skills.updatePhaseCloning';
-    case 'installing': return 'skills.updatePhaseInstalling';
-    case 'writing_lock': return 'skills.updatePhaseWritingLock';
-    default: return 'skills.updatePhaseCloning';
-  }
-}
 
 interface SkillDetailPanelProps {
   skill: InstalledSkill & {
@@ -418,26 +412,17 @@ const UpdatingStatusBadge = memo(function UpdatingStatusBadge({
   projectPath?: string;
 }) {
   const { t } = useTranslation();
-  const [updatePhase, setUpdatePhase] = useState<string | null>(null);
+  const [updatePhase, setUpdatePhase] = useState<SkillUpdatePhase | null>(null);
   const skillName = skill.name;
   const skillScope = skill.scope;
 
-  useEffect(() => {
-    const currentIdentity = getSkillIdentity({ name: skillName, scope: skillScope }, projectPath);
-    const unlisten = listen<{ skillName: string; scope: SkillScope; projectPath?: string | null; phase: string }>('update-progress', (event) => {
-      if (isSameSkillIdentity(currentIdentity, {
-        name: event.payload.skillName,
-        scope: event.payload.scope,
-        projectPath: event.payload.projectPath,
-      })) {
-        setUpdatePhase(event.payload.phase);
-      }
-    });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [projectPath, skillName, skillScope]);
+  useSkillUpdateProgressListener({
+    skillName,
+    scope: skillScope,
+    projectPath,
+    enabled: true,
+    onPhase: setUpdatePhase,
+  });
 
   return (
     <Badge variant="outline" className="h-8 px-2 text-xs text-warning animate-pulse">

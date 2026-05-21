@@ -412,7 +412,7 @@ fn create_symlink(target: &Path, link: &Path) -> Result<(), AppError> {
     #[cfg(windows)]
     {
         // Windows 优先尝试 junction（不需要管理员权限）
-        if let Err(_) = junction::create(&resolved_target, link) {
+        if junction::create(&resolved_target, link).is_err() {
             // Junction 失败，尝试 symlink_dir
             std::os::windows::fs::symlink_dir(&relative_target, link).map_err(|e| {
                 AppError::InstallFailed {

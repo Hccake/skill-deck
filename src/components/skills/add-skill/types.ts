@@ -18,7 +18,7 @@ export type EntryPoint = 'skills-panel' | 'discovery';
 export type CoreStep = 'scope' | 'source' | 'skills' | 'options' | 'confirm';
 
 /** 结果态步骤 */
-export type ResultStep = 'installing' | 'complete' | 'error';
+type ResultStep = 'installing' | 'complete' | 'error';
 
 /** 所有向导步骤 */
 export type WizardStep = CoreStep | ResultStep;
@@ -60,16 +60,6 @@ export function shouldShowInstallModeSelection(
 /** 当前安装流程实际生效的 mode */
 export function getEffectiveInstallMode(state: InstallModeState): InstallMode {
   return shouldShowInstallModeSelection(state) ? state.mode : 'copy';
-}
-
-/** 向导初始化参数（通过窗口 URL query 传递） */
-export interface WizardParams {
-  entryPoint: EntryPoint;
-  scope: 'global' | 'project';
-  projectPath?: string;
-  /** Discovery 入口的预填信息 */
-  prefillSource?: string;
-  prefillSkillName?: string;
 }
 
 /** AddSkillWizard 内部状态 */

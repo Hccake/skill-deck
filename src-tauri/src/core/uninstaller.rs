@@ -65,7 +65,7 @@ pub fn remove_skill(
             }
         } else {
             PathBuf::from(cwd)
-                .join(&config.skills_dir)
+                .join(config.skills_dir)
                 .join(&sanitized_name)
         };
 
@@ -109,7 +109,7 @@ pub fn remove_skill(
                 }
                 let config = agent.config();
                 let agent_skill_path = PathBuf::from(cwd)
-                    .join(&config.skills_dir)
+                    .join(config.skills_dir)
                     .join(&sanitized_name);
                 agent_skill_path.symlink_metadata().is_ok()
             });

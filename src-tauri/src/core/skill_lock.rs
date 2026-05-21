@@ -204,6 +204,7 @@ pub fn write_scoped_lock(lock: &SkillLockFile, project_path: Option<&str>) -> Re
 
 /// 添加或更新 skill 到 lock 文件
 /// 对应 CLI: addSkillToLock (skill-lock.ts:227-242)
+#[allow(clippy::too_many_arguments)]
 pub fn add_skill_to_lock(
     skill_name: &str,
     source: &str,

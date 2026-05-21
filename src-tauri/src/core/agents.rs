@@ -321,7 +321,13 @@ impl AgentType {
                 name: "antigravity",
                 display_name: "Antigravity",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".gemini").join("antigravity").join("skills")),
+                global_skills_dir: Some(
+                    PATHS
+                        .home
+                        .join(".gemini")
+                        .join("antigravity")
+                        .join("skills"),
+                ),
             },
             Self::Augment => AgentConfig {
                 name: "augment",
@@ -411,7 +417,9 @@ impl AgentType {
                 name: "deepagents",
                 display_name: "Deep Agents",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".deepagents").join("agent").join("skills")),
+                global_skills_dir: Some(
+                    PATHS.home.join(".deepagents").join("agent").join("skills"),
+                ),
             },
             Self::Devin => AgentConfig {
                 name: "devin",
@@ -603,7 +611,9 @@ impl AgentType {
                 name: "windsurf",
                 display_name: "Windsurf",
                 skills_dir: ".windsurf/skills",
-                global_skills_dir: Some(PATHS.home.join(".codeium").join("windsurf").join("skills")),
+                global_skills_dir: Some(
+                    PATHS.home.join(".codeium").join("windsurf").join("skills"),
+                ),
             },
             Self::Zencoder => AgentConfig {
                 name: "zencoder",
@@ -629,7 +639,9 @@ impl AgentType {
                 name: "cortex",
                 display_name: "Cortex Code",
                 skills_dir: ".cortex/skills",
-                global_skills_dir: Some(PATHS.home.join(".snowflake").join("cortex").join("skills")),
+                global_skills_dir: Some(
+                    PATHS.home.join(".snowflake").join("cortex").join("skills"),
+                ),
             },
         }
     }
@@ -775,11 +787,11 @@ impl AgentType {
     }
 
     /// 转换为 AgentInfo（前端使用）
-    pub fn to_agent_info(&self) -> AgentInfo {
+    pub fn to_agent_info(self) -> AgentInfo {
         let config = self.config();
 
         AgentInfo {
-            id: *self,
+            id: self,
             name: config.display_name.to_string(),
             skills_dir: config.skills_dir.to_string(),
             global_skills_dir: config

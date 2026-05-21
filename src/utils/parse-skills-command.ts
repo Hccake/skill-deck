@@ -1,7 +1,7 @@
 // src/utils/parse-skills-command.ts
 
 /** CLI 命令解析结果 */
-export interface ParsedCommand {
+interface ParsedCommand {
   /** 提取的 source（owner/repo 或 URL） */
   source: string;
   /** --skill / -s 指定的 skill 名称列表 */

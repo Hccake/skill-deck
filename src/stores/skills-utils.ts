@@ -124,7 +124,7 @@ function normalizeRepairSource(source: string | null | undefined): string | null
   return null;
 }
 
-export function buildRepairSource(
+function buildRepairSource(
   skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { gitRef?: string | null }
 ): string | null {
   const baseSource = skill.sourceUrl || normalizeRepairSource(skill.source);
@@ -133,13 +133,13 @@ export function buildRepairSource(
   return baseSource;
 }
 
-export function canRepairMissingSkillPath(
+function canRepairMissingSkillPath(
   skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { updateReason?: string | null; gitRef?: string | null }
 ): boolean {
   return skill.updateReason === 'missing-skill-path' && buildRepairSource(skill) !== null;
 }
 
-export type SkillMaintenanceAction = 'direct-reinstall' | 'repair-source' | 'none';
+type SkillMaintenanceAction = 'direct-reinstall' | 'repair-source' | 'none';
 
 export function resolveSkillMaintenanceAction(
   skill: Pick<InstalledSkill, 'source' | 'sourceUrl' | 'canRunUpdate'> & {
@@ -172,7 +172,7 @@ export function createSkillRepairPrefill(
   };
 }
 
-export interface UpdatePlanItem {
+interface UpdatePlanItem {
   name: string;
   source?: string | null;
   sourceUrl?: string | null;
@@ -181,7 +181,7 @@ export interface UpdatePlanItem {
   repairSource?: string | null;
 }
 
-export interface UpdatePlanGroup {
+interface UpdatePlanGroup {
   id: string;
   source: string;
   sourceUrl?: string | null;

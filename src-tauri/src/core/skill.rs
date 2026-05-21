@@ -528,8 +528,8 @@ pub fn read_skill_content(canonical_path: &str) -> Result<String, AppError> {
     })?;
 
     // Strip YAML frontmatter if present
-    if content.starts_with("---") {
-        if let Some(end) = content[3..].find("---") {
+    if let Some(stripped) = content.strip_prefix("---") {
+        if let Some(end) = stripped.find("---") {
             // Skip past the closing --- and any trailing newline
             let body_start = 3 + end + 3;
             return Ok(content[body_start..].trim_start_matches('\n').to_string());

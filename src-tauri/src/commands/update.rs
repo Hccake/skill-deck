@@ -31,6 +31,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+type UpdateCheckGroupKey = (String, Option<String>);
+type UpdateCheckSkill = (String, String, String);
+
 /// 更新进度事件（发送到前端）
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -101,8 +104,7 @@ async fn check_updates_inner(
     scope: Scope,
     project_path: Option<&str>,
 ) -> Result<Vec<SkillUpdateInfo>, AppError> {
-    let mut skills_by_source: HashMap<(String, Option<String>), Vec<(String, String, String)>> =
-        HashMap::new();
+    let mut skills_by_source: HashMap<UpdateCheckGroupKey, Vec<UpdateCheckSkill>> = HashMap::new();
     let mut results = Vec::new();
 
     match scope {
@@ -512,7 +514,7 @@ async fn update_skill_single(
 
     // 5. 找到目标 skill
     let skill = find_update_skill(&discovered, skill_name, entry_skill_path.as_deref())
-        .ok_or_else(|| AppError::NoSkillsFound)?;
+        .ok_or(AppError::NoSkillsFound)?;
 
     // 6. 检测已安装的 agents (通过文件系统检测,fallback 仅保留当前 scope 自动应用的 agents)。
     //    注意:fallback 故意不再合并 `AgentType::detect_installed()` —— 否则会把 skill
@@ -790,7 +792,7 @@ async fn update_skills_batch_inner(
     };
 
     // 2. 每组 source 只 clone 一次
-    for (_group_key, group) in &by_source {
+    for group in by_source.values() {
         let update_target = build_update_target(UpdateSourceParts {
             source_type: group[0].source_type.clone(),
             source_url: if group[0].source_url.is_empty() {
@@ -1177,6 +1179,7 @@ fn read_existing_hash(
 ///   3. 保留 lock 中已有的旧 hash — 绝不写入空串
 ///
 /// 返回 `(final_hash, warning)`，只有当 1 / 2 都失败、且需要保留旧 hash 时才会附带 warning。
+#[allow(clippy::too_many_arguments)]
 async fn resolve_post_update_hash(
     scope: &Scope,
     skill_name: &str,

@@ -1,3 +1,5 @@
+use crate::core::skill_paths::normalize_skill_folder_path;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateSourceParts {
     pub source_type: String,
@@ -82,4 +84,3 @@ mod tests {
         assert_eq!(target.discover_subpath.as_deref(), Some("skills/demo"));
     }
 }
-use crate::core::skill_paths::normalize_skill_folder_path;

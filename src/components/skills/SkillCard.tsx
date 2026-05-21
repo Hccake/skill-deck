@@ -1,8 +1,6 @@
 // src/components/skills/SkillCard.tsx
-import { useEffect, useRef, memo } from 'react';
+import { memo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
-import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { cn, formatTime, toTitleCase } from '@/lib/utils';
 import {
   ArrowUpCircle,
@@ -30,28 +28,15 @@ import {
   resolveUpdateStatusLabelI18nKey,
   resolveSkillMaintenanceAction,
 } from '@/stores/skills-utils';
+import {
+  phaseToI18nKey,
+  phaseToPercent,
+  useSkillUpdateProgressListener,
+} from './update-progress';
 import { RiskBadge } from './RiskBadge';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
 const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
-
-function phaseToPercent(phase: string | null): string {
-  switch (phase) {
-    case 'cloning': return '35%';
-    case 'installing': return '70%';
-    case 'writing_lock': return '90%';
-    default: return '10%';
-  }
-}
-
-function phaseToI18nKey(phase: string | null): string {
-  switch (phase) {
-    case 'cloning': return 'skills.updatePhaseCloning';
-    case 'installing': return 'skills.updatePhaseInstalling';
-    case 'writing_lock': return 'skills.updatePhaseWritingLock';
-    default: return 'skills.updatePhaseCloning';
-  }
-}
 
 interface SkillCardProps {
   skill: InstalledSkill & {
@@ -98,36 +83,25 @@ export const SkillCard = memo(function SkillCard({
   const skillName = skill.name;
   const skillScope = skill.scope;
 
-  // React1: useRef 替代 useState — rerender-use-ref-transient-values
-  // updatePhase 频繁更新（Tauri 事件驱动），使用 ref 避免不必要的 re-render
   const progressBarRef = useRef<HTMLDivElement>(null);
   const phaseBadgeRef = useRef<HTMLSpanElement>(null);
 
-  useEffect(() => {
-    if (updateStatus !== 'updating') return;
+  const handleUpdatePhase = useCallback((phase: 'cloning' | 'installing' | 'writing_lock') => {
+    if (progressBarRef.current) {
+      progressBarRef.current.style.width = phaseToPercent(phase);
+    }
+    if (phaseBadgeRef.current) {
+      phaseBadgeRef.current.textContent = t(phaseToI18nKey(phase));
+    }
+  }, [t]);
 
-    const currentIdentity = getSkillIdentity({ name: skillName, scope: skillScope }, projectPath);
-    const unlisten = listen<{ skillName: string; scope: SkillScope; projectPath?: string | null; phase: string }>('update-progress', (event) => {
-      if (isSameSkillIdentity(currentIdentity, {
-        name: event.payload.skillName,
-        scope: event.payload.scope,
-        projectPath: event.payload.projectPath,
-      })) {
-        const phase = event.payload.phase;
-        // 直接操作 DOM — 不触发 React re-render
-        if (progressBarRef.current) {
-          progressBarRef.current.style.width = phaseToPercent(phase);
-        }
-        if (phaseBadgeRef.current) {
-          phaseBadgeRef.current.textContent = t(phaseToI18nKey(phase));
-        }
-      }
-    });
-
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [projectPath, skillName, skillScope, t, updateStatus]);
+  useSkillUpdateProgressListener({
+    skillName,
+    scope: skillScope,
+    projectPath,
+    enabled: updateStatus === 'updating',
+    onPhase: handleUpdatePhase,
+  });
 
   const ScopeIcon = displayScope === 'global' ? Globe : Folder;
   const scopeTooltip = t(`skills.scopeIcon.${displayScope}`);
