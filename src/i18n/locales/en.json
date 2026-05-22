@@ -160,6 +160,7 @@
     "checkUpdatesError": "Failed to check updates: {{error}}",
     "upToDate": "Everything is up to date",
     "needsAttentionCount": "{{count}} need attention",
+    "uncheckableUpdateCount": "{{count}} cannot check updates yet",
     "maintenanceNotice": "{{count}} Skill(s) cannot check for updates right now. Open the matching Skill for details.",
     "viewMaintenanceItems": "View items",
     "updateStatus": {
@@ -171,33 +172,36 @@
       "confirm": "Reinstall"
     },
     "updateStatusLabel": {
-      "available": "Update available",
+      "available": "New version available",
       "needsSourceInfo": "Source info incomplete",
       "versionUnknown": "Cannot check for updates",
       "upstreamUnavailable": "Source unavailable",
-      "localSource": "Local Skill"
+      "localSource": "Local Skill",
+      "reinstallRequired": "Reinstall required",
+      "autoCheckUnavailable": "Auto-check unavailable",
+      "checkFailed": "Check failed"
     },
     "updateHint": {
-      "missing-skill-path": "The source location record is missing, so the remote Skill cannot be located. Restore the source to resume update checks.",
-      "missing-remote-hash": "The version record is missing, so updates cannot be checked. Reinstall to restore update checks.",
+      "missing-skill-path": "Install source information is missing. Reinstall to restore version checks.",
+      "missing-remote-hash": "Local version information is incomplete. Reinstall to restore version checks.",
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
-      "local-source": "Local Skills cannot be updated online. Maintain the local files directly.",
-      "upstream-unavailable": "The install source is unavailable right now. Try again later.",
+      "local-source": "This Skill comes from a local file and does not support update checks.",
+      "upstream-unavailable": "The install source cannot be reached right now. Check again later.",
       "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
       "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
-      "network-error": "Network error. The install source cannot be reached right now.",
-      "http-error": "Update check failed. Try again later."
+      "network-error": "Network connection failed. Check again later.",
+      "http-error": "Version check failed. Check again later."
     },
     "updateReason": {
-      "missing-skill-path": "The source location record is missing, so the remote Skill cannot be located. Restore the source to resume update checks.",
-      "missing-remote-hash": "The version record is missing, so updates cannot be checked. Reinstall to restore update checks.",
+      "missing-skill-path": "Install source information is missing. Reinstall to restore version checks.",
+      "missing-remote-hash": "Local version information is incomplete. Reinstall to restore version checks.",
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
-      "local-source": "Local Skills cannot be updated online. Maintain the local files directly.",
-      "upstream-unavailable": "The install source is unavailable right now. Try again later.",
+      "local-source": "This Skill comes from a local file and does not support update checks.",
+      "upstream-unavailable": "The install source cannot be reached right now. Check again later.",
       "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
       "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
-      "network-error": "Network error. The install source cannot be reached right now.",
-      "http-error": "Update check failed. Try again later."
+      "network-error": "Network connection failed. Check again later.",
+      "http-error": "Version check failed. Check again later."
     },
     "updatePlan": {
       "title": "Update plan",

@@ -257,6 +257,79 @@ describe('SkillsSection', () => {
     });
   });
 
+  it('renders update all as a unified secondary action when updates are available', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          makeSkill('global', {
+            hasUpdate: true,
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+          }),
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={vi.fn(async () => true)}
+      />
+    );
+
+    const actions = screen.getByTestId('skills-section-actions');
+    const secondaryActions = screen.getByTestId('skills-section-secondary-actions');
+    const updateAll = screen.getByRole('button', { name: 'skills.updateAll' });
+    const checkUpdates = screen.getByRole('button', { name: 'skills.checkUpdates' });
+
+    expect(actions.contains(updateAll)).toBe(true);
+    expect(secondaryActions.contains(updateAll)).toBe(true);
+    expect(secondaryActions.contains(checkUpdates)).toBe(true);
+    expect(actions.className).toContain('gap-2');
+    expect(secondaryActions.className).toContain('gap-0.5');
+    expect(updateAll.className).toContain('h-7');
+    expect(updateAll.className).toContain('px-2');
+    expect(updateAll.className).toContain('text-muted-foreground');
+    expect(updateAll.getAttribute('data-variant')).toBe('ghost');
+    expect(updateAll.className).not.toContain('h-auto');
+    expect(updateAll.className).not.toContain('p-0');
+    expect(updateAll.className).not.toContain('border-primary');
+  });
+
+  it('uses neutral summary styling for available update counts', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          makeSkill('global', {
+            hasUpdate: true,
+            canRunUpdate: true,
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+          }),
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    const updateCount = screen.getByText('1 skills.update');
+
+    expect(updateCount.className).not.toContain('text-warning');
+    expect(updateCount.className).toContain('text-muted-foreground');
+  });
+
   it('does not show update all when the section only has maintenance items', () => {
     render(
       <SkillsSection
@@ -287,8 +360,8 @@ describe('SkillsSection', () => {
     );
 
     expect(screen.queryByText('skills.updateAll')).toBeNull();
-    expect(screen.queryByText('skills.needsAttentionCount')).toBeNull();
-    expect(screen.getByText('skills.maintenanceNotice')).toBeTruthy();
+    expect(screen.getByText('skills.uncheckableUpdateCount')).toBeTruthy();
+    expect(screen.queryByText('skills.maintenanceNotice')).toBeNull();
   });
 
   it('shows update all only for directly updatable skills', () => {
@@ -324,7 +397,7 @@ describe('SkillsSection', () => {
     );
 
     expect(screen.getByText('skills.updateAll')).toBeTruthy();
-    expect(screen.queryByText('skills.needsAttentionCount')).toBeNull();
-    expect(screen.getByText('skills.maintenanceNotice')).toBeTruthy();
+    expect(screen.getByText('skills.uncheckableUpdateCount')).toBeTruthy();
+    expect(screen.queryByText('skills.maintenanceNotice')).toBeNull();
   });
 });

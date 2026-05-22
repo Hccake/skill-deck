@@ -80,19 +80,19 @@ export function resolveUpdateStatusLabelI18nKey(
     return 'skills.updateStatusLabel.available';
   }
   if (skill.updateReason === 'missing-skill-path') {
-    return 'skills.updateStatusLabel.needsSourceInfo';
+    return 'skills.updateStatusLabel.reinstallRequired';
   }
   if (skill.updateReason === 'missing-remote-hash') {
-    return 'skills.updateStatusLabel.versionUnknown';
+    return 'skills.updateStatusLabel.reinstallRequired';
   }
-  if (skill.updateReason === 'local-source') {
-    return 'skills.updateStatusLabel.localSource';
+  if (skill.updateReason === 'unsupported-source-type' || skill.updateReason === 'local-source') {
+    return 'skills.updateStatusLabel.autoCheckUnavailable';
   }
-  if (skill.updateReason === 'upstream-unavailable' || skill.updateReason === 'network-error') {
-    return 'skills.updateStatusLabel.upstreamUnavailable';
+  if (skill.updateReason) {
+    return 'skills.updateStatusLabel.checkFailed';
   }
   if (skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false) {
-    return 'skills.updateStatusLabel.versionUnknown';
+    return 'skills.updateStatusLabel.checkFailed';
   }
   return null;
 }

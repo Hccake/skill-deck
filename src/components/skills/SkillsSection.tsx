@@ -1,7 +1,7 @@
 // src/components/skills/SkillsSection.tsx
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, AlertTriangle, Check } from 'lucide-react';
+import { Plus, AlertTriangle, Check, ArrowUpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
 import { UpdatePlanDialog } from './UpdatePlanDialog';
@@ -142,71 +142,88 @@ export const SkillsSection = memo(function SkillsSection({
     <section className="mb-6">
       {/* Section Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h2 className="text-sm font-bold tracking-tight text-foreground/90 flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <h2 className="text-sm font-bold tracking-tight text-foreground/90 flex items-center gap-1">
             {title}
             <span className="text-xs font-semibold opacity-50">({skills.length})</span>
           </h2>
           {isCheckingUpdates && updatesCount === 0 && (
-            <>
-              <span className="text-muted-foreground/50">·</span>
-              <span className="text-xs text-muted-foreground animate-pulse">
-                {t('skills.checking')}
-              </span>
-            </>
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-border mr-0.5">·</span>
+              <span className="text-xs text-muted-foreground">{t('skills.checking')}</span>
+            </div>
           )}
 
           {isAnyUpdating ? (
-            <>
-              <span className="text-muted-foreground/50">·</span>
-              <span className="text-xs font-medium text-warning">
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-border mr-0.5">·</span>
+              <span className="font-medium text-primary">
                 {t('skills.updateAllProgress', { completed: completedCount, total: totalUpdating })}
               </span>
-              <Button variant="ghost" size="sm" className="h-5 px-1.5 text-xs text-muted-foreground cursor-pointer"
+              <Button variant="link" size="sm" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground ml-2 cursor-pointer font-medium hover:underline"
                 onClick={() => onCancelUpdateAll()}>
                 {t('skills.cancel')}
               </Button>
-            </>
+            </div>
           ) : updatesCount > 0 ? (
-            <>
-              <span className="text-muted-foreground/50">·</span>
-              <span className="text-xs font-medium text-warning">
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-border mr-0.5">·</span>
+              <span className="font-medium text-muted-foreground">
                 {`${updatesCount} ${t(updatesCount === 1 ? 'skills.update' : 'skills.updates')}`}
               </span>
-              <Button variant="outline" size="sm" className="h-5 px-1.5 text-xs cursor-pointer"
-                onClick={handleOpenUpdatePlan}>
-                {t('skills.updateAll')}
-              </Button>
-            </>
+            </div>
+          ) : null}
+          {!isAnyUpdating && maintenanceCount > 0 ? (
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-border mr-0.5">·</span>
+              <span className="font-medium text-muted-foreground/80">
+                {t('skills.uncheckableUpdateCount', { count: maintenanceCount })}
+              </span>
+            </div>
           ) : null}
           {!isAnyUpdating && updatesCount === 0 && maintenanceCount === 0 && !isCheckingUpdates ? (
-            <>
-              <span className="text-muted-foreground/50">·</span>
-              <span className="text-xs font-medium text-success">
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-border mr-0.5">·</span>
+              <span className="font-medium text-muted-foreground/80">
                 {t('skills.upToDate')}
               </span>
-            </>
+            </div>
           ) : null}
         </div>
         
-        {/* Right Actions: Check Updates + Add Skill */}
-        <div className="flex items-center gap-1.5">
-          {!isAnyUpdating && onCheckUpdates && skills.length > 0 && checkableCount > 0 && (
-            checkDone && updatesCount === 0 ? (
-              <span className="inline-flex items-center justify-center h-7 px-2.5 text-xs text-success font-medium gap-1.5">
-                <Check className="h-3.5 w-3.5" />
-                {t('skills.updateDone')}
-              </span>
-            ) : (
-              <Button variant="ghost" size="sm" className="h-7 px-2.5 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
-                disabled={isCheckingUpdates}
-                onClick={() => {
-                  void handleCheckUpdates();
-                }}>
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                {t('skills.checkUpdates')}
-              </Button>
-            )
+        {/* Right Actions: Secondary maintenance actions + primary add action */}
+        <div data-testid="skills-section-actions" className="flex items-center gap-2">
+          {!isAnyUpdating && (updatesCount > 0 || (onCheckUpdates && skills.length > 0 && checkableCount > 0)) && (
+            <div data-testid="skills-section-secondary-actions" className="flex items-center gap-0.5">
+              {updatesCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+                  onClick={handleOpenUpdatePlan}
+                >
+                  <ArrowUpCircle className="h-3.5 w-3.5 shrink-0" />
+                  {t('skills.updateAll')}
+                </Button>
+              )}
+              {onCheckUpdates && skills.length > 0 && checkableCount > 0 && (
+                checkDone && updatesCount === 0 ? (
+                  <span className="inline-flex items-center justify-center h-7 px-2 text-xs text-success font-medium gap-1.5">
+                    <Check className="h-3.5 w-3.5" />
+                    {t('skills.updateDone')}
+                  </span>
+                ) : (
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+                    disabled={isCheckingUpdates}
+                    onClick={() => {
+                      void handleCheckUpdates();
+                    }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    {t('skills.checkUpdates')}
+                  </Button>
+                )
+              )}
+            </div>
           )}
           
           {/* 路径不存在时隐藏 Add 按钮 */}
@@ -226,19 +243,13 @@ export const SkillsSection = memo(function SkillsSection({
 
       {/* 路径不存在提示 */}
       {!pathExists && (
-        <div className="flex items-center gap-2 p-3 mb-3 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-sm rounded-md border border-amber-500/20">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>
+        <div className="flex items-center gap-2 py-2 px-3 mb-3 text-xs text-[#D97706] dark:text-[#FBBF24] rounded-md border border-amber-500/20 border-l-2 border-l-[#D97706] dark:border-l-[#F59E0B] bg-[#D97706]/[0.04] dark:bg-[#F59E0B]/[0.04]">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="leading-normal font-medium">
             {t('skills.projectNotFound', { path: projectPath })}
           </span>
         </div>
       )}
-
-      {pathExists && maintenanceCount > 0 ? (
-        <div className="flex items-center justify-between gap-3 p-2.5 mb-3 rounded-md border border-border/70 bg-muted/25 text-xs text-muted-foreground">
-          <span>{t('skills.maintenanceNotice', { count: maintenanceCount })}</span>
-        </div>
-      ) : null}
 
       {/* Skills List */}
       {pathExists && (
