@@ -33,6 +33,7 @@ pub struct SkillLockEntry {
     pub skill_path: Option<String>,
     /// 来源版本追踪 hash。GitHub 来源通常是远端 tree SHA；
     /// 非 GitHub git 来源可能是安装来源目录的内容 hash。
+    #[serde(default)]
     pub skill_folder_hash: String,
     /// 安装时间 (ISO 格式)
     pub installed_at: String,
@@ -370,6 +371,21 @@ mod tests {
         assert_eq!(lock.version, 3);
         assert_eq!(lock.skills.len(), 1);
         assert!(lock.skills.contains_key("test-skill"));
+    }
+
+    #[test]
+    fn test_deserialize_skill_lock_entry_allows_missing_skill_folder_hash() {
+        let json = r#"{
+            "source": "owner/repo",
+            "sourceType": "github",
+            "sourceUrl": "https://github.com/owner/repo",
+            "installedAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let entry: SkillLockEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.source, "owner/repo");
+        assert_eq!(entry.skill_folder_hash, "");
     }
 
     #[test]
