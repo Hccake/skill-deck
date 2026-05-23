@@ -13,12 +13,15 @@ use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
     clone_repo_with_progress, compute_local_tree_sha, discover_skills,
     ensure_install_risk_acknowledged, fetch_skill_folder_hash, get_owner_repo,
-    install_skill_to_agents, parse_source, source_risk_policy, CloneProgress, DiscoverOptions,
+    install_skill_to_agents, install_skill_to_agents_with_modes, parse_source, source_risk_policy,
+    CloneProgress, DiscoverOptions, PerAgentInstallResult,
 };
 use crate::error::AppError;
 use crate::models::{
-    AvailableSkill, FetchResult, InstallParams, InstallResult, InstallResults, SourceType,
+    AvailableSkill, FetchResult, InstallMode, InstallParams, InstallResult, InstallResults,
+    SourceType,
 };
+use std::collections::HashSet;
 use std::path::Path;
 use tauri::{AppHandle, Emitter};
 
@@ -185,6 +188,90 @@ fn apply_wellknown_trust_metadata(
     }
 }
 
+fn should_write_lock_for_skill(
+    successful: &[InstallResult],
+    failed: &[InstallResult],
+    skill_name: &str,
+    require_complete_success: bool,
+    expected_target_count: usize,
+) -> bool {
+    if require_complete_success {
+        let completed_agents: HashSet<&str> = successful
+            .iter()
+            .filter(|result| result.skill_name == skill_name && !result.skipped)
+            .map(|result| result.agent.as_str())
+            .collect();
+        let has_failure = failed.iter().any(|result| result.skill_name == skill_name);
+        if expected_target_count == 0 {
+            return !completed_agents.is_empty() && !has_failure;
+        }
+        return expected_target_count > 0
+            && completed_agents.len() == expected_target_count
+            && !has_failure;
+    }
+
+    successful
+        .iter()
+        .any(|result| result.skill_name == skill_name && result.success)
+}
+
+fn canonical_only_install_result(
+    skill_path: &Path,
+    skill_name: &str,
+    scope: &crate::models::Scope,
+    project_path: Option<&str>,
+    mode: &InstallMode,
+) -> PerAgentInstallResult {
+    let is_global = matches!(scope, crate::models::Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = crate::core::skill::sanitize_name(skill_name);
+    let canonical_dir =
+        crate::core::paths::canonical_skills_dir(is_global, cwd).join(sanitized_name);
+    let started = std::time::Instant::now();
+    let result = (|| -> Result<(), AppError> {
+        if canonical_dir.exists() || canonical_dir.symlink_metadata().is_ok() {
+            let _ = std::fs::remove_dir_all(&canonical_dir);
+            let _ = std::fs::remove_file(&canonical_dir);
+        }
+        std::fs::create_dir_all(&canonical_dir).map_err(|e| AppError::InstallFailed {
+            message: format!("Failed to create dir: {}", e),
+        })?;
+
+        crate::core::copy_skill_files(skill_path, &canonical_dir)
+    })();
+    let elapsed = started.elapsed().as_millis();
+    let duration_ms = if elapsed > u32::MAX as u128 {
+        u32::MAX
+    } else {
+        elapsed as u32
+    };
+
+    match result {
+        Ok(()) => PerAgentInstallResult {
+            agent: "__canonical__".to_string(),
+            success: true,
+            skipped: false,
+            error: None,
+            duration_ms: Some(duration_ms),
+            symlink_failed: false,
+            path: canonical_dir.clone(),
+            canonical_path: Some(canonical_dir),
+            mode: mode.clone(),
+        },
+        Err(err) => PerAgentInstallResult {
+            agent: "__canonical__".to_string(),
+            success: false,
+            skipped: false,
+            error: Some(err.to_string()),
+            duration_ms: Some(duration_ms),
+            symlink_failed: false,
+            path: std::path::PathBuf::new(),
+            canonical_path: None,
+            mode: mode.clone(),
+        },
+    }
+}
+
 /// 安装选中的 skills
 ///
 /// # Arguments
@@ -272,6 +359,8 @@ async fn install_skills_inner(
             }
         }
     }
+    target_agents.sort();
+    target_agents.dedup();
 
     // 6. 解析 target agents
     let target_agent_types: Vec<AgentType> = target_agents
@@ -300,14 +389,46 @@ async fn install_skills_inner(
             },
         );
 
-        let per_agent_results = install_skill_to_agents(
-            &skill.path,
-            &skill.name,
-            &target_agent_types,
-            &params.scope,
-            params.project_path.as_deref(),
-            &params.mode,
-        );
+        let per_agent_results = if params.preserve_existing_modes && target_agent_types.is_empty() {
+            vec![canonical_only_install_result(
+                &skill.path,
+                &skill.name,
+                &params.scope,
+                params.project_path.as_deref(),
+                &params.mode,
+            )]
+        } else if params.preserve_existing_modes {
+            let target_agent_modes: Vec<(AgentType, InstallMode)> = target_agent_types
+                .iter()
+                .map(|agent| {
+                    (
+                        *agent,
+                        crate::core::detect_install_mode(
+                            &skill.name,
+                            agent,
+                            &params.scope,
+                            params.project_path.as_deref(),
+                        ),
+                    )
+                })
+                .collect();
+            install_skill_to_agents_with_modes(
+                &skill.path,
+                &skill.name,
+                &target_agent_modes,
+                &params.scope,
+                params.project_path.as_deref(),
+            )
+        } else {
+            install_skill_to_agents(
+                &skill.path,
+                &skill.name,
+                &target_agent_types,
+                &params.scope,
+                params.project_path.as_deref(),
+                &params.mode,
+            )
+        };
 
         for par in per_agent_results {
             let install_result = InstallResult {
@@ -334,7 +455,15 @@ async fn install_skills_inner(
     }
 
     // 8. 写入 lock 文件
-    if !successful.is_empty() {
+    if selected_skills.iter().any(|skill| {
+        should_write_lock_for_skill(
+            &successful,
+            &failed,
+            &skill.name,
+            params.preserve_existing_modes,
+            target_agent_types.len(),
+        )
+    }) {
         let _ = app.emit(
             "install-progress",
             &InstallProgress {
@@ -348,7 +477,13 @@ async fn install_skills_inner(
         let owner_repo = get_owner_repo(&parsed);
 
         for skill in &selected_skills {
-            let installed = successful.iter().any(|r| r.skill_name == skill.name);
+            let installed = should_write_lock_for_skill(
+                &successful,
+                &failed,
+                &skill.name,
+                params.preserve_existing_modes,
+                target_agent_types.len(),
+            );
             if !installed {
                 continue;
             }
@@ -466,6 +601,210 @@ mod tests {
             automatic_project.contains(&AgentType::Antigravity),
             "Antigravity project target is .agents/skills, so it is automatic"
         );
+    }
+
+    #[test]
+    fn test_regular_install_lock_write_accepts_skipped_canonical_results() {
+        let results = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "windsurf".to_string(),
+            success: true,
+            path: std::path::PathBuf::from("/canonical/demo"),
+            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+            mode: InstallMode::Symlink,
+            symlink_failed: false,
+            skipped: true,
+            error: None,
+        }];
+
+        assert!(should_write_lock_for_skill(&results, &[], "demo", false, 1));
+    }
+
+    #[test]
+    fn test_preserve_mode_lock_write_requires_all_target_agents_to_install() {
+        let successful = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "claude-code".to_string(),
+            success: true,
+            path: std::path::PathBuf::from("/agent/demo"),
+            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: None,
+        }];
+        let failed = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "cursor".to_string(),
+            success: false,
+            path: std::path::PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: Some("copy failed".to_string()),
+        }];
+
+        assert!(!should_write_lock_for_skill(
+            &successful,
+            &failed,
+            "demo",
+            true,
+            2
+        ));
+    }
+
+    #[test]
+    fn test_preserve_mode_lock_write_requires_expected_target_count() {
+        let successful = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "claude-code".to_string(),
+            success: true,
+            path: std::path::PathBuf::from("/agent/demo"),
+            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: None,
+        }];
+
+        assert!(!should_write_lock_for_skill(
+            &successful,
+            &[],
+            "demo",
+            true,
+            2
+        ));
+    }
+
+    #[test]
+    fn test_preserve_mode_lock_write_requires_distinct_target_agents() {
+        let successful = vec![
+            InstallResult {
+                skill_name: "demo".to_string(),
+                agent: "claude-code".to_string(),
+                success: true,
+                path: std::path::PathBuf::from("/agent/demo"),
+                canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+                mode: InstallMode::Copy,
+                symlink_failed: false,
+                skipped: false,
+                error: None,
+            },
+            InstallResult {
+                skill_name: "demo".to_string(),
+                agent: "claude-code".to_string(),
+                success: true,
+                path: std::path::PathBuf::from("/agent/demo-duplicate"),
+                canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+                mode: InstallMode::Copy,
+                symlink_failed: false,
+                skipped: false,
+                error: None,
+            },
+        ];
+
+        assert!(!should_write_lock_for_skill(
+            &successful,
+            &[],
+            "demo",
+            true,
+            2
+        ));
+    }
+
+    #[test]
+    fn test_preserve_mode_lock_write_deduplicates_target_agents() {
+        let successful = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "claude-code".to_string(),
+            success: true,
+            path: std::path::PathBuf::from("/agent/demo"),
+            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: None,
+        }];
+
+        assert!(should_write_lock_for_skill(
+            &successful,
+            &[],
+            "demo",
+            true,
+            1
+        ));
+    }
+
+    #[test]
+    fn test_preserve_mode_lock_write_accepts_canonical_only_repair() {
+        let successful = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "__canonical__".to_string(),
+            success: true,
+            path: std::path::PathBuf::from("/canonical/demo"),
+            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: None,
+        }];
+
+        assert!(should_write_lock_for_skill(
+            &successful,
+            &[],
+            "demo",
+            true,
+            0
+        ));
+    }
+
+    #[test]
+    fn test_canonical_only_install_result_represents_successful_repair() {
+        let temp = tempdir().unwrap();
+        let src = temp.path().join("source-skill");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("SKILL.md"),
+            "---\nname: demo\ndescription: test\n---\n",
+        )
+        .unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+
+        let result = canonical_only_install_result(
+            &src,
+            "demo",
+            &crate::models::Scope::Project,
+            Some(&project_path),
+            &InstallMode::Copy,
+        );
+
+        assert!(result.success, "result: {:?}", result);
+        assert_eq!(result.agent, "__canonical__");
+        assert!(result
+            .canonical_path
+            .as_ref()
+            .unwrap()
+            .join("SKILL.md")
+            .exists());
+        let install_result = InstallResult {
+            skill_name: "demo".to_string(),
+            agent: result.agent,
+            success: result.success,
+            path: result.path,
+            canonical_path: result.canonical_path,
+            mode: result.mode,
+            symlink_failed: result.symlink_failed,
+            skipped: result.skipped,
+            error: result.error,
+        };
+        assert!(should_write_lock_for_skill(
+            &[install_result],
+            &[],
+            "demo",
+            true,
+            0
+        ));
     }
 
     #[test]

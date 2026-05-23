@@ -44,6 +44,9 @@ pub struct InstallParams {
     /// 是否为重试模式（仅重试指定 skills + agents）
     #[serde(default)]
     pub retry: bool,
+    /// 是否按每个已安装 Agent 的现有 copy/symlink 模式重新安装
+    #[serde(default)]
+    pub preserve_existing_modes: bool,
     /// 是否已确认风险来源（如 OpenClaw）
     #[serde(default)]
     pub acknowledge_risk: bool,
@@ -208,4 +211,26 @@ pub struct InstallRiskPolicy {
 pub enum InstallRiskKind {
     None,
     RequireConfirmation,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InstallParams;
+
+    #[test]
+    fn test_install_params_defaults_preserve_existing_modes_to_false() {
+        let params: InstallParams = serde_json::from_str(
+            r#"{
+                "source": "https://github.com/owner/repo",
+                "skills": ["toolkit"],
+                "agents": ["claude-code"],
+                "scope": "global",
+                "projectPath": null,
+                "mode": "copy"
+            }"#,
+        )
+        .unwrap();
+
+        assert!(!params.preserve_existing_modes);
+    }
 }

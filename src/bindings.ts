@@ -520,6 +520,10 @@ mode: InstallMode;
  */
 retry?: boolean;
 /**
+ * 是否按每个已安装 Agent 的现有 copy/symlink 模式重新安装
+ */
+preserveExistingModes?: boolean;
+/**
  * 是否已确认风险来源（如 OpenClaw）
  */
 acknowledgeRisk?: boolean }

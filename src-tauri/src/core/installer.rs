@@ -311,7 +311,7 @@ fn clean_and_create_directory(path: &Path) -> Result<(), AppError> {
 }
 
 /// 复制 skill 文件（排除特定文件，与 CLI copyDirectory 一致）
-fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
+pub(crate) fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
     // 确保目标目录存在
     fs::create_dir_all(dst).map_err(|e| AppError::InstallFailed {
         message: format!("Failed to create dir: {}", e),
