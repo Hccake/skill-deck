@@ -244,6 +244,32 @@ fn build_skipped_update_result(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UpdateLockEntry {
+    source: String,
+    source_type: String,
+    source_url: String,
+    skill_path: Option<String>,
+    plugin_name: Option<String>,
+    ref_name: Option<String>,
+}
+
+fn global_update_entry_from_lock_entry(
+    entry: &crate::core::skill_lock::SkillLockEntry,
+) -> UpdateLockEntry {
+    let metadata = normalize_global_lock_entry(entry);
+    UpdateLockEntry {
+        source: metadata.source.clone(),
+        source_type: metadata.source_type.clone(),
+        source_url: metadata
+            .source_url
+            .unwrap_or_else(|| metadata.source.clone()),
+        skill_path: metadata.skill_path,
+        plugin_name: entry.plugin_name.clone(),
+        ref_name: metadata.ref_name,
+    }
+}
+
 fn build_batch_check_result(
     name: &str,
     source: &str,
@@ -395,13 +421,14 @@ async fn update_skill_single(
                 .ok_or_else(|| AppError::InvalidSource {
                     value: format!("Skill '{}' not found in lock file", skill_name),
                 })?;
+            let update_entry = global_update_entry_from_lock_entry(entry);
             (
-                entry.source.clone(),
-                entry.source_type.clone(),
-                entry.source_url.clone(),
-                entry.skill_path.clone(),
-                entry.plugin_name.clone(),
-                entry.ref_name.clone(),
+                update_entry.source,
+                update_entry.source_type,
+                update_entry.source_url,
+                update_entry.skill_path,
+                update_entry.plugin_name,
+                update_entry.ref_name,
             )
         }
         Scope::Project => {
@@ -416,17 +443,11 @@ async fn update_skill_single(
                     .ok_or_else(|| AppError::InvalidSource {
                         value: format!("Skill '{}' not found in project lock file", skill_name),
                     })?;
-            let source_url = entry.source_url.clone().unwrap_or_else(|| {
-                if entry.source_type == "github" {
-                    format!("https://github.com/{}", entry.source)
-                } else {
-                    entry.source.clone()
-                }
-            });
+            let metadata = normalize_local_lock_entry(entry);
             (
                 entry.source.clone(),
                 entry.source_type.clone(),
-                source_url,
+                metadata.source_url.unwrap_or_default(),
                 entry.skill_path.clone(),
                 entry.plugin_name.clone(),
                 entry.ref_name.clone(),
@@ -438,11 +459,11 @@ async fn update_skill_single(
     let metadata = crate::core::NormalizedUpdateMetadata {
         source: entry_source.clone(),
         source_type: entry_source_type.clone(),
-        source_url: if entry_source_url.is_empty() {
-            None
-        } else {
-            Some(entry_source_url.clone())
-        },
+        source_url: crate::core::recover_source_url(
+            &entry_source,
+            &entry_source_type,
+            Some(entry_source_url.as_str()),
+        ),
         ref_name: entry_ref_name.clone(),
         skill_path: entry_skill_path.clone(),
         remote_hash: None,
@@ -459,11 +480,10 @@ async fn update_skill_single(
     // 3. 直接从 lock 元数据构造更新目标，避免 round-trip 成 source 字符串后丢失来源类型
     let update_target = build_update_target(UpdateSourceParts {
         source_type: entry_source_type.clone(),
-        source_url: if entry_source_url.is_empty() {
-            entry_source.clone()
-        } else {
-            entry_source_url.clone()
-        },
+        source_url: metadata
+            .source_url
+            .clone()
+            .unwrap_or_else(|| entry_source.clone()),
         ref_name: entry_ref_name.clone(),
         skill_path: entry_skill_path.clone(),
     });
@@ -724,12 +744,15 @@ async fn update_skills_batch_inner(
                         }
                         entries.push(SkillEntry {
                             name: name.clone(),
-                            source: entry.source.clone(),
-                            source_type: entry.source_type.clone(),
-                            source_url: entry.source_url.clone(),
-                            skill_path: entry.skill_path.clone(),
+                            source: metadata.source.clone(),
+                            source_type: metadata.source_type.clone(),
+                            source_url: metadata
+                                .source_url
+                                .clone()
+                                .unwrap_or_else(|| metadata.source.clone()),
+                            skill_path: metadata.skill_path.clone(),
                             plugin_name: entry.plugin_name.clone(),
-                            ref_name: entry.ref_name.clone(),
+                            ref_name: metadata.ref_name.clone(),
                         });
                     }
                 }
@@ -750,21 +773,17 @@ async fn update_skills_batch_inner(
                                 ));
                                 continue;
                             }
-                            let source_url = entry.source_url.clone().unwrap_or_else(|| {
-                                if entry.source_type == "github" {
-                                    format!("https://github.com/{}", entry.source)
-                                } else {
-                                    entry.source.clone()
-                                }
-                            });
                             entries.push(SkillEntry {
                                 name: name.clone(),
-                                source: entry.source.clone(),
-                                source_type: entry.source_type.clone(),
-                                source_url,
-                                skill_path: entry.skill_path.clone(),
+                                source: metadata.source.clone(),
+                                source_type: metadata.source_type.clone(),
+                                source_url: metadata
+                                    .source_url
+                                    .clone()
+                                    .unwrap_or_else(|| metadata.source.clone()),
+                                skill_path: metadata.skill_path.clone(),
                                 plugin_name: entry.plugin_name.clone(),
-                                ref_name: entry.ref_name.clone(),
+                                ref_name: metadata.ref_name.clone(),
                             });
                         }
                     }
@@ -1272,6 +1291,55 @@ mod tests {
 
         let normalized = crate::core::normalize_global_lock_entry(&entry);
         assert_eq!(normalized.remote_hash.as_deref(), Some("tree123"));
+    }
+
+    #[test]
+    fn test_normalize_global_lock_entry_recovers_missing_source_url() {
+        let entry = SkillLockEntry {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: String::new(),
+            ref_name: None,
+            skill_path: Some("skills/demo/SKILL.md".to_string()),
+            skill_folder_hash: "tree123".to_string(),
+            installed_at: "2026-01-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+            plugin_name: None,
+        };
+
+        let normalized = crate::core::normalize_global_lock_entry(&entry);
+        assert_eq!(
+            normalized.source_url.as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert!(crate::core::derive_update_capability(&normalized).can_check_for_updates);
+    }
+
+    #[test]
+    fn test_global_update_entry_recovers_missing_source_url() {
+        let entry = SkillLockEntry {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: String::new(),
+            ref_name: Some("main".to_string()),
+            skill_path: Some("skills/demo/SKILL.md".to_string()),
+            skill_folder_hash: "tree123".to_string(),
+            installed_at: "2026-01-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+            plugin_name: Some("plugin-a".to_string()),
+        };
+
+        let update_entry = global_update_entry_from_lock_entry(&entry);
+
+        assert_eq!(update_entry.source, "owner/repo");
+        assert_eq!(update_entry.source_type, "github");
+        assert_eq!(update_entry.source_url, "https://github.com/owner/repo");
+        assert_eq!(
+            update_entry.skill_path.as_deref(),
+            Some("skills/demo/SKILL.md")
+        );
+        assert_eq!(update_entry.plugin_name.as_deref(), Some("plugin-a"));
+        assert_eq!(update_entry.ref_name.as_deref(), Some("main"));
     }
 
     #[test]

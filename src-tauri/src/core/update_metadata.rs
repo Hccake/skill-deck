@@ -18,11 +18,45 @@ pub struct UpdateCapability {
     pub reason: Option<String>,
 }
 
+pub fn recover_source_url(
+    source: &str,
+    source_type: &str,
+    source_url: Option<&str>,
+) -> Option<String> {
+    source_url
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            if source.is_empty() {
+                None
+            } else if source_type == "github" {
+                Some(format!("https://github.com/{}", source))
+            } else {
+                Some(source.to_string())
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recover_source_url;
+
+    #[test]
+    fn test_recover_source_url_does_not_invent_github_url_for_empty_source() {
+        assert_eq!(recover_source_url("", "github", None), None);
+        assert_eq!(recover_source_url("", "github", Some("")), None);
+    }
+}
+
 pub fn normalize_global_lock_entry(entry: &SkillLockEntry) -> NormalizedUpdateMetadata {
     NormalizedUpdateMetadata {
         source: entry.source.clone(),
         source_type: entry.source_type.clone(),
-        source_url: Some(entry.source_url.clone()),
+        source_url: recover_source_url(
+            &entry.source,
+            &entry.source_type,
+            Some(entry.source_url.as_str()),
+        ),
         ref_name: entry.ref_name.clone(),
         skill_path: entry.skill_path.clone(),
         remote_hash: if entry.skill_folder_hash.is_empty() {
@@ -37,13 +71,11 @@ pub fn normalize_local_lock_entry(entry: &LocalSkillLockEntry) -> NormalizedUpda
     NormalizedUpdateMetadata {
         source: entry.source.clone(),
         source_type: entry.source_type.clone(),
-        source_url: entry.source_url.clone().or_else(|| {
-            if entry.source_type == "github" {
-                Some(format!("https://github.com/{}", entry.source))
-            } else {
-                None
-            }
-        }),
+        source_url: recover_source_url(
+            &entry.source,
+            &entry.source_type,
+            entry.source_url.as_deref(),
+        ),
         ref_name: entry.ref_name.clone(),
         skill_path: entry.skill_path.clone(),
         remote_hash: entry.remote_hash.clone(),

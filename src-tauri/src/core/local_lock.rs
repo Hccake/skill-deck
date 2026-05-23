@@ -117,10 +117,10 @@ pub fn read_local_lock(project_path: &str) -> Result<LocalSkillLockFile, AppErro
 /// 读取旧版 lock 文件并转换为新格式
 /// 旧版使用 SkillLockFile 格式（GitHub tree SHA），需要转换
 fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppError> {
-    use crate::core::skill_lock::SkillLockFile;
+    use crate::core::skill_lock::parse_skill_lock_file;
 
     let content = fs::read_to_string(path)?;
-    let old_lock: SkillLockFile = match serde_json::from_str(&content) {
+    let old_lock = match parse_skill_lock_file(&content) {
         Ok(l) => l,
         Err(_) => return Ok(LocalSkillLockFile::empty()),
     };
@@ -133,7 +133,11 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
                 source: entry.source,
                 ref_name: None,
                 source_type: entry.source_type,
-                source_url: Some(entry.source_url),
+                source_url: if entry.source_url.is_empty() {
+                    None
+                } else {
+                    Some(entry.source_url)
+                },
                 computed_hash: String::new(), // 旧版没有 SHA-256，留空
                 remote_hash: if entry.skill_folder_hash.is_empty() {
                     None

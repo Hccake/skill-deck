@@ -166,7 +166,7 @@ impl InstalledSkill {
     pub fn with_lock_entry(mut self, entry: Option<&SkillLockEntry>) -> Self {
         if let Some(e) = entry {
             self.source = Some(e.source.clone());
-            self.source_url = Some(e.source_url.clone());
+            self.source_url = normalize_global_lock_entry(e).source_url;
             self.installed_at = Some(e.installed_at.clone());
             self.updated_at = Some(e.updated_at.clone());
             self.plugin_name = e.plugin_name.clone();
@@ -183,18 +183,13 @@ impl InstalledSkill {
     /// 从 local lock entry 填充元数据（项目级）
     pub fn with_local_lock_entry(mut self, entry: Option<&LocalSkillLockEntry>) -> Self {
         if let Some(e) = entry {
+            let metadata = normalize_local_lock_entry(e);
             self.source = Some(e.source.clone());
-            self.source_url = e.source_url.clone().or_else(|| {
-                if e.source_type == "github" {
-                    Some(format!("https://github.com/{}", e.source))
-                } else {
-                    Some(e.source.clone())
-                }
-            });
+            self.source_url = metadata.source_url.clone();
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
 
-            let capability = derive_update_capability(&normalize_local_lock_entry(e));
+            let capability = derive_update_capability(&metadata);
             self.can_run_update = Some(capability.can_run_update);
             self.can_check_for_updates = Some(capability.can_check_for_updates);
             self.update_reason = capability.reason;
@@ -698,6 +693,42 @@ Content.
             skill.source_url.as_deref(),
             Some("git@github.com:owner/private-repo.git")
         );
+    }
+
+    #[test]
+    fn test_with_local_lock_entry_does_not_invent_source_url_for_empty_source() {
+        let entry = LocalSkillLockEntry {
+            source: String::new(),
+            ref_name: None,
+            source_type: "github".to_string(),
+            source_url: None,
+            computed_hash: String::new(),
+            remote_hash: Some("tree123".to_string()),
+            skill_path: Some("skills/demo/SKILL.md".to_string()),
+            plugin_name: None,
+        };
+
+        let skill = InstalledSkill {
+            name: "demo".to_string(),
+            description: "Demo".to_string(),
+            path: String::new(),
+            canonical_path: String::new(),
+            scope: SkillScope::Project,
+            agents: Vec::new(),
+            source: None,
+            source_url: None,
+            installed_at: None,
+            updated_at: None,
+            has_update: None,
+            can_run_update: None,
+            can_check_for_updates: None,
+            update_reason: None,
+            plugin_name: None,
+            git_ref: None,
+        }
+        .with_local_lock_entry(Some(&entry));
+
+        assert_eq!(skill.source_url, None);
     }
 
     #[test]

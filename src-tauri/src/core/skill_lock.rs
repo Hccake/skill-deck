@@ -24,6 +24,7 @@ pub struct SkillLockEntry {
     /// 来源类型 (e.g., "github", "mintlify", "local")
     pub source_type: String,
     /// 原始安装 URL
+    #[serde(default)]
     pub source_url: String,
     /// Branch or tag ref used for installation
     #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
@@ -36,8 +37,10 @@ pub struct SkillLockEntry {
     #[serde(default)]
     pub skill_folder_hash: String,
     /// 安装时间 (ISO 格式)
+    #[serde(default)]
     pub installed_at: String,
     /// 更新时间 (ISO 格式)
+    #[serde(default)]
     pub updated_at: String,
     /// 所属 plugin 名称
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,6 +94,54 @@ impl SkillLockFile {
     }
 }
 
+pub(crate) fn parse_skill_lock_file(content: &str) -> Result<SkillLockFile, serde_json::Error> {
+    match serde_json::from_str::<SkillLockFile>(content) {
+        Ok(lock) => Ok(lock),
+        Err(original_error) => {
+            let value = serde_json::from_str::<serde_json::Value>(content)?;
+            let Some(version) = value
+                .get("version")
+                .and_then(serde_json::Value::as_u64)
+                .map(|version| version as u32)
+            else {
+                return Err(original_error);
+            };
+            let dismissed = value
+                .get("dismissed")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok());
+            let last_selected_agents = value
+                .get("lastSelectedAgents")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok());
+            let default_target_agents = value
+                .get("defaultTargetAgents")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok());
+            let Some(skills) = value.get("skills").and_then(serde_json::Value::as_object) else {
+                return Err(original_error);
+            };
+
+            let skills = skills
+                .iter()
+                .filter_map(|(name, entry)| {
+                    serde_json::from_value::<SkillLockEntry>(entry.clone())
+                        .ok()
+                        .map(|entry| (name.clone(), entry))
+                })
+                .collect();
+
+            Ok(SkillLockFile {
+                version,
+                skills,
+                dismissed,
+                last_selected_agents,
+                default_target_agents,
+            })
+        }
+    }
+}
+
 /// 获取 skill-lock.json 路径
 /// 对应 CLI: getSkillLockPath (skill-lock.ts:61-63)
 pub fn get_skill_lock_path() -> std::path::PathBuf {
@@ -128,7 +179,7 @@ pub fn read_skill_lock() -> Result<SkillLockFile, AppError> {
     }
 
     let content = std::fs::read_to_string(&path)?;
-    let lock: SkillLockFile = match serde_json::from_str(&content) {
+    let lock: SkillLockFile = match parse_skill_lock_file(&content) {
         Ok(l) => l,
         Err(_) => return Ok(SkillLockFile::empty()),
     };
@@ -149,7 +200,7 @@ pub fn read_scoped_lock(project_path: Option<&str>) -> Result<SkillLockFile, App
         return Ok(SkillLockFile::empty());
     }
     let content = std::fs::read_to_string(&path)?;
-    let lock: SkillLockFile = match serde_json::from_str(&content) {
+    let lock: SkillLockFile = match parse_skill_lock_file(&content) {
         Ok(l) => l,
         Err(_) => return Ok(SkillLockFile::empty()),
     };
@@ -374,6 +425,135 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_skill_lock_file_keeps_entry_when_source_url_missing() {
+        let json = r#"{
+            "version": 3,
+            "skills": {
+                "test-skill": {
+                    "source": "owner/repo",
+                    "sourceType": "github",
+                    "skillPath": "skills/test-skill/SKILL.md",
+                    "skillFolderHash": "abc123",
+                    "installedAt": "2024-01-01T00:00:00Z",
+                    "updatedAt": "2024-01-01T00:00:00Z"
+                }
+            }
+        }"#;
+
+        let lock: SkillLockFile = serde_json::from_str(json).unwrap();
+        let entry = lock.skills.get("test-skill").unwrap();
+
+        assert_eq!(entry.source, "owner/repo");
+        assert_eq!(entry.source_url, "");
+    }
+
+    #[test]
+    fn test_deserialize_skill_lock_file_keeps_entry_when_installed_and_updated_at_missing() {
+        let json = r#"{
+            "version": 3,
+            "skills": {
+                "test-skill": {
+                    "source": "owner/repo",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/owner/repo",
+                    "skillFolderHash": "abc123"
+                }
+            }
+        }"#;
+
+        let lock: SkillLockFile = serde_json::from_str(json).unwrap();
+        let entry = lock.skills.get("test-skill").unwrap();
+
+        assert_eq!(entry.installed_at, "");
+        assert_eq!(entry.updated_at, "");
+    }
+
+    #[test]
+    fn test_parse_skill_lock_file_skips_invalid_entries_without_dropping_valid_entries() {
+        let json = r#"{
+            "version": 3,
+            "skills": {
+                "valid-skill": {
+                    "source": "owner/repo",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/owner/repo",
+                    "skillFolderHash": "abc123"
+                },
+                "invalid-skill": {
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/owner/repo"
+                }
+            },
+            "lastSelectedAgents": ["codex"],
+            "defaultTargetAgents": {
+                "global": ["codex"],
+                "project": ["cursor"]
+            }
+        }"#;
+
+        let lock = parse_skill_lock_file(json).unwrap();
+
+        assert!(lock.skills.contains_key("valid-skill"));
+        assert!(!lock.skills.contains_key("invalid-skill"));
+        assert_eq!(lock.last_selected_agents, Some(vec!["codex".to_string()]));
+        assert_eq!(
+            lock.default_target_agents.as_ref().unwrap().project,
+            vec!["cursor"]
+        );
+    }
+
+    #[test]
+    fn test_parse_skill_lock_file_rejects_invalid_version_even_when_entries_are_recoverable() {
+        let json = r#"{
+            "version": "3",
+            "skills": {
+                "valid-skill": {
+                    "source": "owner/repo",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/owner/repo"
+                },
+                "invalid-skill": {
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/owner/repo"
+                }
+            }
+        }"#;
+
+        assert!(parse_skill_lock_file(json).is_err());
+    }
+
+    #[test]
+    fn test_read_scoped_lock_skips_invalid_entries_without_returning_empty_lock() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let lock_path = temp.path().join(".agents").join(".skill-lock.json");
+        std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &lock_path,
+            r#"{
+  "version": 3,
+  "skills": {
+    "valid-skill": {
+      "source": "owner/repo",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/owner/repo"
+    },
+    "invalid-skill": {
+      "source": "owner/repo",
+      "sourceUrl": "https://github.com/owner/repo"
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let lock = read_scoped_lock(Some(&project_path)).unwrap();
+
+        assert!(lock.skills.contains_key("valid-skill"));
+        assert!(!lock.skills.contains_key("invalid-skill"));
+    }
+
+    #[test]
     fn test_deserialize_skill_lock_entry_allows_missing_skill_folder_hash() {
         let json = r#"{
             "source": "owner/repo",
@@ -386,6 +566,35 @@ mod tests {
         let entry: SkillLockEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.source, "owner/repo");
         assert_eq!(entry.skill_folder_hash, "");
+    }
+
+    #[test]
+    fn test_deserialize_skill_lock_entry_allows_missing_source_url() {
+        let json = r#"{
+            "source": "owner/repo",
+            "sourceType": "github",
+            "skillFolderHash": "abc123",
+            "installedAt": "2024-01-01T00:00:00Z",
+            "updatedAt": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let entry: SkillLockEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.source, "owner/repo");
+        assert_eq!(entry.source_url, "");
+    }
+
+    #[test]
+    fn test_deserialize_skill_lock_entry_allows_missing_installed_and_updated_at() {
+        let json = r#"{
+            "source": "owner/repo",
+            "sourceType": "github",
+            "sourceUrl": "https://github.com/owner/repo"
+        }"#;
+
+        let entry: SkillLockEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.source, "owner/repo");
+        assert_eq!(entry.installed_at, "");
+        assert_eq!(entry.updated_at, "");
     }
 
     #[test]
