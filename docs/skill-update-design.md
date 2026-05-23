@@ -137,6 +137,8 @@ CLI project update 是 GUI 必须兼容的基线语义。它不依赖 `sourceUrl
 4. 获取来源内容：GitHub/GitLab/git 走 clone，well-known/direct-url 走 well-known fetch，本地来源不走普通 update。
 5. discover skill，并优先按 lock 中的 `skillPath` 精确匹配。
 6. 检测当前已经安装到哪些 agent。
+   - 如果文件系统中找不到任何已安装 agent，只回退到当前 scope 下自动读取共享目录的 agent。
+   - 这里不能使用 CLI 的静态 universal 列表；GUI 的 automatic target 是按当前 scope 和实际目标路径计算的。
 7. 检测每个 agent 现有安装模式，尽量保留 symlink、junction 或 copy。
 8. 覆盖安装 canonical 目录，再为各 agent 重建链接或复制。
 9. 写回 lock：全局写 `skillFolderHash`，项目写本地 `computedHash`，并在 GUI 能取得可比较的远端版本 hash 时写扩展 `remoteHash`。如果该 skill 是由 CLI project update 刚刚写回，GUI 增强字段可能不存在，后续 list/check 应降级为 `missing-remote-hash` 或缺少展示元数据。
@@ -153,7 +155,7 @@ Agent 结果语义：
 | --- | --- |
 | `success` | 该 agent 安装或更新成功 |
 | `failed` | 该 agent 安装失败，错误应暴露给前端 |
-| `skipped` | 按规则未安装到该 agent，例如项目级缺少非 universal agent 根目录 |
+| `skipped` | 按规则未安装到该 agent，例如项目级额外 Agent 的根目录不存在 |
 
 Skill 总状态归并：
 
@@ -170,7 +172,7 @@ Skill 总状态归并：
 
 ## 6. 前端缓存与 UI 规则
 
-### 5.1 更新检测缓存
+### 6.1 更新检测缓存
 
 `src/stores/skills-utils.ts` 维护进程内缓存：
 
@@ -188,7 +190,7 @@ updateInfoCache: Map<string, { results: SkillUpdateInfo[]; checkedAt: number }>
 - update 完整成功后才能清除该 skill 的 update 标记。
 - partial、failed、skipped 不应把缓存强写为 `up-to-date`，否则用户会失去重试入口。
 
-### 5.2 列表状态合并
+### 6.2 列表状态合并
 
 `mergeUpdateInfo` 将 `check_updates` 结果合并到 `listSkills` 返回的基础列表。
 
@@ -198,7 +200,7 @@ updateInfoCache: Map<string, { results: SkillUpdateInfo[]; checkedAt: number }>
 - 未命中时，保留已有 `updateStatus` 和 `updateReason`。
 - `hasUpdate` 未命中时默认为 false，避免旧缓存误标新列表项。
 
-### 5.3 UI 状态展示
+### 6.3 UI 状态展示
 
 展示 cannot-check 的统一规则：
 
@@ -218,9 +220,9 @@ skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 - `canCheckForUpdates == false`：不参与“检查更新”批量入口。
 - reason 应映射为可本地化文案，不要直接把机器字符串作为主要 UI 文案。
 
-### 5.4 安装完成页
+### 6.4 安装结果处理
 
-安装或修复来源流程中的完成页需要区分 successful、failed、skipped：
+安装流程的完成页，以及修复来源流程的安装结果处理，都需要区分 successful、failed、skipped：
 
 - successful 计入成功覆盖率。
 - failed 展示错误。
@@ -240,7 +242,7 @@ skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 | 状态表达 | 终端输出文本 | 结构化 capability、status、reason、agent results |
 | 进度反馈 | 终端进度 | `update-progress` event |
 | 错误提示 | 文本输出 | reason → i18n 文案、toast、修复入口 |
-| Agent 选择 | CLI install/update 规则 | 保持规则，同时展示 skipped/partial |
+| Agent 目标 | CLI 使用静态 universal/non-universal 分类 | GUI 使用 scope-aware automatic/additional 分类，同时展示 skipped/partial |
 
 不允许的差异：
 
@@ -251,6 +253,7 @@ skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 - GUI 写回 lock 时丢失 CLI 字段。
 - GUI 扩展字段改变 CLI 已定义字段的含义，例如把 `computedHash` 当成远端 hash，或让 CLI 读取后产生不同安装目标。
 - GUI 把 `remoteHash` 当作执行 project reinstall 的必要条件。它只能控制“能否提前检测”，不能控制“能否按 CLI 语义刷新”。
+- GUI 把 CLI 的静态 universal 列表当成当前 scope 的自动目标。自动目标必须按实际目标目录是否等于 canonical 共享目录计算。
 - 放宽 CLI 的 source、well-known 或文件路径安全校验。
 
 ---

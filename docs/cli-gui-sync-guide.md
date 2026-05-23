@@ -36,11 +36,19 @@
 | `updatedAt` | `updated_at` | 更新时间 |
 | `pluginName` | `plugin_name` | 所属 plugin 名称 |
 
+全局 lock 顶层还包含两个安装偏好字段：
+
+| JSON 字段 | 归属 | 说明 |
+| --- | --- | --- |
+| `lastSelectedAgents` | CLI/GUI | CLI 的最后选择记录。GUI 写入默认安装目标时会同步写入 global/project 默认目标的并集，用于保持 CLI fallback 体验 |
+| `defaultTargetAgents` | GUI 扩展 | GUI 的 scope-aware 默认安装目标，结构为 `{ global: string[], project: string[] }`。只保存需要额外投放的 Agent；当前 scope 下自动读取共享目录的 Agent 不进入该字段 |
+
 互操作规则：
 
 - CLI 使用 JSON roundtrip 时应保留未知字段。
 - GUI 使用 serde 时应忽略未知字段，并在写回时保留未知字段和当前 GUI 已建模的字段。
 - CLI 新增全局 lock 字段后，GUI 的 `SkillLockEntry` 仍需要同步建模，便于前端展示、校验和类型生成；未知字段保留机制是兜底，不是替代同步。
+- 如果 CLI 写回 lock 时未保留 `defaultTargetAgents`，GUI 必须能从 `lastSelectedAgents` 迁移出可用默认值，而不是把配置视为损坏。
 
 ### 1.2 项目 Lock
 
@@ -66,7 +74,7 @@
 
 关键约束：
 
-- 缺 `skillPath` 的旧 entry 不能安全定位上游目录。所有 lock 驱动的普通 update 都必须禁用，标记为 `missing-skill-path`，并通过“修复来源”重新进入安装向导刷新 lock。
+- 缺 `skillPath` 的旧 entry 不能安全定位上游目录。所有 lock 驱动的普通 update 都必须禁用，标记为 `missing-skill-path`，并通过“修复来源”流程重新选择来源并刷新 lock。
 - 缺 `remoteHash` 时，GitHub 来源可以执行 reinstall 语义的 update，但 GUI 不能提前判断远端是否有更新，应标记为 `missing-remote-hash`。
 - 非 GitHub 来源可以保留本地 `computedHash`、安装来源 hash 或 GUI 扩展 hash 用于审计和未来检测；只有实现了该 source type 的远端查询/比较逻辑后，才能把它作为自动更新检测信号。
 - CLI 的 project `add/update` 会用新的 `LocalSkillLockEntry` 替换对应 skill entry。当前 CLI entry 只包含共享契约字段，因此这类写入可能丢失 GUI 增强字段。GUI 必须把这种情况当作可恢复降级，而不是 lock 损坏。
@@ -96,15 +104,19 @@ CLI 和 GUI 都需要解析相同的 source 输入形态，包括 GitHub shortha
 
 ## 3. Agent 注册表
 
-CLI 的 agent registry 是 GUI `AgentType` 的行为基线。
+CLI 的 agent registry 是 GUI `AgentType` 的配置基线，但 GUI 不再直接复用 CLI 的 `universal` 分类作为行为模型。
 
 同步规则：
 
 - CLI 新增 agent 后，GUI 需要新增 `AgentType` variant、`config()`、`detect()` 和相关测试。
-- 必须检查 `skills_dir`、`global_skills_dir`、检测逻辑、是否出现在 universal 列表中的语义是否一致。
-- GUI 的 `Universal` 是桌面端虚拟分组，不对应 CLI agent，不应写入 lock 或当作真实 agent 安装目标。
-- 项目级自动安装或 update 不应创建 CLI 不会自动创建的非 universal agent 根目录；这种结果应作为 `skipped` 返回给 GUI。
-- GUI 中用户显式选择“为某个 agent 添加/管理 skill”时，可以作为体验优化创建目标目录，但这属于显式操作，不应影响 CLI 基线规则。
+- 必须检查 `skills_dir`、`global_skills_dir` 和检测逻辑是否与 CLI 一致。
+- CLI 的 `universal` 列表是静态分类：`skillsDir === ".agents/skills"`，并且 `showInUniversalList !== false` 时才会进入可选/自动安装目标。CLI 仍包含一个 `universal` agent key。
+- GUI 的 `automatic` 是 scope-aware 运行时分类：某个 Agent 在当前 scope 下的目标目录等于 canonical 共享目录时，才算自动可用。全局 canonical 是 `~/.agents/skills`，项目 canonical 是 `<project>/.agents/skills`。
+- 因为 GUI 按 scope 判断，同一个 Agent 可以在项目中自动可用、在全局中需要额外投放。例如 Antigravity 的 project target 是 `.agents/skills`，global target 是 `~/.gemini/antigravity/skills`。
+- GUI 不保留 CLI 的 `universal` agent key，也不把它写入 lock 或当作真实安装目标。`showInUniversalList` 会影响 CLI 的 universal 列表是否纳入安装与 sync 目标，但 GUI 不能把这个静态列表直接当成当前 scope 的自动目标规则。
+- GUI 默认安装设置只保存额外 Agent。自动可用 Agent 由后端按当前 scope 动态补齐，用户不需要也不应该手动保存它们。
+- 项目级安装或 update 不应创建 CLI 不会自动创建的额外 Agent 根目录；这种结果应作为 `skipped` 返回给 GUI。
+- GUI 中用户显式选择“为某个 Agent 添加/管理 Skill”时，可以作为体验优化创建目标目录，但这属于显式操作，不应影响 CLI 基线规则。
 
 ---
 
@@ -158,8 +170,9 @@ CLI 和 GUI 都维护 skill 发现的优先搜索路径。
 
 - CLI 变更 update/add/reinstall 的核心语义后，GUI update 链路必须同步。
 - GUI 可以做更进一步的优化和产品化能力，包括项目级远端更新检测、批量 clone/API 复用、更新计划、缓存、进度事件、错误分类、失败重试和修复来源。约束是：对同一个 lock entry，GUI 最终安装的来源、ref、`skillPath`、目标 agent 和 lock 写回应能解释为 CLI reinstall/update 语义的兼容扩展。
-- 所有 lock 驱动的普通 update 都必须依赖 `skillPath` 定位来源。缺 `skillPath` 时不要按 skill name 猜测路径；用户显式发起“修复来源/重新安装”才可以重新发现目录并刷新 lock。
+- 所有 lock 驱动的普通 update 都必须依赖 `skillPath` 定位来源。缺 `skillPath` 时不要按 skill name 猜测路径；用户显式发起“修复来源”才可以重新发现目录并刷新 lock。
 - Project scope 下，CLI 的 update 语义是“有 `skillPath` 就定点 reinstall”，不是“先检测远端是否变化”。GUI 的 `remoteHash` 检测是额外体验，不能成为执行 reinstall 的必要条件。
+- GUI update 在找不到已安装 Agent 时，只能回退到当前 scope 下自动读取共享目录的 Agent，不能回退到 CLI 的静态 universal 列表。
 - GUI update 应保留每个 agent 原本的安装模式，除非用户显式改变。
 - 每个 agent 的结果需要区分 `success`、`failed`、`skipped`。`skipped` 不能计入安装成功覆盖率。
 - Skill 总状态中，`success + skipped` 的归并规则必须显式：如果 `skipped` 表示“不属于实际目标”，可以整体视为 `success`；如果 `skipped` 表示请求目标未被处理，应归为 `partial` 或 `skipped`，并且不得清除用户重试入口。
@@ -173,7 +186,7 @@ CLI 和 GUI 都维护 skill 发现的优先搜索路径。
 每次从上游 CLI 同步时，按此清单检查：
 
 - [ ] `types.ts`：agent 类型是否新增、移除或重命名。
-- [ ] `agents.ts`：agent 配置、检测逻辑、global/project 目录是否变化。
+- [ ] `agents.ts`：agent 配置、检测逻辑、global/project 目录、`showInUniversalList` 是否变化；同时检查 GUI 的 scope-aware target/automatic 推导是否仍符合预期。
 - [ ] `source-parser.ts`：source 格式、alias、ref/filter 解析顺序是否变化。
 - [ ] `skill-lock.ts`：全局 lock 字段、版本、默认值和未知字段保留策略是否变化。
 - [ ] `local-lock.ts`：项目 lock 字段、排序、写回策略和未知字段保留策略是否变化。
