@@ -5,6 +5,27 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] 2026-05-23
+
+### Added
+
+- **默认安装目标** — 可分别设置全局和项目 Skill 默认安装到哪些 Agent。
+- **修复来源** — 对于缺少更新检查信息的 Skill，可直接修复来源并恢复版本检查，无需重新走完整安装流程。
+
+### Changed
+
+- **安装流程优化** — 安装 Skill 时，安装范围、来源填写、Skill 选择、Agent 选择和确认步骤更清晰。
+- **Agent 选择更直观** — 自动可用的 Agent 与需要额外安装的 Agent 分开展示，并显示对应路径。
+- **设置页重组** — 设置页新增侧边导航，外观、安装、Git、项目和关于信息分区更清楚。
+- **Git 设置位置调整** — 远程拉取超时设置移动到 `Settings > Git`。
+
+### Fixed
+
+- **更新检查更可靠** — 旧版本安装的 Skill 即使缺少部分来源信息，也能更稳定地展示状态，并在可修复时提供明确入口。
+- **更新目标更准确** — 更新 Skill 时更准确地保留原来的安装范围和 Agent 目标。
+- **路径显示更一致** — 统一不同页面中的 Agent 路径展示。
+- **窗口尺寸更稳定** — 避免窗口过小或过大导致页面显示异常。
+
 ## [1.4.0] - 2026-04-27
 
 ### Added
