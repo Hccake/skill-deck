@@ -9,4 +9,5 @@ export { SkillsToolbar } from './SkillsToolbar';
 export { CompactSkillList } from './CompactSkillList';
 export { CompactSkillItem } from './CompactSkillItem';
 export { SkillDetailPanel } from './SkillDetailPanel';
+export { RepairSourceDialog } from './RepairSourceDialog';
 export { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';

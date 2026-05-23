@@ -141,6 +141,7 @@ interface SkillsDataState {
   forceCheckUpdates: (scope: SkillScope) => Promise<boolean>;
   fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
   updateSkill: (skillName: string, scope: SkillScope) => Promise<void>;
+  markSourceRepairSucceeded: (skillName: string, scope: SkillScope, projectPath?: string) => void;
   updateAllInSection: (scope: SkillScope) => Promise<void>;
   cancelUpdateAll: () => void;
   /** 加载所有已注册 project 的 skills（供 Discover 页使用） */
@@ -430,6 +431,21 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         });
       }, 2000);
     }
+  },
+
+  markSourceRepairSucceeded: (skillName, scope, projectPath) => {
+    clearUpdateCacheForSkill(skillName, scope, projectPath, { clearCannotCheck: true });
+    const selectedContext = useContextStore.getState().selectedContext;
+    const shouldUpdateVisibleProject =
+      scope === 'project' && selectedContext === projectPath;
+    set((state) => ({
+      globalSkills: scope === 'global'
+        ? clearLocalUpdateFlags(state.globalSkills, scope, new Set([skillName]), { clearCannotCheck: true })
+        : state.globalSkills,
+      projectSkills: shouldUpdateVisibleProject
+        ? clearLocalUpdateFlags(state.projectSkills, scope, new Set([skillName]), { clearCannotCheck: true })
+        : state.projectSkills,
+    }));
   },
 
   updateAllInSection: async (scope) => {

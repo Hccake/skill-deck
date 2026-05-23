@@ -5,7 +5,6 @@ import { useContextStore } from '@/stores/context';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
-import { createSkillRepairPrefill } from '@/stores/skills-utils';
 import { findSkillByIdentity, getSkillIdentityKey } from '@/lib/skills/identity';
 import { ContextSidebar, SkillsPanel, SkillDetailPanel } from '@/components/skills';
 import { ManageAgentsDialog } from '@/components/skills/ManageAgentsDialog';
@@ -38,7 +37,7 @@ export function SkillsPage() {
   const storeUpdateSkill = useSkillsDataStore((s) => s.updateSkill);
   const updatingSkills = useSkillsDataStore((s) => s.updatingSkills);
   const openDelete = useSkillDialogStore((s) => s.openDelete);
-  const openAddWithPrefill = useSkillDialogStore((s) => s.openAddWithPrefill);
+  const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const allAgents = useSkillsDataStore((s) => s.allAgents);
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
   const closeManageAgents = useSkillDialogStore((s) => s.closeManageAgents);
@@ -106,13 +105,12 @@ export function SkillsPage() {
   }, [openCopyToProject]);
 
   const handleRepairSource = useCallback((skill: InstalledSkill) => {
-    const prefill = createSkillRepairPrefill(
+    openRepairSource(
       skill,
       skill.scope,
       skill.scope === 'project' ? selectedContext : undefined
     );
-    if (prefill) openAddWithPrefill(prefill);
-  }, [openAddWithPrefill, selectedContext]);
+  }, [openRepairSource, selectedContext]);
 
   useLayoutEffect(() => {
     const hasDetail = Boolean(selectedSkill);

@@ -52,8 +52,27 @@
       "delete": "Delete",
       "moreOptions": "More options",
       "copyToProject": "Copy to Project",
-      "repairSource": "Restore source",
+      "repairSource": "Repair source",
       "reinstall": "Reinstall"
+    },
+    "repairSourceDialog": {
+      "title": "Repair {{name}} source",
+      "description": "Reinstall from the source below to restore update checks.",
+      "sourceLabel": "Source",
+      "scopeLabel": "Scope",
+      "projectLabel": "Project",
+      "agentsLabel": "Agents",
+      "editSource": "Change source",
+      "cancelEdit": "Cancel change",
+      "validate": "Check source",
+      "validating": "Checking source...",
+      "sourceContainsSkill": "Found {{name}} in this source.",
+      "sourceMissingSkill": "This source does not contain {{name}}, so this Skill cannot be repaired from it.",
+      "sourceInvalid": "Could not read this source. Check the URL or branch.",
+      "overwriteNotice": "Repair will overwrite the current Skill content and keep the current agents.",
+      "repair": "Repair",
+      "repairing": "Repairing...",
+      "repairFailed": "Repair failed. Check the install result and try again."
     },
     "agent": {
       "enable": "Enable {{name}}",
@@ -173,7 +192,7 @@
     },
     "updateStatusLabel": {
       "available": "New version available",
-      "needsSourceInfo": "Source info incomplete",
+      "needsSourceInfo": "Repair source",
       "versionUnknown": "Cannot check for updates",
       "upstreamUnavailable": "Source unavailable",
       "localSource": "Local Skill",
@@ -182,7 +201,7 @@
       "checkFailed": "Check failed"
     },
     "updateHint": {
-      "missing-skill-path": "Install source information is missing. Reinstall to restore version checks.",
+      "missing-skill-path": "Install source information is missing. Repair the source to restore version checks.",
       "missing-remote-hash": "Local version information is incomplete. Reinstall to restore version checks.",
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
       "local-source": "This Skill comes from a local file and does not support update checks.",
@@ -193,7 +212,7 @@
       "http-error": "Version check failed. Check again later."
     },
     "updateReason": {
-      "missing-skill-path": "Install source information is missing. Reinstall to restore version checks.",
+      "missing-skill-path": "Install source information is missing. Repair the source to restore version checks.",
       "missing-remote-hash": "Local version information is incomplete. Reinstall to restore version checks.",
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
       "local-source": "This Skill comes from a local file and does not support update checks.",

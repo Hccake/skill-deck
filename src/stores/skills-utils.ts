@@ -80,7 +80,7 @@ export function resolveUpdateStatusLabelI18nKey(
     return 'skills.updateStatusLabel.available';
   }
   if (skill.updateReason === 'missing-skill-path') {
-    return 'skills.updateStatusLabel.reinstallRequired';
+    return 'skills.updateStatusLabel.needsSourceInfo';
   }
   if (skill.updateReason === 'missing-remote-hash') {
     return 'skills.updateStatusLabel.reinstallRequired';
@@ -115,6 +115,15 @@ export interface AddDialogPrefill {
   scope?: SkillScope;
   projectPath?: string;
   gitRef?: string | null;
+}
+
+export interface RepairSourceDraft {
+  source: string;
+  skillName: string;
+  scope: SkillScope;
+  projectPath?: string;
+  gitRef?: string | null;
+  agents: AgentType[];
 }
 
 function normalizeRepairSource(source: string | null | undefined): string | null {
@@ -169,6 +178,23 @@ export function createSkillRepairPrefill(
     scope,
     projectPath: scope === 'project' ? projectPath : undefined,
     gitRef: skill.gitRef ?? null,
+  };
+}
+
+export function createSkillRepairDraft(
+  skill: Pick<InstalledSkill, 'name' | 'source' | 'sourceUrl' | 'agents'> & { gitRef?: string | null },
+  scope: SkillScope,
+  projectPath?: string
+): RepairSourceDraft | null {
+  const source = buildRepairSource(skill);
+  if (!source) return null;
+  return {
+    source,
+    skillName: skill.name,
+    scope,
+    projectPath: scope === 'project' ? projectPath : undefined,
+    gitRef: skill.gitRef ?? null,
+    agents: skill.agents,
   };
 }
 

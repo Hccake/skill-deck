@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   skillDialogState: {
     openDelete: vi.fn(),
     openAdd: vi.fn(),
+    openRepairSource: vi.fn(),
   },
 }));
 
@@ -78,7 +79,27 @@ vi.mock('../CompactSkillList', () => ({
 }));
 
 vi.mock('../SkillsSection', () => ({
-  SkillsSection: () => <div>skills-section</div>,
+  SkillsSection: ({
+    skills,
+    onRepairSource,
+  }: {
+    skills: Array<{ name: string; scope: 'global' | 'project' }>;
+    onRepairSource?: (skill: { name: string; scope: 'global' | 'project' }) => void;
+  }) => (
+    <div>
+      skills-section
+      {skills.map((skill) => (
+        <button
+          key={`${skill.scope}:${skill.name}`}
+          type="button"
+          data-testid={`repair:${skill.scope}:${skill.name}`}
+          onClick={() => onRepairSource?.(skill)}
+        >
+          repair
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 vi.mock('../DeleteSkillDialog', () => ({
@@ -119,6 +140,7 @@ describe('SkillsPanel', () => {
     };
     mocks.skillDialogState.openDelete.mockClear();
     mocks.skillDialogState.openAdd.mockClear();
+    mocks.skillDialogState.openRepairSource.mockClear();
   });
 
   it('does not clear the selected skill when compact mode mounts', async () => {
@@ -129,6 +151,39 @@ describe('SkillsPanel', () => {
     });
 
     expect(mocks.skillDetailState.deselectSkill).not.toHaveBeenCalled();
+  });
+
+  it('opens the repair source dialog for repairable skills instead of the install wizard', async () => {
+    mocks.skillsDataState.globalSkills = [
+      {
+        name: 'toolkit',
+        description: '',
+        path: '/skills/toolkit',
+        canonicalPath: '/canonical/toolkit',
+        scope: 'global',
+        agents: [],
+        hasUpdate: false,
+        canRunUpdate: false,
+        canCheckForUpdates: false,
+        updateReason: 'missing-skill-path',
+        source: 'owner/repo',
+        sourceUrl: 'https://github.com/owner/repo',
+      },
+    ] as never;
+
+    render(<SkillsPanel compact={false} />);
+
+    await waitFor(() => {
+      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
+    });
+
+    document.querySelector<HTMLButtonElement>('[data-testid="repair:global:toolkit"]')?.click();
+
+    expect(mocks.skillDialogState.openRepairSource).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'toolkit', scope: 'global' }),
+      'global'
+    );
+    expect(mocks.skillDialogState.openAdd).not.toHaveBeenCalled();
   });
 
   it('clears the selected skill when the selected context changes', async () => {

@@ -2,7 +2,13 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { useContextStore } from './context';
-import { t, type DeleteTarget, type AddDialogPrefill } from './skills-utils';
+import {
+  createSkillRepairDraft,
+  t,
+  type AddDialogPrefill,
+  type DeleteTarget,
+  type RepairSourceDraft,
+} from './skills-utils';
 import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import {
   removeSkill as apiRemoveSkill,
@@ -27,12 +33,17 @@ interface SkillDialogState {
   // Copy to project dialog
   copySkill: InstalledSkill | null;
 
+  // Repair source dialog
+  repairSourceTarget: RepairSourceDraft | null;
+
   // Actions
   openDelete: (skill: InstalledSkill, scope: SkillScope, projectPath?: string) => void;
   closeDelete: () => void;
   deleteSkill: (params: { fullRemoval: boolean; agents?: AgentType[] }) => Promise<void>;
   openAdd: (scope: SkillScope) => void;
   openAddWithPrefill: (prefill: AddDialogPrefill) => void;
+  openRepairSource: (skill: InstalledSkill, scope: SkillScope, projectPath?: string) => void;
+  closeRepairSource: () => void;
   openManageAgents: (skill: InstalledSkill, scope: SkillScope) => void;
   closeManageAgents: () => void;
   saveAgentChanges: (addAgents: string[], removeAgents: string[], mode: InstallMode) => Promise<void>;
@@ -49,6 +60,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   manageAgentsScope: 'global' as SkillScope,
   manageAgentsProjectPath: undefined,
   copySkill: null,
+  repairSourceTarget: null,
 
   openDelete: (skill, scope, projectPath) => {
     set({
@@ -136,6 +148,14 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       toast.error(String(e));
     });
   },
+
+  openRepairSource: (skill, scope, projectPath) => {
+    const repairSourceTarget = createSkillRepairDraft(skill, scope, projectPath);
+    if (!repairSourceTarget) return;
+    set({ repairSourceTarget });
+  },
+
+  closeRepairSource: () => set({ repairSourceTarget: null }),
 
   openManageAgents: (skill, scope) => {
     const manageAgentsProjectPath =

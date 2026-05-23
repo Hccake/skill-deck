@@ -52,8 +52,27 @@
       "delete": "删除",
       "moreOptions": "更多选项",
       "copyToProject": "复制到项目",
-      "repairSource": "补全来源",
+      "repairSource": "修复来源",
       "reinstall": "重新安装"
+    },
+    "repairSourceDialog": {
+      "title": "修复 {{name}} 的来源",
+      "description": "从下方来源重新安装，以恢复更新检查所需信息。",
+      "sourceLabel": "来源",
+      "scopeLabel": "安装范围",
+      "projectLabel": "项目",
+      "agentsLabel": "关联 Agent",
+      "editSource": "更改来源",
+      "cancelEdit": "取消更改",
+      "validate": "检查来源",
+      "validating": "正在检查来源...",
+      "sourceContainsSkill": "来源中已找到 {{name}}。",
+      "sourceMissingSkill": "该来源中未找到 {{name}}，无法修复此 Skill。",
+      "sourceInvalid": "无法读取该来源，请检查 URL 或分支。",
+      "overwriteNotice": "修复会覆盖当前 Skill 内容，并保留当前关联的 Agent。",
+      "repair": "修复",
+      "repairing": "正在修复...",
+      "repairFailed": "修复失败，请检查安装结果后重试。"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -173,7 +192,7 @@
     },
     "updateStatusLabel": {
       "available": "新版本可用",
-      "needsSourceInfo": "来源信息不完整",
+      "needsSourceInfo": "需修复来源",
       "versionUnknown": "暂不能检查更新",
       "upstreamUnavailable": "来源暂不可用",
       "localSource": "本地 Skill",
@@ -182,7 +201,7 @@
       "checkFailed": "检查失败"
     },
     "updateHint": {
-      "missing-skill-path": "缺少安装来源信息。重新安装后可恢复版本检查。",
+      "missing-skill-path": "缺少安装来源信息。修复来源后可恢复版本检查。",
       "missing-remote-hash": "本地版本信息不完整。重新安装后可恢复版本检查。",
       "unsupported-source-type": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "local-source": "此 Skill 来自本地文件，不支持更新检测。",
@@ -193,7 +212,7 @@
       "http-error": "版本检查失败。稍后可重新检查。"
     },
     "updateReason": {
-      "missing-skill-path": "缺少安装来源信息。重新安装后可恢复版本检查。",
+      "missing-skill-path": "缺少安装来源信息。修复来源后可恢复版本检查。",
       "missing-remote-hash": "本地版本信息不完整。重新安装后可恢复版本检查。",
       "unsupported-source-type": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "local-source": "此 Skill 来自本地文件，不支持更新检测。",

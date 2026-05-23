@@ -90,6 +90,7 @@ describe('useSkillsStore', () => {
       manageAgentsScope: 'global',
       manageAgentsProjectPath: undefined,
       copySkill: null,
+      repairSourceTarget: null,
     });
   });
 
@@ -230,6 +231,43 @@ describe('useSkillsStore', () => {
         prefillSource: 'https://github.com/owner/repo#main',
         prefillSkillName: 'toolkit',
       });
+    });
+
+    it('openRepairSource stores a normalized repair target without opening the install wizard', () => {
+      useSkillDialogStore.getState().openRepairSource(
+        makeSkill('toolkit', {
+          scope: 'project',
+          source: 'owner/repo',
+          sourceUrl: null,
+          gitRef: 'main',
+          agents: ['claude-code'],
+        }),
+        'project',
+        'D:\\Code\\project-a'
+      );
+
+      expect(useSkillDialogStore.getState().repairSourceTarget).toEqual(expect.objectContaining({
+        skillName: 'toolkit',
+        scope: 'project',
+        projectPath: 'D:\\Code\\project-a',
+        source: 'https://github.com/owner/repo#main',
+        agents: ['claude-code'],
+      }));
+      expect(mockOpenInstallWizard).not.toHaveBeenCalled();
+    });
+
+    it('openRepairSource ignores skills without a repairable source', () => {
+      useSkillDialogStore.getState().openRepairSource(
+        makeSkill('local-only', {
+          source: 'not a url',
+          sourceUrl: null,
+          gitRef: null,
+        }),
+        'global'
+      );
+
+      expect(useSkillDialogStore.getState().repairSourceTarget).toBeNull();
+      expect(mockOpenInstallWizard).not.toHaveBeenCalled();
     });
 
     it('openDelete sets deleteTarget and fetches agent details', async () => {
@@ -523,6 +561,88 @@ describe('useSkillsStore', () => {
         hasUpdate: false,
         updateStatus: 'up-to-date',
         updateReason: null,
+      }));
+    });
+
+    it('clears missing source metadata after a successful source repair', () => {
+      useSkillsDataStore.setState({
+        globalSkills: [
+          {
+            ...makeSkill('toolkit', {
+              canCheckForUpdates: false,
+              canRunUpdate: false,
+              updateReason: 'missing-skill-path',
+            }),
+            updateStatus: 'cannot-check',
+          },
+        ],
+        projectSkills: [],
+      });
+      updateInfoCache.set('global', {
+        checkedAt: Date.now(),
+        results: [{
+          name: 'toolkit',
+          source: 'owner/repo',
+          hasUpdate: false,
+          status: 'cannot-check',
+          reason: 'missing-skill-path',
+          gitRef: null,
+        }],
+      });
+
+      useSkillsDataStore.getState().markSourceRepairSucceeded('toolkit', 'global');
+
+      const cached = updateInfoCache.get('global');
+      expect(cached?.results[0]).toEqual(expect.objectContaining({
+        hasUpdate: false,
+        status: 'up-to-date',
+        reason: null,
+      }));
+      expect(useSkillsDataStore.getState().globalSkills[0]).toEqual(expect.objectContaining({
+        hasUpdate: false,
+        updateStatus: 'up-to-date',
+        updateReason: null,
+      }));
+    });
+
+    it('does not clear the visible project list when source repair completed for another project', () => {
+      useContextStore.setState({ selectedContext: '/project-b' });
+      useSkillsDataStore.setState({
+        globalSkills: [],
+        projectSkills: [
+          {
+            ...makeSkill('toolkit', {
+              scope: 'project',
+              canCheckForUpdates: false,
+              canRunUpdate: false,
+              updateReason: 'missing-skill-path',
+            }),
+            updateStatus: 'cannot-check',
+          },
+        ],
+      });
+      updateInfoCache.set('/project-a', {
+        checkedAt: Date.now(),
+        results: [{
+          name: 'toolkit',
+          source: 'owner/repo',
+          hasUpdate: false,
+          status: 'cannot-check',
+          reason: 'missing-skill-path',
+          gitRef: null,
+        }],
+      });
+
+      useSkillsDataStore.getState().markSourceRepairSucceeded('toolkit', 'project', '/project-a');
+
+      const cached = updateInfoCache.get('/project-a');
+      expect(cached?.results[0]).toEqual(expect.objectContaining({
+        status: 'up-to-date',
+        reason: null,
+      }));
+      expect(useSkillsDataStore.getState().projectSkills[0]).toEqual(expect.objectContaining({
+        updateStatus: 'cannot-check',
+        updateReason: 'missing-skill-path',
       }));
     });
   });

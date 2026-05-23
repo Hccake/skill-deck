@@ -87,7 +87,7 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.reinstallRequired')).toBeTruthy();
+    expect(screen.getByText('skills.updateStatusLabel.needsSourceInfo')).toBeTruthy();
     expect(screen.getByText('skills.updateHint.missing-skill-path')).toBeTruthy();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
   });
