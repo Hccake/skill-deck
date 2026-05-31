@@ -107,6 +107,7 @@ pub enum AgentType {
     TraeCn,
     Warp,
     Windsurf,
+    Zed,
     Zencoder,
     Pochi,
     Adal,
@@ -166,6 +167,7 @@ impl std::fmt::Display for AgentType {
             Self::TraeCn => "trae-cn",
             Self::Warp => "warp",
             Self::Windsurf => "windsurf",
+            Self::Zed => "zed",
             Self::Zencoder => "zencoder",
             Self::Pochi => "pochi",
             Self::Adal => "adal",
@@ -230,6 +232,7 @@ impl std::str::FromStr for AgentType {
             "trae-cn" => Ok(Self::TraeCn),
             "warp" => Ok(Self::Warp),
             "windsurf" => Ok(Self::Windsurf),
+            "zed" => Ok(Self::Zed),
             "zencoder" => Ok(Self::Zencoder),
             "pochi" => Ok(Self::Pochi),
             "adal" => Ok(Self::Adal),
@@ -293,6 +296,7 @@ impl AgentType {
             Self::TraeCn,
             Self::Warp,
             Self::Windsurf,
+            Self::Zed,
             Self::Zencoder,
             Self::Pochi,
             Self::Adal,
@@ -615,6 +619,12 @@ impl AgentType {
                     PATHS.home.join(".codeium").join("windsurf").join("skills"),
                 ),
             },
+            Self::Zed => AgentConfig {
+                name: "zed",
+                display_name: "Zed",
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
+            },
             Self::Zencoder => AgentConfig {
                 name: "zencoder",
                 display_name: "Zencoder",
@@ -733,6 +743,17 @@ impl AgentType {
             Self::TraeCn => PATHS.home.join(".trae-cn").exists(),
             Self::Warp => PATHS.home.join(".warp").exists(),
             Self::Windsurf => PATHS.home.join(".codeium").join("windsurf").exists(),
+            Self::Zed => {
+                PATHS.config_home.join("zed").exists()
+                    || std::env::var_os("APPDATA")
+                        .filter(|value| !value.is_empty())
+                        .map(|value| PathBuf::from(value).join("Zed").exists())
+                        .unwrap_or(false)
+                    || std::env::var_os("FLATPAK_XDG_CONFIG_HOME")
+                        .filter(|value| !value.is_empty())
+                        .map(|value| PathBuf::from(value).join("zed").exists())
+                        .unwrap_or(false)
+            }
             Self::Zencoder => PATHS.home.join(".zencoder").exists(),
             Self::Pochi => PATHS.home.join(".pochi").exists(),
             Self::Adal => PATHS.home.join(".adal").exists(),
@@ -819,8 +840,8 @@ mod tests {
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
         assert_eq!(
-            count, 54,
-            "Should have 54 real agent types after removing the hidden shared-directory placeholder"
+            count, 55,
+            "Should have 55 real agent types after removing the hidden shared-directory placeholder"
         );
     }
 
@@ -930,6 +951,42 @@ mod tests {
     fn test_deepagents_agent_is_parseable() {
         let parsed = "deepagents".parse::<AgentType>();
         assert!(parsed.is_ok(), "deepagents should be a supported agent");
+    }
+
+    #[test]
+    fn test_zed_agent_is_parseable() {
+        let parsed = "zed".parse::<AgentType>();
+        assert_eq!(parsed.ok(), Some(AgentType::Zed));
+        assert_eq!(AgentType::Zed.to_string(), "zed");
+    }
+
+    #[test]
+    fn test_zed_agent_config_matches_cli() {
+        let config = AgentType::Zed.config();
+        let expected_global = PATHS.home.join(".agents").join("skills");
+        assert_eq!(config.name, "zed");
+        assert_eq!(config.display_name, "Zed");
+        assert_eq!(config.skills_dir, ".agents/skills");
+        assert_eq!(
+            config.global_skills_dir.as_deref(),
+            Some(expected_global.as_path())
+        );
+    }
+
+    #[test]
+    fn test_zed_is_automatic_for_both_scopes() {
+        let info = AgentType::Zed.to_agent_info();
+        assert!(info.targets.project.supported);
+        assert!(info.targets.project.automatic);
+        assert_eq!(info.targets.project.path, ".agents/skills");
+        assert!(info.targets.global.supported);
+        assert!(info.targets.global.automatic);
+        assert!(info
+            .targets
+            .global
+            .path
+            .replace('\\', "/")
+            .ends_with(".agents/skills"));
     }
 
     #[test]
