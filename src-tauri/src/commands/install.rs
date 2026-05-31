@@ -19,7 +19,7 @@ use crate::core::{
 use crate::error::AppError;
 use crate::models::{
     AvailableSkill, FetchResult, InstallMode, InstallParams, InstallResult, InstallResults,
-    SourceType,
+    ParsedSource, SourceType,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -213,6 +213,17 @@ fn should_write_lock_for_skill(
     successful
         .iter()
         .any(|result| result.skill_name == skill_name && result.success)
+}
+
+fn lock_source_for_parsed_source(parsed: &ParsedSource, requested_source: &str) -> String {
+    if parsed.source_type == SourceType::WellKnown {
+        return crate::core::wellknown::extract_hostname(&parsed.url)
+            .unwrap_or_else(|| requested_source.to_string());
+    }
+    if parsed.url.starts_with("git@") || parsed.url.starts_with("ssh://") {
+        return parsed.url.clone();
+    }
+    get_owner_repo(parsed).unwrap_or_else(|| requested_source.to_string())
 }
 
 fn canonical_only_install_result(
@@ -488,12 +499,7 @@ async fn install_skills_inner(
                 continue;
             }
 
-            let source = if parsed.source_type == SourceType::WellKnown {
-                crate::core::wellknown::extract_hostname(&parsed.url)
-                    .unwrap_or_else(|| params.source.clone())
-            } else {
-                owner_repo.as_deref().unwrap_or(&params.source).to_string()
-            };
+            let source = lock_source_for_parsed_source(&parsed, &params.source);
             let source_type_str = &parsed.source_type.to_string();
             let source_url = &parsed.url;
             let skill_path = Some(skill.relative_path.as_str());
@@ -757,6 +763,46 @@ mod tests {
             true,
             0
         ));
+    }
+
+    #[test]
+    fn test_lock_source_preserves_git_ssh_url() {
+        let parsed = parse_source("git@github.com:owner/private.git").unwrap();
+        assert_eq!(
+            lock_source_for_parsed_source(&parsed, "git@github.com:owner/private.git"),
+            "git@github.com:owner/private.git"
+        );
+    }
+
+    #[test]
+    fn test_lock_source_preserves_ssh_url() {
+        let parsed = parse_source("ssh://git@git.example.com:7999/owner/private.git#main").unwrap();
+        assert_eq!(
+            lock_source_for_parsed_source(
+                &parsed,
+                "ssh://git@git.example.com:7999/owner/private.git#main"
+            ),
+            "ssh://git@git.example.com:7999/owner/private.git"
+        );
+    }
+
+    #[test]
+    fn test_lock_source_preserves_ssh_url_without_git_suffix_and_excludes_fragment() {
+        let parsed = parse_source("ssh://git@git.example.com/owner/private#main").unwrap();
+        assert_eq!(parsed.git_ref.as_deref(), Some("main"));
+        assert_eq!(
+            lock_source_for_parsed_source(&parsed, "ssh://git@git.example.com/owner/private#main"),
+            "ssh://git@git.example.com/owner/private"
+        );
+    }
+
+    #[test]
+    fn test_lock_source_keeps_public_github_normalized_owner_repo() {
+        let parsed = parse_source("https://github.com/owner/repo").unwrap();
+        assert_eq!(
+            lock_source_for_parsed_source(&parsed, "https://github.com/owner/repo"),
+            "owner/repo"
+        );
     }
 
     #[test]

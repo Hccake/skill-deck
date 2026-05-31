@@ -58,7 +58,11 @@ static SHORTHAND_RE: Lazy<Regex> =
 /// 只有 git-like 来源才应将 # 后的内容解释为分支 ref
 fn looks_like_git_source(input: &str) -> bool {
     // 前缀检查
-    if input.starts_with("github:") || input.starts_with("gitlab:") || input.starts_with("git@") {
+    if input.starts_with("github:")
+        || input.starts_with("gitlab:")
+        || input.starts_with("git@")
+        || input.starts_with("ssh://")
+    {
         return true;
     }
     // HTTP(S) URL
@@ -188,7 +192,15 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
         return parse_source(&recursive_input);
     }
 
-    // 6. 检查是否是 URL
+    // 6. 检查 SSH Git URL
+    if input.starts_with("ssh://") {
+        let mut result = parse_git_url(input)?;
+        result.git_ref = fragment_ref;
+        result.skill_filter = fragment_skill_filter;
+        return Ok(result);
+    }
+
+    // 7. 检查是否是 URL
     if input.starts_with("http://") || input.starts_with("https://") {
         let mut result = parse_url(input)?;
         // 合并 fragment ref（URL 提取的 ref 优先，fragment 作为 fallback）
@@ -200,7 +212,7 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
         return Ok(result);
     }
 
-    // 7. 检查 Git URL (git@...)
+    // 8. 检查 Git URL (git@...)
     if input.starts_with("git@") {
         let mut result = parse_git_url(input)?;
         result.git_ref = fragment_ref;
@@ -208,7 +220,7 @@ pub fn parse_source(input: &str) -> Result<ParsedSource, AppError> {
         return Ok(result);
     }
 
-    // 8. 尝试解析为 GitHub shorthand（支持 .git 后缀）
+    // 9. 尝试解析为 GitHub shorthand（支持 .git 后缀）
     let mut result = parse_github_shorthand(input)?;
     result.git_ref = result.git_ref.or(fragment_ref);
     result.skill_filter = fragment_skill_filter.or(result.skill_filter);
@@ -484,6 +496,14 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
                 let path = caps[1].trim_end_matches(".git");
                 if path.contains('/') {
                     return Some(path.to_string());
+                }
+            }
+            if parsed.url.starts_with("ssh://") {
+                if let Ok(url) = Url::parse(&parsed.url) {
+                    let path = url.path().trim_start_matches('/').trim_end_matches(".git");
+                    if path.contains('/') {
+                        return Some(path.to_string());
+                    }
                 }
             }
             None
@@ -783,6 +803,45 @@ mod tests {
     fn test_fragment_ref_git_ssh() {
         let result = parse_source("git@github.com:owner/repo.git#develop").unwrap();
         assert_eq!(result.git_ref, Some("develop".to_string()));
+    }
+
+    #[test]
+    fn test_ssh_url_git_source_with_fragment_ref() {
+        let result =
+            parse_source("ssh://git@git.example.com:7999/owner/repo.git#release-2026").unwrap();
+        assert_eq!(result.source_type, SourceType::Git);
+        assert_eq!(result.url, "ssh://git@git.example.com:7999/owner/repo.git");
+        assert_eq!(result.git_ref.as_deref(), Some("release-2026"));
+    }
+
+    #[test]
+    fn test_ssh_url_without_git_suffix_extracts_fragment_ref() {
+        let result = parse_source("ssh://git@git.example.com/owner/repo#main").unwrap();
+        assert_eq!(result.source_type, SourceType::Git);
+        assert_eq!(result.url, "ssh://git@git.example.com/owner/repo");
+        assert_eq!(result.git_ref.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn test_ssh_url_without_git_suffix_extracts_fragment_ref_and_skill_filter() {
+        let result = parse_source("ssh://git@git.example.com/owner/repo#main@demo-skill").unwrap();
+        assert_eq!(result.source_type, SourceType::Git);
+        assert_eq!(result.url, "ssh://git@git.example.com/owner/repo");
+        assert_eq!(result.git_ref.as_deref(), Some("main"));
+        assert_eq!(result.skill_filter.as_deref(), Some("demo-skill"));
+    }
+
+    #[test]
+    fn test_get_owner_repo_ssh_url_with_port() {
+        let parsed = parse_source("ssh://git@git.example.com:7999/org/team/repo.git").unwrap();
+        assert_eq!(get_owner_repo(&parsed), Some("org/team/repo".to_string()));
+    }
+
+    #[test]
+    fn test_non_git_url_fragment_remains_well_known_anchor() {
+        let result = parse_source("https://example.com/docs#install").unwrap();
+        assert_eq!(result.source_type, SourceType::WellKnown);
+        assert_eq!(result.git_ref, None);
     }
 
     #[test]
