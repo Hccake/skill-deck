@@ -21,6 +21,32 @@ const SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache
 /// 最大递归深度（与 CLI 一致）
 const MAX_DEPTH: usize = 5;
 
+const CLI_AGENT_PROJECT_SKILL_DIRS: &[&str] = &[
+    ".agents/skills",
+    ".claude/skills",
+    ".cline/skills",
+    ".codebuddy/skills",
+    ".codex/skills",
+    ".commandcode/skills",
+    ".continue/skills",
+    ".github/skills",
+    ".goose/skills",
+    ".iflow/skills",
+    ".junie/skills",
+    ".kilocode/skills",
+    ".kiro/skills",
+    ".mux/skills",
+    ".neovate/skills",
+    ".opencode/skills",
+    ".openhands/skills",
+    ".pi/skills",
+    ".qoder/skills",
+    ".roo/skills",
+    ".trae/skills",
+    ".windsurf/skills",
+    ".zencoder/skills",
+];
+
 /// 发现选项
 #[derive(Debug, Default)]
 pub struct DiscoverOptions {
@@ -39,6 +65,12 @@ pub struct DiscoveredSkill {
     pub relative_path: String,
     /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
     pub plugin_name: Option<String>,
+}
+
+struct PrioritySearchDir {
+    path: PathBuf,
+    bounded_depth_two: bool,
+    filter_locked_agent_project_skills: bool,
 }
 
 impl From<DiscoveredSkill> for AvailableSkill {
@@ -134,40 +166,54 @@ pub fn discover_skills(
 
     let mut skills = Vec::new();
     let mut seen_names: HashSet<String> = HashSet::new();
+    let locked_project_skill_names = get_locked_project_skill_names(base_path);
 
     // 1. 检查 searchPath 本身是否是 skill
     if let Some(skill_md) = find_skill_md_case_insensitive(&search_path) {
-        if let Some(skill) = try_parse_skill(&skill_md, base_path, &options)? {
-            seen_names.insert(skill.name.clone());
-            skills.push(skill);
+        push_skill_if_new(
+            &skill_md,
+            base_path,
+            &options,
+            Some(&locked_project_skill_names),
+            &mut skills,
+            &mut seen_names,
+        )?;
 
-            // 如果不是 fullDepth 模式，直接返回
-            if !options.full_depth {
-                return Ok(skills);
-            }
+        // 如果不是 fullDepth 模式，直接返回
+        if !options.full_depth {
+            return Ok(skills);
         }
     }
 
     // 2. 搜索优先目录
-    let priority_dirs = get_priority_search_dirs(&search_path);
+    let priority_dirs = get_priority_search_dir_specs(&search_path);
     for priority_dir in priority_dirs {
-        if priority_dir.exists() {
+        if priority_dir.path.exists() {
             discover_in_dir(
-                &priority_dir,
+                &priority_dir.path,
                 base_path,
                 &options,
+                priority_dir.bounded_depth_two,
+                if priority_dir.filter_locked_agent_project_skills {
+                    Some(&locked_project_skill_names)
+                } else if is_in_cli_agent_project_skill_dir(base_path, &priority_dir.path) {
+                    Some(&locked_project_skill_names)
+                } else {
+                    None
+                },
                 &mut skills,
                 &mut seen_names,
             )?;
         }
     }
 
-    // 3. 如果未找到或启用 fullDepth，进行递归搜索
-    if skills.is_empty() || options.full_depth {
+    // 3. 启用 fullDepth 时进行递归搜索
+    if options.full_depth {
         discover_recursive(
             &search_path,
             base_path,
             &options,
+            &locked_project_skill_names,
             &mut skills,
             &mut seen_names,
         )?;
@@ -186,46 +232,52 @@ pub fn discover_skills(
 
 /// 获取优先搜索目录列表（与 CLI 一致）
 fn get_priority_search_dirs(search_path: &Path) -> Vec<PathBuf> {
-    vec![
-        search_path.to_path_buf(),
-        search_path.join("skills"),
-        search_path.join("skills/.curated"),
-        search_path.join("skills/.experimental"),
-        search_path.join("skills/.system"),
-        search_path.join(".aider-desk/skills"),
-        search_path.join(".agents/skills"),
-        search_path.join(".claude/skills"),
-        search_path.join(".cline/skills"),
-        search_path.join(".codeartsdoer/skills"),
-        search_path.join(".codebuddy/skills"),
-        search_path.join(".codemaker/skills"),
-        search_path.join(".codestudio/skills"),
-        search_path.join(".codex/skills"),
-        search_path.join(".commandcode/skills"),
-        search_path.join(".continue/skills"),
-        search_path.join(".cursor/skills"),
-        search_path.join(".devin/skills"),
-        search_path.join(".forge/skills"),
-        search_path.join(".github/skills"),
-        search_path.join(".goose/skills"),
-        search_path.join(".hermes/skills"),
-        search_path.join(".iflow/skills"),
-        search_path.join(".junie/skills"),
-        search_path.join(".kilocode/skills"),
-        search_path.join(".kiro/skills"),
-        search_path.join(".mux/skills"),
-        search_path.join(".neovate/skills"),
-        search_path.join(".opencode/skills"),
-        search_path.join(".openhands/skills"),
-        search_path.join(".pi/skills"),
-        search_path.join(".qoder/skills"),
-        search_path.join(".rovodev/skills"),
-        search_path.join(".roo/skills"),
-        search_path.join(".tabnine/agent/skills"),
-        search_path.join(".trae/skills"),
-        search_path.join(".windsurf/skills"),
-        search_path.join(".zencoder/skills"),
-    ]
+    get_priority_search_dir_specs(search_path)
+        .into_iter()
+        .map(|spec| spec.path)
+        .collect()
+}
+
+fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
+    let mut dirs = vec![
+        PrioritySearchDir {
+            path: search_path.to_path_buf(),
+            bounded_depth_two: false,
+            filter_locked_agent_project_skills: false,
+        },
+        PrioritySearchDir {
+            path: search_path.join("skills"),
+            bounded_depth_two: true,
+            filter_locked_agent_project_skills: false,
+        },
+        PrioritySearchDir {
+            path: search_path.join("skills/.curated"),
+            bounded_depth_two: true,
+            filter_locked_agent_project_skills: false,
+        },
+        PrioritySearchDir {
+            path: search_path.join("skills/.experimental"),
+            bounded_depth_two: true,
+            filter_locked_agent_project_skills: false,
+        },
+        PrioritySearchDir {
+            path: search_path.join("skills/.system"),
+            bounded_depth_two: true,
+            filter_locked_agent_project_skills: false,
+        },
+    ];
+
+    dirs.extend(
+        CLI_AGENT_PROJECT_SKILL_DIRS
+            .iter()
+            .map(|dir| PrioritySearchDir {
+                path: search_path.join(dir),
+                bounded_depth_two: true,
+                filter_locked_agent_project_skills: true,
+            }),
+    );
+
+    dirs
 }
 
 /// 在目录中发现 skills（搜索直接子目录）
@@ -233,25 +285,82 @@ fn discover_in_dir(
     dir: &Path,
     root: &Path,
     options: &DiscoverOptions,
+    bounded_depth_two: bool,
+    locked_project_skill_names: Option<&HashSet<String>>,
     skills: &mut Vec<DiscoveredSkill>,
     seen_names: &mut HashSet<String>,
 ) -> Result<(), AppError> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()), // 目录不存在或无权限
-    };
+    for path in read_child_dirs(dir) {
+        if let Some(skill_md) = find_skill_md_case_insensitive(&path) {
+            push_skill_if_new(
+                &skill_md,
+                root,
+                options,
+                locked_project_skill_names,
+                skills,
+                seen_names,
+            )?;
+            continue;
+        }
 
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(skill_md) = find_skill_md_case_insensitive(&path) {
-                if let Some(skill) = try_parse_skill(&skill_md, root, options)? {
-                    if !seen_names.contains(&skill.name) {
-                        seen_names.insert(skill.name.clone());
-                        skills.push(skill);
-                    }
+        if bounded_depth_two {
+            for nested_path in read_child_dirs(&path) {
+                if let Some(skill_md) = find_skill_md_case_insensitive(&nested_path) {
+                    push_skill_if_new(
+                        &skill_md,
+                        root,
+                        options,
+                        locked_project_skill_names,
+                        skills,
+                        seen_names,
+                    )?;
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn read_child_dirs(dir: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_none_or(|name| !SKIP_DIRS.contains(&name))
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    dirs.sort();
+    dirs
+}
+
+fn push_skill_if_new(
+    skill_md: &Path,
+    root: &Path,
+    options: &DiscoverOptions,
+    locked_project_skill_names: Option<&HashSet<String>>,
+    skills: &mut Vec<DiscoveredSkill>,
+    seen_names: &mut HashSet<String>,
+) -> Result<(), AppError> {
+    if let Some(skill) = try_parse_skill(skill_md, root, options)? {
+        if is_in_cli_agent_project_skill_dir(root, &skill.path)
+            && locked_project_skill_names
+                .is_some_and(|locked| is_locked_project_skill(&skill, locked))
+        {
+            return Ok(());
+        }
+
+        if !seen_names.contains(&skill.name) {
+            seen_names.insert(skill.name.clone());
+            skills.push(skill);
         }
     }
 
@@ -263,6 +372,7 @@ fn discover_recursive(
     dir: &Path,
     root: &Path,
     options: &DiscoverOptions,
+    locked_project_skill_names: &HashSet<String>,
     skills: &mut Vec<DiscoveredSkill>,
     seen_names: &mut HashSet<String>,
 ) -> Result<(), AppError> {
@@ -288,6 +398,12 @@ fn discover_recursive(
                     .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
                 {
                     if let Some(skill) = try_parse_skill(path, root, options)? {
+                        if is_in_cli_agent_project_skill_dir(root, &skill.path)
+                            && is_locked_project_skill(&skill, locked_project_skill_names)
+                        {
+                            continue;
+                        }
+
                         if !seen_names.contains(&skill.name) {
                             seen_names.insert(skill.name.clone());
                             skills.push(skill);
@@ -299,6 +415,51 @@ fn discover_recursive(
     }
 
     Ok(())
+}
+
+fn get_locked_project_skill_names(base_path: &Path) -> HashSet<String> {
+    let lock_path = base_path.join("skills-lock.json");
+    let Ok(content) = std::fs::read_to_string(lock_path) else {
+        return HashSet::new();
+    };
+    let Ok(lock) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return HashSet::new();
+    };
+
+    lock.get("skills")
+        .and_then(|skills| skills.as_object())
+        .into_iter()
+        .flat_map(|skills| skills.keys())
+        .map(|name| normalize_skill_name_for_lock_match(name))
+        .collect()
+}
+
+fn normalize_skill_name_for_lock_match(name: &str) -> String {
+    name.to_lowercase()
+        .split(|c: char| c.is_whitespace() || c == '_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn is_locked_project_skill(skill: &DiscoveredSkill, locked_names: &HashSet<String>) -> bool {
+    locked_names.contains(&normalize_skill_name_for_lock_match(&skill.name))
+        || skill
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| locked_names.contains(&normalize_skill_name_for_lock_match(name)))
+            .unwrap_or(false)
+}
+
+fn is_in_cli_agent_project_skill_dir(root: &Path, skill_dir: &Path) -> bool {
+    let Ok(relative_path) = skill_dir.strip_prefix(root) else {
+        return false;
+    };
+
+    CLI_AGENT_PROJECT_SKILL_DIRS
+        .iter()
+        .any(|agent_dir| relative_path.starts_with(agent_dir))
 }
 
 /// 检查是否应该安装 internal skills（与 CLI 一致）
@@ -393,14 +554,242 @@ mod tests {
     }
 
     #[test]
-    fn test_priority_search_dirs_include_cli_1_5_7_agent_dirs() {
+    fn test_discover_skills_finds_depth_two_catalog_skill_by_default() {
+        let temp = tempdir().unwrap();
+        let skill_dir = temp.path().join("skills/product/demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: catalog-demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "catalog-demo");
+        assert_eq!(skills[0].relative_path, "skills/product/demo/SKILL.md");
+    }
+
+    #[test]
+    fn test_discover_skills_depth_one_skill_shadows_nested_skill() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("skills/demo/inner")).unwrap();
+        fs::write(
+            temp.path().join("skills/demo/SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("skills/demo/inner/SKILL.md"),
+            "---\nname: inner\ndescription: Inner\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "demo");
+    }
+
+    #[test]
+    fn test_discover_skills_does_not_scan_examples_depth_two_by_default() {
+        let temp = tempdir().unwrap();
+        let skill_dir = temp.path().join("examples/product/demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: example-demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn test_discover_skills_skips_locked_agent_project_skill_by_frontmatter_name() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("skills-lock.json"),
+            r#"{"version":1,"skills":{"demo-skill":{"source":"owner/repo","sourceType":"github","skillPath":"skills/demo/SKILL.md","computedHash":"abc"}}}"#,
+        )
+        .unwrap();
+        let skill_dir = temp.path().join(".agents/skills/demo-folder");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo skill\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn test_discover_skills_skips_locked_agent_project_skill_by_directory_name() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("skills-lock.json"),
+            r#"{"version":1,"skills":{"demo-skill":{"source":"owner/repo","sourceType":"github","skillPath":"skills/demo/SKILL.md","computedHash":"abc"}}}"#,
+        )
+        .unwrap();
+        let skill_dir = temp.path().join(".agents/skills/demo_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: different-name\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn test_discover_skills_keeps_unlocked_agent_project_skill() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("skills-lock.json"),
+            r#"{"version":1,"skills":{}}"#,
+        )
+        .unwrap();
+        let skill_dir = temp.path().join(".agents/skills/new-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: new-skill\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "new-skill");
+    }
+
+    #[test]
+    fn test_discover_skills_does_not_filter_from_legacy_project_lock() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".agents")).unwrap();
+        fs::write(
+            temp.path().join(".agents/.skill-lock.json"),
+            r#"{"version":1,"skills":{"demo-skill":{"source":"owner/repo","sourceType":"github","skillPath":"skills/demo/SKILL.md","computedHash":"abc"}}}"#,
+        )
+        .unwrap();
+        let skill_dir = temp.path().join(".agents/skills/demo-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "demo-skill");
+    }
+
+    #[test]
+    fn test_discover_skills_skips_locked_direct_agent_skill_subpath() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("skills-lock.json"),
+            r#"{"version":1,"skills":{"demo-skill":{"source":"owner/repo","sourceType":"github","skillPath":"skills/demo/SKILL.md","computedHash":"abc"}}}"#,
+        )
+        .unwrap();
+        let skill_dir = temp.path().join(".agents/skills/demo-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(
+            temp.path(),
+            Some(".agents/skills/demo-skill"),
+            DiscoverOptions::default(),
+        )
+        .unwrap();
+
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn test_discover_skills_skips_locked_agent_skills_subpath_children() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("skills-lock.json"),
+            r#"{"version":1,"skills":{"demo-skill":{"source":"owner/repo","sourceType":"github","skillPath":"skills/demo/SKILL.md","computedHash":"abc"}}}"#,
+        )
+        .unwrap();
+        let skill_dir = temp.path().join(".agents/skills/demo-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(
+            temp.path(),
+            Some(".agents/skills"),
+            DiscoverOptions::default(),
+        )
+        .unwrap();
+
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn test_priority_search_dirs_match_cli_1_5_9_agent_dirs() {
         let temp = tempdir().unwrap();
         let dirs = get_priority_search_dirs(temp.path());
         let expected = [
+            ".agents/skills",
+            ".claude/skills",
+            ".cline/skills",
+            ".codebuddy/skills",
+            ".codex/skills",
+            ".commandcode/skills",
+            ".continue/skills",
+            ".github/skills",
+            ".goose/skills",
+            ".iflow/skills",
+            ".junie/skills",
+            ".kilocode/skills",
+            ".kiro/skills",
+            ".mux/skills",
+            ".neovate/skills",
+            ".opencode/skills",
+            ".openhands/skills",
+            ".pi/skills",
+            ".qoder/skills",
+            ".roo/skills",
+            ".trae/skills",
+            ".windsurf/skills",
+            ".zencoder/skills",
+        ];
+
+        for dir in expected {
+            assert!(
+                dirs.contains(&temp.path().join(dir)),
+                "priority dirs should include {dir}"
+            );
+        }
+
+        let excluded = [
             ".aider-desk/skills",
             ".codeartsdoer/skills",
             ".codemaker/skills",
             ".codestudio/skills",
+            ".cursor/skills",
             ".devin/skills",
             ".forge/skills",
             ".hermes/skills",
@@ -408,10 +797,10 @@ mod tests {
             ".tabnine/agent/skills",
         ];
 
-        for dir in expected {
+        for dir in excluded {
             assert!(
-                dirs.contains(&temp.path().join(dir)),
-                "priority dirs should include {dir}"
+                !dirs.contains(&temp.path().join(dir)),
+                "priority dirs should not include {dir}"
             );
         }
     }
