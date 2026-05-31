@@ -6,7 +6,7 @@ import { useSkillsDataStore } from '../skills-data';
 import { useSkillDetailStore } from '../skill-detail';
 import { useSkillDialogStore } from '../skill-dialog';
 import { useContextStore } from '../context';
-import { buildUpdatePlan, mergeUpdateInfo, updateInfoCache } from '../skills-utils';
+import { buildUpdatePlan, clearUpdateCacheForSkill, mergeUpdateInfo, updateInfoCache } from '../skills-utils';
 
 const mockListSkills = vi.fn();
 const mockListAgents = vi.fn();
@@ -111,6 +111,39 @@ describe('useSkillsStore', () => {
         updateReason: 'missing-skill-path',
       }));
     });
+
+    it('merges update info by source ref and skill path before name fallback', () => {
+      const skills = [
+        {
+          ...makeSkill('demo', {
+            scope: 'project',
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+            hasUpdate: false,
+            canRunUpdate: true,
+            canCheckForUpdates: true,
+          }),
+          skillPath: 'skills/demo/SKILL.md',
+        },
+      ];
+
+      const merged = mergeUpdateInfo(skills, [
+        {
+          name: 'demo',
+          source: 'owner/repo',
+          sourceUrl: 'https://github.com/owner/repo',
+          gitRef: 'main',
+          skillPath: 'skills/demo/SKILL.md',
+          hasUpdate: false,
+          status: 'deleted-upstream',
+          reason: 'deleted-upstream',
+        },
+      ]);
+
+      expect(merged[0].updateStatus).toBe('deleted-upstream');
+      expect(merged[0].updateReason).toBe('deleted-upstream');
+    });
   });
 
   describe('fetchSkills — global scope', () => {
@@ -166,7 +199,7 @@ describe('useSkillsStore', () => {
       mockCheckUpdates.mockResolvedValue([
         {
           name: 'toolkit',
-          source: 'owner/repo',
+          source: 'https://github.com/test/toolkit',
           hasUpdate: false,
           status: 'cannot-check',
           reason: 'missing-skill-path',
@@ -512,6 +545,28 @@ describe('useSkillsStore', () => {
       expect(cached?.results[0]?.reason).toBe('missing-skill-path');
     });
 
+    it('preserves deleted-upstream cache status when clearing stale update flags', () => {
+      updateInfoCache.set('global', {
+        checkedAt: Date.now(),
+        results: [{
+          name: 'demo',
+          source: 'owner/repo',
+          hasUpdate: false,
+          status: 'deleted-upstream',
+          reason: 'deleted-upstream',
+          gitRef: 'main',
+          skillPath: 'skills/demo/SKILL.md',
+        }],
+      });
+
+      clearUpdateCacheForSkill('demo', 'global', undefined, { clearCannotCheck: true });
+
+      expect(updateInfoCache.get('global')?.results[0]).toEqual(expect.objectContaining({
+        status: 'deleted-upstream',
+        reason: 'deleted-upstream',
+      }));
+    });
+
     it('clears missing version metadata after a successful direct reinstall', async () => {
       useSkillsDataStore.setState({
         globalSkills: [
@@ -675,6 +730,34 @@ describe('useSkillsStore', () => {
       expect(plan.repairable[0]).toEqual(expect.objectContaining({
         name: 'legacy',
         reason: 'missing-skill-path',
+        repairSource: 'https://github.com/owner/repo#main',
+      }));
+    });
+
+    it('puts deleted-upstream skills in a maintenance bucket instead of update groups', () => {
+      const plan = buildUpdatePlan([
+        {
+          ...makeSkill('demo', {
+            scope: 'project',
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+            hasUpdate: false,
+            canRunUpdate: true,
+            canCheckForUpdates: true,
+            agents: ['claude-code'],
+          }),
+          skillPath: 'skills/demo/SKILL.md',
+          updateStatus: 'deleted-upstream',
+          updateReason: 'deleted-upstream',
+        },
+      ], 'project', '/repo');
+
+      expect(plan.updatableCount).toBe(0);
+      expect(plan.deletedUpstreamCount).toBe(1);
+      expect(plan.deletedUpstream?.[0]).toEqual(expect.objectContaining({
+        name: 'demo',
+        reason: 'deleted-upstream',
         repairSource: 'https://github.com/owner/repo#main',
       }));
     });

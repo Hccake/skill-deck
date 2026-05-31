@@ -11,6 +11,7 @@ import type {
 export type SkillListItem = InstalledSkill & {
   updateStatus?: SkillUpdateCheckStatus | null;
   updateReason?: string | null;
+  skillPath?: string | null;
 };
 
 /** 按名称排序 skills，保证展示顺序稳定 */
@@ -20,13 +21,28 @@ export function sortSkills(skills: SkillListItem[]): SkillListItem[] {
 
 /** 将 check_updates 结果合并到 skills 列表 */
 export function mergeUpdateInfo(skills: SkillListItem[], updates: SkillUpdateInfo[]): SkillListItem[] {
-  const updateMap = new Map(updates.map((u) => [u.name, u]));
-  return skills.map((s) => ({
-    ...s,
-    hasUpdate: updateMap.get(s.name)?.hasUpdate ?? false,
-    updateStatus: updateMap.get(s.name)?.status ?? s.updateStatus ?? null,
-    updateReason: updateMap.get(s.name)?.reason ?? s.updateReason ?? null,
-  }));
+  const exactUpdateMap = new Map(updates.map((u) => [updateIdentityKey(u), u]));
+  const pathlessUpdateMap = new Map<string, SkillUpdateInfo[]>();
+  const nameOnlyUpdateMap = new Map<string, SkillUpdateInfo>();
+
+  for (const update of updates) {
+    const pathlessKey = updateIdentityKey(update, { includeSkillPath: false });
+    pathlessUpdateMap.set(pathlessKey, [...(pathlessUpdateMap.get(pathlessKey) ?? []), update]);
+    if (!hasStableUpdateIdentity(update)) {
+      nameOnlyUpdateMap.set(update.name, update);
+    }
+  }
+
+  return skills.map((s) => {
+    const update = findUpdateForSkill(s, exactUpdateMap, pathlessUpdateMap, nameOnlyUpdateMap);
+    return {
+      ...s,
+      skillPath: update?.skillPath ?? s.skillPath ?? null,
+      hasUpdate: update?.hasUpdate ?? false,
+      updateStatus: update?.status ?? s.updateStatus ?? null,
+      updateReason: update?.reason ?? s.updateReason ?? null,
+    };
+  });
 }
 
 /** 更新检测结果的 scope 级缓存 — 避免频繁切换 scope 时重复网络请求 */
@@ -46,10 +62,17 @@ export function clearUpdateCacheForSkill(
   if (cached) {
     cached.results = cached.results.map((r) =>
       r.name === skillName && (r.hasUpdate || options.clearCannotCheck)
-        ? { ...r, hasUpdate: false, status: 'up-to-date', reason: null }
+        ? clearCachedUpdateResult(r)
         : r
     );
   }
+}
+
+function clearCachedUpdateResult(result: SkillUpdateInfo): SkillUpdateInfo {
+  if (result.status === 'deleted-upstream' || result.reason === 'deleted-upstream') {
+    return result;
+  }
+  return { ...result, hasUpdate: false, status: 'up-to-date', reason: null };
 }
 
 /** i18n t() 的便捷包装 */
@@ -78,6 +101,9 @@ export function resolveUpdateStatusLabelI18nKey(
 ): string | null {
   if (skill.hasUpdate === true && skill.canRunUpdate !== false) {
     return 'skills.updateStatusLabel.available';
+  }
+  if (skill.updateStatus === 'deleted-upstream' || skill.updateReason === 'deleted-upstream') {
+    return 'skills.updateStatusLabel.deleted-upstream';
   }
   if (skill.updateReason === 'missing-skill-path') {
     return 'skills.updateStatusLabel.needsSourceInfo';
@@ -203,6 +229,7 @@ interface UpdatePlanItem {
   source?: string | null;
   sourceUrl?: string | null;
   gitRef?: string | null;
+  skillPath?: string | null;
   reason?: string | null;
   repairSource?: string | null;
 }
@@ -227,9 +254,11 @@ export interface UpdatePlan {
   updatableCount: number;
   repairableCount: number;
   skippedCount: number;
+  deletedUpstreamCount?: number;
   groups: UpdatePlanGroup[];
   repairable: UpdatePlanItem[];
   skipped: UpdatePlanItem[];
+  deletedUpstream?: UpdatePlanItem[];
 }
 
 export function buildUpdatePlan(
@@ -240,6 +269,7 @@ export function buildUpdatePlan(
   const groups = new Map<string, UpdatePlanGroup>();
   const repairable: UpdatePlanItem[] = [];
   const skipped: UpdatePlanItem[] = [];
+  const deletedUpstream: UpdatePlanItem[] = [];
 
   for (const skill of skills) {
     const source = skill.sourceUrl ?? skill.source ?? 'manual';
@@ -263,12 +293,26 @@ export function buildUpdatePlan(
       continue;
     }
 
+    if (skill.updateStatus === 'deleted-upstream' || skill.updateReason === 'deleted-upstream') {
+      deletedUpstream.push({
+        name: skill.name,
+        source: skill.source,
+        sourceUrl: skill.sourceUrl,
+        gitRef: skill.gitRef,
+        skillPath: skill.skillPath,
+        reason: skill.updateReason,
+        repairSource: buildRepairSource(skill),
+      });
+      continue;
+    }
+
     if (canRepairMissingSkillPath(skill)) {
       repairable.push({
         name: skill.name,
         source: skill.source,
         sourceUrl: skill.sourceUrl,
         gitRef: skill.gitRef,
+        skillPath: skill.skillPath,
         reason: skill.updateReason,
         repairSource: buildRepairSource(skill),
       });
@@ -281,6 +325,7 @@ export function buildUpdatePlan(
         source: skill.source,
         sourceUrl: skill.sourceUrl,
         gitRef: skill.gitRef,
+        skillPath: skill.skillPath,
         reason: skill.updateReason,
       });
     }
@@ -294,8 +339,59 @@ export function buildUpdatePlan(
     updatableCount: updateGroups.reduce((total, group) => total + group.skillNames.length, 0),
     repairableCount: repairable.length,
     skippedCount: skipped.length,
+    deletedUpstreamCount: deletedUpstream.length,
     groups: updateGroups,
     repairable,
     skipped,
+    deletedUpstream,
   };
+}
+
+function updateIdentityKey(
+  item: {
+    name: string;
+    source?: string | null;
+    sourceUrl?: string | null;
+    gitRef?: string | null;
+    skillPath?: string | null;
+  },
+  options: { includeSkillPath?: boolean } = {}
+): string {
+  const includeSkillPath = options.includeSkillPath ?? true;
+  return [
+    item.name,
+    item.sourceUrl ?? item.source ?? '',
+    item.gitRef ?? '',
+    includeSkillPath ? item.skillPath ?? '' : '',
+  ].join('::');
+}
+
+function hasStableUpdateIdentity(item: {
+  source?: string | null;
+  sourceUrl?: string | null;
+  gitRef?: string | null;
+  skillPath?: string | null;
+}): boolean {
+  return Boolean(item.sourceUrl || item.source || item.gitRef || item.skillPath);
+}
+
+function findUpdateForSkill(
+  skill: SkillListItem,
+  exactUpdateMap: Map<string, SkillUpdateInfo>,
+  pathlessUpdateMap: Map<string, SkillUpdateInfo[]>,
+  nameOnlyUpdateMap: Map<string, SkillUpdateInfo>
+): SkillUpdateInfo | undefined {
+  const exact = exactUpdateMap.get(updateIdentityKey(skill));
+  if (exact) return exact;
+
+  if (!skill.skillPath) {
+    const pathlessMatches = pathlessUpdateMap.get(updateIdentityKey(skill, { includeSkillPath: false })) ?? [];
+    if (pathlessMatches.length === 1) return pathlessMatches[0];
+  }
+
+  if (!hasStableUpdateIdentity(skill)) {
+    return nameOnlyUpdateMap.get(skill.name);
+  }
+
+  return undefined;
 }

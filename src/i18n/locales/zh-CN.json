@@ -183,7 +183,8 @@
     "maintenanceNotice": "有 {{count}} 个 Skill 暂不能检查更新，请查看对应 Skill 的说明。",
     "viewMaintenanceItems": "查看处理项",
     "updateStatus": {
-      "cannotCheck": "暂不能检查更新"
+      "cannotCheck": "暂不能检查更新",
+      "deleted-upstream": "上游已删除"
     },
     "reinstallConfirm": {
       "title": "重新安装此 Skill？",
@@ -198,7 +199,8 @@
       "localSource": "本地 Skill",
       "reinstallRequired": "需重新安装",
       "autoCheckUnavailable": "无法自动检查",
-      "checkFailed": "检查失败"
+      "checkFailed": "检查失败",
+      "deleted-upstream": "上游已删除"
     },
     "updateHint": {
       "missing-skill-path": "缺少安装来源信息。修复来源后可恢复版本检查。",
@@ -206,6 +208,7 @@
       "unsupported-source-type": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "local-source": "此 Skill 来自本地文件，不支持更新检测。",
       "upstream-unavailable": "暂时无法访问安装来源。稍后可重新检查。",
+      "deleted-upstream": "来源可访问，但这个 skill 路径已不在上游。你可以删除本地副本、修复来源，或继续保留当前安装。",
       "rate-limited": "GitHub 请求次数已达上限，配置 GITHUB_TOKEN 后可继续检查。",
       "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN。",
       "network-error": "网络连接异常。稍后可重新检查。",
@@ -217,6 +220,7 @@
       "unsupported-source-type": "此安装来源不支持自动版本检查。请从原来源确认是否有更新。",
       "local-source": "此 Skill 来自本地文件，不支持更新检测。",
       "upstream-unavailable": "暂时无法访问安装来源。稍后可重新检查。",
+      "deleted-upstream": "来源可访问，但这个 skill 路径已不在上游。你可以删除本地副本、修复来源，或继续保留当前安装。",
       "rate-limited": "GitHub 请求次数已达上限，配置 GITHUB_TOKEN 后可继续检查。",
       "auth": "GitHub 认证失败，请检查 GITHUB_TOKEN。",
       "network-error": "网络连接异常。稍后可重新检查。",

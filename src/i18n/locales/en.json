@@ -183,7 +183,8 @@
     "maintenanceNotice": "{{count}} Skill(s) cannot check for updates right now. Open the matching Skill for details.",
     "viewMaintenanceItems": "View items",
     "updateStatus": {
-      "cannotCheck": "Cannot check for updates"
+      "cannotCheck": "Cannot check for updates",
+      "deleted-upstream": "Deleted upstream"
     },
     "reinstallConfirm": {
       "title": "Reinstall this Skill?",
@@ -198,7 +199,8 @@
       "localSource": "Local Skill",
       "reinstallRequired": "Reinstall required",
       "autoCheckUnavailable": "Auto-check unavailable",
-      "checkFailed": "Check failed"
+      "checkFailed": "Check failed",
+      "deleted-upstream": "Deleted upstream"
     },
     "updateHint": {
       "missing-skill-path": "Install source information is missing. Repair the source to restore version checks.",
@@ -206,6 +208,7 @@
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
       "local-source": "This Skill comes from a local file and does not support update checks.",
       "upstream-unavailable": "The install source cannot be reached right now. Check again later.",
+      "deleted-upstream": "The source is reachable, but this skill path no longer exists upstream. Remove the local copy, repair the source, or keep it installed.",
       "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
       "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
       "network-error": "Network connection failed. Check again later.",
@@ -217,6 +220,7 @@
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
       "local-source": "This Skill comes from a local file and does not support update checks.",
       "upstream-unavailable": "The install source cannot be reached right now. Check again later.",
+      "deleted-upstream": "The source is reachable, but this skill path no longer exists upstream. Remove the local copy, repair the source, or keep it installed.",
       "rate-limited": "GitHub request limit reached. Configure GITHUB_TOKEN to continue checking.",
       "auth": "GitHub authentication failed. Check GITHUB_TOKEN.",
       "network-error": "Network connection failed. Check again later.",
