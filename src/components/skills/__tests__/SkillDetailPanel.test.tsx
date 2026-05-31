@@ -198,6 +198,47 @@ describe('SkillDetailPanel', () => {
     expect(onRepairSource).not.toHaveBeenCalled();
   });
 
+  it('shows upstream-deleted state without ordinary update action', () => {
+    const onUpdate = vi.fn();
+    const onRepairSource = vi.fn();
+
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={{
+            ...makeSkill({
+              hasUpdate: false,
+              canRunUpdate: true,
+              canCheckForUpdates: true,
+              source: 'owner/repo',
+              sourceUrl: 'https://github.com/owner/repo',
+              updateReason: 'deleted-upstream',
+            }),
+            updateStatus: 'deleted-upstream',
+          } as InstalledSkill & { updateStatus?: 'deleted-upstream' }}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={onUpdate}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+          onRepairSource={onRepairSource}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('skills.updateStatus.deleted-upstream')).toBeTruthy();
+    expect(screen.getByText('skills.updateReason.deleted-upstream')).toBeTruthy();
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+
+    fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));
+
+    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'brainstorming' }));
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {
     render(
       <TooltipProvider>

@@ -122,11 +122,17 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
 
   const isUpdateInProgress = updateStatus === 'queued' || updateStatus === 'updating';
   const showCheckDone = checkDone && !isCheckingUpdates && !skill.hasUpdate;
-  const showCannotCheckStatus = skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false;
-  const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false;
+  const isDeletedUpstream = skill.updateStatus === 'deleted-upstream' || skill.updateReason === 'deleted-upstream';
+  const showCannotCheckStatus = isDeletedUpstream
+    || skill.updateStatus === 'cannot-check'
+    || skill.canCheckForUpdates === false;
+  const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false && !isDeletedUpstream;
   const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
   const canShowDirectReinstallAction = maintenanceAction === 'direct-reinstall';
-  const canShowRepairAction = maintenanceAction === 'repair-source' && Boolean(onRepairSource);
+  const canShowRepairAction = (maintenanceAction === 'repair-source' || isDeletedUpstream) && Boolean(onRepairSource);
+  const repairActionTitle = isDeletedUpstream
+    ? t('skills.updatePlan.deletedUpstreamActionRepair')
+    : t('skills.actions.repairSource');
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-surface">
@@ -195,7 +201,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
-                      title={t('skills.actions.repairSource')}
+                      title={repairActionTitle}
                       onClick={handleRepairSource}
                     >
                       <Wrench className="h-4 w-4" />
@@ -287,7 +293,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
             {showCannotCheckStatus ? (
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="text-xs text-muted-foreground">
-                  {t('skills.updateStatus.cannotCheck')}
+                  {t(isDeletedUpstream ? 'skills.updateStatus.deleted-upstream' : 'skills.updateStatus.cannotCheck')}
                 </Badge>
                 {(() => {
                   const reasonKey = resolveUpdateReasonI18nKey(skill.updateReason);

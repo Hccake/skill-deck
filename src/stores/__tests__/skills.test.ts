@@ -567,6 +567,27 @@ describe('useSkillsStore', () => {
       }));
     });
 
+    it('does not run ordinary update for upstream-deleted skills', async () => {
+      useSkillsDataStore.setState({
+        globalSkills: [
+          {
+            ...makeSkill('demo', {
+              hasUpdate: false,
+              canRunUpdate: true,
+              updateReason: 'deleted-upstream',
+            }),
+            updateStatus: 'deleted-upstream',
+          },
+        ],
+        projectSkills: [],
+      });
+
+      await useSkillsDataStore.getState().updateSkill('demo', 'global');
+
+      expect(mockUpdateSkill).not.toHaveBeenCalled();
+      expect(toast.info).toHaveBeenCalledWith('skills.updatePlan.deletedUpstreamDescription');
+    });
+
     it('clears missing version metadata after a successful direct reinstall', async () => {
       useSkillsDataStore.setState({
         globalSkills: [

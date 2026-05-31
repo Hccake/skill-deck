@@ -130,17 +130,22 @@ export const SkillCard = memo(function SkillCard({
     displayScope === 'project'
       ? t('skills.conflict.alsoInGlobal')
       : t('skills.conflict.alsoInProject');
-  const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false;
+  const isDeletedUpstream = skill.updateStatus === 'deleted-upstream' || skill.updateReason === 'deleted-upstream';
+  const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false && !isDeletedUpstream;
   const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
   const canShowDirectReinstallAction = maintenanceAction === 'direct-reinstall' && Boolean(onUpdate);
-  const canShowRepairAction = maintenanceAction === 'repair-source' && Boolean(onRepairSource);
+  const canShowRepairAction = (maintenanceAction === 'repair-source' || isDeletedUpstream) && Boolean(onRepairSource);
+  const repairActionTitle = isDeletedUpstream
+    ? t('skills.updatePlan.deletedUpstreamActionRepair')
+    : t('skills.actions.repairSource');
   const hasStatusDrivenAction = (canShowUpdateAction && !updateStatus)
     || canShowDirectReinstallAction
     || canShowRepairAction;
   const updateStatusLabelKey = resolveUpdateStatusLabelI18nKey(skill);
   const updateHintKey = !skill.hasUpdate ? resolveUpdateHintI18nKey(skill.updateReason) : null;
   const isAttentionHint = skill.updateReason === 'missing-skill-path'
-    || skill.updateReason === 'missing-remote-hash';
+    || skill.updateReason === 'missing-remote-hash'
+    || isDeletedUpstream;
   const updateStatusLabelClassName =
     updateStatusLabelKey === 'skills.updateStatusLabel.available'
       ? 'bg-primary/10 text-primary'
@@ -278,8 +283,8 @@ export const SkillCard = memo(function SkillCard({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
-                aria-label={t('skills.actions.repairSource')}
-                title={t('skills.actions.repairSource')}
+                aria-label={repairActionTitle}
+                title={repairActionTitle}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRepairSource?.(skill);

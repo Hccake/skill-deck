@@ -463,6 +463,41 @@ describe('SkillCard', () => {
     expect(onRepairSource).not.toHaveBeenCalled();
   });
 
+  it('shows upstream-deleted state without ordinary update action', () => {
+    const onUpdate = vi.fn();
+    const onRepairSource = vi.fn();
+
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({
+              hasUpdate: false,
+              canRunUpdate: true,
+              canCheckForUpdates: true,
+              source: 'owner/repo',
+              sourceUrl: 'https://github.com/owner/repo',
+              updateReason: 'deleted-upstream',
+            }),
+            updateStatus: 'deleted-upstream',
+          } as InstalledSkill & { updateStatus?: 'deleted-upstream' }}
+          displayScope="global"
+          onUpdate={onUpdate}
+          onRepairSource={onRepairSource}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('skills.updateStatusLabel.deleted-upstream')).toBeTruthy();
+    expect(screen.getByText('skills.updateHint.deleted-upstream')).toBeTruthy();
+    expect(screen.queryByTitle('skills.actions.update')).toBeNull();
+
+    fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));
+
+    expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
   it('hides ordinary update action when update cannot run even if stale update state is present', () => {
     render(
       <TooltipProvider>

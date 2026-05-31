@@ -338,6 +338,13 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     const identityKey = getSkillIdentityKey(skillIdentity);
     if (updatingSkills.has(identityKey)) return;
 
+    const skillsList = scope === 'global' ? get().globalSkills : get().projectSkills;
+    const target = skillsList.find((s) => s.name === skillName);
+    if (target?.updateStatus === 'deleted-upstream' || target?.updateReason === 'deleted-upstream') {
+      toast.info(t('skills.updatePlan.deletedUpstreamDescription'));
+      return;
+    }
+
     set((state) => {
       const next = new Map(state.updatingSkills);
       next.set(identityKey, 'updating');
@@ -370,8 +377,6 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       // 保留 hasUpdate 让用户能再次点击重试,避免失败信息被吞掉。
       const shouldClearUpdateFlag = !item || item.status === 'success';
       if (shouldClearUpdateFlag) {
-        const skillsList = scope === 'global' ? get().globalSkills : get().projectSkills;
-        const target = skillsList.find((s) => s.name === skillName);
         const shouldClearCannotCheck = target?.updateReason === 'missing-remote-hash';
         if (target?.canCheckForUpdates !== false || shouldClearCannotCheck) {
           clearUpdateCacheForSkill(skillName, scope, projectPath, {

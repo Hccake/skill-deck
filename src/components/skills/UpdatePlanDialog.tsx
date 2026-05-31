@@ -85,6 +85,7 @@ export function UpdatePlanDialog({
   }, [lastUpdateResults]);
 
   if (!plan) return null;
+  const deletedUpstream = plan.deletedUpstream ?? [];
 
   const handleConfirm = async () => {
     setRunning(true);
@@ -117,6 +118,34 @@ export function UpdatePlanDialog({
         <div className="py-4 space-y-4 max-h-[60vh] overflow-y-auto">
           {!completed ? (
             <>
+              {deletedUpstream.length ? (
+                <div className="overflow-hidden rounded-md border border-warning/40 bg-warning/5">
+                  <div className="border-b border-warning/30 px-3 py-2.5">
+                    <p className="text-sm font-medium">{t('skills.updatePlan.deletedUpstreamTitle')}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t('skills.updatePlan.deletedUpstreamDescription')}
+                    </p>
+                  </div>
+                  <div className="divide-y divide-border/60">
+                    {deletedUpstream.map((item) => (
+                      <div
+                        key={`${item.name}-${item.sourceUrl ?? item.source ?? ''}-${item.gitRef ?? ''}-${item.skillPath ?? ''}`}
+                        className="px-3 py-2.5"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium">{item.name}</p>
+                          <Badge variant="outline" className="text-xs text-warning">
+                            {t('skills.updateStatus.deleted-upstream')}
+                          </Badge>
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {item.sourceUrl ?? item.source}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {plan.groups.map((group) => (
                 <div key={group.id} className="overflow-hidden rounded-md border border-border/70 bg-background/60">
                   <div className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-2.5">

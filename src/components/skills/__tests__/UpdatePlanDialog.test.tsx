@@ -97,6 +97,42 @@ describe('UpdatePlanDialog', () => {
     expect(screen.queryByText('local-only')).toBeNull();
   });
 
+  it('shows upstream-deleted skills as maintenance items', () => {
+    render(
+      <UpdatePlanDialog
+        open
+        plan={{
+          scope: 'project',
+          projectPath: '/repo',
+          total: 1,
+          updatableCount: 0,
+          repairableCount: 0,
+          skippedCount: 0,
+          deletedUpstreamCount: 1,
+          groups: [],
+          repairable: [],
+          skipped: [],
+          deletedUpstream: [{
+            name: 'demo',
+            source: 'owner/repo',
+            sourceUrl: 'https://github.com/owner/repo',
+            gitRef: 'main',
+            reason: 'deleted-upstream',
+            repairSource: 'https://github.com/owner/repo#main',
+          }],
+        }}
+        agentDisplayNames={new Map()}
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn(async () => undefined)}
+      />
+    );
+
+    expect(screen.getByText('skills.updatePlan.deletedUpstreamTitle')).toBeTruthy();
+    expect(screen.getByText('skills.updatePlan.deletedUpstreamDescription')).toBeTruthy();
+    expect(screen.getByText('demo')).toBeTruthy();
+    expect(screen.getByText('https://github.com/owner/repo')).toBeTruthy();
+  });
+
   it('shows target agents and completed result details with install modes and retry action', async () => {
     const onRetryFailed = vi.fn(async () => undefined);
     const props = {
