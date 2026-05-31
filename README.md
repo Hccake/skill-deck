@@ -9,7 +9,7 @@
   <p>
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-v1.5.1-green" alt="skills CLI v1.5.1">
+    <img src="https://img.shields.io/badge/skills%20CLI-v1.5.9-green" alt="skills CLI v1.5.9">
   </p>
 
   <a href="README.zh-CN.md">中文</a>
@@ -72,7 +72,7 @@ The goal is simple: make Skills easier to inspect, understand, and apply across 
 - 🗂 **Unified view** — Browse all installed Skills in one place
 - 🌍 **Global & project scope** — Manage Skills at global level or per-project
 - 🧠 **Clear visibility** — Understand where each Skill is applied at a glance
-- 🔄 **Multi-editor support** — Auto-detect installed editors (VS Code, Cursor, Windsurf, etc.) and sync Skills across them
+- 🔄 **Multi-editor support** — Auto-detect installed editors (VS Code, Cursor, Windsurf, Zed, etc.) and sync Skills across them
 - ✏️ **Agent management** — Add or remove editor support for installed Skills without reinstalling
 - ♻️ **Update detection & upgrade** — Quickly check for available updates and update installed Skills
 - 📦 **Dual install modes** — Choose between Symlink and Copy when installing Skills

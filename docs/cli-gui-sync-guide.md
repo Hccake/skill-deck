@@ -8,6 +8,7 @@
 ## 0. 维护原则
 
 - CLI 是兼容性和安全语义基线，不是 GUI 的功能上限。GUI 可以在符合 CLI 可读、可写、可解释语义的前提下扩展能力，例如项目级更新检测、批量操作、缓存、状态展示、修复入口、更新计划和更细的错误提示。
+- 当前兼容基线为 skills CLI v1.5.9。该基线包含 Zed agent、SSH private git 来源保真、有限 depth-2 skill 发现、项目 lock 过滤 CLI agent 目录中的已安装 skill，以及 `deleted-upstream` 维护状态。
 - 本文档只描述当前应保持一致的状态，不记录某个 CLI 发布版本的迁移流水账。一次性升级细节应放在 plan、spec 或 review 文档中。
 - 上游 CLI 每次变更后，先对照第 8 节清单检查代码，再把本文档更新为新的当前态。
 - GUI 扩展字段必须保持向前兼容：使用可选字段、缺省值和 `skip_serializing_if`，不要使用 `deny_unknown_fields`。
@@ -99,6 +100,7 @@ CLI 和 GUI 都需要解析相同的 source 输入形态，包括 GitHub shortha
 - Fragment ref 的处理顺序必须一致：先提取 `#ref`，再处理 `@skill-filter`。
 - 解析结果中的 `source`、`source_type`、`source_url`、`ref`、`skill_path` 必须能回写到 lock，并能被 update 链路复用。
 - `skillPath` 的规范形态是仓库内 `SKILL.md` 文件路径，例如 `skills/foo/SKILL.md`；需要目录路径时由调用方显式去掉 `SKILL.md` 后缀。
+- `git@host:org/repo.git` 和 `ssh://git@host[:port]/org/repo.git` 都是 private git source。写入 lock 时必须保留原始 `git@` 或 `ssh://` 来源，不要规范化为 GitHub shorthand；fragment ref 仍应从 lock source 中剥离到 `ref` 字段。
 
 ---
 
@@ -110,6 +112,7 @@ CLI 的 agent registry 是 GUI `AgentType` 的配置基线，但 GUI 不再直�
 
 - CLI 新增 agent 后，GUI 需要新增 `AgentType` variant、`config()`、`detect()` 和相关测试。
 - 必须检查 `skills_dir`、`global_skills_dir` 和检测逻辑是否与 CLI 一致。
+- 当前 CLI v1.5.9 兼容集包含 Zed。Zed 的 global/project canonical 目录都是 `.agents/skills` 语义：global 指向 `~/.agents/skills`，project 指向 `<project>/.agents/skills`。
 - CLI 的 `universal` 列表是静态分类：`skillsDir === ".agents/skills"`，并且 `showInUniversalList !== false` 时才会进入可选/自动安装目标。CLI 仍包含一个 `universal` agent key。
 - GUI 的 `automatic` 是 scope-aware 运行时分类：某个 Agent 在当前 scope 下的目标目录等于 canonical 共享目录时，才算自动可用。全局 canonical 是 `~/.agents/skills`，项目 canonical 是 `<project>/.agents/skills`。
 - 因为 GUI 按 scope 判断，同一个 Agent 可以在项目中自动可用、在全局中需要额外投放。例如 Antigravity 的 project target 是 `.agents/skills`，global target 是 `~/.gemini/antigravity/skills`。
@@ -145,6 +148,8 @@ CLI 和 GUI 都维护 skill 发现的优先搜索路径。
 - CLI 新增、移除或重排搜索路径后，GUI 的搜索路径必须同步。
 - `SKILL.md` 识别应保持大小写兼容，同时保留磁盘上的实际路径大小写写入 lock。
 - 同仓库存在多个 skill 时，更新链路应优先用 lock 中的 `skillPath` 精确定位，而不是只按 skill name 匹配。
+- 已知 skill 容器目录支持有限 depth-2 发现，例如 `skills/<name>/SKILL.md`、`examples/<name>/SKILL.md` 等；默认发现不应无限递归。
+- 当用户直接选择项目中的 CLI agent skill 目录作为 source candidate 时，GUI 必须过滤已被 `<project>/skills-lock.json` 跟踪的 skill。过滤范围包括项目根、`.agents/skills` 以及 `.agents/skills/<name>` 这类 direct subpath，避免把已安装项误当成可安装来源。
 
 ---
 
@@ -178,6 +183,7 @@ CLI 和 GUI 都维护 skill 发现的优先搜索路径。
 - Skill 总状态中，`success + skipped` 的归并规则必须显式：如果 `skipped` 表示“不属于实际目标”，可以整体视为 `success`；如果 `skipped` 表示请求目标未被处理，应归为 `partial` 或 `skipped`，并且不得清除用户重试入口。
 - update 失败或 partial 时不应把缓存强行写成 up-to-date。只有符合 GUI 定义的完整成功后才能清除该 skill 的 update 标记。
 - 更新检测缓存和前端合并不能只以 skill name 作为身份。至少需要同时考虑 scope、project path、source/sourceUrl、ref 和 `skillPath`，避免旧缓存污染修复来源或换 ref 后的新安装项。
+- `deleted-upstream` 是维护状态：来源可访问，但 lock 中的 `skillPath` 在上游已经不存在。它不会触发普通 update，也不会自动删除本地文件；GUI 只能提示用户删除本地副本、修复来源或保留当前安装。
 
 ---
 

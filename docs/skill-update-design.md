@@ -63,7 +63,7 @@ GUI 把“理论上能不能检查/执行更新”和“一次检查的运行结
 | 概念 | 来源 | 典型字段 | 意义 |
 | --- | --- | --- | --- |
 | Capability | lock 元数据静态派生 | `canRunUpdate`、`canCheckForUpdates`、`updateReason` | 这个 skill 原理上是否支持 update/check |
-| Check status | `check_updates` 运行结果 | `update-available`、`up-to-date`、`cannot-check` | 本次检查得到的结果 |
+| Check status | `check_updates` 运行结果 | `update-available`、`up-to-date`、`cannot-check`、`deleted-upstream` | 本次检查得到的结果 |
 
 当前 capability 派生规则：
 
@@ -114,12 +114,14 @@ CLI project update 是 GUI 必须兼容的基线语义。它不依赖 `sourceUrl
 5. 可检查的 GitHub skill 按 `(source, ref)` 分组。
 6. 每组调用 GitHub Trees API 获取远端 tree 信息，再按各自的 `skillPath` 切出 skill 目录 hash。
 7. 远端 hash 与本地记录 hash 不同则 `update-available`，相同则 `up-to-date`。
-8. 上游不存在、限流、认证失败或网络错误时返回 `cannot-check`，并保留机器可读 reason。
+8. 如果 GitHub Trees API 可访问、但某个 `skillPath` 在远端 tree 中不存在，该 skill 返回 `deleted-upstream`，reason 同样是 `deleted-upstream`。
+9. 限流、认证失败、网络错误或 API 级不可用时返回 `cannot-check`，并保留机器可读 reason。
 
 设计约束：
 
 - 同仓库多个 skill 应优先共享远端 tree 请求。
 - 检查失败不能改 lock。
+- `deleted-upstream` 只表示“上游路径缺失”，不能自动删除本地文件，也不能当作普通 update 执行。
 - `mergeUpdateInfo` 合并缓存时必须保留后端已有 `updateReason`，避免没有命中本次检查结果时把 cannot-check 原因清空。
 - `check_updates` 结果必须携带足够身份信息供前端合并，不能长期只依赖 skill name。推荐 identity 为 `scope + projectPath + name + source/sourceUrl + ref + skillPath`。
 
@@ -189,6 +191,7 @@ updateInfoCache: Map<string, { results: SkillUpdateInfo[]; checkedAt: number }>
 - 手动刷新应绕过 TTL。
 - update 完整成功后才能清除该 skill 的 update 标记。
 - partial、failed、skipped 不应把缓存强写为 `up-to-date`，否则用户会失去重试入口。
+- `deleted-upstream` 不能被缓存清理路径改写为 `up-to-date`。只有用户完成删除、修复来源或重新安装后，列表刷新才应自然移除这个维护状态。
 
 ### 6.2 列表状态合并
 
@@ -219,6 +222,7 @@ skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 - `canRunUpdate == false`：不要执行普通 update，展示修复或禁用状态。
 - `canCheckForUpdates == false`：不参与“检查更新”批量入口。
 - reason 应映射为可本地化文案，不要直接把机器字符串作为主要 UI 文案。
+- `deleted-upstream` 使用独立维护展示：它不属于普通 update 分组，不触发单项或批量 update；UI 应提供删除本地副本、修复来源或继续保留安装的入口。
 
 ### 6.4 安装结果处理
 
@@ -241,13 +245,14 @@ skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 | 批量更新 | 按 CLI 命令流程处理 | 同源同 ref 的 skill 可共享 clone/fetch |
 | 状态表达 | 终端输出文本 | 结构化 capability、status、reason、agent results |
 | 进度反馈 | 终端进度 | `update-progress` event |
-| 错误提示 | 文本输出 | reason → i18n 文案、toast、修复入口 |
+| 错误提示 | 文本输出 | reason → i18n 文案、toast、修复入口；`deleted-upstream` 作为维护状态单独展示 |
 | Agent 目标 | CLI 使用静态 universal/non-universal 分类 | GUI 使用 scope-aware automatic/additional 分类，同时展示 skipped/partial |
 
 不允许的差异：
 
 - 缺 `skillPath` 时猜测远端目录并普通 update。
 - 只按 skill name 合并更新检测缓存。
+- 把 `deleted-upstream` 当成普通可更新项执行 update，或自动删除本地文件。
 - 把 partial 或 failed 的更新标记清掉。
 - 把请求目标中的 skipped agent 当成 success。
 - GUI 写回 lock 时丢失 CLI 字段。

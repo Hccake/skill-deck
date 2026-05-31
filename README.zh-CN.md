@@ -9,7 +9,7 @@
   <p>
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-v1.5.1-green" alt="skills CLI v1.5.1">
+    <img src="https://img.shields.io/badge/skills%20CLI-v1.5.9-green" alt="skills CLI v1.5.9">
   </p>
 
   <a href="README.md">English</a>
@@ -72,7 +72,7 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 - 🗂 **统一视图** — 在一处浏览所有已安装的 Skills
 - 🌍 **全局与项目级作用域** — 在全局或项目级别管理 Skills
 - 🧠 **清晰可见** — 一目了然地了解每个 Skill 的应用位置
-- 🔄 **多编辑器支持** — 自动检测已安装的编辑器（VS Code、Cursor、Windsurf 等），并在多个编辑器间同步 Skills
+- 🔄 **多编辑器支持** — 自动检测已安装的编辑器（VS Code、Cursor、Windsurf、Zed 等），并在多个编辑器间同步 Skills
 - ✏️ **Agent 管理** — 为已安装的 Skill 添加或移除编辑器支持，无需重新安装
 - ♻️ **更新检测与升级** — 快速检查可用更新并更新已安装的 Skill
 - 📦 **双安装模式** — 安装 Skills 时可选择 Symlink（符号链接）或 Copy（文件复制）
