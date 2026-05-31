@@ -750,8 +750,8 @@ export type SkillScope = "global" | "project"
 /**
  * 更新检测结果
  */
-export type SkillUpdateCheckStatus = "update-available" | "up-to-date" | "cannot-check"
-export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; reason?: string | null; gitRef?: string | null }
+export type SkillUpdateCheckStatus = "update-available" | "up-to-date" | "cannot-check" | "deleted-upstream"
+export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; reason?: string | null; gitRef?: string | null; sourceUrl?: string | null; skillPath?: string | null }
 /**
  * agent 级更新结果
  */

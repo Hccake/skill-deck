@@ -32,7 +32,16 @@ use std::path::Path;
 use std::time::Instant;
 
 type UpdateCheckGroupKey = (String, Option<String>);
-type UpdateCheckSkill = (String, String, String);
+
+#[derive(Debug, Clone)]
+struct UpdateCheckSkill {
+    name: String,
+    source: String,
+    source_url: Option<String>,
+    ref_name: Option<String>,
+    skill_path: String,
+    local_hash: String,
+}
 
 /// 更新进度事件（发送到前端）
 #[derive(Serialize, Clone)]
@@ -68,6 +77,7 @@ pub enum SkillUpdateCheckStatus {
     UpdateAvailable,
     UpToDate,
     CannotCheck,
+    DeletedUpstream,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -82,6 +92,10 @@ pub struct SkillUpdateInfo {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_path: Option<String>,
 }
 
 /// 检测指定 scope 的 skills 是否有更新
@@ -122,6 +136,8 @@ async fn check_updates_inner(
                         status: SkillUpdateCheckStatus::CannotCheck,
                         reason: capability.reason.clone(),
                         git_ref: metadata.ref_name.clone(),
+                        source_url: metadata.source_url.clone(),
+                        skill_path: metadata.skill_path.clone(),
                     });
                     continue;
                 }
@@ -129,11 +145,14 @@ async fn check_updates_inner(
                 skills_by_source
                     .entry((metadata.source.clone(), metadata.ref_name.clone()))
                     .or_default()
-                    .push((
-                        name.clone(),
-                        metadata.skill_path.unwrap(),
-                        metadata.remote_hash.unwrap(),
-                    ));
+                    .push(UpdateCheckSkill {
+                        name: name.clone(),
+                        source: metadata.source.clone(),
+                        source_url: metadata.source_url.clone(),
+                        ref_name: metadata.ref_name.clone(),
+                        skill_path: metadata.skill_path.unwrap(),
+                        local_hash: metadata.remote_hash.unwrap(),
+                    });
             }
         }
         Scope::Project => {
@@ -151,6 +170,8 @@ async fn check_updates_inner(
                             status: SkillUpdateCheckStatus::CannotCheck,
                             reason: capability.reason.clone(),
                             git_ref: metadata.ref_name.clone(),
+                            source_url: metadata.source_url.clone(),
+                            skill_path: metadata.skill_path.clone(),
                         });
                         continue;
                     }
@@ -158,11 +179,14 @@ async fn check_updates_inner(
                     skills_by_source
                         .entry((metadata.source.clone(), metadata.ref_name.clone()))
                         .or_default()
-                        .push((
-                            name.clone(),
-                            metadata.skill_path.unwrap(),
-                            metadata.remote_hash.unwrap(),
-                        ));
+                        .push(UpdateCheckSkill {
+                            name: name.clone(),
+                            source: metadata.source.clone(),
+                            source_url: metadata.source_url.clone(),
+                            ref_name: metadata.ref_name.clone(),
+                            skill_path: metadata.skill_path.unwrap(),
+                            local_hash: metadata.remote_hash.unwrap(),
+                        });
                 }
             }
         }
@@ -171,17 +195,14 @@ async fn check_updates_inner(
     for ((source, ref_name), skills) in &skills_by_source {
         let paths: Vec<(String, String)> = skills
             .iter()
-            .map(|(name, skill_path, _)| (name.clone(), skill_path.clone()))
+            .map(|skill| (skill.name.clone(), skill.skill_path.clone()))
             .collect();
         match fetch_skill_folder_hashes_batch(source, &paths, ref_name.as_deref()).await {
             Ok(hashes) => {
-                for (name, _, local_hash) in skills {
+                for skill in skills {
                     results.push(build_batch_check_result(
-                        name,
-                        source,
-                        ref_name.as_deref(),
-                        local_hash,
-                        hashes.get(name).and_then(|h| h.as_deref()),
+                        skill,
+                        hashes.get(&skill.name).and_then(|h| h.as_deref()),
                     ));
                 }
             }
@@ -193,14 +214,16 @@ async fn check_updates_inner(
                     AppError::GitHubApiError { reason, .. } => reason.clone(),
                     _ => "upstream-unavailable".to_string(),
                 };
-                for (name, _, _) in skills {
+                for skill in skills {
                     results.push(SkillUpdateInfo {
-                        name: name.clone(),
-                        source: source.clone(),
+                        name: skill.name.clone(),
+                        source: skill.source.clone(),
                         has_update: false,
                         status: SkillUpdateCheckStatus::CannotCheck,
                         reason: Some(reason.clone()),
-                        git_ref: ref_name.clone(),
+                        git_ref: skill.ref_name.clone(),
+                        source_url: skill.source_url.clone(),
+                        skill_path: Some(skill.skill_path.clone()),
                     });
                 }
             }
@@ -271,18 +294,15 @@ fn global_update_entry_from_lock_entry(
 }
 
 fn build_batch_check_result(
-    name: &str,
-    source: &str,
-    ref_name: Option<&str>,
-    local_hash: &str,
+    skill: &UpdateCheckSkill,
     remote_hash: Option<&str>,
 ) -> SkillUpdateInfo {
     match remote_hash {
         Some(remote_hash) => {
-            let has_update = remote_hash != local_hash;
+            let has_update = remote_hash != skill.local_hash;
             SkillUpdateInfo {
-                name: name.to_string(),
-                source: source.to_string(),
+                name: skill.name.clone(),
+                source: skill.source.clone(),
                 has_update,
                 status: if has_update {
                     SkillUpdateCheckStatus::UpdateAvailable
@@ -290,16 +310,20 @@ fn build_batch_check_result(
                     SkillUpdateCheckStatus::UpToDate
                 },
                 reason: None,
-                git_ref: ref_name.map(str::to_string),
+                git_ref: skill.ref_name.clone(),
+                source_url: skill.source_url.clone(),
+                skill_path: Some(skill.skill_path.clone()),
             }
         }
         None => SkillUpdateInfo {
-            name: name.to_string(),
-            source: source.to_string(),
+            name: skill.name.clone(),
+            source: skill.source.clone(),
             has_update: false,
-            status: SkillUpdateCheckStatus::CannotCheck,
-            reason: Some("upstream-unavailable".to_string()),
-            git_ref: ref_name.map(str::to_string),
+            status: SkillUpdateCheckStatus::DeletedUpstream,
+            reason: Some("deleted-upstream".to_string()),
+            git_ref: skill.ref_name.clone(),
+            source_url: skill.source_url.clone(),
+            skill_path: Some(skill.skill_path.clone()),
         },
     }
 }
@@ -1451,16 +1475,43 @@ mod tests {
 
             assert_eq!(item.status, SkillUpdateCheckStatus::CannotCheck);
             assert_eq!(item.reason.as_deref(), Some("missing-skill-path"));
+            assert_eq!(
+                item.source_url.as_deref(),
+                Some("https://github.com/owner/repo")
+            );
+            assert_eq!(item.git_ref.as_deref(), Some("main"));
+            assert_eq!(item.skill_path, None);
         });
     }
 
     #[test]
-    fn test_batch_hash_result_marks_missing_remote_hash_as_cannot_check() {
-        let item = build_batch_check_result("demo", "owner/repo", Some("main"), "local-hash", None);
+    fn test_update_check_status_deleted_upstream_serializes_kebab_case() {
+        let value = serde_json::to_value(SkillUpdateCheckStatus::DeletedUpstream).unwrap();
+        assert_eq!(value, serde_json::json!("deleted-upstream"));
+    }
 
-        assert_eq!(item.status, SkillUpdateCheckStatus::CannotCheck);
+    #[test]
+    fn test_batch_hash_result_marks_missing_remote_hash_as_deleted_upstream() {
+        let skill = UpdateCheckSkill {
+            name: "demo".to_string(),
+            source: "owner/repo".to_string(),
+            source_url: Some("https://github.com/owner/repo".to_string()),
+            ref_name: Some("main".to_string()),
+            skill_path: "skills/demo/SKILL.md".to_string(),
+            local_hash: "local-hash".to_string(),
+        };
+
+        let item = build_batch_check_result(&skill, None);
+
+        assert_eq!(item.status, SkillUpdateCheckStatus::DeletedUpstream);
         assert!(!item.has_update);
-        assert_eq!(item.reason.as_deref(), Some("upstream-unavailable"));
+        assert_eq!(item.reason.as_deref(), Some("deleted-upstream"));
+        assert_eq!(
+            item.source_url.as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert_eq!(item.git_ref.as_deref(), Some("main"));
+        assert_eq!(item.skill_path.as_deref(), Some("skills/demo/SKILL.md"));
     }
 
     #[test]
