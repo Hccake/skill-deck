@@ -5,6 +5,25 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-06-02
+
+### Added
+
+- **Zed 支持** — 可识别并管理 Zed 的 Skill 目录，Zed 用户可以和其他编辑器一样安装、同步和维护 Skill。
+- **上游已删除状态** — 当已安装 Skill 在原仓库中不存在时，应用会明确标记，并提供删除本地副本、修复来源或继续保留的选择。
+
+### Changed
+
+- **多层级目录 Skill 发现** — 添加 Skill 时支持发现常见集合目录下更深一层的 Skill，适配更多仓库组织方式。
+- **项目 Skill 去重** — 浏览项目 Agent Skill 目录时，已安装并记录的 Skill 不再重复出现在待安装列表中。
+- **更新状态更清晰** — 更新检查会区分“有更新”“已是最新”“无法检查”和“上游已删除”，状态判断更直观。
+
+### Fixed
+
+- **私有仓库来源保真** — 通过 SSH 或 private git 来源安装的 Skill 会保留原始来源地址，后续更新和重新安装不会丢失访问方式。
+- **同仓库 Skill 更新更准确** — 同一仓库存在多个 Skill 时，更新会优先使用安装时记录的位置，避免更新到错误内容。
+- **上游删除处理更安全** — 远端 Skill 已删除时，不再误触发普通更新，也不会在检查阶段自动删除本地文件。
+
 ## [1.5.0] 2026-05-23
 
 ### Added
