@@ -52,13 +52,13 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const selectedCount = selectedAgents.size;
   const canConfirm = hasAnyAgent ? (deleteCanonical || selectedCount > 0) : true;
 
-  // 级联切换：勾选共享目录 → 自动全选并锁定独立 agent
+  const retainedIndependentCount = deleteCanonical && agentDetails
+    ? agentDetails.independentAgents.filter((info) => !selectedAgents.has(info.agent)).length
+    : 0;
+
   const handleToggleCanonical = useCallback((checked: boolean) => {
     setDeleteCanonical(checked);
-    if (checked && agentDetails) {
-      setSelectedAgents(buildDefaultSelection(agentDetails));
-    }
-  }, [agentDetails]);
+  }, []);
 
   // rerender-functional-setstate：空 deps，stable callback
   const toggleAgent = useCallback((agent: AgentType) => {
@@ -77,7 +77,10 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
     setIsDeleting(true);
     try {
       if (deleteCanonical || !hasAnyAgent) {
-        await deleteSkillAction({ fullRemoval: true });
+        await deleteSkillAction({
+          fullRemoval: true,
+          agents: deleteCanonical ? Array.from(selectedAgents) : undefined,
+        });
       } else {
         await deleteSkillAction({
           fullRemoval: false,
@@ -156,14 +159,16 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
                   ))}
                 </div>
 
-                {deleteCanonical && (
-                  <div className="flex items-start gap-1.5 rounded-md bg-warning/10 px-2.5 py-2">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-warning" />
-                    <p className="text-xs text-warning leading-relaxed">
-                      {t('skills.deleteConfirm.canonicalWarning')}
-                    </p>
-                  </div>
-                )}
+	                {deleteCanonical && (
+	                  <div className="flex items-start gap-1.5 rounded-md bg-warning/10 px-2.5 py-2">
+	                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-warning" />
+	                    <p className="text-xs text-warning leading-relaxed">
+	                      {retainedIndependentCount > 0
+	                        ? t('skills.deleteConfirm.canonicalLeavesPrivateCopiesWarning')
+	                        : t('skills.deleteConfirm.canonicalWarning')}
+	                    </p>
+	                  </div>
+	                )}
               </div>
             )}
 
@@ -181,18 +186,17 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
                   {agentDetails.independentAgents.map((info) => (
                     <div key={info.agent} className="flex items-center justify-between py-0.5">
                       <div className="flex items-center gap-2">
-                        <Checkbox
-                          id={`agent-${info.agent}`}
-                          checked={deleteCanonical || selectedAgents.has(info.agent)}
-                          disabled={deleteCanonical}
-                          onCheckedChange={() => toggleAgent(info.agent)}
-                        />
+	                        <Checkbox
+	                          id={`agent-${info.agent}`}
+	                          checked={selectedAgents.has(info.agent)}
+	                          onCheckedChange={() => toggleAgent(info.agent)}
+	                        />
                         <Label
                           htmlFor={`agent-${info.agent}`}
-                          className={cn(
-                            'text-sm',
-                            deleteCanonical ? 'text-muted-foreground' : 'cursor-pointer'
-                          )}
+	                          className={cn(
+	                            'text-sm',
+	                            'cursor-pointer'
+	                          )}
                         >
                           {info.displayName}
                         </Label>

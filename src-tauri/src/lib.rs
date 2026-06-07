@@ -30,6 +30,8 @@ pub fn run() {
             commands::overwrites::check_overwrites,
             commands::remove::remove_skill,
             commands::remove_details::get_skill_agent_details,
+            commands::duplicate_copies::cleanup_duplicate_agent_copy,
+            commands::duplicate_copies::cleanup_duplicate_agent_copies,
             commands::update::check_updates,
             commands::update::update_skill,
             commands::update::update_skills_batch,

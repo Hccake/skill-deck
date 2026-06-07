@@ -29,7 +29,7 @@ pub async fn remove_skill(
     full_removal: Option<bool>,
 ) -> Result<RemoveResult, AppError> {
     let full = full_removal.unwrap_or(true);
-    let target_agents = agents.filter(|a| !a.is_empty());
+    let target_agents = agents;
 
     uninstaller::remove_skill(
         &name,

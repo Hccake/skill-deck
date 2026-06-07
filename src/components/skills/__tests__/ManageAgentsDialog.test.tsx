@@ -5,7 +5,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ManageAgentsDialog } from '../ManageAgentsDialog';
-import type { AgentInfo, InstalledSkill } from '@/bindings';
+import type { AgentInfo, InstalledSkill, SkillAgentDetails } from '@/bindings';
+import { makeAgentScopeTarget } from '@/test-utils';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -21,16 +22,15 @@ function makeAgent(agent: Omit<AgentInfo, 'targets'> & {
   return {
     ...agent,
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: agent.globalAutomatic ?? false,
         path: agent.globalSkillsDir,
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: agent.projectAutomatic ?? false,
         path: agent.skillsDir,
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   };
 }
@@ -135,6 +135,150 @@ describe('ManageAgentsDialog', () => {
     await user.click(screen.getByText('addSkill.mode.copy'));
     await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
 
-    expect(onSave).toHaveBeenCalledWith(['cursor'], [], 'copy');
+    expect(onSave).toHaveBeenCalledWith(['cursor'], [], 'copy', []);
+  });
+
+  it('requires confirmation before batch duplicate cleanup', async () => {
+    const user = userEvent.setup();
+    const onCleanupDuplicates = vi.fn().mockResolvedValue(undefined);
+    const details: SkillAgentDetails = {
+      skillName: skill.name,
+      scope: 'project',
+      canonicalPath: skill.canonicalPath,
+      automaticAgents: [],
+      independentAgents: [],
+      defaultAvailableAgents: [],
+      privateRequiredAgents: [],
+      duplicateCopyAgents: [{
+        agent: 'claude-code',
+        displayName: 'Claude Code',
+        presence: 'duplicate-copy',
+        sharedPath: '/canonical/agent-toolkit',
+        privatePath: '/private/agent-toolkit',
+        canCleanupPrivateCopy: true,
+      }],
+      privateOnlyAgents: [],
+    };
+
+    render(
+      <ManageAgentsDialog
+        skill={skill}
+        scope="project"
+        allAgents={allAgents}
+        agentDetails={details}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onCleanupDuplicates={onCleanupDuplicates}
+      />
+    );
+
+    expect(screen.getByText('skills.manageAgents.duplicateCopiesTitle')).toBeDefined();
+    expect(screen.getAllByText('Claude Code').length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.cleanAllDuplicates' }));
+
+    expect(onCleanupDuplicates).not.toHaveBeenCalled();
+    expect(screen.getByText('skills.manageAgents.cleanupConfirmTitle')).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.confirmCleanupDuplicates' }));
+
+    expect(onCleanupDuplicates).toHaveBeenCalledWith(['claude-code']);
+  });
+
+  it('cleans a single duplicate copy without batch confirmation', async () => {
+    const user = userEvent.setup();
+    const onCleanupDuplicates = vi.fn().mockResolvedValue(undefined);
+    const details: SkillAgentDetails = {
+      skillName: skill.name,
+      scope: 'project',
+      canonicalPath: skill.canonicalPath,
+      automaticAgents: [],
+      independentAgents: [],
+      defaultAvailableAgents: [],
+      privateRequiredAgents: [],
+      duplicateCopyAgents: [{
+        agent: 'claude-code',
+        displayName: 'Claude Code',
+        presence: 'duplicate-copy',
+        sharedPath: '/canonical/agent-toolkit',
+        privatePath: '/private/agent-toolkit',
+        canCleanupPrivateCopy: true,
+      }],
+      privateOnlyAgents: [],
+    };
+
+    render(
+      <ManageAgentsDialog
+        skill={skill}
+        scope="project"
+        allAgents={allAgents}
+        agentDetails={details}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onCleanupDuplicates={onCleanupDuplicates}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.cleanDuplicateCopy' }));
+
+    expect(onCleanupDuplicates).toHaveBeenCalledWith(['claude-code']);
+  });
+
+  it('does not offer a private copy action for agents that already have duplicate copies', () => {
+    const sharedCompatibleAgent: AgentInfo = {
+      id: 'firebender',
+      name: 'Firebender',
+      skillsDir: '.firebender/skills',
+      globalSkillsDir: '~/.firebender/skills',
+      detected: true,
+      targets: {
+        global: makeAgentScopeTarget({
+          automatic: true,
+          path: '~/.agents/skills',
+          availability: 'shared-compatible',
+          privatePath: '~/.firebender/skills',
+        }),
+        project: makeAgentScopeTarget({
+          automatic: true,
+          path: '.agents/skills',
+          sharedPath: './.agents/skills',
+          availability: 'shared-compatible',
+          privatePath: '.firebender/skills',
+        }),
+      },
+    };
+    const details: SkillAgentDetails = {
+      skillName: skill.name,
+      scope: 'project',
+      canonicalPath: skill.canonicalPath,
+      automaticAgents: [['firebender', 'Firebender']],
+      independentAgents: [],
+      defaultAvailableAgents: [],
+      privateRequiredAgents: [],
+      duplicateCopyAgents: [{
+        agent: 'firebender',
+        displayName: 'Firebender',
+        presence: 'duplicate-copy',
+        sharedPath: '/canonical/agent-toolkit',
+        privatePath: '/private/agent-toolkit',
+        canCleanupPrivateCopy: true,
+      }],
+      privateOnlyAgents: [],
+    };
+
+    render(
+      <ManageAgentsDialog
+        skill={{ ...skill, agents: ['firebender'] }}
+        scope="project"
+        allAgents={[sharedCompatibleAgent]}
+        agentDetails={details}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onCleanupDuplicates={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.manageAgents.duplicateCopiesTitle')).toBeDefined();
+    expect(screen.queryByText('addSkill.agents.privateCopyTitle')).toBeNull();
   });
 });

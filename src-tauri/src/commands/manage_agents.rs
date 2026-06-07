@@ -4,13 +4,16 @@
 //! - 添加: 从 canonical dir 创建 symlink 到新 agent 目录
 //! - 移除: 复用 uninstaller 的 partial removal
 
+use crate::core::agent_availability::detect_agent_presence;
 use crate::core::agents::AgentType;
-use crate::core::installer::{copy_skill_for_agent, link_skill_for_agent_without_fallback};
+use crate::core::installer::{
+    copy_skill_for_agent, copy_skill_for_agent_private, link_skill_for_agent_without_fallback,
+};
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::core::uninstaller::remove_skill;
 use crate::error::AppError;
-use crate::models::{InstallMode, Scope};
+use crate::models::{AgentSkillPresence, InstallMode, Scope};
 
 /// 管理 skill 的 agent 支持（添加/移除）
 ///
@@ -29,6 +32,7 @@ pub fn manage_skill_agents(
     project_path: Option<String>,
     add_agents: Vec<AgentType>,
     remove_agents: Vec<AgentType>,
+    private_copy_agents: Vec<AgentType>,
     mode: InstallMode,
 ) -> Result<ManageAgentsResult, AppError> {
     let is_global = matches!(scope, Scope::Global);
@@ -67,6 +71,53 @@ pub fn manage_skill_agents(
             ),
         };
 
+        let error = result.error.clone();
+
+        if result.success {
+            added.push(agent.to_string());
+        } else if let Some(err) = &error {
+            add_errors.push(format!("{}: {}", agent, err));
+        }
+
+        added_results.push(ManageAgentOperationResult {
+            agent: result.agent,
+            success: result.success,
+            mode: result.mode,
+            path: result.path.to_string_lossy().to_string(),
+            error,
+        });
+    }
+
+    for agent in &private_copy_agents {
+        let presence = detect_agent_presence(*agent, &skill_name, is_global, cwd);
+        if matches!(
+            presence.presence,
+            AgentSkillPresence::DuplicateCopy | AgentSkillPresence::PrivateOnly
+        ) {
+            let path = presence.private_path.unwrap_or_default();
+            let message = format!(
+                "{} already has a private copy at {}. Clean the duplicate copy before creating a new private copy.",
+                agent.config().display_name,
+                path
+            );
+            add_errors.push(format!("{}: {}", agent, message));
+            added_results.push(ManageAgentOperationResult {
+                agent: agent.to_string(),
+                success: false,
+                mode: InstallMode::Copy,
+                path,
+                error: Some(message),
+            });
+            continue;
+        }
+
+        let result = copy_skill_for_agent_private(
+            &canonical_dir,
+            &skill_name,
+            agent,
+            &scope,
+            project_path.as_deref(),
+        );
         let error = result.error.clone();
 
         if result.success {
@@ -173,6 +224,7 @@ mod tests {
             Some(project_path),
             vec![],
             vec![],
+            vec![],
             crate::models::InstallMode::Symlink,
         );
 
@@ -190,6 +242,7 @@ mod tests {
             Scope::Project,
             Some(project_path),
             vec![AgentType::Cursor],
+            vec![],
             vec![],
             crate::models::InstallMode::Symlink,
         )
@@ -216,6 +269,7 @@ mod tests {
             Some(project_path),
             vec![],
             vec![],
+            vec![],
             crate::models::InstallMode::Symlink,
         )
         .unwrap();
@@ -236,6 +290,7 @@ mod tests {
             Scope::Project,
             Some(project_path.clone()),
             vec![AgentType::ClaudeCode],
+            vec![],
             vec![],
             crate::models::InstallMode::Copy,
         )
@@ -258,6 +313,78 @@ mod tests {
     }
 
     #[test]
+    fn test_manage_skill_agents_add_private_copy() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let canonical = setup_installed_skill(temp.path(), "private-copy-agent-skill");
+
+        let result = manage_skill_agents(
+            "private-copy-agent-skill".to_string(),
+            Scope::Project,
+            Some(project_path.clone()),
+            vec![],
+            vec![],
+            vec![AgentType::ClaudeCode],
+            crate::models::InstallMode::Symlink,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.added, vec!["claude-code".to_string()]);
+        assert_eq!(
+            result.added_results[0].mode,
+            crate::models::InstallMode::Copy
+        );
+
+        let agent_copy = temp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("private-copy-agent-skill");
+        assert!(canonical.join("SKILL.md").exists());
+        assert!(agent_copy.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn test_manage_skill_agents_private_copy_does_not_overwrite_existing_copy() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let canonical = setup_installed_skill(temp.path(), "duplicate-private-copy-skill");
+        let agent_copy = temp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("duplicate-private-copy-skill");
+        fs::create_dir_all(&agent_copy).unwrap();
+        fs::write(agent_copy.join("SKILL.md"), "# Local edits").unwrap();
+
+        let result = manage_skill_agents(
+            "duplicate-private-copy-skill".to_string(),
+            Scope::Project,
+            Some(project_path.clone()),
+            vec![],
+            vec![],
+            vec![AgentType::ClaudeCode],
+            crate::models::InstallMode::Symlink,
+        )
+        .unwrap();
+
+        assert!(result.added.is_empty());
+        assert_eq!(result.added_results.len(), 1);
+        assert!(!result.added_results[0].success);
+        assert!(result.added_results[0]
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("already has a private copy"));
+        assert_eq!(
+            fs::read_to_string(agent_copy.join("SKILL.md")).unwrap(),
+            "# Local edits"
+        );
+        assert!(canonical.join("SKILL.md").exists());
+    }
+
+    #[test]
     fn test_manage_skill_agents_add_agent_with_symlink() {
         let temp = tempdir().unwrap();
         let project_path = temp.path().to_string_lossy().to_string();
@@ -268,6 +395,7 @@ mod tests {
             Scope::Project,
             Some(project_path.clone()),
             vec![AgentType::ClaudeCode],
+            vec![],
             vec![],
             crate::models::InstallMode::Symlink,
         )

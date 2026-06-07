@@ -2,12 +2,43 @@
 //!
 //! 为智能删除对话框提供 agent 安装详情
 
+use crate::core::agent_availability::detect_agent_presence;
 use crate::core::agents::AgentType;
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::error::AppError;
-use crate::models::{IndependentAgentInfo, Scope, SkillAgentDetails};
+use crate::models::{AgentSkillPresence, IndependentAgentInfo, Scope, SkillAgentDetails};
 use std::path::PathBuf;
+
+fn independent_agent_info(
+    agent: AgentType,
+    display_name: &str,
+    private_path: &str,
+) -> IndependentAgentInfo {
+    let skill_path = PathBuf::from(private_path);
+    let is_symlink = skill_path
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+
+    #[cfg(windows)]
+    let is_symlink = is_symlink
+        || skill_path
+            .symlink_metadata()
+            .map(|m| {
+                // Junction 在 Windows 上表现为 dir + reparse point
+                m.file_type().is_dir()
+                    && std::os::windows::fs::MetadataExt::file_attributes(&m) & 0x400 != 0
+            })
+            .unwrap_or(false);
+
+    IndependentAgentInfo {
+        agent,
+        display_name: display_name.to_string(),
+        path: private_path.to_string(),
+        is_symlink,
+    }
+}
 
 /// 查询 skill 的 agent 安装详情
 ///
@@ -26,71 +57,49 @@ pub async fn get_skill_agent_details(
     // 1. 计算 canonical 路径
     let canonical_path = canonical_skills_dir(is_global, cwd).join(&sanitized_name);
 
-    // 2. 获取所有已安装的 agents（与当前 remove_skill 一致的逻辑）
-    let detected_agents = {
-        let detected = AgentType::detect_installed();
-        if detected.is_empty() {
-            AgentType::all().collect::<Vec<_>>()
-        } else {
-            detected
-        }
-    };
-
-    // 3. 遍历 agents，分组为 automatic / independent
+    // 3. 遍历 agents，按 presence 模型分组；旧 automatic/independent 字段保留兼容。
     let mut automatic_agents: Vec<(AgentType, String)> = Vec::new();
     let mut independent_agents: Vec<IndependentAgentInfo> = Vec::new();
+    let mut default_available_agents = Vec::new();
+    let mut private_required_agents = Vec::new();
+    let mut duplicate_copy_agents = Vec::new();
+    let mut private_only_agents = Vec::new();
 
-    for agent in &detected_agents {
+    for agent in AgentType::all() {
         let config = agent.config();
+        let presence = detect_agent_presence(agent, &name, is_global, cwd);
 
-        // 计算该 agent 的 skill 路径
-        let skill_path = if is_global {
-            match &config.global_skills_dir {
-                Some(global_dir) => global_dir.join(&sanitized_name),
-                None => continue, // agent 不支持 global
+        match presence.presence {
+            AgentSkillPresence::DefaultActive => {
+                automatic_agents.push((agent, config.display_name.to_string()));
+                default_available_agents.push(presence);
             }
-        } else {
-            PathBuf::from(cwd)
-                .join(config.skills_dir)
-                .join(&sanitized_name)
-        };
-
-        // 检查路径是否存在（包括 symlink）
-        let exists = skill_path.symlink_metadata().is_ok();
-        if !exists {
-            continue;
-        }
-
-        if agent.is_automatic_for_scope(is_global, cwd) {
-            automatic_agents.push((*agent, config.display_name.to_string()));
-            // automatic agent 读取 canonical，不能放入 independent（删除其目录 = 删除 canonical）
-            continue;
-        } else {
-            // 检查是否是 symlink
-            let is_symlink = skill_path
-                .symlink_metadata()
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false);
-
-            // Windows junction 也需要检查
-            #[cfg(windows)]
-            let is_symlink = is_symlink || {
-                skill_path
-                    .symlink_metadata()
-                    .map(|m| {
-                        // Junction 在 Windows 上表现为 dir + reparse point
-                        m.file_type().is_dir()
-                            && std::os::windows::fs::MetadataExt::file_attributes(&m) & 0x400 != 0
-                    })
-                    .unwrap_or(false)
-            };
-
-            independent_agents.push(IndependentAgentInfo {
-                agent: *agent,
-                display_name: config.display_name.to_string(),
-                path: skill_path.to_string_lossy().to_string(),
-                is_symlink,
-            });
+            AgentSkillPresence::DuplicateCopy => {
+                automatic_agents.push((agent, config.display_name.to_string()));
+                if let Some(private_path) = &presence.private_path {
+                    independent_agents.push(independent_agent_info(
+                        agent,
+                        config.display_name,
+                        private_path,
+                    ));
+                }
+                default_available_agents.push(presence.clone());
+                duplicate_copy_agents.push(presence);
+            }
+            AgentSkillPresence::PrivateOnly => {
+                if let Some(private_path) = &presence.private_path {
+                    independent_agents.push(independent_agent_info(
+                        agent,
+                        config.display_name,
+                        private_path,
+                    ));
+                }
+                private_only_agents.push(presence);
+            }
+            AgentSkillPresence::RequiresPrivateInstall => {
+                private_required_agents.push(presence);
+            }
+            AgentSkillPresence::NotInstalled => {}
         }
     }
 
@@ -100,5 +109,9 @@ pub async fn get_skill_agent_details(
         canonical_path: canonical_path.to_string_lossy().to_string(),
         automatic_agents,
         independent_agents,
+        default_available_agents,
+        private_required_agents,
+        duplicate_copy_agents,
+        private_only_agents,
     })
 }

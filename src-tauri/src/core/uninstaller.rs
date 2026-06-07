@@ -96,7 +96,7 @@ pub fn remove_skill(
                 let config = agent.config();
                 if let Some(global_dir) = &config.global_skills_dir {
                     let agent_skill_path = global_dir.join(&sanitized_name);
-                    agent_skill_path.symlink_metadata().is_ok()
+                    is_link_path(&agent_skill_path)
                 } else {
                     false
                 }
@@ -111,7 +111,7 @@ pub fn remove_skill(
                 let agent_skill_path = PathBuf::from(cwd)
                     .join(config.skills_dir)
                     .join(&sanitized_name);
-                agent_skill_path.symlink_metadata().is_ok()
+                is_link_path(&agent_skill_path)
             });
             !still_used
         };
@@ -202,6 +202,22 @@ fn remove_path(path: &PathBuf) -> Result<(), AppError> {
     }
 }
 
+fn is_link_path(path: &PathBuf) -> bool {
+    path.symlink_metadata()
+        .map(|metadata| {
+            let is_link = metadata.file_type().is_symlink();
+
+            #[cfg(windows)]
+            let is_link = is_link || {
+                use std::os::windows::fs::MetadataExt;
+                metadata.file_type().is_dir() && metadata.file_attributes() & 0x400 != 0
+            };
+
+            is_link
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +276,31 @@ mod tests {
         assert!(dir.exists());
         remove_path(&dir).unwrap();
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn test_full_removal_with_explicit_empty_agents_removes_canonical_only() {
+        let temp = tempdir().unwrap();
+        let canonical = temp.path().join(".agents").join("skills").join("demo");
+        let private = temp.path().join(".claude").join("skills").join("demo");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        fs::write(canonical.join("SKILL.md"), "# Demo").unwrap();
+        fs::write(private.join("SKILL.md"), "# Private").unwrap();
+
+        let cwd = temp.path().to_string_lossy().to_string();
+        let result = remove_skill(
+            "demo",
+            &Scope::Project,
+            Some(&cwd),
+            true,
+            Some(&[]),
+        )
+        .unwrap();
+
+        assert!(result.success);
+        assert!(!canonical.exists());
+        assert!(private.exists());
     }
 
     #[cfg(unix)]
