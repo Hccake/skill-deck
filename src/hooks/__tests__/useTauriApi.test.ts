@@ -94,6 +94,30 @@ describe('useTauriApi unwrap logic', () => {
     );
   });
 
+  it('passes explicit private copy agents to installSkills command', async () => {
+    mockCommands.installSkills.mockResolvedValue({
+      status: 'ok',
+      data: { successful: [], failed: [], symlinkFallbackAgents: [] },
+    });
+
+    await installSkills({
+      source: 'owner/repo',
+      skills: ['demo'],
+      agents: [],
+      privateCopyAgents: ['firebender'],
+      scope: 'global',
+      projectPath: null,
+      mode: 'copy',
+      retry: false,
+      preserveExistingModes: false,
+      acknowledgeRisk: false,
+    });
+
+    expect(mockCommands.installSkills).toHaveBeenCalledWith(
+      expect.objectContaining({ privateCopyAgents: ['firebender'] })
+    );
+  });
+
   it('unwraps updateSkill response with structured results', async () => {
     const response = {
       results: [

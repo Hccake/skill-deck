@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import type { AgentInfo } from '@/bindings';
-import type { WizardState } from '../types';
+import { makeAgentScopeTarget } from '@/test-utils';
+import { shouldShowInstallModeSelection, type WizardState } from '../types';
 import { OptionsStep } from '../OptionsStep';
 
 vi.mock('react-i18next', () => ({
@@ -39,16 +40,15 @@ function makeAgent(agent: Omit<AgentInfo, 'targets'> & {
   return {
     ...agent,
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: agent.globalAutomatic ?? false,
         path: agent.globalSkillsDir,
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: agent.projectAutomatic ?? false,
         path: agent.skillsDir,
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   };
 }
@@ -57,16 +57,15 @@ function makeAutomaticGlobalAgent(agent: Omit<AgentInfo, 'targets'>): AgentInfo 
   return {
     ...agent,
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: true,
         path: '~/.agents/skills',
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: agent.skillsDir === '.agents/skills',
         path: agent.skillsDir,
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   };
 }
@@ -98,9 +97,11 @@ function createState(): WizardState {
     skillFilter: null,
     skillSearchQuery: '',
     selectedAgents: [],
+    privateCopyAgents: [],
     allAgents: [],
     mode: 'symlink',
     otherAgentsExpanded: false,
+    privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
     confirmReady: false,
@@ -137,6 +138,36 @@ function ProjectHarness() {
 }
 
 describe('OptionsStep', () => {
+  it('uses install paths, not private read paths, when deciding whether mode selection is needed', () => {
+    const sharedCompatibleAgent = makeScopeAwareAgent({
+      id: 'firebender',
+      name: 'Firebender',
+      skillsDir: '.agents/skills',
+      globalSkillsDir: '~/.firebender/skills',
+      detected: true,
+    }, {
+      global: makeAgentScopeTarget({
+        automatic: true,
+        path: '~/.firebender/skills',
+        availability: 'shared-compatible',
+        sharedPath: '~/.agents/skills',
+        installPath: '~/.agents/skills',
+        privatePath: '~/.firebender/skills',
+      }),
+      project: makeAgentScopeTarget({
+        automatic: true,
+        path: '.agents/skills',
+        sharedPath: './.agents/skills',
+      }),
+    });
+
+    expect(shouldShowInstallModeSelection({
+      allAgents: [sharedCompatibleAgent],
+      selectedAgents: [],
+      scope: 'global',
+    })).toBe(false);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     getDefaultTargetAgentsMock.mockResolvedValue(null);
@@ -180,16 +211,15 @@ describe('OptionsStep', () => {
         globalSkillsDir: '~/.gemini/antigravity/skills',
         detected: true,
       }, {
-        global: {
-          supported: true,
+        global: makeAgentScopeTarget({
           automatic: false,
           path: '~/.gemini/antigravity/skills',
-        },
-        project: {
-          supported: true,
+        }),
+        project: makeAgentScopeTarget({
           automatic: true,
           path: '.agents/skills',
-        },
+          sharedPath: './.agents/skills',
+        }),
       }),
       makeAgent({
         id: 'claude-code',

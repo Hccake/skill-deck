@@ -5,7 +5,7 @@ import type {
   AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult,
   SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode,
   InstallParams, InstallResults, SkillDeckConfig, Scope,
-  SkillAuditData, SkillAgentDetails, ManageAgentsResult,
+  SkillAuditData, SkillAgentDetails, ManageAgentsResult, DuplicateCleanupResult,
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
   InstallRiskPolicy, InstallRiskKind,
   DefaultTargetAgents,
@@ -15,7 +15,7 @@ export type {
   AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult,
   SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode,
   InstallParams, InstallResults, SkillDeckConfig,
-  SkillAuditData, SkillAgentDetails, ManageAgentsResult,
+  SkillAuditData, SkillAgentDetails, ManageAgentsResult, DuplicateCleanupResult,
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
 };
@@ -120,9 +120,10 @@ export async function checkOverwrites(
   skills: string[],
   agents: string[],
   scope: Scope,
-  projectPath?: string
+  projectPath?: string,
+  privateCopyAgents: string[] = []
 ): Promise<Partial<Record<string, string[]>>> {
-  return unwrap(await commands.checkOverwrites(skills, agents, scope, projectPath ?? null));
+  return unwrap(await commands.checkOverwrites(skills, agents, privateCopyAgents, scope, projectPath ?? null));
 }
 
 // ============ 删除相关 API ============
@@ -274,6 +275,7 @@ export async function manageSkillAgents(params: {
   projectPath?: string;
   addAgents: AgentType[];
   removeAgents: AgentType[];
+  privateCopyAgents?: AgentType[];
   mode: InstallMode;
 }): Promise<ManageAgentsResult> {
   return unwrap(
@@ -283,7 +285,40 @@ export async function manageSkillAgents(params: {
       params.projectPath ?? null,
       params.addAgents,
       params.removeAgents,
+      params.privateCopyAgents ?? [],
       params.mode,
+    )
+  );
+}
+
+export async function cleanupDuplicateAgentCopy(params: {
+  skillName: string;
+  agent: AgentType;
+  scope: Scope;
+  projectPath?: string;
+}): Promise<DuplicateCleanupResult> {
+  return unwrap(
+    await commands.cleanupDuplicateAgentCopy(
+      params.skillName,
+      params.agent,
+      params.scope,
+      params.projectPath ?? null,
+    )
+  );
+}
+
+export async function cleanupDuplicateAgentCopies(params: {
+  skillName: string;
+  scope: Scope;
+  projectPath?: string;
+  agents: AgentType[];
+}): Promise<DuplicateCleanupResult[]> {
+  return unwrap(
+    await commands.cleanupDuplicateAgentCopies(
+      params.skillName,
+      params.scope,
+      params.projectPath ?? null,
+      params.agents,
     )
   );
 }
@@ -298,6 +333,7 @@ export async function copySkillToProjects(params: {
   sourceProjectPath: string;
   targetProjectPaths: string[];
   agents: string[];
+  privateCopyAgents?: string[];
 }): Promise<CopySkillResult> {
   return unwrap(
     await commands.copySkillToProjects(
@@ -305,6 +341,7 @@ export async function copySkillToProjects(params: {
       params.sourceProjectPath,
       params.targetProjectPaths,
       params.agents,
+      params.privateCopyAgents ?? [],
     )
   );
 }

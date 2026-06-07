@@ -48,9 +48,9 @@ export function shouldShowInstallModeSelection(
   for (const agent of state.allAgents) {
     const target = getAgentTarget(agent, scope);
     if (isAutomaticAgent(agent, scope)) {
-      effectiveDirs.add(target.path);
+      effectiveDirs.add(target.installPath);
     } else if (isAdditionalAgent(agent, scope) && selectedSet.has(agent.id)) {
-      effectiveDirs.add(target.path);
+      effectiveDirs.add(target.installPath);
     }
   }
 
@@ -87,9 +87,11 @@ export interface WizardState {
 
   // Options
   selectedAgents: string[];
+  privateCopyAgents: string[];
   allAgents: AgentInfo[];
   mode: InstallMode;
   otherAgentsExpanded: boolean;
+  privateCopyAgentsExpanded: boolean;
   otherAgentsSearchQuery: string;
 
   // Confirm

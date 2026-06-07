@@ -11,7 +11,7 @@ use crate::core::agents::AgentType;
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::error::AppError;
-use crate::models::{InstallMode, InstallResult, Scope};
+use crate::models::{InstallMode, InstallResult, InstallResultCategory, Scope};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -75,6 +75,7 @@ pub fn install_skill_for_agent(
                 "{} does not support global skill installation",
                 config.display_name
             )),
+            category: InstallResultCategory::PrivateAdapted,
         };
     }
 
@@ -100,6 +101,7 @@ pub fn install_skill_for_agent(
             symlink_failed,
             skipped,
             error: None,
+            category: InstallResultCategory::PrivateAdapted,
         },
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
@@ -111,6 +113,7 @@ pub fn install_skill_for_agent(
             symlink_failed: false,
             skipped: false,
             error: Some(e.to_string()),
+            category: InstallResultCategory::PrivateAdapted,
         },
     }
 }
@@ -252,6 +255,26 @@ fn resolve_agent_skill_dir(
     Ok(resolve_agent_base_dir(agent, is_global, cwd)?.join(skill_name))
 }
 
+pub fn resolve_private_agent_skill_dir(
+    agent: &AgentType,
+    skill_name: &str,
+    is_global: bool,
+    cwd: &str,
+) -> Result<PathBuf, AppError> {
+    let availability =
+        crate::core::agent_availability::availability_for_agent(*agent, is_global, cwd);
+    let Some(private_path) = availability.private_path else {
+        return Err(AppError::InstallFailed {
+            message: format!(
+                "{} does not have a separate private skill directory",
+                agent.config().display_name
+            ),
+        });
+    };
+
+    Ok(PathBuf::from(private_path).join(skill_name))
+}
+
 fn write_canonical_skill(
     skill_path: &Path,
     skill_name: &str,
@@ -288,6 +311,20 @@ fn copy_canonical_to_agent(
         ));
     }
 
+    clean_and_create_directory(&agent_dir)?;
+    copy_skill_files(canonical_dir, &agent_dir)?;
+
+    Ok((agent_dir, Some(canonical_dir.to_path_buf()), false, false))
+}
+
+fn copy_canonical_to_private_agent(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    is_global: bool,
+    cwd: &str,
+) -> Result<(PathBuf, Option<PathBuf>, bool, bool), AppError> {
+    let agent_dir = resolve_private_agent_skill_dir(agent, skill_name, is_global, cwd)?;
     clean_and_create_directory(&agent_dir)?;
     copy_skill_files(canonical_dir, &agent_dir)?;
 
@@ -457,6 +494,7 @@ pub fn link_skill_for_agent(
                 "{} does not support global skill installation",
                 config.display_name
             )),
+            category: InstallResultCategory::PrivateAdapted,
         };
     }
 
@@ -475,6 +513,7 @@ pub fn link_skill_for_agent(
             symlink_failed,
             skipped,
             error: None,
+            category: InstallResultCategory::PrivateAdapted,
         },
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
@@ -486,6 +525,7 @@ pub fn link_skill_for_agent(
             symlink_failed: false,
             skipped: false,
             error: Some(e.to_string()),
+            category: InstallResultCategory::PrivateAdapted,
         },
     }
 }
@@ -520,6 +560,7 @@ pub fn link_skill_for_agent_without_fallback(
                 "{} does not support global skill installation",
                 config.display_name
             )),
+            category: InstallResultCategory::PrivateAdapted,
         };
     }
 
@@ -546,6 +587,7 @@ pub fn link_skill_for_agent_without_fallback(
             symlink_failed,
             skipped,
             error: None,
+            category: InstallResultCategory::PrivateAdapted,
         },
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
@@ -557,6 +599,7 @@ pub fn link_skill_for_agent_without_fallback(
             symlink_failed: false,
             skipped: false,
             error: Some(e.to_string()),
+            category: InstallResultCategory::PrivateAdapted,
         },
     }
 }
@@ -589,6 +632,7 @@ pub fn copy_skill_for_agent(
                 "{} does not support global skill installation",
                 config.display_name
             )),
+            category: InstallResultCategory::PrivateAdapted,
         };
     }
 
@@ -603,6 +647,7 @@ pub fn copy_skill_for_agent(
             symlink_failed,
             skipped,
             error: None,
+            category: InstallResultCategory::PrivateAdapted,
         },
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
@@ -614,7 +659,73 @@ pub fn copy_skill_for_agent(
             symlink_failed: false,
             skipped: false,
             error: Some(e.to_string()),
+            category: InstallResultCategory::PrivateAdapted,
         },
+    }
+}
+
+pub fn copy_skill_for_agent_private(
+    canonical_dir: &Path,
+    skill_name: &str,
+    agent: &AgentType,
+    scope: &Scope,
+    project_path: Option<&str>,
+) -> InstallResult {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+
+    match copy_canonical_to_private_agent(canonical_dir, &sanitized_name, agent, is_global, cwd) {
+        Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: true,
+            path,
+            canonical_path,
+            mode: InstallMode::Copy,
+            symlink_failed,
+            skipped,
+            error: None,
+            category: InstallResultCategory::PrivateCopy,
+        },
+        Err(e) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success: false,
+            path: PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: Some(e.to_string()),
+            category: InstallResultCategory::PrivateCopy,
+        },
+    }
+}
+
+fn per_agent_result_from_install(
+    result: InstallResult,
+    duration_ms: Option<u32>,
+) -> PerAgentInstallResult {
+    PerAgentInstallResult {
+        agent: result.agent,
+        success: result.success,
+        skipped: result.skipped,
+        error: result.error,
+        duration_ms,
+        symlink_failed: result.symlink_failed,
+        path: result.path,
+        canonical_path: result.canonical_path,
+        mode: result.mode,
+    }
+}
+
+fn duration_ms(duration: std::time::Duration) -> u32 {
+    let elapsed = duration.as_millis();
+    if elapsed > u32::MAX as u128 {
+        u32::MAX
+    } else {
+        elapsed as u32
     }
 }
 
@@ -654,6 +765,195 @@ pub fn install_skill_to_agents(
             canonical_path: result.canonical_path,
             mode: result.mode,
         });
+    }
+
+    results
+}
+
+pub fn install_skill_to_agent_groups(
+    skill_path: &Path,
+    skill_name: &str,
+    private_required_agents: &[AgentType],
+    private_copy_agents: &[AgentType],
+    scope: &Scope,
+    project_path: Option<&str>,
+    mode: &InstallMode,
+    include_canonical_result: bool,
+) -> Vec<PerAgentInstallResult> {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+    let all_agents: Vec<AgentType> = private_required_agents
+        .iter()
+        .chain(private_copy_agents.iter())
+        .copied()
+        .collect();
+
+    let canonical_dir = match write_canonical_skill(skill_path, &sanitized_name, is_global, cwd) {
+        Ok(path) => path,
+        Err(err) => {
+            return all_agents
+                .iter()
+                .map(|agent| PerAgentInstallResult {
+                    agent: agent.to_string(),
+                    success: false,
+                    skipped: false,
+                    error: Some(err.to_string()),
+                    duration_ms: None,
+                    symlink_failed: false,
+                    path: PathBuf::new(),
+                    canonical_path: None,
+                    mode: if private_copy_agents.contains(agent) {
+                        InstallMode::Copy
+                    } else {
+                        mode.clone()
+                    },
+                })
+                .collect();
+        }
+    };
+
+    let mut results = Vec::with_capacity(all_agents.len());
+    if include_canonical_result {
+        results.push(PerAgentInstallResult {
+            agent: "__canonical__".to_string(),
+            success: true,
+            skipped: false,
+            error: None,
+            duration_ms: None,
+            symlink_failed: false,
+            path: canonical_dir.clone(),
+            canonical_path: Some(canonical_dir.clone()),
+            mode: mode.clone(),
+        });
+    }
+
+    for agent in private_required_agents {
+        let started = std::time::Instant::now();
+        let result = match mode {
+            InstallMode::Symlink => {
+                link_skill_for_agent(&canonical_dir, &sanitized_name, agent, scope, project_path)
+            }
+            InstallMode::Copy => {
+                copy_skill_for_agent(&canonical_dir, &sanitized_name, agent, scope, project_path)
+            }
+        };
+        results.push(per_agent_result_from_install(
+            result,
+            Some(duration_ms(started.elapsed())),
+        ));
+    }
+
+    for agent in private_copy_agents {
+        let started = std::time::Instant::now();
+        let result = copy_skill_for_agent_private(
+            &canonical_dir,
+            &sanitized_name,
+            agent,
+            scope,
+            project_path,
+        );
+        results.push(per_agent_result_from_install(
+            result,
+            Some(duration_ms(started.elapsed())),
+        ));
+    }
+
+    results
+}
+
+pub fn install_skill_to_agent_groups_with_modes(
+    skill_path: &Path,
+    skill_name: &str,
+    private_required_agents: &[(AgentType, InstallMode)],
+    private_copy_agents: &[AgentType],
+    scope: &Scope,
+    project_path: Option<&str>,
+    include_canonical_result: bool,
+) -> Vec<PerAgentInstallResult> {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+    let all_agent_count = private_required_agents.len() + private_copy_agents.len();
+
+    let canonical_dir = match write_canonical_skill(skill_path, &sanitized_name, is_global, cwd) {
+        Ok(path) => path,
+        Err(err) => {
+            let mut results = Vec::with_capacity(all_agent_count);
+            for (agent, mode) in private_required_agents {
+                results.push(PerAgentInstallResult {
+                    agent: agent.to_string(),
+                    success: false,
+                    skipped: false,
+                    error: Some(err.to_string()),
+                    duration_ms: None,
+                    symlink_failed: false,
+                    path: PathBuf::new(),
+                    canonical_path: None,
+                    mode: mode.clone(),
+                });
+            }
+            for agent in private_copy_agents {
+                results.push(PerAgentInstallResult {
+                    agent: agent.to_string(),
+                    success: false,
+                    skipped: false,
+                    error: Some(err.to_string()),
+                    duration_ms: None,
+                    symlink_failed: false,
+                    path: PathBuf::new(),
+                    canonical_path: None,
+                    mode: InstallMode::Copy,
+                });
+            }
+            return results;
+        }
+    };
+
+    let mut results = Vec::with_capacity(all_agent_count);
+    if include_canonical_result {
+        results.push(PerAgentInstallResult {
+            agent: "__canonical__".to_string(),
+            success: true,
+            skipped: false,
+            error: None,
+            duration_ms: None,
+            symlink_failed: false,
+            path: canonical_dir.clone(),
+            canonical_path: Some(canonical_dir.clone()),
+            mode: InstallMode::Copy,
+        });
+    }
+
+    for (agent, mode) in private_required_agents {
+        let started = std::time::Instant::now();
+        let result = match mode {
+            InstallMode::Symlink => {
+                link_skill_for_agent(&canonical_dir, &sanitized_name, agent, scope, project_path)
+            }
+            InstallMode::Copy => {
+                copy_skill_for_agent(&canonical_dir, &sanitized_name, agent, scope, project_path)
+            }
+        };
+        results.push(per_agent_result_from_install(
+            result,
+            Some(duration_ms(started.elapsed())),
+        ));
+    }
+
+    for agent in private_copy_agents {
+        let started = std::time::Instant::now();
+        let result = copy_skill_for_agent_private(
+            &canonical_dir,
+            &sanitized_name,
+            agent,
+            scope,
+            project_path,
+        );
+        results.push(per_agent_result_from_install(
+            result,
+            Some(duration_ms(started.elapsed())),
+        ));
     }
 
     results
@@ -757,6 +1057,24 @@ pub fn is_skill_installed(
         Ok(path) => path,
         Err(_) => return false,
     };
+    skill_dir.exists()
+}
+
+pub fn is_private_copy_installed(
+    skill_name: &str,
+    agent: &AgentType,
+    scope: &Scope,
+    project_path: Option<&str>,
+) -> bool {
+    let is_global = matches!(scope, Scope::Global);
+    let cwd = project_path.unwrap_or(".");
+    let sanitized_name = sanitize_name(skill_name);
+
+    let skill_dir = match resolve_private_agent_skill_dir(agent, &sanitized_name, is_global, cwd) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+
     skill_dir.exists()
 }
 
@@ -1046,6 +1364,48 @@ mod tests {
         assert!(base_str.contains(".gemini"));
         assert!(base_str.contains("antigravity"));
         assert!(!base_str.ends_with(".agents/skills"));
+    }
+
+    #[test]
+    fn test_global_shared_compatible_private_copy_resolves_private_dir() {
+        let path =
+            resolve_private_agent_skill_dir(&AgentType::Firebender, "demo", true, ".").unwrap();
+        let path_str = path.to_string_lossy();
+
+        assert!(path_str.contains(".firebender"));
+        assert!(path_str.ends_with("skills/demo"));
+        assert!(!path_str.ends_with(".agents/skills/demo"));
+    }
+
+    #[test]
+    fn test_private_copy_writes_private_project_dir() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let canonical_dir = temp.path().join(".agents").join("skills").join("demo");
+        fs::create_dir_all(&canonical_dir).unwrap();
+        fs::write(canonical_dir.join("SKILL.md"), "# Demo").unwrap();
+
+        let result = copy_skill_for_agent_private(
+            &canonical_dir,
+            "demo",
+            &AgentType::ClaudeCode,
+            &Scope::Project,
+            Some(&project_path),
+        );
+
+        let private_dir = temp.path().join(".claude").join("skills").join("demo");
+        assert!(
+            result.success,
+            "private copy should succeed: {:?}",
+            result.error
+        );
+        assert_eq!(result.path, private_dir);
+        assert_eq!(
+            result.canonical_path.as_deref(),
+            Some(canonical_dir.as_path())
+        );
+        assert!(private_dir.join("SKILL.md").exists());
+        assert!(canonical_dir.join("SKILL.md").exists());
     }
 
     #[test]

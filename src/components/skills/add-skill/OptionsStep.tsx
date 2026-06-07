@@ -4,11 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { listAgents, getDefaultTargetAgents, getLastSelectedAgents } from '@/hooks/useTauriApi';
-import { filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
+import { canCreatePrivateCopy, filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
 import { AgentSelector } from './AgentSelector';
 import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
 import { Copy, Info, Link2, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { AgentInfo } from '@/bindings';
 
 // CLI 默认选中的手动安装目标
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
@@ -76,6 +77,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
       updateStateRef.current({
         allAgents,
         selectedAgents,
+        privateCopyAgents: [],
       });
     }
 
@@ -89,6 +91,20 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
     [updateState]
   );
 
+  const handlePrivateCopyChange = useCallback(
+    (agents: string[]) => {
+      const agentById = new Map<string, AgentInfo>(state.allAgents.map((agent) => [agent.id, agent]));
+      const filteredAgents = agents.filter((agentId, index) => {
+        if (agents.indexOf(agentId) !== index) return false;
+        const agent = agentById.get(agentId);
+        return agent ? canCreatePrivateCopy(agent, scope) : false;
+      });
+
+      updateState({ privateCopyAgents: filteredAgents });
+    },
+    [scope, state.allAgents, updateState]
+  );
+
   const shouldShowModeSelection = shouldShowInstallModeSelection(state);
   const effectiveMode = getEffectiveInstallMode(state);
 
@@ -99,9 +115,13 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
         <Label className="text-base font-semibold">{t('addSkill.agents.targetTitle')}</Label>
         <AgentSelector
           selectedAgents={state.selectedAgents}
+          privateCopyAgents={state.privateCopyAgents}
           allAgents={state.allAgents}
           onSelectionChange={handleSelectionChange}
+          onPrivateCopyChange={handlePrivateCopyChange}
           scope={state.scope}
+          privateCopyAgentsExpanded={state.privateCopyAgentsExpanded}
+          onPrivateCopyExpandedChange={(expanded) => updateState({ privateCopyAgentsExpanded: expanded })}
         />
       </div>
 

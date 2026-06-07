@@ -12,6 +12,21 @@ vi.mock('react-i18next', () => ({
       if (key === 'addSkill.complete.agentCoverage') {
         return `${options?.success}/${options?.total} agents`;
       }
+      if (key === 'addSkill.complete.defaultAvailable') {
+        return 'Default available';
+      }
+      if (key === 'addSkill.complete.privateAdapted') {
+        return 'Separate setup';
+      }
+      if (key === 'addSkill.complete.privateCopies') {
+        return 'Private copy';
+      }
+      if (key === 'addSkill.complete.skippedCategory') {
+        return 'Skipped';
+      }
+      if (key === 'addSkill.complete.failedCategory') {
+        return 'Failed';
+      }
       if (key === 'addSkill.complete.showFailures') {
         return `Failures (${options?.count})`;
       }
@@ -78,9 +93,11 @@ function makeState(installResults: InstallResults): WizardState {
     skillFilter: null,
     skillSearchQuery: '',
     selectedAgents: [],
+    privateCopyAgents: [],
     allAgents: [],
     mode: 'symlink',
     otherAgentsExpanded: false,
+    privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
     confirmReady: true,
@@ -164,5 +181,102 @@ describe('CompleteStep', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry Skill' }));
     expect(retrySpy).toHaveBeenCalledWith('skill-a', ['windsurf']);
+  });
+
+  it('summarizes default available, separate setup, private copies, skipped, and failed categories', () => {
+    const installResults: InstallResults = {
+      successful: [
+        makeInstallResult({ skillName: 'skill-a', agent: 'codex', category: 'default-available' }),
+        makeInstallResult({ skillName: 'skill-a', agent: 'cursor', category: 'private-adapted' }),
+        makeInstallResult({ skillName: 'skill-a', agent: 'firebender', category: 'private-copy' }),
+        makeInstallResult({ skillName: 'skill-a', agent: 'missing-agent', skipped: true, category: 'skipped' }),
+      ],
+      failed: [
+        makeInstallResult({
+          skillName: 'skill-a',
+          agent: 'windsurf',
+          success: false,
+          category: 'failed',
+          error: 'permission denied',
+        }),
+      ],
+      symlinkFallbackAgents: [],
+    };
+
+    render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
+
+    expect(screen.getByText('3/5 agents')).toBeDefined();
+    expect(screen.getByText('Default available · 1')).toBeDefined();
+    expect(screen.getByText('Separate setup · 1')).toBeDefined();
+    expect(screen.getByText('Private copy · 1')).toBeDefined();
+    expect(screen.getByText('Skipped · 1')).toBeDefined();
+    expect(screen.getByText('Failed · 1')).toBeDefined();
+  });
+
+  it('uses result summary fields to count default-available coverage', () => {
+    const installResults: InstallResults = {
+      successful: [
+        makeInstallResult({ skillName: 'skill-a', agent: '__canonical__', category: 'default-available' }),
+        makeInstallResult({ skillName: 'skill-a', agent: 'cursor', category: 'private-adapted' }),
+        makeInstallResult({ skillName: 'skill-a', agent: 'firebender', category: 'private-copy' }),
+      ],
+      failed: [],
+      symlinkFallbackAgents: [],
+      defaultAvailableAgents: ['codex', 'opencode'],
+      privateAdaptedAgents: ['cursor'],
+      privateCopyAgents: ['firebender'],
+    };
+
+    render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
+
+    expect(screen.getByText('4/4 agents')).toBeDefined();
+    expect(screen.getByText('Default available · 2')).toBeDefined();
+    expect(screen.getByText('Separate setup · 1')).toBeDefined();
+    expect(screen.getByText('Private copy · 1')).toBeDefined();
+  });
+
+  it('does not double count default-available agents that also have private copies', () => {
+    const installResults: InstallResults = {
+      successful: [
+        makeInstallResult({ skillName: 'skill-a', agent: '__canonical__', category: 'default-available' }),
+        makeInstallResult({ skillName: 'skill-a', agent: 'firebender', category: 'private-copy' }),
+      ],
+      failed: [],
+      symlinkFallbackAgents: [],
+      defaultAvailableAgents: ['codex', 'firebender'],
+      privateAdaptedAgents: [],
+      privateCopyAgents: ['firebender'],
+    };
+
+    render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
+
+    expect(screen.getByText('2/2 agents')).toBeDefined();
+    expect(screen.getByText('Default available · 1')).toBeDefined();
+    expect(screen.getByText('Private copy · 1')).toBeDefined();
+  });
+
+  it('does not count default-available summary without a canonical success result', () => {
+    const installResults: InstallResults = {
+      successful: [],
+      failed: [
+        makeInstallResult({
+          skillName: 'skill-a',
+          agent: 'firebender',
+          success: false,
+          category: 'failed',
+          error: 'copy failed',
+        }),
+      ],
+      symlinkFallbackAgents: [],
+      defaultAvailableAgents: ['codex'],
+      privateAdaptedAgents: [],
+      privateCopyAgents: ['firebender'],
+    };
+
+    render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
+
+    expect(screen.getByText('0/1 agents')).toBeDefined();
+    expect(screen.queryByText(/Default available/)).toBeNull();
+    expect(screen.getByText('Failed · 1')).toBeDefined();
   });
 });

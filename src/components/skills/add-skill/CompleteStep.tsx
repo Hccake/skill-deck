@@ -20,6 +20,13 @@ interface SkillGroup {
   failed: InstallResult[];
 }
 
+function resultCategory(result: InstallResult) {
+  if (result.category) return result.category;
+  if (result.skipped) return 'skipped';
+  if (!result.success) return 'failed';
+  return 'private-adapted';
+}
+
 export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteStepProps) {
   const { t } = useTranslation();
   const results = state.installResults;
@@ -40,7 +47,7 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
     const failedMap = new Map<string, InstallResult[]>();
 
     for (const r of results.successful) {
-      const targetMap = r.skipped ? skippedMap : successMap;
+      const targetMap = resultCategory(r) === 'skipped' ? skippedMap : successMap;
       const existing = targetMap.get(r.skillName) ?? [];
       existing.push(r);
       targetMap.set(r.skillName, existing);
@@ -75,6 +82,11 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
 
   const hasFailures = failedSkillCount > 0;
   const hasSymlinkFallback = results.symlinkFallbackAgents.length > 0;
+  const defaultAvailableAgents = results.defaultAvailableAgents;
+  const privateCopyAgentIds = new Set(results.privateCopyAgents ?? []);
+  const defaultAvailableAgentCount = defaultAvailableAgents
+    ? defaultAvailableAgents.filter((agent) => !privateCopyAgentIds.has(agent)).length
+    : null;
 
   const toggleSkill = (skillName: string) => {
     setExpandedSkills((prev) => ({
@@ -114,10 +126,16 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
       {/* Results list */}
       <div className="border rounded-md p-3 space-y-2">
         {groups.map((group) => {
-          const successCount = group.successful.length;
-          const totalCount = group.successful.length + group.skipped.length + group.failed.length;
           const hasSkillFailures = group.failed.length > 0;
           const expanded = expandedSkills[group.skillName] === true;
+          const defaultAvailable = group.successful.filter((r) => resultCategory(r) === 'default-available');
+          const privateAdapted = group.successful.filter((r) => resultCategory(r) === 'private-adapted');
+          const privateCopies = group.successful.filter((r) => resultCategory(r) === 'private-copy');
+          const defaultAvailableCount = defaultAvailable.length > 0
+            ? defaultAvailableAgentCount ?? defaultAvailable.length
+            : 0;
+          const successCount = defaultAvailableCount + privateAdapted.length + privateCopies.length;
+          const totalCount = successCount + group.skipped.length + group.failed.length;
 
           return (
             <div
@@ -149,6 +167,38 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
                       })}
                     </div>
                   )}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {defaultAvailableCount > 0 && (
+                      <ResultCategoryBadge
+                        label={t('addSkill.complete.defaultAvailable')}
+                        count={defaultAvailableCount}
+                      />
+                    )}
+                    {privateAdapted.length > 0 && (
+                      <ResultCategoryBadge
+                        label={t('addSkill.complete.privateAdapted')}
+                        count={privateAdapted.length}
+                      />
+                    )}
+                    {privateCopies.length > 0 && (
+                      <ResultCategoryBadge
+                        label={t('addSkill.complete.privateCopies')}
+                        count={privateCopies.length}
+                      />
+                    )}
+                    {group.skipped.length > 0 && (
+                      <ResultCategoryBadge
+                        label={t('addSkill.complete.skippedCategory')}
+                        count={group.skipped.length}
+                      />
+                    )}
+                    {group.failed.length > 0 && (
+                      <ResultCategoryBadge
+                        label={t('addSkill.complete.failedCategory')}
+                        count={group.failed.length}
+                      />
+                    )}
+                  </div>
                 </div>
 
                 {hasSkillFailures && (
@@ -226,5 +276,13 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
         <Button onClick={onDone}>{t('addSkill.actions.done')}</Button>
       </div>
     </div>
+  );
+}
+
+function ResultCategoryBadge({ label, count }: { label: string; count: number }) {
+  return (
+    <span className="inline-flex items-center rounded border border-border/60 bg-background/70 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+      {label} · {count}
+    </span>
   );
 }

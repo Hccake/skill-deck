@@ -4,6 +4,7 @@
 //! - fetch_available: 从来源获取可用的 skills 列表
 //! - install_skills: 安装选中的 skills
 
+use crate::core::agent_availability::{availability_for_agent, AgentAvailabilityKind};
 use crate::core::agents::AgentType;
 use crate::core::local_lock::{
     add_skill_to_local_lock, compute_skill_folder_hash, LocalSkillLockEntry,
@@ -13,13 +14,13 @@ use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
     clone_repo_with_progress, compute_local_tree_sha, discover_skills,
     ensure_install_risk_acknowledged, fetch_skill_folder_hash, get_owner_repo,
-    install_skill_to_agents, install_skill_to_agents_with_modes, parse_source, source_risk_policy,
-    CloneProgress, DiscoverOptions, PerAgentInstallResult,
+    install_skill_to_agent_groups, install_skill_to_agent_groups_with_modes, parse_source,
+    source_risk_policy, CloneProgress, DiscoverOptions, PerAgentInstallResult,
 };
 use crate::error::AppError;
 use crate::models::{
-    AvailableSkill, FetchResult, InstallMode, InstallParams, InstallResult, InstallResults,
-    ParsedSource, SourceType,
+    AvailableSkill, FetchResult, InstallMode, InstallParams, InstallResult, InstallResultCategory,
+    InstallResults, ParsedSource, SourceType,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -43,6 +44,14 @@ struct InstallBehavior {
     autofill_automatic_agents: bool,
 }
 
+#[derive(Debug, Clone)]
+struct InstallTargetPlan {
+    default_available_agents: Vec<AgentType>,
+    private_required_targets: Vec<AgentType>,
+    private_copy_targets: Vec<AgentType>,
+    install_targets: Vec<AgentType>,
+}
+
 fn compute_install_behavior(retry: bool) -> InstallBehavior {
     if retry {
         InstallBehavior {
@@ -53,6 +62,118 @@ fn compute_install_behavior(retry: bool) -> InstallBehavior {
             autofill_automatic_agents: true,
         }
     }
+}
+
+fn parse_agent_ids(agent_ids: &[String]) -> Result<Vec<AgentType>, AppError> {
+    let mut agents = Vec::new();
+    for agent_id in agent_ids {
+        let agent = agent_id
+            .parse::<AgentType>()
+            .map_err(|_| AppError::InvalidAgent {
+                agent: agent_id.clone(),
+            })?;
+        if !agents.contains(&agent) {
+            agents.push(agent);
+        }
+    }
+    Ok(agents)
+}
+
+fn validate_private_required_targets(
+    agents: &[AgentType],
+    is_global: bool,
+    cwd: &str,
+) -> Result<(), AppError> {
+    for agent in agents {
+        let availability = availability_for_agent(*agent, is_global, cwd);
+        if availability.kind != AgentAvailabilityKind::PrivateRequired {
+            return Err(AppError::InstallFailed {
+                message: format!(
+                    "{} does not require separate setup for this scope.",
+                    agent.config().display_name
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_private_copy_targets(
+    agents: &[AgentType],
+    is_global: bool,
+    cwd: &str,
+) -> Result<(), AppError> {
+    for agent in agents {
+        let availability = availability_for_agent(*agent, is_global, cwd);
+        if availability.kind != AgentAvailabilityKind::SharedCompatible {
+            return Err(AppError::InstallFailed {
+                message: format!(
+                    "cannot create an independent copy for {} in this scope.",
+                    agent.config().display_name
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn resolve_install_target_plan(
+    params: &InstallParams,
+    behavior: InstallBehavior,
+    cwd: &str,
+) -> Result<InstallTargetPlan, AppError> {
+    let is_global = matches!(params.scope, crate::models::Scope::Global);
+    let default_available_agents = if behavior.autofill_automatic_agents {
+        crate::core::agent_availability::default_available_agents(is_global, cwd)
+    } else {
+        Vec::new()
+    };
+    let private_copy_targets = parse_agent_ids(&params.private_copy_agents)?;
+    let private_required_targets: Vec<AgentType> = parse_agent_ids(&params.agents)?
+        .into_iter()
+        .filter(|agent| !private_copy_targets.contains(agent))
+        .collect();
+    validate_private_required_targets(&private_required_targets, is_global, cwd)?;
+    validate_private_copy_targets(&private_copy_targets, is_global, cwd)?;
+    let mut install_targets = Vec::new();
+    for agent in private_required_targets
+        .iter()
+        .chain(private_copy_targets.iter())
+        .copied()
+    {
+        if !install_targets.contains(&agent) {
+            install_targets.push(agent);
+        }
+    }
+
+    Ok(InstallTargetPlan {
+        default_available_agents,
+        private_required_targets,
+        private_copy_targets,
+        install_targets,
+    })
+}
+
+fn install_result_category(
+    result: &PerAgentInstallResult,
+    private_copy_targets: &[AgentType],
+) -> InstallResultCategory {
+    if !result.success {
+        return InstallResultCategory::Failed;
+    }
+    if result.skipped {
+        return InstallResultCategory::Skipped;
+    }
+    if result.agent == "__canonical__" {
+        return InstallResultCategory::DefaultAvailable;
+    }
+    if private_copy_targets
+        .iter()
+        .any(|agent| agent.to_string() == result.agent)
+    {
+        return InstallResultCategory::PrivateCopy;
+    }
+    InstallResultCategory::PrivateAdapted
 }
 
 async fn resolve_install_hash(
@@ -199,6 +320,7 @@ fn should_write_lock_for_skill(
         let completed_agents: HashSet<&str> = successful
             .iter()
             .filter(|result| result.skill_name == skill_name && !result.skipped)
+            .filter(|result| expected_target_count == 0 || result.agent != "__canonical__")
             .map(|result| result.agent.as_str())
             .collect();
         let has_failure = failed.iter().any(|result| result.skill_name == skill_name);
@@ -356,31 +478,10 @@ async fn install_skills_inner(
         return Err(AppError::NoSkillsFound);
     }
 
-    // 5. 确保包含当前 scope 下会自动读取共享目录的 Agents（动态获取）
-    let mut target_agents = params.agents.clone();
-    if behavior.autofill_automatic_agents {
-        let is_global = matches!(params.scope, crate::models::Scope::Global);
-        let cwd = params.project_path.as_deref().unwrap_or(".");
-        let automatic_agents = AgentType::get_automatic_agents_for_scope(is_global, cwd);
-
-        for ua in automatic_agents {
-            let ua_str = ua.to_string();
-            if !target_agents.contains(&ua_str) {
-                target_agents.push(ua_str);
-            }
-        }
-    }
-    target_agents.sort();
-    target_agents.dedup();
-
-    // 6. 解析 target agents
-    let target_agent_types: Vec<AgentType> = target_agents
-        .iter()
-        .map(|s| s.parse::<AgentType>())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::InvalidAgent {
-            agent: "parse failed".to_string(),
-        })?;
+    // 5. 拆分默认可用和独立写入目标。默认可用只写 canonical 共享目录。
+    let cwd = params.project_path.as_deref().unwrap_or(".");
+    let target_plan = resolve_install_target_plan(&params, behavior, cwd)?;
+    let include_canonical_result = !target_plan.default_available_agents.is_empty();
 
     // 7. 执行安装
     let mut successful = Vec::new();
@@ -400,7 +501,7 @@ async fn install_skills_inner(
             },
         );
 
-        let per_agent_results = if params.preserve_existing_modes && target_agent_types.is_empty() {
+        let per_agent_results = if target_plan.install_targets.is_empty() {
             vec![canonical_only_install_result(
                 &skill.path,
                 &skill.name,
@@ -409,7 +510,8 @@ async fn install_skills_inner(
                 &params.mode,
             )]
         } else if params.preserve_existing_modes {
-            let target_agent_modes: Vec<(AgentType, InstallMode)> = target_agent_types
+            let target_agent_modes: Vec<(AgentType, InstallMode)> = target_plan
+                .private_required_targets
                 .iter()
                 .map(|agent| {
                     (
@@ -423,25 +525,30 @@ async fn install_skills_inner(
                     )
                 })
                 .collect();
-            install_skill_to_agents_with_modes(
+            install_skill_to_agent_groups_with_modes(
                 &skill.path,
                 &skill.name,
                 &target_agent_modes,
+                &target_plan.private_copy_targets,
                 &params.scope,
                 params.project_path.as_deref(),
+                include_canonical_result,
             )
         } else {
-            install_skill_to_agents(
+            install_skill_to_agent_groups(
                 &skill.path,
                 &skill.name,
-                &target_agent_types,
+                &target_plan.private_required_targets,
+                &target_plan.private_copy_targets,
                 &params.scope,
                 params.project_path.as_deref(),
                 &params.mode,
+                include_canonical_result,
             )
         };
 
         for par in per_agent_results {
+            let category = install_result_category(&par, &target_plan.private_copy_targets);
             let install_result = InstallResult {
                 skill_name: skill.name.clone(),
                 agent: par.agent.clone(),
@@ -452,6 +559,7 @@ async fn install_skills_inner(
                 symlink_failed: par.symlink_failed,
                 skipped: par.skipped,
                 error: par.error,
+                category,
             };
 
             if install_result.success {
@@ -472,7 +580,7 @@ async fn install_skills_inner(
             &failed,
             &skill.name,
             params.preserve_existing_modes,
-            target_agent_types.len(),
+            target_plan.install_targets.len(),
         )
     }) {
         let _ = app.emit(
@@ -493,7 +601,7 @@ async fn install_skills_inner(
                 &failed,
                 &skill.name,
                 params.preserve_existing_modes,
-                target_agent_types.len(),
+                target_plan.install_targets.len(),
             );
             if !installed {
                 continue;
@@ -573,6 +681,21 @@ async fn install_skills_inner(
         successful,
         failed,
         symlink_fallback_agents,
+        default_available_agents: target_plan
+            .default_available_agents
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        private_adapted_agents: target_plan
+            .private_required_targets
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        private_copy_agents: target_plan
+            .private_copy_targets
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     })
 }
 
@@ -581,6 +704,30 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    fn install_result(
+        skill_name: &str,
+        agent: &str,
+        success: bool,
+        path: std::path::PathBuf,
+        canonical_path: Option<std::path::PathBuf>,
+        mode: InstallMode,
+        skipped: bool,
+        error: Option<String>,
+    ) -> InstallResult {
+        InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: agent.to_string(),
+            success,
+            path,
+            canonical_path,
+            mode,
+            symlink_failed: false,
+            skipped,
+            error,
+            category: InstallResultCategory::PrivateAdapted,
+        }
+    }
 
     #[test]
     fn test_retry_mode_disables_automatic_agent_autofill_and_agent_persistence() {
@@ -610,46 +757,178 @@ mod tests {
     }
 
     #[test]
-    fn test_regular_install_lock_write_accepts_skipped_canonical_results() {
-        let results = vec![InstallResult {
-            skill_name: "demo".to_string(),
-            agent: "windsurf".to_string(),
+    fn test_default_agent_selection_uses_default_available_not_private_paths() {
+        let defaults = crate::core::agent_availability::default_available_agents(true, ".");
+        assert!(defaults.contains(&AgentType::Firebender));
+        let firebender = AgentType::Firebender.availability_for_scope(true, ".");
+        assert_eq!(
+            firebender.kind,
+            crate::core::agent_availability::AgentAvailabilityKind::SharedCompatible
+        );
+    }
+
+    #[test]
+    fn test_resolve_install_targets_excludes_default_available_from_private_targets() {
+        let params = InstallParams {
+            source: "owner/repo".to_string(),
+            skills: vec!["demo".to_string()],
+            agents: vec!["antigravity".to_string()],
+            private_copy_agents: vec!["firebender".to_string()],
+            scope: crate::models::Scope::Global,
+            project_path: None,
+            mode: InstallMode::Copy,
+            retry: false,
+            preserve_existing_modes: false,
+            acknowledge_risk: false,
+        };
+
+        let plan = resolve_install_target_plan(&params, compute_install_behavior(false), ".")
+            .expect("target plan");
+
+        assert!(plan
+            .default_available_agents
+            .contains(&AgentType::Firebender));
+        assert_eq!(plan.private_required_targets, vec![AgentType::Antigravity]);
+        assert_eq!(plan.private_copy_targets, vec![AgentType::Firebender]);
+        assert_eq!(
+            plan.install_targets,
+            vec![AgentType::Antigravity, AgentType::Firebender]
+        );
+    }
+
+    #[test]
+    fn test_resolve_install_targets_rejects_default_available_regular_targets() {
+        let params = InstallParams {
+            source: "owner/repo".to_string(),
+            skills: vec!["demo".to_string()],
+            agents: vec!["firebender".to_string()],
+            private_copy_agents: vec![],
+            scope: crate::models::Scope::Global,
+            project_path: None,
+            mode: InstallMode::Copy,
+            retry: false,
+            preserve_existing_modes: false,
+            acknowledge_risk: false,
+        };
+
+        let err = resolve_install_target_plan(&params, compute_install_behavior(false), ".")
+            .expect_err("shared-compatible agents must not be regular private targets");
+
+        assert!(err
+            .to_string()
+            .contains("does not require separate setup"));
+    }
+
+    #[test]
+    fn test_resolve_install_targets_rejects_private_required_private_copy_targets() {
+        let params = InstallParams {
+            source: "owner/repo".to_string(),
+            skills: vec!["demo".to_string()],
+            agents: vec![],
+            private_copy_agents: vec!["antigravity".to_string()],
+            scope: crate::models::Scope::Global,
+            project_path: None,
+            mode: InstallMode::Copy,
+            retry: false,
+            preserve_existing_modes: false,
+            acknowledge_risk: false,
+        };
+
+        let err = resolve_install_target_plan(&params, compute_install_behavior(false), ".")
+            .expect_err("private-required agents must not be private-copy targets");
+
+        assert!(err
+            .to_string()
+            .contains("cannot create an independent copy"));
+    }
+
+    #[test]
+    fn test_install_result_category_marks_canonical_as_default_available() {
+        let result = PerAgentInstallResult {
+            agent: "__canonical__".to_string(),
             success: true,
+            skipped: false,
+            error: None,
+            duration_ms: None,
+            symlink_failed: false,
             path: std::path::PathBuf::from("/canonical/demo"),
             canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
-            mode: InstallMode::Symlink,
-            symlink_failed: false,
-            skipped: true,
+            mode: InstallMode::Copy,
+        };
+
+        assert_eq!(
+            install_result_category(&result, &[]),
+            InstallResultCategory::DefaultAvailable
+        );
+    }
+
+    #[test]
+    fn test_install_result_category_marks_explicit_copy_and_failures() {
+        let copied = PerAgentInstallResult {
+            agent: "firebender".to_string(),
+            success: true,
+            skipped: false,
             error: None,
-        }];
+            duration_ms: None,
+            symlink_failed: false,
+            path: std::path::PathBuf::from("/firebender/demo"),
+            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
+            mode: InstallMode::Copy,
+        };
+        let failed = PerAgentInstallResult {
+            success: false,
+            error: Some("failed".to_string()),
+            ..copied.clone()
+        };
+
+        assert_eq!(
+            install_result_category(&copied, &[AgentType::Firebender]),
+            InstallResultCategory::PrivateCopy
+        );
+        assert_eq!(
+            install_result_category(&failed, &[AgentType::Firebender]),
+            InstallResultCategory::Failed
+        );
+    }
+
+    #[test]
+    fn test_regular_install_lock_write_accepts_skipped_canonical_results() {
+        let results = vec![install_result(
+            "demo",
+            "windsurf",
+            true,
+            std::path::PathBuf::from("/canonical/demo"),
+            Some(std::path::PathBuf::from("/canonical/demo")),
+            InstallMode::Symlink,
+            true,
+            None,
+        )];
 
         assert!(should_write_lock_for_skill(&results, &[], "demo", false, 1));
     }
 
     #[test]
     fn test_preserve_mode_lock_write_requires_all_target_agents_to_install() {
-        let successful = vec![InstallResult {
-            skill_name: "demo".to_string(),
-            agent: "claude-code".to_string(),
-            success: true,
-            path: std::path::PathBuf::from("/agent/demo"),
-            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
-            mode: InstallMode::Copy,
-            symlink_failed: false,
-            skipped: false,
-            error: None,
-        }];
-        let failed = vec![InstallResult {
-            skill_name: "demo".to_string(),
-            agent: "cursor".to_string(),
-            success: false,
-            path: std::path::PathBuf::new(),
-            canonical_path: None,
-            mode: InstallMode::Copy,
-            symlink_failed: false,
-            skipped: false,
-            error: Some("copy failed".to_string()),
-        }];
+        let successful = vec![install_result(
+            "demo",
+            "claude-code",
+            true,
+            std::path::PathBuf::from("/agent/demo"),
+            Some(std::path::PathBuf::from("/canonical/demo")),
+            InstallMode::Copy,
+            false,
+            None,
+        )];
+        let failed = vec![install_result(
+            "demo",
+            "cursor",
+            false,
+            std::path::PathBuf::new(),
+            None,
+            InstallMode::Copy,
+            false,
+            Some("copy failed".to_string()),
+        )];
 
         assert!(!should_write_lock_for_skill(
             &successful,
@@ -662,17 +941,16 @@ mod tests {
 
     #[test]
     fn test_preserve_mode_lock_write_requires_expected_target_count() {
-        let successful = vec![InstallResult {
-            skill_name: "demo".to_string(),
-            agent: "claude-code".to_string(),
-            success: true,
-            path: std::path::PathBuf::from("/agent/demo"),
-            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
-            mode: InstallMode::Copy,
-            symlink_failed: false,
-            skipped: false,
-            error: None,
-        }];
+        let successful = vec![install_result(
+            "demo",
+            "claude-code",
+            true,
+            std::path::PathBuf::from("/agent/demo"),
+            Some(std::path::PathBuf::from("/canonical/demo")),
+            InstallMode::Copy,
+            false,
+            None,
+        )];
 
         assert!(!should_write_lock_for_skill(
             &successful,
@@ -686,28 +964,26 @@ mod tests {
     #[test]
     fn test_preserve_mode_lock_write_requires_distinct_target_agents() {
         let successful = vec![
-            InstallResult {
-                skill_name: "demo".to_string(),
-                agent: "claude-code".to_string(),
-                success: true,
-                path: std::path::PathBuf::from("/agent/demo"),
-                canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
-                mode: InstallMode::Copy,
-                symlink_failed: false,
-                skipped: false,
-                error: None,
-            },
-            InstallResult {
-                skill_name: "demo".to_string(),
-                agent: "claude-code".to_string(),
-                success: true,
-                path: std::path::PathBuf::from("/agent/demo-duplicate"),
-                canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
-                mode: InstallMode::Copy,
-                symlink_failed: false,
-                skipped: false,
-                error: None,
-            },
+            install_result(
+                "demo",
+                "claude-code",
+                true,
+                std::path::PathBuf::from("/agent/demo"),
+                Some(std::path::PathBuf::from("/canonical/demo")),
+                InstallMode::Copy,
+                false,
+                None,
+            ),
+            install_result(
+                "demo",
+                "claude-code",
+                true,
+                std::path::PathBuf::from("/agent/demo-duplicate"),
+                Some(std::path::PathBuf::from("/canonical/demo")),
+                InstallMode::Copy,
+                false,
+                None,
+            ),
         ];
 
         assert!(!should_write_lock_for_skill(
@@ -721,17 +997,16 @@ mod tests {
 
     #[test]
     fn test_preserve_mode_lock_write_deduplicates_target_agents() {
-        let successful = vec![InstallResult {
-            skill_name: "demo".to_string(),
-            agent: "claude-code".to_string(),
-            success: true,
-            path: std::path::PathBuf::from("/agent/demo"),
-            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
-            mode: InstallMode::Copy,
-            symlink_failed: false,
-            skipped: false,
-            error: None,
-        }];
+        let successful = vec![install_result(
+            "demo",
+            "claude-code",
+            true,
+            std::path::PathBuf::from("/agent/demo"),
+            Some(std::path::PathBuf::from("/canonical/demo")),
+            InstallMode::Copy,
+            false,
+            None,
+        )];
 
         assert!(should_write_lock_for_skill(
             &successful,
@@ -744,17 +1019,16 @@ mod tests {
 
     #[test]
     fn test_preserve_mode_lock_write_accepts_canonical_only_repair() {
-        let successful = vec![InstallResult {
-            skill_name: "demo".to_string(),
-            agent: "__canonical__".to_string(),
-            success: true,
-            path: std::path::PathBuf::from("/canonical/demo"),
-            canonical_path: Some(std::path::PathBuf::from("/canonical/demo")),
-            mode: InstallMode::Copy,
-            symlink_failed: false,
-            skipped: false,
-            error: None,
-        }];
+        let successful = vec![install_result(
+            "demo",
+            "__canonical__",
+            true,
+            std::path::PathBuf::from("/canonical/demo"),
+            Some(std::path::PathBuf::from("/canonical/demo")),
+            InstallMode::Copy,
+            false,
+            None,
+        )];
 
         assert!(should_write_lock_for_skill(
             &successful,
@@ -843,6 +1117,7 @@ mod tests {
             symlink_failed: result.symlink_failed,
             skipped: result.skipped,
             error: result.error,
+            category: InstallResultCategory::PrivateAdapted,
         };
         assert!(should_write_lock_for_skill(
             &[install_result],

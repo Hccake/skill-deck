@@ -1,11 +1,17 @@
 // src/components/skills/add-skill/ConfirmStep.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, CornerDownRight, FolderGit2, Box, Folder, Package } from 'lucide-react';
+import { AlertTriangle, CornerDownRight, FolderGit2, Box, Folder, Package, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getAgentTarget, getSharedSkillDirectory, isAdditionalAgent, isAutomaticAgent } from '@/lib/agentTargets';
+import {
+  canCreatePrivateCopy,
+  getAgentTarget,
+  getSharedSkillDirectory,
+  isDefaultAvailableAgent,
+  isPrivateRequiredAgent,
+} from '@/lib/agentTargets';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
 import { RiskBadge } from '../RiskBadge';
@@ -49,7 +55,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     const overwriteAgentIds = Array.from(new Set([
       ...state.selectedAgents,
       ...state.allAgents
-        .filter((agent) => isAutomaticAgent(agent, scope))
+        .filter((agent) => isDefaultAvailableAgent(agent, scope))
         .map((agent) => agent.id),
     ]));
 
@@ -58,7 +64,8 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
           state.selectedSkills,
           overwriteAgentIds,
           scope,
-          scope === 'project' ? projectPath : undefined
+          scope === 'project' ? projectPath : undefined,
+          state.privateCopyAgents
         )
       : Promise.resolve({});
 
@@ -89,7 +96,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     return () => {
       cancelled = true;
     };
-  }, [state.selectedSkills, state.selectedAgents, state.allAgents, state.source, scope, projectPath]);
+  }, [state.selectedSkills, state.selectedAgents, state.privateCopyAgents, state.allAgents, state.source, scope, projectPath]);
 
   // 覆盖统计
   const availableSkillMap = useMemo(
@@ -102,13 +109,23 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     [state.selectedSkills, state.overwrites]
   );
 
-  // 已选的手动安装目标信息（用于目录列表）
-  const selectedAdditionalAgents = useMemo(() => {
+  const defaultAvailableAgents = useMemo(() => {
+    return state.allAgents.filter((agent) => isDefaultAvailableAgent(agent, scope));
+  }, [state.allAgents, scope]);
+
+  const selectedPrivateRequiredAgents = useMemo(() => {
     const selectedSet = new Set(state.selectedAgents);
     return state.allAgents.filter((agent) =>
-      selectedSet.has(agent.id) && isAdditionalAgent(agent, scope)
+      selectedSet.has(agent.id) && isPrivateRequiredAgent(agent, scope)
     );
   }, [state.selectedAgents, state.allAgents, scope]);
+
+  const selectedPrivateCopyAgents = useMemo(() => {
+    const selectedSet = new Set(state.privateCopyAgents);
+    return state.allAgents.filter((agent) =>
+      selectedSet.has(agent.id) && canCreatePrivateCopy(agent, scope)
+    );
+  }, [state.privateCopyAgents, state.allAgents, scope]);
   const effectiveMode = getEffectiveInstallMode(state);
 
   const sharedDir = getSharedSkillDirectory(scope);
@@ -229,56 +246,51 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
         )}
       </div>
 
-      {/* 物理安装路径拓扑树 */}
+      {/* 安装计划 */}
       <div className="space-y-2 pt-3">
         <div className="space-y-0.5">
-          <span className="text-sm font-semibold text-foreground">{t('addSkill.confirm.directories')}</span>
+          <span className="text-sm font-semibold text-foreground">{t('addSkill.confirm.installPlan')}</span>
           <p className="text-xs leading-5 text-muted-foreground">
-            {t('addSkill.confirm.directoryHint')}
+            {t('addSkill.confirm.installPlanHint')}
           </p>
         </div>
 
-        <div className="mt-2 overflow-x-auto rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[13px]">
-          {/* 共享源目录 */}
-          <div className="flex items-center gap-2 text-foreground relative z-10">
-            <Folder className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0" />
-            <span className="font-semibold">{formatPath(sharedDir)}</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-1 opacity-80 leading-none flex items-center">
-              {t('addSkill.confirm.shared')}
-            </Badge>
-          </div>
+        <div className="space-y-2">
+          <InstallPlanSection
+            icon={Folder}
+            title={t('addSkill.confirm.defaultLocation')}
+            hint={t('addSkill.confirm.defaultLocationHint')}
+            path={formatPath(sharedDir)}
+            agents={defaultAvailableAgents.map((agent) => agent.name)}
+          />
 
-          {/* 目标 Agent 依赖节点 */}
-          {selectedAdditionalAgents.length > 0 && (
-            <div className="mt-1 flex flex-col relative ml-2.5">
-              {selectedAdditionalAgents.map((agent, idx) => {
-                const isLast = idx === selectedAdditionalAgents.length - 1;
-                return (
-                  <div key={agent.id} className="relative flex items-center py-1">
-                    <div className="absolute left-0 top-0 bottom-0 w-[14px]">
-                       <div className="absolute left-0 top-0 w-full h-[50%] border-l-2 border-b-2 border-border/60 rounded-bl-sm" />
-                       {!isLast && <div className="absolute left-0 top-[50%] bottom-0 border-l-2 border-border/60" />}
-                    </div>
-                    <div className="flex items-center gap-2 ml-[22px] mt-px text-muted-foreground w-full">
-                      {effectiveMode === 'symlink' ? (
-                        <CornerDownRight className="h-3.5 w-3.5 text-orange-500/80 shrink-0" />
-                      ) : (
-                        <FolderGit2 className="h-3.5 w-3.5 text-emerald-500/80 shrink-0" />
-                      )}
-                      <span className="truncate">{formatPath(getAgentTarget(agent, scope).path)}</span>
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-[18px] bg-background border-border/80 text-muted-foreground whitespace-nowrap leading-none flex items-center">
-                        {agent.name}
-                      </Badge>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          {selectedPrivateRequiredAgents.length > 0 && (
+            <InstallPlanSection
+              icon={effectiveMode === 'symlink' ? CornerDownRight : FolderGit2}
+              title={t('addSkill.confirm.privateSetup')}
+              hint={effectiveMode === 'symlink'
+                ? t('addSkill.confirm.symlinkHint')
+                : t('addSkill.confirm.copyHint')}
+              agents={selectedPrivateRequiredAgents.map((agent) => agent.name)}
+              paths={selectedPrivateRequiredAgents.map((agent) => formatPath(getAgentTarget(agent, scope).path))}
+            />
+          )}
+
+          {selectedPrivateCopyAgents.length > 0 && (
+            <InstallPlanSection
+              icon={Copy}
+              title={t('addSkill.confirm.privateCopies')}
+              hint={t('addSkill.confirm.privateCopiesHint')}
+              agents={selectedPrivateCopyAgents.map((agent) => agent.name)}
+              paths={selectedPrivateCopyAgents.map((agent) =>
+                formatPath(getAgentTarget(agent, scope).privatePath ?? getAgentTarget(agent, scope).path)
+              )}
+            />
           )}
         </div>
 
         {/* 模式图例提示 */}
-        {selectedAdditionalAgents.length > 0 && (
+        {selectedPrivateRequiredAgents.length > 0 && (
           <div className="text-[11px] text-muted-foreground/70 flex items-center gap-1.5 mt-1 px-1">
             {effectiveMode === 'symlink'
               ? <CornerDownRight className="h-3 w-3" />
@@ -289,6 +301,59 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
               : t('addSkill.confirm.copyHint')}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function InstallPlanSection({
+  icon: Icon,
+  title,
+  hint,
+  path,
+  paths,
+  agents,
+}: {
+  icon: typeof Folder;
+  title: string;
+  hint: string;
+  path?: string;
+  paths?: string[];
+  agents: string[];
+}) {
+  return (
+    <div className="rounded-md border border-border/50 bg-muted/15 px-3 py-2.5">
+      <div className="flex items-start gap-2.5">
+        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] font-semibold text-foreground">{title}</span>
+            {path && (
+              <code className="rounded bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                {path}
+              </code>
+            )}
+          </div>
+          <p className="text-xs leading-5 text-muted-foreground">{hint}</p>
+          {paths && paths.length > 0 && (
+            <div className="flex flex-col gap-1">
+              {paths.map((item) => (
+                <code key={item} className="truncate font-mono text-[11px] text-muted-foreground/80">
+                  {item}
+                </code>
+              ))}
+            </div>
+          )}
+          {agents.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {agents.map((agent) => (
+                <Badge key={agent} variant="outline" className="h-[18px] px-1.5 py-0 text-[10px]">
+                  {agent}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

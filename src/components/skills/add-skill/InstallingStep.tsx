@@ -54,6 +54,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
     source: state.source,
     selectedSkills: state.selectedSkills,
     selectedAgents: state.selectedAgents,
+    privateCopyAgents: state.privateCopyAgents,
     retrySkillName: state.retrySkillName,
     retryAgents: state.retryAgents ?? [],
     riskAcknowledged: state.riskAcknowledged,
@@ -67,6 +68,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       source: state.source,
       selectedSkills: state.selectedSkills,
       selectedAgents: state.selectedAgents,
+      privateCopyAgents: state.privateCopyAgents,
       retrySkillName: state.retrySkillName,
       retryAgents: state.retryAgents ?? [],
       riskAcknowledged: state.riskAcknowledged,
@@ -107,6 +109,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
         source,
         selectedSkills,
         selectedAgents,
+        privateCopyAgents,
         retrySkillName,
         retryAgents,
         riskAcknowledged,
@@ -118,11 +121,15 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       const isRetry = Boolean(retrySkillName && retryAgents.length > 0);
       const targetSkills = isRetry && retrySkillName ? [retrySkillName] : selectedSkills;
       const targetAgents = isRetry ? retryAgents : selectedAgents;
+      const targetPrivateCopyAgents = isRetry
+        ? retryAgents.filter((agentId) => privateCopyAgents.includes(agentId))
+        : privateCopyAgents;
 
       const params = {
         source,
         skills: targetSkills,
         agents: targetAgents,
+        privateCopyAgents: targetPrivateCopyAgents,
         scope: installScope,
         projectPath: installScope === 'project' ? (installProjectPath ?? null) : null,
         mode,
@@ -152,6 +159,9 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
             successful: [],
             failed: [],
             symlinkFallbackAgents: [],
+            defaultAvailableAgents: [],
+            privateAdaptedAgents: [],
+            privateCopyAgents: [],
           },
           retrySkillName: undefined,
           retryAgents: undefined,

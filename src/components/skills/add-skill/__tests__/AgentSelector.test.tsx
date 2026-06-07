@@ -5,6 +5,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSelector } from '../AgentSelector';
 import type { AgentInfo } from '@/bindings';
+import { makeAgentScopeTarget } from '@/test-utils';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -16,8 +17,8 @@ vi.mock('react-i18next', () => ({
         if (typeof options === 'string') return options;
         return 'Collapse options';
       }
-      if (key === 'addSkill.agents.automaticHint') {
-        return `Automatic hint: ${typeof options === 'object' ? options.path ?? '' : ''}`;
+      if (key === 'addSkill.agents.defaultAvailableHint') {
+        return `Default hint: ${typeof options === 'object' ? options.path ?? '' : ''}`;
       }
       return key;
     },
@@ -31,16 +32,15 @@ function makeAgent(agent: Omit<AgentInfo, 'targets'> & {
   return {
     ...agent,
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: agent.globalAutomatic ?? false,
         path: agent.globalSkillsDir,
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: agent.projectAutomatic ?? false,
         path: agent.skillsDir,
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   };
 }
@@ -56,16 +56,15 @@ const agents: AgentInfo[] = [
     projectAutomatic: true,
     }),
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: false,
         path: '~/.codex/skills',
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: true,
         path: '.agents/skills',
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   },
   {
@@ -78,16 +77,15 @@ const agents: AgentInfo[] = [
     projectAutomatic: true,
     }),
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: false,
         path: '~/.cursor/skills',
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: true,
         path: '.agents/skills',
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   },
   makeAgent({
@@ -107,7 +105,7 @@ const agents: AgentInfo[] = [
 ];
 
 describe('AgentSelector', () => {
-  it('presents automatic and manual targets for the selected scope', () => {
+  it('shows default available and separate setup groups for the selected scope', () => {
     render(
       <AgentSelector
         selectedAgents={[]}
@@ -117,13 +115,115 @@ describe('AgentSelector', () => {
       />
     );
 
-    expect(screen.getByText('addSkill.agents.automaticTitle')).toBeDefined();
-    expect(screen.getByText('Automatic hint: ./.agents/skills')).toBeDefined();
+    expect(screen.getByText('addSkill.agents.defaultAvailableTitle')).toBeDefined();
+    expect(screen.getByText('Default hint: ./.agents/skills')).toBeDefined();
     expect(screen.getByText('Codex')).toBeDefined();
     expect(screen.getByText('Cursor')).toBeDefined();
-    expect(screen.getByText('addSkill.agents.additionalTitle')).toBeDefined();
+    expect(screen.getByText('addSkill.agents.privateRequiredTitle')).toBeDefined();
     expect(screen.getByText('Claude Code')).toBeDefined();
     expect(screen.getByText('Show 1 more agents')).toBeDefined();
+  });
+
+  it('shows advanced private copy options for eligible default-available agents', () => {
+    const onPrivateCopyChange = vi.fn();
+    render(
+      <AgentSelector
+        selectedAgents={[]}
+        privateCopyAgents={[]}
+        allAgents={[
+          {
+            ...agents[0],
+            targets: {
+              global: makeAgentScopeTarget({
+                automatic: true,
+                path: '~/.agents/skills',
+                availability: 'shared-compatible',
+                privatePath: '~/.codex/skills',
+              }),
+              project: makeAgentScopeTarget({
+                automatic: true,
+                path: '.agents/skills',
+                sharedPath: './.agents/skills',
+              }),
+            },
+          },
+        ]}
+        onSelectionChange={vi.fn()}
+        onPrivateCopyChange={onPrivateCopyChange}
+        scope="global"
+        privateCopyAgentsExpanded
+      />
+    );
+
+    expect(screen.getByText('addSkill.agents.privateCopyTitle')).toBeDefined();
+    expect(screen.getByText('~/.codex/skills')).toBeDefined();
+  });
+
+  it('does not prefix absolute private copy paths in project scope', () => {
+    render(
+      <AgentSelector
+        selectedAgents={[]}
+        privateCopyAgents={[]}
+        allAgents={[
+          {
+            ...agents[0],
+            targets: {
+              global: makeAgentScopeTarget({
+                automatic: false,
+                path: '~/.codex/skills',
+              }),
+              project: makeAgentScopeTarget({
+                automatic: true,
+                path: '.agents/skills',
+                sharedPath: './.agents/skills',
+                availability: 'shared-compatible',
+                privatePath: '/tmp/project/.codex/skills',
+              }),
+            },
+          },
+        ]}
+        onSelectionChange={vi.fn()}
+        onPrivateCopyChange={vi.fn()}
+        scope="project"
+        privateCopyAgentsExpanded
+      />
+    );
+
+    expect(screen.getByText('/tmp/project/.codex/skills')).toBeDefined();
+    expect(screen.queryByText('./tmp/project/.codex/skills')).toBeNull();
+  });
+
+  it('prefixes relative private copy paths in project scope', () => {
+    render(
+      <AgentSelector
+        selectedAgents={[]}
+        privateCopyAgents={[]}
+        allAgents={[
+          {
+            ...agents[0],
+            targets: {
+              global: makeAgentScopeTarget({
+                automatic: false,
+                path: '~/.codex/skills',
+              }),
+              project: makeAgentScopeTarget({
+                automatic: true,
+                path: '.agents/skills',
+                sharedPath: './.agents/skills',
+                availability: 'shared-compatible',
+                privatePath: '.codex/skills',
+              }),
+            },
+          },
+        ]}
+        onSelectionChange={vi.fn()}
+        onPrivateCopyChange={vi.fn()}
+        scope="project"
+        privateCopyAgentsExpanded
+      />
+    );
+
+    expect(screen.getByText('./.codex/skills')).toBeDefined();
   });
 
   it('keeps expand and collapse labels free of arrow glyphs', async () => {

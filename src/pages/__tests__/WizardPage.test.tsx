@@ -35,6 +35,8 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     riskPolicy: { kind: 'require-confirmation', code: 'openclaw' },
     riskAcknowledged: false,
     ...overrides,
+    privateCopyAgents: overrides.privateCopyAgents ?? [],
+    privateCopyAgentsExpanded: overrides.privateCopyAgentsExpanded ?? false,
   };
 }
 

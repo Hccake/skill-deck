@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
+import { makeAgentScopeTarget } from '@/test-utils';
 import type { WizardState } from '../types';
 import { ConfirmStep } from '../ConfirmStep';
 
@@ -19,16 +20,20 @@ vi.mock('react-i18next', () => ({
       }
       if (key === 'addSkill.confirm.itemsTitle') return 'Install contents';
       if (key === 'addSkill.confirm.overwriteGroup') return '覆盖安装';
-      if (key === 'addSkill.confirm.directories') return 'Install locations';
-      if (key === 'addSkill.confirm.directoryHint') {
-        return 'Skills are installed to the shared directory. Additional agents are handled using the selected method.';
+      if (key === 'addSkill.confirm.installPlan') return 'Install plan';
+      if (key === 'addSkill.confirm.installPlanHint') {
+        return 'Review where this install will be available before continuing.';
       }
-      if (key === 'addSkill.confirm.shared') return 'Shared directory';
+      if (key === 'addSkill.confirm.defaultLocation') return 'Default location';
+      if (key === 'addSkill.confirm.defaultLocationHint') return 'Default-available agents read Skills from here directly.';
+      if (key === 'addSkill.confirm.privateSetup') return 'Separate setup';
+      if (key === 'addSkill.confirm.privateCopies') return 'Private copies';
+      if (key === 'addSkill.confirm.privateCopiesHint') return 'Default-available agents will also receive an independent copy.';
       if (key === 'addSkill.confirm.symlinkHint') {
-        return 'Create symlinks from additional agents to the shared directory.';
+        return 'Create symlinks from separate agent directories to the default location.';
       }
       if (key === 'addSkill.confirm.copyHint') {
-        return 'Copy the Skill into each additional agent directory.';
+        return 'Copy the Skill into each separate agent directory.';
       }
       return key;
     },
@@ -68,9 +73,11 @@ function createState(): WizardState {
     skillFilter: null,
     skillSearchQuery: '',
     selectedAgents: ['codex'],
+    privateCopyAgents: [],
     allAgents: [],
     mode: 'symlink',
     otherAgentsExpanded: false,
+    privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
     confirmReady: true,
@@ -128,8 +135,12 @@ describe('ConfirmStep', () => {
             globalSkillsDir: '~/.agents/skills',
             detected: true,
             targets: {
-              global: { supported: true, automatic: true, path: '~/.agents/skills' },
-              project: { supported: true, automatic: true, path: '.agents/skills' },
+              global: makeAgentScopeTarget({ automatic: true, path: '~/.agents/skills' }),
+              project: makeAgentScopeTarget({
+                automatic: true,
+                path: '.agents/skills',
+                sharedPath: './.agents/skills',
+              }),
             },
           }],
           confirmReady: false,
@@ -147,7 +158,8 @@ describe('ConfirmStep', () => {
       ['demo'],
       ['warp'],
       'global',
-      undefined
+      undefined,
+      []
     );
     expect(checkSkillAuditMock).toHaveBeenCalledWith('openclaw/community-skills', ['demo']);
   });
@@ -254,22 +266,82 @@ describe('ConfirmStep', () => {
     expect(screen.queryByText('Codex')).toBeNull();
   });
 
-  it('uses install location language for the shared directory topology', () => {
+  it('renders default location, separate setup, and private copy sections', () => {
     render(
       <ConfirmStep
         state={{
           ...createState(),
           riskPolicy: { kind: 'none', code: null },
+          selectedAgents: ['cursor'],
+          privateCopyAgents: ['firebender'],
+          allAgents: [
+            {
+              id: 'codex',
+              name: 'Codex',
+              skillsDir: '.agents/skills',
+              globalSkillsDir: '~/.agents/skills',
+              detected: true,
+              targets: {
+                global: makeAgentScopeTarget({
+                  automatic: true,
+                  path: '~/.agents/skills',
+                  availability: 'shared-only',
+                  privatePath: null,
+                }),
+                project: makeAgentScopeTarget({
+                  automatic: true,
+                  path: '.agents/skills',
+                  sharedPath: './.agents/skills',
+                }),
+              },
+            },
+            {
+              id: 'cursor',
+              name: 'Cursor',
+              skillsDir: '.cursor/skills',
+              globalSkillsDir: '~/.cursor/skills',
+              detected: true,
+              targets: {
+                global: makeAgentScopeTarget({ automatic: false, path: '~/.cursor/skills' }),
+                project: makeAgentScopeTarget({ automatic: false, path: '.cursor/skills' }),
+              },
+            },
+            {
+              id: 'firebender',
+              name: 'Firebender',
+              skillsDir: '.firebender/skills',
+              globalSkillsDir: '~/.agents/skills',
+              detected: true,
+              targets: {
+                global: makeAgentScopeTarget({
+                  automatic: true,
+                  path: '~/.agents/skills',
+                  availability: 'shared-compatible',
+                  privatePath: '~/.firebender/skills',
+                }),
+                project: makeAgentScopeTarget({
+                  automatic: true,
+                  path: '.agents/skills',
+                  sharedPath: './.agents/skills',
+                  availability: 'shared-compatible',
+                  privatePath: '.firebender/skills',
+                }),
+              },
+            },
+          ],
         }}
         updateState={vi.fn()}
         scope="global"
       />
     );
 
-    expect(screen.getByText('Install locations')).toBeTruthy();
-    expect(screen.getByText('Shared directory')).toBeTruthy();
+    expect(screen.getByText('Install plan')).toBeTruthy();
+    expect(screen.getByText('Default location')).toBeTruthy();
+    expect(screen.getByText('Separate setup')).toBeTruthy();
+    expect(screen.getByText('Private copies')).toBeTruthy();
     expect(screen.getByText('~/.agents/skills')).toBeTruthy();
-    expect(screen.getByText(/Skills are installed to the shared directory/)).toBeTruthy();
+    expect(screen.getByText('~/.cursor/skills')).toBeTruthy();
+    expect(screen.getByText('~/.firebender/skills')).toBeTruthy();
   });
 
   it('renders guarded-source risk confirmation UI', () => {
