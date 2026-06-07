@@ -141,6 +141,7 @@ CLI project update 是 GUI 必须兼容的基线语义。它不依赖 `sourceUrl
 6. 检测当前已经安装到哪些 agent。
    - 如果文件系统中找不到任何已安装 agent，只回退到当前 scope 下自动读取共享目录的 agent。
    - 这里不能使用 CLI 的静态 universal 列表；GUI 的 automatic target 是按当前 scope 和实际目标路径计算的。
+   - 如果某个默认位置已可用的 Agent 同时存在私有目录副本，应识别为重复副本。更新 canonical 共享目录不能静默删除或覆盖私有副本；私有副本的清理应由独立维护入口处理。
 7. 检测每个 agent 现有安装模式，尽量保留 symlink、junction 或 copy。
 8. 覆盖安装 canonical 目录，再为各 agent 重建链接或复制。
 9. 写回 lock：全局写 `skillFolderHash`，项目写本地 `computedHash`，并在 GUI 能取得可比较的远端版本 hash 时写扩展 `remoteHash`。如果该 skill 是由 CLI project update 刚刚写回，GUI 增强字段可能不存在，后续 list/check 应降级为 `missing-remote-hash` 或缺少展示元数据。
@@ -158,6 +159,18 @@ Agent 结果语义：
 | `success` | 该 agent 安装或更新成功 |
 | `failed` | 该 agent 安装失败，错误应暴露给前端 |
 | `skipped` | 按规则未安装到该 agent，例如项目级额外 Agent 的根目录不存在 |
+
+Agent presence 与维护语义：
+
+| Presence | 更新链路含义 | 维护入口 |
+| --- | --- | --- |
+| `default-active` | canonical 共享目录是该 Agent 的有效来源 | 无需单独处理 |
+| `requires-private-install` | canonical 存在但该 Agent 不读取，需要用户显式添加私有安装 | Manage Agents 可添加 |
+| `duplicate-copy` | canonical 和私有目录都存在；更新 canonical 不代表私有副本也被刷新 | 详情页和 Manage Agents 提供批量清理私有副本 |
+| `private-only` | 只有私有目录存在；按独立安装处理 | 可删除或保留，不能被“创建独立副本”静默覆盖 |
+| `not-installed` | 不属于当前有效目标 | 不计入安装结果 |
+
+重复副本清理是维护操作，不是 update 的一部分。清理时必须重新检测 presence，只能在 `duplicate-copy` 状态下删除私有目录，并且不能触碰 canonical 共享目录。
 
 Skill 总状态归并：
 
@@ -247,6 +260,7 @@ skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 | 进度反馈 | 终端进度 | `update-progress` event |
 | 错误提示 | 文本输出 | reason → i18n 文案、toast、修复入口；`deleted-upstream` 作为维护状态单独展示 |
 | Agent 目标 | CLI 使用静态 universal/non-universal 分类 | GUI 使用 scope-aware automatic/additional 分类，同时展示 skipped/partial |
+| 重复副本维护 | CLI 不提供专门 GUI 化入口 | GUI 识别 `duplicate-copy`，在详情和 Manage Agents 中提示并提供批量清理 |
 
 不允许的差异：
 
@@ -255,6 +269,7 @@ skill.updateStatus === 'cannot-check' || skill.canCheckForUpdates === false
 - 把 `deleted-upstream` 当成普通可更新项执行 update，或自动删除本地文件。
 - 把 partial 或 failed 的更新标记清掉。
 - 把请求目标中的 skipped agent 当成 success。
+- 把默认位置已可用 Agent 的私有副本静默覆盖，或把重复副本清理混入普通 update。
 - GUI 写回 lock 时丢失 CLI 字段。
 - GUI 扩展字段改变 CLI 已定义字段的含义，例如把 `computedHash` 当成远端 hash，或让 CLI 读取后产生不同安装目标。
 - GUI 把 `remoteHash` 当作执行 project reinstall 的必要条件。它只能控制“能否提前检测”，不能控制“能否按 CLI 语义刷新”。

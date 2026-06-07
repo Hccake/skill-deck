@@ -118,8 +118,30 @@ CLI 的 agent registry 是 GUI `AgentType` 的配置基线，但 GUI 不再直�
 - 因为 GUI 按 scope 判断，同一个 Agent 可以在项目中自动可用、在全局中需要额外投放。例如 Antigravity 的 project target 是 `.agents/skills`，global target 是 `~/.gemini/antigravity/skills`。
 - GUI 不保留 CLI 的 `universal` agent key，也不把它写入 lock 或当作真实安装目标。`showInUniversalList` 会影响 CLI 的 universal 列表是否纳入安装与 sync 目标，但 GUI 不能把这个静态列表直接当成当前 scope 的自动目标规则。
 - GUI 默认安装设置只保存额外 Agent。自动可用 Agent 由后端按当前 scope 动态补齐，用户不需要也不应该手动保存它们。
+- GUI 的 agent 目标模型分为三层：
+  - **默认位置已可用**：Agent 会读取当前 scope 的共享目录。安装时只需要写入 canonical 共享目录，完成页和详情页应展示为“默认位置可用”，不要再要求用户选择这些 Agent。
+  - **需要单独适配**：Agent 不读取当前 scope 的共享目录。用户选择后才安装到该 Agent 的私有目录。
+  - **可创建独立副本**：部分默认位置已可用的 Agent 也有独立私有目录。用户显式选择时，GUI 可以额外复制一份到私有目录，用于让该 Agent 拥有独立可编辑副本。
+- 如果某个 Agent 的安装目录本身就是共享目录，例如 Zed 这类 canonical target，它没有也不需要“创建独立副本”入口。
+- 如果共享目录和 Agent 私有目录都存在同名 skill，GUI 应识别为 **重复副本**：共享目录仍是默认生效来源，私有目录是额外副本。详情页和 Manage Agents 弹窗需要提示该状态，并提供批量清理私有副本的入口。
+- 清理重复副本只能删除 Agent 私有目录，不能删除 canonical 共享目录。删除前必须重新检测 presence，只有确认为重复副本时才执行删除；状态变化后应跳过而不是误删。
+- Manage Agents 中，已经处于重复副本或仅私有目录状态的 Agent 不能再通过“创建独立副本”覆盖私有目录。用户需要先清理重复副本，或通过明确的更新/重装流程处理。
 - 项目级安装或 update 不应创建 CLI 不会自动创建的额外 Agent 根目录；这种结果应作为 `skipped` 返回给 GUI。
 - GUI 中用户显式选择“为某个 Agent 添加/管理 Skill”时，可以作为体验优化创建目标目录，但这属于显式操作，不应影响 CLI 基线规则。
+
+### 3.1 Presence 状态
+
+GUI 后端使用 presence 模型统一描述每个 Agent 对某个 skill 的实际状态：
+
+| Presence | 含义 | UI 行为 |
+| --- | --- | --- |
+| `default-active` | 共享目录存在，且该 Agent 会读取共享目录 | 归入“默认位置可用” |
+| `requires-private-install` | 共享目录存在，但该 Agent 不会读取共享目录，且私有目录未安装 | 可在 Manage Agents 中添加独立安装 |
+| `duplicate-copy` | 共享目录和私有目录都存在 | 展示重复副本维护提示，可批量清理私有副本 |
+| `private-only` | 只有私有目录存在 | 作为独立安装展示，不能被“创建独立副本”静默覆盖 |
+| `not-installed` | 当前 scope 下没有有效安装 | 不展示为已安装目标 |
+
+这个模型用于删除详情、Manage Agents、重复副本清理和未来的 agent 维护入口。前端仍可保留旧的 `automaticAgents`、`independentAgents` 字段兼容旧 UI，但新增 UI 应优先使用 presence 分组。
 
 ---
 
@@ -193,6 +215,7 @@ CLI 和 GUI 都维护 skill 发现的优先搜索路径。
 
 - [ ] `types.ts`：agent 类型是否新增、移除或重命名。
 - [ ] `agents.ts`：agent 配置、检测逻辑、global/project 目录、`showInUniversalList` 是否变化；同时检查 GUI 的 scope-aware target/automatic 推导是否仍符合预期。
+- [ ] Agent availability：`defaultAvailable`、`availability`、`sharedPath`、`privatePath` 和 presence 分组是否仍能表达“默认位置可用 / 需要单独适配 / 可创建独立副本 / 重复副本”。
 - [ ] `source-parser.ts`：source 格式、alias、ref/filter 解析顺序是否变化。
 - [ ] `skill-lock.ts`：全局 lock 字段、版本、默认值和未知字段保留策略是否变化。
 - [ ] `local-lock.ts`：项目 lock 字段、排序、写回策略和未知字段保留策略是否变化。
@@ -203,5 +226,6 @@ CLI 和 GUI 都维护 skill 发现的优先搜索路径。
 - [ ] GUI Rust models：对应 lock、install、update、agent 类型是否同步。
 - [ ] GUI TypeScript bindings：Rust 类型变更后 bindings 是否同步。
 - [ ] GUI UI：新增状态、reason、warning、skipped 是否有清晰展示。
+- [ ] GUI 维护入口：重复副本是否能在详情页和 Manage Agents 中识别、批量清理，并避免静默覆盖私有目录。
 - [ ] Tests：Rust 单元测试、前端 store/component 测试是否覆盖同步差异，包括未知字段保留、缓存 identity、`missing-skill-path` 和 `success/skipped` 归并。
 - [ ] 本文档和 [skill-update-design.md](./skill-update-design.md) 是否已更新为新的当前态。
