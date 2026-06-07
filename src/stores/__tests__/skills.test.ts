@@ -19,6 +19,7 @@ const mockOpenInstallWizard = vi.fn();
 const mockCheckSkillAudit = vi.fn();
 const mockReadSkillContent = vi.fn();
 const mockManageSkillAgents = vi.fn();
+const mockCleanupDuplicateAgentCopies = vi.fn();
 const mockCopySkillToProjects = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
@@ -33,6 +34,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   checkSkillAudit: (...args: unknown[]) => mockCheckSkillAudit(...args),
   readSkillContent: (...args: unknown[]) => mockReadSkillContent(...args),
   manageSkillAgents: (...args: unknown[]) => mockManageSkillAgents(...args),
+  cleanupDuplicateAgentCopies: (...args: unknown[]) => mockCleanupDuplicateAgentCopies(...args),
   copySkillToProjects: (...args: unknown[]) => mockCopySkillToProjects(...args),
 }));
 
@@ -51,6 +53,10 @@ const makeSkill = (name: string, overrides: Partial<InstalledSkill> = {}): Insta
   hasUpdate: false,
   ...overrides,
 });
+
+const initialSkillsDataActions = {
+  syncSkills: useSkillsDataStore.getState().syncSkills,
+};
 
 describe('useSkillsStore', () => {
   beforeEach(() => {
@@ -76,6 +82,7 @@ describe('useSkillsStore', () => {
       lastUpdatePlan: null,
       lastUpdateResults: null,
       lastFailedUpdateNames: [],
+      syncSkills: initialSkillsDataActions.syncSkills,
     });
     useSkillDetailStore.setState({
       selectedSkillRef: null,
@@ -305,7 +312,17 @@ describe('useSkillsStore', () => {
 
     it('openDelete sets deleteTarget and fetches agent details', async () => {
       const skill = makeSkill('test-skill');
-      const details: SkillAgentDetails = { skillName: 'test-skill', scope: 'global', canonicalPath: '/tmp', automaticAgents: [], independentAgents: [] };
+      const details: SkillAgentDetails = {
+        skillName: 'test-skill',
+        scope: 'global',
+        canonicalPath: '/tmp',
+        automaticAgents: [],
+        independentAgents: [],
+        defaultAvailableAgents: [],
+        privateRequiredAgents: [],
+        duplicateCopyAgents: [],
+        privateOnlyAgents: [],
+      };
       mockGetAgentDetails.mockResolvedValue(details);
 
       useSkillDialogStore.getState().openDelete(skill, 'global');
@@ -323,7 +340,17 @@ describe('useSkillsStore', () => {
     it('closeDelete clears all delete state', () => {
       useSkillDialogStore.setState({
         deleteTarget: { skill: makeSkill('x'), scope: 'global' },
-        agentDetails: { skillName: 'x', scope: 'global', canonicalPath: '/tmp', automaticAgents: [], independentAgents: [] } satisfies SkillAgentDetails,
+        agentDetails: {
+          skillName: 'x',
+          scope: 'global',
+          canonicalPath: '/tmp',
+          automaticAgents: [],
+          independentAgents: [],
+          defaultAvailableAgents: [],
+          privateRequiredAgents: [],
+          duplicateCopyAgents: [],
+          privateOnlyAgents: [],
+        } satisfies SkillAgentDetails,
         loadingAgentDetails: true,
       });
 
@@ -1023,10 +1050,29 @@ describe('useSkillsStore', () => {
         projectPath: undefined,
         addAgents: ['cursor'],
         removeAgents: [],
+        privateCopyAgents: [],
         mode: 'copy',
       });
       expect(useSkillDialogStore.getState().manageAgentsSkill).toBeNull();
       expect(toast.success).toHaveBeenCalled();
+    });
+
+    it('saveAgentChanges passes private copy agents to the API', async () => {
+      const skill = makeSkill('test');
+      mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: [] });
+
+      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      await useSkillDialogStore.getState().saveAgentChanges([], [], 'copy', ['firebender']);
+
+      expect(mockManageSkillAgents).toHaveBeenCalledWith({
+        skillName: 'test',
+        scope: 'global',
+        projectPath: undefined,
+        addAgents: [],
+        removeAgents: [],
+        privateCopyAgents: ['firebender'],
+        mode: 'copy',
+      });
     });
 
     it('saveAgentChanges keeps the project path from when the dialog was opened', async () => {
@@ -1046,6 +1092,7 @@ describe('useSkillsStore', () => {
         projectPath: '/project-a',
         addAgents: ['cursor'],
         removeAgents: [],
+        privateCopyAgents: [],
         mode: 'symlink',
       });
     });
@@ -1059,6 +1106,62 @@ describe('useSkillsStore', () => {
       await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'symlink');
 
       expect(toast.error).toHaveBeenCalled();
+    });
+
+    it('cleanupDuplicateCopies removes duplicate copies, refreshes details, and syncs skills', async () => {
+      const skill = makeSkill('test');
+      const refreshedDetails: SkillAgentDetails = {
+        skillName: 'test',
+        scope: 'global',
+        canonicalPath: '/home/.agents/skills/test',
+        defaultAvailableAgents: [{
+          agent: 'claude-code',
+          displayName: 'Claude Code',
+          presence: 'default-active',
+          sharedPath: '/home/.agents/skills/test',
+          privatePath: null,
+          canCleanupPrivateCopy: false,
+        }],
+        privateRequiredAgents: [],
+        duplicateCopyAgents: [],
+        privateOnlyAgents: [],
+        automaticAgents: [['claude-code', 'Claude Code']],
+        independentAgents: [],
+      };
+      const syncSkills = vi.fn().mockResolvedValue(undefined);
+      mockCleanupDuplicateAgentCopies.mockResolvedValue([
+        { agent: 'firebender', success: true, skipped: false, path: '/home/.firebender/skills/test', error: null },
+      ]);
+      mockGetAgentDetails.mockResolvedValue(refreshedDetails);
+      useSkillsDataStore.setState({ syncSkills });
+
+      useSkillDialogStore.setState({
+        manageAgentsSkill: skill,
+        manageAgentsScope: 'global',
+        manageAgentDetails: {
+          ...refreshedDetails,
+          duplicateCopyAgents: [{
+            agent: 'firebender',
+            displayName: 'Firebender',
+            presence: 'duplicate-copy',
+            sharedPath: '/home/.agents/skills/test',
+            privatePath: '/home/.firebender/skills/test',
+            canCleanupPrivateCopy: true,
+          }],
+        },
+      });
+      await useSkillDialogStore.getState().cleanupDuplicateCopies(['firebender']);
+
+      expect(mockCleanupDuplicateAgentCopies).toHaveBeenCalledWith({
+        skillName: 'test',
+        scope: 'global',
+        projectPath: undefined,
+        agents: ['firebender'],
+      });
+      expect(mockGetAgentDetails).toHaveBeenCalledWith({ scope: 'global', name: 'test', projectPath: undefined });
+      expect(syncSkills).toHaveBeenCalledTimes(1);
+      expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(refreshedDetails);
+      expect(toast.success).toHaveBeenCalled();
     });
   });
 
@@ -1076,9 +1179,23 @@ describe('useSkillsStore', () => {
     });
 
     it('executeCopy calls API and shows success toast', async () => {
-      const skill = makeSkill('test', { scope: 'project', agents: ['claude-code'] });
+      const skill = makeSkill('test', {
+        scope: 'project',
+        agents: ['antigravity', 'claude-code', 'firebender'],
+        defaultAvailableAgents: ['antigravity'],
+        privateAdaptedAgents: ['claude-code'],
+        privateCopyAgents: ['firebender'],
+      });
       mockCopySkillToProjects.mockResolvedValue({
-        results: [{ projectPath: '/project-b', success: true, error: null }],
+        results: [{
+          projectPath: '/project-b',
+          success: true,
+          error: null,
+          defaultAvailableAgents: ['antigravity'],
+          privateAdaptedAgents: ['claude-code'],
+          privateCopyAgents: ['firebender'],
+          skippedAgents: [],
+        }],
       });
 
       useSkillDialogStore.setState({ copySkill: skill });
@@ -1089,9 +1206,34 @@ describe('useSkillsStore', () => {
         sourceProjectPath: 'global',
         targetProjectPaths: ['/project-b'],
         agents: ['claude-code'],
+        privateCopyAgents: ['firebender'],
       });
       expect(useSkillDialogStore.getState().copySkill).toBeNull();
       expect(toast.success).toHaveBeenCalled();
+    });
+
+    it('executeCopy warns when target agents are skipped', async () => {
+      const skill = makeSkill('test', {
+        scope: 'project',
+        agents: ['claude-code'],
+        privateAdaptedAgents: ['claude-code'],
+      });
+      mockCopySkillToProjects.mockResolvedValue({
+        results: [{
+          projectPath: '/project-b',
+          success: true,
+          error: null,
+          defaultAvailableAgents: ['antigravity'],
+          privateAdaptedAgents: [],
+          privateCopyAgents: [],
+          skippedAgents: ['claude-code'],
+        }],
+      });
+
+      useSkillDialogStore.setState({ copySkill: skill });
+      await useSkillDialogStore.getState().executeCopy(['/project-b']);
+
+      expect(toast.warning).toHaveBeenCalledWith('skills.copyToProject.skippedAgents');
     });
 
     it('executeCopy shows error toast on partial failure', async () => {

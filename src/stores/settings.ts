@@ -32,6 +32,7 @@ interface SettingsState {
   // 默认安装目标（读写 ~/.agents/.skill-lock.json）
   allAgents: AgentInfo[];
   defaultTargetAgents: DefaultTargetAgents;
+  defaultTargetsMigrated: boolean;
   agentsLoaded: boolean;
   loadDefaultTargetAgents: () => Promise<void>;
   setDefaultTargetAgents: (scope: InstallScope, agents: string[]) => void;
@@ -46,6 +47,23 @@ const applyTheme = (theme: Theme) => {
   root.classList.remove('light', 'dark');
   root.classList.add(theme);
 };
+
+function didFilterAnyDefaultTargets(
+  source: DefaultTargetAgents,
+  filtered: DefaultTargetAgents,
+): boolean {
+  return (['global', 'project'] as const).some((scope) =>
+    source[scope].some((agentId) => !filtered[scope].includes(agentId))
+  );
+}
+
+function didMigrateAnyLastSelectedAgents(
+  source: string[],
+  filtered: DefaultTargetAgents,
+): boolean {
+  const retained = new Set([...filtered.global, ...filtered.project]);
+  return source.some((agentId) => !retained.has(agentId));
+}
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
@@ -73,6 +91,7 @@ export const useSettingsStore = create<SettingsState>()(
       // ========== 默认安装目标 ==========
       allAgents: [],
       defaultTargetAgents: EMPTY_DEFAULT_TARGET_AGENTS,
+      defaultTargetsMigrated: false,
       agentsLoaded: false,
 
       loadDefaultTargetAgents: async () => {
@@ -97,12 +116,22 @@ export const useSettingsStore = create<SettingsState>()(
                 project: filterAdditionalAgentIds(targetDefaults.project, agents, 'project'),
               }
             : migratedDefaults;
+          const defaultTargetsMigrated = targetDefaults
+            ? didFilterAnyDefaultTargets(targetDefaults, defaultTargetAgents)
+            : lastSelected.length > 0 && didMigrateAnyLastSelectedAgents(lastSelected, migratedDefaults);
 
           set({
             allAgents: agents,
             defaultTargetAgents,
+            defaultTargetsMigrated,
             agentsLoaded: true,
           });
+
+          if (targetDefaults && defaultTargetsMigrated) {
+            saveDefaultTargetAgents(defaultTargetAgents).catch((error) => {
+              console.error('保存迁移后的默认 agents 失败:', error);
+            });
+          }
         } catch (error) {
           console.error('加载默认 agents 失败:', error);
 
@@ -112,6 +141,7 @@ export const useSettingsStore = create<SettingsState>()(
             set({
               allAgents: agents,
               defaultTargetAgents,
+              defaultTargetsMigrated: false,
               agentsLoaded: true,
             });
           } catch {

@@ -3,8 +3,11 @@
 //! 将项目级 skill 复制到其他项目，保持相同的 agent 配置。
 //! 复用 installer 的 install_skill_to_agents 完成实际安装。
 
+use crate::core::agent_availability::{
+    availability_for_agent, default_available_agents, AgentAvailabilityKind,
+};
 use crate::core::agents::AgentType;
-use crate::core::installer::install_skill_to_agents;
+use crate::core::installer::{install_skill_to_agent_groups, PerAgentInstallResult};
 use crate::core::local_lock::{
     add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock,
 };
@@ -12,6 +15,7 @@ use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::error::AppError;
 use crate::models::{InstallMode, Scope};
+use std::collections::HashSet;
 
 /// 检查 skill 在哪些项目中已存在
 ///
@@ -55,6 +59,18 @@ pub struct CopyProjectResult {
     pub success: bool,
     /// 错误信息
     pub error: Option<String>,
+    /// 默认可用的 agents
+    #[serde(default)]
+    pub default_available_agents: Vec<String>,
+    /// 需要单独适配且写入成功的 agents
+    #[serde(default)]
+    pub private_adapted_agents: Vec<String>,
+    /// 明确写入独立副本的 agents
+    #[serde(default)]
+    pub private_copy_agents: Vec<String>,
+    /// 因目标项目缺少 agent 根目录而跳过的 agents
+    #[serde(default)]
+    pub skipped_agents: Vec<String>,
 }
 
 /// 复制结果汇总
@@ -79,6 +95,7 @@ pub fn copy_skill_to_projects(
     source_project_path: String,
     target_project_paths: Vec<String>,
     agents: Vec<String>,
+    private_copy_agents: Vec<String>,
 ) -> Result<CopySkillResult, AppError> {
     let sanitized = sanitize_name(&skill_name);
 
@@ -100,10 +117,8 @@ pub fn copy_skill_to_projects(
     };
 
     // 3. 解析 agent types
-    let agent_types: Vec<AgentType> = agents
-        .iter()
-        .filter_map(|s| s.parse::<AgentType>().ok())
-        .collect();
+    let agent_types = parse_agent_ids(&agents);
+    let private_copy_agent_types = parse_agent_ids(&private_copy_agents);
 
     // 4. 对每个目标项目执行复制
     let mut results = Vec::with_capacity(target_project_paths.len());
@@ -114,18 +129,19 @@ pub fn copy_skill_to_projects(
             &source_canonical,
             target_path,
             &agent_types,
+            &private_copy_agent_types,
             source_lock_entry.as_ref(),
         );
         match result {
-            Ok(()) => results.push(CopyProjectResult {
-                project_path: target_path.clone(),
-                success: true,
-                error: None,
-            }),
+            Ok(project_result) => results.push(project_result),
             Err(e) => results.push(CopyProjectResult {
                 project_path: target_path.clone(),
                 success: false,
                 error: Some(e.to_string()),
+                default_available_agents: Vec::new(),
+                private_adapted_agents: Vec::new(),
+                private_copy_agents: Vec::new(),
+                skipped_agents: Vec::new(),
             }),
         }
     }
@@ -138,21 +154,45 @@ fn copy_to_single_project(
     source_canonical: &std::path::Path,
     target_path: &str,
     agent_types: &[AgentType],
+    private_copy_agent_types: &[AgentType],
     source_lock_entry: Option<&crate::core::local_lock::LocalSkillLockEntry>,
-) -> Result<(), AppError> {
-    // 安装 skill 到目标项目的 agents
-    let per_agent_results = install_skill_to_agents(
+) -> Result<CopyProjectResult, AppError> {
+    let default_available = default_available_agents(false, target_path);
+    let private_required_agents = agent_types
+        .iter()
+        .copied()
+        .filter(|agent| {
+            availability_for_agent(*agent, false, target_path).kind
+                == AgentAvailabilityKind::PrivateRequired
+        })
+        .collect::<Vec<_>>();
+    let private_copy_agents = private_copy_agent_types
+        .iter()
+        .copied()
+        .filter(|agent| {
+            availability_for_agent(*agent, false, target_path).kind
+                == AgentAvailabilityKind::SharedCompatible
+        })
+        .collect::<Vec<_>>();
+    let include_canonical_result = !default_available.is_empty();
+
+    // 安装 skill 到目标项目的 canonical 和需要单独适配的 agents。
+    let per_agent_results = install_skill_to_agent_groups(
         source_canonical,
         skill_name,
-        agent_types,
+        &private_required_agents,
+        &private_copy_agents,
         &Scope::Project,
         Some(target_path),
         &InstallMode::Symlink,
+        include_canonical_result,
     );
 
-    // 检查是否至少有一个成功
-    let any_success = per_agent_results.iter().any(|r| r.success);
-    if !any_success {
+    let failed_results = per_agent_results
+        .iter()
+        .filter(|result| !result.success)
+        .collect::<Vec<_>>();
+    if !failed_results.is_empty() {
         let errors: Vec<String> = per_agent_results
             .iter()
             .filter_map(|r| r.error.clone())
@@ -175,7 +215,68 @@ fn copy_to_single_project(
         let _ = add_skill_to_local_lock(skill_name, new_entry, target_path);
     }
 
-    Ok(())
+    Ok(build_copy_project_result(
+        target_path,
+        &default_available,
+        &private_required_agents,
+        &private_copy_agents,
+        &per_agent_results,
+    ))
+}
+
+fn parse_agent_ids(agent_ids: &[String]) -> Vec<AgentType> {
+    let mut agents = Vec::new();
+    for agent_id in agent_ids {
+        if let Ok(agent) = agent_id.parse::<AgentType>() {
+            if !agents.contains(&agent) {
+                agents.push(agent);
+            }
+        }
+    }
+    agents
+}
+
+fn build_copy_project_result(
+    target_path: &str,
+    default_available_agents: &[AgentType],
+    private_required_agents: &[AgentType],
+    private_copy_agents: &[AgentType],
+    per_agent_results: &[PerAgentInstallResult],
+) -> CopyProjectResult {
+    let skipped_agents = per_agent_results
+        .iter()
+        .filter(|result| result.skipped)
+        .map(|result| result.agent.clone())
+        .collect::<Vec<_>>();
+    let successful_agents = per_agent_results
+        .iter()
+        .filter(|result| result.success && !result.skipped)
+        .map(|result| result.agent.clone())
+        .collect::<HashSet<_>>();
+
+    CopyProjectResult {
+        project_path: target_path.to_string(),
+        success: per_agent_results.iter().any(|result| result.success && !result.skipped)
+            || per_agent_results
+                .iter()
+                .any(|result| result.agent == "__canonical__" && result.success),
+        error: None,
+        default_available_agents: default_available_agents
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        private_adapted_agents: private_required_agents
+            .iter()
+            .filter(|agent| successful_agents.contains(&agent.to_string()))
+            .map(ToString::to_string)
+            .collect(),
+        private_copy_agents: private_copy_agents
+            .iter()
+            .filter(|agent| successful_agents.contains(&agent.to_string()))
+            .map(ToString::to_string)
+            .collect(),
+        skipped_agents,
+    }
 }
 
 #[cfg(test)]
@@ -204,6 +305,7 @@ mod tests {
             source.path().to_string_lossy().to_string(),
             vec![target.path().to_string_lossy().to_string()],
             vec![],
+            vec![],
         );
 
         assert!(result.is_err());
@@ -220,6 +322,7 @@ mod tests {
             source.path().to_string_lossy().to_string(),
             vec![target.path().to_string_lossy().to_string()],
             vec!["cursor".to_string()],
+            vec![],
         )
         .unwrap();
 
@@ -268,6 +371,7 @@ mod tests {
             source.path().to_string_lossy().to_string(),
             vec![target.path().to_string_lossy().to_string()],
             vec!["cursor".to_string()],
+            vec![],
         )
         .unwrap();
 
@@ -297,10 +401,40 @@ mod tests {
                 target_b.path().to_string_lossy().to_string(),
             ],
             vec!["cursor".to_string()],
+            vec![],
         )
         .unwrap();
 
         assert_eq!(result.results.len(), 2);
         assert!(result.results.iter().all(|r| r.success));
+    }
+
+    #[test]
+    fn test_copy_skill_reports_default_private_and_skipped_targets() {
+        let source = tempdir().unwrap();
+        let target = tempdir().unwrap();
+        setup_source_skill(source.path(), "my-skill");
+
+        let result = copy_skill_to_projects(
+            "my-skill".to_string(),
+            source.path().to_string_lossy().to_string(),
+            vec![target.path().to_string_lossy().to_string()],
+            vec!["antigravity".to_string(), "kiro-cli".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        assert_eq!(result.results.len(), 1);
+        let project_result = &result.results[0];
+        assert!(project_result.success);
+        assert!(project_result
+            .default_available_agents
+            .contains(&"antigravity".to_string()));
+        assert!(project_result.private_adapted_agents.is_empty());
+        assert!(project_result.private_copy_agents.is_empty());
+        assert!(project_result
+            .skipped_agents
+            .iter()
+            .any(|agent| agent == "kiro-cli"));
     }
 }

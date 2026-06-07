@@ -1491,6 +1491,13 @@ mod tests {
     }
 
     #[test]
+    fn test_update_fallback_uses_default_available_agents() {
+        let fallback = AgentType::get_automatic_agents_for_scope(true, ".");
+        assert!(fallback.contains(&AgentType::Firebender));
+        assert!(!fallback.contains(&AgentType::Antigravity));
+    }
+
+    #[test]
     fn test_batch_hash_result_marks_missing_remote_hash_as_deleted_upstream() {
         let skill = UpdateCheckSkill {
             name: "demo".to_string(),

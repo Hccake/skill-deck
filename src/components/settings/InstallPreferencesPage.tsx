@@ -18,24 +18,25 @@ import { useSettingsStore } from '@/stores/settings';
 import type { AgentInfo } from '@/hooks/useTauriApi';
 
 interface ScopeAgentGroups {
-  detectedAutomatic: AgentInfo[];
-  undetectedAutomatic: AgentInfo[];
-  detectedSelectableAgents: AgentInfo[];
-  visibleSelectableAgents: AgentInfo[];
-  hiddenSelectableAgents: AgentInfo[];
+  detectedDefaultAvailable: AgentInfo[];
+  undetectedDefaultAvailable: AgentInfo[];
+  detectedPrivateRequired: AgentInfo[];
+  visiblePrivateRequiredAgents: AgentInfo[];
+  hiddenPrivateRequiredAgents: AgentInfo[];
   selectableCount: number;
   isAllSelected: boolean;
 }
 
 export function InstallPreferencesPage() {
   const { t } = useTranslation();
-  const {
-    allAgents,
-    agentsLoaded,
-    defaultTargetAgents,
-    toggleDefaultTargetAgent,
-    setDefaultTargetAgents,
-  } = useSettingsStore();
+	  const {
+	    allAgents,
+	    agentsLoaded,
+	    defaultTargetAgents,
+	    defaultTargetsMigrated,
+	    toggleDefaultTargetAgent,
+	    setDefaultTargetAgents,
+	  } = useSettingsStore();
 
   return (
     <div className="space-y-5 pb-8">
@@ -45,12 +46,18 @@ export function InstallPreferencesPage() {
             {t('settings.installPreferences.title')}
           </h2>
         </div>
-        <p className="text-sm leading-6 text-muted-foreground">
-          {t('settings.installPreferences.description')}
-        </p>
-      </header>
+	        <p className="text-sm leading-6 text-muted-foreground">
+	          {t('settings.installPreferences.description')}
+	        </p>
+	      </header>
 
-      <Tabs defaultValue="global" className="max-w-3xl">
+	      {defaultTargetsMigrated && (
+	        <div className="max-w-3xl rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
+	          {t('settings.installPreferences.migratedDefaultTargets')}
+	        </div>
+	      )}
+
+	      <Tabs defaultValue="global" className="max-w-3xl">
         <TabsList className="grid w-full max-w-xs grid-cols-2">
           <TabsTrigger value="global">{t('settings.installPreferences.globalTitle')}</TabsTrigger>
           <TabsTrigger value="project">{t('settings.installPreferences.projectTitle')}</TabsTrigger>
@@ -94,8 +101,8 @@ function ScopePreferencePanel({
 
     return {
       ...groups,
-      isAllSelected: groups.detectedSelectableAgents.length > 0
-        && groups.detectedSelectableAgents.every((agent) => selectedAgentIds.has(agent.id)),
+      isAllSelected: groups.detectedPrivateRequired.length > 0
+        && groups.detectedPrivateRequired.every((agent) => selectedAgentIds.has(agent.id)),
     };
   }, [agents, scope, selectedAgentIds]);
 
@@ -104,11 +111,11 @@ function ScopePreferencePanel({
   }
 
   const {
-    detectedAutomatic,
-    undetectedAutomatic,
-    detectedSelectableAgents,
-    visibleSelectableAgents,
-    hiddenSelectableAgents,
+    detectedDefaultAvailable,
+    undetectedDefaultAvailable,
+    detectedPrivateRequired,
+    visiblePrivateRequiredAgents,
+    hiddenPrivateRequiredAgents,
     selectableCount,
     isAllSelected,
   } = agentGroups;
@@ -120,8 +127,8 @@ function ScopePreferencePanel({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <h3 className="text-[13px] font-semibold tracking-tight text-foreground">
-                {t('settings.installPreferences.automaticSection')}
+                <h3 className="text-[13px] font-semibold tracking-tight text-foreground">
+                  {t('settings.installPreferences.automaticSection')}
                 </h3>
                 <span className="text-xs leading-5 text-muted-foreground">
                   {t('settings.installPreferences.automaticHint', { path: getSharedSkillDirectory(scope) })}
@@ -130,8 +137,8 @@ function ScopePreferencePanel({
             </div>
             <span className="shrink-0 text-xs text-muted-foreground">
               {t('settings.installPreferences.automaticDetectionSummary', {
-                detected: detectedAutomatic.length,
-                undetected: undetectedAutomatic.length,
+                detected: detectedDefaultAvailable.length,
+                undetected: undetectedDefaultAvailable.length,
               })}
             </span>
           </div>
@@ -139,27 +146,27 @@ function ScopePreferencePanel({
 
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            {detectedAutomatic.map((agent) => (
+            {detectedDefaultAvailable.map((agent) => (
               <div key={agent.id} className="flex items-center gap-1.5 rounded border border-border/40 bg-muted/10 px-2 py-1">
                 <AgentIcon agentId={agent.id} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-foreground/80" />
                 <span className="text-xs font-medium text-foreground">{agent.name}</span>
               </div>
             ))}
-            {detectedAutomatic.length === 0 && (
+            {detectedDefaultAvailable.length === 0 && (
               <span className="text-xs text-muted-foreground">
                 {t('settings.installPreferences.noAutomaticAgents')}
               </span>
             )}
           </div>
 
-          {undetectedAutomatic.length > 0 && (
+          {undetectedDefaultAvailable.length > 0 && (
             <Collapsible>
               <CollapsibleTrigger className="group flex items-center text-xs text-muted-foreground transition-colors hover:text-foreground">
-                {t('settings.installPreferences.otherAutomaticAgentsToggle', { count: undetectedAutomatic.length })}
+                {t('settings.installPreferences.otherAutomaticAgentsToggle', { count: undetectedDefaultAvailable.length })}
                 <ChevronDown className="ml-1 h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2 flex flex-wrap gap-2">
-                {undetectedAutomatic.map((agent) => (
+                {undetectedDefaultAvailable.map((agent) => (
                   <div key={agent.id} className="flex items-center gap-1.5 rounded border border-border/40 bg-muted/5 px-2 py-1 opacity-70">
                     <AgentIcon agentId={agent.id} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-muted-foreground/80" />
                     <span className="text-xs font-medium text-muted-foreground">{agent.name}</span>
@@ -173,18 +180,23 @@ function ScopePreferencePanel({
 
       <section className="rounded-lg border border-border/60 bg-background p-3.5">
         <div className="mb-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[13px] font-semibold tracking-tight text-foreground">
-              {t('settings.installPreferences.additionalSection')}
-            </h3>
-            <div className="flex items-center gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-[13px] font-semibold tracking-tight text-foreground">
+                {t('settings.installPreferences.additionalSection')}
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('settings.installPreferences.additionalHint')}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
               <span className="text-xs text-muted-foreground">
                 {t('settings.installPreferences.selectedCount', { count: selectedAgents.length })}
               </span>
               <label className="flex cursor-pointer items-center gap-1.5 text-xs text-foreground group">
                 <Checkbox
                   checked={isAllSelected}
-                  onCheckedChange={() => onSelectAll(isAllSelected ? [] : detectedSelectableAgents.map((a) => a.id))}
+                  onCheckedChange={() => onSelectAll(isAllSelected ? [] : detectedPrivateRequired.map((a) => a.id))}
                   className="h-3.5 w-3.5"
                 />
                 <span className="transition-opacity group-hover:opacity-80">{t('settings.installPreferences.selectAll')}</span>
@@ -195,9 +207,9 @@ function ScopePreferencePanel({
 
         {selectableCount > 0 ? (
           <div className="space-y-2">
-            {visibleSelectableAgents.length > 0 ? (
+            {visiblePrivateRequiredAgents.length > 0 ? (
               <div className="flex flex-col gap-1.5">
-                {visibleSelectableAgents.map((agent) => (
+                {visiblePrivateRequiredAgents.map((agent) => (
                   <SelectableAgentRow
                     key={agent.id}
                     agent={agent}
@@ -213,14 +225,14 @@ function ScopePreferencePanel({
               </p>
             )}
 
-            {hiddenSelectableAgents.length > 0 && (
+            {hiddenPrivateRequiredAgents.length > 0 && (
               <Collapsible>
                 <CollapsibleTrigger className="group flex w-full items-center justify-center gap-1.5 rounded-md border border-transparent py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40">
-                  {t('settings.installPreferences.otherAgentsToggle', { count: hiddenSelectableAgents.length })}
+                  {t('settings.installPreferences.otherAgentsToggle', { count: hiddenPrivateRequiredAgents.length })}
                   <ChevronDown className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-1.5 flex flex-col gap-1.5">
-                  {hiddenSelectableAgents.map((agent) => (
+                  {hiddenPrivateRequiredAgents.map((agent) => (
                     <SelectableAgentRow
                       key={agent.id}
                       agent={agent}

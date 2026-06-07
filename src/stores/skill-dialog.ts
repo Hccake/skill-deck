@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { useContextStore } from './context';
 import {
   createSkillRepairDraft,
+  getSkillOperationAgents,
   t,
   type AddDialogPrefill,
   type DeleteTarget,
@@ -15,6 +16,7 @@ import {
   getSkillAgentDetails as apiGetAgentDetails,
   openInstallWizard,
   manageSkillAgents as apiManageSkillAgents,
+  cleanupDuplicateAgentCopies as apiCleanupDuplicateAgentCopies,
   copySkillToProjects as apiCopySkillToProjects,
 } from '@/hooks/useTauriApi';
 import type { AgentType, InstalledSkill, SkillScope, SkillAgentDetails, InstallMode } from '@/bindings';
@@ -29,6 +31,8 @@ interface SkillDialogState {
   manageAgentsSkill: InstalledSkill | null;
   manageAgentsScope: SkillScope;
   manageAgentsProjectPath?: string;
+  manageAgentDetails: SkillAgentDetails | null;
+  loadingManageAgentDetails: boolean;
 
   // Copy to project dialog
   copySkill: InstalledSkill | null;
@@ -46,7 +50,13 @@ interface SkillDialogState {
   closeRepairSource: () => void;
   openManageAgents: (skill: InstalledSkill, scope: SkillScope) => void;
   closeManageAgents: () => void;
-  saveAgentChanges: (addAgents: string[], removeAgents: string[], mode: InstallMode) => Promise<void>;
+  saveAgentChanges: (
+    addAgents: string[],
+    removeAgents: string[],
+    mode: InstallMode,
+    privateCopyAgents?: string[],
+  ) => Promise<void>;
+  cleanupDuplicateCopies: (agents: string[]) => Promise<void>;
   openCopyToProject: (skill: InstalledSkill) => void;
   closeCopyToProject: () => void;
   executeCopy: (targetPaths: string[]) => Promise<void>;
@@ -59,6 +69,8 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   manageAgentsSkill: null,
   manageAgentsScope: 'global' as SkillScope,
   manageAgentsProjectPath: undefined,
+  manageAgentDetails: null,
+  loadingManageAgentDetails: false,
   copySkill: null,
   repairSourceTarget: null,
 
@@ -160,12 +172,27 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   openManageAgents: (skill, scope) => {
     const manageAgentsProjectPath =
       scope === 'project' ? useContextStore.getState().selectedContext : undefined;
-    set({ manageAgentsSkill: skill, manageAgentsScope: scope, manageAgentsProjectPath });
+    set({
+      manageAgentsSkill: skill,
+      manageAgentsScope: scope,
+      manageAgentsProjectPath,
+      manageAgentDetails: null,
+      loadingManageAgentDetails: true,
+    });
+    apiGetAgentDetails({ scope, name: skill.name, projectPath: manageAgentsProjectPath })
+      .then((details) => set({ manageAgentDetails: details }))
+      .catch((e) => console.warn('Failed to fetch manage agent details:', e))
+      .finally(() => set({ loadingManageAgentDetails: false }));
   },
 
-  closeManageAgents: () => set({ manageAgentsSkill: null, manageAgentsProjectPath: undefined }),
+  closeManageAgents: () => set({
+    manageAgentsSkill: null,
+    manageAgentsProjectPath: undefined,
+    manageAgentDetails: null,
+    loadingManageAgentDetails: false,
+  }),
 
-  saveAgentChanges: async (addAgents, removeAgents, mode) => {
+  saveAgentChanges: async (addAgents, removeAgents, mode, privateCopyAgents = []) => {
     const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath } = get();
     if (!manageAgentsSkill) return;
 
@@ -179,6 +206,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
         projectPath,
         addAgents: addAgents as AgentType[],
         removeAgents: removeAgents as AgentType[],
+        privateCopyAgents: privateCopyAgents as AgentType[],
         mode,
       });
 
@@ -204,6 +232,40 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
     }
   },
 
+  cleanupDuplicateCopies: async (agents) => {
+    const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath } = get();
+    if (!manageAgentsSkill || agents.length === 0) return;
+
+    const scope = manageAgentsScope === 'project' ? 'project' : 'global';
+    const projectPath = scope === 'project' ? manageAgentsProjectPath : undefined;
+
+    try {
+      const results = await apiCleanupDuplicateAgentCopies({
+        skillName: manageAgentsSkill.name,
+        scope,
+        projectPath,
+        agents: agents as AgentType[],
+      });
+      const failures = results.filter((result) => !result.success && !result.skipped);
+      if (failures.length > 0) {
+        toast.error(failures.map((result) => `${result.agent}: ${result.error}`).join('\n'));
+      } else {
+        toast.success(t('skills.manageAgents.cleanupSuccess'));
+      }
+
+      const [details] = await Promise.all([
+        apiGetAgentDetails({ scope, name: manageAgentsSkill.name, projectPath }),
+        import('./skills-data').then(({ useSkillsDataStore }) =>
+          useSkillsDataStore.getState().syncSkills()
+        ),
+      ]);
+      set({ manageAgentDetails: details });
+    } catch (e) {
+      console.error('[cleanupDuplicateCopies] Failed:', e);
+      toast.error(String(e));
+    }
+  },
+
   openCopyToProject: (skill) => {
     set({ copySkill: skill });
   },
@@ -221,11 +283,15 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
         skillName: copySkill.name,
         sourceProjectPath: selectedContext,
         targetProjectPaths: targetPaths,
-        agents: copySkill.agents,
+        agents: copySkill.privateAdaptedAgents ?? getSkillOperationAgents(copySkill),
+        privateCopyAgents: copySkill.privateCopyAgents ?? [],
       });
 
       const successCount = result.results.filter((r) => r.success).length;
       const failCount = result.results.filter((r) => !r.success).length;
+      const skippedAgents = result.results
+        .flatMap((r) => r.skippedAgents ?? [])
+        .filter((agent, index, agents) => agents.indexOf(agent) === index);
 
       if (failCount > 0) {
         const errors = result.results
@@ -233,6 +299,8 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
           .map((r) => `${r.projectPath}: ${r.error}`)
           .join('\n');
         toast.error(t('skills.copyToProject.partialError', { success: successCount, fail: failCount }) + '\n' + errors);
+      } else if (skippedAgents.length > 0) {
+        toast.warning(t('skills.copyToProject.skippedAgents', { agents: skippedAgents.join(', ') }));
       } else {
         toast.success(t('skills.copyToProject.success', { count: successCount }));
       }

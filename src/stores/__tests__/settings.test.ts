@@ -1,6 +1,7 @@
 // src/stores/__tests__/settings.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AgentInfo } from '@/bindings';
+import { makeAgentScopeTarget } from '@/test-utils';
 
 const mockGetLastSelectedAgents = vi.fn();
 const mockGetDefaultTargetAgents = vi.fn();
@@ -19,6 +20,7 @@ import { useSettingsStore } from '../settings';
 describe('useSettingsStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
     useSettingsStore.setState({
       defaultTargetAgents: { global: [], project: [] },
       agentsLoaded: false,
@@ -57,16 +59,15 @@ describe('useSettingsStore', () => {
         globalSkillsDir: '~/.gemini/antigravity/skills',
         detected: true,
         targets: {
-          global: {
-            supported: true,
+          global: makeAgentScopeTarget({
             automatic: false,
             path: '~/.gemini/antigravity/skills',
-          },
-          project: {
-            supported: true,
+          }),
+          project: makeAgentScopeTarget({
             automatic: true,
             path: '.agents/skills',
-          },
+            sharedPath: './.agents/skills',
+          }),
         },
       },
       {
@@ -76,16 +77,15 @@ describe('useSettingsStore', () => {
         globalSkillsDir: '~/.claude/skills',
         detected: true,
         targets: {
-          global: {
-            supported: true,
+          global: makeAgentScopeTarget({
             automatic: false,
             path: '~/.claude/skills',
-          },
-          project: {
-            supported: true,
+          }),
+          project: makeAgentScopeTarget({
             automatic: false,
             path: '.claude/skills',
-          },
+            sharedPath: './.agents/skills',
+          }),
         },
       },
     ];
@@ -105,7 +105,10 @@ describe('useSettingsStore', () => {
         project: ['claude-code'],
       });
       expect(useSettingsStore.getState().agentsLoaded).toBe(true);
-      expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
+      expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith({
+        global: ['antigravity', 'claude-code'],
+        project: ['claude-code'],
+      });
     });
 
     it('migrates lastSelectedAgents independently per scope', async () => {
@@ -168,6 +171,50 @@ describe('useSettingsStore', () => {
       });
 
       useSettingsStore.getState().setDefaultTargetAgents('global', ['claude-code']);
+
+      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
+        global: ['claude-code'],
+        project: ['claude-code'],
+      });
+      expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith({
+        global: ['claude-code'],
+        project: ['claude-code'],
+      });
+    });
+
+    it('filters default-available agents out of persisted scoped defaults', async () => {
+      const scopedAgents: AgentInfo[] = [
+        ...agents,
+        {
+          id: 'firebender',
+          name: 'Firebender',
+          skillsDir: '.agents/skills',
+          globalSkillsDir: '~/.firebender/skills',
+          detected: true,
+          targets: {
+            global: makeAgentScopeTarget({
+              automatic: true,
+              availability: 'shared-compatible',
+              defaultAvailable: true,
+              path: '~/.agents/skills',
+              privatePath: '~/.firebender/skills',
+            }),
+            project: makeAgentScopeTarget({
+              automatic: true,
+              path: '.agents/skills',
+              sharedPath: './.agents/skills',
+            }),
+          },
+        },
+      ];
+      mockListAgents.mockResolvedValue(scopedAgents);
+      mockGetDefaultTargetAgents.mockResolvedValue({
+        global: ['firebender', 'claude-code'],
+        project: ['firebender', 'claude-code'],
+      });
+      mockGetLastSelectedAgents.mockResolvedValue([]);
+
+      await useSettingsStore.getState().loadDefaultTargetAgents();
 
       expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
         global: ['claude-code'],

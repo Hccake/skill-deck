@@ -42,8 +42,11 @@ export function SkillsPage() {
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
   const closeManageAgents = useSkillDialogStore((s) => s.closeManageAgents);
   const saveAgentChanges = useSkillDialogStore((s) => s.saveAgentChanges);
+  const cleanupDuplicateCopies = useSkillDialogStore((s) => s.cleanupDuplicateCopies);
   const manageAgentsSkill = useSkillDialogStore((s) => s.manageAgentsSkill);
   const manageAgentsScope = useSkillDialogStore((s) => s.manageAgentsScope);
+  const manageAgentDetails = useSkillDialogStore((s) => s.manageAgentDetails);
+  const loadingManageAgentDetails = useSkillDialogStore((s) => s.loadingManageAgentDetails);
   const copySkill = useSkillDialogStore((s) => s.copySkill);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
   const closeCopyToProject = useSkillDialogStore((s) => s.closeCopyToProject);
@@ -210,8 +213,11 @@ export function SkillsPage() {
       skill={manageAgentsSkill}
       scope={manageAgentsScope}
       allAgents={allAgents}
+      agentDetails={manageAgentDetails}
+      loadingAgentDetails={loadingManageAgentDetails}
       onClose={closeManageAgents}
       onSave={saveAgentChanges}
+      onCleanupDuplicates={cleanupDuplicateCopies}
     />
 
     {/* Copy to Project Dialog */}

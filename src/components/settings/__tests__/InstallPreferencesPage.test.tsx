@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentInfo } from '@/hooks/useTauriApi';
 import { InstallPreferencesPage } from '../InstallPreferencesPage';
 import enLocale from '@/i18n/locales/en.json';
+import { makeAgentScopeTarget } from '@/test-utils';
 
 const mockToggleDefaultTargetAgent = vi.fn();
 const mockSetDefaultTargetAgents = vi.fn();
@@ -13,6 +14,7 @@ const mockSetDefaultTargetAgents = vi.fn();
 const mockSettingsState = vi.hoisted(() => ({
   allAgents: [] as AgentInfo[],
   agentsLoaded: true,
+  defaultTargetsMigrated: false,
   defaultTargetAgents: {
     global: [] as string[],
     project: [] as string[],
@@ -64,16 +66,15 @@ const agents: AgentInfo[] = [
     globalSkillsDir: '~/.agents/skills',
     detected: true,
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: true,
         path: '~/.agents/skills',
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: true,
         path: './.agents/skills',
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   },
   {
@@ -83,16 +84,15 @@ const agents: AgentInfo[] = [
     globalSkillsDir: '~/.claude/skills',
     detected: true,
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: false,
         path: '~/.claude/skills',
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: false,
         path: './.claude/skills',
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   },
   {
@@ -102,16 +102,15 @@ const agents: AgentInfo[] = [
     globalSkillsDir: '~/.codeium/windsurf/skills',
     detected: false,
     targets: {
-      global: {
-        supported: true,
+      global: makeAgentScopeTarget({
         automatic: false,
         path: '~/.codeium/windsurf/skills',
-      },
-      project: {
-        supported: true,
+      }),
+      project: makeAgentScopeTarget({
         automatic: false,
         path: './.windsurf/skills',
-      },
+        sharedPath: './.agents/skills',
+      }),
     },
   },
 ];
@@ -121,6 +120,7 @@ describe('InstallPreferencesPage', () => {
     vi.clearAllMocks();
     mockSettingsState.allAgents = agents;
     mockSettingsState.agentsLoaded = true;
+    mockSettingsState.defaultTargetsMigrated = false;
     mockSettingsState.defaultTargetAgents = {
       global: [],
       project: [],
@@ -131,8 +131,10 @@ describe('InstallPreferencesPage', () => {
     render(<InstallPreferencesPage />);
 
     expect(screen.getAllByText('Amp').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Available automatically').length).toBeGreaterThan(0);
-    expect(screen.getByText(/shared directory/)).toBeDefined();
+    expect(screen.getAllByText('Default available').length).toBeGreaterThan(0);
+    expect(screen.getByText(/default location/)).toBeDefined();
+    expect(screen.getByText('Needs separate setup')).toBeDefined();
+    expect(screen.getByText(/adapted separately by default/)).toBeDefined();
   });
 
   it('uses global and project labels instead of workspace labels', () => {
@@ -158,5 +160,13 @@ describe('InstallPreferencesPage', () => {
     fireEvent.click(screen.getAllByText('Select All')[0]);
 
     expect(mockSetDefaultTargetAgents).toHaveBeenCalledWith('global', ['claude-code']);
+  });
+
+  it('shows a low-priority notice when default target agents were migrated', () => {
+    mockSettingsState.defaultTargetsMigrated = true;
+
+    render(<InstallPreferencesPage />);
+
+    expect(screen.getByText('Some agents are now available by default and no longer need separate setup.')).toBeDefined();
   });
 });
