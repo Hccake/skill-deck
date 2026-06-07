@@ -35,6 +35,9 @@ pub struct InstallParams {
     pub skills: Vec<String>,
     /// 目标 agents
     pub agents: Vec<String>,
+    /// 明确要求写入独立副本的 agents
+    #[serde(default)]
+    pub private_copy_agents: Vec<String>,
     /// 安装范围
     pub scope: Scope,
     /// Project scope 时的项目路径
@@ -50,6 +53,22 @@ pub struct InstallParams {
     /// 是否已确认风险来源（如 OpenClaw）
     #[serde(default)]
     pub acknowledge_risk: bool,
+}
+
+/// 安装结果分类
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+#[specta(rename_all = "kebab-case")]
+pub enum InstallResultCategory {
+    DefaultAvailable,
+    PrivateAdapted,
+    PrivateCopy,
+    Skipped,
+    Failed,
+}
+
+fn default_install_result_category() -> InstallResultCategory {
+    InstallResultCategory::PrivateAdapted
 }
 
 /// 单个 skill 的安装结果
@@ -75,6 +94,9 @@ pub struct InstallResult {
     pub skipped: bool,
     /// 错误信息
     pub error: Option<String>,
+    /// 安装结果分类
+    #[serde(default = "default_install_result_category")]
+    pub category: InstallResultCategory,
 }
 
 /// 安装结果汇总
@@ -88,6 +110,40 @@ pub struct InstallResults {
     pub failed: Vec<InstallResult>,
     /// symlink 失败降级为 copy 的 agents
     pub symlink_fallback_agents: Vec<String>,
+    /// 默认可用的 agents
+    #[serde(default)]
+    pub default_available_agents: Vec<String>,
+    /// 需要独立适配的 agents
+    #[serde(default)]
+    pub private_adapted_agents: Vec<String>,
+    /// 明确写入独立副本的 agents
+    #[serde(default)]
+    pub private_copy_agents: Vec<String>,
+}
+
+/// Agent 对某个 skill 的安装/可用状态
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+#[specta(rename_all = "kebab-case")]
+pub enum AgentSkillPresence {
+    DefaultActive,
+    RequiresPrivateInstall,
+    DuplicateCopy,
+    PrivateOnly,
+    NotInstalled,
+}
+
+/// Agent 对某个 skill 的 presence 摘要
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct AgentPresenceInfo {
+    pub agent: AgentType,
+    pub display_name: String,
+    pub presence: AgentSkillPresence,
+    pub shared_path: String,
+    pub private_path: Option<String>,
+    pub can_cleanup_private_copy: bool,
 }
 
 /// 可用的 Skill 信息（fetch_available 返回）
@@ -151,6 +207,18 @@ pub struct SkillAgentDetails {
     pub automatic_agents: Vec<(AgentType, String)>,
     /// 有独立 symlink 或 copy 的 Agents
     pub independent_agents: Vec<IndependentAgentInfo>,
+    /// 默认位置已生效的 Agents
+    #[serde(default)]
+    pub default_available_agents: Vec<AgentPresenceInfo>,
+    /// 需要单独适配但尚未安装私有目录的 Agents
+    #[serde(default)]
+    pub private_required_agents: Vec<AgentPresenceInfo>,
+    /// 默认位置和私有目录都存在的重复副本 Agents
+    #[serde(default)]
+    pub duplicate_copy_agents: Vec<AgentPresenceInfo>,
+    /// 仅私有目录存在的 Agents
+    #[serde(default)]
+    pub private_only_agents: Vec<AgentPresenceInfo>,
     // 注意：不设 has_independent_agents 字段，前端直接用 independent_agents.length > 0 推导（YAGNI）
 }
 
@@ -215,7 +283,7 @@ pub enum InstallRiskKind {
 
 #[cfg(test)]
 mod tests {
-    use super::InstallParams;
+    use super::{InstallParams, InstallResultCategory};
 
     #[test]
     fn test_install_params_defaults_preserve_existing_modes_to_false() {
@@ -232,5 +300,28 @@ mod tests {
         .unwrap();
 
         assert!(!params.preserve_existing_modes);
+    }
+
+    #[test]
+    fn test_install_params_defaults_private_copy_agents_empty() {
+        let params: InstallParams = serde_json::from_str(
+            r#"{
+                "source": "owner/repo",
+                "skills": ["demo"],
+                "agents": [],
+                "scope": "global",
+                "projectPath": null,
+                "mode": "copy"
+            }"#,
+        )
+        .unwrap();
+
+        assert!(params.private_copy_agents.is_empty());
+    }
+
+    #[test]
+    fn test_install_result_category_serializes_kebab_case() {
+        let value = serde_json::to_value(InstallResultCategory::DefaultAvailable).unwrap();
+        assert_eq!(value, serde_json::json!("default-available"));
     }
 }

@@ -1,4 +1,5 @@
 // src-tauri/src/core/mod.rs
+pub mod agent_availability;
 pub mod agents;
 pub mod app_config;
 pub mod audit;

@@ -20,17 +20,34 @@ export function getAgentTarget(agent: AgentInfo, scope: InstallScope) {
   return agent.targets[scope];
 }
 
-export function isAutomaticAgent(agent: AgentInfo, scope: InstallScope): boolean {
+export function isDefaultAvailableAgent(agent: AgentInfo, scope: InstallScope): boolean {
   const target = getAgentTarget(agent, scope);
-  return target.supported && target.automatic;
+  return target.supported && target.defaultAvailable;
 }
 
-export function isAdditionalAgent(agent: AgentInfo, scope: InstallScope): boolean {
+export function isPrivateRequiredAgent(agent: AgentInfo, scope: InstallScope): boolean {
   const target = getAgentTarget(agent, scope);
-  return target.supported && !target.automatic;
+  return target.supported && !target.defaultAvailable;
 }
+
+export function canCreatePrivateCopy(agent: AgentInfo, scope: InstallScope): boolean {
+  const target = getAgentTarget(agent, scope);
+  return target.supported
+    && target.defaultAvailable
+    && target.privatePath !== null
+    && target.availability === 'shared-compatible';
+}
+
+export const isAutomaticAgent = isDefaultAvailableAgent;
+export const isAdditionalAgent = isPrivateRequiredAgent;
 
 export interface ScopedAgentGroups {
+  detectedDefaultAvailable: AgentInfo[];
+  undetectedDefaultAvailable: AgentInfo[];
+  detectedPrivateRequired: AgentInfo[];
+  visiblePrivateRequiredAgents: AgentInfo[];
+  hiddenPrivateRequiredAgents: AgentInfo[];
+  privateCopyEligibleAgents: AgentInfo[];
   detectedAutomatic: AgentInfo[];
   undetectedAutomatic: AgentInfo[];
   detectedSelectableAgents: AgentInfo[];
@@ -44,22 +61,27 @@ export function groupAgentsByScopedTarget(
   scope: InstallScope,
   selectedAgentIds: ReadonlySet<string> = new Set(),
 ): ScopedAgentGroups {
-  const detectedAutomatic: AgentInfo[] = [];
-  const undetectedAutomatic: AgentInfo[] = [];
-  const detectedSelectableAgents: AgentInfo[] = [];
-  const visibleSelectableAgents: AgentInfo[] = [];
-  const hiddenSelectableAgents: AgentInfo[] = [];
+  const detectedDefaultAvailable: AgentInfo[] = [];
+  const undetectedDefaultAvailable: AgentInfo[] = [];
+  const detectedPrivateRequired: AgentInfo[] = [];
+  const visiblePrivateRequiredAgents: AgentInfo[] = [];
+  const hiddenPrivateRequiredAgents: AgentInfo[] = [];
+  const privateCopyEligibleAgents: AgentInfo[] = [];
   let selectableCount = 0;
 
   for (const agent of agents) {
     const target = getAgentTarget(agent, scope);
     if (!target.supported) continue;
 
-    if (target.automatic) {
+    if (target.defaultAvailable) {
       if (agent.detected) {
-        detectedAutomatic.push(agent);
+        detectedDefaultAvailable.push(agent);
       } else {
-        undetectedAutomatic.push(agent);
+        undetectedDefaultAvailable.push(agent);
+      }
+
+      if (canCreatePrivateCopy(agent, scope)) {
+        privateCopyEligibleAgents.push(agent);
       }
       continue;
     }
@@ -67,22 +89,28 @@ export function groupAgentsByScopedTarget(
     selectableCount += 1;
 
     if (agent.detected) {
-      detectedSelectableAgents.push(agent);
+      detectedPrivateRequired.push(agent);
     }
 
     if (agent.detected || selectedAgentIds.has(agent.id)) {
-      visibleSelectableAgents.push(agent);
+      visiblePrivateRequiredAgents.push(agent);
     } else {
-      hiddenSelectableAgents.push(agent);
+      hiddenPrivateRequiredAgents.push(agent);
     }
   }
 
   return {
-    detectedAutomatic,
-    undetectedAutomatic,
-    detectedSelectableAgents,
-    visibleSelectableAgents,
-    hiddenSelectableAgents,
+    detectedDefaultAvailable,
+    undetectedDefaultAvailable,
+    detectedPrivateRequired,
+    visiblePrivateRequiredAgents,
+    hiddenPrivateRequiredAgents,
+    privateCopyEligibleAgents,
+    detectedAutomatic: detectedDefaultAvailable,
+    undetectedAutomatic: undetectedDefaultAvailable,
+    detectedSelectableAgents: detectedPrivateRequired,
+    visibleSelectableAgents: visiblePrivateRequiredAgents,
+    hiddenSelectableAgents: hiddenPrivateRequiredAgents,
     selectableCount,
   };
 }

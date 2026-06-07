@@ -1,6 +1,7 @@
 // Agent 配置与检测
 // 完整对应 CLI: agents.ts
 
+use crate::core::agent_availability::{AgentAvailability, AgentAvailabilityKind};
 use crate::core::paths::PATHS;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -25,6 +26,12 @@ pub struct AgentScopeTarget {
     pub supported: bool,
     pub automatic: bool,
     pub path: String,
+    pub availability: AgentAvailabilityKind,
+    pub default_available: bool,
+    pub shared_path: String,
+    pub install_path: String,
+    pub read_paths: Vec<String>,
+    pub private_path: Option<String>,
 }
 
 /// Agent 在全局和项目两个安装范围下的目标能力
@@ -60,7 +67,10 @@ pub enum AgentType {
     AiderDesk,
     Amp,
     Antigravity,
+    AntigravityCli,
+    Astrbot,
     Augment,
+    AutohandCode,
     Bob,
     ClaudeCode,
     Openclaw,
@@ -87,18 +97,27 @@ pub enum AgentType {
     IflowCli,
     Junie,
     Kilo,
-    KimiCli,
+    KimiCodeCli,
     KiroCli,
     Kode,
+    InferenceSh,
+    Jazz,
+    Lingma,
+    Loaf,
     Mcpjam,
     MistralVibe,
+    Moxby,
     Mux,
     Neovate,
+    Ona,
     Opencode,
     Openhands,
     Pi,
+    Promptscript,
     Qoder,
+    QoderCn,
     QwenCode,
+    Reasonix,
     Replit,
     Rovodev,
     Roo,
@@ -109,9 +128,12 @@ pub enum AgentType {
     Windsurf,
     Zed,
     Zencoder,
+    Zenflow,
     Pochi,
     Adal,
     Cortex,
+    Terramind,
+    Tinycloud,
 }
 
 impl std::fmt::Display for AgentType {
@@ -120,7 +142,10 @@ impl std::fmt::Display for AgentType {
             Self::AiderDesk => "aider-desk",
             Self::Amp => "amp",
             Self::Antigravity => "antigravity",
+            Self::AntigravityCli => "antigravity-cli",
+            Self::Astrbot => "astrbot",
             Self::Augment => "augment",
+            Self::AutohandCode => "autohand-code",
             Self::Bob => "bob",
             Self::ClaudeCode => "claude-code",
             Self::Openclaw => "openclaw",
@@ -147,18 +172,27 @@ impl std::fmt::Display for AgentType {
             Self::IflowCli => "iflow-cli",
             Self::Junie => "junie",
             Self::Kilo => "kilo",
-            Self::KimiCli => "kimi-cli",
+            Self::KimiCodeCli => "kimi-code-cli",
             Self::KiroCli => "kiro-cli",
             Self::Kode => "kode",
+            Self::InferenceSh => "inference-sh",
+            Self::Jazz => "jazz",
+            Self::Lingma => "lingma",
+            Self::Loaf => "loaf",
             Self::Mcpjam => "mcpjam",
             Self::MistralVibe => "mistral-vibe",
+            Self::Moxby => "moxby",
             Self::Mux => "mux",
             Self::Neovate => "neovate",
+            Self::Ona => "ona",
             Self::Opencode => "opencode",
             Self::Openhands => "openhands",
             Self::Pi => "pi",
+            Self::Promptscript => "promptscript",
             Self::Qoder => "qoder",
+            Self::QoderCn => "qoder-cn",
             Self::QwenCode => "qwen-code",
+            Self::Reasonix => "reasonix",
             Self::Replit => "replit",
             Self::Rovodev => "rovodev",
             Self::Roo => "roo",
@@ -169,9 +203,12 @@ impl std::fmt::Display for AgentType {
             Self::Windsurf => "windsurf",
             Self::Zed => "zed",
             Self::Zencoder => "zencoder",
+            Self::Zenflow => "zenflow",
             Self::Pochi => "pochi",
             Self::Adal => "adal",
             Self::Cortex => "cortex",
+            Self::Terramind => "terramind",
+            Self::Tinycloud => "tinycloud",
         };
         write!(f, "{}", name)
     }
@@ -185,7 +222,10 @@ impl std::str::FromStr for AgentType {
             "aider-desk" => Ok(Self::AiderDesk),
             "amp" => Ok(Self::Amp),
             "antigravity" => Ok(Self::Antigravity),
+            "antigravity-cli" => Ok(Self::AntigravityCli),
+            "astrbot" => Ok(Self::Astrbot),
             "augment" => Ok(Self::Augment),
+            "autohand-code" => Ok(Self::AutohandCode),
             "bob" => Ok(Self::Bob),
             "claude-code" => Ok(Self::ClaudeCode),
             "openclaw" => Ok(Self::Openclaw),
@@ -212,18 +252,27 @@ impl std::str::FromStr for AgentType {
             "iflow-cli" => Ok(Self::IflowCli),
             "junie" => Ok(Self::Junie),
             "kilo" => Ok(Self::Kilo),
-            "kimi-cli" => Ok(Self::KimiCli),
+            "kimi-code-cli" | "kimi-cli" => Ok(Self::KimiCodeCli),
             "kiro-cli" => Ok(Self::KiroCli),
             "kode" => Ok(Self::Kode),
+            "inference-sh" => Ok(Self::InferenceSh),
+            "jazz" => Ok(Self::Jazz),
+            "lingma" => Ok(Self::Lingma),
+            "loaf" => Ok(Self::Loaf),
             "mcpjam" => Ok(Self::Mcpjam),
             "mistral-vibe" => Ok(Self::MistralVibe),
+            "moxby" => Ok(Self::Moxby),
             "mux" => Ok(Self::Mux),
             "neovate" => Ok(Self::Neovate),
+            "ona" => Ok(Self::Ona),
             "opencode" => Ok(Self::Opencode),
             "openhands" => Ok(Self::Openhands),
             "pi" => Ok(Self::Pi),
+            "promptscript" => Ok(Self::Promptscript),
             "qoder" => Ok(Self::Qoder),
+            "qoder-cn" => Ok(Self::QoderCn),
             "qwen-code" => Ok(Self::QwenCode),
+            "reasonix" => Ok(Self::Reasonix),
             "replit" => Ok(Self::Replit),
             "rovodev" => Ok(Self::Rovodev),
             "roo" => Ok(Self::Roo),
@@ -234,9 +283,12 @@ impl std::str::FromStr for AgentType {
             "windsurf" => Ok(Self::Windsurf),
             "zed" => Ok(Self::Zed),
             "zencoder" => Ok(Self::Zencoder),
+            "zenflow" => Ok(Self::Zenflow),
             "pochi" => Ok(Self::Pochi),
             "adal" => Ok(Self::Adal),
             "cortex" => Ok(Self::Cortex),
+            "terramind" => Ok(Self::Terramind),
+            "tinycloud" => Ok(Self::Tinycloud),
             _ => Err(format!("Unknown agent type: {}", s)),
         }
     }
@@ -249,7 +301,10 @@ impl AgentType {
             Self::AiderDesk,
             Self::Amp,
             Self::Antigravity,
+            Self::AntigravityCli,
+            Self::Astrbot,
             Self::Augment,
+            Self::AutohandCode,
             Self::Bob,
             Self::ClaudeCode,
             Self::Openclaw,
@@ -276,18 +331,27 @@ impl AgentType {
             Self::IflowCli,
             Self::Junie,
             Self::Kilo,
-            Self::KimiCli,
+            Self::KimiCodeCli,
             Self::KiroCli,
             Self::Kode,
+            Self::InferenceSh,
+            Self::Jazz,
+            Self::Lingma,
+            Self::Loaf,
             Self::Mcpjam,
             Self::MistralVibe,
+            Self::Moxby,
             Self::Mux,
             Self::Neovate,
+            Self::Ona,
             Self::Opencode,
             Self::Openhands,
             Self::Pi,
+            Self::Promptscript,
             Self::Qoder,
+            Self::QoderCn,
             Self::QwenCode,
+            Self::Reasonix,
             Self::Replit,
             Self::Rovodev,
             Self::Roo,
@@ -298,9 +362,12 @@ impl AgentType {
             Self::Windsurf,
             Self::Zed,
             Self::Zencoder,
+            Self::Zenflow,
             Self::Pochi,
             Self::Adal,
             Self::Cortex,
+            Self::Terramind,
+            Self::Tinycloud,
         ]
         .into_iter()
     }
@@ -333,11 +400,35 @@ impl AgentType {
                         .join("skills"),
                 ),
             },
+            Self::AntigravityCli => AgentConfig {
+                name: "antigravity-cli",
+                display_name: "Antigravity CLI",
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(
+                    PATHS
+                        .home
+                        .join(".gemini")
+                        .join("antigravity-cli")
+                        .join("skills"),
+                ),
+            },
+            Self::Astrbot => AgentConfig {
+                name: "astrbot",
+                display_name: "AstrBot",
+                skills_dir: "data/skills",
+                global_skills_dir: Some(PATHS.home.join(".astrbot").join("data").join("skills")),
+            },
             Self::Augment => AgentConfig {
                 name: "augment",
                 display_name: "Augment",
                 skills_dir: ".augment/skills",
                 global_skills_dir: Some(PATHS.home.join(".augment").join("skills")),
+            },
+            Self::AutohandCode => AgentConfig {
+                name: "autohand-code",
+                display_name: "Autohand Code CLI",
+                skills_dir: ".autohand/skills",
+                global_skills_dir: Some(Self::autohand_home().join("skills")),
             },
             Self::Bob => AgentConfig {
                 name: "bob",
@@ -361,7 +452,7 @@ impl AgentType {
                 name: "cline",
                 display_name: "Cline",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
+                global_skills_dir: Some(PATHS.home.join(".cline").join("skills")),
             },
             Self::CodeartsAgent => AgentConfig {
                 name: "codearts-agent",
@@ -477,7 +568,7 @@ impl AgentType {
                 name: "hermes-agent",
                 display_name: "Hermes Agent",
                 skills_dir: ".hermes/skills",
-                global_skills_dir: Some(PATHS.home.join(".hermes").join("skills")),
+                global_skills_dir: Some(Self::hermes_home().join("skills")),
             },
             Self::IflowCli => AgentConfig {
                 name: "iflow-cli",
@@ -497,11 +588,11 @@ impl AgentType {
                 skills_dir: ".kilocode/skills",
                 global_skills_dir: Some(PATHS.home.join(".kilocode").join("skills")),
             },
-            Self::KimiCli => AgentConfig {
-                name: "kimi-cli",
+            Self::KimiCodeCli => AgentConfig {
+                name: "kimi-code-cli",
                 display_name: "Kimi Code CLI",
                 skills_dir: ".agents/skills",
-                global_skills_dir: Some(PATHS.config_home.join("agents").join("skills")),
+                global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
             },
             Self::KiroCli => AgentConfig {
                 name: "kiro-cli",
@@ -515,6 +606,30 @@ impl AgentType {
                 skills_dir: ".kode/skills",
                 global_skills_dir: Some(PATHS.home.join(".kode").join("skills")),
             },
+            Self::InferenceSh => AgentConfig {
+                name: "inference-sh",
+                display_name: "inference.sh",
+                skills_dir: ".inferencesh/skills",
+                global_skills_dir: Some(PATHS.home.join(".inferencesh").join("skills")),
+            },
+            Self::Jazz => AgentConfig {
+                name: "jazz",
+                display_name: "Jazz",
+                skills_dir: ".jazz/skills",
+                global_skills_dir: Some(PATHS.home.join(".jazz").join("skills")),
+            },
+            Self::Lingma => AgentConfig {
+                name: "lingma",
+                display_name: "Lingma",
+                skills_dir: ".lingma/skills",
+                global_skills_dir: Some(PATHS.home.join(".lingma").join("skills")),
+            },
+            Self::Loaf => AgentConfig {
+                name: "loaf",
+                display_name: "Loaf",
+                skills_dir: ".agents/skills",
+                global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
+            },
             Self::Mcpjam => AgentConfig {
                 name: "mcpjam",
                 display_name: "MCPJam",
@@ -527,6 +642,12 @@ impl AgentType {
                 skills_dir: ".vibe/skills",
                 global_skills_dir: Some(Self::mistral_vibe_home().join("skills")),
             },
+            Self::Moxby => AgentConfig {
+                name: "moxby",
+                display_name: "Moxby",
+                skills_dir: ".moxby/skills",
+                global_skills_dir: Some(PATHS.home.join(".moxby").join("skills")),
+            },
             Self::Mux => AgentConfig {
                 name: "mux",
                 display_name: "Mux",
@@ -538,6 +659,12 @@ impl AgentType {
                 display_name: "Neovate",
                 skills_dir: ".neovate/skills",
                 global_skills_dir: Some(PATHS.home.join(".neovate").join("skills")),
+            },
+            Self::Ona => AgentConfig {
+                name: "ona",
+                display_name: "Ona",
+                skills_dir: ".ona/skills",
+                global_skills_dir: Some(PATHS.home.join(".ona").join("skills")),
             },
             Self::Opencode => AgentConfig {
                 name: "opencode",
@@ -557,17 +684,35 @@ impl AgentType {
                 skills_dir: ".pi/skills",
                 global_skills_dir: Some(PATHS.home.join(".pi").join("agent").join("skills")),
             },
+            Self::Promptscript => AgentConfig {
+                name: "promptscript",
+                display_name: "PromptScript",
+                skills_dir: ".agents/skills",
+                global_skills_dir: None,
+            },
             Self::Qoder => AgentConfig {
                 name: "qoder",
                 display_name: "Qoder",
                 skills_dir: ".qoder/skills",
                 global_skills_dir: Some(PATHS.home.join(".qoder").join("skills")),
             },
+            Self::QoderCn => AgentConfig {
+                name: "qoder-cn",
+                display_name: "Qoder CN",
+                skills_dir: ".qoder/skills",
+                global_skills_dir: Some(PATHS.home.join(".qoder-cn").join("skills")),
+            },
             Self::QwenCode => AgentConfig {
                 name: "qwen-code",
                 display_name: "Qwen Code",
                 skills_dir: ".qwen/skills",
                 global_skills_dir: Some(PATHS.home.join(".qwen").join("skills")),
+            },
+            Self::Reasonix => AgentConfig {
+                name: "reasonix",
+                display_name: "Reasonix",
+                skills_dir: ".reasonix/skills",
+                global_skills_dir: Some(PATHS.home.join(".reasonix").join("skills")),
             },
             Self::Replit => AgentConfig {
                 name: "replit",
@@ -631,6 +776,12 @@ impl AgentType {
                 skills_dir: ".zencoder/skills",
                 global_skills_dir: Some(PATHS.home.join(".zencoder").join("skills")),
             },
+            Self::Zenflow => AgentConfig {
+                name: "zenflow",
+                display_name: "Zenflow",
+                skills_dir: ".zencoder/skills",
+                global_skills_dir: Some(PATHS.home.join(".zencoder").join("skills")),
+            },
             Self::Pochi => AgentConfig {
                 name: "pochi",
                 display_name: "Pochi",
@@ -652,6 +803,18 @@ impl AgentType {
                 global_skills_dir: Some(
                     PATHS.home.join(".snowflake").join("cortex").join("skills"),
                 ),
+            },
+            Self::Terramind => AgentConfig {
+                name: "terramind",
+                display_name: "Terramind",
+                skills_dir: ".terramind/skills",
+                global_skills_dir: Some(PATHS.home.join(".terramind").join("skills")),
+            },
+            Self::Tinycloud => AgentConfig {
+                name: "tinycloud",
+                display_name: "Tinycloud",
+                skills_dir: ".tinycloud/skills",
+                global_skills_dir: Some(PATHS.home.join(".tinycloud").join("skills")),
             },
         }
     }
@@ -679,6 +842,24 @@ impl AgentType {
             .unwrap_or_else(|| PATHS.home.join(".vibe"))
     }
 
+    fn hermes_home() -> PathBuf {
+        std::env::var("HERMES_HOME")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PATHS.home.join(".hermes"))
+    }
+
+    fn autohand_home() -> PathBuf {
+        std::env::var("AUTOHAND_HOME")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PATHS.home.join(".autohand"))
+    }
+
     /// 检测 Agent 是否已安装
     /// 完整对应 CLI: 每个 agent 的 detectInstalled 函数
     pub fn is_installed(&self) -> bool {
@@ -688,7 +869,12 @@ impl AgentType {
             Self::AiderDesk => PATHS.home.join(".aider-desk").exists(),
             Self::Amp => PATHS.config_home.join("amp").exists(),
             Self::Antigravity => PATHS.home.join(".gemini").join("antigravity").exists(),
+            Self::AntigravityCli => PATHS.home.join(".gemini").join("antigravity-cli").exists(),
+            Self::Astrbot => {
+                cwd.join("data").join("skills").exists() || PATHS.home.join(".astrbot").exists()
+            }
             Self::Augment => PATHS.home.join(".augment").exists(),
+            Self::AutohandCode => Self::autohand_home().exists(),
             Self::Bob => PATHS.home.join(".bob").exists(),
             Self::ClaudeCode => PATHS.claude_home.exists(),
             Self::Openclaw => {
@@ -719,22 +905,35 @@ impl AgentType {
             Self::GeminiCli => PATHS.home.join(".gemini").exists(),
             Self::GithubCopilot => PATHS.home.join(".copilot").exists(),
             Self::Goose => PATHS.config_home.join("goose").exists(),
-            Self::HermesAgent => PATHS.home.join(".hermes").exists(),
+            Self::HermesAgent => Self::hermes_home().exists(),
             Self::IflowCli => PATHS.home.join(".iflow").exists(),
             Self::Junie => PATHS.home.join(".junie").exists(),
             Self::Kilo => PATHS.home.join(".kilocode").exists(),
-            Self::KimiCli => PATHS.home.join(".kimi").exists(),
+            Self::KimiCodeCli => {
+                PATHS.home.join(".kimi-code").exists() || PATHS.home.join(".kimi").exists()
+            }
             Self::KiroCli => PATHS.home.join(".kiro").exists(),
             Self::Kode => PATHS.home.join(".kode").exists(),
+            Self::InferenceSh => PATHS.home.join(".inferencesh").exists(),
+            Self::Jazz => cwd.join(".jazz").exists() || PATHS.home.join(".jazz").exists(),
+            Self::Lingma => PATHS.home.join(".lingma").exists(),
+            Self::Loaf => PATHS.home.join(".loaf").exists(),
             Self::Mcpjam => PATHS.home.join(".mcpjam").exists(),
             Self::MistralVibe => Self::mistral_vibe_home().exists(),
+            Self::Moxby => PATHS.home.join(".moxby").exists(),
             Self::Mux => PATHS.home.join(".mux").exists(),
             Self::Neovate => PATHS.home.join(".neovate").exists(),
+            Self::Ona => PATHS.home.join(".ona").exists(),
             Self::Opencode => PATHS.config_home.join("opencode").exists(),
             Self::Openhands => PATHS.home.join(".openhands").exists(),
             Self::Pi => PATHS.home.join(".pi").join("agent").exists(),
+            Self::Promptscript => {
+                cwd.join(".promptscript").exists() || cwd.join("promptscript.yaml").exists()
+            }
             Self::Qoder => PATHS.home.join(".qoder").exists(),
+            Self::QoderCn => PATHS.home.join(".qoder-cn").exists(),
             Self::QwenCode => PATHS.home.join(".qwen").exists(),
+            Self::Reasonix => PATHS.home.join(".reasonix").exists(),
             Self::Replit => cwd.join(".replit").exists(),
             Self::Rovodev => PATHS.home.join(".rovodev").exists(),
             Self::Roo => PATHS.home.join(".roo").exists(),
@@ -755,9 +954,12 @@ impl AgentType {
                         .unwrap_or(false)
             }
             Self::Zencoder => PATHS.home.join(".zencoder").exists(),
+            Self::Zenflow => PATHS.home.join(".zencoder").exists(),
             Self::Pochi => PATHS.home.join(".pochi").exists(),
             Self::Adal => PATHS.home.join(".adal").exists(),
             Self::Cortex => PATHS.home.join(".snowflake").join("cortex").exists(),
+            Self::Terramind => PATHS.home.join(".terramind").exists(),
+            Self::Tinycloud => PATHS.home.join(".tinycloud").exists(),
         }
     }
 
@@ -770,7 +972,7 @@ impl AgentType {
     /// 获取指定安装范围下的目标能力
     pub fn scope_target(&self, is_global: bool, cwd: &str) -> AgentScopeTarget {
         let config = self.config();
-        let canonical = crate::core::paths::canonical_skills_dir(is_global, cwd);
+        let availability = self.availability_for_scope(is_global, cwd);
 
         let path = if is_global {
             config.global_skills_dir.clone().unwrap_or_default()
@@ -778,33 +980,37 @@ impl AgentType {
             std::path::PathBuf::from(cwd).join(config.skills_dir)
         };
 
-        let supported = if is_global {
-            config.global_skills_dir.is_some()
-        } else {
-            !config.skills_dir.trim().is_empty()
-        };
-
         AgentScopeTarget {
-            supported,
-            automatic: supported && same_normalized_path(&path, &canonical),
+            supported: availability.supported,
+            automatic: availability.default_available,
             path: if is_global {
                 path.to_string_lossy().to_string()
             } else {
                 config.skills_dir.to_string()
             },
+            availability: availability.kind,
+            default_available: availability.default_available,
+            shared_path: availability.shared_path,
+            install_path: availability.install_path,
+            read_paths: availability.read_paths,
+            private_path: availability.private_path,
         }
+    }
+
+    /// 获取 Agent 在指定安装范围下的共享目录可用性
+    pub fn availability_for_scope(&self, is_global: bool, cwd: &str) -> AgentAvailability {
+        crate::core::agent_availability::availability_for_agent(*self, is_global, cwd)
     }
 
     /// 判断 Agent 在指定安装范围下是否自动读取共享目录
     pub fn is_automatic_for_scope(&self, is_global: bool, cwd: &str) -> bool {
-        self.scope_target(is_global, cwd).automatic
+        self.availability_for_scope(is_global, cwd)
+            .default_available
     }
 
     /// 获取指定安装范围下自动读取共享目录的 Agent
     pub fn get_automatic_agents_for_scope(is_global: bool, cwd: &str) -> Vec<AgentType> {
-        Self::all()
-            .filter(|agent| agent.is_automatic_for_scope(is_global, cwd))
-            .collect()
+        crate::core::agent_availability::default_available_agents(is_global, cwd)
     }
 
     /// 转换为 AgentInfo（前端使用）
@@ -828,20 +1034,142 @@ impl AgentType {
     }
 }
 
-fn same_normalized_path(left: &std::path::Path, right: &std::path::Path) -> bool {
-    left.components().collect::<Vec<_>>() == right.components().collect::<Vec<_>>()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod cli_1_5_10 {
+        use super::*;
+        use std::sync::Mutex;
+
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        #[test]
+        fn test_cli_1_5_10_agent_count() {
+            assert_eq!(AgentType::all().count(), 70);
+        }
+
+        #[test]
+        fn test_kimi_code_cli_parse_and_legacy_alias() {
+            assert_eq!(
+                "kimi-code-cli".parse::<AgentType>().ok(),
+                Some(AgentType::KimiCodeCli)
+            );
+            assert_eq!(
+                "kimi-cli".parse::<AgentType>().ok(),
+                Some(AgentType::KimiCodeCli)
+            );
+            assert_eq!(AgentType::KimiCodeCli.to_string(), "kimi-code-cli");
+        }
+
+        #[test]
+        fn test_hermes_home_env_is_used_for_config_and_detection_path() {
+            let original = std::env::var_os("HERMES_HOME");
+            let temp = tempfile::tempdir().unwrap();
+            std::env::set_var("HERMES_HOME", temp.path());
+
+            let config = AgentType::HermesAgent.config();
+            assert_eq!(
+                config.global_skills_dir.as_deref(),
+                Some(temp.path().join("skills").as_path())
+            );
+            assert!(AgentType::HermesAgent.is_installed());
+
+            match original {
+                Some(value) => std::env::set_var("HERMES_HOME", value),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+        }
+
+        #[test]
+        fn test_autohand_home_env_is_used_for_config() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let original = std::env::var_os("AUTOHAND_HOME");
+            let temp = tempfile::tempdir().unwrap();
+            std::env::set_var("AUTOHAND_HOME", temp.path());
+
+            let config = AgentType::AutohandCode.config();
+            assert_eq!(
+                config.global_skills_dir.as_deref(),
+                Some(temp.path().join("skills").as_path())
+            );
+
+            match original {
+                Some(value) => std::env::set_var("AUTOHAND_HOME", value),
+                None => std::env::remove_var("AUTOHAND_HOME"),
+            }
+        }
+
+        #[test]
+        fn test_new_agents_are_parseable_and_configured() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let original_autohand_home = std::env::var_os("AUTOHAND_HOME");
+            std::env::remove_var("AUTOHAND_HOME");
+
+            let agents = [
+                (
+                    "antigravity-cli",
+                    "Antigravity CLI",
+                    ".agents/skills",
+                    Some(
+                        PATHS
+                            .home
+                            .join(".gemini")
+                            .join("antigravity-cli")
+                            .join("skills"),
+                    ),
+                ),
+                (
+                    "astrbot",
+                    "AstrBot",
+                    "data/skills",
+                    Some(PATHS.home.join(".astrbot").join("data").join("skills")),
+                ),
+                (
+                    "autohand-code",
+                    "Autohand Code CLI",
+                    ".autohand/skills",
+                    Some(PATHS.home.join(".autohand").join("skills")),
+                ),
+                (
+                    "inference-sh",
+                    "inference.sh",
+                    ".inferencesh/skills",
+                    Some(PATHS.home.join(".inferencesh").join("skills")),
+                ),
+                (
+                    "zenflow",
+                    "Zenflow",
+                    ".zencoder/skills",
+                    Some(PATHS.home.join(".zencoder").join("skills")),
+                ),
+                ("promptscript", "PromptScript", ".agents/skills", None),
+            ];
+
+            for (name, display_name, skills_dir, global_skills_dir) in agents {
+                let agent: AgentType = name.parse().unwrap();
+                let config = agent.config();
+
+                assert_eq!(agent.to_string(), name);
+                assert_eq!(config.name, name);
+                assert_eq!(config.display_name, display_name);
+                assert_eq!(config.skills_dir, skills_dir);
+                assert_eq!(config.global_skills_dir, global_skills_dir);
+            }
+
+            match original_autohand_home {
+                Some(value) => std::env::set_var("AUTOHAND_HOME", value),
+                None => std::env::remove_var("AUTOHAND_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
         assert_eq!(
-            count, 55,
-            "Should have 55 real agent types after removing the hidden shared-directory placeholder"
+            count, 70,
+            "Should have 70 real agent types after syncing CLI 1.5.10"
         );
     }
 
@@ -1025,5 +1353,69 @@ mod tests {
         assert!(!info.targets.project.automatic);
         assert!(info.targets.global.supported);
         assert!(!info.targets.global.automatic);
+    }
+
+    #[test]
+    fn agent_availability_firebender_global_is_shared_compatible_by_default() {
+        use crate::core::agent_availability::AgentAvailabilityKind;
+
+        let availability = AgentType::Firebender.availability_for_scope(true, ".");
+
+        assert_eq!(availability.kind, AgentAvailabilityKind::SharedCompatible);
+        assert!(availability.default_available);
+        assert!(availability.private_path.is_some());
+    }
+
+    #[test]
+    fn agent_availability_antigravity_global_requires_private_install() {
+        use crate::core::agent_availability::AgentAvailabilityKind;
+
+        let availability = AgentType::Antigravity.availability_for_scope(true, ".");
+
+        assert_eq!(availability.kind, AgentAvailabilityKind::PrivateRequired);
+        assert!(!availability.default_available);
+    }
+
+    #[test]
+    fn agent_availability_cline_global_requires_private_install() {
+        use crate::core::agent_availability::AgentAvailabilityKind;
+
+        let availability = AgentType::Cline.availability_for_scope(true, ".");
+
+        assert_eq!(availability.kind, AgentAvailabilityKind::PrivateRequired);
+        assert!(!availability.default_available);
+        let private_path = availability
+            .private_path
+            .expect("Cline private path should be available");
+        assert!(private_path.replace('\\', "/").contains(".cline/skills"));
+        assert_ne!(private_path, availability.shared_path);
+    }
+
+    #[test]
+    fn agent_availability_warp_global_defaults_to_shared() {
+        use crate::core::agent_availability::AgentAvailabilityKind;
+
+        let availability = AgentType::Warp.availability_for_scope(true, ".");
+
+        assert!(availability.default_available);
+        if availability.kind == AgentAvailabilityKind::SharedOnly {
+            assert!(availability.private_path.is_none());
+        }
+    }
+
+    #[test]
+    fn agent_availability_antigravity_project_defaults_to_shared_project_dir() {
+        let availability = AgentType::Antigravity.availability_for_scope(false, ".");
+
+        assert!(availability.default_available);
+        assert!(AgentType::Antigravity.is_automatic_for_scope(false, "."));
+    }
+
+    #[test]
+    fn agent_availability_cursor_global_is_not_default_available() {
+        let availability = AgentType::Cursor.availability_for_scope(true, ".");
+
+        assert!(!availability.default_available);
+        assert!(!AgentType::Cursor.is_automatic_for_scope(true, "."));
     }
 }

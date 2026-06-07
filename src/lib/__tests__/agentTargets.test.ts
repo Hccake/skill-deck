@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentInfo } from '@/bindings';
+import { makeAgentScopeTarget } from '@/test-utils';
 import {
   filterAdditionalAgentIds,
   formatAgentTargetPath,
@@ -13,6 +14,10 @@ function makeAgent(
   globalAutomatic: boolean,
   projectAutomatic: boolean,
   detected = true,
+  targetOverrides: {
+    global?: Partial<AgentInfo['targets']['global']>;
+    project?: Partial<AgentInfo['targets']['project']>;
+  } = {},
 ): AgentInfo {
   return {
     id: id as AgentInfo['id'],
@@ -22,15 +27,18 @@ function makeAgent(
     detected,
     targets: {
       global: {
-        supported: true,
-        automatic: globalAutomatic,
-        path: globalAutomatic ? '~/.agents/skills' : `~/.${id}/skills`,
+        ...makeAgentScopeTarget({
+          automatic: globalAutomatic,
+          path: globalAutomatic ? '~/.agents/skills' : `~/.${id}/skills`,
+          ...targetOverrides.global,
+        }),
       },
-      project: {
-        supported: true,
+      project: makeAgentScopeTarget({
         automatic: projectAutomatic,
         path: projectAutomatic ? '.agents/skills' : `.${id}/skills`,
-      },
+        sharedPath: './.agents/skills',
+        ...targetOverrides.project,
+      }),
     },
   };
 }
@@ -107,6 +115,46 @@ describe('agent target helpers', () => {
     ]);
     expect(groups.hiddenSelectableAgents.map((agent) => agent.id)).toEqual(['selectable-hidden']);
     expect(groups.selectableCount).toBe(3);
+  });
+
+  it('groups default-available agents separately from private-required agents', () => {
+    const defaultAgent = makeAgent('codex', true, true, true, {
+      global: {
+        availability: 'shared-compatible',
+        defaultAvailable: true,
+      },
+    });
+    const privateAgent = makeAgent('cursor', false, true, true, {
+      global: {
+        availability: 'private-required',
+        defaultAvailable: false,
+      },
+    });
+
+    const groups = groupAgentsByScopedTarget([defaultAgent, privateAgent], 'global');
+
+    expect(groups.detectedDefaultAvailable.map((agent) => agent.id)).toEqual(['codex']);
+    expect(groups.detectedPrivateRequired.map((agent) => agent.id)).toEqual(['cursor']);
+  });
+
+  it('filters default-available agents from default target preferences', () => {
+    const agents = [
+      makeAgent('firebender', true, true, true, {
+        global: {
+          availability: 'shared-compatible',
+          defaultAvailable: true,
+        },
+      }),
+      makeAgent('cursor', false, true, true, {
+        global: {
+          availability: 'private-required',
+          defaultAvailable: false,
+        },
+      }),
+    ];
+
+    expect(filterAdditionalAgentIds(['firebender', 'cursor'], agents, 'global'))
+      .toEqual(['cursor']);
   });
 
   it('normalizes local target paths for display on Windows', () => {

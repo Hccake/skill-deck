@@ -133,10 +133,10 @@ async openInExplorer(path: string) : Promise<Result<null, AppError>> {
 },
 /**
  * 从来源获取可用的 skills 列表
- *
+ * 
  * # Arguments
  * * `source` - 来源字符串（支持 9 种格式）
- *
+ * 
  * # Returns
  * * `FetchResult` - 包含来源信息和可用 skills 列表
  */
@@ -150,10 +150,10 @@ async fetchAvailable(source: string) : Promise<Result<FetchResult, AppError>> {
 },
 /**
  * 安装选中的 skills
- *
+ * 
  * # Arguments
  * * `params` - 安装参数（来源、选中的 skills、agents、scope、mode）
- *
+ * 
  * # Returns
  * * `InstallResults` - 安装结果汇总
  */
@@ -167,19 +167,19 @@ async installSkills(params: InstallParams) : Promise<Result<InstallResults, AppE
 },
 /**
  * 检测哪些 skill × agent 组合会被覆盖
- *
+ * 
  * # Arguments
  * * `skills` - 要安装的 skill 名称列表
  * * `agents` - 目标 agent 列表
  * * `scope` - 安装范围
  * * `project_path` - Project scope 时的项目路径
- *
+ * 
  * # Returns
  * * `HashMap<String, Vec<String>>` - { skill_name: [agent_ids that will be overwritten] }
  */
-async checkOverwrites(skills: string[], agents: string[], scope: Scope, projectPath: string | null) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
+async checkOverwrites(skills: string[], agents: string[], privateCopyAgents: string[], scope: Scope, projectPath: string | null) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { skills, agents, scope, projectPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { skills, agents, privateCopyAgents, scope, projectPath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -187,7 +187,7 @@ async checkOverwrites(skills: string[], agents: string[], scope: Scope, projectP
 },
 /**
  * 删除指定 skill
- *
+ * 
  * # Arguments
  * * `scope` - 删除范围（global/project）
  * * `name` - skill 名称
@@ -205,7 +205,7 @@ async removeSkill(scope: Scope, name: string, projectPath: string | null, agents
 },
 /**
  * 查询 skill 的 agent 安装详情
- *
+ * 
  * 对话框挂载时调用，返回自动应用/独立安装分组信息
  */
 async getSkillAgentDetails(scope: Scope, name: string, projectPath: string | null) : Promise<Result<SkillAgentDetails, AppError>> {
@@ -216,9 +216,25 @@ async getSkillAgentDetails(scope: Scope, name: string, projectPath: string | nul
     else return { status: "error", error: e  as any };
 }
 },
+async cleanupDuplicateAgentCopy(skillName: string, agent: AgentType, scope: Scope, projectPath: string | null) : Promise<Result<DuplicateCleanupResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copy", { skillName, agent, scope, projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cleanupDuplicateAgentCopies(skillName: string, scope: Scope, projectPath: string | null, agents: AgentType[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copies", { skillName, scope, projectPath, agents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * 检测指定 scope 的 skills 是否有更新
- *
+ * 
  * 流程：
  * 1. 读取对应 scope 的 lock 文件
  * 2. 从 lock entry 派生更新能力；不可检查的 entry 直接返回 cannot-check
@@ -235,7 +251,7 @@ async checkUpdates(scope: Scope, projectPath: string | null) : Promise<Result<Sk
 },
 /**
  * 更新指定 skill
- *
+ * 
  * 本质是"重新安装"：从 lock 文件读取来源信息，构造安装 URL，复用安装逻辑。
  * 与 CLI update 命令行为一致。
  */
@@ -249,7 +265,7 @@ async updateSkill(scope: Scope, name: string, projectPath: string | null) : Prom
 },
 /**
  * 批量更新多个 skills（同源 clone 合并）
- *
+ * 
  * 按 source 分组，每组只 clone 一次仓库，然后从同一 clone 中安装所有该组的 skills。
  * 对于 N 个同源 skills，从 clone N 次降为 clone 1 次。
  */
@@ -263,7 +279,7 @@ async updateSkillsBatch(scope: Scope, names: string[], projectPath: string | nul
 },
 /**
  * 打开安装向导独立窗口
- *
+ * 
  * 必须为 async —— 同步 command 在主线程执行，
  * 而 WebviewWindowBuilder::build() 也需要主线程，会导致死锁。
  * async command 在异步线程执行，build() 可以安全回调主线程。
@@ -289,7 +305,7 @@ async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial
 },
 /**
  * 管理 skill 的 agent 支持（添加/移除）
- *
+ * 
  * # Arguments
  * * `skill_name` - skill 名称
  * * `scope` - 安装范围
@@ -298,9 +314,9 @@ async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial
  * * `remove_agents` - 要移除的 agent 列表
  * * `mode` - 添加 agent 时使用的安装模式
  */
-async manageSkillAgents(skillName: string, scope: Scope, projectPath: string | null, addAgents: AgentType[], removeAgents: AgentType[], mode: InstallMode) : Promise<Result<ManageAgentsResult, AppError>> {
+async manageSkillAgents(skillName: string, scope: Scope, projectPath: string | null, addAgents: AgentType[], removeAgents: AgentType[], privateCopyAgents: AgentType[], mode: InstallMode) : Promise<Result<ManageAgentsResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents", { skillName, scope, projectPath, addAgents, removeAgents, mode }) };
+    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents", { skillName, scope, projectPath, addAgents, removeAgents, privateCopyAgents, mode }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -308,16 +324,16 @@ async manageSkillAgents(skillName: string, scope: Scope, projectPath: string | n
 },
 /**
  * 复制项目级 skill 到其他项目
- *
+ * 
  * # Arguments
  * * `skill_name` - skill 名称
  * * `source_project_path` - 源项目路径
  * * `target_project_paths` - 目标项目路径列表
  * * `agents` - 要安装的 agent 列表（与源 skill 相同）
  */
-async copySkillToProjects(skillName: string, sourceProjectPath: string, targetProjectPaths: string[], agents: string[]) : Promise<Result<CopySkillResult, AppError>> {
+async copySkillToProjects(skillName: string, sourceProjectPath: string, targetProjectPaths: string[], agents: string[], privateCopyAgents: string[]) : Promise<Result<CopySkillResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects", { skillName, sourceProjectPath, targetProjectPaths, agents }) };
+    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects", { skillName, sourceProjectPath, targetProjectPaths, agents, privateCopyAgents }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -325,7 +341,7 @@ async copySkillToProjects(skillName: string, sourceProjectPath: string, targetPr
 },
 /**
  * 检查 skill 在哪些项目中已存在
- *
+ * 
  * 返回每个项目路径是否存在该 skill 的 canonical dir
  */
 async checkSkillInProjects(skillName: string, projectPaths: string[]) : Promise<ProjectSkillStatus[]> {
@@ -343,19 +359,28 @@ async checkSkillInProjects(skillName: string, projectPaths: string[]) : Promise<
 
 /** user-defined types **/
 
+export type AgentAvailabilityKind = "shared-only" | "shared-compatible" | "private-required" | "unknown" | "unsupported"
 /**
  * Agent 信息（返回给前端）
  * 对应 CLI: 综合 AgentConfig + detectInstalled 结果
  */
-export type AgentInfo = { id: AgentType; name: string; skillsDir: string; globalSkillsDir: string; detected: boolean;
+export type AgentInfo = { id: AgentType; name: string; skillsDir: string; globalSkillsDir: string; detected: boolean; 
 /**
  * 按安装范围计算后的目标能力
  */
 targets: AgentTargets }
 /**
+ * Agent 对某个 skill 的 presence 摘要
+ */
+export type AgentPresenceInfo = { agent: AgentType; displayName: string; presence: AgentSkillPresence; sharedPath: string; privatePath: string | null; canCleanupPrivateCopy: boolean }
+/**
  * Agent 在单个安装范围下的目标能力
  */
-export type AgentScopeTarget = { supported: boolean; automatic: boolean; path: string }
+export type AgentScopeTarget = { supported: boolean; automatic: boolean; path: string; availability: AgentAvailabilityKind; defaultAvailable: boolean; sharedPath: string; installPath: string; readPaths: string[]; privatePath: string | null }
+/**
+ * Agent 对某个 skill 的安装/可用状态
+ */
+export type AgentSkillPresence = "default-active" | "requires-private-install" | "duplicate-copy" | "private-only" | "not-installed"
 /**
  * Agent 在全局和项目两个安装范围下的目标能力
  */
@@ -364,8 +389,8 @@ export type AgentTargets = { global: AgentScopeTarget; project: AgentScopeTarget
  * Agent 类型枚举
  * 完整对应 CLI: types.ts AgentType
  */
-export type AgentType = "aider-desk" | "amp" | "antigravity" | "augment" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-cli" | "kiro-cli" | "kode" | "mcpjam" | "mistral-vibe" | "mux" | "neovate" | "opencode" | "openhands" | "pi" | "qoder" | "qwen-code" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zed" | "zencoder" | "pochi" | "adal" | "cortex"
-export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
+export type AgentType = "aider-desk" | "amp" | "antigravity" | "antigravity-cli" | "astrbot" | "augment" | "autohand-code" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-code-cli" | "kiro-cli" | "kode" | "inference-sh" | "jazz" | "lingma" | "loaf" | "mcpjam" | "mistral-vibe" | "moxby" | "mux" | "neovate" | "ona" | "opencode" | "openhands" | "pi" | "promptscript" | "qoder" | "qoder-cn" | "qwen-code" | "reasonix" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zed" | "zencoder" | "zenflow" | "pochi" | "adal" | "cortex" | "terramind" | "tinycloud"
+export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } | 
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
@@ -374,39 +399,39 @@ export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml
 /**
  * 可用的 Skill 信息（fetch_available 返回）
  */
-export type AvailableSkill = {
+export type AvailableSkill = { 
 /**
  * Skill 名称
  */
-name: string;
+name: string; 
 /**
  * 描述
  */
-description: string;
+description: string; 
 /**
  * 仓库内相对路径
  */
-relativePath: string;
+relativePath: string; 
 /**
  * 所属 plugin 名称（来自 .claude-plugin/ manifest）
  */
-pluginName?: string | null;
+pluginName?: string | null; 
 /**
  * Well-known discovery protocol version, if applicable.
  */
-wellKnownVersion?: string | null;
+wellKnownVersion?: string | null; 
 /**
  * Well-known entry type: legacy, skill-md, or archive.
  */
-wellKnownEntryType?: string | null;
+wellKnownEntryType?: string | null; 
 /**
  * Hostname of the fetched artifact URL for v2 entries.
  */
-artifactUrlHost?: string | null;
+artifactUrlHost?: string | null; 
 /**
  * Whether the v2 artifact digest was verified.
  */
-digestVerified?: boolean | null;
+digestVerified?: boolean | null; 
 /**
  * Compact trust reason for UI display.
  */
@@ -414,19 +439,35 @@ trustReason?: string | null }
 /**
  * 单个目标项目的复制结果
  */
-export type CopyProjectResult = {
+export type CopyProjectResult = { 
 /**
  * 目标项目路径
  */
-projectPath: string;
+projectPath: string; 
 /**
  * 是否成功
  */
-success: boolean;
+success: boolean; 
 /**
  * 错误信息
  */
-error: string | null }
+error: string | null; 
+/**
+ * 默认可用的 agents
+ */
+defaultAvailableAgents?: string[]; 
+/**
+ * 需要单独适配且写入成功的 agents
+ */
+privateAdaptedAgents?: string[]; 
+/**
+ * 明确写入独立副本的 agents
+ */
+privateCopyAgents?: string[]; 
+/**
+ * 因目标项目缺少 agent 根目录而跳过的 agents
+ */
+skippedAgents?: string[] }
 /**
  * 复制结果汇总
  */
@@ -435,30 +476,31 @@ export type CopySkillResult = { results: CopyProjectResult[] }
  * GUI 使用的 scope-aware 默认安装目标
  */
 export type DefaultTargetAgents = { global: string[]; project: string[] }
+export type DuplicateCleanupResult = { agent: AgentType; success: boolean; skipped: boolean; path: string; error: string | null }
 /**
  * fetch_available 返回结果
  */
-export type FetchResult = {
+export type FetchResult = { 
 /**
  * 来源类型
  */
-sourceType: string;
+sourceType: string; 
 /**
  * 规范化 URL
  */
-sourceUrl: string;
+sourceUrl: string; 
 /**
  * Git ref（branch/tag）
  */
-gitRef?: string | null;
+gitRef?: string | null; 
 /**
  * @skill 语法提取的名称（用于预选）
  */
-skillFilter: string | null;
+skillFilter: string | null; 
 /**
  * 安装前风险策略
  */
-riskPolicy: InstallRiskPolicy;
+riskPolicy: InstallRiskPolicy; 
 /**
  * 可用的 skills 列表
  */
@@ -466,19 +508,19 @@ skills: AvailableSkill[] }
 /**
  * 需要独立安装记录的 Agent 详情
  */
-export type IndependentAgentInfo = {
+export type IndependentAgentInfo = { 
 /**
  * Agent 类型
  */
-agent: AgentType;
+agent: AgentType; 
 /**
  * Agent 显示名称
  */
-displayName: string;
+displayName: string; 
 /**
  * 安装路径
  */
-path: string;
+path: string; 
 /**
  * 是否是 symlink（false 表示 copy 模式安装）
  */
@@ -490,39 +532,43 @@ export type InstallMode = "symlink" | "copy"
 /**
  * 安装参数
  */
-export type InstallParams = {
+export type InstallParams = { 
 /**
  * 原始来源字符串
  */
-source: string;
+source: string; 
 /**
  * 选中的 skill 名称列表
  */
-skills: string[];
+skills: string[]; 
 /**
  * 目标 agents
  */
-agents: string[];
+agents: string[]; 
+/**
+ * 明确要求写入独立副本的 agents
+ */
+privateCopyAgents?: string[]; 
 /**
  * 安装范围
  */
-scope: Scope;
+scope: Scope; 
 /**
  * Project scope 时的项目路径
  */
-projectPath: string | null;
+projectPath: string | null; 
 /**
  * 安装模式
  */
-mode: InstallMode;
+mode: InstallMode; 
 /**
  * 是否为重试模式（仅重试指定 skills + agents）
  */
-retry?: boolean;
+retry?: boolean; 
 /**
  * 是否按每个已安装 Agent 的现有 copy/symlink 模式重新安装
  */
-preserveExistingModes?: boolean;
+preserveExistingModes?: boolean; 
 /**
  * 是否已确认风险来源（如 OpenClaw）
  */
@@ -530,59 +576,79 @@ acknowledgeRisk?: boolean }
 /**
  * 单个 skill 的安装结果
  */
-export type InstallResult = {
+export type InstallResult = { 
 /**
  * Skill 名称
  */
-skillName: string;
+skillName: string; 
 /**
  * Agent 名称
  */
-agent: string;
+agent: string; 
 /**
  * 是否成功
  */
-success: boolean;
+success: boolean; 
 /**
  * 安装路径
  */
-path: string;
+path: string; 
 /**
  * Canonical 路径（symlink 模式）
  */
-canonicalPath: string | null;
+canonicalPath: string | null; 
 /**
  * 实际使用的安装模式
  */
-mode: InstallMode;
+mode: InstallMode; 
 /**
  * symlink 是否失败并降级为 copy
  */
-symlinkFailed: boolean;
+symlinkFailed: boolean; 
 /**
  * project scope 中因目标 agent 根目录不存在而跳过
  */
-skipped: boolean;
+skipped: boolean; 
 /**
  * 错误信息
  */
-error: string | null }
+error: string | null; 
+/**
+ * 安装结果分类
+ */
+category?: InstallResultCategory }
+/**
+ * 安装结果分类
+ */
+export type InstallResultCategory = "default-available" | "private-adapted" | "private-copy" | "skipped" | "failed"
 /**
  * 安装结果汇总
  */
-export type InstallResults = {
+export type InstallResults = { 
 /**
  * 成功的安装
  */
-successful: InstallResult[];
+successful: InstallResult[]; 
 /**
  * 失败的安装
  */
-failed: InstallResult[];
+failed: InstallResult[]; 
 /**
  * symlink 失败降级为 copy 的 agents
  */
-symlinkFallbackAgents: string[] }
+symlinkFallbackAgents: string[]; 
+/**
+ * 默认可用的 agents
+ */
+defaultAvailableAgents?: string[]; 
+/**
+ * 需要独立适配的 agents
+ */
+privateAdaptedAgents?: string[]; 
+/**
+ * 明确写入独立副本的 agents
+ */
+privateCopyAgents?: string[] }
 /**
  * 风险策略种类
  */
@@ -595,35 +661,67 @@ export type InstallRiskPolicy = { kind: InstallRiskKind; code?: string | null }
  * 已安装的 Skill 信息
  * 对应 CLI: InstalledSkill (installer.ts:783-790)
  */
-export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
+export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null; 
 /**
  * 是否可直接执行更新
  */
-canRunUpdate?: boolean | null;
+canRunUpdate?: boolean | null; 
 /**
  * 是否可自动检查更新
  */
-canCheckForUpdates?: boolean | null;
+canCheckForUpdates?: boolean | null; 
 /**
  * 更新能力缺失原因
  */
-updateReason?: string | null;
+updateReason?: string | null; 
 /**
  * 所属 plugin 名称
  */
-pluginName?: string | null;
+pluginName?: string | null; 
 /**
  * Git ref（branch/tag）
  */
-gitRef?: string | null }
+gitRef?: string | null; 
+/**
+ * 默认可用 Agent 数量
+ */
+defaultAvailableAgentCount?: number | null; 
+/**
+ * 已独立适配 Agent 数量
+ */
+privateAdaptedAgentCount?: number | null; 
+/**
+ * 可清理的重复独立副本数量
+ */
+duplicateCopyCount?: number | null; 
+/**
+ * 默认可用 Agents
+ */
+defaultAvailableAgents?: AgentType[] | null; 
+/**
+ * 需要/已有单独适配的 Agents
+ */
+privateAdaptedAgents?: AgentType[] | null; 
+/**
+ * 当前存在重复独立副本的 Agents
+ */
+duplicateCopyAgents?: AgentType[] | null; 
+/**
+ * 当前只有独立副本的 Agents
+ */
+privateOnlyAgents?: AgentType[] | null; 
+/**
+ * 需要按独立副本重写的默认可用 Agents
+ */
+privateCopyAgents?: AgentType[] | null }
 /**
  * list_skills 参数
  */
-export type ListSkillsParams = {
+export type ListSkillsParams = { 
 /**
  * 范围: "global" | "project" | null (返回全部)
  */
-scope: string | null;
+scope: string | null; 
 /**
  * 项目路径（用于 project scope）
  */
@@ -632,7 +730,7 @@ projectPath: string | null }
  * list_skills 返回结果
  * 包含 skills 列表和路径存在性信息
  */
-export type ListSkillsResult = { skills: InstalledSkill[];
+export type ListSkillsResult = { skills: InstalledSkill[]; 
 /**
  * 项目目录是否存在（project scope 时有意义，global 始终为 true）
  */
@@ -644,19 +742,19 @@ export type ManageAgentOperationResult = { agent: string; success: boolean; mode
 /**
  * Agent 管理操作结果
  */
-export type ManageAgentsResult = {
+export type ManageAgentsResult = { 
 /**
  * 成功添加的 agent IDs
  */
-added: string[];
+added: string[]; 
 /**
  * 每个新增 agent 的详细结果
  */
-addedResults: ManageAgentOperationResult[];
+addedResults: ManageAgentOperationResult[]; 
 /**
  * 成功移除的 agent IDs
  */
-removed: string[];
+removed: string[]; 
 /**
  * 错误信息列表
  */
@@ -669,27 +767,27 @@ export type ProjectSkillStatus = { projectPath: string; hasSkill: boolean }
  * 单个 skill 的删除结果
  * 对应 CLI: remove.ts 第 148-195 行的 results 数组元素
  */
-export type RemoveResult = {
+export type RemoveResult = { 
 /**
  * Skill 名称
  */
-skillName: string;
+skillName: string; 
 /**
  * 是否成功
  */
-success: boolean;
+success: boolean; 
 /**
  * 删除的 agent 目录路径列表
  */
-removedPaths: string[];
+removedPaths: string[]; 
 /**
  * 来源信息（从 lock file 读取，仅 Global）
  */
-source: string | null;
+source: string | null; 
 /**
  * 来源类型
  */
-sourceType: string | null;
+sourceType: string | null; 
 /**
  * 错误信息
  */
@@ -705,27 +803,43 @@ export type Scope = "global" | "project"
 /**
  * Skill 的 Agent 安装详情（用于智能删除对话框）
  */
-export type SkillAgentDetails = {
+export type SkillAgentDetails = { 
 /**
  * Skill 名称
  */
-skillName: string;
+skillName: string; 
 /**
  * 安装范围
  */
-scope: Scope;
+scope: Scope; 
 /**
  * Canonical 目录路径
  */
-canonicalPath: string;
+canonicalPath: string; 
 /**
  * 自动读取 shared canonical 目录的 Agents（带显示名称）
  */
-automaticAgents: ([AgentType, string])[];
+automaticAgents: ([AgentType, string])[]; 
 /**
  * 有独立 symlink 或 copy 的 Agents
  */
-independentAgents: IndependentAgentInfo[] }
+independentAgents: IndependentAgentInfo[]; 
+/**
+ * 默认位置已生效的 Agents
+ */
+defaultAvailableAgents?: AgentPresenceInfo[]; 
+/**
+ * 需要单独适配但尚未安装私有目录的 Agents
+ */
+privateRequiredAgents?: AgentPresenceInfo[]; 
+/**
+ * 默认位置和私有目录都存在的重复副本 Agents
+ */
+duplicateCopyAgents?: AgentPresenceInfo[]; 
+/**
+ * 仅私有目录存在的 Agents
+ */
+privateOnlyAgents?: AgentPresenceInfo[] }
 /**
  * Skill 审计数据
  */
@@ -734,11 +848,11 @@ export type SkillAuditData = { risk: RiskLevel; alerts?: number | null; score?: 
  * Skill Deck 应用配置
  * 持久化到 ~/.skill-deck/config.json
  */
-export type SkillDeckConfig = {
+export type SkillDeckConfig = { 
 /**
  * 已保存的项目路径列表
  */
-projects?: string[];
+projects?: string[]; 
 /**
  * Git 仓库拉取超时（秒）
  */
@@ -781,6 +895,7 @@ export type UpdateSkillSummary = { total: number; succeeded: number; partial: nu
 
 import {
 	invoke as TAURI_INVOKE,
+	Channel as TAURI_CHANNEL,
 } from "@tauri-apps/api/core";
 import * as TAURI_API_EVENT from "@tauri-apps/api/event";
 import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
@@ -801,7 +916,7 @@ export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-export function __makeEvents__<T extends Record<string, any>>(
+function __makeEvents__<T extends Record<string, any>>(
 	mappings: Record<keyof T, string>,
 ) {
 	return new Proxy(

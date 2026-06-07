@@ -5,6 +5,9 @@ use specta::Type;
 use std::collections::HashMap;
 use std::path::Path;
 
+use super::agent_availability::{
+    availability_for_agent, detect_agent_presence, AgentAvailabilityKind,
+};
 use super::agents::AgentType;
 use super::local_lock::{read_local_lock, LocalSkillLockEntry};
 use super::paths::canonical_skills_dir;
@@ -14,6 +17,7 @@ use super::update_metadata::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
 };
 use crate::error::AppError;
+use crate::models::AgentSkillPresence;
 
 /// Skill 元数据
 /// 对应 CLI: Skill (types.ts:42-49)
@@ -159,6 +163,30 @@ pub struct InstalledSkill {
     /// Git ref（branch/tag）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+    /// 默认可用 Agent 数量
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_available_agent_count: Option<u32>,
+    /// 已独立适配 Agent 数量
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_adapted_agent_count: Option<u32>,
+    /// 可清理的重复独立副本数量
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duplicate_copy_count: Option<u32>,
+    /// 默认可用 Agents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_available_agents: Option<Vec<AgentType>>,
+    /// 需要/已有单独适配的 Agents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_adapted_agents: Option<Vec<AgentType>>,
+    /// 当前存在重复独立副本的 Agents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duplicate_copy_agents: Option<Vec<AgentType>>,
+    /// 当前只有独立副本的 Agents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_only_agents: Option<Vec<AgentType>>,
+    /// 需要按独立副本重写的默认可用 Agents
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_copy_agents: Option<Vec<AgentType>>,
 }
 
 impl InstalledSkill {
@@ -196,6 +224,67 @@ impl InstalledSkill {
         }
         self
     }
+}
+
+fn apply_presence_summary(skill: &mut InstalledSkill, cwd: &str) {
+    let is_global = matches!(skill.scope, SkillScope::Global);
+    let original_agents = skill.agents.clone();
+    let mut effective_agents = Vec::new();
+    let mut default_available_agents = Vec::new();
+    let mut private_adapted_agents = Vec::new();
+    let mut duplicate_copy_agents = Vec::new();
+    let mut private_only_agents = Vec::new();
+    let mut private_copy_agents = Vec::new();
+    let mut default_available_count = 0usize;
+    let mut private_adapted_count = 0usize;
+    let mut duplicate_copy_count = 0usize;
+
+    for agent in AgentType::all() {
+        let presence = detect_agent_presence(agent, &skill.name, is_global, cwd);
+        let availability = availability_for_agent(agent, is_global, cwd);
+        match presence.presence {
+            AgentSkillPresence::DefaultActive => {
+                default_available_count += 1;
+                default_available_agents.push(agent);
+                effective_agents.push(agent);
+            }
+            AgentSkillPresence::DuplicateCopy => {
+                default_available_count += 1;
+                duplicate_copy_count += 1;
+                default_available_agents.push(agent);
+                duplicate_copy_agents.push(agent);
+                private_copy_agents.push(agent);
+                effective_agents.push(agent);
+            }
+            AgentSkillPresence::PrivateOnly => {
+                private_only_agents.push(agent);
+                if availability.kind == AgentAvailabilityKind::SharedCompatible {
+                    private_copy_agents.push(agent);
+                } else {
+                    private_adapted_count += 1;
+                    private_adapted_agents.push(agent);
+                }
+                effective_agents.push(agent);
+            }
+            AgentSkillPresence::RequiresPrivateInstall | AgentSkillPresence::NotInstalled => {
+                if original_agents.contains(&agent) {
+                    private_adapted_count += 1;
+                    private_adapted_agents.push(agent);
+                    effective_agents.push(agent);
+                }
+            }
+        }
+    }
+
+    skill.agents = effective_agents;
+    skill.default_available_agent_count = Some(default_available_count as u32);
+    skill.private_adapted_agent_count = Some(private_adapted_count as u32);
+    skill.duplicate_copy_count = Some(duplicate_copy_count as u32);
+    skill.default_available_agents = Some(default_available_agents);
+    skill.private_adapted_agents = Some(private_adapted_agents);
+    skill.duplicate_copy_agents = Some(duplicate_copy_agents);
+    skill.private_only_agents = Some(private_only_agents);
+    skill.private_copy_agents = Some(private_copy_agents);
 }
 
 /// list_skills 返回结果
@@ -382,6 +471,14 @@ pub fn list_installed_skills(
                         update_reason: None,
                         plugin_name: None,
                         git_ref: None,
+                        default_available_agent_count: None,
+                        private_adapted_agent_count: None,
+                        duplicate_copy_count: None,
+                        default_available_agents: None,
+                        private_adapted_agents: None,
+                        duplicate_copy_agents: None,
+                        private_only_agents: None,
+                        private_copy_agents: None,
                     };
 
                     // 根据 scope 从对应的 lock 文件填充元数据
@@ -491,6 +588,14 @@ pub fn list_installed_skills(
                     update_reason: None,
                     plugin_name: None,
                     git_ref: None,
+                    default_available_agent_count: None,
+                    private_adapted_agent_count: None,
+                    duplicate_copy_count: None,
+                    default_available_agents: None,
+                    private_adapted_agents: None,
+                    duplicate_copy_agents: None,
+                    private_only_agents: None,
+                    private_copy_agents: None,
                 };
 
                 // 根据 scope 从对应的 lock 文件填充元数据
@@ -509,7 +614,12 @@ pub fn list_installed_skills(
         }
     }
 
-    Ok(skills_map.into_values().collect())
+    let mut skills: Vec<InstalledSkill> = skills_map.into_values().collect();
+    for skill in &mut skills {
+        apply_presence_summary(skill, cwd);
+    }
+
+    Ok(skills)
 }
 
 /// Read the markdown body of SKILL.md, stripping YAML frontmatter.
@@ -647,6 +757,70 @@ Content.
     }
 
     #[test]
+    fn test_list_installed_skills_preserves_frontmatter_fallback_agents_after_presence_summary() {
+        let project = tempdir().unwrap();
+        let cwd = project.path().to_string_lossy().to_string();
+
+        let agent = AgentType::ClaudeCode;
+        let agent_dir = project
+            .path()
+            .join(agent.config().skills_dir)
+            .join("custom-folder");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("SKILL.md"),
+            "---\nname: legacy-name\ndescription: Legacy folder\n---\n",
+        )
+        .unwrap();
+
+        let skills = list_installed_skills(Some(SkillScope::Project), &cwd).unwrap();
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "legacy-name")
+            .expect("legacy skill should be visible via frontmatter fallback");
+
+        assert!(
+            skill.agents.contains(&agent),
+            "presence summary should preserve agents found by frontmatter fallback"
+        );
+        assert!(skill.private_adapted_agent_count.unwrap_or_default() > 0);
+    }
+
+    #[test]
+    fn test_list_installed_skills_adds_presence_summary_counts() {
+        let project = tempdir().unwrap();
+        let cwd = project.path().to_string_lossy().to_string();
+
+        let shared_dir = project.path().join(".agents").join("skills").join("demo");
+        fs::create_dir_all(&shared_dir).unwrap();
+        fs::write(
+            shared_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let private_dir = project.path().join(".claude").join("skills").join("demo");
+        fs::create_dir_all(&private_dir).unwrap();
+        fs::write(
+            private_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = list_installed_skills(Some(SkillScope::Project), &cwd).unwrap();
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "demo")
+            .expect("demo skill");
+
+        assert!(skill.default_available_agent_count.unwrap_or_default() > 0);
+        assert!(skill.private_adapted_agent_count.unwrap_or_default() > 0);
+        assert_eq!(skill.duplicate_copy_count, Some(0));
+        assert!(skill.agents.contains(&AgentType::Codex));
+        assert!(skill.agents.contains(&AgentType::ClaudeCode));
+    }
+
+    #[test]
     fn test_with_local_lock_entry_prefers_explicit_source_url() {
         let project = tempdir().unwrap();
         let cwd = project.path().to_string_lossy().to_string();
@@ -686,6 +860,14 @@ Content.
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            default_available_agent_count: None,
+            private_adapted_agent_count: None,
+            duplicate_copy_count: None,
+            default_available_agents: None,
+            private_adapted_agents: None,
+            duplicate_copy_agents: None,
+            private_only_agents: None,
+            private_copy_agents: None,
         }
         .with_local_lock_entry(Some(entry));
 
@@ -725,6 +907,14 @@ Content.
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            default_available_agent_count: None,
+            private_adapted_agent_count: None,
+            duplicate_copy_count: None,
+            default_available_agents: None,
+            private_adapted_agents: None,
+            duplicate_copy_agents: None,
+            private_only_agents: None,
+            private_copy_agents: None,
         }
         .with_local_lock_entry(Some(&entry));
 
@@ -750,6 +940,14 @@ Content.
             update_reason: Some("missing-skill-path".to_string()),
             plugin_name: None,
             git_ref: None,
+            default_available_agent_count: None,
+            private_adapted_agent_count: None,
+            duplicate_copy_count: None,
+            default_available_agents: None,
+            private_adapted_agents: None,
+            duplicate_copy_agents: None,
+            private_only_agents: None,
+            private_copy_agents: None,
         };
 
         assert_eq!(skill.can_run_update, Some(true));
