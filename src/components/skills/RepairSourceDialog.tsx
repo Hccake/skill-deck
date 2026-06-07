@@ -49,6 +49,10 @@ function didRepairInstallSucceed(
   return Array.from(targetAgents).every((agent) => successfulAgents.has(agent));
 }
 
+function uniqueAgentIds(agents: string[] | undefined): string[] {
+  return Array.from(new Set(agents ?? []));
+}
+
 export function RepairSourceDialog() {
   const target = useSkillDialogStore((s) => s.repairSourceTarget);
   const closeRepairSource = useSkillDialogStore((s) => s.closeRepairSource);
@@ -123,11 +127,14 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       if (validation.requiresRiskConfirmation && !riskAcknowledged) return;
 
       setRepairPhase('installing');
-      const targetAgents = Array.from(new Set(target.agents));
+      const targetAgents = uniqueAgentIds(target.privateAdaptedAgents ?? target.agents);
+      const targetPrivateCopyAgents = uniqueAgentIds(target.privateCopyAgents);
+      const expectedAgents = uniqueAgentIds([...targetAgents, ...targetPrivateCopyAgents]);
       const results = await installSkills({
         source: source.trim(),
         skills: [target.skillName],
         agents: targetAgents,
+        privateCopyAgents: targetPrivateCopyAgents,
         scope: target.scope,
         projectPath: target.projectPath ?? null,
         mode: 'copy',
@@ -135,7 +142,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         preserveExistingModes: true,
         acknowledgeRisk: validation.requiresRiskConfirmation ? riskAcknowledged : true,
       });
-      if (!didRepairInstallSucceed(results, target.skillName, targetAgents)) {
+      if (!didRepairInstallSucceed(results, target.skillName, expectedAgents)) {
         toast.error(t('skills.repairSourceDialog.repairFailed'));
         return;
       }

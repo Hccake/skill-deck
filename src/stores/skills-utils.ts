@@ -150,6 +150,19 @@ export interface RepairSourceDraft {
   projectPath?: string;
   gitRef?: string | null;
   agents: AgentType[];
+  defaultAvailableAgents?: AgentType[];
+  privateAdaptedAgents?: AgentType[];
+  privateCopyAgents?: AgentType[];
+}
+
+export function getSkillOperationAgents(
+  skill: Pick<InstalledSkill, 'agents' | 'privateAdaptedAgents' | 'privateCopyAgents'>
+): AgentType[] {
+  const agents = [
+    ...(skill.privateAdaptedAgents ?? skill.agents),
+    ...(skill.privateCopyAgents ?? []),
+  ];
+  return agents.filter((agent, index) => agents.indexOf(agent) === index);
 }
 
 function normalizeRepairSource(source: string | null | undefined): string | null {
@@ -208,12 +221,23 @@ export function createSkillRepairPrefill(
 }
 
 export function createSkillRepairDraft(
-  skill: Pick<InstalledSkill, 'name' | 'source' | 'sourceUrl' | 'agents'> & { gitRef?: string | null },
+  skill: Pick<
+    InstalledSkill,
+    | 'name'
+    | 'source'
+    | 'sourceUrl'
+    | 'agents'
+    | 'defaultAvailableAgents'
+    | 'privateAdaptedAgents'
+    | 'privateCopyAgents'
+  > & { gitRef?: string | null },
   scope: SkillScope,
   projectPath?: string
 ): RepairSourceDraft | null {
   const source = buildRepairSource(skill);
   if (!source) return null;
+  const privateAdaptedAgents = skill.privateAdaptedAgents ?? skill.agents;
+  const privateCopyAgents = skill.privateCopyAgents ?? [];
   return {
     source,
     skillName: skill.name,
@@ -221,6 +245,9 @@ export function createSkillRepairDraft(
     projectPath: scope === 'project' ? projectPath : undefined,
     gitRef: skill.gitRef ?? null,
     agents: skill.agents,
+    defaultAvailableAgents: skill.defaultAvailableAgents ?? [],
+    privateAdaptedAgents,
+    privateCopyAgents,
   };
 }
 
@@ -287,8 +314,9 @@ export function buildUpdatePlan(
         skillRows: [],
       };
       group.skillNames.push(skill.name);
-      group.skillRows.push({ name: skill.name, agents: skill.agents });
-      group.agents = Array.from(new Set([...group.agents, ...skill.agents]));
+      const operationAgents = getSkillOperationAgents(skill);
+      group.skillRows.push({ name: skill.name, agents: operationAgents });
+      group.agents = Array.from(new Set([...group.agents, ...operationAgents]));
       groups.set(groupKey, group);
       continue;
     }

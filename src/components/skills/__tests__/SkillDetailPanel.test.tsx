@@ -368,6 +368,44 @@ describe('SkillDetailPanel', () => {
     expect(heading.parentElement).not.toBe(description.parentElement);
   });
 
+  it('shows duplicate copy maintenance prompt only when duplicate copy count is positive', () => {
+    const { rerender } = render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({ duplicateCopyCount: 2 })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('skills.detail.duplicateCopiesTitle')).toBeTruthy();
+
+    rerender(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({ duplicateCopyCount: 0 })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.queryByText('skills.detail.duplicateCopiesTitle')).toBeNull();
+  });
+
   it('ignores update-progress events from a different skill identity', () => {
     render(
       <TooltipProvider>

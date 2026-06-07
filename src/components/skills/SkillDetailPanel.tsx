@@ -63,6 +63,16 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const [copied, setCopied] = useState(false);
   const [checkDone, setCheckDone] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const defaultAvailableAgents = skill.defaultAvailableAgents ?? [];
+  const privateAdaptedAgents = skill.privateAdaptedAgents ?? [];
+  const privateCopyAgents = skill.privateCopyAgents ?? [];
+  const hasAgentSummary = Boolean(
+    skill.defaultAvailableAgents || skill.privateAdaptedAgents || skill.privateCopyAgents
+  );
+  const displayAgents = hasAgentSummary
+    ? [...defaultAvailableAgents, ...privateAdaptedAgents, ...privateCopyAgents]
+      .filter((agentId, index, agents) => agents.indexOf(agentId) === index)
+    : skill.agents;
 
   useEffect(() => {
     return () => {
@@ -357,9 +367,27 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
               <span className="font-heading text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em]">
                 {t('skills.detail.agents')}
               </span>
-              <div className="flex flex-wrap gap-2">
-                {skill.agents.length > 0 ? (
-                  skill.agents.map((agentId) => (
+              <div className="flex flex-wrap items-center gap-2">
+                {hasAgentSummary ? (
+                  <>
+                    {defaultAvailableAgents.length > 0 ? (
+                      <span className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary">
+                        {t('skills.detail.defaultAvailableCount', { count: defaultAvailableAgents.length })}
+                      </span>
+                    ) : null}
+                    {privateAdaptedAgents.length > 0 ? (
+                      <span className="inline-flex items-center rounded-full bg-accent px-3 py-1 text-[11px] font-bold text-accent-foreground">
+                        {t('skills.detail.privateAdaptedCount', { count: privateAdaptedAgents.length })}
+                      </span>
+                    ) : null}
+                    {privateCopyAgents.length > 0 ? (
+                      <span className="inline-flex items-center rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                        {t('skills.detail.privateCopyCount', { count: privateCopyAgents.length })}
+                      </span>
+                    ) : null}
+                  </>
+                ) : displayAgents.length > 0 ? (
+                  displayAgents.map((agentId) => (
                     <span
                       key={agentId}
                       className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary"
@@ -372,6 +400,27 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 )}
               </div>
             </div>
+
+            {(skill.duplicateCopyCount ?? 0) > 0 ? (
+              <div className="flex items-start justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
+                <div className="min-w-0 space-y-1">
+                  <div className="text-[13px] font-semibold text-foreground">
+                    {t('skills.detail.duplicateCopiesTitle')}
+                  </div>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t('skills.detail.duplicateCopiesHint', { count: skill.duplicateCopyCount ?? 0 })}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={handleManageAgents}
+                >
+                  {t('skills.detail.manageDuplicates')}
+                </Button>
+              </div>
+            ) : null}
 
             {/* Markdown 正文 */}
             <div className="pb-10">

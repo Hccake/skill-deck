@@ -266,6 +266,105 @@ describe('RepairSourceDialog', () => {
     });
   });
 
+  it('repairs canonical only when the skill is only default available', async () => {
+    mocks.installSkills.mockResolvedValue({
+      successful: [{
+        skillName: 'toolkit',
+        agent: '__canonical__',
+        success: true,
+        path: '/canonical/toolkit',
+        canonicalPath: '/canonical/toolkit',
+        mode: 'copy',
+        symlinkFailed: false,
+        skipped: false,
+        error: null,
+      }],
+      failed: [],
+      symlinkFallbackAgents: [],
+    });
+    useSkillDialogStore.setState({
+      repairSourceTarget: {
+        skillName: 'toolkit',
+        source: 'https://github.com/owner/repo#main',
+        scope: 'global',
+        agents: ['codex', 'firebender'],
+        defaultAvailableAgents: ['codex', 'firebender'],
+        privateAdaptedAgents: [],
+        privateCopyAgents: [],
+        gitRef: 'main',
+      },
+    });
+
+    render(<RepairSourceDialog />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+
+    await waitFor(() => {
+      expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
+        agents: [],
+        privateCopyAgents: [],
+        retry: true,
+      }));
+    });
+    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith('toolkit', 'global', undefined);
+  });
+
+  it('repairs private adapted and existing independent-copy targets separately', async () => {
+    mocks.installSkills.mockResolvedValue({
+      successful: [
+        {
+          skillName: 'toolkit',
+          agent: 'cursor',
+          success: true,
+          path: '/cursor/toolkit',
+          canonicalPath: '/canonical/toolkit',
+          mode: 'copy',
+          symlinkFailed: false,
+          skipped: false,
+          error: null,
+        },
+        {
+          skillName: 'toolkit',
+          agent: 'firebender',
+          success: true,
+          path: '/firebender/toolkit',
+          canonicalPath: '/canonical/toolkit',
+          mode: 'copy',
+          symlinkFailed: false,
+          skipped: false,
+          error: null,
+        },
+      ],
+      failed: [],
+      symlinkFallbackAgents: [],
+    });
+    useSkillDialogStore.setState({
+      repairSourceTarget: {
+        skillName: 'toolkit',
+        source: 'https://github.com/owner/repo#main',
+        scope: 'global',
+        agents: ['codex', 'cursor', 'firebender'],
+        defaultAvailableAgents: ['codex', 'firebender'],
+        privateAdaptedAgents: ['cursor'],
+        privateCopyAgents: ['firebender'],
+        gitRef: 'main',
+      },
+    });
+
+    render(<RepairSourceDialog />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+
+    await waitFor(() => {
+      expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
+        agents: ['cursor'],
+        privateCopyAgents: ['firebender'],
+        retry: true,
+      }));
+    });
+    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith('toolkit', 'global', undefined);
+  });
+
   it('treats canonical-only repair as successful when no target agents are associated', async () => {
     mocks.installSkills.mockResolvedValue({
       successful: [{
