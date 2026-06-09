@@ -4,6 +4,7 @@ import '@/test-utils';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSelector } from '../AgentSelector';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import type { AgentInfo } from '@/bindings';
 import { makeAgentScopeTarget } from '@/test-utils';
 
@@ -18,7 +19,16 @@ vi.mock('react-i18next', () => ({
         return 'Collapse options';
       }
       if (key === 'addSkill.agents.defaultAvailableHint') {
-        return `Default hint: ${typeof options === 'object' ? options.path ?? '' : ''}`;
+        return `These Agents are ready to use after install. No selection is needed. ${typeof options === 'object' ? options.path ?? '' : ''}`;
+      }
+      if (key === 'addSkill.agents.privateRequiredHint') {
+        return 'These Agents need to be connected to the Skill separately. When selected, install will create a link or copy for them.';
+      }
+      if (key === 'addSkill.agents.privateCopyTitle') {
+        return 'Dedicated copies';
+      }
+      if (key === 'addSkill.agents.privateCopyHint') {
+        return 'These Agents can use the shared Skill directory. Select an Agent only when you want it to keep its own copy; copies may not update with the shared Skill.';
       }
       return key;
     },
@@ -104,9 +114,13 @@ const agents: AgentInfo[] = [
   }),
 ];
 
+function renderAgentSelector(ui: React.ReactElement) {
+  return render(<TooltipProvider>{ui}</TooltipProvider>);
+}
+
 describe('AgentSelector', () => {
   it('shows default available and separate setup groups for the selected scope', () => {
-    render(
+    renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
         allAgents={agents}
@@ -116,17 +130,18 @@ describe('AgentSelector', () => {
     );
 
     expect(screen.getByText('addSkill.agents.defaultAvailableTitle')).toBeDefined();
-    expect(screen.getByText('Default hint: ./.agents/skills')).toBeDefined();
+    expect(screen.getByText('These Agents are ready to use after install. No selection is needed. ./.agents/skills')).toBeDefined();
     expect(screen.getByText('Codex')).toBeDefined();
     expect(screen.getByText('Cursor')).toBeDefined();
     expect(screen.getByText('addSkill.agents.privateRequiredTitle')).toBeDefined();
+    expect(screen.getByText('These Agents need to be connected to the Skill separately. When selected, install will create a link or copy for them.')).toBeDefined();
     expect(screen.getByText('Claude Code')).toBeDefined();
     expect(screen.getByText('Show 1 more agents')).toBeDefined();
   });
 
-  it('shows advanced private copy options for eligible default-available agents', () => {
+  it('shows separate version options for eligible ready-to-use agents', () => {
     const onPrivateCopyChange = vi.fn();
-    render(
+    renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
         privateCopyAgents={[]}
@@ -155,12 +170,137 @@ describe('AgentSelector', () => {
       />
     );
 
-    expect(screen.getByText('addSkill.agents.privateCopyTitle')).toBeDefined();
+    expect(screen.getByText('Dedicated copies')).toBeDefined();
+    expect(screen.getByText('These Agents can use the shared Skill directory. Select an Agent only when you want it to keep its own copy; copies may not update with the shared Skill.')).toBeDefined();
     expect(screen.getByText('~/.codex/skills')).toBeDefined();
   });
 
+  it('keeps dedicated copy options collapsed until requested when nothing is selected', () => {
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        privateCopyAgents={[]}
+        allAgents={[
+          {
+            ...agents[0],
+            targets: {
+              global: makeAgentScopeTarget({
+                automatic: true,
+                path: '~/.agents/skills',
+                availability: 'shared-compatible',
+                privatePath: '~/.codex/skills',
+              }),
+              project: makeAgentScopeTarget({
+                automatic: true,
+                path: '.agents/skills',
+                sharedPath: './.agents/skills',
+              }),
+            },
+          },
+        ]}
+        onSelectionChange={vi.fn()}
+        onPrivateCopyChange={vi.fn()}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByText('Dedicated copies')).toBeDefined();
+    expect(screen.queryByText('~/.codex/skills')).toBeNull();
+  });
+
+  it('groups undetected dedicated copy options behind the same collapsed affordance', async () => {
+    const { userEvent } = await import('@testing-library/user-event');
+    const detectedAgent: AgentInfo = {
+      ...agents[0],
+      targets: {
+        global: makeAgentScopeTarget({
+          automatic: true,
+          path: '~/.agents/skills',
+          availability: 'shared-compatible',
+          privatePath: '~/.codex/skills',
+        }),
+        project: makeAgentScopeTarget({
+          automatic: true,
+          path: '.agents/skills',
+          sharedPath: './.agents/skills',
+        }),
+      },
+    };
+    const undetectedAgent: AgentInfo = {
+      ...agents[1],
+      detected: false,
+      targets: {
+        global: makeAgentScopeTarget({
+          automatic: true,
+          path: '~/.agents/skills',
+          availability: 'shared-compatible',
+          privatePath: '~/.cursor/skills',
+        }),
+        project: makeAgentScopeTarget({
+          automatic: true,
+          path: '.agents/skills',
+          sharedPath: './.agents/skills',
+        }),
+      },
+    };
+
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        privateCopyAgents={[]}
+        allAgents={[detectedAgent, undetectedAgent]}
+        onSelectionChange={vi.fn()}
+        onPrivateCopyChange={vi.fn()}
+        scope="global"
+        privateCopyAgentsExpanded
+      />
+    );
+
+    expect(screen.getAllByText('Codex').length).toBeGreaterThan(1);
+    expect(screen.queryByText('Cursor')).toBeNull();
+
+    const expandButton = screen.getByRole('button', { name: /Show 1 more agents/i });
+    await userEvent.click(expandButton);
+
+    expect(screen.getByText('Cursor')).toBeDefined();
+  });
+
+  it('keeps selected undetected dedicated copy options visible for cleanup', () => {
+    const undetectedAgent: AgentInfo = {
+      ...agents[1],
+      detected: false,
+      targets: {
+        global: makeAgentScopeTarget({
+          automatic: true,
+          path: '~/.agents/skills',
+          availability: 'shared-compatible',
+          privatePath: '~/.cursor/skills',
+        }),
+        project: makeAgentScopeTarget({
+          automatic: true,
+          path: '.agents/skills',
+          sharedPath: './.agents/skills',
+        }),
+      },
+    };
+
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        privateCopyAgents={['cursor']}
+        allAgents={[undetectedAgent]}
+        onSelectionChange={vi.fn()}
+        onPrivateCopyChange={vi.fn()}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByText('Cursor')).toBeDefined();
+    expect(screen.getByText('~/.cursor/skills')).toBeDefined();
+  });
+
   it('does not prefix absolute private copy paths in project scope', () => {
-    render(
+    renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
         privateCopyAgents={[]}
@@ -194,7 +334,7 @@ describe('AgentSelector', () => {
   });
 
   it('prefixes relative private copy paths in project scope', () => {
-    render(
+    renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
         privateCopyAgents={[]}
@@ -228,7 +368,7 @@ describe('AgentSelector', () => {
 
   it('keeps expand and collapse labels free of arrow glyphs', async () => {
     const { userEvent } = await import('@testing-library/user-event');
-    render(
+    renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
         allAgents={agents}
@@ -247,7 +387,7 @@ describe('AgentSelector', () => {
   });
 
   it('uses global target metadata when global scope is selected', () => {
-    render(
+    renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
         allAgents={agents}
@@ -262,5 +402,29 @@ describe('AgentSelector', () => {
     expect(screen.getByText('~/.cursor/skills')).toBeDefined();
     expect(screen.getByText('Claude Code')).toBeDefined();
     expect(screen.getByText('~/.claude/skills')).toBeDefined();
+  });
+
+  it('constrains long path rows so they can shrink inside dialogs', () => {
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        allAgents={[
+          makeAgent({
+            id: 'claude-code',
+            name: 'Claude Code',
+            skillsDir: '.claude/skills',
+            globalSkillsDir: '/Users/example/projects/very/long/path/that/should/not/push/dialog/width/.claude/skills',
+            detected: true,
+          }),
+        ]}
+        onSelectionChange={vi.fn()}
+        scope="global"
+      />
+    );
+
+    const path = screen.getByText('/Users/example/projects/very/long/path/that/should/not/push/dialog/width/.claude/skills');
+    expect(path.className).toContain('truncate');
+    expect(path.parentElement?.className).toContain('min-w-0');
+    expect(path.parentElement?.className).toContain('flex-1');
   });
 });

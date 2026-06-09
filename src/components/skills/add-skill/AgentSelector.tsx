@@ -18,10 +18,8 @@ import type { AgentInfo } from '@/bindings';
 interface AgentSelectorProps {
   /** 选中的 agent IDs */
   selectedAgents: string[];
-  /** 明确创建独立副本的默认可用 agent IDs */
+  /** 明确保留独立副本的可直接使用 agent IDs */
   privateCopyAgents?: string[];
-  /** 不应展示为可创建独立副本的 agent IDs */
-  excludedPrivateCopyAgents?: string[];
   /** 所有 agents */
   allAgents: AgentInfo[];
   /** 选择变化回调 */
@@ -37,7 +35,6 @@ interface AgentSelectorProps {
 export function AgentSelector({
   selectedAgents,
   privateCopyAgents = [],
-  excludedPrivateCopyAgents = [],
   allAgents,
   onSelectionChange,
   onPrivateCopyChange,
@@ -49,6 +46,7 @@ export function AgentSelector({
   const selectedAgentsRef = useRef(selectedAgents);
   const privateCopyAgentsRef = useRef(privateCopyAgents);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [privateCopyUndetectedExpanded, setPrivateCopyUndetectedExpanded] = useState(false);
 
   useEffect(() => {
     selectedAgentsRef.current = selectedAgents;
@@ -59,11 +57,6 @@ export function AgentSelector({
 
   const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
   const privateCopyAgentIds = useMemo(() => new Set(privateCopyAgents), [privateCopyAgents]);
-  const excludedPrivateCopyAgentIds = useMemo(
-    () => new Set(excludedPrivateCopyAgents),
-    [excludedPrivateCopyAgents]
-  );
-
   const {
     detectedDefaultAvailable,
     undetectedDefaultAvailable,
@@ -74,10 +67,26 @@ export function AgentSelector({
     () => groupAgentsByScopedTarget(allAgents, scope, selectedAgentIds),
     [allAgents, scope, selectedAgentIds]
   );
-  const visiblePrivateCopyEligibleAgents = useMemo(
-    () => privateCopyEligibleAgents.filter((agent) => !excludedPrivateCopyAgentIds.has(agent.id)),
-    [privateCopyEligibleAgents, excludedPrivateCopyAgentIds]
-  );
+  const {
+    visiblePrivateCopyEligibleAgents,
+    hiddenPrivateCopyEligibleAgents,
+  } = useMemo(() => {
+    const visible: AgentInfo[] = [];
+    const hidden: AgentInfo[] = [];
+
+    for (const agent of privateCopyEligibleAgents) {
+      if (agent.detected || privateCopyAgentIds.has(agent.id)) {
+        visible.push(agent);
+      } else {
+        hidden.push(agent);
+      }
+    }
+
+    return {
+      visiblePrivateCopyEligibleAgents: visible,
+      hiddenPrivateCopyEligibleAgents: hidden,
+    };
+  }, [privateCopyEligibleAgents, privateCopyAgentIds]);
 
   const toggleAgent = useCallback((agentId: string) => {
     const currentSelection = selectedAgentsRef.current;
@@ -91,7 +100,6 @@ export function AgentSelector({
 
   const togglePrivateCopyAgent = useCallback((agentId: string) => {
     if (!onPrivateCopyChange) return;
-    if (excludedPrivateCopyAgentIds.has(agentId)) return;
 
     const currentSelection = privateCopyAgentsRef.current;
     const isSelected = currentSelection.includes(agentId);
@@ -100,14 +108,14 @@ export function AgentSelector({
       : [...currentSelection, agentId];
     privateCopyAgentsRef.current = newSelection;
     onPrivateCopyChange(newSelection);
-  }, [onPrivateCopyChange, excludedPrivateCopyAgentIds]);
+  }, [onPrivateCopyChange]);
 
   const hasSelectableAgents = detectedAgents.length > 0 || otherAgents.length > 0;
   const hasDefaultAvailableAgents = detectedDefaultAvailable.length > 0 || undetectedDefaultAvailable.length > 0;
-  const hasPrivateCopyOptions = visiblePrivateCopyEligibleAgents.length > 0 && Boolean(onPrivateCopyChange);
+  const hasPrivateCopyOptions = privateCopyEligibleAgents.length > 0 && Boolean(onPrivateCopyChange);
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 max-w-full space-y-5">
       {hasDefaultAvailableAgents && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -184,12 +192,12 @@ export function AgentSelector({
 
       {hasSelectableAgents && (
         <div className="space-y-2">
-          <div className="flex justify-between items-center pb-2 border-b border-border/40">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-foreground">
+          <div className="flex min-w-0 justify-between items-center pb-2 border-b border-border/40">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="shrink-0 text-sm font-semibold text-foreground">
                 {t('addSkill.agents.privateRequiredTitle')}
               </span>
-              <span className="text-[11px] text-muted-foreground truncate">
+              <span className="min-w-0 text-[11px] text-muted-foreground">
                 {t('addSkill.agents.privateRequiredHint')}
               </span>
             </div>
@@ -254,11 +262,11 @@ export function AgentSelector({
           open={privateCopyAgentsExpanded || privateCopyAgents.length > 0}
           onOpenChange={onPrivateCopyExpandedChange}
         >
-          <div className="rounded-md border border-border/50 bg-muted/10">
+          <div className="space-y-1">
             <CollapsibleTrigger asChild>
               <button
                 type="button"
-                className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/25"
+                className="flex w-full items-center justify-between gap-3 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-muted/25"
               >
                 <div className="min-w-0 space-y-0.5">
                   <div className="text-sm font-semibold text-foreground">
@@ -276,7 +284,7 @@ export function AgentSelector({
                 </div>
               </button>
             </CollapsibleTrigger>
-            <CollapsibleContent className="border-t border-border/40 px-2 py-2">
+            <CollapsibleContent className="pt-1">
               <div className="flex flex-col space-y-1">
                 {visiblePrivateCopyEligibleAgents.map((agent) => (
                   <AgentRow
@@ -288,6 +296,44 @@ export function AgentSelector({
                     pathOverride={getAgentTarget(agent, scope).privatePath ?? undefined}
                   />
                 ))}
+                {hiddenPrivateCopyEligibleAgents.length > 0 && (
+                  <Collapsible open={privateCopyUndetectedExpanded} onOpenChange={setPrivateCopyUndetectedExpanded}>
+                    <CollapsibleTrigger asChild>
+                      <div className="relative py-2 flex items-center justify-center">
+                        <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                          <div className="w-full border-t border-border/40" />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="relative bg-background text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors h-7 px-3"
+                        >
+                          {privateCopyUndetectedExpanded ? (
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          )}
+                          {privateCopyUndetectedExpanded
+                            ? t('addSkill.agents.collapseOtherAgents')
+                            : t('addSkill.agents.expandOtherAgents', { count: hiddenPrivateCopyEligibleAgents.length })}
+                        </Button>
+                      </div>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="flex flex-col space-y-1 mt-1">
+                      {hiddenPrivateCopyEligibleAgents.map((agent) => (
+                        <AgentRow
+                          key={agent.id}
+                          agent={agent}
+                          selected={privateCopyAgentIds.has(agent.id)}
+                          onToggle={togglePrivateCopyAgent}
+                          scope={scope}
+                          pathOverride={getAgentTarget(agent, scope).privatePath ?? undefined}
+                          muted
+                        />
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
               </div>
             </CollapsibleContent>
           </div>
@@ -340,7 +386,7 @@ const AgentRow = memo(function AgentRow({
         muted && !selected ? 'opacity-60 grayscale-[0.5] hover:opacity-90' : 'opacity-100 grayscale-0'
       )}
     >
-      <div className="flex items-center gap-3 min-w-0">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <Checkbox
           checked={selected}
           className="pointer-events-none shrink-0"
@@ -351,9 +397,9 @@ const AgentRow = memo(function AgentRow({
         </span>
       </div>
 
-      <div className="flex items-center gap-4 sm:gap-6 shrink-0 pl-2">
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-3 pl-2 sm:gap-4">
         {pathLabel && (
-          <code className={cn("hidden sm:block font-mono text-[11px] leading-none", selected ? "text-muted-foreground" : "text-muted-foreground/60")}>
+          <code className={cn("hidden min-w-0 truncate sm:block font-mono text-[11px] leading-none", selected ? "text-muted-foreground" : "text-muted-foreground/60")}>
             {pathLabel}
           </code>
         )}

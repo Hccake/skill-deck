@@ -1075,6 +1075,33 @@ describe('useSkillsStore', () => {
       });
     });
 
+    it('saveAgentChanges cleans deselected duplicate private copies before saving', async () => {
+      const skill = makeSkill('test');
+      mockCleanupDuplicateAgentCopies.mockResolvedValue([
+        { agent: 'firebender', success: true, skipped: false, path: '/home/.firebender/skills/test', error: null },
+      ]);
+      mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: [] });
+
+      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      await useSkillDialogStore.getState().saveAgentChanges([], [], 'copy', [], ['firebender']);
+
+      expect(mockCleanupDuplicateAgentCopies).toHaveBeenCalledWith({
+        skillName: 'test',
+        scope: 'global',
+        projectPath: undefined,
+        agents: ['firebender'],
+      });
+      expect(mockManageSkillAgents).toHaveBeenCalledWith({
+        skillName: 'test',
+        scope: 'global',
+        projectPath: undefined,
+        addAgents: [],
+        removeAgents: [],
+        privateCopyAgents: [],
+        mode: 'copy',
+      });
+    });
+
     it('saveAgentChanges keeps the project path from when the dialog was opened', async () => {
       const skill = makeSkill('test', { scope: 'project' });
       useContextStore.setState({ selectedContext: '/project-a' });

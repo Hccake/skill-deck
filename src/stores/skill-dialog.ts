@@ -55,6 +55,7 @@ interface SkillDialogState {
     removeAgents: string[],
     mode: InstallMode,
     privateCopyAgents?: string[],
+    removePrivateCopyAgents?: string[],
   ) => Promise<void>;
   cleanupDuplicateCopies: (agents: string[]) => Promise<void>;
   openCopyToProject: (skill: InstalledSkill) => void;
@@ -192,7 +193,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
     loadingManageAgentDetails: false,
   }),
 
-  saveAgentChanges: async (addAgents, removeAgents, mode, privateCopyAgents = []) => {
+  saveAgentChanges: async (addAgents, removeAgents, mode, privateCopyAgents = [], removePrivateCopyAgents = []) => {
     const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath } = get();
     if (!manageAgentsSkill) return;
 
@@ -200,6 +201,20 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
     const projectPath = scope === 'project' ? manageAgentsProjectPath : undefined;
 
     try {
+      if (removePrivateCopyAgents.length > 0) {
+        const cleanupResults = await apiCleanupDuplicateAgentCopies({
+          skillName: manageAgentsSkill.name,
+          scope,
+          projectPath,
+          agents: removePrivateCopyAgents as AgentType[],
+        });
+        const cleanupFailures = cleanupResults.filter((result) => !result.success && !result.skipped);
+        if (cleanupFailures.length > 0) {
+          toast.error(cleanupFailures.map((result) => `${result.agent}: ${result.error}`).join('\n'));
+          return;
+        }
+      }
+
       const result = await apiManageSkillAgents({
         skillName: manageAgentsSkill.name,
         scope,
