@@ -127,20 +127,20 @@ describe('InstallPreferencesPage', () => {
     };
   });
 
-  it('shows automatically included agents without requiring a nested expansion', () => {
+  it('shows directly usable agents without requiring a nested expansion', () => {
     render(<InstallPreferencesPage />);
 
     expect(screen.getAllByText('Amp').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Default available').length).toBeGreaterThan(0);
-    expect(screen.getByText(/default location/)).toBeDefined();
-    expect(screen.getByText('Needs separate setup')).toBeDefined();
-    expect(screen.getByText(/adapted separately by default/)).toBeDefined();
+    expect(screen.getAllByText('Ready to use').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/No selection is needed/).length).toBeGreaterThan(0);
+    expect(screen.getByText('Needs extra setup')).toBeDefined();
+    expect(screen.getAllByText(/link or copy/).length).toBeGreaterThan(0);
   });
 
   it('uses global and project labels instead of workspace labels', () => {
     expect(enLocale.settings.installPreferences.globalTitle).toBe('Global');
     expect(enLocale.settings.installPreferences.projectTitle).toBe('Project');
-    expect(enLocale.settings.installPreferences.description).toContain('Global and project defaults');
+    expect(enLocale.settings.installPreferences.description).toContain('enabled by default');
     expect(enLocale.settings.installPreferences.description).not.toContain('workspaces');
     expect(Object.hasOwn(enLocale.settings.installPreferences, 'globalAutomaticPath')).toBe(false);
     expect(Object.hasOwn(enLocale.settings.installPreferences, 'projectAutomaticPath')).toBe(false);
@@ -167,6 +167,6 @@ describe('InstallPreferencesPage', () => {
 
     render(<InstallPreferencesPage />);
 
-    expect(screen.getByText('Some agents are now available by default and no longer need separate setup.')).toBeDefined();
+    expect(screen.getByText('Default extra setup was removed where it is no longer needed. These Agents can still use Skills.')).toBeDefined();
   });
 });

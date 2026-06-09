@@ -13,13 +13,13 @@ vi.mock('react-i18next', () => ({
         return `${options?.success}/${options?.total} agents`;
       }
       if (key === 'addSkill.complete.defaultAvailable') {
-        return 'Default available';
+        return 'Ready to use';
       }
       if (key === 'addSkill.complete.privateAdapted') {
-        return 'Separate setup';
+        return 'Extra setup';
       }
       if (key === 'addSkill.complete.privateCopies') {
-        return 'Private copy';
+        return 'Dedicated copy';
       }
       if (key === 'addSkill.complete.skippedCategory') {
         return 'Skipped';
@@ -183,7 +183,7 @@ describe('CompleteStep', () => {
     expect(retrySpy).toHaveBeenCalledWith('skill-a', ['windsurf']);
   });
 
-  it('summarizes default available, separate setup, private copies, skipped, and failed categories', () => {
+  it('summarizes ready to use, extra setup, dedicated copies, skipped, and failed categories', () => {
     const installResults: InstallResults = {
       successful: [
         makeInstallResult({ skillName: 'skill-a', agent: 'codex', category: 'default-available' }),
@@ -206,9 +206,9 @@ describe('CompleteStep', () => {
     render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
 
     expect(screen.getByText('3/5 agents')).toBeDefined();
-    expect(screen.getByText('Default available · 1')).toBeDefined();
-    expect(screen.getByText('Separate setup · 1')).toBeDefined();
-    expect(screen.getByText('Private copy · 1')).toBeDefined();
+    expect(screen.getByText('Ready to use · 1')).toBeDefined();
+    expect(screen.getByText('Extra setup · 1')).toBeDefined();
+    expect(screen.getByText('Dedicated copy · 1')).toBeDefined();
     expect(screen.getByText('Skipped · 1')).toBeDefined();
     expect(screen.getByText('Failed · 1')).toBeDefined();
   });
@@ -230,12 +230,12 @@ describe('CompleteStep', () => {
     render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
 
     expect(screen.getByText('4/4 agents')).toBeDefined();
-    expect(screen.getByText('Default available · 2')).toBeDefined();
-    expect(screen.getByText('Separate setup · 1')).toBeDefined();
-    expect(screen.getByText('Private copy · 1')).toBeDefined();
+    expect(screen.getByText('Ready to use · 2')).toBeDefined();
+    expect(screen.getByText('Extra setup · 1')).toBeDefined();
+    expect(screen.getByText('Dedicated copy · 1')).toBeDefined();
   });
 
-  it('does not double count default-available agents that also have private copies', () => {
+  it('does not double count ready-to-use agents that also keep dedicated copies', () => {
     const installResults: InstallResults = {
       successful: [
         makeInstallResult({ skillName: 'skill-a', agent: '__canonical__', category: 'default-available' }),
@@ -251,8 +251,8 @@ describe('CompleteStep', () => {
     render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
 
     expect(screen.getByText('2/2 agents')).toBeDefined();
-    expect(screen.getByText('Default available · 1')).toBeDefined();
-    expect(screen.getByText('Private copy · 1')).toBeDefined();
+    expect(screen.getByText('Ready to use · 1')).toBeDefined();
+    expect(screen.getByText('Dedicated copy · 1')).toBeDefined();
   });
 
   it('does not count default-available summary without a canonical success result', () => {
@@ -276,7 +276,7 @@ describe('CompleteStep', () => {
     render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
 
     expect(screen.getByText('0/1 agents')).toBeDefined();
-    expect(screen.queryByText(/Default available/)).toBeNull();
+    expect(screen.queryByText(/Ready to use/)).toBeNull();
     expect(screen.getByText('Failed · 1')).toBeDefined();
   });
 });
