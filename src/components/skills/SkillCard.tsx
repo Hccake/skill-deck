@@ -84,12 +84,20 @@ export const SkillCard = memo(function SkillCard({
   const { t, i18n } = useTranslation();
   const skillName = skill.name;
   const skillScope = skill.scope;
-  const defaultAvailableAgents = skill.defaultAvailableAgents ?? [];
-  const privateAdaptedAgents = skill.privateAdaptedAgents ?? [];
-  const privateCopyAgents = skill.privateCopyAgents ?? [];
+  const summaryAgents = [
+    ...(skill.defaultAvailableAgents ?? []),
+    ...(skill.privateAdaptedAgents ?? []),
+    ...(skill.privateCopyAgents ?? []),
+  ];
   const hasAgentSummary = Boolean(
     skill.defaultAvailableAgents || skill.privateAdaptedAgents || skill.privateCopyAgents
   );
+  const rawEffectiveAgents = skill.cardAgents
+    ?? (hasAgentSummary ? summaryAgents : skill.agents);
+  const effectiveAgents = Array.from(new Set(rawEffectiveAgents));
+  const visibleAgents = effectiveAgents.slice(0, 4);
+  const hiddenAgentCount = Math.max(effectiveAgents.length - visibleAgents.length, 0);
+  const duplicateCopyCount = skill.duplicateCopyCount ?? 0;
 
   const progressBarRef = useRef<HTMLDivElement>(null);
   const phaseBadgeRef = useRef<HTMLSpanElement>(null);
@@ -403,34 +411,34 @@ export const SkillCard = memo(function SkillCard({
 
         {/* Row 4: Agents */}
         <div className="flex items-center gap-1.5 flex-wrap pt-0.5 mt-auto">
-          {hasAgentSummary ? (
-            <>
-              {defaultAvailableAgents.length > 0 ? (
-                <span className="inline-flex h-6 items-center rounded-full bg-primary/10 px-2.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
-                  {t('skills.detail.defaultAvailableCount', { count: defaultAvailableAgents.length })}
+          {visibleAgents.map((agentId) => (
+            <span
+              key={agentId}
+              className="inline-flex h-6 items-center rounded-full bg-primary/10 px-2.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20"
+            >
+              {agentDisplayNames.get(agentId) ?? agentId}
+            </span>
+          ))}
+          {hiddenAgentCount > 0 ? (
+            <span className="inline-flex h-6 items-center rounded-full bg-muted px-2.5 text-xs font-medium text-muted-foreground">
+              {t('skills.card.moreAgents', { count: hiddenAgentCount })}
+            </span>
+          ) : null}
+          {duplicateCopyCount > 0 ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+                  aria-label={t('skills.card.extraCopies')}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" />
                 </span>
-              ) : null}
-              {privateAdaptedAgents.length > 0 ? (
-                <span className="inline-flex h-6 items-center rounded-full bg-accent px-2.5 text-xs font-medium text-accent-foreground">
-                  {t('skills.detail.privateAdaptedCount', { count: privateAdaptedAgents.length })}
-                </span>
-              ) : null}
-              {privateCopyAgents.length > 0 ? (
-                <span className="inline-flex h-6 items-center rounded-full bg-amber-500/10 px-2.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-                  {t('skills.detail.privateCopyCount', { count: privateCopyAgents.length })}
-                </span>
-              ) : null}
-            </>
-          ) : (
-            skill.agents.map((agentId) => (
-              <span
-                key={agentId}
-                className="inline-flex h-6 items-center rounded-full bg-primary/10 px-2.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20"
-              >
-                {agentDisplayNames.get(agentId) ?? agentId}
-              </span>
-            ))
-          )}
+              </TooltipTrigger>
+              <TooltipContent className="max-w-72 whitespace-normal text-left leading-5">
+                <p data-testid="skill-card-extra-copies-tooltip">{t('skills.card.extraCopiesHint')}</p>
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
       </CardContent>
       {/* Bug2 修复：底部极细进度条，无文字标签 */}

@@ -368,14 +368,20 @@ describe('SkillDetailPanel', () => {
     expect(heading.parentElement).not.toBe(description.parentElement);
   });
 
-  it('shows duplicate copy maintenance prompt only when duplicate copy count is positive', () => {
+  it('shows duplicate copies as a maintenance note instead of another badge group', () => {
     const { rerender } = render(
       <TooltipProvider>
         <SkillDetailPanel
-          skill={makeSkill({ duplicateCopyCount: 2 })}
+          skill={makeSkill({
+            duplicateCopyCount: 2,
+            duplicateCopyAgents: ['firebender', 'claude-code'],
+          })}
           content="# Brainstorming"
           loading={false}
-          agentDisplayNames={new Map()}
+          agentDisplayNames={new Map([
+            ['firebender', 'Firebender'],
+            ['claude-code', 'Claude Code'],
+          ])}
           onClose={vi.fn()}
           onUpdate={vi.fn()}
           onDelete={vi.fn()}
@@ -385,7 +391,10 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.detail.duplicateCopiesTitle')).toBeTruthy();
+    expect(screen.getByText('skills.detail.extraCopiesNamedHint')).toBeTruthy();
+    expect(screen.queryByText('skills.card.extraCopies')).toBeNull();
+    expect(screen.queryByText('skills.detail.duplicateCopiesTitle')).toBeNull();
+    expect(screen.queryByText('skills.detail.manageDuplicates')).toBeNull();
 
     rerender(
       <TooltipProvider>
@@ -403,7 +412,38 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByText('skills.detail.duplicateCopiesTitle')).toBeNull();
+    expect(screen.queryByText('skills.detail.extraCopiesNamedHint')).toBeNull();
+  });
+
+  it('summarizes duplicate copy agents when the maintenance note would be too long', () => {
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({
+            duplicateCopyCount: 4,
+            duplicateCopyAgents: ['codex', 'cursor', 'firebender', 'claude-code'],
+          })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map([
+            ['codex', 'Codex'],
+            ['cursor', 'Cursor'],
+            ['firebender', 'Firebender'],
+            ['claude-code', 'Claude Code'],
+          ])}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('skills.detail.extraCopiesNamedHint')).toBeTruthy();
+    expect(screen.getByText('skills.detail.extraCopiesAgentSummaryMore')).toBeTruthy();
+    expect(screen.queryByText('Firebender')).toBeNull();
+    expect(screen.queryByText('Claude Code')).toBeNull();
   });
 
   it('ignores update-progress events from a different skill identity', () => {
@@ -538,5 +578,40 @@ describe('SkillDetailPanel', () => {
 
     expect(screen.queryByText('skills.updatePhaseWritingLock')).toBeNull();
     expect(screen.getByText('skills.updatePhaseCloning')).toBeTruthy();
+  });
+
+  it('shows available agent names without technical availability category counts', () => {
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({
+            agents: ['codex', 'cursor', 'firebender'],
+            cardAgents: ['codex', 'cursor'],
+            defaultAvailableAgents: ['codex'],
+            privateAdaptedAgents: ['cursor'],
+            privateCopyAgents: ['firebender'],
+          })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map([
+            ['codex', 'Codex'],
+            ['cursor', 'Cursor'],
+            ['firebender', 'Firebender'],
+          ])}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Codex')).toBeTruthy();
+    expect(screen.getByText('Cursor')).toBeTruthy();
+    expect(screen.queryByText('Firebender')).toBeNull();
+    expect(screen.queryByText('skills.detail.defaultAvailableCount')).toBeNull();
+    expect(screen.queryByText('skills.detail.privateAdaptedCount')).toBeNull();
+    expect(screen.queryByText('skills.detail.privateCopyCount')).toBeNull();
   });
 });

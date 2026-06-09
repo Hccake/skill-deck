@@ -2,6 +2,7 @@
 
 import '@/test-utils';
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { SkillCard } from '../SkillCard';
@@ -161,6 +162,219 @@ describe('SkillCard', () => {
     expect(description.className).not.toContain('leading-relaxed');
     expect(agent.className).toContain('h-6');
     expect(agent.className).toContain('text-xs');
+  });
+
+  it('renders concrete card agent names and excludes private-copy-only agents', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            cardAgents: ['claude-code', 'codex'],
+            defaultAvailableAgents: ['claude-code'],
+            privateAdaptedAgents: ['codex'],
+            privateCopyAgents: ['gemini-cli'],
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+            ['gemini-cli', 'Gemini'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
+    expect(screen.queryByText('Gemini')).toBeNull();
+  });
+
+  it('does not render agent availability category count keys on the card', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            cardAgents: ['claude-code', 'codex'],
+            defaultAvailableAgents: ['claude-code'],
+            privateAdaptedAgents: ['codex'],
+            privateCopyAgents: ['gemini-cli'],
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+            ['gemini-cli', 'Gemini'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.queryByText('skills.detail.defaultAvailableCount')).toBeNull();
+    expect(screen.queryByText('skills.detail.privateAdaptedCount')).toBeNull();
+    expect(screen.queryByText('skills.detail.privateCopyCount')).toBeNull();
+  });
+
+  it('shows extra-copy maintenance as a warning icon only when duplicate copies are reported', async () => {
+    const { rerender } = render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            cardAgents: ['claude-code'],
+            privateCopyAgents: ['codex'],
+            duplicateCopyCount: 0,
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.queryByText('skills.card.extraCopies')).toBeNull();
+
+    rerender(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            cardAgents: ['claude-code'],
+            privateCopyAgents: [],
+            duplicateCopyCount: 2,
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([['claude-code', 'Claude Code']])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.queryByText('skills.card.extraCopies')).toBeNull();
+    const extraCopiesIcon = screen.getByLabelText('skills.card.extraCopies');
+    expect(extraCopiesIcon).toBeTruthy();
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    await userEvent.hover(extraCopiesIcon);
+    const tooltips = await screen.findAllByTestId('skill-card-extra-copies-tooltip');
+    expect(tooltips.some((tooltip) => tooltip.parentElement?.className.includes('max-w-'))).toBe(true);
+    expect(tooltips.some((tooltip) => tooltip.parentElement?.className.includes('whitespace-normal'))).toBe(true);
+  });
+
+  it('renders four agent names and an overflow chip for additional card agents', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            cardAgents: ['claude-code', 'codex', 'gemini-cli', 'cursor', 'qwen-code'],
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+            ['gemini-cli', 'Gemini'],
+            ['cursor', 'Cursor'],
+            ['qwen-code', 'Qwen'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
+    expect(screen.getByText('Gemini')).toBeTruthy();
+    expect(screen.getByText('Cursor')).toBeTruthy();
+    expect(screen.queryByText('Qwen')).toBeNull();
+    expect(screen.getByText('skills.card.moreAgents')).toBeTruthy();
+  });
+
+  it('falls back to deduped summary agents when card agents are absent', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            defaultAvailableAgents: ['claude-code', 'codex'],
+            privateAdaptedAgents: ['codex', 'gemini-cli'],
+            privateCopyAgents: ['claude-code'],
+            agents: ['qwen-code'],
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+            ['gemini-cli', 'Gemini'],
+            ['qwen-code', 'Qwen'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
+    expect(screen.getByText('Gemini')).toBeTruthy();
+    expect(screen.queryByText('Qwen')).toBeNull();
+  });
+
+  it('does not fall back to skill agents when summary arrays are present but empty', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            defaultAvailableAgents: [],
+            privateAdaptedAgents: [],
+            privateCopyAgents: [],
+            agents: ['claude-code'],
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([['claude-code', 'Claude Code']])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.queryByText('Claude Code')).toBeNull();
+  });
+
+  it('dedupes duplicate card agent ids before rendering chips', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            cardAgents: ['claude-code', 'claude-code', 'codex'],
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getAllByText('Claude Code')).toHaveLength(1);
+    expect(screen.getByText('Codex')).toBeTruthy();
+  });
+
+  it('falls back to skill agents when card and summary agents are absent', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({
+            cardAgents: null,
+            agents: ['claude-code', 'codex'],
+          })}
+          displayScope="global"
+          agentDisplayNames={new Map([
+            ['claude-code', 'Claude Code'],
+            ['codex', 'Codex'],
+          ])}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
   });
 
   it('uses the card content flex gap between metadata, diagnostics, and agent chips', () => {

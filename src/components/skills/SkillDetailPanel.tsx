@@ -3,7 +3,7 @@ import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench } from 'lucide-react';
+import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench, AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PopConfirm } from '@/components/ui/pop-confirm';
@@ -66,13 +66,23 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const defaultAvailableAgents = skill.defaultAvailableAgents ?? [];
   const privateAdaptedAgents = skill.privateAdaptedAgents ?? [];
   const privateCopyAgents = skill.privateCopyAgents ?? [];
+  const summaryAgents = [...defaultAvailableAgents, ...privateAdaptedAgents, ...privateCopyAgents];
   const hasAgentSummary = Boolean(
     skill.defaultAvailableAgents || skill.privateAdaptedAgents || skill.privateCopyAgents
   );
-  const displayAgents = hasAgentSummary
-    ? [...defaultAvailableAgents, ...privateAdaptedAgents, ...privateCopyAgents]
-      .filter((agentId, index, agents) => agents.indexOf(agentId) === index)
-    : skill.agents;
+  const rawDisplayAgents = skill.cardAgents
+    ?? (hasAgentSummary ? summaryAgents : skill.agents);
+  const displayAgents = rawDisplayAgents.filter((agentId, index, agents) => agents.indexOf(agentId) === index);
+  const duplicateCopyCount = skill.duplicateCopyCount ?? 0;
+  const duplicateCopyAgents = skill.duplicateCopyAgents ?? [];
+  const duplicateCopyAgentNames = duplicateCopyAgents.map((agentId) => agentDisplayNames.get(agentId) ?? agentId);
+  const duplicateCopyAgentSummary = duplicateCopyAgentNames.length > 3
+    ? t('skills.detail.extraCopiesAgentSummaryMore', {
+      agents: duplicateCopyAgentNames.slice(0, 2).join('、'),
+      count: duplicateCopyAgentNames.length,
+    })
+    : duplicateCopyAgentNames.join('、');
+  const duplicateCopyAgentSeparator = i18n.language.startsWith('zh') ? '' : ' ';
 
   useEffect(() => {
     return () => {
@@ -363,64 +373,43 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
             </div>
 
             {/* Agents row */}
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-start gap-3">
               <span className="font-heading text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em]">
                 {t('skills.detail.agents')}
               </span>
-              <div className="flex flex-wrap items-center gap-2">
-                {hasAgentSummary ? (
-                  <>
-                    {defaultAvailableAgents.length > 0 ? (
-                      <span className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary">
-                        {t('skills.detail.defaultAvailableCount', { count: defaultAvailableAgents.length })}
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                {displayAgents.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {displayAgents.map((agentId) => (
+                      <span
+                        key={agentId}
+                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary"
+                      >
+                        {agentDisplayNames.get(agentId) ?? agentId}
                       </span>
-                    ) : null}
-                    {privateAdaptedAgents.length > 0 ? (
-                      <span className="inline-flex items-center rounded-full bg-accent px-3 py-1 text-[11px] font-bold text-accent-foreground">
-                        {t('skills.detail.privateAdaptedCount', { count: privateAdaptedAgents.length })}
-                      </span>
-                    ) : null}
-                    {privateCopyAgents.length > 0 ? (
-                      <span className="inline-flex items-center rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-300">
-                        {t('skills.detail.privateCopyCount', { count: privateCopyAgents.length })}
-                      </span>
-                    ) : null}
-                  </>
-                ) : displayAgents.length > 0 ? (
-                  displayAgents.map((agentId) => (
-                    <span
-                      key={agentId}
-                      className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary"
-                    >
-                      {agentDisplayNames.get(agentId) ?? agentId}
-                    </span>
-                  ))
+                    ))}
+                  </div>
                 ) : (
                   <span className="text-[11px] text-muted-foreground/60">{t('skills.detail.noAgents')}</span>
                 )}
+                {duplicateCopyCount > 0 ? (
+                  <div className="flex items-start gap-1.5 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      {duplicateCopyAgentSummary ? (
+                        <>
+                          <span className="font-medium">{duplicateCopyAgentSummary}</span>
+                          {duplicateCopyAgentSeparator}
+                          {t('skills.detail.extraCopiesNamedHint')}
+                        </>
+                      ) : (
+                        t('skills.detail.extraCopiesCountHint', { count: duplicateCopyCount })
+                      )}
+                    </span>
+                  </div>
+                ) : null}
               </div>
             </div>
-
-            {(skill.duplicateCopyCount ?? 0) > 0 ? (
-              <div className="flex items-start justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
-                <div className="min-w-0 space-y-1">
-                  <div className="text-[13px] font-semibold text-foreground">
-                    {t('skills.detail.duplicateCopiesTitle')}
-                  </div>
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    {t('skills.detail.duplicateCopiesHint', { count: skill.duplicateCopyCount ?? 0 })}
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={handleManageAgents}
-                >
-                  {t('skills.detail.manageDuplicates')}
-                </Button>
-              </div>
-            ) : null}
 
             {/* Markdown 正文 */}
             <div className="pb-10">
