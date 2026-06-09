@@ -137,6 +137,9 @@ pub struct InstalledSkill {
     pub canonical_path: String,
     pub scope: SkillScope,
     pub agents: Vec<AgentType>,
+    /// Skill card Agents that are both effective for this skill and detected locally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_agents: Option<Vec<AgentType>>,
     // 来自 skill-lock.json 的元数据
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -276,7 +279,15 @@ fn apply_presence_summary(skill: &mut InstalledSkill, cwd: &str) {
         }
     }
 
+    let detected_agents = AgentType::detect_installed();
+    let card_agents = effective_agents
+        .iter()
+        .copied()
+        .filter(|agent| detected_agents.contains(agent))
+        .collect();
+
     skill.agents = effective_agents;
+    skill.card_agents = Some(card_agents);
     skill.default_available_agent_count = Some(default_available_count as u32);
     skill.private_adapted_agent_count = Some(private_adapted_count as u32);
     skill.duplicate_copy_count = Some(duplicate_copy_count as u32);
@@ -461,6 +472,7 @@ pub fn list_installed_skills(
                             SkillScope::Project
                         },
                         agents: vec![agent_type],
+                        card_agents: None,
                         source: None,
                         source_url: None,
                         installed_at: None,
@@ -578,6 +590,7 @@ pub fn list_installed_skills(
                         SkillScope::Project
                     },
                     agents: installed_agents,
+                    card_agents: None,
                     source: None,
                     source_url: None,
                     installed_at: None,
@@ -754,6 +767,81 @@ Content.
             ghost_skill.agents.contains(&undetected_agent),
             "skill should be associated with the undetected agent directory"
         );
+        assert!(
+            !ghost_skill
+                .card_agents
+                .as_ref()
+                .unwrap()
+                .contains(&undetected_agent),
+            "skill card agents should exclude undetected agents"
+        );
+    }
+
+    #[test]
+    fn test_presence_summary_card_agents_exclude_undetected_agents() {
+        let project = tempdir().unwrap();
+        let cwd = project.path().to_string_lossy().to_string();
+
+        let detected = AgentType::detect_installed();
+        let undetected_agent = AgentType::all()
+            .find(|agent| {
+                !detected.contains(agent) && agent.config().skills_dir != ".agents/skills"
+            })
+            .expect("expected at least one undetected agent with a separate skill directory");
+
+        let agent_dir = project
+            .path()
+            .join(undetected_agent.config().skills_dir)
+            .join("ghost-skill");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(
+            agent_dir.join("SKILL.md"),
+            "---\nname: ghost-skill\ndescription: Hidden skill\n---\n",
+        )
+        .unwrap();
+
+        let mut skill = InstalledSkill {
+            name: "ghost-skill".to_string(),
+            description: "Hidden skill".to_string(),
+            path: agent_dir.to_string_lossy().to_string(),
+            canonical_path: agent_dir.to_string_lossy().to_string(),
+            scope: SkillScope::Project,
+            agents: vec![undetected_agent],
+            card_agents: None,
+            source: None,
+            source_url: None,
+            installed_at: None,
+            updated_at: None,
+            has_update: None,
+            can_run_update: None,
+            can_check_for_updates: None,
+            update_reason: None,
+            plugin_name: None,
+            git_ref: None,
+            default_available_agent_count: None,
+            private_adapted_agent_count: None,
+            duplicate_copy_count: None,
+            default_available_agents: None,
+            private_adapted_agents: None,
+            duplicate_copy_agents: None,
+            private_only_agents: None,
+            private_copy_agents: None,
+        };
+
+        apply_presence_summary(&mut skill, &cwd);
+
+        assert!(
+            skill.agents.contains(&undetected_agent),
+            "presence summary should keep undetected private agent effective"
+        );
+        assert!(
+            !skill
+                .card_agents
+                .as_ref()
+                .unwrap()
+                .contains(&undetected_agent),
+            "skill card agents should exclude undetected agents"
+        );
     }
 
     #[test]
@@ -850,6 +938,7 @@ Content.
             canonical_path: String::new(),
             scope: SkillScope::Project,
             agents: Vec::new(),
+            card_agents: None,
             source: None,
             source_url: None,
             installed_at: None,
@@ -897,6 +986,7 @@ Content.
             canonical_path: String::new(),
             scope: SkillScope::Project,
             agents: Vec::new(),
+            card_agents: None,
             source: None,
             source_url: None,
             installed_at: None,
@@ -930,6 +1020,7 @@ Content.
             canonical_path: String::new(),
             scope: SkillScope::Global,
             agents: Vec::new(),
+            card_agents: None,
             source: None,
             source_url: None,
             installed_at: None,
