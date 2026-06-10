@@ -172,7 +172,7 @@ pub struct InstalledSkill {
     /// 已独立适配 Agent 数量
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_adapted_agent_count: Option<u32>,
-    /// 可清理的重复独立副本数量
+    /// 可清理的额外 Agent 目录项数量（可能是链接或副本）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duplicate_copy_count: Option<u32>,
     /// 默认可用 Agents
@@ -181,13 +181,13 @@ pub struct InstalledSkill {
     /// 需要/已有单独适配的 Agents
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_adapted_agents: Option<Vec<AgentType>>,
-    /// 当前存在重复独立副本的 Agents
+    /// 当前存在额外 Agent 目录项的 Agents（可能是链接或副本）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duplicate_copy_agents: Option<Vec<AgentType>>,
-    /// 当前只有独立副本的 Agents
+    /// 当前只通过 Agent 目录项使用的 Agents
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_only_agents: Option<Vec<AgentType>>,
-    /// 需要按独立副本重写的默认可用 Agents
+    /// 需要额外保留到 Agent 目录的默认可用 Agents
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_copy_agents: Option<Vec<AgentType>>,
 }

@@ -18,13 +18,13 @@ import type { AgentInfo } from '@/bindings';
 interface AgentSelectorProps {
   /** 选中的 agent IDs */
   selectedAgents: string[];
-  /** 明确保留独立副本的可直接使用 agent IDs */
+  /** 额外保留到 Agent 目录中的可直接使用 Agent IDs */
   privateCopyAgents?: string[];
   /** 所有 agents */
   allAgents: AgentInfo[];
   /** 选择变化回调 */
   onSelectionChange: (agents: string[]) => void;
-  /** 独立副本选择变化回调 */
+  /** 额外保留选择变化回调 */
   onPrivateCopyChange?: (agents: string[]) => void;
   /** 安装范围（用于动态显示自动应用路径） */
   scope?: 'global' | 'project';
@@ -44,19 +44,19 @@ export function AgentSelector({
 }: AgentSelectorProps) {
   const { t } = useTranslation();
   const selectedAgentsRef = useRef(selectedAgents);
-  const privateCopyAgentsRef = useRef(privateCopyAgents);
+  const keptAgentDirectoryAgentsRef = useRef(privateCopyAgents);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [privateCopyUndetectedExpanded, setPrivateCopyUndetectedExpanded] = useState(false);
+  const [keptAgentDirectoryUndetectedExpanded, setKeptAgentDirectoryUndetectedExpanded] = useState(false);
 
   useEffect(() => {
     selectedAgentsRef.current = selectedAgents;
   }, [selectedAgents]);
   useEffect(() => {
-    privateCopyAgentsRef.current = privateCopyAgents;
+    keptAgentDirectoryAgentsRef.current = privateCopyAgents;
   }, [privateCopyAgents]);
 
   const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
-  const privateCopyAgentIds = useMemo(() => new Set(privateCopyAgents), [privateCopyAgents]);
+  const keptAgentDirectoryAgentIds = useMemo(() => new Set(privateCopyAgents), [privateCopyAgents]);
   const {
     detectedDefaultAvailable,
     undetectedDefaultAvailable,
@@ -68,14 +68,14 @@ export function AgentSelector({
     [allAgents, scope, selectedAgentIds]
   );
   const {
-    visiblePrivateCopyEligibleAgents,
-    hiddenPrivateCopyEligibleAgents,
+    visibleKeptAgentDirectoryAgents,
+    hiddenKeptAgentDirectoryAgents,
   } = useMemo(() => {
     const visible: AgentInfo[] = [];
     const hidden: AgentInfo[] = [];
 
     for (const agent of privateCopyEligibleAgents) {
-      if (agent.detected || privateCopyAgentIds.has(agent.id)) {
+      if (agent.detected || keptAgentDirectoryAgentIds.has(agent.id)) {
         visible.push(agent);
       } else {
         hidden.push(agent);
@@ -83,10 +83,10 @@ export function AgentSelector({
     }
 
     return {
-      visiblePrivateCopyEligibleAgents: visible,
-      hiddenPrivateCopyEligibleAgents: hidden,
+      visibleKeptAgentDirectoryAgents: visible,
+      hiddenKeptAgentDirectoryAgents: hidden,
     };
-  }, [privateCopyEligibleAgents, privateCopyAgentIds]);
+  }, [privateCopyEligibleAgents, keptAgentDirectoryAgentIds]);
 
   const toggleAgent = useCallback((agentId: string) => {
     const currentSelection = selectedAgentsRef.current;
@@ -101,12 +101,12 @@ export function AgentSelector({
   const togglePrivateCopyAgent = useCallback((agentId: string) => {
     if (!onPrivateCopyChange) return;
 
-    const currentSelection = privateCopyAgentsRef.current;
+    const currentSelection = keptAgentDirectoryAgentsRef.current;
     const isSelected = currentSelection.includes(agentId);
     const newSelection = isSelected
       ? currentSelection.filter((id) => id !== agentId)
       : [...currentSelection, agentId];
-    privateCopyAgentsRef.current = newSelection;
+    keptAgentDirectoryAgentsRef.current = newSelection;
     onPrivateCopyChange(newSelection);
   }, [onPrivateCopyChange]);
 
@@ -286,18 +286,18 @@ export function AgentSelector({
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-1">
               <div className="flex flex-col space-y-1">
-                {visiblePrivateCopyEligibleAgents.map((agent) => (
+                {visibleKeptAgentDirectoryAgents.map((agent) => (
                   <AgentRow
                     key={agent.id}
                     agent={agent}
-                    selected={privateCopyAgentIds.has(agent.id)}
+                    selected={keptAgentDirectoryAgentIds.has(agent.id)}
                     onToggle={togglePrivateCopyAgent}
                     scope={scope}
                     pathOverride={getAgentTarget(agent, scope).privatePath ?? undefined}
                   />
                 ))}
-                {hiddenPrivateCopyEligibleAgents.length > 0 && (
-                  <Collapsible open={privateCopyUndetectedExpanded} onOpenChange={setPrivateCopyUndetectedExpanded}>
+                {hiddenKeptAgentDirectoryAgents.length > 0 && (
+                  <Collapsible open={keptAgentDirectoryUndetectedExpanded} onOpenChange={setKeptAgentDirectoryUndetectedExpanded}>
                     <CollapsibleTrigger asChild>
                       <div className="relative py-2 flex items-center justify-center">
                         <div className="absolute inset-0 flex items-center" aria-hidden="true">
@@ -308,23 +308,23 @@ export function AgentSelector({
                           size="sm"
                           className="relative bg-background text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors h-7 px-3"
                         >
-                          {privateCopyUndetectedExpanded ? (
+                          {keptAgentDirectoryUndetectedExpanded ? (
                             <ChevronUp className="h-3.5 w-3.5" />
                           ) : (
                             <ChevronDown className="h-3.5 w-3.5" />
                           )}
-                          {privateCopyUndetectedExpanded
+                          {keptAgentDirectoryUndetectedExpanded
                             ? t('addSkill.agents.collapseOtherAgents')
-                            : t('addSkill.agents.expandOtherAgents', { count: hiddenPrivateCopyEligibleAgents.length })}
+                            : t('addSkill.agents.expandOtherAgents', { count: hiddenKeptAgentDirectoryAgents.length })}
                         </Button>
                       </div>
                     </CollapsibleTrigger>
                     <CollapsibleContent className="flex flex-col space-y-1 mt-1">
-                      {hiddenPrivateCopyEligibleAgents.map((agent) => (
+                      {hiddenKeptAgentDirectoryAgents.map((agent) => (
                         <AgentRow
                           key={agent.id}
                           agent={agent}
-                          selected={privateCopyAgentIds.has(agent.id)}
+                          selected={keptAgentDirectoryAgentIds.has(agent.id)}
                           onToggle={togglePrivateCopyAgent}
                           scope={scope}
                           pathOverride={getAgentTarget(agent, scope).privatePath ?? undefined}

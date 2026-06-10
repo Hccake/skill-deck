@@ -25,10 +25,10 @@ vi.mock('react-i18next', () => ({
         return 'These Agents need to be connected to the Skill separately. When selected, install will create a link or copy for them.';
       }
       if (key === 'addSkill.agents.privateCopyTitle') {
-        return 'Dedicated copies';
+        return 'Keep separately';
       }
       if (key === 'addSkill.agents.privateCopyHint') {
-        return 'These Agents can use the shared Skill directory. Select an Agent only when you want it to keep its own copy; copies may not update with the shared Skill.';
+        return 'These Agents can already use the shared Skill directory. Select an Agent only when you also want to keep a link or copy in its own Skill directory; copied files may not update with the shared Skill.';
       }
       return key;
     },
@@ -139,7 +139,7 @@ describe('AgentSelector', () => {
     expect(screen.getByText('Show 1 more agents')).toBeDefined();
   });
 
-  it('shows separate version options for eligible ready-to-use agents', () => {
+  it('shows optional agent-directory entries for eligible ready-to-use agents', () => {
     const onPrivateCopyChange = vi.fn();
     renderAgentSelector(
       <AgentSelector
@@ -170,12 +170,12 @@ describe('AgentSelector', () => {
       />
     );
 
-    expect(screen.getByText('Dedicated copies')).toBeDefined();
-    expect(screen.getByText('These Agents can use the shared Skill directory. Select an Agent only when you want it to keep its own copy; copies may not update with the shared Skill.')).toBeDefined();
+    expect(screen.getByText('Keep separately')).toBeDefined();
+    expect(screen.getByText('These Agents can already use the shared Skill directory. Select an Agent only when you also want to keep a link or copy in its own Skill directory; copied files may not update with the shared Skill.')).toBeDefined();
     expect(screen.getByText('~/.codex/skills')).toBeDefined();
   });
 
-  it('keeps dedicated copy options collapsed until requested when nothing is selected', () => {
+  it('keeps optional agent-directory entries collapsed until requested when nothing is selected', () => {
     renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
@@ -204,11 +204,11 @@ describe('AgentSelector', () => {
       />
     );
 
-    expect(screen.getByText('Dedicated copies')).toBeDefined();
+    expect(screen.getByText('Keep separately')).toBeDefined();
     expect(screen.queryByText('~/.codex/skills')).toBeNull();
   });
 
-  it('groups undetected dedicated copy options behind the same collapsed affordance', async () => {
+  it('groups undetected optional agent-directory entries behind the same collapsed affordance', async () => {
     const { userEvent } = await import('@testing-library/user-event');
     const detectedAgent: AgentInfo = {
       ...agents[0],
@@ -265,7 +265,7 @@ describe('AgentSelector', () => {
     expect(screen.getByText('Cursor')).toBeDefined();
   });
 
-  it('keeps selected undetected dedicated copy options visible for cleanup', () => {
+  it('keeps selected undetected agent-directory entries visible for cleanup', () => {
     const undetectedAgent: AgentInfo = {
       ...agents[1],
       detected: false,
@@ -299,7 +299,7 @@ describe('AgentSelector', () => {
     expect(screen.getByText('~/.cursor/skills')).toBeDefined();
   });
 
-  it('does not prefix absolute private copy paths in project scope', () => {
+  it('does not prefix absolute kept agent-directory paths in project scope', () => {
     renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
@@ -333,7 +333,7 @@ describe('AgentSelector', () => {
     expect(screen.queryByText('./tmp/project/.codex/skills')).toBeNull();
   });
 
-  it('prefixes relative private copy paths in project scope', () => {
+  it('prefixes relative kept agent-directory paths in project scope', () => {
     renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}

@@ -83,9 +83,9 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
   const hasFailures = failedSkillCount > 0;
   const hasSymlinkFallback = results.symlinkFallbackAgents.length > 0;
   const defaultAvailableAgents = results.defaultAvailableAgents;
-  const privateCopyAgentIds = new Set(results.privateCopyAgents ?? []);
+  const keptAgentDirectoryAgentIds = new Set(results.privateCopyAgents ?? []);
   const defaultAvailableAgentCount = defaultAvailableAgents
-    ? defaultAvailableAgents.filter((agent) => !privateCopyAgentIds.has(agent)).length
+    ? defaultAvailableAgents.filter((agent) => !keptAgentDirectoryAgentIds.has(agent)).length
     : null;
 
   const toggleSkill = (skillName: string) => {

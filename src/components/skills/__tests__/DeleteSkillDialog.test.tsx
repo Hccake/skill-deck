@@ -72,7 +72,7 @@ describe('DeleteSkillDialog', () => {
     mockDialogState.loadingAgentDetails = false;
   });
 
-  it('does not force dedicated copies to be deleted when deleting from the shared Skill directory', async () => {
+  it('does not force Agent directory entries to be deleted when deleting from the shared Skill directory', async () => {
     const user = userEvent.setup();
     mockDeleteSkill.mockResolvedValue(undefined);
 

@@ -26,9 +26,9 @@ vi.mock('react-i18next', () => ({
       }
       if (key === 'addSkill.confirm.defaultLocation') return 'Shared Skill directory';
       if (key === 'addSkill.confirm.defaultLocationHint') return 'These Agents read the shared Skill directory.';
-      if (key === 'addSkill.confirm.privateSetup') return 'Extra setup';
-      if (key === 'addSkill.confirm.privateCopies') return 'Dedicated copies';
-      if (key === 'addSkill.confirm.privateCopiesHint') return 'These Agents are already ready to use. This install will also keep a dedicated copy.';
+      if (key === 'addSkill.confirm.privateSetup') return 'Separate setup';
+      if (key === 'addSkill.confirm.privateCopies') return 'Keep separately';
+      if (key === 'addSkill.confirm.privateCopiesHint') return 'These Agents are already ready to use. This install will also keep a link or copy in their own Skill directory.';
       if (key === 'addSkill.confirm.symlinkHint') {
         return 'Connect these Agents to the shared Skill directory with symlinks.';
       }
@@ -266,7 +266,7 @@ describe('ConfirmStep', () => {
     expect(screen.queryByText('Codex')).toBeNull();
   });
 
-  it('renders shared directory, extra setup, and dedicated copy sections', () => {
+  it('renders shared directory, separate setup, and keep-separately sections', () => {
     render(
       <ConfirmStep
         state={{
@@ -338,11 +338,11 @@ describe('ConfirmStep', () => {
     expect(screen.getByText('Install plan')).toBeTruthy();
     expect(screen.getByText('Review which Agents can use this Skill after install.')).toBeTruthy();
     expect(screen.getByText('Shared Skill directory')).toBeTruthy();
-    expect(screen.getByText('Extra setup')).toBeTruthy();
-    expect(screen.getByText('Dedicated copies')).toBeTruthy();
+    expect(screen.getByText('Separate setup')).toBeTruthy();
+    expect(screen.getByText('Keep separately')).toBeTruthy();
     expect(screen.getByText('These Agents read the shared Skill directory.')).toBeTruthy();
     expect(screen.getAllByText('Connect these Agents to the shared Skill directory with symlinks.').length).toBeGreaterThan(0);
-    expect(screen.getByText('These Agents are already ready to use. This install will also keep a dedicated copy.')).toBeTruthy();
+    expect(screen.getByText('These Agents are already ready to use. This install will also keep a link or copy in their own Skill directory.')).toBeTruthy();
     expect(screen.getByText('~/.agents/skills')).toBeTruthy();
     expect(screen.getByText('~/.cursor/skills')).toBeTruthy();
     expect(screen.getByText('~/.firebender/skills')).toBeTruthy();

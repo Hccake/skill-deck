@@ -138,7 +138,7 @@ describe('ManageAgentsDialog', () => {
     expect(onSave).toHaveBeenCalledWith(['cursor'], [], 'copy', [], []);
   });
 
-  it('shows existing duplicate copies as selected dedicated copies and saves deselection', async () => {
+  it('shows existing extra Agent directory entries as selected keep-separately entries and saves deselection', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
     const sharedCompatibleAgent: AgentInfo = {
@@ -202,7 +202,7 @@ describe('ManageAgentsDialog', () => {
     expect(onSave).toHaveBeenCalledWith([], [], 'symlink', [], ['firebender']);
   });
 
-  it('includes duplicate copies in the dedicated copy section', () => {
+  it('includes extra agent-directory entries in the keep-separately section', () => {
     const sharedCompatibleAgent: AgentInfo = {
       id: 'firebender',
       name: 'Firebender',

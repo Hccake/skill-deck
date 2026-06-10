@@ -133,7 +133,7 @@ describe('InstallPreferencesPage', () => {
     expect(screen.getAllByText('Amp').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Ready to use').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/No selection is needed/).length).toBeGreaterThan(0);
-    expect(screen.getByText('Needs extra setup')).toBeDefined();
+    expect(screen.getByText('Needs separate setup')).toBeDefined();
     expect(screen.getAllByText(/link or copy/).length).toBeGreaterThan(0);
   });
 
@@ -167,6 +167,6 @@ describe('InstallPreferencesPage', () => {
 
     render(<InstallPreferencesPage />);
 
-    expect(screen.getByText('Default extra setup was removed where it is no longer needed. These Agents can still use Skills.')).toBeDefined();
+    expect(screen.getByText('Default separate setup was removed where it is no longer needed. These Agents can still use Skills.')).toBeDefined();
   });
 });
