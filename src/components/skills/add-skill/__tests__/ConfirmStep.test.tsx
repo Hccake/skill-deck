@@ -13,13 +13,13 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (key === 'addSkill.confirm.summary') {
-        return `Will install ${options?.count} skills. ${options?.overwriteCount} will overwrite existing content.`;
+        return `Will install ${options?.count} skills. ${options?.overwriteCount} target directories already contain matching skills and will be overwritten.`;
       }
       if (key === 'addSkill.confirm.summaryNoOverwrite') {
         return `Will install ${options?.count} skills.`;
       }
       if (key === 'addSkill.confirm.itemsTitle') return 'Install contents';
-      if (key === 'addSkill.confirm.overwriteGroup') return '覆盖安装';
+      if (key === 'addSkill.confirm.overwriteGroup') return '目标目录已存在';
       if (key === 'addSkill.confirm.installPlan') return 'Install plan';
       if (key === 'addSkill.confirm.installPlanHint') {
         return 'Review which Agents can use this Skill after install.';
@@ -218,7 +218,7 @@ describe('ConfirmStep', () => {
     });
   });
 
-  it('summarizes the install plan and uses overwrite-install status only for conflicted skills', () => {
+  it('summarizes the install plan and uses target-exists status only for conflicted skills', () => {
     render(
       <ConfirmStep
         state={{
@@ -236,11 +236,11 @@ describe('ConfirmStep', () => {
       />
     );
 
-    expect(screen.getByText('Will install 2 skills. 1 will overwrite existing content.')).toBeTruthy();
+    expect(screen.getByText('Will install 2 skills. 1 target directories already contain matching skills and will be overwritten.')).toBeTruthy();
     expect(screen.getByText('Install contents')).toBeTruthy();
     const installContentsSection = screen.getByText('Install contents').closest('div');
-    expect(installContentsSection?.textContent).toContain('Will install 2 skills. 1 will overwrite existing content.');
-    expect(screen.getByText('覆盖安装')).toBeTruthy();
+    expect(installContentsSection?.textContent).toContain('Will install 2 skills. 1 target directories already contain matching skills and will be overwritten.');
+    expect(screen.getByText('目标目录已存在')).toBeTruthy();
     expect(screen.queryByText('将新增')).toBeNull();
     expect(screen.queryByText('1 locations')).toBeNull();
   });

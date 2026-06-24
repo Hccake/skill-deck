@@ -528,7 +528,7 @@
       "moreUndetected": "+ {{count}} not detected",
       "undetectedListPrefix": "These Agents read the shared Skill directory, but were not detected",
       "viewUndetectedInfo": "View {{count}} ready-to-use Agents that were not detected",
-      "detected": "Installed",
+      "detected": "Detected",
       "notDetected": "Not detected",
       "noAutomaticAgents": "No related agents were detected.",
       "noDefaultAvailableAgents": "No ready-to-use Agents were detected."
@@ -558,11 +558,11 @@
       "singleDirectoryHint": "If no Agents need separate setup, the Skill is installed only to the shared Skill directory."
     },
     "confirm": {
-      "summary": "Will install {{count}} skills. {{overwriteCount}} will overwrite existing content.",
+      "summary": "Will install {{count}} skills. {{overwriteCount}} target directories already contain matching skills and will be overwritten.",
       "summaryNoOverwrite": "Will install {{count}} skills.",
       "itemsTitle": "Install contents",
-      "overwriteCount": "{{count}} skills already exist and will be overwritten",
-      "willOverwrite": "Overwrites: {{agents}}",
+      "overwriteCount": "{{count}} target directories already contain matching skills and will be overwritten",
+      "willOverwrite": "Overwrite targets: {{agents}}",
       "shared": "Shared Skill directory",
       "directories": "Install locations",
       "directoryHint": "Skills are installed to the shared Skill directory. Agents that need separate setup are handled with the selected method.",
@@ -583,9 +583,9 @@
         "archive": "archive",
         "digestVerified": "digest verified"
       },
-      "conflictZone": "Conflict & Overwrite",
-      "freshZone": "New Installs",
-      "overwriteGroup": "Overwrite"
+      "conflictZone": "Existing targets",
+      "freshZone": "New writes",
+      "overwriteGroup": "Target exists"
     },
     "risk": {
       "openclawTitle": "OpenClaw sources require extra confirmation",
@@ -612,13 +612,13 @@
       "defaultAvailable": "Ready to use",
       "privateAdapted": "Separate setup",
       "privateCopies": "Kept separately",
-      "skippedCategory": "Skipped",
+      "skippedCategory": "Not written",
       "failedCategory": "Failed",
       "showFailures": "Failures ({{count}})",
       "hideFailures": "Hide failures",
       "symlinked": "symlinked",
       "copied": "copied",
-      "skipped": "Skipped: {{agents}}",
+      "skipped": "Not written: {{agents}}",
       "symlinkFailed": "Symlinks failed for: {{agents}}",
       "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support."
     },
@@ -675,7 +675,7 @@
       "retry": "Retry",
       "retrySkill": "Retry Skill",
       "done": "Done",
-      "installWithOverwrite": "Overwrite & Install"
+      "installWithOverwrite": "Confirm overwrite and continue"
     }
   }
 }

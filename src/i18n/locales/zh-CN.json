@@ -528,7 +528,7 @@
       "moreUndetected": "+ {{count}} 个未检测到",
       "undetectedListPrefix": "这些 Agent 会读取通用 Skill 目录，但当前安装状态未确认",
       "viewUndetectedInfo": "查看 {{count}} 个未检测到但可直接使用的 Agent",
-      "detected": "已安装",
+      "detected": "已检测到",
       "notDetected": "未检测到",
       "noAutomaticAgents": "未检测到相关 Agent。",
       "noDefaultAvailableAgents": "未检测到可直接使用的 Agent。"
@@ -558,11 +558,11 @@
       "singleDirectoryHint": "没有选择需要单独接入的 Agent 时，Skill 只会安装到通用 Skill 目录。"
     },
     "confirm": {
-      "summary": "将安装 {{count}} 个 Skill，其中 {{overwriteCount}} 个会覆盖已有内容",
+      "summary": "将安装 {{count}} 个 Skill，其中 {{overwriteCount}} 个目标目录已有同名 Skill，继续后会覆盖对应内容",
       "summaryNoOverwrite": "将安装 {{count}} 个 Skill",
       "itemsTitle": "安装内容",
-      "overwriteCount": "{{count}} 个 Skills 已存在，安装后将被覆盖",
-      "willOverwrite": "将覆盖: {{agents}}",
+      "overwriteCount": "{{count}} 个目标目录已有同名 Skill，继续后会覆盖对应内容",
+      "willOverwrite": "将覆盖目标: {{agents}}",
       "shared": "通用 Skill 目录",
       "directories": "安装位置",
       "directoryHint": "Skill 会安装到通用 Skill 目录；需要单独接入的 Agent 会按所选方式处理。",
@@ -583,9 +583,9 @@
         "archive": "archive",
         "digestVerified": "摘要已验证"
       },
-      "conflictZone": "冲突覆盖区",
-      "freshZone": "全新安装区",
-      "overwriteGroup": "覆盖安装"
+      "conflictZone": "已有目标目录",
+      "freshZone": "新增写入",
+      "overwriteGroup": "目标目录已存在"
     },
     "risk": {
       "openclawTitle": "OpenClaw 来源需要额外确认",
@@ -612,13 +612,13 @@
       "defaultAvailable": "可直接使用",
       "privateAdapted": "已单独接入",
       "privateCopies": "额外保留",
-      "skippedCategory": "已跳过",
+      "skippedCategory": "未写入",
       "failedCategory": "失败",
       "showFailures": "失败明细 ({{count}})",
       "hideFailures": "收起失败明细",
       "symlinked": "已链接",
       "copied": "已复制",
-      "skipped": "已跳过: {{agents}}",
+      "skipped": "未写入: {{agents}}",
       "symlinkFailed": "符号链接失败: {{agents}}",
       "symlinkFailedHint": "已改为复制文件。在 Windows 上，启用开发者模式可支持符号链接。"
     },
@@ -675,7 +675,7 @@
       "retry": "重试",
       "retrySkill": "重试该 Skill",
       "done": "完成",
-      "installWithOverwrite": "覆盖并安装"
+      "installWithOverwrite": "确认覆盖并继续"
     }
   }
 }

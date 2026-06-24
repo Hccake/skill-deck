@@ -22,7 +22,7 @@ vi.mock('react-i18next', () => ({
         return 'Kept separately';
       }
       if (key === 'addSkill.complete.skippedCategory') {
-        return 'Skipped';
+        return 'Not written';
       }
       if (key === 'addSkill.complete.failedCategory') {
         return 'Failed';
@@ -52,7 +52,7 @@ vi.mock('react-i18next', () => ({
         return `Failed: ${options?.count}`;
       }
       if (key === 'addSkill.complete.skipped') {
-        return `Skipped: ${options?.agents}`;
+        return `Not written: ${options?.agents}`;
       }
       if (key === 'addSkill.error.unknown') {
         return 'Unknown error';
@@ -152,7 +152,7 @@ describe('CompleteStep', () => {
     render(<CompleteStep state={makeState(installResults)} onDone={() => undefined} />);
 
     expect(screen.getByText('1/2 agents')).toBeDefined();
-    expect(screen.getByText('Skipped: windsurf')).toBeDefined();
+    expect(screen.getByText('Not written: windsurf')).toBeDefined();
   });
 
   it('retries one failed skill with only failed agents', () => {
@@ -209,7 +209,7 @@ describe('CompleteStep', () => {
     expect(screen.getByText('Ready to use · 1')).toBeDefined();
     expect(screen.getByText('Separate setup · 1')).toBeDefined();
     expect(screen.getByText('Kept separately · 1')).toBeDefined();
-    expect(screen.getByText('Skipped · 1')).toBeDefined();
+    expect(screen.getByText('Not written · 1')).toBeDefined();
     expect(screen.getByText('Failed · 1')).toBeDefined();
   });
 
