@@ -31,6 +31,17 @@ async listAgentsForProject(projectPath: string | null) : Promise<Result<AgentInf
 }
 },
 /**
+ * 列出指定项目内 Eve 可安装的具体目标：root agent 与已存在 subagents。
+ */
+async listEveInstallTargets(projectPath: string) : Promise<Result<InstallTargetInfo[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_eve_install_targets", { projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * 列出已安装的 skills
  * 对应前端调用: invoke('list_skills', { params })
  */
@@ -557,6 +568,10 @@ skills: string[];
  */
 agents: string[];
 /**
+ * 具体安装目标。Eve root/subagent 和未来非 AgentType 目标使用该字段。
+ */
+agentTargets?: InstallTargetSpec[];
+/**
  * 明确要求写入独立副本的 agents
  */
 privateCopyAgents?: string[];
@@ -596,6 +611,14 @@ skillName: string;
  * Agent 名称
  */
 agent: string;
+/**
+ * 具体目标 ID，例如 `eve:root` 或 `eve:research`
+ */
+targetId?: string | null;
+/**
+ * Eve subagent 名称；Eve root 和非 Eve Agent 为空
+ */
+subagent?: string | null;
 /**
  * 是否成功
  */
@@ -659,7 +682,11 @@ privateAdaptedAgents?: string[];
 /**
  * 明确写入独立副本的 agents
  */
-privateCopyAgents?: string[] }
+privateCopyAgents?: string[];
+/**
+ * 具体目标详情，主要用于 Eve root/subagent 展示
+ */
+targetDetails?: InstallTargetInfo[] }
 /**
  * 风险策略种类
  */
@@ -668,6 +695,14 @@ export type InstallRiskKind = "none" | "require-confirmation"
  * 安装风险策略
  */
 export type InstallRiskPolicy = { kind: InstallRiskKind; code?: string | null }
+/**
+ * 具体安装目标展示信息，供前端确认页、完成页和目标选择使用。
+ */
+export type InstallTargetInfo = { targetId: string; agent: AgentType; displayName: string; subagent?: string | null; path: string }
+/**
+ * 具体安装目标请求。Eve root/subagent 使用该模型表达，不再只依赖 Agent 类型。
+ */
+export type InstallTargetSpec = { agent: AgentType; subagent?: string | null }
 /**
  * 已安装的 Skill 信息
  * 对应 CLI: InstalledSkill (installer.ts:783-790)
@@ -884,7 +919,7 @@ export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean
 /**
  * agent 级更新结果
  */
-export type UpdateSkillAgentResult = { agent: string; status: UpdateSkillAgentStatus; mode?: InstallMode | null; error?: string | null; durationMs?: number | null }
+export type UpdateSkillAgentResult = { agent: string; targetId?: string | null; subagent?: string | null; status: UpdateSkillAgentStatus; mode?: InstallMode | null; error?: string | null; durationMs?: number | null }
 /**
  * 单个 agent 的更新状态
  */

@@ -55,6 +55,11 @@ pub struct LocalSkillLockEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_path: Option<String>,
 
+    /// CLI/GUI 共享 Eve 扩展：该 skill 安装到的 Eve subagent targets。
+    /// 空字符串表示 Eve root agent (`agent/skills`)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<Vec<String>>,
+
     /// GUI 扩展字段：所属 plugin 名称
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_name: Option<String>,
@@ -145,6 +150,7 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
                     Some(entry.skill_folder_hash)
                 },
                 skill_path: entry.skill_path,
+                subagents: None,
                 plugin_name: entry.plugin_name,
             },
         );
@@ -282,6 +288,7 @@ mod tests {
                 computed_hash: "hash-z".to_string(),
                 remote_hash: None,
                 skill_path: None,
+                subagents: None,
                 plugin_name: None,
             },
         );
@@ -295,6 +302,7 @@ mod tests {
                 computed_hash: "hash-a".to_string(),
                 remote_hash: None,
                 skill_path: None,
+                subagents: None,
                 plugin_name: None,
             },
         );
@@ -318,6 +326,7 @@ mod tests {
             computed_hash: "abc123".to_string(),
             remote_hash: None,
             skill_path: None,
+            subagents: None,
             plugin_name: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
@@ -395,6 +404,7 @@ mod tests {
                 computed_hash: "abc123".to_string(),
                 remote_hash: Some("tree-sha".to_string()),
                 skill_path: Some("skills/test/SKILL.md".to_string()),
+                subagents: None,
                 plugin_name: None,
             },
         );
@@ -435,6 +445,7 @@ mod tests {
                 computed_hash: "hash1".to_string(),
                 remote_hash: None,
                 skill_path: None,
+                subagents: None,
                 plugin_name: None,
             },
             &project_path,
@@ -499,6 +510,7 @@ mod tests {
             computed_hash: "abc123".to_string(),
             remote_hash: None,
             skill_path: None,
+            subagents: None,
             plugin_name: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
@@ -527,5 +539,26 @@ mod tests {
         assert_eq!(entry.ref_name, Some("main".to_string()));
         assert_eq!(entry.source_url, None);
         assert_eq!(entry.remote_hash, None);
+    }
+
+    #[test]
+    fn test_local_lock_entry_round_trips_eve_subagents() {
+        let json = r#"{
+          "source": "vercel/eve",
+          "ref": "main",
+          "sourceType": "github",
+          "computedHash": "abc",
+          "skillPath": "SKILL.md",
+          "subagents": ["", "research"]
+        }"#;
+
+        let entry: LocalSkillLockEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            entry.subagents,
+            Some(vec!["".to_string(), "research".to_string()])
+        );
+
+        let written = serde_json::to_string(&entry).unwrap();
+        assert!(written.contains("\"subagents\""));
     }
 }

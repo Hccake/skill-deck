@@ -15,6 +15,7 @@ pub fn run() {
         .commands(collect_commands![
             commands::agents::list_agents,
             commands::agents::list_agents_for_project,
+            commands::agents::list_eve_install_targets,
             commands::skills::list_skills,
             commands::skills::read_skill_content,
             commands::config::get_config,

@@ -976,6 +976,7 @@ Content.
             computed_hash: String::new(),
             remote_hash: Some("tree123".to_string()),
             skill_path: Some("skills/demo/SKILL.md".to_string()),
+            subagents: None,
             plugin_name: None,
         };
 

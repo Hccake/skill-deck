@@ -3,6 +3,7 @@
 
 use crate::core::agents::{AgentInfo, AgentType};
 use crate::error::AppError;
+use crate::models::InstallTargetInfo;
 
 /// 列出所有 Agents（包括未安装的）
 /// 返回完整信息供前端使用，前端无需额外计算
@@ -29,6 +30,15 @@ pub fn list_agents_for_project(project_path: Option<String>) -> Result<Vec<Agent
     Ok(agents)
 }
 
+/// 列出指定项目内 Eve 可安装的具体目标：root agent 与已存在 subagents。
+#[tauri::command]
+#[specta::specta]
+pub fn list_eve_install_targets(project_path: String) -> Result<Vec<InstallTargetInfo>, AppError> {
+    Ok(crate::core::eve::eve_install_targets_for_project(
+        &project_path,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,5 +62,22 @@ mod tests {
 
         assert!(eve.detected);
         assert_eq!(eve.skills_dir, "agent/skills");
+    }
+
+    #[test]
+    fn list_eve_install_targets_returns_root_and_subagents() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("agent/subagents/research")).unwrap();
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{"dependencies":{"eve":"^0.11.5"}}"#,
+        )
+        .unwrap();
+
+        let targets = list_eve_install_targets(temp.path().to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].target_id, "eve:root");
+        assert_eq!(targets[1].target_id, "eve:research");
     }
 }

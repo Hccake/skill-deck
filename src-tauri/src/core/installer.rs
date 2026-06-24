@@ -65,6 +65,8 @@ pub fn install_skill_for_agent(
         return InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -90,6 +92,8 @@ pub fn install_skill_for_agent(
         Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: true,
             path,
             canonical_path,
@@ -106,6 +110,8 @@ pub fn install_skill_for_agent(
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -484,6 +490,8 @@ pub fn link_skill_for_agent(
         return InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -502,6 +510,8 @@ pub fn link_skill_for_agent(
         Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: true,
             path,
             canonical_path,
@@ -518,6 +528,8 @@ pub fn link_skill_for_agent(
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -550,6 +562,8 @@ pub fn link_skill_for_agent_without_fallback(
         return InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -576,6 +590,8 @@ pub fn link_skill_for_agent_without_fallback(
         Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: true,
             path,
             canonical_path,
@@ -592,6 +608,8 @@ pub fn link_skill_for_agent_without_fallback(
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -622,6 +640,8 @@ pub fn copy_skill_for_agent(
         return InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -640,6 +660,8 @@ pub fn copy_skill_for_agent(
         Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: true,
             path,
             canonical_path,
@@ -652,6 +674,8 @@ pub fn copy_skill_for_agent(
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,
@@ -679,6 +703,8 @@ pub fn copy_skill_for_agent_private(
         Ok((path, canonical_path, symlink_failed, skipped)) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: true,
             path,
             canonical_path,
@@ -691,6 +717,8 @@ pub fn copy_skill_for_agent_private(
         Err(e) => InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success: false,
             path: PathBuf::new(),
             canonical_path: None,

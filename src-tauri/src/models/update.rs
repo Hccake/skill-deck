@@ -31,6 +31,10 @@ pub enum UpdateSkillAgentStatus {
 #[specta(rename_all = "camelCase")]
 pub struct UpdateSkillAgentResult {
     pub agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
     pub status: UpdateSkillAgentStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<InstallMode>,
@@ -107,11 +111,13 @@ mod tests {
                 warnings: vec!["lock write failed".to_string()],
                 duration_ms: Some(12),
                 agent_results: vec![UpdateSkillAgentResult {
-                    agent: "cursor".to_string(),
+                    agent: "eve".to_string(),
                     status: UpdateSkillAgentStatus::Failed,
                     mode: Some(InstallMode::Copy),
                     error: Some("permission denied".to_string()),
                     duration_ms: Some(3),
+                    target_id: Some("eve:research".to_string()),
+                    subagent: Some("research".to_string()),
                 }],
             }],
             summary: UpdateSkillSummary {
@@ -132,6 +138,14 @@ mod tests {
         );
         assert_eq!(value["results"][0]["gitRef"], "main");
         assert_eq!(value["results"][0]["agentResults"][0]["mode"], "copy");
+        assert_eq!(
+            value["results"][0]["agentResults"][0]["targetId"],
+            "eve:research"
+        );
+        assert_eq!(
+            value["results"][0]["agentResults"][0]["subagent"],
+            "research"
+        );
         assert!(value["results"][0]["agentResults"].is_array());
     }
 }

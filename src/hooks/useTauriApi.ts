@@ -9,6 +9,7 @@ import type {
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
   InstallRiskPolicy, InstallRiskKind,
   DefaultTargetAgents,
+  InstallTargetInfo,
 } from '@/bindings';
 
 export type {
@@ -18,6 +19,7 @@ export type {
   SkillAuditData, SkillAgentDetails, ManageAgentsResult, DuplicateCleanupResult,
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
+  InstallTargetInfo,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -45,6 +47,13 @@ export async function listAgents(): Promise<AgentInfo[]> {
  */
 export async function listAgentsForProject(projectPath?: string): Promise<AgentInfo[]> {
   return unwrap(await commands.listAgentsForProject(projectPath ?? null));
+}
+
+/**
+ * 列出 Eve project 内可安装的具体目标（root agent 与 subagents）。
+ */
+export async function listEveInstallTargets(projectPath: string): Promise<InstallTargetInfo[]> {
+  return unwrap(await commands.listEveInstallTargets(projectPath));
 }
 
 /**

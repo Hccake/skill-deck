@@ -24,6 +24,29 @@ pub enum InstallMode {
     Copy,
 }
 
+/// 具体安装目标请求。Eve root/subagent 使用该模型表达，不再只依赖 Agent 类型。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct InstallTargetSpec {
+    pub agent: AgentType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+}
+
+/// 具体安装目标展示信息，供前端确认页、完成页和目标选择使用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct InstallTargetInfo {
+    pub target_id: String,
+    pub agent: AgentType,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+    pub path: String,
+}
+
 /// 安装参数
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +58,9 @@ pub struct InstallParams {
     pub skills: Vec<String>,
     /// 目标 agents
     pub agents: Vec<String>,
+    /// 具体安装目标。Eve root/subagent 和未来非 AgentType 目标使用该字段。
+    #[serde(default)]
+    pub agent_targets: Vec<InstallTargetSpec>,
     /// 明确要求写入独立副本的 agents
     #[serde(default)]
     pub private_copy_agents: Vec<String>,
@@ -80,6 +106,12 @@ pub struct InstallResult {
     pub skill_name: String,
     /// Agent 名称
     pub agent: String,
+    /// 具体目标 ID，例如 `eve:root` 或 `eve:research`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    /// Eve subagent 名称；Eve root 和非 Eve Agent 为空
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
     /// 是否成功
     pub success: bool,
     /// 安装路径
@@ -119,6 +151,9 @@ pub struct InstallResults {
     /// 明确写入独立副本的 agents
     #[serde(default)]
     pub private_copy_agents: Vec<String>,
+    /// 具体目标详情，主要用于 Eve root/subagent 展示
+    #[serde(default)]
+    pub target_details: Vec<InstallTargetInfo>,
 }
 
 /// Agent 对某个 skill 的安装/可用状态
@@ -283,7 +318,10 @@ pub enum InstallRiskKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstallParams, InstallResultCategory};
+    use super::{
+        AgentType, InstallParams, InstallResultCategory, InstallResults, InstallTargetInfo,
+        InstallTargetSpec,
+    };
 
     #[test]
     fn test_install_params_defaults_preserve_existing_modes_to_false() {
@@ -323,5 +361,45 @@ mod tests {
     fn test_install_result_category_serializes_kebab_case() {
         let value = serde_json::to_value(InstallResultCategory::DefaultAvailable).unwrap();
         assert_eq!(value, serde_json::json!("default-available"));
+    }
+
+    #[test]
+    fn test_install_target_spec_serializes_eve_subagent() {
+        let spec = InstallTargetSpec {
+            agent: AgentType::Eve,
+            subagent: Some("research".to_string()),
+        };
+
+        let value = serde_json::to_value(&spec).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "agent": "eve",
+                "subagent": "research"
+            })
+        );
+    }
+
+    #[test]
+    fn test_install_results_include_target_details() {
+        let results = InstallResults {
+            successful: Vec::new(),
+            failed: Vec::new(),
+            symlink_fallback_agents: Vec::new(),
+            default_available_agents: Vec::new(),
+            private_adapted_agents: Vec::new(),
+            private_copy_agents: Vec::new(),
+            target_details: vec![InstallTargetInfo {
+                target_id: "eve:research".to_string(),
+                agent: AgentType::Eve,
+                display_name: "Eve (research)".to_string(),
+                subagent: Some("research".to_string()),
+                path: "/tmp/project/agent/subagents/research/skills".to_string(),
+            }],
+        };
+
+        let value = serde_json::to_value(&results).unwrap();
+        assert_eq!(value["targetDetails"][0]["targetId"], "eve:research");
+        assert_eq!(value["targetDetails"][0]["subagent"], "research");
     }
 }

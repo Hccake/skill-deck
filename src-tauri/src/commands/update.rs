@@ -604,6 +604,8 @@ async fn update_skill_single(
         .into_iter()
         .map(|r| UpdateSkillAgentResult {
             agent: r.agent,
+            target_id: None,
+            subagent: None,
             status: if r.skipped {
                 UpdateSkillAgentStatus::Skipped
             } else if r.success {
@@ -674,6 +676,7 @@ async fn update_skill_single(
                             Some(final_hash.clone())
                         },
                         skill_path: entry_skill_path.clone(),
+                        subagents: None,
                         plugin_name: entry_plugin_name.clone(),
                     };
                     if let Err(err) = add_skill_to_local_lock(skill_name, entry, pp) {
@@ -1020,6 +1023,8 @@ async fn update_skills_batch_inner(
                 .into_iter()
                 .map(|r| UpdateSkillAgentResult {
                     agent: r.agent,
+                    target_id: None,
+                    subagent: None,
                     status: if r.skipped {
                         UpdateSkillAgentStatus::Skipped
                     } else if r.success {
@@ -1091,6 +1096,7 @@ async fn update_skills_batch_inner(
                                     Some(final_hash.clone())
                                 },
                                 skill_path: entry.skill_path.clone(),
+                                subagents: None,
                                 plugin_name: entry.plugin_name.clone(),
                             };
                             if let Err(err) = add_skill_to_local_lock(&entry.name, lock_entry, pp) {
@@ -1591,6 +1597,8 @@ mod tests {
         let agent_results = vec![
             UpdateSkillAgentResult {
                 agent: "cursor".to_string(),
+                target_id: None,
+                subagent: None,
                 status: UpdateSkillAgentStatus::Success,
                 mode: None,
                 error: None,
@@ -1598,6 +1606,8 @@ mod tests {
             },
             UpdateSkillAgentResult {
                 agent: "claude-code".to_string(),
+                target_id: None,
+                subagent: None,
                 status: UpdateSkillAgentStatus::Failed,
                 mode: None,
                 error: Some("copy failed".to_string()),
@@ -1677,6 +1687,8 @@ mod tests {
         let agent_results = vec![
             UpdateSkillAgentResult {
                 agent: "cursor".to_string(),
+                target_id: None,
+                subagent: None,
                 status: UpdateSkillAgentStatus::Success,
                 mode: None,
                 error: None,
@@ -1684,6 +1696,8 @@ mod tests {
             },
             UpdateSkillAgentResult {
                 agent: "claude-code".to_string(),
+                target_id: None,
+                subagent: None,
                 status: UpdateSkillAgentStatus::Success,
                 mode: None,
                 error: None,
@@ -1700,6 +1714,8 @@ mod tests {
     fn test_skill_status_failed_when_all_agents_failed() {
         let agent_results = vec![UpdateSkillAgentResult {
             agent: "cursor".to_string(),
+            target_id: None,
+            subagent: None,
             status: UpdateSkillAgentStatus::Failed,
             mode: None,
             error: Some("err".to_string()),
@@ -1720,6 +1736,8 @@ mod tests {
     fn test_skill_status_skipped_when_all_agents_skipped() {
         let agent_results = vec![UpdateSkillAgentResult {
             agent: "cursor".to_string(),
+            target_id: None,
+            subagent: None,
             status: UpdateSkillAgentStatus::Skipped,
             mode: None,
             error: None,

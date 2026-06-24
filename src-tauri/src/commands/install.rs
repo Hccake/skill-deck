@@ -552,6 +552,8 @@ async fn install_skills_inner(
             let install_result = InstallResult {
                 skill_name: skill.name.clone(),
                 agent: par.agent.clone(),
+                target_id: None,
+                subagent: None,
                 success: par.success,
                 path: par.path,
                 canonical_path: par.canonical_path,
@@ -668,6 +670,7 @@ async fn install_skills_inner(
                                 Some(skill_folder_hash.clone())
                             },
                             skill_path: skill_path.map(|s| s.to_string()),
+                            subagents: None,
                             plugin_name: skill.plugin_name.clone(),
                         };
                         let _ = add_skill_to_local_lock(&skill.name, entry, project_path);
@@ -696,6 +699,7 @@ async fn install_skills_inner(
             .iter()
             .map(ToString::to_string)
             .collect(),
+        target_details: Vec::new(),
     })
 }
 
@@ -718,6 +722,8 @@ mod tests {
         InstallResult {
             skill_name: skill_name.to_string(),
             agent: agent.to_string(),
+            target_id: None,
+            subagent: None,
             success,
             path,
             canonical_path,
@@ -773,6 +779,7 @@ mod tests {
             source: "owner/repo".to_string(),
             skills: vec!["demo".to_string()],
             agents: vec!["antigravity".to_string()],
+            agent_targets: Vec::new(),
             private_copy_agents: vec!["firebender".to_string()],
             scope: crate::models::Scope::Global,
             project_path: None,
@@ -802,6 +809,7 @@ mod tests {
             source: "owner/repo".to_string(),
             skills: vec!["demo".to_string()],
             agents: vec!["firebender".to_string()],
+            agent_targets: Vec::new(),
             private_copy_agents: vec![],
             scope: crate::models::Scope::Global,
             project_path: None,
@@ -825,6 +833,7 @@ mod tests {
             source: "owner/repo".to_string(),
             skills: vec!["demo".to_string()],
             agents: vec![],
+            agent_targets: Vec::new(),
             private_copy_agents: vec!["antigravity".to_string()],
             scope: crate::models::Scope::Global,
             project_path: None,
@@ -1110,6 +1119,8 @@ mod tests {
         let install_result = InstallResult {
             skill_name: "demo".to_string(),
             agent: result.agent,
+            target_id: None,
+            subagent: None,
             success: result.success,
             path: result.path,
             canonical_path: result.canonical_path,
