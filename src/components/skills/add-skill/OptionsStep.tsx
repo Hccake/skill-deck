@@ -3,16 +3,34 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { listAgents, getDefaultTargetAgents, getLastSelectedAgents } from '@/hooks/useTauriApi';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  listAgents,
+  listAgentsForProject,
+  listEveInstallTargets,
+  getDefaultTargetAgents,
+  getLastSelectedAgents,
+} from '@/hooks/useTauriApi';
 import { canCreatePrivateCopy, filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
 import { AgentSelector } from './AgentSelector';
 import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
-import { Copy, Info, Link2, type LucideIcon } from 'lucide-react';
+import { Bot, Copy, Info, Link2, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { AgentInfo } from '@/bindings';
+import type { AgentInfo, InstallTargetInfo, InstallTargetSpec } from '@/bindings';
 
 // CLI 默认选中的手动安装目标
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
+
+function targetKey(target: Pick<InstallTargetInfo, 'agent' | 'subagent'> | InstallTargetSpec) {
+  return `${target.agent}:${target.subagent ?? 'root'}`;
+}
+
+function targetSpec(target: Pick<InstallTargetInfo, 'agent' | 'subagent'>): InstallTargetSpec {
+  return {
+    agent: target.agent,
+    subagent: target.subagent ?? null,
+  };
+}
 
 interface OptionsStepProps {
   state: WizardState;
@@ -34,12 +52,20 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   // 初始化 agents 数据 — async-parallel 规则
   useEffect(() => {
     async function initAgents() {
-      const agentsPromise = listAgents();
+      const isProjectScope = scope === 'project';
+      const projectPath = state.projectPath;
+      const agentsPromise = isProjectScope
+        ? listAgentsForProject(projectPath)
+        : listAgents();
+      const eveTargetsPromise = isProjectScope && projectPath
+        ? listEveInstallTargets(projectPath).catch(() => [])
+        : Promise.resolve([] as InstallTargetInfo[]);
       const lastSelectedPromise = getLastSelectedAgents();
       const targetDefaultsPromise = getDefaultTargetAgents().catch(() => null);
 
-      const [allAgents, lastSelected, targetDefaults] = await Promise.all([
+      const [allAgents, eveTargets, lastSelected, targetDefaults] = await Promise.all([
         agentsPromise,
+        eveTargetsPromise,
         lastSelectedPromise,
         targetDefaultsPromise,
       ]);
@@ -77,18 +103,54 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
       updateStateRef.current({
         allAgents,
         selectedAgents,
+        availableAgentTargets: eveTargets,
+        selectedAgentTargets: selectedAgents.includes('eve')
+          ? eveTargets.map(targetSpec)
+          : [],
         privateCopyAgents: [],
       });
     }
 
     initAgents();
-  }, [scope]);
+  }, [scope, state.projectPath]);
 
   const handleSelectionChange = useCallback(
     (agents: string[]) => {
-      updateState({ selectedAgents: agents });
+      const next: Partial<WizardState> = { selectedAgents: agents };
+      const availableTargets = state.availableAgentTargets ?? [];
+      const wasEveSelected = state.selectedAgents.includes('eve');
+      const isEveSelected = agents.includes('eve');
+
+      if (!isEveSelected) {
+        next.selectedAgentTargets = [];
+      } else if (!wasEveSelected && availableTargets.length > 0) {
+        next.selectedAgentTargets = availableTargets.map(targetSpec);
+      }
+
+      updateState(next);
     },
-    [updateState]
+    [state.availableAgentTargets, state.selectedAgents, updateState]
+  );
+
+  const handleAgentTargetChange = useCallback(
+    (target: InstallTargetInfo, checked: boolean) => {
+      const current = state.selectedAgentTargets ?? [];
+      const key = targetKey(target);
+      const nextTargets = checked
+        ? [...current.filter((item) => targetKey(item) !== key), targetSpec(target)]
+        : current.filter((item) => targetKey(item) !== key);
+      const nextAgents = nextTargets.length > 0 && !state.selectedAgents.includes(target.agent)
+        ? [...state.selectedAgents, target.agent]
+        : nextTargets.length === 0
+          ? state.selectedAgents.filter((agent) => agent !== target.agent)
+          : state.selectedAgents;
+
+      updateState({
+        selectedAgentTargets: nextTargets,
+        selectedAgents: nextAgents,
+      });
+    },
+    [state.selectedAgentTargets, state.selectedAgents, updateState],
   );
 
   const handlePrivateCopyChange = useCallback(
@@ -107,6 +169,11 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
 
   const shouldShowModeSelection = shouldShowInstallModeSelection(state);
   const effectiveMode = getEffectiveInstallMode(state);
+  const availableAgentTargets = state.availableAgentTargets ?? [];
+  const selectedTargetKeys = new Set((state.selectedAgentTargets ?? []).map(targetKey));
+  const showConcreteTargets = scope === 'project'
+    && state.selectedAgents.includes('eve')
+    && availableAgentTargets.length > 0;
 
   return (
     <div className="space-y-6 py-4">
@@ -124,6 +191,41 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
           onPrivateCopyExpandedChange={(expanded) => updateState({ privateCopyAgentsExpanded: expanded })}
         />
       </div>
+
+      {showConcreteTargets ? (
+        <div className="space-y-3">
+          <div className="space-y-0.5">
+            <Label className="text-base font-semibold">{t('addSkill.agents.concreteTargetsTitle')}</Label>
+            <p className="text-xs leading-5 text-muted-foreground">
+              {t('addSkill.agents.concreteTargetsHint')}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            {availableAgentTargets.map((target) => {
+              const id = `agent-target-${target.targetId}`;
+              return (
+                <div key={target.targetId} className="flex items-start gap-2 rounded-md border border-border/50 bg-muted/15 px-3 py-2">
+                  <Checkbox
+                    id={id}
+                    checked={selectedTargetKeys.has(targetKey(target))}
+                    onCheckedChange={(checked) => handleAgentTargetChange(target, checked === true)}
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor={id} className="min-w-0 flex-1 cursor-pointer space-y-0.5">
+                    <span className="flex items-center gap-1.5 text-sm font-medium">
+                      <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                      {target.displayName}
+                    </span>
+                    <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                      {target.path}
+                    </span>
+                  </Label>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {/* Mode */}
       {shouldShowModeSelection ? (

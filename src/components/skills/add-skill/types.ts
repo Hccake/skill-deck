@@ -1,6 +1,14 @@
 // src/components/skills/add-skill/types.ts
 
-import type { AgentInfo, AppError, AvailableSkill, InstallMode, InstallResults } from '@/bindings';
+import type {
+  AgentInfo,
+  AppError,
+  AvailableSkill,
+  InstallMode,
+  InstallResults,
+  InstallTargetInfo,
+  InstallTargetSpec,
+} from '@/bindings';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
 import { getAgentTarget, isAutomaticAgent, isAdditionalAgent, type InstallScope } from '@/lib/agentTargets';
 
@@ -89,6 +97,8 @@ export interface WizardState {
   selectedAgents: string[];
   privateCopyAgents: string[];
   allAgents: AgentInfo[];
+  availableAgentTargets?: InstallTargetInfo[];
+  selectedAgentTargets?: InstallTargetSpec[];
   mode: InstallMode;
   otherAgentsExpanded: boolean;
   privateCopyAgentsExpanded: boolean;
@@ -107,6 +117,7 @@ export interface WizardState {
   installError?: InstallError;
   retrySkillName?: string;
   retryAgents?: string[];
+  retryAgentTargets?: InstallTargetSpec[];
 }
 
 export function canProceedForStep(state: WizardState): boolean {

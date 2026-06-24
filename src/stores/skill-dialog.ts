@@ -19,7 +19,14 @@ import {
   cleanupDuplicateAgentCopies as apiCleanupDuplicateAgentCopies,
   copySkillToProjects as apiCopySkillToProjects,
 } from '@/hooks/useTauriApi';
-import type { AgentType, InstalledSkill, SkillScope, SkillAgentDetails, InstallMode } from '@/bindings';
+import type {
+  AgentType,
+  InstalledSkill,
+  SkillScope,
+  SkillAgentDetails,
+  InstallMode,
+  InstallTargetSpec,
+} from '@/bindings';
 
 interface SkillDialogState {
   // Delete dialog
@@ -43,7 +50,11 @@ interface SkillDialogState {
   // Actions
   openDelete: (skill: InstalledSkill, scope: SkillScope, projectPath?: string) => void;
   closeDelete: () => void;
-  deleteSkill: (params: { fullRemoval: boolean; agents?: AgentType[] }) => Promise<void>;
+  deleteSkill: (params: {
+    fullRemoval: boolean;
+    agents?: AgentType[];
+    agentTargets?: InstallTargetSpec[];
+  }) => Promise<void>;
   openAdd: (scope: SkillScope) => void;
   openAddWithPrefill: (prefill: AddDialogPrefill) => void;
   openRepairSource: (skill: InstalledSkill, scope: SkillScope, projectPath?: string) => void;
@@ -89,7 +100,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
   closeDelete: () => set({ deleteTarget: null, agentDetails: null, loadingAgentDetails: false }),
 
-  deleteSkill: async ({ fullRemoval, agents }) => {
+  deleteSkill: async ({ fullRemoval, agents, agentTargets }) => {
     const { deleteTarget } = get();
     if (!deleteTarget) return;
 
@@ -100,10 +111,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
         projectPath: deleteTarget.projectPath,
         fullRemoval,
         agents,
+        agentTargets,
       });
+      const removedTargetCount = (agents?.length ?? 0) + (agentTargets?.length ?? 0);
       const msg = fullRemoval
         ? t('skills.deleteSuccess', { name: deleteTarget.skill.name })
-        : t('skills.partialDeleteSuccess', { name: deleteTarget.skill.name, count: agents?.length ?? 0 });
+        : t('skills.partialDeleteSuccess', { name: deleteTarget.skill.name, count: removedTargetCount });
       toast.success(msg);
 
       // Auto-deselect if the deleted skill was selected

@@ -1,7 +1,17 @@
 // src/components/skills/add-skill/ConfirmStep.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, CornerDownRight, FolderGit2, Box, Folder, Package, Copy } from 'lucide-react';
+import {
+  AlertTriangle,
+  CornerDownRight,
+  FolderGit2,
+  Box,
+  Folder,
+  Package,
+  Copy,
+  Bot,
+  type LucideIcon,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -14,6 +24,7 @@ import {
 } from '@/lib/agentTargets';
 import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
+import type { InstallTargetInfo, InstallTargetSpec } from '@/bindings';
 import { RiskBadge } from '../RiskBadge';
 import { getEffectiveInstallMode, type WizardState } from './types';
 
@@ -21,6 +32,17 @@ function formatPath(path: string) {
   return path
     .replace(/^([A-Z]:\\Users\\[^\\]+|^\/Users\/[^/]+|^\/home\/[^/]+)/i, '~')
     .replace(/[\\/]+$/, '');
+}
+
+function targetKey(target: Pick<InstallTargetInfo, 'agent' | 'subagent'> | InstallTargetSpec) {
+  return `${target.agent}:${target.subagent ?? 'root'}`;
+}
+
+function targetLabel(target: InstallTargetSpec) {
+  if (target.agent === 'eve') {
+    return target.subagent ? `Eve (${target.subagent})` : 'Eve (root)';
+  }
+  return `${target.agent}:${target.subagent ?? 'root'}`;
 }
 
 interface ConfirmStepProps {
@@ -52,20 +74,24 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
 
     updateStateRef.current({ confirmReady: false });
 
+    const concreteTargetAgentIds = new Set<string>((state.selectedAgentTargets ?? []).map((target) => target.agent));
     const overwriteAgentIds = Array.from(new Set([
-      ...state.selectedAgents,
+      ...state.selectedAgents.filter((agent) => !concreteTargetAgentIds.has(agent)),
       ...state.allAgents
-        .filter((agent) => isDefaultAvailableAgent(agent, scope))
+        .filter((agent) => isDefaultAvailableAgent(agent, scope) && !concreteTargetAgentIds.has(agent.id))
         .map((agent) => agent.id),
     ]));
+    const selectedAgentTargets = state.selectedAgentTargets ?? [];
 
-    const overwritePromise: Promise<Record<string, string[]>> = overwriteAgentIds.length > 0
+    const overwritePromise: Promise<Record<string, string[]>> =
+      overwriteAgentIds.length > 0 || selectedAgentTargets.length > 0
       ? checkOverwrites(
           state.selectedSkills,
           overwriteAgentIds,
           scope,
           scope === 'project' ? projectPath : undefined,
-          state.privateCopyAgents
+          state.privateCopyAgents,
+          selectedAgentTargets
         )
       : Promise.resolve({});
 
@@ -96,7 +122,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     return () => {
       cancelled = true;
     };
-  }, [state.selectedSkills, state.selectedAgents, state.privateCopyAgents, state.allAgents, state.source, scope, projectPath]);
+  }, [state.selectedSkills, state.selectedAgents, state.selectedAgentTargets, state.privateCopyAgents, state.allAgents, state.source, scope, projectPath]);
 
   // 覆盖统计
   const availableSkillMap = useMemo(
@@ -126,6 +152,23 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
       selectedSet.has(agent.id) && canCreatePrivateCopy(agent, scope)
     );
   }, [state.privateCopyAgents, state.allAgents, scope]);
+  const selectedConcreteTargets = useMemo(() => {
+    const availableByKey = new Map(
+      (state.availableAgentTargets ?? []).map((target) => [targetKey(target), target])
+    );
+
+    return (state.selectedAgentTargets ?? []).map((target) => {
+      const info = availableByKey.get(targetKey(target));
+      if (info) return info;
+      return {
+        targetId: targetKey(target),
+        agent: target.agent,
+        displayName: targetLabel(target),
+        subagent: target.subagent ?? null,
+        path: '',
+      } satisfies InstallTargetInfo;
+    });
+  }, [state.availableAgentTargets, state.selectedAgentTargets]);
   const effectiveMode = getEffectiveInstallMode(state);
 
   const sharedDir = getSharedSkillDirectory(scope);
@@ -287,6 +330,19 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
               )}
             />
           )}
+
+          {selectedConcreteTargets.length > 0 && (
+            <InstallPlanSection
+              icon={Bot}
+              title={t('addSkill.confirm.concreteTargets')}
+              hint={t('addSkill.confirm.concreteTargetsHint')}
+              agents={selectedConcreteTargets.map((target) => target.displayName)}
+              paths={selectedConcreteTargets
+                .map((target) => target.path)
+                .filter((path) => path.length > 0)
+                .map(formatPath)}
+            />
+          )}
         </div>
 
         {/* 模式图例提示 */}
@@ -314,7 +370,7 @@ function InstallPlanSection({
   paths,
   agents,
 }: {
-  icon: typeof Folder;
+  icon: LucideIcon;
   title: string;
   hint: string;
   path?: string;

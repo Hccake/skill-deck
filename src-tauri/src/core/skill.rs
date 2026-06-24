@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::agent_availability::{
-    AgentAvailabilityKind, availability_for_agent, detect_agent_presence,
+    availability_for_agent, detect_agent_presence, AgentAvailabilityKind,
 };
 use super::agents::AgentType;
-use super::local_lock::{LocalSkillLockEntry, read_local_lock};
+use super::local_lock::{read_local_lock, LocalSkillLockEntry};
 use super::paths::canonical_skills_dir;
-use super::skill_lock::{SkillLockEntry, get_skill_from_lock};
+use super::skill_lock::{get_skill_from_lock, SkillLockEntry};
 use super::skill_paths::find_skill_md_case_insensitive;
 use super::update_metadata::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
@@ -693,7 +693,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
-    use tempfile::{NamedTempFile, tempdir};
+    use tempfile::{tempdir, NamedTempFile};
 
     #[test]
     fn test_parse_valid_skill_md() {

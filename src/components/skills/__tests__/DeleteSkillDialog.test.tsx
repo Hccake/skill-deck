@@ -5,7 +5,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeleteSkillDialog } from '../DeleteSkillDialog';
-import type { AgentType, InstalledSkill, SkillAgentDetails } from '@/bindings';
+import type { AgentType, InstalledSkill, SkillAgentDetails, SkillScope } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -48,10 +48,11 @@ const details: SkillAgentDetails = {
     canCleanupPrivateCopy: true,
   }],
   privateOnlyAgents: [],
+  eveTargets: [],
 };
 
 const mockDialogState = vi.hoisted(() => ({
-  deleteTarget: null as { skill: InstalledSkill; scope: 'global'; projectPath?: string } | null,
+  deleteTarget: null as { skill: InstalledSkill; scope: SkillScope; projectPath?: string } | null,
   agentDetails: null as SkillAgentDetails | null,
   loadingAgentDetails: false,
 }));
@@ -92,6 +93,52 @@ describe('DeleteSkillDialog', () => {
     expect(mockDeleteSkill).toHaveBeenCalledWith({
       fullRemoval: true,
       agents: [] as AgentType[],
+    });
+  });
+
+  it('shows Eve targets and submits concrete target specs for partial deletion', async () => {
+    const user = userEvent.setup();
+    mockDeleteSkill.mockResolvedValue(undefined);
+    mockDialogState.deleteTarget = {
+      skill: { ...skill, scope: 'project', agents: ['eve'] },
+      scope: 'project',
+      projectPath: '/projects/eve-app',
+    };
+    mockDialogState.agentDetails = {
+      ...details,
+      scope: 'project',
+      automaticAgents: [],
+      independentAgents: [],
+      eveTargets: [
+        {
+          targetId: 'eve:root',
+          agent: 'eve',
+          displayName: 'Eve (root)',
+          subagent: null,
+          path: '/projects/eve-app/agent/skills/agent-toolkit',
+        },
+        {
+          targetId: 'eve:research',
+          agent: 'eve',
+          displayName: 'Eve (research)',
+          subagent: 'research',
+          path: '/projects/eve-app/agent/subagents/research/skills/agent-toolkit',
+        },
+      ],
+    };
+
+    render(<DeleteSkillDialog />);
+
+    expect(screen.getByLabelText('Eve (root)')).toBeDefined();
+    expect(screen.getByLabelText('Eve (research)')).toBeDefined();
+
+    await user.click(screen.getByLabelText('Eve (root)'));
+    await user.click(screen.getByRole('button', { name: 'skills.deleteConfirm.confirmPartial:1' }));
+
+    expect(mockDeleteSkill).toHaveBeenCalledWith({
+      fullRemoval: false,
+      agents: [],
+      agentTargets: [{ agent: 'eve', subagent: 'research' }],
     });
   });
 });

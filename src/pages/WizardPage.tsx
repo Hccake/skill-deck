@@ -23,6 +23,7 @@ import type {
   WizardStep,
   WizardState,
 } from '@/components/skills/add-skill/types';
+import type { InstallTargetSpec } from '@/bindings';
 
 function createInitialState(params: {
   entryPoint: EntryPoint;
@@ -57,6 +58,8 @@ function createInitialState(params: {
     selectedAgents: [],
     privateCopyAgents: [],
     allAgents: [],
+    availableAgentTargets: [],
+    selectedAgentTargets: [],
     mode: 'symlink',
     otherAgentsExpanded: false,
     privateCopyAgentsExpanded: false,
@@ -68,6 +71,7 @@ function createInitialState(params: {
     installResults: null,
     retrySkillName: undefined,
     retryAgents: undefined,
+    retryAgentTargets: undefined,
   };
 }
 
@@ -142,17 +146,23 @@ export function WizardPage() {
       installError: undefined,
       retrySkillName: undefined,
       retryAgents: undefined,
+      retryAgentTargets: undefined,
       step: 'installing',
     });
     setInstallKey((k) => k + 1);
   }, [updateState]);
 
-  const handleRetryFailedSkill = useCallback((skillName: string, failedAgents: string[]) => {
+  const handleRetryFailedSkill = useCallback((
+    skillName: string,
+    failedAgents: string[],
+    failedAgentTargets: InstallTargetSpec[] = [],
+  ) => {
     updateState({
       installResults: null,
       installError: undefined,
       retrySkillName: skillName,
       retryAgents: failedAgents,
+      retryAgentTargets: failedAgentTargets,
       step: 'installing',
     });
     setInstallKey((k) => k + 1);

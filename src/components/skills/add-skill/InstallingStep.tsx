@@ -54,9 +54,11 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
     source: state.source,
     selectedSkills: state.selectedSkills,
     selectedAgents: state.selectedAgents,
+    selectedAgentTargets: state.selectedAgentTargets ?? [],
     privateCopyAgents: state.privateCopyAgents,
     retrySkillName: state.retrySkillName,
     retryAgents: state.retryAgents ?? [],
+    retryAgentTargets: state.retryAgentTargets ?? [],
     riskAcknowledged: state.riskAcknowledged,
     mode: getEffectiveInstallMode(state),
     availableSkills: state.availableSkills,
@@ -68,9 +70,11 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       source: state.source,
       selectedSkills: state.selectedSkills,
       selectedAgents: state.selectedAgents,
+      selectedAgentTargets: state.selectedAgentTargets ?? [],
       privateCopyAgents: state.privateCopyAgents,
       retrySkillName: state.retrySkillName,
       retryAgents: state.retryAgents ?? [],
+      retryAgentTargets: state.retryAgentTargets ?? [],
       riskAcknowledged: state.riskAcknowledged,
       mode: getEffectiveInstallMode(state),
       availableSkills: state.availableSkills,
@@ -109,18 +113,23 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
         source,
         selectedSkills,
         selectedAgents,
+        selectedAgentTargets,
         privateCopyAgents,
         retrySkillName,
         retryAgents,
+        retryAgentTargets,
         riskAcknowledged,
         mode,
         scope: installScope,
         projectPath: installProjectPath,
       } = installParamsRef.current;
 
-      const isRetry = Boolean(retrySkillName && retryAgents.length > 0);
+      const concreteTargetAgents = new Set<string>(selectedAgentTargets.map((target) => target.agent));
+      const selectedRegularAgents = selectedAgents.filter((agent) => !concreteTargetAgents.has(agent));
+      const isRetry = Boolean(retrySkillName && (retryAgents.length > 0 || retryAgentTargets.length > 0));
       const targetSkills = isRetry && retrySkillName ? [retrySkillName] : selectedSkills;
-      const targetAgents = isRetry ? retryAgents : selectedAgents;
+      const targetAgents = isRetry ? retryAgents : selectedRegularAgents;
+      const targetAgentTargets = isRetry ? retryAgentTargets : selectedAgentTargets;
       const targetPrivateCopyAgents = isRetry
         ? retryAgents.filter((agentId) => privateCopyAgents.includes(agentId))
         : privateCopyAgents;
@@ -129,6 +138,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
         source,
         skills: targetSkills,
         agents: targetAgents,
+        agentTargets: targetAgentTargets,
         privateCopyAgents: targetPrivateCopyAgents,
         scope: installScope,
         projectPath: installScope === 'project' ? (installProjectPath ?? null) : null,
@@ -144,6 +154,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
           installResults: results,
           retrySkillName: undefined,
           retryAgents: undefined,
+          retryAgentTargets: undefined,
           step: results.failed.length > 0 ? 'error' : 'complete',
         });
       } catch (error) {
@@ -165,6 +176,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
           },
           retrySkillName: undefined,
           retryAgents: undefined,
+          retryAgentTargets: undefined,
           installError,
           step: 'error',
         });

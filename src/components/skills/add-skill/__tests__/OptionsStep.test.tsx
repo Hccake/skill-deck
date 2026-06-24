@@ -16,19 +16,32 @@ vi.mock('react-i18next', () => ({
 }));
 
 const listAgentsMock = vi.fn<() => Promise<AgentInfo[]>>();
+const listAgentsForProjectMock = vi.fn<(projectPath?: string) => Promise<AgentInfo[]>>();
+const listEveInstallTargetsMock = vi.fn();
 const getDefaultTargetAgentsMock = vi.fn();
 const getLastSelectedAgentsMock = vi.fn<() => Promise<string[]>>();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listAgents: () => listAgentsMock(),
+  listAgentsForProject: (projectPath?: string) => listAgentsForProjectMock(projectPath),
+  listEveInstallTargets: (projectPath: string) => listEveInstallTargetsMock(projectPath),
   getDefaultTargetAgents: () => getDefaultTargetAgentsMock(),
   getLastSelectedAgents: () => getLastSelectedAgentsMock(),
 }));
 
 vi.mock('../AgentSelector', () => ({
-  AgentSelector: ({ selectedAgents, scope }: { selectedAgents: string[]; scope: string }) => (
+  AgentSelector: ({
+    selectedAgents,
+    scope,
+    allAgents,
+  }: {
+    selectedAgents: string[];
+    scope: string;
+    allAgents: AgentInfo[];
+  }) => (
     <div>
       agent-selector:{scope}:{selectedAgents.join(',')}
+      <span>all-agents:{allAgents.map((agent) => agent.id).join(',')}</span>
     </div>
   ),
 }));
@@ -128,6 +141,7 @@ function ProjectHarness() {
   const [state, setState] = useState<WizardState>(() => ({
     ...createState(),
     scope: 'project',
+    projectPath: '/projects/eve-app',
   }));
   return (
     <OptionsStep
@@ -172,6 +186,31 @@ describe('OptionsStep', () => {
     vi.clearAllMocks();
     getDefaultTargetAgentsMock.mockResolvedValue(null);
     getLastSelectedAgentsMock.mockResolvedValue([]);
+    listAgentsForProjectMock.mockResolvedValue([]);
+    listEveInstallTargetsMock.mockResolvedValue([]);
+  });
+
+  it('loads project-aware agents using the selected project path', async () => {
+    listAgentsMock.mockResolvedValue([]);
+    listAgentsForProjectMock.mockResolvedValue([
+      makeAgent({
+        id: 'eve',
+        name: 'Eve',
+        skillsDir: 'agent/skills',
+        globalSkillsDir: '',
+        detected: true,
+      }),
+    ]);
+
+    render(<ProjectHarness />);
+
+    await waitFor(() => {
+      expect(listAgentsForProjectMock).toHaveBeenCalledWith('/projects/eve-app');
+    });
+    expect(listAgentsMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByText('all-agents:eve')).toBeDefined();
+    });
   });
 
   it('hides mode radios when only the shared directory is relevant', async () => {
@@ -203,7 +242,7 @@ describe('OptionsStep', () => {
   });
 
   it('passes scope to the agent selector and uses persisted defaults for that scope', async () => {
-    listAgentsMock.mockResolvedValue([
+    listAgentsForProjectMock.mockResolvedValue([
       makeScopeAwareAgent({
         id: 'antigravity',
         name: 'Antigravity',

@@ -138,9 +138,19 @@ export async function checkOverwrites(
   agents: string[],
   scope: Scope,
   projectPath?: string,
-  privateCopyAgents: string[] = []
+  privateCopyAgents: string[] = [],
+  agentTargets: InstallTargetSpec[] = [],
 ): Promise<Partial<Record<string, string[]>>> {
-  return unwrap(await commands.checkOverwrites(skills, agents, privateCopyAgents, scope, projectPath ?? null));
+  return unwrap(
+    await commands.checkOverwrites(
+      skills,
+      agents,
+      privateCopyAgents,
+      scope,
+      projectPath ?? null,
+      agentTargets,
+    )
+  );
 }
 
 // ============ 删除相关 API ============

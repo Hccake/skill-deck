@@ -10,6 +10,7 @@ import { buildUpdatePlan, clearUpdateCacheForSkill, mergeUpdateInfo, updateInfoC
 
 const mockListSkills = vi.fn();
 const mockListAgents = vi.fn();
+const mockListAgentsForProject = vi.fn();
 const mockRemoveSkill = vi.fn();
 const mockGetAgentDetails = vi.fn();
 const mockCheckUpdates = vi.fn();
@@ -25,6 +26,7 @@ const mockCopySkillToProjects = vi.fn();
 vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mockListSkills(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
+  listAgentsForProject: (...args: unknown[]) => mockListAgentsForProject(...args),
   removeSkill: (...args: unknown[]) => mockRemoveSkill(...args),
   getSkillAgentDetails: (...args: unknown[]) => mockGetAgentDetails(...args),
   checkUpdates: (...args: unknown[]) => mockCheckUpdates(...args),
@@ -63,6 +65,8 @@ describe('useSkillsStore', () => {
     vi.clearAllMocks();
     useContextStore.setState({ selectedContext: 'global' });
     mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
+    mockListAgents.mockResolvedValue([]);
+    mockListAgentsForProject.mockResolvedValue([]);
     mockCheckUpdates.mockResolvedValue([]);
     mockOpenInstallWizard.mockResolvedValue(undefined);
     updateInfoCache.clear();
@@ -174,7 +178,7 @@ describe('useSkillsStore', () => {
   describe('fetchSkills — project scope', () => {
     it('loads both global and project skills when project is selected', async () => {
       useContextStore.setState({ selectedContext: '/my/project' });
-      mockListAgents.mockResolvedValue([]);
+      mockListAgentsForProject.mockResolvedValue([]);
       mockListSkills
         .mockResolvedValueOnce({ skills: [makeSkill('global-skill')], pathExists: true })
         .mockResolvedValueOnce({ skills: [makeSkill('project-skill')], pathExists: true });
@@ -184,6 +188,8 @@ describe('useSkillsStore', () => {
       const state = useSkillsDataStore.getState();
       expect(state.globalSkills).toHaveLength(1);
       expect(state.projectSkills).toHaveLength(1);
+      expect(mockListAgentsForProject).toHaveBeenCalledWith('/my/project');
+      expect(mockListAgents).not.toHaveBeenCalled();
     });
   });
 

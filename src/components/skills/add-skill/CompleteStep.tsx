@@ -3,14 +3,18 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { InstallResult } from '@/bindings';
+import type { InstallResult, InstallTargetSpec } from '@/bindings';
 import type { WizardState } from './types';
 
 interface CompleteStepProps {
   state: WizardState;
   onDone: () => void;
   onRetry?: () => void;
-  onRetrySkill?: (skillName: string, failedAgents: string[]) => void;
+  onRetrySkill?: (
+    skillName: string,
+    failedAgents: string[],
+    failedAgentTargets: InstallTargetSpec[],
+  ) => void;
 }
 
 interface SkillGroup {
@@ -218,12 +222,18 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
                         variant="outline"
                         size="sm"
                         className="h-7"
-                        onClick={() =>
-                          onRetrySkill(
-                            group.skillName,
-                            group.failed.map((f) => f.agent)
-                          )
-                        }
+                        onClick={() => {
+                          const failedAgentTargets = group.failed
+                            .filter((item) => item.agent === 'eve' && item.targetId)
+                            .map((item) => ({
+                              agent: 'eve' as const,
+                              subagent: item.subagent ?? null,
+                            }));
+                          const failedAgents = group.failed
+                            .filter((item) => !(item.agent === 'eve' && item.targetId))
+                            .map((item) => item.agent);
+                          onRetrySkill(group.skillName, failedAgents, failedAgentTargets);
+                        }}
                       >
                         {t('addSkill.actions.retrySkill')}
                       </Button>

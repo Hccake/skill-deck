@@ -129,9 +129,15 @@ fn resolve_install_target_plan(
         Vec::new()
     };
     let private_copy_targets = parse_agent_ids(&params.private_copy_agents)?;
+    let concrete_target_agents: Vec<AgentType> = params
+        .agent_targets
+        .iter()
+        .map(|target| target.agent)
+        .collect();
     let private_required_targets: Vec<AgentType> = parse_agent_ids(&params.agents)?
         .into_iter()
         .filter(|agent| !private_copy_targets.contains(agent))
+        .filter(|agent| !concrete_target_agents.contains(agent))
         .collect();
     validate_private_required_targets(&private_required_targets, is_global, cwd)?;
     validate_private_copy_targets(&private_copy_targets, is_global, cwd)?;
@@ -909,9 +915,7 @@ mod tests {
         let err = resolve_install_target_plan(&params, compute_install_behavior(false), ".")
             .expect_err("shared-compatible agents must not be regular private targets");
 
-        assert!(err
-            .to_string()
-            .contains("does not require separate setup"));
+        assert!(err.to_string().contains("does not require separate setup"));
     }
 
     #[test]
@@ -979,6 +983,32 @@ mod tests {
             resolve_eve_subagents_from_targets(&params),
             vec![None, Some("research".to_string())]
         );
+    }
+
+    #[test]
+    fn test_resolve_install_targets_excludes_eve_regular_target_when_concrete_targets_exist() {
+        let params = InstallParams {
+            source: "owner/repo".to_string(),
+            skills: vec!["demo".to_string()],
+            agents: vec!["eve".to_string()],
+            agent_targets: vec![crate::models::InstallTargetSpec {
+                agent: AgentType::Eve,
+                subagent: Some("research".to_string()),
+            }],
+            private_copy_agents: vec![],
+            scope: crate::models::Scope::Project,
+            project_path: Some("/tmp/project".to_string()),
+            mode: InstallMode::Copy,
+            retry: false,
+            preserve_existing_modes: false,
+            acknowledge_risk: false,
+        };
+
+        let plan =
+            resolve_install_target_plan(&params, compute_install_behavior(false), "/tmp/project")
+                .unwrap();
+
+        assert!(!plan.install_targets.contains(&AgentType::Eve));
     }
 
     #[test]

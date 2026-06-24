@@ -29,6 +29,8 @@ vi.mock('react-i18next', () => ({
       if (key === 'addSkill.confirm.privateSetup') return 'Separate setup';
       if (key === 'addSkill.confirm.privateCopies') return 'Keep separately';
       if (key === 'addSkill.confirm.privateCopiesHint') return 'These Agents are already ready to use. This install will also keep a link or copy in their own Skill directory.';
+      if (key === 'addSkill.confirm.concreteTargets') return 'Concrete targets';
+      if (key === 'addSkill.confirm.concreteTargetsHint') return 'These project targets will receive the Skill.';
       if (key === 'addSkill.confirm.symlinkHint') {
         return 'Connect these Agents to the shared Skill directory with symlinks.';
       }
@@ -87,6 +89,7 @@ function createState(): WizardState {
     installError: undefined,
     retrySkillName: undefined,
     retryAgents: undefined,
+    retryAgentTargets: undefined,
     riskPolicy: { kind: 'require-confirmation', code: 'openclaw' },
     riskAcknowledged: false,
   };
@@ -159,7 +162,8 @@ describe('ConfirmStep', () => {
       ['warp'],
       'global',
       undefined,
-      []
+      [],
+      [],
     );
     expect(checkSkillAuditMock).toHaveBeenCalledWith('openclaw/community-skills', ['demo']);
   });
@@ -216,6 +220,84 @@ describe('ConfirmStep', () => {
         confirmReady: true,
       });
     });
+  });
+
+  it('shows concrete Eve targets in the install plan', async () => {
+    const updateState = vi.fn();
+
+    render(
+      <ConfirmStep
+        state={{
+          ...createState(),
+          scope: 'project',
+          projectPath: '/projects/eve-app',
+          selectedAgents: ['eve'],
+          selectedAgentTargets: [
+            {
+              targetId: 'eve:root',
+              agent: 'eve',
+              displayName: 'Eve (root)',
+              subagent: null,
+              path: '/projects/eve-app/agent/skills',
+            },
+            {
+              targetId: 'eve:research',
+              agent: 'eve',
+              displayName: 'Eve (research)',
+              subagent: 'research',
+              path: '/projects/eve-app/agent/subagents/research/skills',
+            },
+          ],
+          riskPolicy: { kind: 'none', code: null },
+        } as unknown as WizardState}
+        updateState={updateState}
+        scope="project"
+        projectPath="/projects/eve-app"
+      />
+    );
+
+    expect(await screen.findByText('Concrete targets')).toBeDefined();
+    expect(screen.getByText('Eve (root)')).toBeDefined();
+    expect(screen.getByText('Eve (research)')).toBeDefined();
+  });
+
+  it('checks overwrites for selected Eve concrete targets', async () => {
+    const updateState = vi.fn();
+
+    render(
+      <ConfirmStep
+        state={{
+          ...createState(),
+          scope: 'project',
+          projectPath: '/projects/eve-app',
+          selectedAgents: ['eve'],
+          selectedAgentTargets: [{ agent: 'eve', subagent: 'research' }],
+          availableAgentTargets: [{
+            targetId: 'eve:research',
+            agent: 'eve',
+            displayName: 'Eve (research)',
+            subagent: 'research',
+            path: '/projects/eve-app/agent/subagents/research/skills',
+          }],
+          riskPolicy: { kind: 'none', code: null },
+        } as unknown as WizardState}
+        updateState={updateState}
+        scope="project"
+        projectPath="/projects/eve-app"
+      />
+    );
+
+    await waitFor(() => {
+      expect(updateState).toHaveBeenCalledWith({ overwrites: {}, confirmReady: true });
+    });
+    expect(checkOverwritesMock).toHaveBeenCalledWith(
+      ['demo'],
+      [],
+      'project',
+      '/projects/eve-app',
+      [],
+      [{ agent: 'eve', subagent: 'research' }],
+    );
   });
 
   it('summarizes the install plan and uses target-exists status only for conflicted skills', () => {

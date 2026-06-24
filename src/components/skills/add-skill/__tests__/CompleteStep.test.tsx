@@ -106,6 +106,7 @@ function makeState(installResults: InstallResults): WizardState {
     installResults,
     retrySkillName: undefined,
     retryAgents: undefined,
+    retryAgentTargets: undefined,
   };
 }
 
@@ -180,7 +181,41 @@ describe('CompleteStep', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry Skill' }));
-    expect(retrySpy).toHaveBeenCalledWith('skill-a', ['windsurf']);
+    expect(retrySpy).toHaveBeenCalledWith('skill-a', ['windsurf'], []);
+  });
+
+  it('retries failed Eve concrete targets without collapsing them to the root agent', () => {
+    const retrySpy = vi.fn();
+    const installResults: InstallResults = {
+      successful: [],
+      failed: [
+        makeInstallResult({
+          skillName: 'skill-a',
+          agent: 'eve',
+          targetId: 'eve:research',
+          subagent: 'research',
+          success: false,
+          error: 'permission denied',
+        }),
+      ],
+      symlinkFallbackAgents: [],
+    };
+
+    render(
+      <CompleteStep
+        state={makeState(installResults)}
+        onDone={() => undefined}
+        onRetry={() => undefined}
+        onRetrySkill={retrySpy}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Skill' }));
+    expect(retrySpy).toHaveBeenCalledWith(
+      'skill-a',
+      [],
+      [{ agent: 'eve', subagent: 'research' }],
+    );
   });
 
   it('summarizes ready to use, separate setup, kept-separately, skipped, and failed categories', () => {

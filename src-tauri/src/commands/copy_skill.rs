@@ -256,7 +256,9 @@ fn build_copy_project_result(
 
     CopyProjectResult {
         project_path: target_path.to_string(),
-        success: per_agent_results.iter().any(|result| result.success && !result.skipped)
+        success: per_agent_results
+            .iter()
+            .any(|result| result.success && !result.skipped)
             || per_agent_results
                 .iter()
                 .any(|result| result.agent == "__canonical__" && result.success),

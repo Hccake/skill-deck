@@ -362,9 +362,17 @@ mod tests {
 
     #[test]
     fn test_get_skill_lock_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original = std::env::var("XDG_STATE_HOME").ok();
+        std::env::remove_var("XDG_STATE_HOME");
+
         let path = get_skill_lock_path();
         assert!(path.to_string_lossy().contains(".agents"));
         assert!(path.to_string_lossy().contains(".skill-lock.json"));
+
+        if let Some(value) = original {
+            std::env::set_var("XDG_STATE_HOME", value);
+        }
     }
 
     #[test]

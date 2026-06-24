@@ -16,6 +16,7 @@ import {
 import {
   listSkills,
   listAgents,
+  listAgentsForProject,
   checkUpdates,
   updateSkill as apiUpdateSkill,
   updateSkillsBatch as apiUpdateSkillsBatch,
@@ -76,7 +77,7 @@ async function loadSkillsData(
 
   if (isProjectSelected) {
     const [agents, globalResult, projectResult] = await Promise.all([
-      options.includeAgents ? listAgents() : Promise.resolve(null),
+      options.includeAgents ? listAgentsForProject(selectedContext) : Promise.resolve(null),
       listSkills({ scope: 'global' }),
       listSkills({ scope: 'project', projectPath: selectedContext }),
     ]);

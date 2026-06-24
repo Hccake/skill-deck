@@ -8,13 +8,13 @@ use crate::core::installer::{
     detect_install_mode, detect_installed_agents_for_skill, install_skill_to_agents_with_modes,
 };
 use crate::core::local_lock::{
-    LocalSkillLockEntry, add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock,
+    add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
 };
 use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
-    CloneProgress, DiscoverOptions, DiscoveredSkill, UpdateSourceParts, build_update_group_key,
-    build_update_target, clone_repo_with_progress, compute_local_tree_sha, discover_skills,
+    build_update_group_key, build_update_target, clone_repo_with_progress, compute_local_tree_sha,
+    discover_skills, CloneProgress, DiscoverOptions, DiscoveredSkill, UpdateSourceParts,
 };
 use crate::core::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,

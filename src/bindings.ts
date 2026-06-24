@@ -199,9 +199,9 @@ async installSkills(params: InstallParams) : Promise<Result<InstallResults, AppE
  * # Returns
  * * `HashMap<String, Vec<String>>` - { skill_name: [agent_ids that will be overwritten] }
  */
-async checkOverwrites(skills: string[], agents: string[], privateCopyAgents: string[], scope: Scope, projectPath: string | null) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
+async checkOverwrites(skills: string[], agents: string[], privateCopyAgents: string[], scope: Scope, projectPath: string | null, agentTargets: InstallTargetSpec[]) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { skills, agents, privateCopyAgents, scope, projectPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { skills, agents, privateCopyAgents, scope, projectPath, agentTargets }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

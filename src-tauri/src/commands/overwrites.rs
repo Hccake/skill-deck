@@ -2,8 +2,9 @@
 
 use crate::core::agents::AgentType;
 use crate::core::installer::{is_private_copy_installed, is_skill_installed};
+use crate::core::skill::sanitize_name;
 use crate::error::AppError;
-use crate::models::Scope;
+use crate::models::{InstallTargetSpec, Scope};
 use std::collections::HashMap;
 
 /// 检测哪些 skill × agent 组合会被覆盖
@@ -24,8 +25,16 @@ pub async fn check_overwrites(
     private_copy_agents: Vec<String>,
     scope: Scope,
     project_path: Option<String>,
+    agent_targets: Vec<InstallTargetSpec>,
 ) -> Result<HashMap<String, Vec<String>>, AppError> {
-    check_overwrites_inner(skills, agents, private_copy_agents, scope, project_path)
+    check_overwrites_inner(
+        skills,
+        agents,
+        private_copy_agents,
+        scope,
+        project_path,
+        agent_targets,
+    )
 }
 
 fn check_overwrites_inner(
@@ -34,6 +43,7 @@ fn check_overwrites_inner(
     private_copy_agents: Vec<String>,
     scope: Scope,
     project_path: Option<String>,
+    agent_targets: Vec<InstallTargetSpec>,
 ) -> Result<HashMap<String, Vec<String>>, AppError> {
     let mut overwrites: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -66,6 +76,30 @@ fn check_overwrites_inner(
             }
         }
 
+        if matches!(scope, Scope::Project) {
+            let cwd = project_path.as_deref().unwrap_or(".");
+            let sanitized = sanitize_name(skill_name);
+            for target in &agent_targets {
+                if target.agent != AgentType::Eve {
+                    continue;
+                }
+
+                let subagent = target
+                    .subagent
+                    .as_ref()
+                    .filter(|value| !value.is_empty() && *value != "root");
+                let path =
+                    crate::core::eve::eve_skills_dir_for_target(cwd, subagent.map(String::as_str))
+                        .join(&sanitized);
+                if path.exists() {
+                    let target_id = crate::core::eve::eve_target_id(subagent.map(String::as_str));
+                    if !overwritten_agents.contains(&target_id) {
+                        overwritten_agents.push(target_id);
+                    }
+                }
+            }
+        }
+
         if !overwritten_agents.is_empty() {
             overwrites.insert(skill_name.clone(), overwritten_agents);
         }
@@ -94,9 +128,40 @@ mod tests {
             vec!["claude-code".to_string()],
             Scope::Project,
             Some(project_path),
+            Vec::new(),
         )
         .unwrap();
 
         assert_eq!(result.get("demo"), Some(&vec!["claude-code".to_string()]));
+    }
+
+    #[test]
+    fn test_check_overwrites_detects_eve_target_path() {
+        let temp = tempdir().unwrap();
+        let project_path = temp.path().to_string_lossy().to_string();
+        let eve_skill = temp
+            .path()
+            .join("agent")
+            .join("subagents")
+            .join("research")
+            .join("skills")
+            .join("demo");
+        fs::create_dir_all(&eve_skill).unwrap();
+        fs::write(eve_skill.join("SKILL.md"), "---\nname: demo\n---\n").unwrap();
+
+        let result = check_overwrites_inner(
+            vec!["demo".to_string()],
+            Vec::new(),
+            Vec::new(),
+            Scope::Project,
+            Some(project_path),
+            vec![crate::models::InstallTargetSpec {
+                agent: AgentType::Eve,
+                subagent: Some("research".to_string()),
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(result.get("demo"), Some(&vec!["eve:research".to_string()]));
     }
 }

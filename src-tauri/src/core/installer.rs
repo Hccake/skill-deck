@@ -1663,22 +1663,20 @@ mod tests {
         );
 
         assert!(results.iter().all(|r| r.success), "results: {:?}", results);
-        assert!(
-            temp.path()
-                .join(".agents")
-                .join("skills")
-                .join("mixed-skill")
-                .join("SKILL.md")
-                .exists()
-        );
-        assert!(
-            temp.path()
-                .join(".claude")
-                .join("skills")
-                .join("mixed-skill")
-                .join("SKILL.md")
-                .exists()
-        );
+        assert!(temp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("mixed-skill")
+            .join("SKILL.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("mixed-skill")
+            .join("SKILL.md")
+            .exists());
     }
 
     #[test]
