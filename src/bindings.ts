@@ -217,9 +217,9 @@ async checkOverwrites(skills: string[], agents: string[], privateCopyAgents: str
  * * `agents` - 部分移除时指定的 agent 列表（None 或空 = 完全删除）
  * * `full_removal` - 是否完全删除（true = 删除一切，false = 仅删除指定 agents 的 symlink）
  */
-async removeSkill(scope: Scope, name: string, projectPath: string | null, agents: AgentType[] | null, fullRemoval: boolean | null) : Promise<Result<RemoveResult, AppError>> {
+async removeSkill(scope: Scope, name: string, projectPath: string | null, agents: AgentType[] | null, fullRemoval: boolean | null, agentTargets: InstallTargetSpec[] | null) : Promise<Result<RemoveResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { scope, name, projectPath, agents, fullRemoval }) };
+    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { scope, name, projectPath, agents, fullRemoval, agentTargets }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -889,7 +889,11 @@ duplicateCopyAgents?: AgentPresenceInfo[];
 /**
  * 仅私有目录存在的 Agents
  */
-privateOnlyAgents?: AgentPresenceInfo[] }
+privateOnlyAgents?: AgentPresenceInfo[];
+/**
+ * Eve root/subagent 具体目标。
+ */
+eveTargets?: InstallTargetInfo[] }
 /**
  * Skill 审计数据
  */

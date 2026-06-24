@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::agent_availability::{
-    availability_for_agent, detect_agent_presence, AgentAvailabilityKind,
+    AgentAvailabilityKind, availability_for_agent, detect_agent_presence,
 };
 use super::agents::AgentType;
-use super::local_lock::{read_local_lock, LocalSkillLockEntry};
+use super::local_lock::{LocalSkillLockEntry, read_local_lock};
 use super::paths::canonical_skills_dir;
-use super::skill_lock::{get_skill_from_lock, SkillLockEntry};
+use super::skill_lock::{SkillLockEntry, get_skill_from_lock};
 use super::skill_paths::find_skill_md_case_insensitive;
 use super::update_metadata::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
@@ -409,6 +409,36 @@ pub fn list_installed_skills(
                 });
             }
         }
+
+        if !*is_global && crate::core::eve::is_eve_project(cwd) {
+            let root = crate::core::eve::eve_root_skills_dir(cwd);
+            if root.exists()
+                && !scopes
+                    .iter()
+                    .any(|scope| scope.path == root && !scope.global)
+            {
+                scopes.push(ScanScope {
+                    global: false,
+                    path: root,
+                    agent_type: Some(AgentType::Eve),
+                });
+            }
+
+            for subagent in crate::core::eve::list_eve_subagents(cwd) {
+                let path = crate::core::eve::eve_subagent_skills_dir(cwd, &subagent);
+                if path.exists()
+                    && !scopes
+                        .iter()
+                        .any(|scope| scope.path == path && !scope.global)
+                {
+                    scopes.push(ScanScope {
+                        global: false,
+                        path,
+                        agent_type: Some(AgentType::Eve),
+                    });
+                }
+            }
+        }
     }
 
     // 遍历每个扫描目录
@@ -663,7 +693,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
-    use tempfile::{tempdir, NamedTempFile};
+    use tempfile::{NamedTempFile, tempdir};
 
     #[test]
     fn test_parse_valid_skill_md() {
@@ -872,6 +902,33 @@ Content.
             "presence summary should preserve agents found by frontmatter fallback"
         );
         assert!(skill.private_adapted_agent_count.unwrap_or_default() > 0);
+    }
+
+    #[test]
+    fn test_list_installed_skills_scans_eve_subagent_targets() {
+        let project = tempdir().unwrap();
+        let cwd = project.path().to_string_lossy().to_string();
+        fs::create_dir_all(project.path().join("agent/subagents/research/skills/demo")).unwrap();
+        fs::write(
+            project
+                .path()
+                .join("agent/subagents/research/skills/demo/SKILL.md"),
+            "---\nname: demo\ndescription: Eve subagent skill\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            project.path().join("package.json"),
+            r#"{"dependencies":{"eve":"^0.11.5"}}"#,
+        )
+        .unwrap();
+
+        let skills = list_installed_skills(Some(SkillScope::Project), &cwd).unwrap();
+        let skill = skills
+            .iter()
+            .find(|skill| skill.name == "demo")
+            .expect("Eve subagent skill should be listed");
+
+        assert!(skill.agents.contains(&AgentType::Eve));
     }
 
     #[test]

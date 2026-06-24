@@ -7,7 +7,9 @@ use crate::core::agents::AgentType;
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::error::AppError;
-use crate::models::{AgentSkillPresence, IndependentAgentInfo, Scope, SkillAgentDetails};
+use crate::models::{
+    AgentSkillPresence, IndependentAgentInfo, InstallTargetInfo, Scope, SkillAgentDetails,
+};
 use std::path::PathBuf;
 
 fn independent_agent_info(
@@ -56,6 +58,7 @@ pub async fn get_skill_agent_details(
 
     // 1. 计算 canonical 路径
     let canonical_path = canonical_skills_dir(is_global, cwd).join(&sanitized_name);
+    let eve_targets = eve_targets_for_skill(is_global, cwd, &sanitized_name);
 
     // 3. 遍历 agents，按 presence 模型分组；旧 automatic/independent 字段保留兼容。
     let mut automatic_agents: Vec<(AgentType, String)> = Vec::new();
@@ -113,5 +116,76 @@ pub async fn get_skill_agent_details(
         private_required_agents,
         duplicate_copy_agents,
         private_only_agents,
+        eve_targets,
     })
+}
+
+fn eve_targets_for_skill(
+    is_global: bool,
+    cwd: &str,
+    sanitized_name: &str,
+) -> Vec<InstallTargetInfo> {
+    if is_global || !crate::core::eve::is_eve_project(cwd) {
+        return Vec::new();
+    }
+
+    let mut targets = Vec::new();
+    let root_path = crate::core::eve::eve_root_skills_dir(cwd).join(sanitized_name);
+    if root_path.exists() {
+        targets.push(InstallTargetInfo {
+            target_id: crate::core::eve::eve_target_id(None),
+            agent: AgentType::Eve,
+            display_name: crate::core::eve::eve_target_label(None),
+            subagent: None,
+            path: root_path.to_string_lossy().to_string(),
+        });
+    }
+
+    for subagent in crate::core::eve::list_eve_subagents(cwd) {
+        let path = crate::core::eve::eve_subagent_skills_dir(cwd, &subagent).join(sanitized_name);
+        if path.exists() {
+            targets.push(InstallTargetInfo {
+                target_id: crate::core::eve::eve_target_id(Some(&subagent)),
+                agent: AgentType::Eve,
+                display_name: crate::core::eve::eve_target_label(Some(&subagent)),
+                subagent: Some(subagent),
+                path: path.to_string_lossy().to_string(),
+            });
+        }
+    }
+
+    targets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_get_skill_agent_details_includes_eve_targets() {
+        tauri::async_runtime::block_on(async {
+            let project = tempdir().unwrap();
+            let cwd = project.path().to_string_lossy().to_string();
+            std::fs::create_dir_all(project.path().join("agent/skills/demo")).unwrap();
+            std::fs::create_dir_all(project.path().join("agent/subagents/research/skills/demo"))
+                .unwrap();
+            std::fs::write(
+                project.path().join("package.json"),
+                r#"{"dependencies":{"eve":"^0.11.5"}}"#,
+            )
+            .unwrap();
+
+            let details = get_skill_agent_details(Scope::Project, "demo".to_string(), Some(cwd))
+                .await
+                .unwrap();
+
+            let target_ids: Vec<_> = details
+                .eve_targets
+                .iter()
+                .map(|target| target.target_id.as_str())
+                .collect();
+            assert_eq!(target_ids, vec!["eve:root", "eve:research"]);
+        });
+    }
 }

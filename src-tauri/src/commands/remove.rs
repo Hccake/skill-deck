@@ -9,7 +9,7 @@
 use crate::core::agents::AgentType;
 use crate::core::uninstaller;
 use crate::error::AppError;
-use crate::models::{RemoveResult, Scope};
+use crate::models::{InstallTargetSpec, RemoveResult, Scope};
 
 /// 删除指定 skill
 ///
@@ -19,6 +19,7 @@ use crate::models::{RemoveResult, Scope};
 /// * `project_path` - Project scope 时的项目路径
 /// * `agents` - 部分移除时指定的 agent 列表（None 或空 = 完全删除）
 /// * `full_removal` - 是否完全删除（true = 删除一切，false = 仅删除指定 agents 的 symlink）
+/// * `agent_targets` - 具体目标列表；目前用于 Eve root/subagent 删除
 #[tauri::command]
 #[specta::specta]
 pub async fn remove_skill(
@@ -27,9 +28,11 @@ pub async fn remove_skill(
     project_path: Option<String>,
     agents: Option<Vec<AgentType>>,
     full_removal: Option<bool>,
+    agent_targets: Option<Vec<InstallTargetSpec>>,
 ) -> Result<RemoveResult, AppError> {
     let full = full_removal.unwrap_or(true);
     let target_agents = agents;
+    let eve_targets = resolve_eve_targets(agent_targets.as_deref());
 
     uninstaller::remove_skill(
         &name,
@@ -37,5 +40,30 @@ pub async fn remove_skill(
         project_path.as_deref(),
         full,
         target_agents.as_deref(),
+        eve_targets.as_deref(),
     )
+}
+
+fn resolve_eve_targets(agent_targets: Option<&[InstallTargetSpec]>) -> Option<Vec<Option<String>>> {
+    let mut targets = Vec::new();
+    for target in agent_targets.unwrap_or(&[]) {
+        if target.agent != AgentType::Eve {
+            continue;
+        }
+
+        let subagent = target
+            .subagent
+            .as_ref()
+            .filter(|value| !value.is_empty() && *value != "root")
+            .cloned();
+        if !targets.contains(&subagent) {
+            targets.push(subagent);
+        }
+    }
+
+    if targets.is_empty() {
+        None
+    } else {
+        Some(targets)
+    }
 }

@@ -11,7 +11,7 @@
 //! - 错误收集：CLI 用 `results` 数组收集批量结果，GUI 是单个删除返回 `RemoveResult`
 
 use crate::core::agents::AgentType;
-use crate::core::local_lock::remove_skill_from_local_lock;
+use crate::core::local_lock::{read_local_lock, remove_skill_from_local_lock};
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::core::skill_lock::{get_skill_from_lock, remove_skill_from_lock};
@@ -40,13 +40,24 @@ pub fn remove_skill(
     project_path: Option<&str>,
     full_removal: bool,
     target_agents: Option<&[AgentType]>,
+    eve_targets: Option<&[Option<String>]>,
 ) -> Result<RemoveResult, AppError> {
     let is_global = matches!(scope, Scope::Global);
     let cwd = project_path.unwrap_or(".");
     let sanitized_name = sanitize_name(skill_name);
 
     // 1. 确定要操作的 agents
-    let agents_to_remove: Vec<AgentType> = resolve_agents_to_remove(target_agents);
+    let mut agents_to_remove: Vec<AgentType> = resolve_agents_to_remove(target_agents);
+    let eve_targets_to_remove = resolve_eve_targets_to_remove(
+        skill_name,
+        cwd,
+        is_global,
+        full_removal,
+        eve_targets.unwrap_or(&[]),
+    );
+    if !eve_targets_to_remove.is_empty() {
+        agents_to_remove.retain(|agent| *agent != AgentType::Eve);
+    }
 
     let mut removed_paths = Vec::new();
 
@@ -81,6 +92,19 @@ pub fn remove_skill(
             // 路径存在但删除后仍然存在，说明删除失败
         } else {
             removed_paths.push(skill_path.to_string_lossy().to_string());
+        }
+    }
+
+    for subagent in &eve_targets_to_remove {
+        match remove_eve_target(skill_name, cwd, subagent.as_deref()) {
+            Ok(path) => {
+                if !removed_paths.contains(&path) {
+                    removed_paths.push(path);
+                }
+            }
+            Err(e) => {
+                log::warn!("Could not remove skill from Eve target: {}", e);
+            }
         }
     }
 
@@ -160,10 +184,82 @@ pub fn remove_skill(
     })
 }
 
+pub fn remove_eve_target(
+    skill_name: &str,
+    project_path: &str,
+    subagent: Option<&str>,
+) -> Result<String, AppError> {
+    let sanitized = sanitize_name(skill_name);
+    let path = crate::core::eve::eve_skills_dir_for_target(project_path, subagent).join(sanitized);
+    remove_path(&path)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 fn resolve_agents_to_remove(target_agents: Option<&[AgentType]>) -> Vec<AgentType> {
     target_agents
         .map(|specified| specified.to_vec())
         .unwrap_or_else(|| AgentType::all().collect::<Vec<_>>())
+}
+
+fn resolve_eve_targets_to_remove(
+    skill_name: &str,
+    cwd: &str,
+    is_global: bool,
+    full_removal: bool,
+    explicit_targets: &[Option<String>],
+) -> Vec<Option<String>> {
+    if is_global {
+        return Vec::new();
+    }
+
+    let mut targets = Vec::new();
+    for target in explicit_targets {
+        push_eve_target(&mut targets, target.clone());
+    }
+
+    if full_removal {
+        if let Ok(lock) = read_local_lock(cwd) {
+            if let Some(entry) = lock.skills.get(skill_name) {
+                if let Some(subagents) = &entry.subagents {
+                    for subagent in subagents {
+                        push_eve_target(
+                            &mut targets,
+                            if subagent.is_empty() {
+                                None
+                            } else {
+                                Some(subagent.clone())
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        let sanitized = sanitize_name(skill_name);
+        if crate::core::eve::eve_root_skills_dir(cwd)
+            .join(&sanitized)
+            .exists()
+        {
+            push_eve_target(&mut targets, None);
+        }
+
+        for subagent in crate::core::eve::list_eve_subagents(cwd) {
+            if crate::core::eve::eve_subagent_skills_dir(cwd, &subagent)
+                .join(&sanitized)
+                .exists()
+            {
+                push_eve_target(&mut targets, Some(subagent));
+            }
+        }
+    }
+
+    targets
+}
+
+fn push_eve_target(targets: &mut Vec<Option<String>>, target: Option<String>) {
+    if !targets.contains(&target) {
+        targets.push(target);
+    }
 }
 
 /// 删除路径（目录或 symlink）
@@ -289,18 +385,28 @@ mod tests {
         fs::write(private.join("SKILL.md"), "# Private").unwrap();
 
         let cwd = temp.path().to_string_lossy().to_string();
-        let result = remove_skill(
-            "demo",
-            &Scope::Project,
-            Some(&cwd),
-            true,
-            Some(&[]),
-        )
-        .unwrap();
+        let result =
+            remove_skill("demo", &Scope::Project, Some(&cwd), true, Some(&[]), None).unwrap();
 
         assert!(result.success);
         assert!(!canonical.exists());
         assert!(private.exists());
+    }
+
+    #[test]
+    fn test_remove_eve_subagent_does_not_remove_root() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("agent/skills/demo");
+        let sub = temp.path().join("agent/subagents/research/skills/demo");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(root.join("SKILL.md"), "# Root").unwrap();
+        fs::write(sub.join("SKILL.md"), "# Sub").unwrap();
+
+        remove_eve_target("demo", &temp.path().to_string_lossy(), Some("research")).unwrap();
+
+        assert!(root.exists());
+        assert!(!sub.exists());
     }
 
     #[cfg(unix)]

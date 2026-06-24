@@ -8,13 +8,13 @@ use crate::core::installer::{
     detect_install_mode, detect_installed_agents_for_skill, install_skill_to_agents_with_modes,
 };
 use crate::core::local_lock::{
-    add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
+    LocalSkillLockEntry, add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock,
 };
 use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
-    build_update_group_key, build_update_target, clone_repo_with_progress, compute_local_tree_sha,
-    discover_skills, CloneProgress, DiscoverOptions, DiscoveredSkill, UpdateSourceParts,
+    CloneProgress, DiscoverOptions, DiscoveredSkill, UpdateSourceParts, build_update_group_key,
+    build_update_target, clone_repo_with_progress, compute_local_tree_sha, discover_skills,
 };
 use crate::core::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
@@ -370,6 +370,51 @@ fn discover_update_candidates(
     )
 }
 
+fn eve_targets_from_source_or_root_install(
+    source_type: &str,
+    subagents: Option<&[String]>,
+    project_path: &str,
+    skill_name: &str,
+) -> Vec<Option<String>> {
+    if !matches!(source_type, "github" | "git" | "gitlab") {
+        return Vec::new();
+    }
+
+    if let Some(subagents) = subagents {
+        return subagents
+            .iter()
+            .map(|value| {
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value.clone())
+                }
+            })
+            .collect();
+    }
+
+    let root_path = crate::core::eve::eve_root_skills_dir(project_path)
+        .join(crate::core::skill::sanitize_name(skill_name));
+    if root_path.exists() {
+        vec![None]
+    } else {
+        Vec::new()
+    }
+}
+
+fn eve_targets_from_lock_or_root_install(
+    entry: &LocalSkillLockEntry,
+    project_path: &str,
+    skill_name: &str,
+) -> Vec<Option<String>> {
+    eve_targets_from_source_or_root_install(
+        &entry.source_type,
+        entry.subagents.as_deref(),
+        project_path,
+        skill_name,
+    )
+}
+
 /// 更新指定 skill
 ///
 /// 本质是"重新安装"：从 lock 文件读取来源信息，构造安装 URL，复用安装逻辑。
@@ -436,6 +481,7 @@ async fn update_skill_single(
         entry_skill_path,
         entry_plugin_name,
         entry_ref_name,
+        project_lock_entry,
     ) = match scope {
         Scope::Global => {
             let lock = read_scoped_lock(None)?;
@@ -453,6 +499,7 @@ async fn update_skill_single(
                 update_entry.skill_path,
                 update_entry.plugin_name,
                 update_entry.ref_name,
+                None,
             )
         }
         Scope::Project => {
@@ -475,6 +522,7 @@ async fn update_skill_single(
                 entry.skill_path.clone(),
                 entry.plugin_name.clone(),
                 entry.ref_name.clone(),
+                Some(entry.clone()),
             )
         }
     };
@@ -560,6 +608,13 @@ async fn update_skill_single(
     let skill = find_update_skill(&discovered, skill_name, entry_skill_path.as_deref())
         .ok_or(AppError::NoSkillsFound)?;
 
+    let eve_update_targets = match (&scope, project_path, project_lock_entry.as_ref()) {
+        (Scope::Project, Some(pp), Some(entry)) => {
+            eve_targets_from_lock_or_root_install(entry, pp, skill_name)
+        }
+        _ => Vec::new(),
+    };
+
     // 6. 检测已安装的 agents (通过文件系统检测,fallback 仅保留当前 scope 自动应用的 agents)。
     //    注意:fallback 故意不再合并 `AgentType::detect_installed()` —— 否则会把 skill
     //    装到从未链接过的 agent 上 (例如用户原本只装在 cursor、之后手动卸了 cursor 时)。
@@ -571,7 +626,11 @@ async fn update_skill_single(
     };
     let mut target_agents =
         detect_installed_agents_for_skill(skill_name, &install_scope, project_path);
-    if target_agents.is_empty() {
+    let had_detected_targets = !target_agents.is_empty();
+    if matches!(scope, Scope::Project) {
+        target_agents.retain(|agent| *agent != AgentType::Eve);
+    }
+    if target_agents.is_empty() && !had_detected_targets {
         let is_global = matches!(install_scope, crate::models::Scope::Global);
         let cwd = project_path.unwrap_or(".");
         target_agents = AgentType::get_automatic_agents_for_scope(is_global, cwd);
@@ -600,7 +659,7 @@ async fn update_skill_single(
         &install_scope,
         project_path,
     );
-    let agent_results: Vec<UpdateSkillAgentResult> = per_agent_results
+    let mut agent_results: Vec<UpdateSkillAgentResult> = per_agent_results
         .into_iter()
         .map(|r| UpdateSkillAgentResult {
             agent: r.agent,
@@ -618,6 +677,30 @@ async fn update_skill_single(
             duration_ms: r.duration_ms,
         })
         .collect();
+
+    for subagent in eve_update_targets {
+        let result = crate::core::installer::install_skill_for_eve_target(
+            &skill.path,
+            &skill.name,
+            project_path.unwrap_or("."),
+            subagent.as_deref(),
+        );
+        agent_results.push(UpdateSkillAgentResult {
+            agent: "eve".to_string(),
+            target_id: result.target_id,
+            subagent: result.subagent,
+            status: if result.skipped {
+                UpdateSkillAgentStatus::Skipped
+            } else if result.success {
+                UpdateSkillAgentStatus::Success
+            } else {
+                UpdateSkillAgentStatus::Failed
+            },
+            mode: Some(result.mode),
+            error: result.error,
+            duration_ms: None,
+        });
+    }
 
     // 9. 仅当所有 agent 都成功时,才把新 hash 写入 lock。
     //    Partial / Failed 时保留旧 hash —— 这样下次 check_updates 仍会提示 update-available,
@@ -676,7 +759,9 @@ async fn update_skill_single(
                             Some(final_hash.clone())
                         },
                         skill_path: entry_skill_path.clone(),
-                        subagents: None,
+                        subagents: project_lock_entry
+                            .as_ref()
+                            .and_then(|entry| entry.subagents.clone()),
                         plugin_name: entry_plugin_name.clone(),
                     };
                     if let Err(err) = add_skill_to_local_lock(skill_name, entry, pp) {
@@ -748,6 +833,7 @@ async fn update_skills_batch_inner(
         skill_path: Option<String>,
         plugin_name: Option<String>,
         ref_name: Option<String>,
+        subagents: Option<Vec<String>>,
     }
 
     let names_set: std::collections::HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
@@ -780,6 +866,7 @@ async fn update_skills_batch_inner(
                             skill_path: metadata.skill_path.clone(),
                             plugin_name: entry.plugin_name.clone(),
                             ref_name: metadata.ref_name.clone(),
+                            subagents: None,
                         });
                     }
                 }
@@ -811,6 +898,7 @@ async fn update_skills_batch_inner(
                                 skill_path: metadata.skill_path.clone(),
                                 plugin_name: entry.plugin_name.clone(),
                                 ref_name: metadata.ref_name.clone(),
+                                subagents: entry.subagents.clone(),
                             });
                         }
                     }
@@ -994,7 +1082,11 @@ async fn update_skills_batch_inner(
             // detect agents (fallback 仅保留当前 scope 自动应用的 agents,见单个 update 路径的注释)
             let mut target_agents =
                 detect_installed_agents_for_skill(&entry.name, &install_scope, project_path);
-            if target_agents.is_empty() {
+            let had_detected_targets = !target_agents.is_empty();
+            if matches!(scope, Scope::Project) {
+                target_agents.retain(|agent| *agent != AgentType::Eve);
+            }
+            if target_agents.is_empty() && !had_detected_targets {
                 let is_global = matches!(install_scope, crate::models::Scope::Global);
                 let cwd = project_path.unwrap_or(".");
                 target_agents = AgentType::get_automatic_agents_for_scope(is_global, cwd);
@@ -1019,7 +1111,7 @@ async fn update_skills_batch_inner(
                 &install_scope,
                 project_path,
             );
-            let agent_results: Vec<UpdateSkillAgentResult> = per_agent_results
+            let mut agent_results: Vec<UpdateSkillAgentResult> = per_agent_results
                 .into_iter()
                 .map(|r| UpdateSkillAgentResult {
                     agent: r.agent,
@@ -1037,6 +1129,40 @@ async fn update_skills_batch_inner(
                     duration_ms: r.duration_ms,
                 })
                 .collect();
+
+            let eve_update_targets = match (&scope, project_path) {
+                (Scope::Project, Some(pp)) => eve_targets_from_source_or_root_install(
+                    &entry.source_type,
+                    entry.subagents.as_deref(),
+                    pp,
+                    &entry.name,
+                ),
+                _ => Vec::new(),
+            };
+
+            for subagent in eve_update_targets {
+                let result = crate::core::installer::install_skill_for_eve_target(
+                    &skill.path,
+                    &skill.name,
+                    project_path.unwrap_or("."),
+                    subagent.as_deref(),
+                );
+                agent_results.push(UpdateSkillAgentResult {
+                    agent: "eve".to_string(),
+                    target_id: result.target_id,
+                    subagent: result.subagent,
+                    status: if result.skipped {
+                        UpdateSkillAgentStatus::Skipped
+                    } else if result.success {
+                        UpdateSkillAgentStatus::Success
+                    } else {
+                        UpdateSkillAgentStatus::Failed
+                    },
+                    mode: Some(result.mode),
+                    error: result.error,
+                    duration_ms: None,
+                });
+            }
 
             // 仅当所有 agent 都成功时,才把新 hash 写入 lock。
             // Partial / Failed 时保留旧 hash —— 与单个 update 路径行为一致,
@@ -1096,7 +1222,7 @@ async fn update_skills_batch_inner(
                                     Some(final_hash.clone())
                                 },
                                 skill_path: entry.skill_path.clone(),
-                                subagents: None,
+                                subagents: entry.subagents.clone(),
                                 plugin_name: entry.plugin_name.clone(),
                             };
                             if let Err(err) = add_skill_to_local_lock(&entry.name, lock_entry, pp) {
@@ -1566,6 +1692,52 @@ mod tests {
             remote_hash: Some("abc123".to_string()),
         };
         assert!(ensure_can_run_update(&metadata).is_ok());
+    }
+
+    #[test]
+    fn test_eve_targets_from_lock_maps_empty_string_to_root() {
+        let entry = LocalSkillLockEntry {
+            source: "vercel/eve".to_string(),
+            ref_name: None,
+            source_type: "github".to_string(),
+            source_url: None,
+            computed_hash: "abc".to_string(),
+            remote_hash: None,
+            skill_path: Some("SKILL.md".to_string()),
+            subagents: Some(vec!["".to_string(), "research".to_string()]),
+            plugin_name: None,
+        };
+
+        assert_eq!(
+            eve_targets_from_lock_or_root_install(&entry, ".", "demo"),
+            vec![None, Some("research".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_eve_targets_from_lock_falls_back_to_existing_root_only() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("agent/skills/demo");
+        let sub = temp.path().join("agent/subagents/research/skills/demo");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let entry = LocalSkillLockEntry {
+            source: "vercel/eve".to_string(),
+            ref_name: None,
+            source_type: "github".to_string(),
+            source_url: None,
+            computed_hash: "abc".to_string(),
+            remote_hash: None,
+            skill_path: Some("SKILL.md".to_string()),
+            subagents: None,
+            plugin_name: None,
+        };
+
+        assert_eq!(
+            eve_targets_from_lock_or_root_install(&entry, &temp.path().to_string_lossy(), "demo"),
+            vec![None]
+        );
     }
 
     #[test]

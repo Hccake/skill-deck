@@ -254,6 +254,9 @@ pub struct SkillAgentDetails {
     /// 仅私有目录存在的 Agents
     #[serde(default)]
     pub private_only_agents: Vec<AgentPresenceInfo>,
+    /// Eve root/subagent 具体目标。
+    #[serde(default)]
+    pub eve_targets: Vec<InstallTargetInfo>,
     // 注意：不设 has_independent_agents 字段，前端直接用 independent_agents.length > 0 推导（YAGNI）
 }
 

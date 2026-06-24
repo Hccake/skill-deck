@@ -10,6 +10,7 @@ import type {
   InstallRiskPolicy, InstallRiskKind,
   DefaultTargetAgents,
   InstallTargetInfo,
+  InstallTargetSpec,
 } from '@/bindings';
 
 export type {
@@ -19,7 +20,7 @@ export type {
   SkillAuditData, SkillAgentDetails, ManageAgentsResult, DuplicateCleanupResult,
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
-  InstallTargetInfo,
+  InstallTargetInfo, InstallTargetSpec,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -155,6 +156,7 @@ export async function removeSkill(params: {
   projectPath?: string;
   agents?: AgentType[];
   fullRemoval?: boolean;
+  agentTargets?: InstallTargetSpec[];
 }): Promise<RemoveResult> {
   return unwrap(
     await commands.removeSkill(
@@ -163,6 +165,7 @@ export async function removeSkill(params: {
       params.projectPath ?? null,
       params.agents ?? null,
       params.fullRemoval ?? null,
+      params.agentTargets ?? null,
     )
   );
 }

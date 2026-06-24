@@ -146,6 +146,7 @@ pub fn manage_skill_agents(
             project_path.as_deref(),
             false, // partial removal
             Some(&remove_agents),
+            None,
         ) {
             Ok(result) => {
                 if result.success {
