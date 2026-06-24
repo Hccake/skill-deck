@@ -5,6 +5,27 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-06-24
+
+### Added
+
+- **Agent 可用性分组** — 安装和管理 Skill 时，按“可直接使用”“需要单独接入”“额外保留”区分 Agent，不再把所有 Agent 都视为需要写入独立目录的目标。
+- **额外保留项清理** — 当 Agent 既能读取通用 Skill 目录，又在自己的目录中保留同名链接或副本时，Skill Deck 会标记该状态，并可在“管理 Agents”中清理对应目录项。
+- **Agent 支持扩展** — 新增并校准 Antigravity CLI、AstrBot、Autohand Code CLI、inference.sh、Jazz、Lingma、Loaf、Moxby、Ona、PromptScript、Qoder CN、Reasonix、Zenflow、Terramind、Tinycloud 等 Agent 的目录识别。
+
+### Changed
+
+- **安装目标选择** — 可直接读取通用 Skill 目录的 Agent 不再进入普通接入选择；需要写入独立目录的 Agent 仍由用户显式选择。
+- **安装确认与结果展示** — 确认页改为展示安装计划，完成页按“可直接使用”“已单独接入”“额外保留”“已跳过”“失败”分类展示结果。
+- **默认接入设置迁移** — 已经可直接使用的 Agent 会从默认接入配置中移除，避免后续安装时重复写入独立目录。
+- **项目复制目标处理** — 复制项目级 Skill 时，会根据目标项目中的 Agent 可用性决定写入通用 Skill 目录、独立 Agent 目录或跳过，并返回被跳过的 Agent。
+
+### Fixed
+
+- **重复目录项覆盖** — 对已经存在额外保留项或仅存在独立目录副本的 Agent，管理入口不再直接覆盖原有目录内容。
+- **删除范围提示** — 删除通用 Skill 目录中的 Skill 时，如果 Agent 自己目录中仍有链接或副本，会明确提示这些目录项不会随通用目录一起删除。
+- **部分 Agent 目录识别** — 校准 Cline、Hermes、Kimi Code CLI 等 Agent 的目录配置和检测逻辑。
+
 ## [1.6.0] - 2026-06-02
 
 ### Added
