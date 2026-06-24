@@ -4,6 +4,7 @@ pub mod agents;
 pub mod app_config;
 pub mod audit;
 pub mod discovery;
+pub mod eve;
 pub mod git;
 pub mod github_api;
 pub mod installer;

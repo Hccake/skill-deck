@@ -88,6 +88,7 @@ pub enum AgentType {
     Devin,
     Dexto,
     Droid,
+    Eve,
     Firebender,
     Forgecode,
     GeminiCli,
@@ -163,6 +164,7 @@ impl std::fmt::Display for AgentType {
             Self::Devin => "devin",
             Self::Dexto => "dexto",
             Self::Droid => "droid",
+            Self::Eve => "eve",
             Self::Firebender => "firebender",
             Self::Forgecode => "forgecode",
             Self::GeminiCli => "gemini-cli",
@@ -243,6 +245,7 @@ impl std::str::FromStr for AgentType {
             "devin" => Ok(Self::Devin),
             "dexto" => Ok(Self::Dexto),
             "droid" => Ok(Self::Droid),
+            "eve" => Ok(Self::Eve),
             "firebender" => Ok(Self::Firebender),
             "forgecode" => Ok(Self::Forgecode),
             "gemini-cli" => Ok(Self::GeminiCli),
@@ -322,6 +325,7 @@ impl AgentType {
             Self::Devin,
             Self::Dexto,
             Self::Droid,
+            Self::Eve,
             Self::Firebender,
             Self::Forgecode,
             Self::GeminiCli,
@@ -533,6 +537,12 @@ impl AgentType {
                 display_name: "Droid",
                 skills_dir: ".factory/skills",
                 global_skills_dir: Some(PATHS.home.join(".factory").join("skills")),
+            },
+            Self::Eve => AgentConfig {
+                name: "eve",
+                display_name: "Eve",
+                skills_dir: "agent/skills",
+                global_skills_dir: None,
             },
             Self::Firebender => AgentConfig {
                 name: "firebender",
@@ -900,6 +910,7 @@ impl AgentType {
             Self::Devin => PATHS.config_home.join("devin").exists(),
             Self::Dexto => PATHS.home.join(".dexto").exists(),
             Self::Droid => PATHS.home.join(".factory").exists(),
+            Self::Eve => crate::core::eve::is_eve_project(&cwd.to_string_lossy()),
             Self::Firebender => PATHS.home.join(".firebender").exists(),
             Self::Forgecode => PATHS.home.join(".forge").exists(),
             Self::GeminiCli => PATHS.home.join(".gemini").exists(),
@@ -969,6 +980,14 @@ impl AgentType {
         Self::all().filter(|agent| agent.is_installed()).collect()
     }
 
+    /// 检测 Agent 是否在指定项目路径可用。
+    pub fn is_installed_for_project(&self, cwd: &str) -> bool {
+        match self {
+            Self::Eve => crate::core::eve::is_eve_project(cwd),
+            _ => self.is_installed(),
+        }
+    }
+
     /// 获取指定安装范围下的目标能力
     pub fn scope_target(&self, is_global: bool, cwd: &str) -> AgentScopeTarget {
         let config = self.config();
@@ -1013,8 +1032,8 @@ impl AgentType {
         crate::core::agent_availability::default_available_agents(is_global, cwd)
     }
 
-    /// 转换为 AgentInfo（前端使用）
-    pub fn to_agent_info(self) -> AgentInfo {
+    /// 转换为指定项目路径下的 AgentInfo（前端使用）
+    pub fn to_agent_info_for_project(self, cwd: &str) -> AgentInfo {
         let config = self.config();
 
         AgentInfo {
@@ -1025,12 +1044,17 @@ impl AgentType {
                 .global_skills_dir
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default(),
-            detected: self.is_installed(),
+            detected: self.is_installed_for_project(cwd),
             targets: AgentTargets {
-                global: self.scope_target(true, ""),
-                project: self.scope_target(false, "."),
+                global: self.scope_target(true, cwd),
+                project: self.scope_target(false, cwd),
             },
         }
+    }
+
+    /// 转换为 AgentInfo（前端使用）
+    pub fn to_agent_info(self) -> AgentInfo {
+        self.to_agent_info_for_project(".")
     }
 }
 
@@ -1046,7 +1070,45 @@ mod tests {
 
         #[test]
         fn test_cli_1_5_10_agent_count() {
-            assert_eq!(AgentType::all().count(), 70);
+            assert_eq!(AgentType::all().count(), 71);
+        }
+
+        #[test]
+        fn test_eve_parse_display_and_config() {
+            assert_eq!("eve".parse::<AgentType>().ok(), Some(AgentType::Eve));
+            assert_eq!(AgentType::Eve.to_string(), "eve");
+
+            let config = AgentType::Eve.config();
+            assert_eq!(config.name, "eve");
+            assert_eq!(config.display_name, "Eve");
+            assert_eq!(config.skills_dir, "agent/skills");
+            assert!(config.global_skills_dir.is_none());
+        }
+
+        #[test]
+        fn test_eve_project_aware_detection() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(temp.path().join("agent")).unwrap();
+            std::fs::write(
+                temp.path().join("package.json"),
+                r#"{"devDependencies":{"eve":"^0.11.5"}}"#,
+            )
+            .unwrap();
+
+            assert!(AgentType::Eve.is_installed_for_project(&temp.path().to_string_lossy()));
+            assert!(
+                AgentType::Eve
+                    .to_agent_info_for_project(&temp.path().to_string_lossy())
+                    .detected
+            );
+            assert!(
+                !AgentType::Eve
+                    .to_agent_info_for_project(".")
+                    .targets
+                    .global
+                    .supported
+            );
         }
 
         #[test]
@@ -1168,8 +1230,8 @@ mod tests {
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
         assert_eq!(
-            count, 70,
-            "Should have 70 real agent types after syncing CLI 1.5.10"
+            count, 71,
+            "Should have 71 real agent types after syncing CLI 1.5.13"
         );
     }
 

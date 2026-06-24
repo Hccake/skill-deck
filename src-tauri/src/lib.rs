@@ -14,6 +14,7 @@ pub fn run() {
     let builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             commands::agents::list_agents,
+            commands::agents::list_agents_for_project,
             commands::skills::list_skills,
             commands::skills::read_skill_content,
             commands::config::get_config,

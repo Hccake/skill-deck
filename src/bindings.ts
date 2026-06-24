@@ -20,6 +20,17 @@ async listAgents() : Promise<Result<AgentInfo[], AppError>> {
 }
 },
 /**
+ * 按指定项目路径列出 Agents，供 project-only Agent 使用真实项目上下文检测。
+ */
+async listAgentsForProject(projectPath: string | null) : Promise<Result<AgentInfo[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_agents_for_project", { projectPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * 列出已安装的 skills
  * 对应前端调用: invoke('list_skills', { params })
  */
@@ -389,7 +400,7 @@ export type AgentTargets = { global: AgentScopeTarget; project: AgentScopeTarget
  * Agent 类型枚举
  * 完整对应 CLI: types.ts AgentType
  */
-export type AgentType = "aider-desk" | "amp" | "antigravity" | "antigravity-cli" | "astrbot" | "augment" | "autohand-code" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-code-cli" | "kiro-cli" | "kode" | "inference-sh" | "jazz" | "lingma" | "loaf" | "mcpjam" | "mistral-vibe" | "moxby" | "mux" | "neovate" | "ona" | "opencode" | "openhands" | "pi" | "promptscript" | "qoder" | "qoder-cn" | "qwen-code" | "reasonix" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zed" | "zencoder" | "zenflow" | "pochi" | "adal" | "cortex" | "terramind" | "tinycloud"
+export type AgentType = "aider-desk" | "amp" | "antigravity" | "antigravity-cli" | "astrbot" | "augment" | "autohand-code" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "eve" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-code-cli" | "kiro-cli" | "kode" | "inference-sh" | "jazz" | "lingma" | "loaf" | "mcpjam" | "mistral-vibe" | "moxby" | "mux" | "neovate" | "ona" | "opencode" | "openhands" | "pi" | "promptscript" | "qoder" | "qoder-cn" | "qwen-code" | "reasonix" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zed" | "zencoder" | "zenflow" | "pochi" | "adal" | "cortex" | "terramind" | "tinycloud"
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
@@ -661,7 +672,11 @@ export type InstallRiskPolicy = { kind: InstallRiskKind; code?: string | null }
  * 已安装的 Skill 信息
  * 对应 CLI: InstalledSkill (installer.ts:783-790)
  */
-export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
+export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[];
+/**
+ * Skill card Agents that are both effective for this skill and detected locally.
+ */
+cardAgents?: AgentType[] | null; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
 /**
  * 是否可直接执行更新
  */
@@ -691,13 +706,9 @@ defaultAvailableAgentCount?: number | null;
  */
 privateAdaptedAgentCount?: number | null;
 /**
- * 可清理的重复独立副本数量
+ * 可清理的额外 Agent 目录项数量（可能是链接或副本）
  */
 duplicateCopyCount?: number | null;
-/**
- * Skill card Agents that are both effective for this skill and detected locally.
- */
-cardAgents?: AgentType[] | null;
 /**
  * 默认可用 Agents
  */
@@ -707,15 +718,15 @@ defaultAvailableAgents?: AgentType[] | null;
  */
 privateAdaptedAgents?: AgentType[] | null;
 /**
- * 当前存在重复独立副本的 Agents
+ * 当前存在额外 Agent 目录项的 Agents（可能是链接或副本）
  */
 duplicateCopyAgents?: AgentType[] | null;
 /**
- * 当前只有独立副本的 Agents
+ * 当前只通过 Agent 目录项使用的 Agents
  */
 privateOnlyAgents?: AgentType[] | null;
 /**
- * 需要按独立副本重写的默认可用 Agents
+ * 需要额外保留到 Agent 目录的默认可用 Agents
  */
 privateCopyAgents?: AgentType[] | null }
 /**

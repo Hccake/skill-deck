@@ -41,6 +41,13 @@ export async function listAgents(): Promise<AgentInfo[]> {
 }
 
 /**
+ * 按指定项目路径列出 Agents，project-only Agent 会基于该路径检测。
+ */
+export async function listAgentsForProject(projectPath?: string): Promise<AgentInfo[]> {
+  return unwrap(await commands.listAgentsForProject(projectPath ?? null));
+}
+
+/**
  * 列出已安装的 Skills
  */
 export async function listSkills(params?: ListSkillsParams): Promise<ListSkillsResult> {
