@@ -20,7 +20,7 @@ use crate::core::{
 use crate::error::AppError;
 use crate::models::{
     AvailableSkill, FetchResult, InstallMode, InstallParams, InstallResult, InstallResultCategory,
-    InstallResults, ParsedSource, SourceType,
+    InstallResults, InstallTargetInfo, ParsedSource, SourceType,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -152,6 +152,56 @@ fn resolve_install_target_plan(
         private_copy_targets,
         install_targets,
     })
+}
+
+fn resolve_eve_subagents_from_targets(params: &InstallParams) -> Vec<Option<String>> {
+    let mut result = Vec::new();
+    for target in &params.agent_targets {
+        if target.agent != AgentType::Eve {
+            continue;
+        }
+
+        let value = target
+            .subagent
+            .as_ref()
+            .filter(|value| !value.is_empty() && *value != "root")
+            .cloned();
+        if !result.contains(&value) {
+            result.push(value);
+        }
+    }
+    result
+}
+
+fn lock_subagents_from_eve_targets(eve_targets: &[Option<String>]) -> Option<Vec<String>> {
+    let values: Vec<String> = eve_targets
+        .iter()
+        .map(|value| crate::core::eve::lock_subagent_value(value.as_deref()))
+        .collect();
+
+    if values.is_empty() || (values.len() == 1 && values[0].is_empty()) {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+fn eve_target_details(
+    project_path: &str,
+    eve_targets: &[Option<String>],
+) -> Vec<InstallTargetInfo> {
+    eve_targets
+        .iter()
+        .map(|subagent| InstallTargetInfo {
+            target_id: crate::core::eve::eve_target_id(subagent.as_deref()),
+            agent: AgentType::Eve,
+            display_name: crate::core::eve::eve_target_label(subagent.as_deref()),
+            subagent: subagent.clone(),
+            path: crate::core::eve::eve_skills_dir_for_target(project_path, subagent.as_deref())
+                .to_string_lossy()
+                .to_string(),
+        })
+        .collect()
 }
 
 fn install_result_category(
@@ -321,7 +371,7 @@ fn should_write_lock_for_skill(
             .iter()
             .filter(|result| result.skill_name == skill_name && !result.skipped)
             .filter(|result| expected_target_count == 0 || result.agent != "__canonical__")
-            .map(|result| result.agent.as_str())
+            .map(|result| result.target_id.as_deref().unwrap_or(result.agent.as_str()))
             .collect();
         let has_failure = failed.iter().any(|result| result.skill_name == skill_name);
         if expected_target_count == 0 {
@@ -332,9 +382,11 @@ fn should_write_lock_for_skill(
             && !has_failure;
     }
 
-    successful
-        .iter()
-        .any(|result| result.skill_name == skill_name && result.success)
+    successful.iter().any(|result| {
+        result.skill_name == skill_name
+            && result.success
+            && (!result.skipped || result.canonical_path.is_some())
+    })
 }
 
 fn lock_source_for_parsed_source(parsed: &ParsedSource, requested_source: &str) -> String {
@@ -481,6 +533,14 @@ async fn install_skills_inner(
     // 5. 拆分默认可用和独立写入目标。默认可用只写 canonical 共享目录。
     let cwd = params.project_path.as_deref().unwrap_or(".");
     let target_plan = resolve_install_target_plan(&params, behavior, cwd)?;
+    let eve_targets = if matches!(params.scope, crate::models::Scope::Project) {
+        resolve_eve_subagents_from_targets(&params)
+    } else {
+        Vec::new()
+    };
+    let expected_target_count = target_plan.install_targets.len() + eve_targets.len();
+    let lock_subagents = lock_subagents_from_eve_targets(&eve_targets);
+    let target_details = eve_target_details(cwd, &eve_targets);
     let include_canonical_result = !target_plan.default_available_agents.is_empty();
 
     // 7. 执行安装
@@ -501,7 +561,8 @@ async fn install_skills_inner(
             },
         );
 
-        let per_agent_results = if target_plan.install_targets.is_empty() {
+        let per_agent_results = if target_plan.install_targets.is_empty() && eve_targets.is_empty()
+        {
             vec![canonical_only_install_result(
                 &skill.path,
                 &skill.name,
@@ -573,6 +634,21 @@ async fn install_skills_inner(
                 failed.push(install_result);
             }
         }
+
+        for subagent in &eve_targets {
+            let eve_result = crate::core::install_skill_for_eve_target(
+                &skill.path,
+                &skill.name,
+                cwd,
+                subagent.as_deref(),
+            );
+
+            if eve_result.success {
+                successful.push(eve_result);
+            } else {
+                failed.push(eve_result);
+            }
+        }
     }
 
     // 8. 写入 lock 文件
@@ -582,7 +658,7 @@ async fn install_skills_inner(
             &failed,
             &skill.name,
             params.preserve_existing_modes,
-            target_plan.install_targets.len(),
+            expected_target_count,
         )
     }) {
         let _ = app.emit(
@@ -603,7 +679,7 @@ async fn install_skills_inner(
                 &failed,
                 &skill.name,
                 params.preserve_existing_modes,
-                target_plan.install_targets.len(),
+                expected_target_count,
             );
             if !installed {
                 continue;
@@ -613,7 +689,7 @@ async fn install_skills_inner(
             let source_type_str = &parsed.source_type.to_string();
             let source_url = &parsed.url;
             let skill_path = Some(skill.relative_path.as_str());
-            let installed_skill_dir = match params.scope {
+            let canonical_skill_dir = match params.scope {
                 crate::models::Scope::Global => crate::core::paths::canonical_skills_dir(true, "")
                     .join(crate::core::skill::sanitize_name(&skill.name)),
                 crate::models::Scope::Project => params
@@ -627,6 +703,17 @@ async fn install_skills_inner(
                         crate::core::paths::canonical_skills_dir(false, "")
                             .join(crate::core::skill::sanitize_name(&skill.name))
                     }),
+            };
+            let installed_skill_dir = if canonical_skill_dir.exists() {
+                canonical_skill_dir
+            } else {
+                successful
+                    .iter()
+                    .find(|result| {
+                        result.skill_name == skill.name && result.success && !result.skipped
+                    })
+                    .map(|result| result.path.clone())
+                    .unwrap_or(canonical_skill_dir)
             };
             let skill_folder_hash = resolve_install_hash(
                 Some(skills_dir.as_path()),
@@ -670,7 +757,7 @@ async fn install_skills_inner(
                                 Some(skill_folder_hash.clone())
                             },
                             skill_path: skill_path.map(|s| s.to_string()),
-                            subagents: None,
+                            subagents: lock_subagents.clone(),
                             plugin_name: skill.plugin_name.clone(),
                         };
                         let _ = add_skill_to_local_lock(&skill.name, entry, project_path);
@@ -699,7 +786,7 @@ async fn install_skills_inner(
             .iter()
             .map(ToString::to_string)
             .collect(),
-        target_details: Vec::new(),
+        target_details,
     })
 }
 
@@ -852,6 +939,49 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_eve_subagents_from_targets_deduplicates_root_and_named_subagents() {
+        let params = InstallParams {
+            source: "owner/repo".to_string(),
+            skills: vec!["demo".to_string()],
+            agents: vec![],
+            agent_targets: vec![
+                crate::models::InstallTargetSpec {
+                    agent: AgentType::Eve,
+                    subagent: None,
+                },
+                crate::models::InstallTargetSpec {
+                    agent: AgentType::Eve,
+                    subagent: Some("root".to_string()),
+                },
+                crate::models::InstallTargetSpec {
+                    agent: AgentType::Eve,
+                    subagent: Some("research".to_string()),
+                },
+                crate::models::InstallTargetSpec {
+                    agent: AgentType::Eve,
+                    subagent: Some("research".to_string()),
+                },
+                crate::models::InstallTargetSpec {
+                    agent: AgentType::ClaudeCode,
+                    subagent: Some("ignored".to_string()),
+                },
+            ],
+            private_copy_agents: vec![],
+            scope: crate::models::Scope::Project,
+            project_path: Some("/tmp/project".to_string()),
+            mode: InstallMode::Copy,
+            retry: false,
+            preserve_existing_modes: false,
+            acknowledge_risk: false,
+        };
+
+        assert_eq!(
+            resolve_eve_subagents_from_targets(&params),
+            vec![None, Some("research".to_string())]
+        );
+    }
+
+    #[test]
     fn test_install_result_category_marks_canonical_as_default_available() {
         let result = PerAgentInstallResult {
             agent: "__canonical__".to_string(),
@@ -914,6 +1044,32 @@ mod tests {
         )];
 
         assert!(should_write_lock_for_skill(&results, &[], "demo", false, 1));
+    }
+
+    #[test]
+    fn test_regular_install_lock_write_rejects_skipped_eve_target_only() {
+        let results = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "eve".to_string(),
+            target_id: Some("eve:root".to_string()),
+            subagent: None,
+            success: true,
+            path: std::path::PathBuf::from("/project/agent/skills/demo"),
+            canonical_path: None,
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: true,
+            error: Some("source-overlaps-target".to_string()),
+            category: InstallResultCategory::Skipped,
+        }];
+
+        assert!(!should_write_lock_for_skill(
+            &results,
+            &[],
+            "demo",
+            false,
+            1
+        ));
     }
 
     #[test]

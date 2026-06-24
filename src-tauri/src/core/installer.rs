@@ -353,8 +353,11 @@ fn clean_and_create_directory(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 复制 skill 文件（排除特定文件，与 CLI copyDirectory 一致）
-pub(crate) fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
+fn copy_skill_files_for_agent(
+    src: &Path,
+    dst: &Path,
+    agent: Option<AgentType>,
+) -> Result<(), AppError> {
     // 确保目标目录存在
     fs::create_dir_all(dst).map_err(|e| AppError::InstallFailed {
         message: format!("Failed to create dir: {}", e),
@@ -381,8 +384,19 @@ pub(crate) fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
                 continue;
             }
             // 递归复制目录
-            copy_skill_files(&path, &dst_path)?;
+            copy_skill_files_for_agent(&path, &dst_path, agent)?;
         } else {
+            if agent == Some(AgentType::Eve) && file_name.eq_ignore_ascii_case("SKILL.md") {
+                let raw = fs::read_to_string(&path).map_err(|e| AppError::InstallFailed {
+                    message: format!("Failed to read file: {}", e),
+                })?;
+                let normalized = crate::core::eve::normalize_eve_skill_md(&raw);
+                fs::write(&dst_path, normalized).map_err(|e| AppError::InstallFailed {
+                    message: format!("Failed to write file: {}", e),
+                })?;
+                continue;
+            }
+
             // 复制文件（解引用 symlink）。broken symlink 直接跳过，不中断整个安装。
             if let Err(e) = fs::copy(&path, &dst_path) {
                 let is_broken_symlink = e.kind() == std::io::ErrorKind::NotFound
@@ -401,6 +415,76 @@ pub(crate) fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+/// 复制 skill 文件（排除特定文件，与 CLI copyDirectory 一致）
+pub(crate) fn copy_skill_files(src: &Path, dst: &Path) -> Result<(), AppError> {
+    copy_skill_files_for_agent(src, dst, None)
+}
+
+pub fn install_skill_for_eve_target(
+    skill_path: &Path,
+    skill_name: &str,
+    project_path: &str,
+    subagent: Option<&str>,
+) -> InstallResult {
+    let sanitized_name = sanitize_name(skill_name);
+    let base_dir = crate::core::eve::eve_skills_dir_for_target(project_path, subagent);
+    let target_dir = base_dir.join(&sanitized_name);
+    let target_id = crate::core::eve::eve_target_id(subagent);
+
+    if crate::core::eve::paths_overlap(skill_path, &target_dir) {
+        return InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: "eve".to_string(),
+            target_id: Some(target_id),
+            subagent: subagent.map(ToOwned::to_owned),
+            success: true,
+            path: target_dir,
+            canonical_path: None,
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: true,
+            error: Some("source-overlaps-target".to_string()),
+            category: InstallResultCategory::Skipped,
+        };
+    }
+
+    let result = (|| -> Result<(), AppError> {
+        clean_and_create_directory(&target_dir)?;
+        copy_skill_files_for_agent(skill_path, &target_dir, Some(AgentType::Eve))
+    })();
+
+    match result {
+        Ok(()) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: "eve".to_string(),
+            target_id: Some(target_id),
+            subagent: subagent.map(ToOwned::to_owned),
+            success: true,
+            path: target_dir,
+            canonical_path: None,
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: None,
+            category: InstallResultCategory::PrivateAdapted,
+        },
+        Err(error) => InstallResult {
+            skill_name: skill_name.to_string(),
+            agent: "eve".to_string(),
+            target_id: Some(target_id),
+            subagent: subagent.map(ToOwned::to_owned),
+            success: false,
+            path: target_dir,
+            canonical_path: None,
+            mode: InstallMode::Copy,
+            symlink_failed: false,
+            skipped: false,
+            error: Some(error.to_string()),
+            category: InstallResultCategory::Failed,
+        },
+    }
 }
 
 /// 创建 symlink（跨平台，与 CLI createSymlink 一致）
@@ -1579,19 +1663,65 @@ mod tests {
         );
 
         assert!(results.iter().all(|r| r.success), "results: {:?}", results);
-        assert!(temp
-            .path()
-            .join(".agents")
-            .join("skills")
-            .join("mixed-skill")
-            .join("SKILL.md")
-            .exists());
-        assert!(temp
-            .path()
-            .join(".claude")
-            .join("skills")
-            .join("mixed-skill")
-            .join("SKILL.md")
-            .exists());
+        assert!(
+            temp.path()
+                .join(".agents")
+                .join("skills")
+                .join("mixed-skill")
+                .join("SKILL.md")
+                .exists()
+        );
+        assert!(
+            temp.path()
+                .join(".claude")
+                .join("skills")
+                .join("mixed-skill")
+                .join("SKILL.md")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn test_eve_native_install_writes_to_root_agent_and_strips_name() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("agent")).unwrap();
+        let source = temp.path().join("source/demo");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+        )
+        .unwrap();
+
+        let result =
+            install_skill_for_eve_target(&source, "demo", &temp.path().to_string_lossy(), None);
+
+        assert!(result.success);
+        assert_eq!(result.target_id.as_deref(), Some("eve:root"));
+        let installed = temp.path().join("agent/skills/demo/SKILL.md");
+        let content = std::fs::read_to_string(installed).unwrap();
+        assert!(!content.contains("name:"));
+        assert!(content.contains("description: Demo"));
+    }
+
+    #[test]
+    fn test_eve_native_install_skips_when_source_overlaps_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("agent/skills/demo");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+        )
+        .unwrap();
+        std::fs::write(source.join("extra.txt"), "keep").unwrap();
+
+        let result =
+            install_skill_for_eve_target(&source, "demo", &temp.path().to_string_lossy(), None);
+
+        assert!(result.success);
+        assert!(result.skipped);
+        assert_eq!(result.error.as_deref(), Some("source-overlaps-target"));
+        assert!(source.join("extra.txt").exists());
     }
 }

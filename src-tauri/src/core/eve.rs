@@ -119,6 +119,87 @@ pub fn eve_install_targets_for_project(cwd: &str) -> Vec<InstallTargetInfo> {
     targets
 }
 
+pub fn normalize_eve_skill_md(raw: &str) -> String {
+    let Some(rest) = raw.strip_prefix("---") else {
+        return raw.to_string();
+    };
+    let Some(end) = rest.find("\n---") else {
+        return raw.to_string();
+    };
+
+    let yaml_content = rest[..end].trim_start_matches(['\r', '\n']);
+    let content = rest[end + "\n---".len()..]
+        .trim_start_matches(['\r', '\n'])
+        .to_string();
+
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(yaml_content) else {
+        return raw.to_string();
+    };
+    let Some(mapping) = value.as_mapping() else {
+        return content;
+    };
+
+    let mut kept = serde_yaml::Mapping::new();
+    for key in ["description", "license"] {
+        if let Some(value) = mapping
+            .get(&serde_yaml::Value::String(key.to_string()))
+            .and_then(|value| value.as_str())
+        {
+            kept.insert(
+                serde_yaml::Value::String(key.to_string()),
+                serde_yaml::Value::String(value.to_string()),
+            );
+        }
+    }
+
+    if let Some(metadata) = mapping
+        .get(&serde_yaml::Value::String("metadata".to_string()))
+        .and_then(|value| value.as_mapping())
+    {
+        let mut meta = serde_yaml::Mapping::new();
+        for (key, value) in metadata {
+            if key.as_str().is_some() && value.as_str().is_some() {
+                meta.insert(key.clone(), value.clone());
+            }
+        }
+        if !meta.is_empty() {
+            kept.insert(
+                serde_yaml::Value::String("metadata".to_string()),
+                serde_yaml::Value::Mapping(meta),
+            );
+        }
+    }
+
+    if kept.is_empty() {
+        return content;
+    }
+
+    let yaml = serde_yaml::to_string(&kept).unwrap_or_default();
+    format!("---\n{}---\n{}", yaml, content)
+}
+
+pub fn paths_overlap(left: &Path, right: &Path) -> bool {
+    let normalize = |path: &Path| {
+        path.canonicalize().unwrap_or_else(|_| {
+            let mut normalized = PathBuf::new();
+            for component in path.components() {
+                match component {
+                    std::path::Component::CurDir => {}
+                    std::path::Component::ParentDir => {
+                        normalized.pop();
+                    }
+                    other => normalized.push(other.as_os_str()),
+                }
+            }
+            normalized
+        })
+    };
+
+    let left = normalize(left);
+    let right = normalize(right);
+    left.starts_with(&right) || right.starts_with(&left)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +275,30 @@ mod tests {
                 .to_string_lossy()
                 .to_string()
         );
+    }
+
+    #[test]
+    fn eve_skill_md_normalizer_removes_unsupported_name_field() {
+        let raw = "---\nname: demo\ndescription: Demo\nlicense: MIT\nmetadata:\n  keep: value\n  skip: 1\n---\n# Demo\n";
+        let normalized = normalize_eve_skill_md(raw);
+
+        assert!(!normalized.contains("name:"));
+        assert!(normalized.contains("description: Demo"));
+        assert!(normalized.contains("license: MIT"));
+        assert!(normalized.contains("keep: value"));
+        assert!(!normalized.contains("skip: 1"));
+        assert!(normalized.contains("# Demo"));
+    }
+
+    #[test]
+    fn paths_overlap_when_source_is_target_or_parent() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("skills/demo");
+        let child = source.join("nested");
+        std::fs::create_dir_all(&child).unwrap();
+
+        assert!(paths_overlap(&source, &source));
+        assert!(paths_overlap(&source, &child));
+        assert!(!paths_overlap(&source, &temp.path().join("other")));
     }
 }
