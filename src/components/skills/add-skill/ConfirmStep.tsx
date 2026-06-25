@@ -177,6 +177,10 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     const skill = availableSkillMap.get(skillName);
     const overwriteAgents = state.overwrites[skillName] ?? [];
     const hasOverwrite = overwriteAgents.length > 0;
+    const installDirName = skill?.installDirName;
+    const hasInstallDirNameChange = Boolean(
+      installDirName && installDirName !== skillName
+    );
     const trustTypeKey = skill?.wellKnownEntryType === 'legacy'
       ? 'addSkill.confirm.trust.legacy'
       : skill?.wellKnownEntryType === 'skill-md'
@@ -223,6 +227,23 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
             )}
           </div>
         </div>
+        {hasInstallDirNameChange && (
+          <div className="mx-3 mb-2 -mt-0.5 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="text-xs font-medium text-foreground">
+                  {t('addSkill.confirm.installDirNameChanged')}
+                </p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {t('addSkill.confirm.installDirNameChangedHint', {
+                    installDirName,
+                  })}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };

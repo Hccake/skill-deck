@@ -564,6 +564,8 @@
       "summary": "将安装 {{count}} 个 Skill，其中 {{overwriteCount}} 个目标目录已有同名 Skill，继续后会覆盖对应内容",
       "summaryNoOverwrite": "将安装 {{count}} 个 Skill",
       "itemsTitle": "安装内容",
+      "installDirNameChanged": "安装目录与 Skill 名称不同",
+      "installDirNameChangedHint": "Skill 名称包含不适合作为目录名的字符，安装时将使用 {{installDirName}}。",
       "overwriteCount": "{{count}} 个目标目录已有同名 Skill，继续后会覆盖对应内容",
       "willOverwrite": "将覆盖目标: {{agents}}",
       "shared": "通用 Skill 目录",

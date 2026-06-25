@@ -20,6 +20,10 @@ vi.mock('react-i18next', () => ({
       }
       if (key === 'addSkill.confirm.itemsTitle') return 'Install contents';
       if (key === 'addSkill.confirm.overwriteGroup') return '目标目录已存在';
+      if (key === 'addSkill.confirm.installDirNameChanged') return '安装目录与 Skill 名称不同';
+      if (key === 'addSkill.confirm.installDirNameChangedHint') {
+        return `Skill 名称包含不适合作为目录名的字符，安装时将使用 ${options?.installDirName}。`;
+      }
       if (key === 'addSkill.confirm.installPlan') return 'Install plan';
       if (key === 'addSkill.confirm.installPlanHint') {
         return 'Review which Agents can use this Skill after install.';
@@ -70,7 +74,7 @@ function createState(): WizardState {
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
-    availableSkills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null }],
+    availableSkills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null, installDirName: 'demo' }],
     selectedSkills: ['demo'],
     skillFilter: null,
     skillSearchQuery: '',
@@ -109,6 +113,7 @@ function createTrustState(
         description: 'Demo',
         relativePath: 'demo/SKILL.md',
         pluginName: null,
+        installDirName: 'demo',
         ...trustFields,
       } as never,
     ],
@@ -307,8 +312,8 @@ describe('ConfirmStep', () => {
           ...createState(),
           riskPolicy: { kind: 'none', code: null },
           availableSkills: [
-            { name: 'existing-skill', description: 'Existing', relativePath: 'skills/existing/SKILL.md', pluginName: null },
-            { name: 'new-skill', description: 'New', relativePath: 'skills/new/SKILL.md', pluginName: null },
+            { name: 'existing-skill', description: 'Existing', relativePath: 'skills/existing/SKILL.md', pluginName: null, installDirName: 'existing-skill' },
+            { name: 'new-skill', description: 'New', relativePath: 'skills/new/SKILL.md', pluginName: null, installDirName: 'new-skill' },
           ],
           selectedSkills: ['existing-skill', 'new-skill'],
           overwrites: { 'existing-skill': ['Claude Code'] },
@@ -334,7 +339,7 @@ describe('ConfirmStep', () => {
           ...createState(),
           riskPolicy: { kind: 'none', code: null },
           availableSkills: [
-            { name: 'existing-skill', description: 'Existing', relativePath: 'skills/existing/SKILL.md', pluginName: null },
+            { name: 'existing-skill', description: 'Existing', relativePath: 'skills/existing/SKILL.md', pluginName: null, installDirName: 'existing-skill' },
           ],
           selectedSkills: ['existing-skill'],
           overwrites: { 'existing-skill': ['Claude Code', 'Codex', 'Cursor'] },
@@ -346,6 +351,56 @@ describe('ConfirmStep', () => {
 
     expect(screen.queryByText('Claude Code')).toBeNull();
     expect(screen.queryByText('Codex')).toBeNull();
+  });
+
+  it('shows the install directory note only when it differs from the Skill name', () => {
+    const updateState = vi.fn();
+    const { rerender } = render(
+      <ConfirmStep
+        state={{
+          ...createState(),
+          riskPolicy: { kind: 'none', code: null },
+          availableSkills: [
+            {
+              name: 'demo',
+              description: 'Demo',
+              relativePath: 'skills/demo/SKILL.md',
+              pluginName: null,
+              installDirName: 'demo',
+            },
+          ],
+          selectedSkills: ['demo'],
+        }}
+        updateState={updateState}
+        scope="global"
+      />
+    );
+
+    expect(screen.queryByText('安装目录与 Skill 名称不同')).toBeNull();
+
+    rerender(
+      <ConfirmStep
+        state={{
+          ...createState(),
+          riskPolicy: { kind: 'none', code: null },
+          availableSkills: [
+            {
+              name: '张雪峰-skill',
+              description: 'Demo',
+              relativePath: 'skills/zhangxuefeng/SKILL.md',
+              pluginName: null,
+              installDirName: 'skill',
+            },
+          ],
+          selectedSkills: ['张雪峰-skill'],
+        }}
+        updateState={updateState}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByText('安装目录与 Skill 名称不同')).toBeTruthy();
+    expect(screen.getByText('Skill 名称包含不适合作为目录名的字符，安装时将使用 skill。')).toBeTruthy();
   });
 
   it('renders shared directory, separate setup, and keep-separately sections', () => {

@@ -7,7 +7,7 @@
 //!
 //! 与 CLI skills.ts 行为一致
 
-use crate::core::skill::parse_skill_md;
+use crate::core::skill::{parse_skill_md, sanitize_name};
 use crate::core::skill_paths::{find_skill_md_case_insensitive, relative_skill_path};
 use crate::error::AppError;
 use crate::models::AvailableSkill;
@@ -60,6 +60,7 @@ pub struct DiscoverOptions {
 #[derive(Debug, Clone)]
 pub struct DiscoveredSkill {
     pub name: String,
+    pub install_dir_name: String,
     pub description: String,
     pub path: PathBuf,
     pub relative_path: String,
@@ -77,6 +78,7 @@ impl From<DiscoveredSkill> for AvailableSkill {
     fn from(skill: DiscoveredSkill) -> Self {
         AvailableSkill {
             name: skill.name,
+            install_dir_name: skill.install_dir_name,
             description: skill.description,
             relative_path: skill.relative_path,
             plugin_name: skill.plugin_name,
@@ -497,8 +499,11 @@ fn try_parse_skill(
     let skill_dir = skill_md.parent().unwrap_or(skill_md);
     let relative_skill_path = relative_skill_path(root, skill_md);
 
+    let install_dir_name = sanitize_name(&parsed.name);
+
     Ok(Some(DiscoveredSkill {
         name: parsed.name,
+        install_dir_name,
         description: parsed.description,
         path: skill_dir.to_path_buf(),
         relative_path: relative_skill_path,
@@ -531,6 +536,30 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "test-skill");
         assert_eq!(skills[0].description, "A test skill");
+    }
+
+    #[test]
+    fn test_discover_skills_exposes_install_dir_name() {
+        let temp = tempdir().unwrap();
+        let skill_dir = temp.path().join("localized-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: 张雪峰-skill\ndescription: Localized\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+        let available = AvailableSkill::from(skills.into_iter().next().unwrap());
+        let value = serde_json::to_value(available).unwrap();
+
+        assert_eq!(
+            value
+                .get("installDirName")
+                .and_then(serde_json::Value::as_str),
+            Some("skill")
+        );
     }
 
     #[test]

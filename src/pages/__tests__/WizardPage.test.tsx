@@ -15,7 +15,7 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
-    availableSkills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null }],
+    availableSkills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null }],
     selectedSkills: ['demo'],
     skillFilter: null,
     skillSearchQuery: '',

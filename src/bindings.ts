@@ -427,6 +427,10 @@ export type AvailableSkill = {
  */
 name: string;
 /**
+ * 安装时使用的目录名
+ */
+installDirName: string;
+/**
  * 描述
  */
 description: string;

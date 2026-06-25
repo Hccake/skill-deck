@@ -121,7 +121,7 @@ describe('SourceStep', () => {
       gitRef: null,
       skillFilter: null,
       riskPolicy: { kind: 'require-confirmation', code: 'openclaw' },
-      skills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
+      skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
     });
 
     render(
@@ -149,7 +149,7 @@ describe('SourceStep', () => {
       gitRef: null,
       skillFilter: 'demo',
       riskPolicy: { kind: 'none', code: null },
-      skills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
+      skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
     });
 
     render(<Harness onNext={onNext} />);

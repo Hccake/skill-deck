@@ -1515,6 +1515,7 @@ mod tests {
     fn test_find_update_skill_prefers_locked_skill_path_over_duplicate_name() {
         let priority_skill = crate::core::DiscoveredSkill {
             name: "demo".to_string(),
+            install_dir_name: "demo".to_string(),
             description: "Priority".to_string(),
             path: std::path::PathBuf::from("skills/demo"),
             relative_path: "skills/demo/SKILL.md".to_string(),
@@ -1522,6 +1523,7 @@ mod tests {
         };
         let locked_skill = crate::core::DiscoveredSkill {
             name: "demo".to_string(),
+            install_dir_name: "demo".to_string(),
             description: "Locked".to_string(),
             path: std::path::PathBuf::from("examples/demo"),
             relative_path: "examples/demo/SKILL.md".to_string(),

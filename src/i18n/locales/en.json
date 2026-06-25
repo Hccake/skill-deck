@@ -564,6 +564,8 @@
       "summary": "Will install {{count}} skills. {{overwriteCount}} target directories already contain matching skills and will be overwritten.",
       "summaryNoOverwrite": "Will install {{count}} skills.",
       "itemsTitle": "Install contents",
+      "installDirNameChanged": "Install directory differs from Skill name",
+      "installDirNameChangedHint": "The Skill name contains characters that are not suitable for a directory name. Install will use {{installDirName}}.",
       "overwriteCount": "{{count}} target directories already contain matching skills and will be overwritten",
       "willOverwrite": "Overwrite targets: {{agents}}",
       "shared": "Shared Skill directory",

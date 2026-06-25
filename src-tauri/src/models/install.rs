@@ -188,6 +188,8 @@ pub struct AgentPresenceInfo {
 pub struct AvailableSkill {
     /// Skill 名称
     pub name: String,
+    /// 安装时使用的目录名
+    pub install_dir_name: String,
     /// 描述
     pub description: String,
     /// 仓库内相对路径

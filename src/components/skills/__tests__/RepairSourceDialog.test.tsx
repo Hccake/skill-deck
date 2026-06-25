@@ -46,6 +46,7 @@ const fetchResult = (skillNames: string[], kind: 'none' | 'require-confirmation'
   riskPolicy: { kind, code: kind === 'require-confirmation' ? 'openclaw' : null },
   skills: skillNames.map((name) => ({
     name,
+    installDirName: name,
     description: name,
     relativePath: `skills/${name}`,
   })),
