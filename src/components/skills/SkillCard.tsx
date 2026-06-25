@@ -95,8 +95,6 @@ export const SkillCard = memo(function SkillCard({
   const rawEffectiveAgents = skill.cardAgents
     ?? (hasAgentSummary ? summaryAgents : skill.agents);
   const effectiveAgents = Array.from(new Set(rawEffectiveAgents));
-  const visibleAgents = effectiveAgents.slice(0, 4);
-  const hiddenAgentCount = Math.max(effectiveAgents.length - visibleAgents.length, 0);
   const duplicateCopyCount = skill.duplicateCopyCount ?? 0;
 
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -411,7 +409,7 @@ export const SkillCard = memo(function SkillCard({
 
         {/* Row 4: Agents */}
         <div className="flex items-center gap-1.5 flex-wrap pt-0.5 mt-auto">
-          {visibleAgents.map((agentId) => (
+          {effectiveAgents.map((agentId) => (
             <span
               key={agentId}
               className="inline-flex h-6 items-center rounded-full bg-primary/10 px-2.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20"
@@ -419,11 +417,6 @@ export const SkillCard = memo(function SkillCard({
               {agentDisplayNames.get(agentId) ?? agentId}
             </span>
           ))}
-          {hiddenAgentCount > 0 ? (
-            <span className="inline-flex h-6 items-center rounded-full bg-muted px-2.5 text-xs font-medium text-muted-foreground">
-              {t('skills.card.moreAgents', { count: hiddenAgentCount })}
-            </span>
-          ) : null}
           {duplicateCopyCount > 0 ? (
             <Tooltip>
               <TooltipTrigger asChild>

@@ -263,7 +263,7 @@ describe('SkillCard', () => {
     expect(tooltips.some((tooltip) => tooltip.parentElement?.className.includes('whitespace-normal'))).toBe(true);
   });
 
-  it('renders four agent names and an overflow chip for additional card agents', () => {
+  it('renders all card agent names without an overflow chip', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -286,8 +286,8 @@ describe('SkillCard', () => {
     expect(screen.getByText('Codex')).toBeTruthy();
     expect(screen.getByText('Gemini')).toBeTruthy();
     expect(screen.getByText('Cursor')).toBeTruthy();
-    expect(screen.queryByText('Qwen')).toBeNull();
-    expect(screen.getByText('skills.card.moreAgents')).toBeTruthy();
+    expect(screen.getByText('Qwen')).toBeTruthy();
+    expect(screen.queryByText('skills.card.moreAgents')).toBeNull();
   });
 
   it('falls back to deduped summary agents when card agents are absent', () => {

@@ -105,8 +105,7 @@
     "projectNotFound": "Project path not found: {{path}}",
     "card": {
       "extraCopies": "Extra setup items",
-      "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage Agents\" to adjust them.",
-      "moreAgents": "+{{count}}"
+      "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage Agents\" to adjust them."
     },
     "detail": {
       "title": "Skill Details",

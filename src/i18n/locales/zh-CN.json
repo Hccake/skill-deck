@@ -105,8 +105,7 @@
     "projectNotFound": "项目路径不存在：{{path}}",
     "card": {
       "extraCopies": "有额外接入项",
-      "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理 Agents”调整。",
-      "moreAgents": "+{{count}}"
+      "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理 Agents”调整。"
     },
     "detail": {
       "title": "Skill 详情",
