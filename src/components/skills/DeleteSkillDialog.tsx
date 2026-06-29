@@ -114,12 +114,15 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
       const selectedTargetSpecs = eveTargets
         .filter((target) => selectedEveTargets.has(targetKey(target)))
         .map(targetSpec);
+      const fullRemovalEveTargets = deleteCanonical && hasEveTargets
+        ? selectedTargetSpecs
+        : undefined;
 
       if (deleteCanonical || !hasAnyAgent) {
         await deleteSkillAction({
           fullRemoval: true,
           agents: deleteCanonical ? selectedAgentList : undefined,
-          agentTargets: deleteCanonical && selectedTargetSpecs.length > 0 ? selectedTargetSpecs : undefined,
+          agentTargets: fullRemovalEveTargets,
         });
       } else {
         await deleteSkillAction({
@@ -131,7 +134,15 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteCanonical, hasAnyAgent, selectedAgents, eveTargets, selectedEveTargets, deleteSkillAction]);
+  }, [
+    deleteCanonical,
+    hasAnyAgent,
+    hasEveTargets,
+    selectedAgents,
+    eveTargets,
+    selectedEveTargets,
+    deleteSkillAction,
+  ]);
 
   const ScopeIcon = target?.scope === 'global' ? Globe : Folder;
   const isFullRemoval = deleteCanonical || !hasAnyAgent;

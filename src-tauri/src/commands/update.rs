@@ -376,7 +376,10 @@ fn eve_targets_from_source_or_root_install(
     project_path: &str,
     skill_name: &str,
 ) -> Vec<Option<String>> {
-    if !matches!(source_type, "github" | "git" | "gitlab") {
+    if !matches!(
+        source_type,
+        "github" | "git" | "gitlab" | "well-known" | "wellknown" | "direct-url" | "directurl"
+    ) {
         return Vec::new();
     }
 
@@ -1713,6 +1716,46 @@ mod tests {
         assert_eq!(
             eve_targets_from_lock_or_root_install(&entry, ".", "demo"),
             vec![None, Some("research".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_eve_targets_from_well_known_lock_maps_subagents() {
+        let entry = LocalSkillLockEntry {
+            source: "https://example.com".to_string(),
+            ref_name: None,
+            source_type: "well-known".to_string(),
+            source_url: Some("https://example.com".to_string()),
+            computed_hash: "abc".to_string(),
+            remote_hash: None,
+            skill_path: Some("SKILL.md".to_string()),
+            subagents: Some(vec!["".to_string(), "research".to_string()]),
+            plugin_name: None,
+        };
+
+        assert_eq!(
+            eve_targets_from_lock_or_root_install(&entry, ".", "demo"),
+            vec![None, Some("research".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_eve_targets_from_direct_url_lock_maps_subagents() {
+        let entry = LocalSkillLockEntry {
+            source: "https://example.com/skill.md".to_string(),
+            ref_name: None,
+            source_type: "direct-url".to_string(),
+            source_url: Some("https://example.com/skill.md".to_string()),
+            computed_hash: "abc".to_string(),
+            remote_hash: None,
+            skill_path: Some("SKILL.md".to_string()),
+            subagents: Some(vec!["research".to_string()]),
+            plugin_name: None,
+        };
+
+        assert_eq!(
+            eve_targets_from_lock_or_root_install(&entry, ".", "demo"),
+            vec![Some("research".to_string())]
         );
     }
 

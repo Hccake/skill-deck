@@ -141,4 +141,89 @@ describe('DeleteSkillDialog', () => {
       agentTargets: [{ agent: 'eve', subagent: 'research' }],
     });
   });
+
+  it('submits the selected Eve targets when deleting the shared Skill directory', async () => {
+    const user = userEvent.setup();
+    mockDeleteSkill.mockResolvedValue(undefined);
+    mockDialogState.deleteTarget = {
+      skill: { ...skill, scope: 'project', agents: ['eve', 'firebender'] },
+      scope: 'project',
+      projectPath: '/projects/eve-app',
+    };
+    mockDialogState.agentDetails = {
+      ...details,
+      scope: 'project',
+      eveTargets: [
+        {
+          targetId: 'eve:root',
+          agent: 'eve',
+          displayName: 'Eve (root)',
+          subagent: null,
+          path: '/projects/eve-app/agent/skills/agent-toolkit',
+        },
+        {
+          targetId: 'eve:research',
+          agent: 'eve',
+          displayName: 'Eve (research)',
+          subagent: 'research',
+          path: '/projects/eve-app/agent/subagents/research/skills/agent-toolkit',
+        },
+      ],
+    };
+
+    render(<DeleteSkillDialog />);
+
+    await user.click(screen.getByLabelText('skills.deleteConfirm.deleteCanonical'));
+    await user.click(screen.getByLabelText('Eve (root)'));
+    await user.click(screen.getByRole('button', { name: 'skills.deleteConfirm.confirm' }));
+
+    expect(mockDeleteSkill).toHaveBeenCalledWith({
+      fullRemoval: true,
+      agents: [] as AgentType[],
+      agentTargets: [{ agent: 'eve', subagent: 'research' }],
+    });
+  });
+
+  it('submits an explicit empty Eve target list when all Eve targets are kept', async () => {
+    const user = userEvent.setup();
+    mockDeleteSkill.mockResolvedValue(undefined);
+    mockDialogState.deleteTarget = {
+      skill: { ...skill, scope: 'project', agents: ['eve', 'firebender'] },
+      scope: 'project',
+      projectPath: '/projects/eve-app',
+    };
+    mockDialogState.agentDetails = {
+      ...details,
+      scope: 'project',
+      eveTargets: [
+        {
+          targetId: 'eve:root',
+          agent: 'eve',
+          displayName: 'Eve (root)',
+          subagent: null,
+          path: '/projects/eve-app/agent/skills/agent-toolkit',
+        },
+        {
+          targetId: 'eve:research',
+          agent: 'eve',
+          displayName: 'Eve (research)',
+          subagent: 'research',
+          path: '/projects/eve-app/agent/subagents/research/skills/agent-toolkit',
+        },
+      ],
+    };
+
+    render(<DeleteSkillDialog />);
+
+    await user.click(screen.getByLabelText('skills.deleteConfirm.deleteCanonical'));
+    await user.click(screen.getByLabelText('Eve (root)'));
+    await user.click(screen.getByLabelText('Eve (research)'));
+    await user.click(screen.getByRole('button', { name: 'skills.deleteConfirm.confirm' }));
+
+    expect(mockDeleteSkill).toHaveBeenCalledWith({
+      fullRemoval: true,
+      agents: [] as AgentType[],
+      agentTargets: [],
+    });
+  });
 });

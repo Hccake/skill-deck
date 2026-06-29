@@ -48,13 +48,8 @@ pub fn remove_skill(
 
     // 1. 确定要操作的 agents
     let mut agents_to_remove: Vec<AgentType> = resolve_agents_to_remove(target_agents);
-    let eve_targets_to_remove = resolve_eve_targets_to_remove(
-        skill_name,
-        cwd,
-        is_global,
-        full_removal,
-        eve_targets.unwrap_or(&[]),
-    );
+    let eve_targets_to_remove =
+        resolve_eve_targets_to_remove(skill_name, cwd, is_global, full_removal, eve_targets);
     if !eve_targets_to_remove.is_empty() {
         agents_to_remove.retain(|agent| *agent != AgentType::Eve);
     }
@@ -206,15 +201,18 @@ fn resolve_eve_targets_to_remove(
     cwd: &str,
     is_global: bool,
     full_removal: bool,
-    explicit_targets: &[Option<String>],
+    explicit_targets: Option<&[Option<String>]>,
 ) -> Vec<Option<String>> {
     if is_global {
         return Vec::new();
     }
 
     let mut targets = Vec::new();
-    for target in explicit_targets {
-        push_eve_target(&mut targets, target.clone());
+    if let Some(explicit_targets) = explicit_targets {
+        for target in explicit_targets {
+            push_eve_target(&mut targets, target.clone());
+        }
+        return targets;
     }
 
     if full_removal {
@@ -391,6 +389,68 @@ mod tests {
         assert!(result.success);
         assert!(!canonical.exists());
         assert!(private.exists());
+    }
+
+    #[test]
+    fn test_full_removal_with_explicit_empty_eve_targets_does_not_scan_eve_targets() {
+        let temp = tempdir().unwrap();
+        let canonical = temp.path().join(".agents").join("skills").join("demo");
+        let root = temp.path().join("agent/skills/demo");
+        let sub = temp.path().join("agent/subagents/research/skills/demo");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(canonical.join("SKILL.md"), "# Canonical").unwrap();
+        fs::write(root.join("SKILL.md"), "# Root").unwrap();
+        fs::write(sub.join("SKILL.md"), "# Sub").unwrap();
+
+        let cwd = temp.path().to_string_lossy().to_string();
+        let explicit_targets: Vec<Option<String>> = Vec::new();
+        let result = remove_skill(
+            "demo",
+            &Scope::Project,
+            Some(&cwd),
+            true,
+            Some(&[]),
+            Some(&explicit_targets),
+        )
+        .unwrap();
+
+        assert!(result.success);
+        assert!(!canonical.exists());
+        assert!(root.exists());
+        assert!(sub.exists());
+    }
+
+    #[test]
+    fn test_full_removal_with_explicit_eve_target_removes_only_that_target() {
+        let temp = tempdir().unwrap();
+        let canonical = temp.path().join(".agents").join("skills").join("demo");
+        let root = temp.path().join("agent/skills/demo");
+        let sub = temp.path().join("agent/subagents/research/skills/demo");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(canonical.join("SKILL.md"), "# Canonical").unwrap();
+        fs::write(root.join("SKILL.md"), "# Root").unwrap();
+        fs::write(sub.join("SKILL.md"), "# Sub").unwrap();
+
+        let cwd = temp.path().to_string_lossy().to_string();
+        let explicit_targets = vec![Some("research".to_string())];
+        let result = remove_skill(
+            "demo",
+            &Scope::Project,
+            Some(&cwd),
+            true,
+            Some(&[]),
+            Some(&explicit_targets),
+        )
+        .unwrap();
+
+        assert!(result.success);
+        assert!(!canonical.exists());
+        assert!(root.exists());
+        assert!(!sub.exists());
     }
 
     #[test]

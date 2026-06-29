@@ -279,11 +279,10 @@ fn apply_presence_summary(skill: &mut InstalledSkill, cwd: &str) {
         }
     }
 
-    let detected_agents = AgentType::detect_installed();
     let card_agents = effective_agents
         .iter()
         .copied()
-        .filter(|agent| detected_agents.contains(agent))
+        .filter(|agent| agent.is_installed_for_project(cwd))
         .collect();
 
     skill.agents = effective_agents;
@@ -929,6 +928,14 @@ Content.
             .expect("Eve subagent skill should be listed");
 
         assert!(skill.agents.contains(&AgentType::Eve));
+        assert!(
+            skill
+                .card_agents
+                .as_ref()
+                .unwrap()
+                .contains(&AgentType::Eve),
+            "project-aware Eve targets should be visible on skill cards"
+        );
     }
 
     #[test]

@@ -45,8 +45,9 @@ pub async fn remove_skill(
 }
 
 fn resolve_eve_targets(agent_targets: Option<&[InstallTargetSpec]>) -> Option<Vec<Option<String>>> {
+    let agent_targets = agent_targets?;
     let mut targets = Vec::new();
-    for target in agent_targets.unwrap_or(&[]) {
+    for target in agent_targets {
         if target.agent != AgentType::Eve {
             continue;
         }
@@ -61,9 +62,5 @@ fn resolve_eve_targets(agent_targets: Option<&[InstallTargetSpec]>) -> Option<Ve
         }
     }
 
-    if targets.is_empty() {
-        None
-    } else {
-        Some(targets)
-    }
+    Some(targets)
 }
