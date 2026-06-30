@@ -1228,6 +1228,8 @@ describe('useSkillsStore', () => {
           privateAdaptedAgents: ['claude-code'],
           privateCopyAgents: ['firebender'],
           skippedAgents: [],
+          updateMetadataStatus: 'preserved',
+          updateMetadataReason: null,
         }],
       });
 
@@ -1260,6 +1262,8 @@ describe('useSkillsStore', () => {
           privateAdaptedAgents: [],
           privateCopyAgents: [],
           skippedAgents: ['claude-code'],
+          updateMetadataStatus: 'preserved',
+          updateMetadataReason: null,
         }],
       });
 
@@ -1273,8 +1277,20 @@ describe('useSkillsStore', () => {
       const skill = makeSkill('test', { scope: 'project' });
       mockCopySkillToProjects.mockResolvedValue({
         results: [
-          { projectPath: '/a', success: true, error: null },
-          { projectPath: '/b', success: false, error: 'disk full' },
+          {
+            projectPath: '/a',
+            success: true,
+            error: null,
+            updateMetadataStatus: 'preserved',
+            updateMetadataReason: null,
+          },
+          {
+            projectPath: '/b',
+            success: false,
+            error: 'disk full',
+            updateMetadataStatus: 'missing',
+            updateMetadataReason: 'copy-failed',
+          },
         ],
       });
 
@@ -1282,6 +1298,65 @@ describe('useSkillsStore', () => {
       await useSkillDialogStore.getState().executeCopy(['/a', '/b']);
 
       expect(toast.error).toHaveBeenCalled();
+    });
+
+    it('executeCopy shows a normal success toast when copied projects cannot keep update metadata', async () => {
+      const skill = makeSkill('test', { scope: 'project' });
+      mockCopySkillToProjects.mockResolvedValue({
+        results: [{
+          projectPath: '/project-b',
+          success: true,
+          error: null,
+          defaultAvailableAgents: ['antigravity'],
+          privateAdaptedAgents: [],
+          privateCopyAgents: [],
+          skippedAgents: [],
+          updateMetadataStatus: 'incomplete',
+          updateMetadataReason: 'missing-remote-hash',
+        }],
+      });
+
+      useSkillDialogStore.setState({ copySkill: skill });
+      await useSkillDialogStore.getState().executeCopy(['/project-b']);
+
+      expect(toast.success).toHaveBeenCalledWith('skills.copyToProject.success');
+      expect(toast.warning).not.toHaveBeenCalledWith('skills.copyToProject.metadataIncomplete');
+    });
+
+    it('executeCopy reports copy failures without adding metadata warnings', async () => {
+      const skill = makeSkill('test', { scope: 'project' });
+      mockCopySkillToProjects.mockResolvedValue({
+        results: [
+          {
+            projectPath: '/a',
+            success: true,
+            error: null,
+            defaultAvailableAgents: [],
+            privateAdaptedAgents: [],
+            privateCopyAgents: [],
+            skippedAgents: [],
+            updateMetadataStatus: 'missing',
+            updateMetadataReason: 'missing-source',
+          },
+          {
+            projectPath: '/b',
+            success: false,
+            error: 'disk full',
+            defaultAvailableAgents: [],
+            privateAdaptedAgents: [],
+            privateCopyAgents: [],
+            skippedAgents: [],
+            updateMetadataStatus: 'missing',
+            updateMetadataReason: 'copy-failed',
+          },
+        ],
+      });
+
+      useSkillDialogStore.setState({ copySkill: skill });
+      await useSkillDialogStore.getState().executeCopy(['/a', '/b']);
+
+      expect(toast.error).toHaveBeenCalled();
+      expect(toast.warning).not.toHaveBeenCalledWith('skills.copyToProject.metadataIncomplete');
     });
   });
 });

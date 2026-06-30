@@ -168,6 +168,7 @@
       "installed": "Installed",
       "copy": "Copy to {{count}} project(s)",
       "overwriteWarning": "{{count}} selected project(s) already have this skill — they will be overwritten",
+      "metadataWarning": "This Skill is missing the source details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically.",
       "success": "Copied to {{count}} project(s) successfully",
       "skippedAgents": "Copied to the shared Skill directory. Some Agents were not connected separately because their project directory was not found: {{agents}}",
       "partialError": "{{success}} succeeded, {{fail}} failed"

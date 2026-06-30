@@ -48,6 +48,16 @@ pub struct ProjectSkillStatus {
     pub has_skill: bool,
 }
 
+/// 复制后目标项目的更新信息保留状态
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+#[specta(rename_all = "kebab-case")]
+pub enum CopyUpdateMetadataStatus {
+    Preserved,
+    Incomplete,
+    Missing,
+}
+
 /// 单个目标项目的复制结果
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -71,6 +81,11 @@ pub struct CopyProjectResult {
     /// 因目标项目缺少 agent 根目录而跳过的 agents
     #[serde(default)]
     pub skipped_agents: Vec<String>,
+    /// 复制后目标项目的更新信息保留状态
+    pub update_metadata_status: CopyUpdateMetadataStatus,
+    /// 更新信息降级原因
+    #[serde(default)]
+    pub update_metadata_reason: Option<String>,
 }
 
 /// 复制结果汇总
@@ -142,6 +157,8 @@ pub fn copy_skill_to_projects(
                 private_adapted_agents: Vec::new(),
                 private_copy_agents: Vec::new(),
                 skipped_agents: Vec::new(),
+                update_metadata_status: CopyUpdateMetadataStatus::Missing,
+                update_metadata_reason: Some("copy-failed".to_string()),
             }),
         }
     }
@@ -202,17 +219,23 @@ fn copy_to_single_project(
         });
     }
 
-    // 写入目标项目的 local lock
+    let (mut update_metadata_status, mut update_metadata_reason) =
+        classify_copy_update_metadata(source_lock_entry);
+
     if let Some(entry) = source_lock_entry {
-        // 重新计算目标项目的本地哈希
         let target_canonical = canonical_skills_dir(false, target_path)
             .join(crate::core::skill::sanitize_name(skill_name));
         let computed_hash = compute_skill_folder_hash(&target_canonical).unwrap_or_default();
 
         let mut new_entry = entry.clone();
         new_entry.computed_hash = computed_hash;
+        new_entry.subagents = None;
 
-        let _ = add_skill_to_local_lock(skill_name, new_entry, target_path);
+        if let Err(err) = add_skill_to_local_lock(skill_name, new_entry, target_path) {
+            log::warn!("Failed to write copied skill metadata: {}", err);
+            update_metadata_status = CopyUpdateMetadataStatus::Missing;
+            update_metadata_reason = Some("lock-write-failed".to_string());
+        }
     }
 
     Ok(build_copy_project_result(
@@ -221,7 +244,41 @@ fn copy_to_single_project(
         &private_required_agents,
         &private_copy_agents,
         &per_agent_results,
+        update_metadata_status,
+        update_metadata_reason,
     ))
+}
+
+fn classify_copy_update_metadata(
+    source_lock_entry: Option<&crate::core::local_lock::LocalSkillLockEntry>,
+) -> (CopyUpdateMetadataStatus, Option<String>) {
+    let Some(entry) = source_lock_entry else {
+        return (
+            CopyUpdateMetadataStatus::Missing,
+            Some("missing-source".to_string()),
+        );
+    };
+
+    if entry.source.trim().is_empty() {
+        return (
+            CopyUpdateMetadataStatus::Missing,
+            Some("missing-source".to_string()),
+        );
+    }
+
+    let metadata = crate::core::normalize_local_lock_entry(entry);
+    let capability = crate::core::derive_update_capability(&metadata);
+
+    if capability.can_check_for_updates {
+        (CopyUpdateMetadataStatus::Preserved, None)
+    } else {
+        (
+            CopyUpdateMetadataStatus::Incomplete,
+            capability
+                .reason
+                .or_else(|| Some("unsupported-source-type".to_string())),
+        )
+    }
 }
 
 fn parse_agent_ids(agent_ids: &[String]) -> Vec<AgentType> {
@@ -242,6 +299,8 @@ fn build_copy_project_result(
     private_required_agents: &[AgentType],
     private_copy_agents: &[AgentType],
     per_agent_results: &[PerAgentInstallResult],
+    update_metadata_status: CopyUpdateMetadataStatus,
+    update_metadata_reason: Option<String>,
 ) -> CopyProjectResult {
     let skipped_agents = per_agent_results
         .iter()
@@ -278,12 +337,15 @@ fn build_copy_project_result(
             .map(ToString::to_string)
             .collect(),
         skipped_agents,
+        update_metadata_status,
+        update_metadata_reason,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::local_lock::{add_skill_to_local_lock, read_local_lock, LocalSkillLockEntry};
     use std::fs;
     use tempfile::tempdir;
 
@@ -295,6 +357,28 @@ mod tests {
             format!("---\nname: {}\ndescription: test\n---\n", name),
         )
         .unwrap();
+    }
+
+    fn remote_lock_entry(
+        source: &str,
+        skill_path: Option<&str>,
+        remote_hash: Option<&str>,
+    ) -> LocalSkillLockEntry {
+        LocalSkillLockEntry {
+            source: source.to_string(),
+            ref_name: Some("main".to_string()),
+            source_type: "github".to_string(),
+            source_url: Some(format!("https://github.com/{}", source)),
+            computed_hash: "source-computed-hash".to_string(),
+            remote_hash: remote_hash.map(str::to_string),
+            skill_path: skill_path.map(str::to_string),
+            subagents: Some(vec!["researcher".to_string()]),
+            plugin_name: Some("plugin-a".to_string()),
+        }
+    }
+
+    fn write_source_lock(project: &std::path::Path, name: &str, entry: LocalSkillLockEntry) {
+        add_skill_to_local_lock(name, entry, project.to_string_lossy().as_ref()).unwrap();
     }
 
     #[test]
@@ -438,5 +522,185 @@ mod tests {
             .skipped_agents
             .iter()
             .any(|agent| agent == "kiro-cli"));
+    }
+
+    #[test]
+    fn test_copy_skill_preserves_remote_update_metadata() {
+        let source = tempdir().unwrap();
+        let target = tempdir().unwrap();
+        setup_source_skill(source.path(), "my-skill");
+        write_source_lock(
+            source.path(),
+            "my-skill",
+            remote_lock_entry(
+                "owner/repo",
+                Some("skills/my-skill/SKILL.md"),
+                Some("remote123"),
+            ),
+        );
+
+        let result = copy_skill_to_projects(
+            "my-skill".to_string(),
+            source.path().to_string_lossy().to_string(),
+            vec![target.path().to_string_lossy().to_string()],
+            vec!["antigravity".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        let project_result = &result.results[0];
+        assert!(project_result.success);
+        assert_eq!(
+            project_result.update_metadata_status,
+            CopyUpdateMetadataStatus::Preserved
+        );
+        assert_eq!(project_result.update_metadata_reason, None);
+
+        let target_lock = read_local_lock(target.path().to_string_lossy().as_ref()).unwrap();
+        let copied = target_lock.skills.get("my-skill").unwrap();
+        assert_eq!(copied.source, "owner/repo");
+        assert_eq!(copied.source_type, "github");
+        assert_eq!(
+            copied.source_url.as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert_eq!(copied.ref_name.as_deref(), Some("main"));
+        assert_eq!(
+            copied.skill_path.as_deref(),
+            Some("skills/my-skill/SKILL.md")
+        );
+        assert_eq!(copied.remote_hash.as_deref(), Some("remote123"));
+        assert_eq!(copied.plugin_name.as_deref(), Some("plugin-a"));
+        assert_eq!(copied.subagents, None);
+        assert_ne!(copied.computed_hash, "source-computed-hash");
+        assert!(!copied.computed_hash.is_empty());
+    }
+
+    #[test]
+    fn test_copy_skill_does_not_inherit_source_eve_subagents() {
+        let source = tempdir().unwrap();
+        let target = tempdir().unwrap();
+        setup_source_skill(source.path(), "my-skill");
+        write_source_lock(
+            source.path(),
+            "my-skill",
+            remote_lock_entry("owner/repo", Some("skills/my-skill/SKILL.md"), Some("remote123")),
+        );
+
+        let result = copy_skill_to_projects(
+            "my-skill".to_string(),
+            source.path().to_string_lossy().to_string(),
+            vec![target.path().to_string_lossy().to_string()],
+            vec!["antigravity".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        assert!(result.results[0].success);
+        let target_lock = read_local_lock(target.path().to_string_lossy().as_ref()).unwrap();
+        assert_eq!(target_lock.skills["my-skill"].subagents, None);
+    }
+
+    #[test]
+    fn test_copy_skill_keeps_success_when_update_metadata_cannot_be_written() {
+        let source = tempdir().unwrap();
+        let target = tempdir().unwrap();
+        setup_source_skill(source.path(), "my-skill");
+        write_source_lock(
+            source.path(),
+            "my-skill",
+            remote_lock_entry("owner/repo", Some("skills/my-skill/SKILL.md"), Some("remote123")),
+        );
+        fs::create_dir(target.path().join("skills-lock.json")).unwrap();
+
+        let result = copy_skill_to_projects(
+            "my-skill".to_string(),
+            source.path().to_string_lossy().to_string(),
+            vec![target.path().to_string_lossy().to_string()],
+            vec!["antigravity".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        let project_result = &result.results[0];
+        assert!(project_result.success);
+        assert_eq!(project_result.error, None);
+        assert_eq!(
+            project_result.update_metadata_status,
+            CopyUpdateMetadataStatus::Missing
+        );
+        assert_eq!(
+            project_result.update_metadata_reason.as_deref(),
+            Some("lock-write-failed")
+        );
+        assert!(target
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md")
+            .exists());
+    }
+
+    #[test]
+    fn test_copy_skill_reports_missing_update_metadata_without_source_lock() {
+        let source = tempdir().unwrap();
+        let target = tempdir().unwrap();
+        setup_source_skill(source.path(), "my-skill");
+
+        let result = copy_skill_to_projects(
+            "my-skill".to_string(),
+            source.path().to_string_lossy().to_string(),
+            vec![target.path().to_string_lossy().to_string()],
+            vec!["antigravity".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        let project_result = &result.results[0];
+        assert!(project_result.success);
+        assert_eq!(
+            project_result.update_metadata_status,
+            CopyUpdateMetadataStatus::Missing
+        );
+        assert_eq!(
+            project_result.update_metadata_reason.as_deref(),
+            Some("missing-source")
+        );
+
+        let target_lock = read_local_lock(target.path().to_string_lossy().as_ref()).unwrap();
+        assert!(!target_lock.skills.contains_key("my-skill"));
+    }
+
+    #[test]
+    fn test_copy_skill_reports_incomplete_update_metadata_for_missing_remote_hash() {
+        let source = tempdir().unwrap();
+        let target = tempdir().unwrap();
+        setup_source_skill(source.path(), "my-skill");
+        write_source_lock(
+            source.path(),
+            "my-skill",
+            remote_lock_entry("owner/repo", Some("skills/my-skill/SKILL.md"), None),
+        );
+
+        let result = copy_skill_to_projects(
+            "my-skill".to_string(),
+            source.path().to_string_lossy().to_string(),
+            vec![target.path().to_string_lossy().to_string()],
+            vec!["antigravity".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        let project_result = &result.results[0];
+        assert!(project_result.success);
+        assert_eq!(
+            project_result.update_metadata_status,
+            CopyUpdateMetadataStatus::Incomplete
+        );
+        assert_eq!(
+            project_result.update_metadata_reason.as_deref(),
+            Some("missing-remote-hash")
+        );
     }
 }

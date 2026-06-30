@@ -463,6 +463,10 @@ digestVerified?: boolean | null;
  */
 trustReason?: string | null }
 /**
+ * 复制后目标项目的更新信息保留状态
+ */
+export type CopyUpdateMetadataStatus = "preserved" | "incomplete" | "missing"
+/**
  * 单个目标项目的复制结果
  */
 export type CopyProjectResult = {
@@ -493,7 +497,15 @@ privateCopyAgents?: string[];
 /**
  * 因目标项目缺少 agent 根目录而跳过的 agents
  */
-skippedAgents?: string[] }
+skippedAgents?: string[];
+/**
+ * 复制后目标项目的更新信息保留状态
+ */
+updateMetadataStatus: CopyUpdateMetadataStatus;
+/**
+ * 更新信息降级原因
+ */
+updateMetadataReason?: string | null }
 /**
  * 复制结果汇总
  */

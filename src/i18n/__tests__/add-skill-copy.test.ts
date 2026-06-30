@@ -35,3 +35,19 @@ describe('add skill copy', () => {
     expect(en.addSkill.complete.skipped).toBe('Not written: {{agents}}');
   });
 });
+
+describe('copy to project copy', () => {
+  it('explains source limitations before copy without implying copy failure in Chinese', () => {
+    expect(zhCN.skills.copyToProject.metadataWarning).toBe(
+      '当前 Skill 缺少用于自动检查更新的来源信息。复制到其他项目后，仍无法自动检查更新。'
+    );
+    expect('metadataIncomplete' in zhCN.skills.copyToProject).toBe(false);
+  });
+
+  it('keeps the English fallback focused on source limitations before copy', () => {
+    expect(en.skills.copyToProject.metadataWarning).toBe(
+      "This Skill is missing the source details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically."
+    );
+    expect('metadataIncomplete' in en.skills.copyToProject).toBe(false);
+  });
+});

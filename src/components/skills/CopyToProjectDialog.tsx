@@ -1,7 +1,7 @@
 // src/components/skills/CopyToProjectDialog.tsx
 import { useState, useCallback, useMemo, useEffect, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Folder, Loader2 } from 'lucide-react';
+import { AlertTriangle, Folder, Info, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,8 @@ interface CopyToProjectDialogProps {
   onClose: () => void;
   onCopy: (targetPaths: string[]) => Promise<void>;
 }
+
+const SOURCE_INFO_LIMIT_REASONS = new Set(['missing-skill-path', 'missing-remote-hash']);
 
 export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   skill,
@@ -77,6 +79,12 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
     return count;
   }, [selected, existingSet]);
 
+  const showSourceInfoNote = useMemo(() => {
+    if (!skill) return false;
+    if (!skill.source && !skill.sourceUrl) return true;
+    return SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? '');
+  }, [skill]);
+
   const toggleProject = useCallback((path: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -108,7 +116,16 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="mt-4 space-y-1.5 max-h-[50vh] overflow-y-auto">
+        {showSourceInfoNote ? (
+          <div role="note" className="mt-4 flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-2">
+            <Info className="h-3.5 w-3.5 shrink-0 mt-px text-muted-foreground" />
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {t('skills.copyToProject.metadataWarning')}
+            </p>
+          </div>
+        ) : null}
+
+        <div className={showSourceInfoNote ? 'mt-2 space-y-1.5 max-h-[50vh] overflow-y-auto' : 'mt-4 space-y-1.5 max-h-[50vh] overflow-y-auto'}>
           {availableProjects.length > 0 ? (
             <>
               {availableProjects.map((path) => {
