@@ -5,6 +5,21 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-07-07
+
+### Added
+
+- **Eve 项目支持** — 可识别 Eve 项目，并支持将 Skill 安装到 Eve root agent 或指定 subagent。
+- **项目内目标选择** — 安装项目级 Skill 时，可以选择具体的项目内目标，例如 Eve root 或 subagent；确认页会展示实际写入位置。
+- **安装目录提示** — 当 Skill 名称包含不适合作为目录名的字符时，确认页会显示实际安装目录，避免安装后目录名与预期不一致。
+- **复制 Skill 时保留更新来源** — 将远程安装的 Skill 复制到其他项目时，会尽量保留自动检查更新所需的来源信息；源 Skill 缺少相关信息时，会在复制前给出轻量提示。
+
+### Changed
+
+- **安装确认更贴近实际写入结果** — 覆盖提示、目标分组和完成页文案改为围绕“目标目录”表达，减少 Agent 检测状态和 Skill 写入状态之间的歧义。
+- **Eve Skill 的更新和删除范围更明确** — 对安装到 Eve root 或 subagent 的 Skill，更新和删除会按实际目标处理，用户可以更清楚地控制影响范围。
+- **Skill 卡片展示完整 Agent 信息** — SkillCard 不再折叠 Agent 标签，会直接展示当前 Skill 关联的全部 Agent。
+
 ## [1.6.1] - 2026-06-24
 
 ### Added
