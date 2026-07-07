@@ -11,6 +11,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   publish-tauri:
     permissions:
@@ -21,12 +25,16 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
+            asset_platform: 'macos'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
+            asset_platform: 'macos'
           - platform: 'ubuntu-22.04'
             args: ''
+            asset_platform: 'linux'
           - platform: 'windows-latest'
             args: ''
+            asset_platform: 'windows'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -34,20 +42,49 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'pnpm'
+
+      - name: Validate release tag
+        id: release
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_TAG="v${VERSION}"
+
+          if [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Release tag ${TAG} does not match package version ${VERSION}. Expected ${EXPECTED_TAG}."
+            exit 1
+          fi
+
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Extract release notes from CHANGELOG.md
         id: changelog
         shell: bash
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="${TAG#v}"
+          VERSION="${{ steps.release.outputs.version }}"
           NOTES=$(awk -v ver="$VERSION" '
             /^## \[/ { if (found) exit; if (index($0, "[" ver "]")) { found=1; next } }
             found && /^\[.+\]:/ { exit }
             found { print }
           ' CHANGELOG.md)
-          if [ -z "$NOTES" ]; then
-            NOTES="See the assets to download and install this version."
+
+          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md does not contain release notes for version ${VERSION}."
+            exit 1
           fi
+
           {
             echo "notes<<CHANGELOG_EOF"
             echo "$NOTES"
@@ -58,16 +95,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-          cache: 'pnpm'
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -80,18 +108,19 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install frontend dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: 'Skill Deck v__VERSION__'
+          tagName: ${{ steps.release.outputs.tag }}
+          releaseName: Skill Deck ${{ steps.release.outputs.tag }}
           releaseBody: ${{ steps.changelog.outputs.notes }}
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
+          releaseAssetNamePattern: skill-deck_[version]_${{ matrix.asset_platform }}_[arch][setup][ext]
           args: ${{ matrix.args }}
