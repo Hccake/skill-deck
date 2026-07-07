@@ -9,7 +9,7 @@
   <p>
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-v1.5.9-green" alt="skills CLI v1.5.9">
+    <img src="https://img.shields.io/badge/skills%20CLI-compatible-green" alt="skills CLI compatible">
   </p>
 
   <a href="README.md">English</a>
@@ -72,7 +72,7 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 - 🗂 **统一视图** — 在一处浏览所有已安装的 Skills
 - 🌍 **全局与项目级作用域** — 在全局或项目级别管理 Skills
 - 🧠 **清晰可见** — 一目了然地了解每个 Skill 的应用位置
-- 🔄 **多编辑器支持** — 自动检测已安装的编辑器（VS Code、Cursor、Windsurf、Zed 等），并在多个编辑器间同步 Skills
+- 🔄 **多编辑器支持** — 自动检测支持的编辑器和 Agent（Cursor、Windsurf、Zed、Eve 等），并在多个编辑器间同步 Skills
 - ✏️ **Agent 管理** — 为已安装的 Skill 添加或移除编辑器支持，无需重新安装
 - ♻️ **更新检测与升级** — 快速检查可用更新并更新已安装的 Skill
 - 📦 **双安装模式** — 安装 Skills 时可选择 Symlink（符号链接）或 Copy（文件复制）
@@ -91,13 +91,14 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 
 从 [GitHub Releases](https://github.com/hccake/skill-deck/releases) 下载对应平台的安装包：
 
-- **Windows**: `Skill-Deck_x.x.x_x64_en-US.msi`
-- **macOS**: `Skill-Deck_x.x.x_universal.dmg`（支持 Intel 和 Apple Silicon）
-  > **macOS 用户注意**：当前应用未进行 Apple 开发者签名。如果在安装后提示“应用已损坏，打不开”或“无法打开，因为无法验证开发者”，请在终端执行以下命令解除系统隔离：
+- **Windows**：`skill-deck_x.x.x_windows_x64-setup.exe` 或 `skill-deck_x.x.x_windows_x64.msi`
+- **macOS Apple Silicon**：`skill-deck_x.x.x_macos_aarch64.dmg`
+- **macOS Intel**：`skill-deck_x.x.x_macos_x64.dmg`
+  > macOS 构建目前未进行 Apple 开发者签名。如果安装后被系统拦截，可执行：
   > ```bash
   > sudo xattr -rd com.apple.quarantine "/Applications/Skill Deck.app"
   > ```
-- **Linux**: `skill-deck_x.x.x_amd64.deb` 或 `skill-deck-x.x.x-1.x86_64.rpm`
+- **Linux**：`skill-deck_x.x.x_linux_amd64.deb`、`skill-deck_x.x.x_linux_x86_64.rpm` 或 `skill-deck_x.x.x_linux_x86_64.AppImage`
 
 ### 方式二：从源码构建
 

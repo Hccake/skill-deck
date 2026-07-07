@@ -9,7 +9,7 @@
   <p>
     <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
     <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-v1.5.9-green" alt="skills CLI v1.5.9">
+    <img src="https://img.shields.io/badge/skills%20CLI-compatible-green" alt="skills CLI compatible">
   </p>
 
   <a href="README.zh-CN.md">中文</a>
@@ -72,7 +72,7 @@ The goal is simple: make Skills easier to inspect, understand, and apply across 
 - 🗂 **Unified view** — Browse all installed Skills in one place
 - 🌍 **Global & project scope** — Manage Skills at global level or per-project
 - 🧠 **Clear visibility** — Understand where each Skill is applied at a glance
-- 🔄 **Multi-editor support** — Auto-detect installed editors (VS Code, Cursor, Windsurf, Zed, etc.) and sync Skills across them
+- 🔄 **Multi-editor support** — Auto-detect supported editors and agents (Cursor, Windsurf, Zed, Eve, etc.) and sync Skills across them
 - ✏️ **Agent management** — Add or remove editor support for installed Skills without reinstalling
 - ♻️ **Update detection & upgrade** — Quickly check for available updates and update installed Skills
 - 📦 **Dual install modes** — Choose between Symlink and Copy when installing Skills
@@ -92,13 +92,14 @@ The goal is simple: make Skills easier to inspect, understand, and apply across 
 
 Download the installer for your platform from [GitHub Releases](https://github.com/hccake/skill-deck/releases):
 
-- **Windows**: `Skill-Deck_x.x.x_x64_en-US.msi`
-- **macOS**: `Skill-Deck_x.x.x_universal.dmg` (Intel + Apple Silicon)
-  > **Note for macOS users**: The application is currently unsigned. If you encounter an "app is damaged" or "cannot be opened because the developer cannot be verified" error after installation, please run the following command in your terminal:
+- **Windows**: `skill-deck_x.x.x_windows_x64-setup.exe` or `skill-deck_x.x.x_windows_x64.msi`
+- **macOS Apple Silicon**: `skill-deck_x.x.x_macos_aarch64.dmg`
+- **macOS Intel**: `skill-deck_x.x.x_macos_x64.dmg`
+  > macOS builds are currently unsigned. If macOS blocks the app after installation, run:
   > ```bash
   > sudo xattr -rd com.apple.quarantine "/Applications/Skill Deck.app"
   > ```
-- **Linux**: `skill-deck_x.x.x_amd64.deb` or `skill-deck-x.x.x-1.x86_64.rpm`
+- **Linux**: `skill-deck_x.x.x_linux_amd64.deb`, `skill-deck_x.x.x_linux_x86_64.rpm`, or `skill-deck_x.x.x_linux_x86_64.AppImage`
 
 ### Option 2: Build from source
 
