@@ -3,9 +3,15 @@
 use crate::core::agents::AgentType;
 use crate::core::installer::{is_private_copy_installed, is_skill_installed};
 use crate::core::skill::sanitize_name;
+use crate::environment::service::{
+    EnvironmentService, EnvironmentSnapshot, InspectRequest, ResolvedContext,
+};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::error::AppError;
 use crate::models::{InstallTargetSpec, Scope};
 use std::collections::HashMap;
+use tauri::State;
 
 /// 检测哪些 skill × agent 组合会被覆盖
 ///
@@ -35,6 +41,169 @@ pub async fn check_overwrites(
         project_path,
         agent_targets,
     )
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn check_overwrites_v2(
+    context: ContextRef,
+    skills: Vec<String>,
+    agents: Vec<String>,
+    private_copy_agents: Vec<String>,
+    agent_targets: Vec<InstallTargetSpec>,
+    registry: State<'_, EnvironmentRegistry>,
+) -> Result<HashMap<String, Vec<String>>, AppError> {
+    match &context.environment {
+        EnvironmentRef::Host => {
+            let (scope, project_path) = match &context.scope {
+                ContextScope::Global => (Scope::Global, None),
+                ContextScope::Project { project_id } => (
+                    Scope::Project,
+                    Some(
+                        crate::commands::environments::host_projects_store()?
+                            .read()?
+                            .into_iter()
+                            .find(|project| &project.id == project_id)
+                            .ok_or_else(|| AppError::PathNotFound {
+                                path: project_id.clone(),
+                            })?
+                            .native_path,
+                    ),
+                ),
+            };
+            check_overwrites_inner(
+                skills,
+                agents,
+                private_copy_agents,
+                scope,
+                project_path,
+                agent_targets,
+            )
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let snapshot = inspect_wsl_context(context, session).await?;
+            check_overwrites_from_snapshot(
+                &snapshot,
+                &skills,
+                &agents,
+                &private_copy_agents,
+                &agent_targets,
+            )
+        }
+    }
+}
+
+async fn inspect_wsl_context(
+    context: ContextRef,
+    session: WslSession,
+) -> Result<EnvironmentSnapshot, AppError> {
+    let project = match &context.scope {
+        ContextScope::Global => None,
+        ContextScope::Project { project_id } => Some(
+            crate::commands::environments::read_wsl_projects(&session)
+                .await?
+                .into_iter()
+                .find(|project| &project.id == project_id)
+                .ok_or_else(|| AppError::PathNotFound {
+                    path: project_id.clone(),
+                })?,
+        ),
+    };
+    let context_path = project
+        .as_ref()
+        .map(|project| project.native_path.clone())
+        .unwrap_or_else(|| session.home.clone());
+    let environment = context.environment.clone();
+    EnvironmentService::Wsl(session.clone())
+        .inspect(&InspectRequest {
+            context: ResolvedContext {
+                context,
+                project,
+                home: ResourceLocator {
+                    environment: environment.clone(),
+                    native_path: session.home,
+                },
+                skill_root: ResourceLocator {
+                    environment: environment.clone(),
+                    native_path: format!("{}/.agents/skills", context_path.trim_end_matches('/')),
+                },
+                lock: ResourceLocator {
+                    environment,
+                    native_path: String::new(),
+                },
+            },
+        })
+        .await
+}
+
+fn check_overwrites_from_snapshot(
+    snapshot: &EnvironmentSnapshot,
+    skills: &[String],
+    agents: &[String],
+    private_copy_agents: &[String],
+    agent_targets: &[InstallTargetSpec],
+) -> Result<HashMap<String, Vec<String>>, AppError> {
+    let mut overwrites = HashMap::new();
+    for skill_name in skills {
+        let Some(skill) = snapshot
+            .skills
+            .iter()
+            .find(|skill| &skill.name == skill_name)
+        else {
+            continue;
+        };
+        let mut overwritten_agents = Vec::new();
+        for agent_str in agents {
+            let agent: AgentType = agent_str.parse().map_err(|_| AppError::InvalidAgent {
+                agent: agent_str.clone(),
+            })?;
+            let installed = if agent == AgentType::Eve {
+                skill
+                    .eve_targets
+                    .iter()
+                    .any(|target| target.target_id == "eve:root")
+            } else {
+                skill.agents.contains(&agent)
+            };
+            if installed {
+                overwritten_agents.push(agent_str.clone());
+            }
+        }
+        for agent_str in private_copy_agents {
+            let agent: AgentType = agent_str.parse().map_err(|_| AppError::InvalidAgent {
+                agent: agent_str.clone(),
+            })?;
+            if skill.private_copy_agents.contains(&agent) && !overwritten_agents.contains(agent_str)
+            {
+                overwritten_agents.push(agent_str.clone());
+            }
+        }
+        for target in agent_targets {
+            if target.agent != AgentType::Eve {
+                continue;
+            }
+            let subagent = target
+                .subagent
+                .as_ref()
+                .filter(|value| !value.is_empty() && *value != "root");
+            let target_id = crate::core::eve::eve_target_id(subagent.map(String::as_str));
+            if skill
+                .eve_targets
+                .iter()
+                .any(|target| target.target_id == target_id)
+                && !overwritten_agents.contains(&target_id)
+            {
+                overwritten_agents.push(target_id);
+            }
+        }
+        if !overwritten_agents.is_empty() {
+            overwrites.insert(skill_name.clone(), overwritten_agents);
+        }
+    }
+    Ok(overwrites)
 }
 
 fn check_overwrites_inner(
@@ -111,6 +280,8 @@ fn check_overwrites_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::service::{EnvironmentSnapshot, SkillEntrySnapshot};
+    use crate::models::InstallTargetInfo;
     use std::fs;
     use tempfile::tempdir;
 
@@ -163,5 +334,54 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.get("demo"), Some(&vec!["eve:research".to_string()]));
+    }
+
+    #[test]
+    fn environment_snapshot_drives_agent_private_copy_and_eve_overwrites() {
+        let snapshot = EnvironmentSnapshot {
+            path_exists: true,
+            detected_agents: vec![AgentType::Codex, AgentType::ClaudeCode, AgentType::Eve],
+            skills: vec![SkillEntrySnapshot {
+                name: "demo".to_string(),
+                description: "Demo".to_string(),
+                canonical_path: "/work/app/.agents/skills/demo".to_string(),
+                canonical_present: true,
+                agents: vec![AgentType::Codex, AgentType::ClaudeCode, AgentType::Eve],
+                card_agents: vec![AgentType::Codex, AgentType::ClaudeCode, AgentType::Eve],
+                default_available_agents: vec![AgentType::Codex],
+                private_adapted_agents: vec![AgentType::Eve],
+                duplicate_copy_agents: vec![AgentType::ClaudeCode],
+                private_only_agents: vec![AgentType::Eve],
+                private_copy_agents: vec![AgentType::ClaudeCode],
+                eve_targets: vec![InstallTargetInfo {
+                    target_id: "eve:research".to_string(),
+                    agent: AgentType::Eve,
+                    display_name: "Eve (research)".to_string(),
+                    subagent: Some("research".to_string()),
+                    path: "/work/app/agent/subagents/research/skills/demo".to_string(),
+                }],
+            }],
+        };
+
+        let result = check_overwrites_from_snapshot(
+            &snapshot,
+            &["demo".to_string()],
+            &["codex".to_string()],
+            &["claude-code".to_string()],
+            &[InstallTargetSpec {
+                agent: AgentType::Eve,
+                subagent: Some("research".to_string()),
+            }],
+        )
+        .expect("check overwrites");
+
+        assert_eq!(
+            result.get("demo"),
+            Some(&vec![
+                "codex".to_string(),
+                "claude-code".to_string(),
+                "eve:research".to_string(),
+            ])
+        );
     }
 }

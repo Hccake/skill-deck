@@ -36,9 +36,26 @@ pub fn linux_path_to_host_path(path: &str) -> Option<String> {
     }
 }
 
+pub fn host_path_to_linux_path(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        return None;
+    }
+    if bytes.len() > 2 && !matches!(bytes[2], b'\\' | b'/') {
+        return None;
+    }
+    let drive = (bytes[0] as char).to_ascii_lowercase();
+    let tail = path[2..].trim_start_matches(['\\', '/']).replace('\\', "/");
+    if tail.is_empty() {
+        Some(format!("/mnt/{drive}"))
+    } else {
+        Some(format!("/mnt/{drive}/{tail}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{linux_path_to_host_path, wsl_unc_to_linux_path};
+    use super::{host_path_to_linux_path, linux_path_to_host_path, wsl_unc_to_linux_path};
 
     #[test]
     fn maps_current_distro_unc_to_linux_path() {
@@ -69,5 +86,19 @@ mod tests {
             r"C:\Code\demo"
         );
         assert!(linux_path_to_host_path("/srv/demo").is_none());
+    }
+
+    #[test]
+    fn maps_windows_drive_path_to_standard_drvfs_path() {
+        assert_eq!(
+            host_path_to_linux_path(r"C:\Users\alice\AppData\Local\Temp\skill deck")
+                .expect("map host temp"),
+            "/mnt/c/Users/alice/AppData/Local/Temp/skill deck"
+        );
+        assert_eq!(
+            host_path_to_linux_path(r"d:/Code/demo").expect("map slash path"),
+            "/mnt/d/Code/demo"
+        );
+        assert!(host_path_to_linux_path(r"\\server\share\demo").is_none());
     }
 }

@@ -7,6 +7,7 @@ pub mod duplicate_copies;
 pub mod environments;
 pub mod install;
 pub mod manage_agents;
+pub mod mutations;
 pub mod overwrites;
 pub mod remove;
 pub mod remove_details;

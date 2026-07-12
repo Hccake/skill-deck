@@ -16,6 +16,41 @@ pub enum EnvironmentLockIo {
 }
 
 impl EnvironmentLockIo {
+    pub async fn read_optional(
+        &self,
+        locator: &ResourceLocator,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        match self {
+            Self::Host => {
+                let path = Path::new(&locator.native_path);
+                if !path.exists() {
+                    return Ok(None);
+                }
+                Ok(Some(fs::read(path)?))
+            }
+            Self::Wsl(session) => {
+                ensure_wsl_locator(locator, &session.distro_name)?;
+                const SCRIPT: &str =
+                    r#"if [ -f "$1" ]; then printf '1'; cat -- "$1"; else printf '0'; fi"#;
+                let output = run_wsl_script(
+                    session,
+                    SCRIPT,
+                    std::slice::from_ref(&locator.native_path),
+                    Vec::new(),
+                    Duration::from_secs(10),
+                )
+                .await?;
+                match output.split_first() {
+                    Some((b'0', rest)) if rest.is_empty() => Ok(None),
+                    Some((b'1', rest)) => Ok(Some(rest.to_vec())),
+                    _ => Err(AppError::Custom {
+                        message: "invalid optional lock response".to_string(),
+                    }),
+                }
+            }
+        }
+    }
+
     pub async fn read(&self, locator: &ResourceLocator) -> Result<Vec<u8>, AppError> {
         match self {
             Self::Host => Ok(fs::read(&locator.native_path)?),
@@ -106,6 +141,33 @@ mod tests {
         assert_eq!(
             io.read(&locator).await.expect("read lock"),
             br#"{"skills":{}}\n"#
+        );
+    }
+
+    #[tokio::test]
+    async fn host_optional_read_distinguishes_missing_lock_from_empty_bytes() {
+        let temp = tempdir().expect("tempdir");
+        let locator = ResourceLocator {
+            environment: EnvironmentRef::Host,
+            native_path: temp
+                .path()
+                .join("state/lock.json")
+                .to_string_lossy()
+                .to_string(),
+        };
+        let io = EnvironmentLockIo::Host;
+
+        assert_eq!(
+            io.read_optional(&locator).await.expect("missing lock"),
+            None
+        );
+
+        io.write_atomic(&locator, Vec::new())
+            .await
+            .expect("write empty lock");
+        assert_eq!(
+            io.read_optional(&locator).await.expect("empty lock"),
+            Some(Vec::new())
         );
     }
 }

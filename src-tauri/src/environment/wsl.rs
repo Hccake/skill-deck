@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ pub struct WslSession {
     pub uid: u32,
     pub home: String,
     pub xdg_state_home: Option<String>,
+    pub config_home: String,
+    pub environment: BTreeMap<String, String>,
     pub git_available: bool,
 }
 
@@ -68,11 +70,23 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
     if fields.last().is_some_and(String::is_empty) {
         fields.pop();
     }
-    if fields.len() != 6 || fields[0] != "1" {
+    if fields.len() != 12 || fields[0] != "1" {
         return Err(AppError::Custom {
             message: "invalid WSL session response".to_string(),
         });
     }
+    let environment = [
+        ("CODEX_HOME", 6usize),
+        ("CLAUDE_CONFIG_DIR", 7),
+        ("VIBE_HOME", 8),
+        ("HERMES_HOME", 9),
+        ("AUTOHAND_HOME", 10),
+    ]
+    .into_iter()
+    .filter_map(|(name, index)| {
+        (!fields[index].is_empty()).then(|| (name.to_string(), fields[index].clone()))
+    })
+    .collect();
     Ok(WslSession {
         distro_name: distro_name.to_string(),
         user: fields[1].clone(),
@@ -81,7 +95,9 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
         })?,
         home: fields[3].clone(),
         xdg_state_home: (!fields[4].is_empty()).then(|| fields[4].clone()),
-        git_available: fields[5] == "1",
+        config_home: fields[5].clone(),
+        environment,
+        git_available: fields[11] == "1",
     })
 }
 
@@ -109,7 +125,7 @@ pub async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
 
 #[cfg(target_os = "windows")]
 pub async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, AppError> {
-    const SCRIPT: &str = r#"printf '1\0'; id -un | tr -d '\n'; printf '\0'; id -u | tr -d '\n'; printf '\0'; printf '%s\0' "$HOME" "${XDG_STATE_HOME:-}"; if command -v git >/dev/null 2>&1; then printf '1\0'; else printf '0\0'; fi"#;
+    const SCRIPT: &str = r#"printf '1\0'; id -un | tr -d '\n'; printf '\0'; id -u | tr -d '\n'; printf '\0'; printf '%s\0' "$HOME" "${XDG_STATE_HOME:-}" "${XDG_CONFIG_HOME:-$HOME/.config}" "${CODEX_HOME:-}" "${CLAUDE_CONFIG_DIR:-}" "${VIBE_HOME:-}" "${HERMES_HOME:-}" "${AUTOHAND_HOME:-}"; if command -v git >/dev/null 2>&1; then printf '1\0'; else printf '0\0'; fi"#;
     let mut command = Command::new("wsl.exe");
     command.args([
         "--distribution",
@@ -166,6 +182,8 @@ mod tests {
             uid: 1000,
             home: "/home/alice".to_string(),
             xdg_state_home: None,
+            config_home: "/home/alice/.config".to_string(),
+            environment: std::collections::BTreeMap::new(),
             git_available: true,
         });
 
@@ -175,7 +193,7 @@ mod tests {
 
     #[test]
     fn parses_versioned_session_output() {
-        let output = b"1\0alice\01000\0/home/alice\0/home/alice/.state\01\0";
+        let output = b"1\0alice\01000\0/home/alice\0/home/alice/.state\0/home/alice/.config\0/opt/codex\0/opt/claude\0\0\0\01\0";
         let session = parse_wsl_session_output("Ubuntu", output).expect("parse session");
 
         assert_eq!(session.user, "alice");
@@ -185,12 +203,15 @@ mod tests {
             session.xdg_state_home.as_deref(),
             Some("/home/alice/.state")
         );
+        assert_eq!(session.config_home, "/home/alice/.config");
+        assert_eq!(session.environment["CODEX_HOME"], "/opt/codex");
+        assert_eq!(session.environment["CLAUDE_CONFIG_DIR"], "/opt/claude");
         assert!(session.git_available);
     }
 
     #[test]
     fn parses_empty_xdg_state_home_without_shifting_fields() {
-        let output = b"1\0alice\01000\0/home/alice\0\01\0";
+        let output = b"1\0alice\01000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\01\0";
         let session = parse_wsl_session_output("Ubuntu", output).expect("parse session");
 
         assert_eq!(session.xdg_state_home, None);

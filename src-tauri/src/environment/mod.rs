@@ -1,3 +1,4 @@
+pub mod agent_environment;
 pub mod host;
 pub mod lock_io;
 pub mod path_mapping;

@@ -10,6 +10,7 @@ pub mod github_api;
 pub mod installer;
 pub mod local_lock;
 pub mod lossless_lock;
+pub mod mutation;
 pub mod paths;
 pub mod plugin_manifest;
 pub mod projects;

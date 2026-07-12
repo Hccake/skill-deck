@@ -3,6 +3,7 @@ use specta_typescript::Typescript;
 use tauri::Manager;
 use tauri_specta::{collect_commands, collect_events, Builder};
 
+use core::mutation::SingleMutationController;
 use environment::wsl::EnvironmentRegistry;
 
 mod commands;
@@ -18,8 +19,10 @@ pub fn run() {
         .commands(collect_commands![
             commands::agents::list_agents,
             commands::agents::list_agents_for_project,
+            commands::agents::list_agents_for_project_v2,
             commands::agents::list_eve_install_targets,
             commands::skills::list_skills,
+            commands::skills::list_skills_v2,
             commands::skills::read_skill_content,
             commands::config::get_config,
             commands::config::save_config,
@@ -33,8 +36,10 @@ pub fn run() {
             commands::install::fetch_available,
             commands::install::install_skills,
             commands::overwrites::check_overwrites,
+            commands::overwrites::check_overwrites_v2,
             commands::remove::remove_skill,
             commands::remove_details::get_skill_agent_details,
+            commands::remove_details::get_skill_agent_details_v2,
             commands::duplicate_copies::cleanup_duplicate_agent_copy,
             commands::duplicate_copies::cleanup_duplicate_agent_copies,
             commands::update::check_updates,
@@ -51,6 +56,8 @@ pub fn run() {
             commands::environments::list_environment_projects_v2,
             commands::environments::add_environment_project_v2,
             commands::environments::remove_environment_project_v2,
+            commands::mutations::get_active_mutation,
+            commands::mutations::request_cancel_active_mutation,
         ])
         .events(collect_events![]);
 
@@ -67,6 +74,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(EnvironmentRegistry::default())
+        .manage(SingleMutationController::default())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();

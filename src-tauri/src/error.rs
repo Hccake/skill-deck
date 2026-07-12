@@ -66,6 +66,9 @@ pub enum AppError {
     #[error("No skills found")]
     NoSkillsFound,
 
+    #[error("Another Skill operation is already running")]
+    MutationBusy,
+
     #[error("Invalid agent: {agent}")]
     InvalidAgent { agent: String },
 

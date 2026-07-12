@@ -73,7 +73,7 @@ pub fn map_environment_path_v2(
     }
 }
 
-fn host_projects_store() -> Result<ProjectsStore, AppError> {
+pub(crate) fn host_projects_store() -> Result<ProjectsStore, AppError> {
     let config_path = get_config_path()?;
     let projects_path = config_path.with_file_name("projects.json");
     migrate_legacy_projects(&config_path, &projects_path)?;
@@ -87,7 +87,7 @@ fn wsl_projects_path(session: &WslSession) -> String {
     )
 }
 
-async fn read_wsl_projects(
+pub(crate) async fn read_wsl_projects(
     session: &WslSession,
 ) -> Result<Vec<crate::environment::types::ProjectBinding>, AppError> {
     const READ_SCRIPT: &str =
