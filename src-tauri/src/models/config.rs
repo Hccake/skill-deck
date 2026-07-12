@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::environment::types::EnvironmentRef;
+
 fn default_git_clone_timeout_secs() -> u32 {
     120
 }
@@ -17,6 +19,12 @@ pub struct SkillDeckConfig {
     /// Git 仓库拉取超时（秒）
     #[serde(default = "default_git_clone_timeout_secs")]
     pub git_clone_timeout_secs: u32,
+    #[serde(default)]
+    pub hidden_wsl_distros: Vec<String>,
+    #[serde(default)]
+    pub last_selected_environment: Option<EnvironmentRef>,
+    #[serde(default)]
+    pub last_connected_wsl_user_by_distro: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for SkillDeckConfig {
@@ -24,6 +32,9 @@ impl Default for SkillDeckConfig {
         Self {
             projects: Vec::new(),
             git_clone_timeout_secs: default_git_clone_timeout_secs(),
+            hidden_wsl_distros: Vec::new(),
+            last_selected_environment: None,
+            last_connected_wsl_user_by_distro: std::collections::BTreeMap::new(),
         }
     }
 }

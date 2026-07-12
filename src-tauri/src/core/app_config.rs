@@ -77,6 +77,7 @@ mod tests {
         let config = SkillDeckConfig {
             projects: vec!["/demo".to_string()],
             git_clone_timeout_secs: 300,
+            ..SkillDeckConfig::default()
         };
 
         write_config_to_path(&config, &path).expect("write");

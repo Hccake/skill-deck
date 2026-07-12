@@ -3,8 +3,11 @@ use specta_typescript::Typescript;
 use tauri::Manager;
 use tauri_specta::{collect_commands, collect_events, Builder};
 
+use environment::wsl::EnvironmentRegistry;
+
 mod commands;
 mod core;
+mod environment;
 mod error;
 mod models;
 
@@ -42,6 +45,12 @@ pub fn run() {
             commands::manage_agents::manage_skill_agents,
             commands::copy_skill::copy_skill_to_projects,
             commands::copy_skill::check_skill_in_projects,
+            commands::environments::list_environments_v2,
+            commands::environments::connect_environment_v2,
+            commands::environments::map_environment_path_v2,
+            commands::environments::list_environment_projects_v2,
+            commands::environments::add_environment_project_v2,
+            commands::environments::remove_environment_project_v2,
         ])
         .events(collect_events![]);
 
@@ -57,6 +66,7 @@ pub fn run() {
         .expect("Failed to export typescript bindings");
 
     tauri::Builder::default()
+        .manage(EnvironmentRegistry::default())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
