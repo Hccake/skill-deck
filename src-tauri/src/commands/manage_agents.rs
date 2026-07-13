@@ -9,11 +9,105 @@ use crate::core::agents::AgentType;
 use crate::core::installer::{
     copy_skill_for_agent, copy_skill_for_agent_private, link_skill_for_agent_without_fallback,
 };
+use crate::core::mutation::{MutationGuard, MutationKind, SingleMutationController};
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::core::uninstaller::remove_skill;
+use crate::environment::agent_environment::{AgentEnvironmentResolver, AgentEnvironmentTarget};
+use crate::environment::materialize::{
+    materialize_wsl_agent_targets, WslAgentMaterializeRequest, WslAgentMaterializeTarget,
+};
+use crate::environment::service::{EnvironmentService, InspectRequest, ResolvedContext};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::error::AppError;
 use crate::models::{AgentSkillPresence, InstallMode, Scope};
+use tauri::State;
+
+struct WslAgentAddPlan {
+    immediate_results: Vec<ManageAgentOperationResult>,
+    targets: Vec<WslAgentMaterializeTarget>,
+}
+
+fn unsupported_wsl_agent_result(
+    target: &AgentEnvironmentTarget,
+    mode: InstallMode,
+    reason: &str,
+) -> ManageAgentOperationResult {
+    ManageAgentOperationResult {
+        agent: target.agent.to_string(),
+        success: false,
+        mode,
+        path: target.private_path.clone().unwrap_or_default(),
+        error: Some(format!("{}: {reason}", target.display_name)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_wsl_agent_additions(
+    resolver: &AgentEnvironmentResolver,
+    is_global: bool,
+    context_root: &str,
+    canonical_path: &str,
+    skill_name: &str,
+    add_agents: &[AgentType],
+    private_copy_agents: &[AgentType],
+    mode: InstallMode,
+) -> WslAgentAddPlan {
+    let sanitized = sanitize_name(skill_name);
+    let mut immediate_results = Vec::new();
+    let mut targets = Vec::new();
+    for agent in add_agents {
+        let target = resolver.target(*agent, is_global, context_root);
+        if target.default_available {
+            immediate_results.push(ManageAgentOperationResult {
+                agent: agent.to_string(),
+                success: true,
+                mode: mode.clone(),
+                path: canonical_path.to_string(),
+                error: None,
+            });
+            continue;
+        }
+        let Some(private_root) = target.private_path.clone() else {
+            immediate_results.push(unsupported_wsl_agent_result(
+                &target,
+                mode.clone(),
+                "does not support a private Skill directory for this scope",
+            ));
+            continue;
+        };
+        targets.push(WslAgentMaterializeTarget {
+            target_id: agent.to_string(),
+            agent: agent.to_string(),
+            target_path: format!("{}/{}", private_root.trim_end_matches('/'), sanitized),
+            mode: mode.clone(),
+            protect_existing_copy: false,
+        });
+    }
+    for agent in private_copy_agents {
+        let target = resolver.target(*agent, is_global, context_root);
+        let Some(private_root) = target.private_path.clone() else {
+            immediate_results.push(unsupported_wsl_agent_result(
+                &target,
+                InstallMode::Copy,
+                "does not have a separate private Skill directory",
+            ));
+            continue;
+        };
+        targets.push(WslAgentMaterializeTarget {
+            target_id: agent.to_string(),
+            agent: agent.to_string(),
+            target_path: format!("{}/{}", private_root.trim_end_matches('/'), sanitized),
+            mode: InstallMode::Copy,
+            protect_existing_copy: true,
+        });
+    }
+    WslAgentAddPlan {
+        immediate_results,
+        targets,
+    }
+}
 
 /// 管理 skill 的 agent 支持（添加/移除）
 ///
@@ -166,6 +260,244 @@ pub fn manage_skill_agents(
         added_results,
         removed,
         errors: [add_errors, remove_errors].concat(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn manage_skill_agents_v2(
+    context: ContextRef,
+    skill_name: String,
+    add_agents: Vec<AgentType>,
+    remove_agents: Vec<AgentType>,
+    private_copy_agents: Vec<AgentType>,
+    mode: InstallMode,
+    registry: State<'_, EnvironmentRegistry>,
+    controller: State<'_, SingleMutationController>,
+) -> Result<ManageAgentsResult, AppError> {
+    let guard = controller.begin(
+        MutationKind::ManageAgents,
+        context.clone(),
+        "Preparing Agent changes",
+    )?;
+    match &context.environment {
+        EnvironmentRef::Host => {
+            let (scope, project_path) = match &context.scope {
+                ContextScope::Global => (Scope::Global, None),
+                ContextScope::Project { project_id } => {
+                    let project = crate::commands::environments::host_projects_store()?
+                        .read()?
+                        .into_iter()
+                        .find(|project| &project.id == project_id)
+                        .ok_or_else(|| AppError::PathNotFound {
+                            path: project_id.clone(),
+                        })?;
+                    (Scope::Project, Some(project.native_path))
+                }
+            };
+            manage_skill_agents(
+                skill_name,
+                scope,
+                project_path,
+                add_agents,
+                remove_agents,
+                private_copy_agents,
+                mode,
+            )
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            manage_skill_agents_wsl_v2(
+                &context,
+                &session,
+                &skill_name,
+                &add_agents,
+                &remove_agents,
+                &private_copy_agents,
+                mode,
+                &guard,
+            )
+            .await
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn manage_skill_agents_wsl_v2(
+    context: &ContextRef,
+    session: &WslSession,
+    skill_name: &str,
+    add_agents: &[AgentType],
+    remove_agents: &[AgentType],
+    private_copy_agents: &[AgentType],
+    mode: InstallMode,
+    guard: &MutationGuard<'_>,
+) -> Result<ManageAgentsResult, AppError> {
+    let (project, context_root) = match &context.scope {
+        ContextScope::Global => (None, session.home.clone()),
+        ContextScope::Project { project_id } => {
+            let project = crate::commands::environments::read_wsl_projects(session)
+                .await?
+                .into_iter()
+                .find(|project| &project.id == project_id)
+                .ok_or_else(|| AppError::PathNotFound {
+                    path: project_id.clone(),
+                })?;
+            let root = project.native_path.clone();
+            (Some(project), root)
+        }
+    };
+    let is_global = project.is_none();
+    let canonical_root = format!("{}/.agents/skills", context_root.trim_end_matches('/'));
+    let (lock, _) = crate::commands::remove::wsl_remove_lock_locators(
+        context,
+        session,
+        project.as_ref().map(|project| project.native_path.as_str()),
+    );
+    let snapshot = EnvironmentService::Wsl(session.clone())
+        .inspect(&InspectRequest {
+            context: ResolvedContext {
+                context: context.clone(),
+                project,
+                home: ResourceLocator {
+                    environment: context.environment.clone(),
+                    native_path: session.home.clone(),
+                },
+                skill_root: ResourceLocator {
+                    environment: context.environment.clone(),
+                    native_path: canonical_root,
+                },
+                lock,
+            },
+        })
+        .await?
+        .skills
+        .into_iter()
+        .find(|skill| skill.name == skill_name)
+        .filter(|skill| skill.canonical_present)
+        .ok_or_else(|| AppError::PathNotFound {
+            path: format!(
+                "{}/.agents/skills/{}",
+                context_root.trim_end_matches('/'),
+                sanitize_name(skill_name)
+            ),
+        })?;
+    let resolver = AgentEnvironmentResolver::new(
+        crate::environment::agent_environment::AgentEnvironmentContext {
+            home: session.home.clone(),
+            config_home: session.config_home.clone(),
+            env: session.environment.clone(),
+        },
+    );
+    let add_plan = plan_wsl_agent_additions(
+        &resolver,
+        is_global,
+        &context_root,
+        &snapshot.canonical_path,
+        skill_name,
+        add_agents,
+        private_copy_agents,
+        mode,
+    );
+    let mut added = Vec::new();
+    let mut added_results = add_plan.immediate_results;
+    let mut removed = Vec::new();
+    let mut errors = Vec::new();
+    for result in &added_results {
+        if result.success {
+            added.push(result.agent.clone());
+        } else if let Some(error) = &result.error {
+            errors.push(format!("{}: {}", result.agent, error));
+        }
+    }
+
+    if guard.cancellation().is_cancelled() {
+        return Err(AppError::Custom {
+            message: "Agent changes were cancelled".to_string(),
+        });
+    }
+    if !add_plan.targets.is_empty() {
+        guard.set_cancelable(false);
+        let materialized = materialize_wsl_agent_targets(
+            session,
+            WslAgentMaterializeRequest {
+                canonical_path: snapshot.canonical_path.clone(),
+                targets: add_plan.targets,
+            },
+        )
+        .await;
+        guard.set_cancelable(true);
+        for result in materialized? {
+            if result.success {
+                added.push(result.agent.clone());
+            } else if let Some(error) = &result.error {
+                errors.push(format!("{}: {}", result.agent, error));
+            }
+            added_results.push(ManageAgentOperationResult {
+                agent: result.agent,
+                success: result.success,
+                mode: result.mode,
+                path: result.path,
+                error: result.error,
+            });
+        }
+    }
+
+    if guard.cancellation().is_cancelled() {
+        errors.push("Agent changes were cancelled before removals".to_string());
+        return Ok(ManageAgentsResult {
+            added,
+            added_results,
+            removed,
+            errors,
+        });
+    }
+    let sanitized = sanitize_name(skill_name);
+    let mut removal_agents = Vec::new();
+    let mut removal_paths = Vec::new();
+    for agent in remove_agents {
+        let target = resolver.target(*agent, is_global, &context_root);
+        let Some(private_root) = target.private_path else {
+            errors.push(format!(
+                "{}: no separate private Skill directory can be removed",
+                target.display_name
+            ));
+            continue;
+        };
+        removal_agents.push(*agent);
+        removal_paths.push(format!(
+            "{}/{}",
+            private_root.trim_end_matches('/'),
+            sanitized
+        ));
+    }
+    if !removal_paths.is_empty() {
+        guard.set_cancelable(false);
+        let removal_results =
+            crate::commands::remove::remove_wsl_paths(session, &removal_paths).await;
+        guard.set_cancelable(true);
+        for (agent, result) in removal_agents.into_iter().zip(removal_results?) {
+            if result.success {
+                removed.push(agent.to_string());
+            } else {
+                errors.push(format!(
+                    "{}: {}",
+                    agent,
+                    result
+                        .error
+                        .unwrap_or_else(|| "failed to remove Agent target".to_string())
+                ));
+            }
+        }
+    }
+
+    Ok(ManageAgentsResult {
+        added,
+        added_results,
+        removed,
+        errors,
     })
 }
 
@@ -409,5 +741,77 @@ mod tests {
             crate::models::InstallMode::Symlink
         );
         assert!(canonical.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn wsl_add_plan_uses_noop_for_default_agent_and_private_path_for_required_agent() {
+        let resolver = crate::environment::agent_environment::AgentEnvironmentResolver::new(
+            crate::environment::agent_environment::AgentEnvironmentContext {
+                home: "/home/alice".to_string(),
+                config_home: "/home/alice/.config".to_string(),
+                env: Default::default(),
+            },
+        );
+
+        let global = plan_wsl_agent_additions(
+            &resolver,
+            true,
+            "/home/alice",
+            "/home/alice/.agents/skills/demo",
+            "demo",
+            &[AgentType::Codex],
+            &[],
+            InstallMode::Symlink,
+        );
+        assert_eq!(global.immediate_results.len(), 1);
+        assert!(global.immediate_results[0].success);
+        assert!(global.targets.is_empty());
+
+        let project = plan_wsl_agent_additions(
+            &resolver,
+            false,
+            "/work/app",
+            "/work/app/.agents/skills/demo",
+            "demo",
+            &[AgentType::ClaudeCode],
+            &[],
+            InstallMode::Symlink,
+        );
+        assert!(project.immediate_results.is_empty());
+        assert_eq!(
+            project.targets[0].target_path,
+            "/work/app/.claude/skills/demo"
+        );
+        assert!(!project.targets[0].protect_existing_copy);
+    }
+
+    #[test]
+    fn wsl_private_copy_plan_protects_existing_private_path() {
+        let resolver = crate::environment::agent_environment::AgentEnvironmentResolver::new(
+            crate::environment::agent_environment::AgentEnvironmentContext {
+                home: "/home/alice".to_string(),
+                config_home: "/home/alice/.config".to_string(),
+                env: Default::default(),
+            },
+        );
+
+        let plan = plan_wsl_agent_additions(
+            &resolver,
+            true,
+            "/home/alice",
+            "/home/alice/.agents/skills/demo",
+            "demo",
+            &[],
+            &[AgentType::Codex],
+            InstallMode::Symlink,
+        );
+
+        assert_eq!(plan.targets.len(), 1);
+        assert_eq!(plan.targets[0].mode, InstallMode::Copy);
+        assert!(plan.targets[0].protect_existing_copy);
+        assert_eq!(
+            plan.targets[0].target_path,
+            "/home/alice/.codex/skills/demo"
+        );
     }
 }

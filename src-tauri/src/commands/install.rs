@@ -7,24 +7,39 @@
 use crate::core::agent_availability::{availability_for_agent, AgentAvailabilityKind};
 use crate::core::agents::AgentType;
 use crate::core::local_lock::{
-    add_skill_to_local_lock, compute_skill_folder_hash, LocalSkillLockEntry,
+    add_skill_to_local_lock, compute_skill_folder_hash, LocalSkillLockEntry, LocalSkillLockFile,
 };
-use crate::core::skill_lock::add_skill_to_lock;
-use crate::core::wellknown::fetch_wellknown_skills;
+use crate::core::lossless_lock::{LockEntrySnapshot, LosslessLockDocument};
+use crate::core::mutation::{
+    CancellationSignal, MutationGuard, MutationKind, SingleMutationController,
+};
+use crate::core::skill_lock::{add_skill_to_lock, SkillLockEntry, SkillLockFile};
+use crate::core::skill_paths::find_skill_md_case_insensitive;
+use crate::core::wellknown::{fetch_wellknown_skills, WellKnownFetchResult};
 use crate::core::{
     clone_repo_with_progress, compute_local_tree_sha, discover_skills,
     ensure_install_risk_acknowledged, fetch_skill_folder_hash, get_owner_repo,
     install_skill_to_agent_groups, install_skill_to_agent_groups_with_modes, parse_source,
     source_risk_policy, CloneProgress, DiscoverOptions, PerAgentInstallResult,
 };
+use crate::environment::acquisition::{stage_wsl_source, StagedWslSource, WslAcquisitionSource};
+use crate::environment::agent_environment::{AgentEnvironmentContext, AgentEnvironmentResolver};
+use crate::environment::lock_io::EnvironmentLockIo;
+use crate::environment::materialize::{
+    materialize_wsl_skill, WslMaterializeRequest, WslMaterializeTarget,
+};
+use crate::environment::path_mapping::host_path_to_linux_path;
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+use crate::environment::wsl_protocol::run_wsl_script;
 use crate::error::AppError;
 use crate::models::{
     AvailableSkill, FetchResult, InstallMode, InstallParams, InstallResult, InstallResultCategory,
     InstallResults, InstallTargetInfo, ParsedSource, SourceType,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 
 /// 安装进度事件（发送到前端）
 #[derive(serde::Serialize, Clone)]
@@ -50,6 +65,15 @@ struct InstallTargetPlan {
     private_required_targets: Vec<AgentType>,
     private_copy_targets: Vec<AgentType>,
     install_targets: Vec<AgentType>,
+}
+
+#[derive(Debug, Clone)]
+struct WslInstallTargetPlan {
+    default_available_agents: Vec<AgentType>,
+    private_required_targets: Vec<AgentType>,
+    private_copy_targets: Vec<AgentType>,
+    materialize_targets: Vec<WslMaterializeTarget>,
+    target_details: Vec<InstallTargetInfo>,
 }
 
 fn compute_install_behavior(retry: bool) -> InstallBehavior {
@@ -157,6 +181,140 @@ fn resolve_install_target_plan(
         private_required_targets,
         private_copy_targets,
         install_targets,
+    })
+}
+
+fn posix_parent(path: &str) -> Option<String> {
+    path.trim_end_matches('/')
+        .rsplit_once('/')
+        .map(|(parent, _)| parent.to_string())
+}
+
+fn resolve_wsl_install_target_plan(
+    params: &InstallParams,
+    session: &crate::environment::wsl::WslSession,
+    project_path: &str,
+) -> Result<WslInstallTargetPlan, AppError> {
+    let is_global = matches!(params.scope, crate::models::Scope::Global);
+    let resolver = AgentEnvironmentResolver::new(AgentEnvironmentContext {
+        home: session.home.clone(),
+        config_home: session.config_home.clone(),
+        env: session.environment.clone(),
+    });
+    let behavior = compute_install_behavior(params.retry);
+    let default_available_agents = if behavior.autofill_automatic_agents {
+        AgentType::all()
+            .filter(|agent| {
+                resolver
+                    .target(*agent, is_global, project_path)
+                    .default_available
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let private_copy_targets = parse_agent_ids(&params.private_copy_agents)?;
+    let concrete_target_agents: Vec<AgentType> = params
+        .agent_targets
+        .iter()
+        .map(|target| target.agent)
+        .collect();
+    let private_required_targets: Vec<AgentType> = parse_agent_ids(&params.agents)?
+        .into_iter()
+        .filter(|agent| !private_copy_targets.contains(agent))
+        .filter(|agent| !concrete_target_agents.contains(agent))
+        .collect();
+    let mut materialize_targets = Vec::new();
+    for agent in &private_required_targets {
+        let target = resolver.target(*agent, is_global, project_path);
+        let skills_root = target.private_path.ok_or_else(|| AppError::InstallFailed {
+            message: format!(
+                "{} does not require or support a private Skill directory for this scope.",
+                target.display_name
+            ),
+        })?;
+        materialize_targets.push(WslMaterializeTarget {
+            target_id: agent.to_string(),
+            agent: agent.to_string(),
+            required_root: (!is_global).then(|| posix_parent(&skills_root)).flatten(),
+            skills_root,
+            mode: params.mode.clone(),
+            preserve_existing_mode: params.preserve_existing_modes,
+        });
+    }
+    for agent in &private_copy_targets {
+        let target = resolver.target(*agent, is_global, project_path);
+        if target.availability != AgentAvailabilityKind::SharedCompatible {
+            return Err(AppError::InstallFailed {
+                message: format!(
+                    "cannot create an independent copy for {} in this scope.",
+                    target.display_name
+                ),
+            });
+        }
+        let skills_root = target.private_path.ok_or_else(|| AppError::InstallFailed {
+            message: format!("{} has no private Skill directory.", target.display_name),
+        })?;
+        materialize_targets.push(WslMaterializeTarget {
+            target_id: agent.to_string(),
+            agent: agent.to_string(),
+            required_root: (!is_global).then(|| posix_parent(&skills_root)).flatten(),
+            skills_root,
+            mode: InstallMode::Copy,
+            preserve_existing_mode: false,
+        });
+    }
+
+    let mut target_details = Vec::new();
+    let mut concrete_target_ids = HashSet::new();
+    if !is_global {
+        for target in &params.agent_targets {
+            if target.agent != AgentType::Eve {
+                continue;
+            }
+            let subagent = target
+                .subagent
+                .as_ref()
+                .filter(|value| !value.is_empty() && *value != "root")
+                .cloned();
+            let skills_root = match &subagent {
+                Some(name) => format!(
+                    "{}/agent/subagents/{}/skills",
+                    project_path.trim_end_matches('/'),
+                    crate::core::skill::sanitize_name(name)
+                ),
+                None => format!("{}/agent/skills", project_path.trim_end_matches('/')),
+            };
+            let target_id = crate::core::eve::eve_target_id(subagent.as_deref());
+            if !concrete_target_ids.insert(target_id.clone()) {
+                continue;
+            }
+            let display_name = crate::core::eve::eve_target_label(subagent.as_deref());
+            let required_root = posix_parent(&skills_root);
+            materialize_targets.push(WslMaterializeTarget {
+                target_id: target_id.clone(),
+                agent: AgentType::Eve.to_string(),
+                skills_root: skills_root.clone(),
+                mode: InstallMode::Copy,
+                required_root,
+                preserve_existing_mode: false,
+            });
+            target_details.push(InstallTargetInfo {
+                target_id,
+                agent: AgentType::Eve,
+                display_name,
+                subagent,
+                path: skills_root,
+            });
+        }
+    }
+
+    Ok(WslInstallTargetPlan {
+        default_available_agents,
+        private_required_targets,
+        private_copy_targets,
+        materialize_targets,
+        target_details,
     })
 }
 
@@ -279,6 +437,100 @@ async fn resolve_install_hash(
 #[specta::specta]
 pub async fn fetch_available(app: AppHandle, source: String) -> Result<FetchResult, AppError> {
     fetch_available_inner(&app, &source).await
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FetchAcquisitionRoute {
+    Host,
+    Wsl(WslAcquisitionSource),
+}
+
+fn fetch_acquisition_route(
+    environment: &EnvironmentRef,
+    parsed: &ParsedSource,
+) -> Result<FetchAcquisitionRoute, AppError> {
+    if matches!(environment, EnvironmentRef::Host) || parsed.source_type == SourceType::WellKnown {
+        return Ok(FetchAcquisitionRoute::Host);
+    }
+    match parsed.source_type {
+        SourceType::Local => {
+            let native_path = parsed
+                .local_path
+                .as_ref()
+                .ok_or_else(|| AppError::InvalidSource {
+                    value: "Missing local path".to_string(),
+                })?
+                .to_string_lossy()
+                .to_string();
+            Ok(FetchAcquisitionRoute::Wsl(WslAcquisitionSource::Local {
+                native_path,
+            }))
+        }
+        SourceType::GitHub | SourceType::GitLab | SourceType::Git => {
+            Ok(FetchAcquisitionRoute::Wsl(WslAcquisitionSource::Git {
+                url: parsed.url.clone(),
+                git_ref: parsed.git_ref.clone(),
+            }))
+        }
+        SourceType::WellKnown => Ok(FetchAcquisitionRoute::Host),
+    }
+}
+
+fn bind_install_params_to_context(
+    mut params: InstallParams,
+    project_path: Option<String>,
+) -> InstallParams {
+    match project_path {
+        Some(project_path) => {
+            params.scope = crate::models::Scope::Project;
+            params.project_path = Some(project_path);
+        }
+        None => {
+            params.scope = crate::models::Scope::Global;
+            params.project_path = None;
+        }
+    }
+    params
+}
+
+fn begin_install_mutation<'a>(
+    controller: &'a SingleMutationController,
+    context: ContextRef,
+) -> Result<MutationGuard<'a>, AppError> {
+    controller.begin(MutationKind::Install, context, "Preparing installation")
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fetch_available_v2(
+    app: AppHandle,
+    context: ContextRef,
+    source: String,
+    registry: State<'_, EnvironmentRegistry>,
+) -> Result<FetchResult, AppError> {
+    if matches!(context.environment, EnvironmentRef::Host) {
+        return fetch_available_inner(&app, &source).await;
+    }
+
+    let parsed = parse_source(&source)?;
+    match fetch_acquisition_route(&context.environment, &parsed)? {
+        FetchAcquisitionRoute::Host => {
+            let result = fetch_wellknown_skills(&parsed.url).await?;
+            let mut fetch_result = discover_and_build_result(&parsed, &result.repo_path)?;
+            apply_wellknown_trust_metadata(&mut fetch_result, &result.trust_metadata);
+            Ok(fetch_result)
+        }
+        FetchAcquisitionRoute::Wsl(source) => {
+            let EnvironmentRef::Wsl { distro_name } = &context.environment else {
+                unreachable!("Host route returned above")
+            };
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let staged = stage_wsl_source(&session, source, CancellationSignal::default()).await?;
+            discover_and_build_result(&parsed, staged.host_repo_path())
+        }
+    }
 }
 
 async fn fetch_available_inner(app: &AppHandle, source: &str) -> Result<FetchResult, AppError> {
@@ -406,6 +658,94 @@ fn lock_source_for_parsed_source(parsed: &ParsedSource, requested_source: &str) 
     get_owner_repo(parsed).unwrap_or_else(|| requested_source.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn build_wsl_lock_entry(
+    scope: &crate::models::Scope,
+    parsed: &ParsedSource,
+    requested_source: &str,
+    skill: &crate::core::discovery::DiscoveredSkill,
+    remote_hash: &str,
+    computed_hash: &str,
+    subagents: Option<Vec<String>>,
+    existing: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let source = lock_source_for_parsed_source(parsed, requested_source);
+    let (replacement, known_fields) = match scope {
+        crate::models::Scope::Global => {
+            let now = chrono::Utc::now()
+                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string();
+            let installed_at = existing
+                .and_then(|entry| entry.get("installedAt"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(&now)
+                .to_string();
+            (
+                serde_json::to_value(SkillLockEntry {
+                    source,
+                    source_type: parsed.source_type.to_string(),
+                    source_url: parsed.url.clone(),
+                    ref_name: parsed.git_ref.clone(),
+                    skill_path: Some(skill.relative_path.clone()),
+                    skill_folder_hash: remote_hash.to_string(),
+                    installed_at,
+                    updated_at: now,
+                    plugin_name: skill.plugin_name.clone(),
+                })
+                .expect("SkillLockEntry serialization cannot fail"),
+                &[
+                    "source",
+                    "sourceType",
+                    "sourceUrl",
+                    "ref",
+                    "skillPath",
+                    "skillFolderHash",
+                    "installedAt",
+                    "updatedAt",
+                    "pluginName",
+                ][..],
+            )
+        }
+        crate::models::Scope::Project => (
+            serde_json::to_value(LocalSkillLockEntry {
+                source,
+                ref_name: parsed.git_ref.clone(),
+                source_type: parsed.source_type.to_string(),
+                source_url: Some(parsed.url.clone()),
+                computed_hash: computed_hash.to_string(),
+                remote_hash: (!remote_hash.is_empty()).then(|| remote_hash.to_string()),
+                skill_path: Some(skill.relative_path.clone()),
+                subagents,
+                plugin_name: skill.plugin_name.clone(),
+            })
+            .expect("LocalSkillLockEntry serialization cannot fail"),
+            &[
+                "source",
+                "ref",
+                "sourceType",
+                "sourceUrl",
+                "computedHash",
+                "remoteHash",
+                "skillPath",
+                "subagents",
+                "pluginName",
+            ][..],
+        ),
+    };
+    let mut merged = existing
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for field in known_fields {
+        merged.remove(*field);
+    }
+    if let Some(replacement) = replacement.as_object() {
+        merged.extend(replacement.clone());
+    }
+    serde_json::Value::Object(merged)
+}
+
 fn canonical_only_install_result(
     skill_path: &Path,
     skill_name: &str,
@@ -477,6 +817,666 @@ pub async fn install_skills(
     params: InstallParams,
 ) -> Result<InstallResults, AppError> {
     install_skills_inner(&app, params).await
+}
+
+pub(crate) enum PreparedWslInstallSource {
+    Staged(StagedWslSource),
+    WellKnown(WellKnownFetchResult),
+}
+
+impl PreparedWslInstallSource {
+    fn host_repo_path(&self) -> &Path {
+        match self {
+            Self::Staged(source) => source.host_repo_path(),
+            Self::WellKnown(source) => &source.repo_path,
+        }
+    }
+
+    fn linux_skill_path(&self, host_skill_path: &Path) -> Result<String, AppError> {
+        match self {
+            Self::Staged(source) => source.linux_path_for_host_path(host_skill_path),
+            Self::WellKnown(_) => host_path_to_linux_path(&host_skill_path.to_string_lossy())
+                .ok_or_else(|| AppError::Path {
+                    message: format!(
+                        "Well-Known staging path is not available through WSL DrvFS: {}",
+                        host_skill_path.display()
+                    ),
+                }),
+        }
+    }
+}
+
+fn wsl_lock_locator(
+    context: &ContextRef,
+    session: &WslSession,
+    project_path: Option<&str>,
+) -> ResourceLocator {
+    let native_path = match project_path {
+        Some(project_path) => format!("{}/skills-lock.json", project_path.trim_end_matches('/')),
+        None => session
+            .xdg_state_home
+            .as_ref()
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| format!("{}/skills/.skill-lock.json", path.trim_end_matches('/')))
+            .unwrap_or_else(|| {
+                format!(
+                    "{}/.agents/.skill-lock.json",
+                    session.home.trim_end_matches('/')
+                )
+            }),
+    };
+    ResourceLocator {
+        environment: context.environment.clone(),
+        native_path,
+    }
+}
+
+fn empty_wsl_lock_document(scope: &crate::models::Scope) -> LosslessLockDocument {
+    let bytes = match scope {
+        crate::models::Scope::Global => serde_json::to_vec(&SkillLockFile::empty()),
+        crate::models::Scope::Project => serde_json::to_vec(&LocalSkillLockFile::empty()),
+    }
+    .expect("empty lock serialization cannot fail");
+    LosslessLockDocument::parse(&bytes).expect("empty lock document is valid")
+}
+
+fn normalize_initial_wsl_lock_bytes(
+    scope: &crate::models::Scope,
+    current: Option<&[u8]>,
+    legacy_project: Option<&[u8]>,
+) -> Result<Vec<u8>, AppError> {
+    if let Some(current) = current {
+        return Ok(current.to_vec());
+    }
+    if matches!(scope, crate::models::Scope::Project) {
+        if let Some(legacy_project) = legacy_project {
+            let legacy: SkillLockFile = serde_json::from_slice(legacy_project)?;
+            let mut migrated = LocalSkillLockFile::empty();
+            for (name, entry) in legacy.skills {
+                migrated.skills.insert(
+                    name,
+                    LocalSkillLockEntry {
+                        source: entry.source,
+                        ref_name: entry.ref_name,
+                        source_type: entry.source_type,
+                        source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
+                        computed_hash: String::new(),
+                        remote_hash: (!entry.skill_folder_hash.is_empty())
+                            .then_some(entry.skill_folder_hash),
+                        skill_path: entry.skill_path,
+                        subagents: None,
+                        plugin_name: entry.plugin_name,
+                    },
+                );
+            }
+            return Ok(serde_json::to_vec_pretty(&migrated)?);
+        }
+    }
+    Ok(empty_wsl_lock_document(scope).to_pretty_bytes()?)
+}
+
+fn wsl_legacy_project_lock_locator(
+    context: &ContextRef,
+    project_path: Option<&str>,
+) -> Option<ResourceLocator> {
+    project_path.map(|project_path| ResourceLocator {
+        environment: context.environment.clone(),
+        native_path: format!(
+            "{}/.agents/.skill-lock.json",
+            project_path.trim_end_matches('/')
+        ),
+    })
+}
+
+fn install_cancelled() -> AppError {
+    AppError::Custom {
+        message: "Skill installation was cancelled".to_string(),
+    }
+}
+
+fn build_wsl_eve_normalization_payload(
+    host_skill_path: &Path,
+    target_dir: &str,
+) -> Result<(String, Vec<u8>), AppError> {
+    let skill_md = find_skill_md_case_insensitive(host_skill_path).ok_or_else(|| {
+        AppError::InvalidSkillMd {
+            message: format!("SKILL.md not found in {}", host_skill_path.display()),
+        }
+    })?;
+    let raw = std::fs::read_to_string(skill_md)?;
+    let normalized = crate::core::eve::normalize_eve_skill_md(&raw);
+    Ok((
+        format!("{}/SKILL.md", target_dir.trim_end_matches('/')),
+        normalized.into_bytes(),
+    ))
+}
+
+async fn normalize_wsl_eve_target(
+    session: &WslSession,
+    host_skill_path: &Path,
+    target_dir: &str,
+) -> Result<(), AppError> {
+    const SCRIPT: &str = r#"
+path=$1
+dir=${path%/*}
+mkdir -p -- "$dir"
+for candidate in "$dir"/*; do
+  [ -f "$candidate" ] || continue
+  base=${candidate##*/}
+  lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+  if [ "$lower" = 'skill.md' ] && [ "$candidate" != "$path" ]; then
+    rm -f -- "$candidate" || exit 20
+  fi
+done
+tmp=$(mktemp "$dir/.skill-md.XXXXXX") || exit 21
+trap 'rm -f -- "$tmp"' EXIT HUP INT TERM
+cat > "$tmp" || exit 22
+mv -f -- "$tmp" "$path" || exit 23
+trap - EXIT HUP INT TERM
+"#;
+    let (target_path, payload) = build_wsl_eve_normalization_payload(host_skill_path, target_dir)?;
+    run_wsl_script(
+        session,
+        SCRIPT,
+        &[target_path],
+        payload,
+        tokio::time::Duration::from_secs(10),
+    )
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallCancellationDecision {
+    Continue,
+    AbortNow,
+    CommitCompletedThenAbort,
+}
+
+fn install_cancellation_decision(
+    cancelled: bool,
+    completed_skills: usize,
+) -> InstallCancellationDecision {
+    match (cancelled, completed_skills) {
+        (false, _) => InstallCancellationDecision::Continue,
+        (true, 0) => InstallCancellationDecision::AbortNow,
+        (true, _) => InstallCancellationDecision::CommitCompletedThenAbort,
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct WslInstallExecutionOptions<'a> {
+    pub expected_skill_paths: HashMap<String, String>,
+    pub require_complete_targets_for_lock: bool,
+    pub prepared_source: Option<&'a PreparedWslInstallSource>,
+}
+
+fn select_wsl_install_skills(
+    repo_path: &Path,
+    requested_names: &[String],
+    parsed_subpath: Option<&str>,
+    expected_skill_paths: &HashMap<String, String>,
+) -> Result<Vec<crate::core::discovery::DiscoveredSkill>, AppError> {
+    let options = DiscoverOptions {
+        include_internal: true,
+        full_depth: false,
+    };
+    if expected_skill_paths.is_empty() {
+        return Ok(discover_skills(repo_path, parsed_subpath, options)?
+            .into_iter()
+            .filter(|skill| requested_names.contains(&skill.name))
+            .collect());
+    }
+
+    let mut selected = Vec::new();
+    for name in requested_names {
+        let expected_path = expected_skill_paths
+            .get(name)
+            .ok_or_else(|| AppError::InvalidSource {
+                value: format!("Missing locked skill path for '{name}'"),
+            })?
+            .replace('\\', "/");
+        let discover_subpath = expected_path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .filter(|parent| !parent.is_empty());
+        let discovered = discover_skills(
+            repo_path,
+            discover_subpath,
+            DiscoverOptions {
+                include_internal: true,
+                full_depth: false,
+            },
+        )?;
+        let skill = discovered
+            .into_iter()
+            .find(|skill| {
+                skill.name == *name && skill.relative_path.replace('\\', "/") == expected_path
+            })
+            .ok_or(AppError::NoSkillsFound)?;
+        selected.push(skill);
+    }
+    Ok(selected)
+}
+
+fn should_commit_wsl_lock(
+    skill_name: &str,
+    failed: &[InstallResult],
+    require_complete_targets: bool,
+) -> bool {
+    !require_complete_targets || !failed.iter().any(|result| result.skill_name == skill_name)
+}
+
+pub(crate) async fn prepare_wsl_install_source(
+    session: &WslSession,
+    parsed: &ParsedSource,
+    cancellation: CancellationSignal,
+) -> Result<PreparedWslInstallSource, AppError> {
+    match parsed.source_type {
+        SourceType::Local => {
+            let native_path = parsed
+                .local_path
+                .as_ref()
+                .ok_or_else(|| AppError::InvalidSource {
+                    value: "Missing local path".to_string(),
+                })?
+                .to_string_lossy()
+                .to_string();
+            Ok(PreparedWslInstallSource::Staged(
+                stage_wsl_source(
+                    session,
+                    WslAcquisitionSource::Local { native_path },
+                    cancellation,
+                )
+                .await?,
+            ))
+        }
+        SourceType::GitHub | SourceType::GitLab | SourceType::Git => {
+            Ok(PreparedWslInstallSource::Staged(
+                stage_wsl_source(
+                    session,
+                    WslAcquisitionSource::Git {
+                        url: parsed.url.clone(),
+                        git_ref: parsed.git_ref.clone(),
+                    },
+                    cancellation,
+                )
+                .await?,
+            ))
+        }
+        SourceType::WellKnown => {
+            let fetch = fetch_wellknown_skills(&parsed.url);
+            tokio::pin!(fetch);
+            let cancel = async move {
+                while !cancellation.is_cancelled() {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+                }
+            };
+            tokio::pin!(cancel);
+            tokio::select! {
+                result = &mut fetch => Ok(PreparedWslInstallSource::WellKnown(result?)),
+                () = &mut cancel => Err(install_cancelled()),
+            }
+        }
+    }
+}
+
+async fn resolve_v2_project_path(
+    context: &ContextRef,
+    session: Option<&WslSession>,
+) -> Result<Option<String>, AppError> {
+    match &context.scope {
+        ContextScope::Global => Ok(None),
+        ContextScope::Project { project_id } => match (&context.environment, session) {
+            (EnvironmentRef::Host, _) => crate::commands::environments::host_projects_store()?
+                .read()?
+                .into_iter()
+                .find(|project| &project.id == project_id)
+                .map(|project| Some(project.native_path))
+                .ok_or_else(|| AppError::PathNotFound {
+                    path: project_id.clone(),
+                }),
+            (EnvironmentRef::Wsl { .. }, Some(session)) => {
+                crate::commands::environments::read_wsl_projects(session)
+                    .await?
+                    .into_iter()
+                    .find(|project| &project.id == project_id)
+                    .map(|project| Some(project.native_path))
+                    .ok_or_else(|| AppError::PathNotFound {
+                        path: project_id.clone(),
+                    })
+            }
+            (EnvironmentRef::Wsl { distro_name }, None) => Err(AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            }),
+        },
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn install_skills_v2(
+    app: AppHandle,
+    context: ContextRef,
+    params: InstallParams,
+    registry: State<'_, EnvironmentRegistry>,
+    controller: State<'_, SingleMutationController>,
+) -> Result<InstallResults, AppError> {
+    let guard = begin_install_mutation(&controller, context.clone())?;
+    match &context.environment {
+        EnvironmentRef::Host => {
+            let project_path = resolve_v2_project_path(&context, None).await?;
+            install_skills_inner(&app, bind_install_params_to_context(params, project_path)).await
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let project_path = resolve_v2_project_path(&context, Some(&session)).await?;
+            install_skills_wsl_inner(
+                &app,
+                &context,
+                &session,
+                bind_install_params_to_context(params, project_path),
+                &guard,
+            )
+            .await
+        }
+    }
+}
+
+async fn install_skills_wsl_inner(
+    app: &AppHandle,
+    context: &ContextRef,
+    session: &WslSession,
+    params: InstallParams,
+    guard: &MutationGuard<'_>,
+) -> Result<InstallResults, AppError> {
+    install_skills_wsl_inner_with_options(
+        app,
+        context,
+        session,
+        params,
+        guard,
+        WslInstallExecutionOptions::default(),
+    )
+    .await
+}
+
+pub(crate) async fn install_skills_wsl_inner_with_options(
+    app: &AppHandle,
+    context: &ContextRef,
+    session: &WslSession,
+    params: InstallParams,
+    guard: &MutationGuard<'_>,
+    execution_options: WslInstallExecutionOptions<'_>,
+) -> Result<InstallResults, AppError> {
+    let parsed = parse_source(&params.source)?;
+    let risk_policy = source_risk_policy(&parsed);
+    ensure_install_risk_acknowledged(&risk_policy, params.acknowledge_risk)?;
+    let project_path = params.project_path.as_deref();
+    let cwd = project_path.unwrap_or(session.home.as_str());
+    let canonical_root = if matches!(params.scope, crate::models::Scope::Global) {
+        format!("{}/.agents/skills", session.home.trim_end_matches('/'))
+    } else {
+        format!("{}/.agents/skills", cwd.trim_end_matches('/'))
+    };
+    let lock_locator = wsl_lock_locator(context, session, project_path);
+    let legacy_lock_locator = wsl_legacy_project_lock_locator(context, project_path);
+    let lock_io = EnvironmentLockIo::Wsl(session.clone());
+    let initial_lock_bytes = lock_io.read_optional(&lock_locator).await?;
+    let initial_legacy_bytes = match &legacy_lock_locator {
+        Some(locator) if initial_lock_bytes.is_none() => lock_io.read_optional(locator).await?,
+        _ => None,
+    };
+    let normalized_initial_lock = normalize_initial_wsl_lock_bytes(
+        &params.scope,
+        initial_lock_bytes.as_deref(),
+        initial_legacy_bytes.as_deref(),
+    )?;
+    let initial_lock_value: serde_json::Value = serde_json::from_slice(&normalized_initial_lock)?;
+    let initial_document = LosslessLockDocument::parse(&normalized_initial_lock)?;
+    let initial_snapshots: HashMap<String, LockEntrySnapshot> = params
+        .skills
+        .iter()
+        .map(|name| (name.clone(), initial_document.snapshot(name)))
+        .collect();
+
+    let cancellation = guard.cancellation();
+    let owned_prepared;
+    let prepared = match execution_options.prepared_source {
+        Some(prepared) => prepared,
+        None => {
+            owned_prepared =
+                prepare_wsl_install_source(session, &parsed, cancellation.clone()).await?;
+            &owned_prepared
+        }
+    };
+    let selected_skills = select_wsl_install_skills(
+        prepared.host_repo_path(),
+        &params.skills,
+        parsed.subpath.as_deref(),
+        &execution_options.expected_skill_paths,
+    )?;
+    if selected_skills.is_empty() {
+        return Err(AppError::NoSkillsFound);
+    }
+    let target_plan = resolve_wsl_install_target_plan(&params, session, cwd)?;
+    let include_canonical_result = !target_plan.default_available_agents.is_empty()
+        || target_plan.materialize_targets.is_empty();
+    let mut successful = Vec::new();
+    let mut failed = Vec::new();
+    let mut symlink_fallback_agents = Vec::new();
+    let mut completed_skill_names = HashSet::new();
+    let mut cancel_after_commit = false;
+    let total_skills = selected_skills.len();
+
+    for (index, skill) in selected_skills.iter().enumerate() {
+        match install_cancellation_decision(
+            cancellation.is_cancelled(),
+            completed_skill_names.len(),
+        ) {
+            InstallCancellationDecision::Continue => {}
+            InstallCancellationDecision::AbortNow => return Err(install_cancelled()),
+            InstallCancellationDecision::CommitCompletedThenAbort => {
+                cancel_after_commit = true;
+                break;
+            }
+        }
+        let _ = app.emit(
+            "install-progress",
+            &InstallProgress {
+                phase: "installing".to_string(),
+                current_skill: skill.name.clone(),
+                completed: index,
+                total: total_skills,
+            },
+        );
+        let result = materialize_wsl_skill(
+            session,
+            WslMaterializeRequest {
+                source_skill_path: prepared.linux_skill_path(&skill.path)?,
+                canonical_root: canonical_root.clone(),
+                install_dir_name: skill.install_dir_name.clone(),
+                context_root: cwd.to_string(),
+                canonical_mode: params.mode.clone(),
+                targets: target_plan.materialize_targets.clone(),
+            },
+        )
+        .await?;
+        let canonical_path = std::path::PathBuf::from(&result.canonical_path);
+        if include_canonical_result {
+            successful.push(InstallResult {
+                skill_name: skill.name.clone(),
+                agent: "__canonical__".to_string(),
+                target_id: None,
+                subagent: None,
+                success: true,
+                path: canonical_path.clone(),
+                canonical_path: Some(canonical_path.clone()),
+                mode: result.canonical_mode,
+                symlink_failed: false,
+                skipped: false,
+                error: None,
+                category: InstallResultCategory::DefaultAvailable,
+            });
+        }
+        for mut target in result.targets {
+            if target.agent == AgentType::Eve.to_string() && target.success && !target.skipped {
+                if let Err(error) =
+                    normalize_wsl_eve_target(session, &skill.path, &target.path).await
+                {
+                    target.success = false;
+                    target.error = Some(error.to_string());
+                }
+            }
+            let is_private_copy = target_plan
+                .private_copy_targets
+                .iter()
+                .any(|agent| agent.to_string() == target.agent);
+            let category = if !target.success {
+                InstallResultCategory::Failed
+            } else if target.skipped {
+                InstallResultCategory::Skipped
+            } else if is_private_copy {
+                InstallResultCategory::PrivateCopy
+            } else {
+                InstallResultCategory::PrivateAdapted
+            };
+            let subagent = target
+                .target_id
+                .strip_prefix("eve:")
+                .filter(|value| *value != "root")
+                .map(str::to_string);
+            let install_result = InstallResult {
+                skill_name: skill.name.clone(),
+                agent: target.agent.clone(),
+                target_id: Some(target.target_id),
+                subagent,
+                success: target.success,
+                path: std::path::PathBuf::from(target.path),
+                canonical_path: Some(canonical_path.clone()),
+                mode: target.mode,
+                symlink_failed: target.symlink_failed,
+                skipped: target.skipped,
+                error: target.error,
+                category,
+            };
+            if install_result.success {
+                if install_result.symlink_failed
+                    && !symlink_fallback_agents.contains(&install_result.agent)
+                {
+                    symlink_fallback_agents.push(install_result.agent.clone());
+                }
+                successful.push(install_result);
+            } else {
+                failed.push(install_result);
+            }
+        }
+        completed_skill_names.insert(skill.name.clone());
+    }
+
+    guard.set_cancelable(false);
+    let _ = app.emit(
+        "install-progress",
+        &InstallProgress {
+            phase: "writing_lock".to_string(),
+            current_skill: String::new(),
+            completed: total_skills,
+            total: total_skills,
+        },
+    );
+    let latest_bytes = lock_io.read_optional(&lock_locator).await?;
+    let latest_legacy_bytes = match &legacy_lock_locator {
+        Some(locator) if latest_bytes.is_none() => lock_io.read_optional(locator).await?,
+        _ => None,
+    };
+    let normalized_latest_lock = normalize_initial_wsl_lock_bytes(
+        &params.scope,
+        latest_bytes.as_deref(),
+        latest_legacy_bytes.as_deref(),
+    )?;
+    let mut latest_document = LosslessLockDocument::parse(&normalized_latest_lock)?;
+    let owner_repo = get_owner_repo(&parsed);
+    let lock_subagents = lock_subagents_from_eve_targets(
+        &target_plan
+            .target_details
+            .iter()
+            .map(|target| target.subagent.clone())
+            .collect::<Vec<_>>(),
+    );
+    for skill in selected_skills
+        .iter()
+        .filter(|skill| completed_skill_names.contains(&skill.name))
+        .filter(|skill| {
+            should_commit_wsl_lock(
+                &skill.name,
+                &failed,
+                execution_options.require_complete_targets_for_lock,
+            )
+        })
+    {
+        let remote_hash = resolve_install_hash(
+            Some(prepared.host_repo_path()),
+            &parsed.source_type,
+            owner_repo.as_deref(),
+            &skill.relative_path,
+            parsed.git_ref.as_deref(),
+            Some(skill.path.as_path()),
+        )
+        .await;
+        let computed_hash = compute_skill_folder_hash(&skill.path).unwrap_or_default();
+        let existing = initial_lock_value
+            .get("skills")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|skills| skills.get(&skill.name));
+        let replacement = build_wsl_lock_entry(
+            &params.scope,
+            &parsed,
+            &params.source,
+            skill,
+            &remote_hash,
+            &computed_hash,
+            lock_subagents.clone(),
+            existing,
+        );
+        latest_document.replace_entry(
+            &skill.name,
+            initial_snapshots
+                .get(&skill.name)
+                .expect("selected skill snapshot exists"),
+            replacement,
+        )?;
+    }
+    lock_io
+        .write_atomic(&lock_locator, latest_document.to_pretty_bytes()?)
+        .await?;
+
+    if cancel_after_commit {
+        return Err(install_cancelled());
+    }
+
+    Ok(InstallResults {
+        successful,
+        failed,
+        symlink_fallback_agents,
+        default_available_agents: target_plan
+            .default_available_agents
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        private_adapted_agents: target_plan
+            .private_required_targets
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        private_copy_agents: target_plan
+            .private_copy_targets
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        target_details: target_plan.target_details,
+    })
 }
 
 async fn install_skills_inner(
@@ -799,6 +1799,8 @@ async fn install_skills_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::acquisition::WslAcquisitionSource;
+    use crate::environment::types::EnvironmentRef;
     use std::fs;
     use tempfile::tempdir;
 
@@ -826,6 +1828,379 @@ mod tests {
             error,
             category: InstallResultCategory::PrivateAdapted,
         }
+    }
+
+    #[test]
+    fn fetch_v2_routes_host_sources_to_existing_host_adapter() {
+        let parsed = parse_source("owner/repo").expect("parse source");
+
+        assert_eq!(
+            fetch_acquisition_route(&EnvironmentRef::Host, &parsed).expect("route source"),
+            FetchAcquisitionRoute::Host
+        );
+    }
+
+    #[test]
+    fn fetch_v2_routes_wsl_git_and_local_sources_into_target_distro() {
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu-24.04".to_string(),
+        };
+        let git = parse_source("owner/repo#main").expect("parse git");
+        let local = parse_source("/home/alice/code/skills").expect("parse local");
+
+        assert_eq!(
+            fetch_acquisition_route(&environment, &git).expect("route git"),
+            FetchAcquisitionRoute::Wsl(WslAcquisitionSource::Git {
+                url: git.url.clone(),
+                git_ref: Some("main".to_string()),
+            })
+        );
+        assert_eq!(
+            fetch_acquisition_route(&environment, &local).expect("route local"),
+            FetchAcquisitionRoute::Wsl(WslAcquisitionSource::Local {
+                native_path: "/home/alice/code/skills".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn fetch_v2_keeps_well_known_http_on_host() {
+        let parsed = parse_source("https://skills.example.com").expect("parse source");
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Debian".to_string(),
+        };
+
+        assert_eq!(
+            fetch_acquisition_route(&environment, &parsed).expect("route source"),
+            FetchAcquisitionRoute::Host
+        );
+    }
+
+    fn sample_install_params() -> InstallParams {
+        InstallParams {
+            source: "owner/repo".to_string(),
+            skills: vec!["toolkit".to_string()],
+            agents: Vec::new(),
+            agent_targets: Vec::new(),
+            private_copy_agents: Vec::new(),
+            scope: crate::models::Scope::Project,
+            project_path: Some("C:\\wrong-project".to_string()),
+            mode: InstallMode::Symlink,
+            retry: false,
+            preserve_existing_modes: false,
+            acknowledge_risk: false,
+        }
+    }
+
+    fn wsl_session() -> crate::environment::wsl::WslSession {
+        crate::environment::wsl::WslSession {
+            distro_name: "Ubuntu-24.04".to_string(),
+            user: "alice".to_string(),
+            uid: 1000,
+            home: "/home/alice".to_string(),
+            xdg_state_home: None,
+            config_home: "/home/alice/.config".to_string(),
+            environment: Default::default(),
+            git_available: true,
+        }
+    }
+
+    #[test]
+    fn install_v2_overrides_legacy_scope_and_path_with_fixed_context() {
+        let global = bind_install_params_to_context(sample_install_params(), None);
+        assert_eq!(global.scope, crate::models::Scope::Global);
+        assert_eq!(global.project_path, None);
+
+        let project = bind_install_params_to_context(
+            sample_install_params(),
+            Some("/home/alice/code/cgp-be".to_string()),
+        );
+        assert_eq!(project.scope, crate::models::Scope::Project);
+        assert_eq!(
+            project.project_path.as_deref(),
+            Some("/home/alice/code/cgp-be")
+        );
+    }
+
+    #[test]
+    fn install_v2_rejects_second_mutation_instead_of_queueing() {
+        let controller = crate::core::mutation::SingleMutationController::default();
+        let context = ContextRef {
+            environment: EnvironmentRef::Wsl {
+                distro_name: "Ubuntu-24.04".to_string(),
+            },
+            scope: crate::environment::types::ContextScope::Global,
+        };
+        let _active = begin_install_mutation(&controller, context.clone()).expect("first install");
+
+        let error = match begin_install_mutation(&controller, context) {
+            Ok(_) => panic!("second install must not be queued"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, AppError::MutationBusy));
+    }
+
+    #[test]
+    fn wsl_install_plan_uses_linux_agent_paths_and_keeps_default_agents_on_canonical() {
+        let mut params = sample_install_params();
+        params.agents = vec![AgentType::ClaudeCode.to_string()];
+        params.private_copy_agents = vec![AgentType::Codex.to_string()];
+        params.scope = crate::models::Scope::Global;
+        params.project_path = None;
+
+        let plan = resolve_wsl_install_target_plan(&params, &wsl_session(), "/home/alice")
+            .expect("resolve targets");
+
+        assert!(plan.default_available_agents.contains(&AgentType::Codex));
+        assert_eq!(plan.materialize_targets.len(), 2);
+        let claude = plan
+            .materialize_targets
+            .iter()
+            .find(|target| target.agent == AgentType::ClaudeCode.to_string())
+            .expect("claude target");
+        assert_eq!(claude.skills_root, "/home/alice/.claude/skills");
+        assert_eq!(claude.mode, InstallMode::Symlink);
+        let codex_copy = plan
+            .materialize_targets
+            .iter()
+            .find(|target| target.agent == AgentType::Codex.to_string())
+            .expect("codex copy target");
+        assert_eq!(codex_copy.skills_root, "/home/alice/.codex/skills");
+        assert_eq!(codex_copy.mode, InstallMode::Copy);
+    }
+
+    #[test]
+    fn wsl_project_agent_target_skips_when_agent_root_is_absent() {
+        let mut params = sample_install_params();
+        params.agents = vec![AgentType::ClaudeCode.to_string()];
+        params.scope = crate::models::Scope::Project;
+        params.project_path = Some("/home/alice/code/app".to_string());
+
+        let plan = resolve_wsl_install_target_plan(&params, &wsl_session(), "/home/alice/code/app")
+            .expect("resolve targets");
+
+        assert_eq!(plan.materialize_targets.len(), 1);
+        assert_eq!(
+            plan.materialize_targets[0].required_root.as_deref(),
+            Some("/home/alice/code/app/.claude")
+        );
+    }
+
+    #[test]
+    fn wsl_eve_targets_are_deduplicated_by_concrete_target_id() {
+        let mut params = sample_install_params();
+        params.agent_targets = vec![
+            crate::models::InstallTargetSpec {
+                agent: AgentType::Eve,
+                subagent: Some("research".to_string()),
+            },
+            crate::models::InstallTargetSpec {
+                agent: AgentType::Eve,
+                subagent: Some("research".to_string()),
+            },
+        ];
+        params.scope = crate::models::Scope::Project;
+        params.project_path = Some("/home/alice/code/app".to_string());
+
+        let plan = resolve_wsl_install_target_plan(&params, &wsl_session(), "/home/alice/code/app")
+            .expect("resolve targets");
+
+        assert_eq!(plan.target_details.len(), 1);
+        assert_eq!(plan.materialize_targets.len(), 1);
+        assert_eq!(plan.materialize_targets[0].target_id, "eve:research");
+    }
+
+    #[test]
+    fn wsl_global_lock_entry_keeps_cli_fields_and_existing_install_time() {
+        let parsed = parse_source("owner/repo#main").expect("parse source");
+        let skill = crate::core::discovery::DiscoveredSkill {
+            name: "toolkit".to_string(),
+            install_dir_name: "toolkit".to_string(),
+            description: "Toolkit".to_string(),
+            path: std::path::PathBuf::from("/tmp/toolkit"),
+            relative_path: "skills/toolkit".to_string(),
+            plugin_name: Some("core".to_string()),
+        };
+        let existing = serde_json::json!({
+            "installedAt":"2026-01-01T00:00:00.000Z",
+            "futureEntry": {"enabled": true}
+        });
+
+        let entry = build_wsl_lock_entry(
+            &crate::models::Scope::Global,
+            &parsed,
+            "owner/repo#main",
+            &skill,
+            "remote-hash",
+            "computed-hash",
+            None,
+            Some(&existing),
+        );
+
+        assert_eq!(entry["source"], "owner/repo");
+        assert_eq!(entry["sourceType"], "github");
+        assert_eq!(entry["sourceUrl"], "https://github.com/owner/repo");
+        assert_eq!(entry["ref"], "main");
+        assert_eq!(entry["skillPath"], "skills/toolkit");
+        assert_eq!(entry["skillFolderHash"], "remote-hash");
+        assert_eq!(entry["installedAt"], "2026-01-01T00:00:00.000Z");
+        assert!(entry["updatedAt"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+        assert_eq!(entry["pluginName"], "core");
+        assert_eq!(entry["futureEntry"]["enabled"], true);
+    }
+
+    #[test]
+    fn wsl_project_lock_entry_remains_skills_cli_compatible() {
+        let parsed = parse_source("/home/alice/source").expect("parse source");
+        let skill = crate::core::discovery::DiscoveredSkill {
+            name: "toolkit".to_string(),
+            install_dir_name: "toolkit".to_string(),
+            description: "Toolkit".to_string(),
+            path: std::path::PathBuf::from("/tmp/toolkit"),
+            relative_path: "toolkit".to_string(),
+            plugin_name: None,
+        };
+
+        let existing = serde_json::json!({
+            "pluginName": "stale-plugin",
+            "futureEntry": 42
+        });
+        let entry = build_wsl_lock_entry(
+            &crate::models::Scope::Project,
+            &parsed,
+            "/home/alice/source",
+            &skill,
+            "remote-hash",
+            "computed-hash",
+            Some(vec!["research".to_string()]),
+            Some(&existing),
+        );
+
+        assert_eq!(entry["source"], "/home/alice/source");
+        assert_eq!(entry["sourceType"], "local");
+        assert_eq!(entry["computedHash"], "computed-hash");
+        assert_eq!(entry["remoteHash"], "remote-hash");
+        assert_eq!(entry["skillPath"], "toolkit");
+        assert_eq!(entry["subagents"], serde_json::json!(["research"]));
+        assert!(entry.get("pluginName").is_none());
+        assert_eq!(entry["futureEntry"], 42);
+    }
+
+    #[test]
+    fn cancellation_before_first_skill_aborts_but_mid_batch_commits_completed_locks() {
+        assert_eq!(
+            install_cancellation_decision(false, 0),
+            InstallCancellationDecision::Continue
+        );
+        assert_eq!(
+            install_cancellation_decision(true, 0),
+            InstallCancellationDecision::AbortNow
+        );
+        assert_eq!(
+            install_cancellation_decision(true, 1),
+            InstallCancellationDecision::CommitCompletedThenAbort
+        );
+    }
+
+    #[test]
+    fn wsl_project_legacy_lock_is_migrated_before_adding_new_entries() {
+        let legacy = br#"{
+          "version": 3,
+          "skills": {
+            "existing": {
+              "source": "owner/existing",
+              "sourceType": "github",
+              "sourceUrl": "https://github.com/owner/existing",
+              "skillFolderHash": "tree-hash",
+              "installedAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }"#;
+
+        let bytes =
+            normalize_initial_wsl_lock_bytes(&crate::models::Scope::Project, None, Some(legacy))
+                .expect("migrate legacy lock");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parse migrated lock");
+
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["skills"]["existing"]["source"], "owner/existing");
+        assert_eq!(value["skills"]["existing"]["remoteHash"], "tree-hash");
+        assert_eq!(value["skills"]["existing"]["computedHash"], "");
+    }
+
+    #[test]
+    fn wsl_eve_target_reuses_existing_frontmatter_normalizer() {
+        let temp = tempdir().expect("tempdir");
+        fs::write(
+            temp.path().join("SKILL.md"),
+            "---\nname: toolkit\ndescription: useful\nlicense: MIT\nunknown: drop\n---\nBody\n",
+        )
+        .expect("write skill");
+
+        let (target_path, payload) = build_wsl_eve_normalization_payload(
+            temp.path(),
+            "/home/alice/app/agent/skills/toolkit",
+        )
+        .expect("build Eve payload");
+        let normalized = String::from_utf8(payload).expect("utf8 payload");
+
+        assert_eq!(target_path, "/home/alice/app/agent/skills/toolkit/SKILL.md");
+        assert!(normalized.contains("description: useful"));
+        assert!(normalized.contains("license: MIT"));
+        assert!(!normalized.contains("name: toolkit"));
+        assert!(!normalized.contains("unknown: drop"));
+        assert!(normalized.ends_with("Body\n"));
+    }
+
+    #[test]
+    fn wsl_update_selection_prefers_exact_locked_path_for_duplicate_name() {
+        let temp = tempdir().expect("tempdir");
+        fs::create_dir_all(temp.path().join("skills/demo")).expect("priority dir");
+        fs::write(
+            temp.path().join("skills/demo/SKILL.md"),
+            "---\nname: demo\ndescription: priority\n---\n",
+        )
+        .expect("priority skill");
+        fs::create_dir_all(temp.path().join("examples/demo")).expect("locked dir");
+        fs::write(
+            temp.path().join("examples/demo/SKILL.md"),
+            "---\nname: demo\ndescription: locked\n---\n",
+        )
+        .expect("locked skill");
+        let expected = HashMap::from([("demo".to_string(), "examples/demo/SKILL.md".to_string())]);
+
+        let selected =
+            select_wsl_install_skills(temp.path(), &["demo".to_string()], None, &expected)
+                .expect("select exact skill");
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].relative_path, "examples/demo/SKILL.md");
+    }
+
+    #[test]
+    fn wsl_update_lock_policy_keeps_old_hash_on_agent_partial() {
+        let failed = vec![InstallResult {
+            skill_name: "demo".to_string(),
+            agent: "claude-code".to_string(),
+            target_id: Some("claude-code".to_string()),
+            subagent: None,
+            success: false,
+            path: std::path::PathBuf::new(),
+            canonical_path: None,
+            mode: InstallMode::Symlink,
+            symlink_failed: false,
+            skipped: false,
+            error: Some("permission denied".to_string()),
+            category: InstallResultCategory::Failed,
+        }];
+
+        assert!(should_commit_wsl_lock("demo", &failed, false));
+        assert!(!should_commit_wsl_lock("demo", &failed, true));
+        assert!(should_commit_wsl_lock("other", &failed, true));
     }
 
     #[test]

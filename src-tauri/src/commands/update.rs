@@ -9,8 +9,10 @@ use crate::core::installer::{
 };
 use crate::core::local_lock::{
     add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
+    LocalSkillLockFile,
 };
-use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock};
+use crate::core::mutation::{MutationGuard, MutationKind, SingleMutationController};
+use crate::core::skill_lock::{add_skill_to_lock, read_scoped_lock, SkillLockFile};
 use crate::core::wellknown::fetch_wellknown_skills;
 use crate::core::{
     build_update_group_key, build_update_target, clone_repo_with_progress, compute_local_tree_sha,
@@ -20,16 +22,22 @@ use crate::core::{
     derive_update_capability, normalize_global_lock_entry, normalize_local_lock_entry,
 };
 use crate::core::{fetch_skill_folder_hash, fetch_skill_folder_hashes_batch};
+use crate::environment::lock_io::EnvironmentLockIo;
+use crate::environment::service::{EnvironmentService, InspectRequest, ResolvedContext};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::wsl::EnvironmentRegistry;
 use crate::error::AppError;
 use crate::models::{
-    InstallMode, Scope, UpdateSkillAgentResult, UpdateSkillAgentStatus, UpdateSkillItemResult,
-    UpdateSkillResponse, UpdateSkillStatus, UpdateSkillSummary,
+    InstallMode, InstallParams, InstallTargetSpec, Scope, UpdateSkillAgentResult,
+    UpdateSkillAgentStatus, UpdateSkillItemResult, UpdateSkillResponse, UpdateSkillStatus,
+    UpdateSkillSummary,
 };
 use serde::Serialize;
 use specta::Type;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
+use tauri::{AppHandle, State};
 
 type UpdateCheckGroupKey = (String, Option<String>);
 
@@ -41,6 +49,310 @@ struct UpdateCheckSkill {
     ref_name: Option<String>,
     skill_path: String,
     local_hash: String,
+}
+
+struct PreparedUpdateChecks {
+    groups: HashMap<UpdateCheckGroupKey, Vec<UpdateCheckSkill>>,
+    immediate_results: Vec<SkillUpdateInfo>,
+}
+
+fn prepare_update_checks(
+    entries: Vec<(String, crate::core::NormalizedUpdateMetadata)>,
+) -> PreparedUpdateChecks {
+    let mut groups: HashMap<UpdateCheckGroupKey, Vec<UpdateCheckSkill>> = HashMap::new();
+    let mut immediate_results = Vec::new();
+    for (name, metadata) in entries {
+        let capability = derive_update_capability(&metadata);
+        if !capability.can_check_for_updates {
+            immediate_results.push(SkillUpdateInfo {
+                name,
+                source: metadata.source,
+                has_update: false,
+                status: SkillUpdateCheckStatus::CannotCheck,
+                reason: capability.reason,
+                git_ref: metadata.ref_name,
+                source_url: metadata.source_url,
+                skill_path: metadata.skill_path,
+            });
+            continue;
+        }
+        groups
+            .entry((metadata.source.clone(), metadata.ref_name.clone()))
+            .or_default()
+            .push(UpdateCheckSkill {
+                name,
+                source: metadata.source,
+                source_url: metadata.source_url,
+                ref_name: metadata.ref_name,
+                skill_path: metadata
+                    .skill_path
+                    .expect("checkable metadata has skill path"),
+                local_hash: metadata
+                    .remote_hash
+                    .expect("checkable metadata has remote hash"),
+            });
+    }
+    PreparedUpdateChecks {
+        groups,
+        immediate_results,
+    }
+}
+
+async fn check_updates_from_metadata(
+    entries: Vec<(String, crate::core::NormalizedUpdateMetadata)>,
+) -> Result<Vec<SkillUpdateInfo>, AppError> {
+    let prepared = prepare_update_checks(entries);
+    let mut results = prepared.immediate_results;
+    for ((source, ref_name), skills) in &prepared.groups {
+        let paths: Vec<(String, String)> = skills
+            .iter()
+            .map(|skill| (skill.name.clone(), skill.skill_path.clone()))
+            .collect();
+        match fetch_skill_folder_hashes_batch(source, &paths, ref_name.as_deref()).await {
+            Ok(hashes) => {
+                for skill in skills {
+                    results.push(build_batch_check_result(
+                        skill,
+                        hashes.get(&skill.name).and_then(|hash| hash.as_deref()),
+                    ));
+                }
+            }
+            Err(error) => {
+                let reason = match &error {
+                    AppError::GitHubApiError { reason, .. } => reason.clone(),
+                    _ => "upstream-unavailable".to_string(),
+                };
+                for skill in skills {
+                    results.push(SkillUpdateInfo {
+                        name: skill.name.clone(),
+                        source: skill.source.clone(),
+                        has_update: false,
+                        status: SkillUpdateCheckStatus::CannotCheck,
+                        reason: Some(reason.clone()),
+                        git_ref: skill.ref_name.clone(),
+                        source_url: skill.source_url.clone(),
+                        skill_path: Some(skill.skill_path.clone()),
+                    });
+                }
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn parse_wsl_update_metadata(
+    scope: &Scope,
+    current: Option<&[u8]>,
+    legacy_project: Option<&[u8]>,
+) -> Result<Vec<(String, crate::core::NormalizedUpdateMetadata)>, AppError> {
+    match scope {
+        Scope::Global => {
+            let lock = match current {
+                Some(bytes) => serde_json::from_slice::<SkillLockFile>(bytes)?,
+                None => SkillLockFile::empty(),
+            };
+            Ok(lock
+                .skills
+                .into_iter()
+                .map(|(name, entry)| (name, normalize_global_lock_entry(&entry)))
+                .collect())
+        }
+        Scope::Project => {
+            if let Some(bytes) = current {
+                let lock = serde_json::from_slice::<LocalSkillLockFile>(bytes)?;
+                return Ok(lock
+                    .skills
+                    .into_iter()
+                    .map(|(name, entry)| (name, normalize_local_lock_entry(&entry)))
+                    .collect());
+            }
+            let lock = match legacy_project {
+                Some(bytes) => serde_json::from_slice::<SkillLockFile>(bytes)?,
+                None => SkillLockFile::empty(),
+            };
+            Ok(lock
+                .skills
+                .into_iter()
+                .map(|(name, entry)| (name, normalize_global_lock_entry(&entry)))
+                .collect())
+        }
+    }
+}
+
+fn build_wsl_update_install_params(
+    scope: Scope,
+    project_path: Option<&str>,
+    skill_name: &str,
+    metadata: &crate::core::NormalizedUpdateMetadata,
+    snapshot: &crate::environment::service::SkillEntrySnapshot,
+) -> InstallParams {
+    let source_base = metadata
+        .source_url
+        .clone()
+        .unwrap_or_else(|| metadata.source.clone());
+    let source = metadata
+        .ref_name
+        .as_ref()
+        .map(|git_ref| format!("{source_base}#{git_ref}"))
+        .unwrap_or(source_base);
+    let mut agents = Vec::new();
+    for agent in snapshot
+        .private_adapted_agents
+        .iter()
+        .chain(snapshot.private_only_agents.iter())
+    {
+        let value = agent.to_string();
+        if !agents.contains(&value) {
+            agents.push(value);
+        }
+    }
+    InstallParams {
+        source,
+        skills: vec![skill_name.to_string()],
+        agents,
+        agent_targets: snapshot
+            .eve_targets
+            .iter()
+            .map(|target| InstallTargetSpec {
+                agent: AgentType::Eve,
+                subagent: target.subagent.clone(),
+            })
+            .collect(),
+        private_copy_agents: snapshot
+            .private_copy_agents
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        scope,
+        project_path: project_path.map(str::to_string),
+        mode: InstallMode::Symlink,
+        retry: false,
+        preserve_existing_modes: true,
+        acknowledge_risk: true,
+    }
+}
+
+fn build_wsl_update_item(
+    skill_name: &str,
+    metadata: &crate::core::NormalizedUpdateMetadata,
+    install: crate::models::InstallResults,
+    duration_ms: u32,
+) -> UpdateSkillItemResult {
+    let explicit_agents: std::collections::HashSet<String> = install
+        .successful
+        .iter()
+        .chain(install.failed.iter())
+        .filter(|result| result.agent != "__canonical__")
+        .map(|result| result.agent.clone())
+        .collect();
+    let canonical_mode = install
+        .successful
+        .iter()
+        .find(|result| result.agent == "__canonical__")
+        .map(|result| result.mode.clone());
+    let mut agent_results = Vec::new();
+    for agent in &install.default_available_agents {
+        if explicit_agents.contains(agent) {
+            continue;
+        }
+        agent_results.push(UpdateSkillAgentResult {
+            agent: agent.clone(),
+            target_id: None,
+            subagent: None,
+            status: UpdateSkillAgentStatus::Success,
+            mode: canonical_mode.clone(),
+            error: None,
+            duration_ms: None,
+        });
+    }
+    for result in install.successful.into_iter().chain(install.failed) {
+        if result.agent == "__canonical__" {
+            continue;
+        }
+        agent_results.push(UpdateSkillAgentResult {
+            agent: result.agent,
+            target_id: result.target_id,
+            subagent: result.subagent,
+            status: if result.skipped {
+                UpdateSkillAgentStatus::Skipped
+            } else if result.success {
+                UpdateSkillAgentStatus::Success
+            } else {
+                UpdateSkillAgentStatus::Failed
+            },
+            mode: Some(result.mode),
+            error: result.error,
+            duration_ms: None,
+        });
+    }
+    let status = derive_skill_status(&agent_results);
+    let error = matches!(
+        status,
+        UpdateSkillStatus::Failed | UpdateSkillStatus::Partial
+    )
+    .then(|| {
+        agent_results
+            .iter()
+            .find(|result| result.status == UpdateSkillAgentStatus::Failed)
+            .and_then(|result| result.error.clone())
+            .unwrap_or_else(|| "Some agents failed to update".to_string())
+    });
+    UpdateSkillItemResult {
+        name: skill_name.to_string(),
+        status,
+        error,
+        reason: None,
+        source: Some(metadata.source.clone()),
+        source_url: metadata.source_url.clone(),
+        git_ref: metadata.ref_name.clone(),
+        skill_path: metadata.skill_path.clone(),
+        warnings: install
+            .symlink_fallback_agents
+            .into_iter()
+            .map(|agent| format!("Symlink failed for {agent}; used copy mode"))
+            .collect(),
+        duration_ms: Some(duration_ms),
+        agent_results,
+    }
+}
+
+fn update_lock_locators(
+    context: &ContextRef,
+    session: &crate::environment::wsl::WslSession,
+    project_path: Option<&str>,
+) -> (ResourceLocator, Option<ResourceLocator>) {
+    match project_path {
+        Some(project_path) => (
+            ResourceLocator {
+                environment: context.environment.clone(),
+                native_path: format!("{}/skills-lock.json", project_path.trim_end_matches('/')),
+            },
+            Some(ResourceLocator {
+                environment: context.environment.clone(),
+                native_path: format!(
+                    "{}/.agents/.skill-lock.json",
+                    project_path.trim_end_matches('/')
+                ),
+            }),
+        ),
+        None => (
+            ResourceLocator {
+                environment: context.environment.clone(),
+                native_path: session
+                    .xdg_state_home
+                    .as_ref()
+                    .filter(|path| !path.trim().is_empty())
+                    .map(|path| format!("{}/skills/.skill-lock.json", path.trim_end_matches('/')))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{}/.agents/.skill-lock.json",
+                            session.home.trim_end_matches('/')
+                        )
+                    }),
+            },
+            None,
+        ),
+    }
 }
 
 /// 更新进度事件（发送到前端）
@@ -114,123 +426,87 @@ pub async fn check_updates(
     check_updates_inner(scope, project_path.as_deref()).await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn check_updates_v2(
+    context: ContextRef,
+    registry: State<'_, EnvironmentRegistry>,
+) -> Result<Vec<SkillUpdateInfo>, AppError> {
+    match &context.environment {
+        EnvironmentRef::Host => match &context.scope {
+            ContextScope::Global => check_updates_inner(Scope::Global, None).await,
+            ContextScope::Project { project_id } => {
+                let project = crate::commands::environments::host_projects_store()?
+                    .read()?
+                    .into_iter()
+                    .find(|project| &project.id == project_id)
+                    .ok_or_else(|| AppError::PathNotFound {
+                        path: project_id.clone(),
+                    })?;
+                check_updates_inner(Scope::Project, Some(&project.native_path)).await
+            }
+        },
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let (scope, project_path) = match &context.scope {
+                ContextScope::Global => (Scope::Global, None),
+                ContextScope::Project { project_id } => {
+                    let project = crate::commands::environments::read_wsl_projects(&session)
+                        .await?
+                        .into_iter()
+                        .find(|project| &project.id == project_id)
+                        .ok_or_else(|| AppError::PathNotFound {
+                            path: project_id.clone(),
+                        })?;
+                    (Scope::Project, Some(project.native_path))
+                }
+            };
+            let io = EnvironmentLockIo::Wsl(session.clone());
+            let (locator, legacy_locator) =
+                update_lock_locators(&context, &session, project_path.as_deref());
+            let current = io.read_optional(&locator).await?;
+            let legacy = match legacy_locator {
+                Some(locator) if current.is_none() => io.read_optional(&locator).await?,
+                _ => None,
+            };
+            check_updates_from_metadata(parse_wsl_update_metadata(
+                &scope,
+                current.as_deref(),
+                legacy.as_deref(),
+            )?)
+            .await
+        }
+    }
+}
+
 async fn check_updates_inner(
     scope: Scope,
     project_path: Option<&str>,
 ) -> Result<Vec<SkillUpdateInfo>, AppError> {
-    let mut skills_by_source: HashMap<UpdateCheckGroupKey, Vec<UpdateCheckSkill>> = HashMap::new();
-    let mut results = Vec::new();
-
-    match scope {
+    let entries = match scope {
         Scope::Global => {
             let lock = read_scoped_lock(None)?;
-            for (name, entry) in &lock.skills {
-                let metadata = normalize_global_lock_entry(entry);
-                let capability = derive_update_capability(&metadata);
-
-                if !capability.can_check_for_updates {
-                    results.push(SkillUpdateInfo {
-                        name: name.clone(),
-                        source: metadata.source.clone(),
-                        has_update: false,
-                        status: SkillUpdateCheckStatus::CannotCheck,
-                        reason: capability.reason.clone(),
-                        git_ref: metadata.ref_name.clone(),
-                        source_url: metadata.source_url.clone(),
-                        skill_path: metadata.skill_path.clone(),
-                    });
-                    continue;
-                }
-
-                skills_by_source
-                    .entry((metadata.source.clone(), metadata.ref_name.clone()))
-                    .or_default()
-                    .push(UpdateCheckSkill {
-                        name: name.clone(),
-                        source: metadata.source.clone(),
-                        source_url: metadata.source_url.clone(),
-                        ref_name: metadata.ref_name.clone(),
-                        skill_path: metadata.skill_path.unwrap(),
-                        local_hash: metadata.remote_hash.unwrap(),
-                    });
-            }
+            lock.skills
+                .into_iter()
+                .map(|(name, entry)| (name, normalize_global_lock_entry(&entry)))
+                .collect()
         }
         Scope::Project => {
             if let Some(pp) = project_path {
                 let local_lock = read_local_lock(pp)?;
-                for (name, entry) in &local_lock.skills {
-                    let metadata = normalize_local_lock_entry(entry);
-                    let capability = derive_update_capability(&metadata);
-
-                    if !capability.can_check_for_updates {
-                        results.push(SkillUpdateInfo {
-                            name: name.clone(),
-                            source: metadata.source.clone(),
-                            has_update: false,
-                            status: SkillUpdateCheckStatus::CannotCheck,
-                            reason: capability.reason.clone(),
-                            git_ref: metadata.ref_name.clone(),
-                            source_url: metadata.source_url.clone(),
-                            skill_path: metadata.skill_path.clone(),
-                        });
-                        continue;
-                    }
-
-                    skills_by_source
-                        .entry((metadata.source.clone(), metadata.ref_name.clone()))
-                        .or_default()
-                        .push(UpdateCheckSkill {
-                            name: name.clone(),
-                            source: metadata.source.clone(),
-                            source_url: metadata.source_url.clone(),
-                            ref_name: metadata.ref_name.clone(),
-                            skill_path: metadata.skill_path.unwrap(),
-                            local_hash: metadata.remote_hash.unwrap(),
-                        });
-                }
+                local_lock
+                    .skills
+                    .into_iter()
+                    .map(|(name, entry)| (name, normalize_local_lock_entry(&entry)))
+                    .collect()
+            } else {
+                Vec::new()
             }
         }
-    }
-
-    for ((source, ref_name), skills) in &skills_by_source {
-        let paths: Vec<(String, String)> = skills
-            .iter()
-            .map(|skill| (skill.name.clone(), skill.skill_path.clone()))
-            .collect();
-        match fetch_skill_folder_hashes_batch(source, &paths, ref_name.as_deref()).await {
-            Ok(hashes) => {
-                for skill in skills {
-                    results.push(build_batch_check_result(
-                        skill,
-                        hashes.get(&skill.name).and_then(|h| h.as_deref()),
-                    ));
-                }
-            }
-            Err(err) => {
-                // API 失败,不误报。reason 优先走 GitHubApiError 自带的精细分类
-                // (`rate-limited` / `auth` / `network-error` / `http-<code>`),
-                // 让前端能针对性提示用户(例如 rate-limited 时引导设置 GITHUB_TOKEN)。
-                let reason = match &err {
-                    AppError::GitHubApiError { reason, .. } => reason.clone(),
-                    _ => "upstream-unavailable".to_string(),
-                };
-                for skill in skills {
-                    results.push(SkillUpdateInfo {
-                        name: skill.name.clone(),
-                        source: skill.source.clone(),
-                        has_update: false,
-                        status: SkillUpdateCheckStatus::CannotCheck,
-                        reason: Some(reason.clone()),
-                        git_ref: skill.ref_name.clone(),
-                        source_url: skill.source_url.clone(),
-                        skill_path: Some(skill.skill_path.clone()),
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(results)
+    };
+    check_updates_from_metadata(entries).await
 }
 
 /// 入口校验：仅当 metadata 满足"可执行更新"时返回 Ok，否则给出具体原因
@@ -265,6 +541,135 @@ fn build_skipped_update_result(
         duration_ms: None,
         agent_results: Vec::new(),
     }
+}
+
+#[derive(Debug, Clone)]
+struct WslBatchUpdatePlanItem {
+    name: String,
+    metadata: crate::core::NormalizedUpdateMetadata,
+    source_key: crate::core::UpdateGroupKey,
+}
+
+struct WslBatchUpdatePlan {
+    ready: Vec<WslBatchUpdatePlanItem>,
+    immediate_results: Vec<UpdateSkillItemResult>,
+}
+
+fn missing_batch_lock_result(name: &str) -> UpdateSkillItemResult {
+    UpdateSkillItemResult {
+        name: name.to_string(),
+        status: UpdateSkillStatus::Failed,
+        error: Some(format!("Skill '{name}' not found in lock file")),
+        reason: Some("missing-lock-entry".to_string()),
+        source: None,
+        source_url: None,
+        git_ref: None,
+        skill_path: None,
+        warnings: Vec::new(),
+        duration_ms: None,
+        agent_results: Vec::new(),
+    }
+}
+
+fn prepare_wsl_batch_plan(
+    names: &[String],
+    entries: Vec<(String, crate::core::NormalizedUpdateMetadata)>,
+) -> WslBatchUpdatePlan {
+    let metadata_by_name: HashMap<String, crate::core::NormalizedUpdateMetadata> =
+        entries.into_iter().collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut ready = Vec::new();
+    let mut immediate_results = Vec::new();
+
+    for name in names {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(metadata) = metadata_by_name.get(name).cloned() else {
+            immediate_results.push(missing_batch_lock_result(name));
+            continue;
+        };
+        let capability = derive_update_capability(&metadata);
+        if !capability.can_run_update {
+            immediate_results.push(build_skipped_update_result(
+                name,
+                &metadata,
+                capability.reason.as_deref().unwrap_or("cannot-update"),
+            ));
+            continue;
+        }
+        let source_url = metadata
+            .source_url
+            .clone()
+            .unwrap_or_else(|| metadata.source.clone());
+        ready.push(WslBatchUpdatePlanItem {
+            name: name.clone(),
+            source_key: build_update_group_key(
+                &metadata.source_type,
+                &source_url,
+                metadata.ref_name.as_deref(),
+            ),
+            metadata,
+        });
+    }
+
+    WslBatchUpdatePlan {
+        ready,
+        immediate_results,
+    }
+}
+
+fn batch_source_needs_acquisition<T>(
+    prepared: &HashMap<crate::core::UpdateGroupKey, T>,
+    failed: &HashMap<crate::core::UpdateGroupKey, String>,
+    key: &crate::core::UpdateGroupKey,
+) -> bool {
+    !prepared.contains_key(key) && !failed.contains_key(key)
+}
+
+fn append_cancelled_batch_results(
+    results: &mut Vec<UpdateSkillItemResult>,
+    pending: &[WslBatchUpdatePlanItem],
+) {
+    results.extend(
+        pending
+            .iter()
+            .map(|item| build_skipped_update_result(&item.name, &item.metadata, "cancelled")),
+    );
+}
+
+fn failed_wsl_batch_result(
+    item: &WslBatchUpdatePlanItem,
+    error: impl Into<String>,
+    duration_ms: Option<u32>,
+) -> UpdateSkillItemResult {
+    UpdateSkillItemResult {
+        name: item.name.clone(),
+        status: UpdateSkillStatus::Failed,
+        error: Some(error.into()),
+        reason: None,
+        source: Some(item.metadata.source.clone()),
+        source_url: item.metadata.source_url.clone(),
+        git_ref: item.metadata.ref_name.clone(),
+        skill_path: item.metadata.skill_path.clone(),
+        warnings: Vec::new(),
+        duration_ms,
+        agent_results: Vec::new(),
+    }
+}
+
+fn order_batch_results(names: &[String], results: &mut [UpdateSkillItemResult]) {
+    let positions: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
+    results.sort_by_key(|result| {
+        positions
+            .get(result.name.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -431,6 +836,181 @@ pub async fn update_skill(
     project_path: Option<String>,
 ) -> Result<UpdateSkillResponse, AppError> {
     Ok(update_skill_inner(&app, scope, &name, project_path.as_deref()).await)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_skill_v2(
+    app: AppHandle,
+    context: ContextRef,
+    name: String,
+    registry: State<'_, EnvironmentRegistry>,
+    controller: State<'_, SingleMutationController>,
+) -> Result<UpdateSkillResponse, AppError> {
+    let guard = controller.begin(MutationKind::Update, context.clone(), "Preparing update")?;
+    match &context.environment {
+        EnvironmentRef::Host => {
+            let (scope, project_path) = match &context.scope {
+                ContextScope::Global => (Scope::Global, None),
+                ContextScope::Project { project_id } => {
+                    let project = crate::commands::environments::host_projects_store()?
+                        .read()?
+                        .into_iter()
+                        .find(|project| &project.id == project_id)
+                        .ok_or_else(|| AppError::PathNotFound {
+                            path: project_id.clone(),
+                        })?;
+                    (Scope::Project, Some(project.native_path))
+                }
+            };
+            Ok(update_skill_inner(&app, scope, &name, project_path.as_deref()).await)
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let started = Instant::now();
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let (scope, project) = match &context.scope {
+                ContextScope::Global => (Scope::Global, None),
+                ContextScope::Project { project_id } => {
+                    let project = crate::commands::environments::read_wsl_projects(&session)
+                        .await?
+                        .into_iter()
+                        .find(|project| &project.id == project_id)
+                        .ok_or_else(|| AppError::PathNotFound {
+                            path: project_id.clone(),
+                        })?;
+                    (Scope::Project, Some(project))
+                }
+            };
+            let project_path = project.as_ref().map(|project| project.native_path.as_str());
+            let io = EnvironmentLockIo::Wsl(session.clone());
+            let (lock_locator, legacy_locator) =
+                update_lock_locators(&context, &session, project_path);
+            let current = io.read_optional(&lock_locator).await?;
+            let legacy = match legacy_locator {
+                Some(locator) if current.is_none() => io.read_optional(&locator).await?,
+                _ => None,
+            };
+            let metadata =
+                parse_wsl_update_metadata(&scope, current.as_deref(), legacy.as_deref())?
+                    .into_iter()
+                    .find(|(skill_name, _)| skill_name == &name)
+                    .map(|(_, metadata)| metadata)
+                    .ok_or_else(|| AppError::InvalidSource {
+                        value: format!("Skill '{name}' not found in lock file"),
+                    })?;
+            if ensure_can_run_update(&metadata).is_err() {
+                let capability = derive_update_capability(&metadata);
+                let item = build_skipped_update_result(
+                    &name,
+                    &metadata,
+                    capability.reason.as_deref().unwrap_or("cannot-update"),
+                );
+                return Ok(UpdateSkillResponse {
+                    summary: summarize_results(std::slice::from_ref(&item)),
+                    results: vec![item],
+                });
+            }
+            let context_root = project_path.unwrap_or(session.home.as_str());
+            let canonical_root = format!("{}/.agents/skills", context_root.trim_end_matches('/'));
+            let snapshot = EnvironmentService::Wsl(session.clone())
+                .inspect(&InspectRequest {
+                    context: ResolvedContext {
+                        context: context.clone(),
+                        project: project.clone(),
+                        home: ResourceLocator {
+                            environment: context.environment.clone(),
+                            native_path: session.home.clone(),
+                        },
+                        skill_root: ResourceLocator {
+                            environment: context.environment.clone(),
+                            native_path: canonical_root,
+                        },
+                        lock: lock_locator,
+                    },
+                })
+                .await?
+                .skills
+                .into_iter()
+                .find(|skill| skill.name == name)
+                .unwrap_or_else(|| {
+                    fallback_wsl_update_snapshot(&session, &scope, context_root, &name)
+                });
+            let params = build_wsl_update_install_params(
+                scope.clone(),
+                project_path,
+                &name,
+                &metadata,
+                &snapshot,
+            );
+            let expected_path =
+                metadata
+                    .skill_path
+                    .clone()
+                    .ok_or_else(|| AppError::InvalidSource {
+                        value: "Missing locked skill path".to_string(),
+                    })?;
+            let install = crate::commands::install::install_skills_wsl_inner_with_options(
+                &app,
+                &context,
+                &session,
+                params,
+                &guard,
+                crate::commands::install::WslInstallExecutionOptions {
+                    expected_skill_paths: HashMap::from([(name.clone(), expected_path)]),
+                    require_complete_targets_for_lock: true,
+                    prepared_source: None,
+                },
+            )
+            .await?;
+            let item = build_wsl_update_item(&name, &metadata, install, elapsed_ms(&started));
+            Ok(UpdateSkillResponse {
+                summary: summarize_results(std::slice::from_ref(&item)),
+                results: vec![item],
+            })
+        }
+    }
+}
+
+fn fallback_wsl_update_snapshot(
+    session: &crate::environment::wsl::WslSession,
+    scope: &Scope,
+    context_root: &str,
+    skill_name: &str,
+) -> crate::environment::service::SkillEntrySnapshot {
+    let resolver = crate::environment::agent_environment::AgentEnvironmentResolver::new(
+        crate::environment::agent_environment::AgentEnvironmentContext {
+            home: session.home.clone(),
+            config_home: session.config_home.clone(),
+            env: session.environment.clone(),
+        },
+    );
+    let is_global = matches!(scope, Scope::Global);
+    crate::environment::service::SkillEntrySnapshot {
+        name: skill_name.to_string(),
+        description: String::new(),
+        canonical_path: format!(
+            "{}/.agents/skills/{}",
+            context_root.trim_end_matches('/'),
+            crate::core::skill::sanitize_name(skill_name)
+        ),
+        canonical_present: false,
+        agents: Vec::new(),
+        card_agents: Vec::new(),
+        default_available_agents: AgentType::all()
+            .filter(|agent| {
+                resolver
+                    .target(*agent, is_global, context_root)
+                    .default_available
+            })
+            .collect(),
+        private_adapted_agents: Vec::new(),
+        duplicate_copy_agents: Vec::new(),
+        private_only_agents: Vec::new(),
+        private_copy_agents: Vec::new(),
+        eve_targets: Vec::new(),
+    }
 }
 
 async fn update_skill_inner(
@@ -815,6 +1395,213 @@ pub async fn update_skills_batch(
     project_path: Option<String>,
 ) -> Result<UpdateSkillResponse, AppError> {
     Ok(update_skills_batch_inner(&app, scope, &names, project_path.as_deref()).await)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_skills_batch_v2(
+    app: AppHandle,
+    context: ContextRef,
+    names: Vec<String>,
+    registry: State<'_, EnvironmentRegistry>,
+    controller: State<'_, SingleMutationController>,
+) -> Result<UpdateSkillResponse, AppError> {
+    let guard = controller.begin(
+        MutationKind::BatchUpdate,
+        context.clone(),
+        "Preparing batch update",
+    )?;
+    match &context.environment {
+        EnvironmentRef::Host => {
+            let (scope, project_path) = match &context.scope {
+                ContextScope::Global => (Scope::Global, None),
+                ContextScope::Project { project_id } => {
+                    let project = crate::commands::environments::host_projects_store()?
+                        .read()?
+                        .into_iter()
+                        .find(|project| &project.id == project_id)
+                        .ok_or_else(|| AppError::PathNotFound {
+                            path: project_id.clone(),
+                        })?;
+                    (Scope::Project, Some(project.native_path))
+                }
+            };
+            Ok(update_skills_batch_inner(&app, scope, &names, project_path.as_deref()).await)
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            update_skills_batch_wsl_v2(&app, &context, &names, &session, &guard).await
+        }
+    }
+}
+
+async fn update_skills_batch_wsl_v2(
+    app: &AppHandle,
+    context: &ContextRef,
+    names: &[String],
+    session: &crate::environment::wsl::WslSession,
+    guard: &MutationGuard<'_>,
+) -> Result<UpdateSkillResponse, AppError> {
+    let (scope, project) = match &context.scope {
+        ContextScope::Global => (Scope::Global, None),
+        ContextScope::Project { project_id } => {
+            let project = crate::commands::environments::read_wsl_projects(session)
+                .await?
+                .into_iter()
+                .find(|project| &project.id == project_id)
+                .ok_or_else(|| AppError::PathNotFound {
+                    path: project_id.clone(),
+                })?;
+            (Scope::Project, Some(project))
+        }
+    };
+    let project_path = project.as_ref().map(|project| project.native_path.as_str());
+    let io = EnvironmentLockIo::Wsl(session.clone());
+    let (lock_locator, legacy_locator) = update_lock_locators(context, session, project_path);
+    let current = io.read_optional(&lock_locator).await?;
+    let legacy = match legacy_locator {
+        Some(locator) if current.is_none() => io.read_optional(&locator).await?,
+        _ => None,
+    };
+    let plan = prepare_wsl_batch_plan(
+        names,
+        parse_wsl_update_metadata(&scope, current.as_deref(), legacy.as_deref())?,
+    );
+    let context_root = project_path.unwrap_or(session.home.as_str());
+    let canonical_root = format!("{}/.agents/skills", context_root.trim_end_matches('/'));
+    let snapshots: HashMap<String, crate::environment::service::SkillEntrySnapshot> =
+        EnvironmentService::Wsl(session.clone())
+            .inspect(&InspectRequest {
+                context: ResolvedContext {
+                    context: context.clone(),
+                    project: project.clone(),
+                    home: ResourceLocator {
+                        environment: context.environment.clone(),
+                        native_path: session.home.clone(),
+                    },
+                    skill_root: ResourceLocator {
+                        environment: context.environment.clone(),
+                        native_path: canonical_root,
+                    },
+                    lock: lock_locator,
+                },
+            })
+            .await?
+            .skills
+            .into_iter()
+            .map(|snapshot| (snapshot.name.clone(), snapshot))
+            .collect();
+
+    let cancellation = guard.cancellation();
+    let mut prepared_sources: HashMap<
+        crate::core::UpdateGroupKey,
+        crate::commands::install::PreparedWslInstallSource,
+    > = HashMap::new();
+    let mut acquisition_failures: HashMap<crate::core::UpdateGroupKey, String> = HashMap::new();
+    let mut results = plan.immediate_results;
+
+    for (index, item) in plan.ready.iter().enumerate() {
+        if cancellation.is_cancelled() {
+            append_cancelled_batch_results(&mut results, &plan.ready[index..]);
+            break;
+        }
+        let snapshot = snapshots.get(&item.name).cloned().unwrap_or_else(|| {
+            fallback_wsl_update_snapshot(session, &scope, context_root, &item.name)
+        });
+        let params = build_wsl_update_install_params(
+            scope.clone(),
+            project_path,
+            &item.name,
+            &item.metadata,
+            &snapshot,
+        );
+
+        if batch_source_needs_acquisition(
+            &prepared_sources,
+            &acquisition_failures,
+            &item.source_key,
+        ) {
+            let acquisition = match crate::core::parse_source(&params.source) {
+                Ok(parsed) => {
+                    crate::commands::install::prepare_wsl_install_source(
+                        session,
+                        &parsed,
+                        cancellation.clone(),
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            };
+            match acquisition {
+                Ok(prepared) => {
+                    prepared_sources.insert(item.source_key.clone(), prepared);
+                }
+                Err(_error) if cancellation.is_cancelled() => {
+                    append_cancelled_batch_results(&mut results, &plan.ready[index..]);
+                    break;
+                }
+                Err(error) => {
+                    acquisition_failures.insert(item.source_key.clone(), error.to_string());
+                }
+            }
+        }
+
+        if let Some(error) = acquisition_failures.get(&item.source_key) {
+            results.push(failed_wsl_batch_result(item, error.clone(), None));
+            continue;
+        }
+        let prepared_source = prepared_sources
+            .get(&item.source_key)
+            .expect("successful acquisition is cached");
+        let expected_path =
+            item.metadata
+                .skill_path
+                .clone()
+                .ok_or_else(|| AppError::InvalidSource {
+                    value: format!("Missing locked skill path for '{}'", item.name),
+                })?;
+        let started = Instant::now();
+        let install = crate::commands::install::install_skills_wsl_inner_with_options(
+            app,
+            context,
+            session,
+            params,
+            guard,
+            crate::commands::install::WslInstallExecutionOptions {
+                expected_skill_paths: HashMap::from([(item.name.clone(), expected_path)]),
+                require_complete_targets_for_lock: true,
+                prepared_source: Some(prepared_source),
+            },
+        )
+        .await;
+        guard.set_cancelable(true);
+
+        match install {
+            Ok(install) => results.push(build_wsl_update_item(
+                &item.name,
+                &item.metadata,
+                install,
+                elapsed_ms(&started),
+            )),
+            Err(_) if cancellation.is_cancelled() => {
+                append_cancelled_batch_results(&mut results, &plan.ready[index..]);
+                break;
+            }
+            Err(error) => results.push(failed_wsl_batch_result(
+                item,
+                error.to_string(),
+                Some(elapsed_ms(&started)),
+            )),
+        }
+    }
+
+    order_batch_results(names, &mut results);
+    Ok(UpdateSkillResponse {
+        summary: summarize_results(&results),
+        results,
+    })
 }
 
 async fn update_skills_batch_inner(
@@ -1435,6 +2222,94 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn shared_update_check_preparation_groups_checkable_entries_and_keeps_cannot_check() {
+        let prepared = prepare_update_checks(vec![
+            (
+                "toolkit".to_string(),
+                crate::core::NormalizedUpdateMetadata {
+                    source: "owner/repo".to_string(),
+                    source_type: "github".to_string(),
+                    source_url: Some("https://github.com/owner/repo".to_string()),
+                    ref_name: Some("main".to_string()),
+                    skill_path: Some("skills/toolkit/SKILL.md".to_string()),
+                    remote_hash: Some("old-hash".to_string()),
+                },
+            ),
+            (
+                "local-only".to_string(),
+                crate::core::NormalizedUpdateMetadata {
+                    source: "/home/alice/local".to_string(),
+                    source_type: "local".to_string(),
+                    source_url: Some("/home/alice/local".to_string()),
+                    ref_name: None,
+                    skill_path: Some("SKILL.md".to_string()),
+                    remote_hash: None,
+                },
+            ),
+        ]);
+
+        assert_eq!(prepared.groups.len(), 1);
+        assert_eq!(
+            prepared
+                .groups
+                .get(&("owner/repo".to_string(), Some("main".to_string())))
+                .expect("github group")[0]
+                .name,
+            "toolkit"
+        );
+        assert_eq!(prepared.immediate_results.len(), 1);
+        assert_eq!(
+            prepared.immediate_results[0].status,
+            SkillUpdateCheckStatus::CannotCheck
+        );
+        assert_eq!(
+            prepared.immediate_results[0].reason.as_deref(),
+            Some("local-source")
+        );
+    }
+
+    #[test]
+    fn wsl_update_metadata_reads_project_lock_and_falls_back_to_legacy() {
+        let project = br#"{
+          "version": 1,
+          "skills": {
+            "toolkit": {
+              "source": "owner/repo",
+              "sourceType": "github",
+              "sourceUrl": "https://github.com/owner/repo",
+              "computedHash": "local",
+              "remoteHash": "remote",
+              "skillPath": "skills/toolkit/SKILL.md"
+            }
+          }
+        }"#;
+        let current = parse_wsl_update_metadata(&Scope::Project, Some(project), None)
+            .expect("parse project lock");
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].0, "toolkit");
+        assert_eq!(current[0].1.remote_hash.as_deref(), Some("remote"));
+
+        let legacy = br#"{
+          "version": 3,
+          "skills": {
+            "legacy": {
+              "source": "owner/legacy",
+              "sourceType": "github",
+              "sourceUrl": "https://github.com/owner/legacy",
+              "skillPath": "SKILL.md",
+              "skillFolderHash": "legacy-hash",
+              "installedAt": "",
+              "updatedAt": ""
+            }
+          }
+        }"#;
+        let fallback = parse_wsl_update_metadata(&Scope::Project, None, Some(legacy))
+            .expect("parse legacy lock");
+        assert_eq!(fallback[0].0, "legacy");
+        assert_eq!(fallback[0].1.remote_hash.as_deref(), Some("legacy-hash"));
+    }
+
+    #[test]
     fn test_normalize_global_lock_entry_maps_skill_folder_hash_to_remote_hash() {
         let entry = SkillLockEntry {
             source: "owner/repo".to_string(),
@@ -1717,6 +2592,232 @@ mod tests {
             eve_targets_from_lock_or_root_install(&entry, ".", "demo"),
             vec![None, Some("research".to_string())]
         );
+    }
+
+    #[test]
+    fn wsl_update_install_params_reuse_current_agent_targets_and_locked_source() {
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo".to_string()),
+            ref_name: Some("feature/test".to_string()),
+            skill_path: Some("examples/toolkit/SKILL.md".to_string()),
+            remote_hash: Some("old-hash".to_string()),
+        };
+        let snapshot = crate::environment::service::SkillEntrySnapshot {
+            name: "toolkit".to_string(),
+            description: String::new(),
+            canonical_path: "/work/app/.agents/skills/toolkit".to_string(),
+            canonical_present: true,
+            agents: vec![],
+            card_agents: vec![],
+            default_available_agents: vec![AgentType::Codex],
+            private_adapted_agents: vec![AgentType::ClaudeCode],
+            duplicate_copy_agents: vec![],
+            private_only_agents: vec![AgentType::Amp],
+            private_copy_agents: vec![AgentType::GithubCopilot],
+            eve_targets: vec![crate::models::InstallTargetInfo {
+                target_id: "eve:research".to_string(),
+                agent: AgentType::Eve,
+                display_name: "Eve (research)".to_string(),
+                subagent: Some("research".to_string()),
+                path: "/work/app/agent/subagents/research/skills".to_string(),
+            }],
+        };
+
+        let params = build_wsl_update_install_params(
+            Scope::Project,
+            Some("/work/app"),
+            "toolkit",
+            &metadata,
+            &snapshot,
+        );
+
+        assert_eq!(params.source, "https://github.com/owner/repo#feature/test");
+        assert_eq!(
+            params.agents,
+            vec![
+                AgentType::ClaudeCode.to_string(),
+                AgentType::Amp.to_string()
+            ]
+        );
+        assert_eq!(
+            params.private_copy_agents,
+            vec![AgentType::GithubCopilot.to_string()]
+        );
+        assert_eq!(params.agent_targets.len(), 1);
+        assert_eq!(
+            params.agent_targets[0].subagent.as_deref(),
+            Some("research")
+        );
+        assert!(params.preserve_existing_modes);
+        assert!(params.acknowledge_risk);
+    }
+
+    #[test]
+    fn wsl_update_result_expands_canonical_to_default_agents_and_reports_partial() {
+        let metadata = crate::core::NormalizedUpdateMetadata {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo".to_string()),
+            ref_name: None,
+            skill_path: Some("skills/toolkit/SKILL.md".to_string()),
+            remote_hash: Some("old".to_string()),
+        };
+        let install = crate::models::InstallResults {
+            successful: vec![crate::models::InstallResult {
+                skill_name: "toolkit".to_string(),
+                agent: "__canonical__".to_string(),
+                target_id: None,
+                subagent: None,
+                success: true,
+                path: std::path::PathBuf::from("/home/alice/.agents/skills/toolkit"),
+                canonical_path: Some(std::path::PathBuf::from(
+                    "/home/alice/.agents/skills/toolkit",
+                )),
+                mode: InstallMode::Copy,
+                symlink_failed: false,
+                skipped: false,
+                error: None,
+                category: crate::models::InstallResultCategory::DefaultAvailable,
+            }],
+            failed: vec![crate::models::InstallResult {
+                skill_name: "toolkit".to_string(),
+                agent: AgentType::ClaudeCode.to_string(),
+                target_id: Some(AgentType::ClaudeCode.to_string()),
+                subagent: None,
+                success: false,
+                path: std::path::PathBuf::new(),
+                canonical_path: None,
+                mode: InstallMode::Symlink,
+                symlink_failed: false,
+                skipped: false,
+                error: Some("permission denied".to_string()),
+                category: crate::models::InstallResultCategory::Failed,
+            }],
+            symlink_fallback_agents: vec![],
+            default_available_agents: vec![AgentType::Codex.to_string()],
+            private_adapted_agents: vec![AgentType::ClaudeCode.to_string()],
+            private_copy_agents: vec![],
+            target_details: vec![],
+        };
+
+        let item = build_wsl_update_item("toolkit", &metadata, install, 12);
+
+        assert_eq!(item.status, UpdateSkillStatus::Partial);
+        assert_eq!(item.agent_results.len(), 2);
+        assert!(item.agent_results.iter().any(|result| {
+            result.agent == AgentType::Codex.to_string()
+                && result.status == UpdateSkillAgentStatus::Success
+        }));
+        assert_eq!(item.error.as_deref(), Some("permission denied"));
+        assert_eq!(item.duration_ms, Some(12));
+    }
+
+    #[test]
+    fn wsl_batch_plan_preserves_requested_order_and_exact_source_groups() {
+        let names = vec![
+            "second".to_string(),
+            "first".to_string(),
+            "missing".to_string(),
+        ];
+        let plan = prepare_wsl_batch_plan(
+            &names,
+            vec![
+                (
+                    "first".to_string(),
+                    crate::core::NormalizedUpdateMetadata {
+                        source: "owner/repo".to_string(),
+                        source_type: "github".to_string(),
+                        source_url: Some("https://github.com/owner/repo".to_string()),
+                        ref_name: Some("main".to_string()),
+                        skill_path: Some("skills/first/SKILL.md".to_string()),
+                        remote_hash: Some("old-first".to_string()),
+                    },
+                ),
+                (
+                    "second".to_string(),
+                    crate::core::NormalizedUpdateMetadata {
+                        source: "owner/repo".to_string(),
+                        source_type: "github".to_string(),
+                        source_url: Some("https://github.com/owner/repo".to_string()),
+                        ref_name: Some("main".to_string()),
+                        skill_path: Some("examples/second/SKILL.md".to_string()),
+                        remote_hash: Some("old-second".to_string()),
+                    },
+                ),
+            ],
+        );
+
+        assert_eq!(
+            plan.ready
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second", "first"]
+        );
+        assert_eq!(plan.ready[0].source_key, plan.ready[1].source_key);
+        assert_eq!(plan.immediate_results.len(), 1);
+        assert_eq!(plan.immediate_results[0].name, "missing");
+        assert_eq!(
+            plan.immediate_results[0].reason.as_deref(),
+            Some("missing-lock-entry")
+        );
+    }
+
+    #[test]
+    fn batch_source_is_acquired_only_until_success_or_failure_is_cached() {
+        let key = build_update_group_key("github", "https://github.com/owner/repo", Some("main"));
+        let mut prepared = HashMap::new();
+        let mut failed = HashMap::new();
+
+        assert!(batch_source_needs_acquisition(&prepared, &failed, &key));
+
+        prepared.insert(key.clone(), ());
+        assert!(!batch_source_needs_acquisition(&prepared, &failed, &key));
+
+        prepared.clear();
+        failed.insert(key.clone(), "clone failed".to_string());
+        assert!(!batch_source_needs_acquisition(&prepared, &failed, &key));
+    }
+
+    #[test]
+    fn cancelled_batch_marks_only_unstarted_skills_in_request_order() {
+        let plan = prepare_wsl_batch_plan(
+            &["one".to_string(), "two".to_string()],
+            vec![
+                (
+                    "one".to_string(),
+                    crate::core::NormalizedUpdateMetadata {
+                        source: "owner/repo".to_string(),
+                        source_type: "github".to_string(),
+                        source_url: Some("https://github.com/owner/repo".to_string()),
+                        ref_name: None,
+                        skill_path: Some("skills/one/SKILL.md".to_string()),
+                        remote_hash: Some("old-one".to_string()),
+                    },
+                ),
+                (
+                    "two".to_string(),
+                    crate::core::NormalizedUpdateMetadata {
+                        source: "owner/repo".to_string(),
+                        source_type: "github".to_string(),
+                        source_url: Some("https://github.com/owner/repo".to_string()),
+                        ref_name: None,
+                        skill_path: Some("skills/two/SKILL.md".to_string()),
+                        remote_hash: Some("old-two".to_string()),
+                    },
+                ),
+            ],
+        );
+        let mut results = Vec::new();
+
+        append_cancelled_batch_results(&mut results, &plan.ready[1..]);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "two");
+        assert_eq!(results[0].status, UpdateSkillStatus::Skipped);
+        assert_eq!(results[0].reason.as_deref(), Some("cancelled"));
     }
 
     #[test]

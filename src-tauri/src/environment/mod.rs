@@ -1,6 +1,8 @@
+pub mod acquisition;
 pub mod agent_environment;
 pub mod host;
 pub mod lock_io;
+pub mod materialize;
 pub mod path_mapping;
 pub mod service;
 pub mod types;

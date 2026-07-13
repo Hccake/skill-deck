@@ -7,15 +7,37 @@ use crate::core::agent_availability::{
     availability_for_agent, default_available_agents, AgentAvailabilityKind,
 };
 use crate::core::agents::AgentType;
-use crate::core::installer::{install_skill_to_agent_groups, PerAgentInstallResult};
-use crate::core::local_lock::{
-    add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock,
+use crate::core::installer::{
+    copy_skill_files, install_skill_to_agent_groups, PerAgentInstallResult,
 };
+use crate::core::local_lock::{
+    add_skill_to_local_lock, compute_skill_folder_hash, read_local_lock, LocalSkillLockEntry,
+    LocalSkillLockFile,
+};
+use crate::core::lossless_lock::{LockEntrySnapshot, LosslessLockDocument};
+use crate::core::mutation::{MutationGuard, MutationKind, SingleMutationController};
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
+use crate::core::skill_lock::SkillLockFile;
+#[cfg(target_os = "windows")]
+use crate::environment::acquisition::HostStagingDir;
+use crate::environment::acquisition::{stage_wsl_source, StagedWslSource, WslAcquisitionSource};
+use crate::environment::agent_environment::{AgentEnvironmentContext, AgentEnvironmentResolver};
+use crate::environment::lock_io::EnvironmentLockIo;
+use crate::environment::materialize::{
+    materialize_wsl_skill, WslMaterializeRequest, WslMaterializeResult, WslMaterializeTarget,
+};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::error::AppError;
 use crate::models::{InstallMode, Scope};
+use serde_json::Value;
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
+#[cfg(not(target_os = "windows"))]
+use std::path::PathBuf;
+use tauri::State;
 
 /// 检查 skill 在哪些项目中已存在
 ///
@@ -96,6 +118,241 @@ pub struct CopySkillResult {
     pub results: Vec<CopyProjectResult>,
 }
 
+#[derive(Debug, Clone)]
+struct WslCopyTargetPlan {
+    default_available_agents: Vec<AgentType>,
+    private_required_agents: Vec<AgentType>,
+    private_copy_agents: Vec<AgentType>,
+    materialize_targets: Vec<WslMaterializeTarget>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedCopyProject {
+    context: ContextRef,
+    project_path: String,
+    session: Option<WslSession>,
+}
+
+#[derive(Debug, Clone)]
+struct CopySourceMetadata {
+    raw_entry: Value,
+    normalized_entry: LocalSkillLockEntry,
+}
+
+enum PreparedCopySource {
+    #[cfg(target_os = "windows")]
+    HostDrvFs(HostStagingDir),
+    #[cfg(not(target_os = "windows"))]
+    HostNative {
+        _temp_dir: tempfile::TempDir,
+        host_repo_path: PathBuf,
+        linux_repo_path: String,
+    },
+    Wsl(StagedWslSource),
+}
+
+impl PreparedCopySource {
+    fn host_repo_path(&self) -> &Path {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::HostDrvFs(staging) => staging.host_repo_path(),
+            #[cfg(not(target_os = "windows"))]
+            Self::HostNative { host_repo_path, .. } => host_repo_path,
+            Self::Wsl(staging) => staging.host_repo_path(),
+        }
+    }
+
+    fn linux_repo_path(&self) -> &str {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::HostDrvFs(staging) => staging.linux_repo_path(),
+            #[cfg(not(target_os = "windows"))]
+            Self::HostNative {
+                linux_repo_path, ..
+            } => linux_repo_path,
+            Self::Wsl(staging) => staging.linux_repo_path(),
+        }
+    }
+}
+
+fn create_host_copy_staging() -> Result<PreparedCopySource, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        let staging = HostStagingDir::new()?;
+        fs::create_dir_all(staging.host_repo_path())?;
+        Ok(PreparedCopySource::HostDrvFs(staging))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let temp_dir = tempfile::Builder::new()
+            .prefix("skill-deck-copy-")
+            .tempdir()
+            .map_err(|error| AppError::Io {
+                message: format!("failed to create Host copy staging directory: {error}"),
+            })?;
+        let host_repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(&host_repo_path)?;
+        let linux_repo_path = host_repo_path.to_string_lossy().to_string();
+        Ok(PreparedCopySource::HostNative {
+            _temp_dir: temp_dir,
+            host_repo_path,
+            linux_repo_path,
+        })
+    }
+}
+
+struct TargetLockState {
+    io: EnvironmentLockIo,
+    primary: ResourceLocator,
+    legacy: ResourceLocator,
+    expected: LockEntrySnapshot,
+}
+
+#[derive(Clone, Copy)]
+struct CopyTargetRequest<'a> {
+    skill_name: &'a str,
+    staged: &'a PreparedCopySource,
+    agents: &'a [AgentType],
+    private_copy_agents: &'a [AgentType],
+    source_metadata: Option<&'a CopySourceMetadata>,
+    staged_hash: &'a str,
+}
+
+fn validate_copy_contexts(
+    source: &ContextRef,
+    targets: &[ContextRef],
+) -> Result<Vec<ContextRef>, AppError> {
+    if !matches!(source.scope, ContextScope::Project { .. }) {
+        return Err(AppError::Custom {
+            message: "Copy source must be a project context".to_string(),
+        });
+    }
+    if targets
+        .iter()
+        .any(|target| !matches!(target.scope, ContextScope::Project { .. }))
+    {
+        return Err(AppError::Custom {
+            message: "Copy targets must be project contexts".to_string(),
+        });
+    }
+    Ok(targets.to_vec())
+}
+
+fn posix_parent(path: &str) -> Option<String> {
+    path.trim_end_matches('/')
+        .rsplit_once('/')
+        .map(|(parent, _)| parent.to_string())
+}
+
+fn build_wsl_copy_target_plan(
+    resolver: &AgentEnvironmentResolver,
+    target_project_path: &str,
+    _skill_name: &str,
+    agents: &[AgentType],
+    private_copy_agents: &[AgentType],
+) -> WslCopyTargetPlan {
+    let default_available_agents = AgentType::all()
+        .filter(|agent| {
+            resolver
+                .target(*agent, false, target_project_path)
+                .default_available
+        })
+        .collect::<Vec<_>>();
+    let mut private_required = Vec::new();
+    let mut private_copies = Vec::new();
+    let mut materialize_targets = Vec::new();
+    for agent in agents {
+        let target = resolver.target(*agent, false, target_project_path);
+        if target.availability != AgentAvailabilityKind::PrivateRequired {
+            continue;
+        }
+        let Some(skills_root) = target.private_path else {
+            continue;
+        };
+        private_required.push(*agent);
+        materialize_targets.push(WslMaterializeTarget {
+            target_id: agent.to_string(),
+            agent: agent.to_string(),
+            required_root: posix_parent(&skills_root),
+            skills_root,
+            mode: InstallMode::Symlink,
+            preserve_existing_mode: false,
+        });
+    }
+    for agent in private_copy_agents {
+        let target = resolver.target(*agent, false, target_project_path);
+        if target.availability != AgentAvailabilityKind::SharedCompatible {
+            continue;
+        }
+        let Some(skills_root) = target.private_path else {
+            continue;
+        };
+        private_copies.push(*agent);
+        materialize_targets.push(WslMaterializeTarget {
+            target_id: agent.to_string(),
+            agent: agent.to_string(),
+            required_root: posix_parent(&skills_root),
+            skills_root,
+            mode: InstallMode::Copy,
+            preserve_existing_mode: false,
+        });
+    }
+    WslCopyTargetPlan {
+        default_available_agents,
+        private_required_agents: private_required,
+        private_copy_agents: private_copies,
+        materialize_targets,
+    }
+}
+
+fn build_copied_lock_entry(source: &Value, computed_hash: &str) -> Result<Value, AppError> {
+    let mut copied = source.as_object().cloned().ok_or_else(|| AppError::Json {
+        message: "project lock entry must be a JSON object".to_string(),
+    })?;
+    copied.insert(
+        "computedHash".to_string(),
+        Value::String(computed_hash.to_string()),
+    );
+    copied.remove("subagents");
+    Ok(Value::Object(copied))
+}
+
+fn normalize_project_copy_lock_bytes(
+    current: Option<&[u8]>,
+    legacy: Option<&[u8]>,
+) -> Result<Vec<u8>, AppError> {
+    if let Some(current) = current {
+        return Ok(current.to_vec());
+    }
+    let lock = if let Some(legacy) = legacy {
+        let legacy: SkillLockFile = serde_json::from_slice(legacy)?;
+        let mut migrated = LocalSkillLockFile::empty();
+        for (name, entry) in legacy.skills {
+            migrated.skills.insert(
+                name,
+                LocalSkillLockEntry {
+                    source: entry.source,
+                    ref_name: entry.ref_name,
+                    source_type: entry.source_type,
+                    source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
+                    computed_hash: String::new(),
+                    remote_hash: (!entry.skill_folder_hash.is_empty())
+                        .then_some(entry.skill_folder_hash),
+                    skill_path: entry.skill_path,
+                    subagents: None,
+                    plugin_name: entry.plugin_name,
+                },
+            );
+        }
+        migrated
+    } else {
+        LocalSkillLockFile::empty()
+    };
+    let mut bytes = serde_json::to_vec_pretty(&lock)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
 /// 复制项目级 skill 到其他项目
 ///
 /// # Arguments
@@ -164,6 +421,469 @@ pub fn copy_skill_to_projects(
     }
 
     Ok(CopySkillResult { results })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn copy_skill_to_projects_v2(
+    skill_name: String,
+    source: ContextRef,
+    targets: Vec<ContextRef>,
+    agents: Vec<String>,
+    private_copy_agents: Vec<String>,
+    registry: State<'_, EnvironmentRegistry>,
+    controller: State<'_, SingleMutationController>,
+) -> Result<CopySkillResult, AppError> {
+    let targets = validate_copy_contexts(&source, &targets)?;
+    let guard = controller.begin(MutationKind::Copy, source.clone(), "Preparing copy")?;
+    let source_project = resolve_copy_project(&source, &registry).await?;
+    let source_metadata = read_copy_source_metadata(&source_project, &skill_name).await;
+    let staged = prepare_copy_source(&source_project, &skill_name, &guard).await?;
+    let staged_hash = compute_skill_folder_hash(staged.host_repo_path()).unwrap_or_default();
+    let agent_types = parse_agent_ids(&agents);
+    let private_copy_agent_types = parse_agent_ids(&private_copy_agents);
+    let request = CopyTargetRequest {
+        skill_name: &skill_name,
+        staged: &staged,
+        agents: &agent_types,
+        private_copy_agents: &private_copy_agent_types,
+        source_metadata: source_metadata.as_ref(),
+        staged_hash: &staged_hash,
+    };
+    let mut results = Vec::with_capacity(targets.len());
+
+    for target in targets {
+        if guard.cancellation().is_cancelled() {
+            results.push(copy_failure_result(
+                project_id(&target).unwrap_or_default(),
+                "Copy was cancelled before this target".to_string(),
+            ));
+            continue;
+        }
+        let target_project = match resolve_copy_project(&target, &registry).await {
+            Ok(project) => project,
+            Err(error) => {
+                results.push(copy_failure_result(
+                    project_id(&target).unwrap_or_default(),
+                    error.to_string(),
+                ));
+                continue;
+            }
+        };
+        let result = match &target_project.context.environment {
+            EnvironmentRef::Host => copy_to_host_project_v2(request, &target_project).await,
+            EnvironmentRef::Wsl { .. } => {
+                copy_to_wsl_project_v2(request, &target_project, &guard).await
+            }
+        };
+        results.push(result.unwrap_or_else(|error| {
+            copy_failure_result(&target_project.project_path, error.to_string())
+        }));
+    }
+
+    Ok(CopySkillResult { results })
+}
+
+fn project_id(context: &ContextRef) -> Option<&str> {
+    match &context.scope {
+        ContextScope::Project { project_id } => Some(project_id),
+        ContextScope::Global => None,
+    }
+}
+
+async fn resolve_copy_project(
+    context: &ContextRef,
+    registry: &EnvironmentRegistry,
+) -> Result<ResolvedCopyProject, AppError> {
+    let project_id = project_id(context).ok_or_else(|| AppError::Custom {
+        message: "Copy requires a project context".to_string(),
+    })?;
+    match &context.environment {
+        EnvironmentRef::Host => {
+            let project = crate::commands::environments::host_projects_store()?
+                .read()?
+                .into_iter()
+                .find(|project| project.id == project_id)
+                .ok_or_else(|| AppError::PathNotFound {
+                    path: project_id.to_string(),
+                })?;
+            Ok(ResolvedCopyProject {
+                context: context.clone(),
+                project_path: project.native_path,
+                session: None,
+            })
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let project = crate::commands::environments::read_wsl_projects(&session)
+                .await?
+                .into_iter()
+                .find(|project| project.id == project_id)
+                .ok_or_else(|| AppError::PathNotFound {
+                    path: project_id.to_string(),
+                })?;
+            Ok(ResolvedCopyProject {
+                context: context.clone(),
+                project_path: project.native_path,
+                session: Some(session),
+            })
+        }
+    }
+}
+
+async fn prepare_copy_source(
+    source: &ResolvedCopyProject,
+    skill_name: &str,
+    guard: &MutationGuard<'_>,
+) -> Result<PreparedCopySource, AppError> {
+    let sanitized = sanitize_name(skill_name);
+    match &source.context.environment {
+        EnvironmentRef::Host => {
+            let source_canonical =
+                canonical_skills_dir(false, &source.project_path).join(sanitized);
+            if !source_canonical.is_dir() {
+                return Err(AppError::PathNotFound {
+                    path: source_canonical.to_string_lossy().to_string(),
+                });
+            }
+            let staging = create_host_copy_staging()?;
+            copy_skill_files(&source_canonical, staging.host_repo_path())?;
+            Ok(staging)
+        }
+        EnvironmentRef::Wsl { .. } => {
+            let session = source.session.as_ref().expect("WSL project has a session");
+            let source_canonical = format!(
+                "{}/.agents/skills/{}",
+                source.project_path.trim_end_matches('/'),
+                sanitized
+            );
+            Ok(PreparedCopySource::Wsl(
+                stage_wsl_source(
+                    session,
+                    WslAcquisitionSource::Local {
+                        native_path: source_canonical,
+                    },
+                    guard.cancellation(),
+                )
+                .await?,
+            ))
+        }
+    }
+}
+
+fn project_lock_locators(project: &ResolvedCopyProject) -> (ResourceLocator, ResourceLocator) {
+    let root = project.project_path.trim_end_matches(['/', '\\']);
+    (
+        ResourceLocator {
+            environment: project.context.environment.clone(),
+            native_path: format!("{root}/skills-lock.json"),
+        },
+        ResourceLocator {
+            environment: project.context.environment.clone(),
+            native_path: format!("{root}/.agents/.skill-lock.json"),
+        },
+    )
+}
+
+fn project_lock_io(project: &ResolvedCopyProject) -> EnvironmentLockIo {
+    match &project.context.environment {
+        EnvironmentRef::Host => EnvironmentLockIo::Host,
+        EnvironmentRef::Wsl { .. } => {
+            EnvironmentLockIo::Wsl(project.session.clone().expect("WSL project has a session"))
+        }
+    }
+}
+
+async fn read_copy_source_metadata(
+    source: &ResolvedCopyProject,
+    skill_name: &str,
+) -> Option<CopySourceMetadata> {
+    let io = project_lock_io(source);
+    let (primary, legacy) = project_lock_locators(source);
+    let loaded = async {
+        let current = io.read_optional(&primary).await?;
+        let legacy_bytes = if current.is_none() {
+            io.read_optional(&legacy).await?
+        } else {
+            None
+        };
+        let normalized =
+            normalize_project_copy_lock_bytes(current.as_deref(), legacy_bytes.as_deref())?;
+        let value: Value = serde_json::from_slice(&normalized)?;
+        let raw_entry = value
+            .get("skills")
+            .and_then(Value::as_object)
+            .and_then(|skills| skills.get(skill_name))
+            .cloned()
+            .ok_or_else(|| AppError::InvalidSource {
+                value: format!("Skill '{skill_name}' not found in source lock"),
+            })?;
+        let normalized_entry = serde_json::from_value(raw_entry.clone())?;
+        Ok::<_, AppError>(CopySourceMetadata {
+            raw_entry,
+            normalized_entry,
+        })
+    }
+    .await;
+    match loaded {
+        Ok(metadata) => Some(metadata),
+        Err(error) => {
+            log::warn!("Failed to read source project lock metadata for copy: {error}");
+            None
+        }
+    }
+}
+
+async fn prepare_target_lock(
+    target: &ResolvedCopyProject,
+    skill_name: &str,
+) -> Result<TargetLockState, AppError> {
+    let io = project_lock_io(target);
+    let (primary, legacy) = project_lock_locators(target);
+    let current = io.read_optional(&primary).await?;
+    let legacy_bytes = if current.is_none() {
+        io.read_optional(&legacy).await?
+    } else {
+        None
+    };
+    let normalized =
+        normalize_project_copy_lock_bytes(current.as_deref(), legacy_bytes.as_deref())?;
+    let document = LosslessLockDocument::parse(&normalized)?;
+    Ok(TargetLockState {
+        io,
+        primary,
+        legacy,
+        expected: document.snapshot(skill_name),
+    })
+}
+
+async fn commit_target_lock(
+    state: TargetLockState,
+    skill_name: &str,
+    source_entry: &Value,
+    computed_hash: &str,
+) -> Result<(), AppError> {
+    let current = state.io.read_optional(&state.primary).await?;
+    let legacy = if current.is_none() {
+        state.io.read_optional(&state.legacy).await?
+    } else {
+        None
+    };
+    let normalized = normalize_project_copy_lock_bytes(current.as_deref(), legacy.as_deref())?;
+    let mut document = LosslessLockDocument::parse(&normalized)?;
+    document.replace_entry(
+        skill_name,
+        &state.expected,
+        build_copied_lock_entry(source_entry, computed_hash)?,
+    )?;
+    state
+        .io
+        .write_atomic(&state.primary, document.to_pretty_bytes()?)
+        .await
+}
+
+async fn copy_to_host_project_v2(
+    request: CopyTargetRequest<'_>,
+    target: &ResolvedCopyProject,
+) -> Result<CopyProjectResult, AppError> {
+    let lock_state = if request.source_metadata.is_some() {
+        Some(prepare_target_lock(target, request.skill_name).await)
+    } else {
+        None
+    };
+    let mut result = copy_to_single_project(
+        request.skill_name,
+        request.staged.host_repo_path(),
+        &target.project_path,
+        request.agents,
+        request.private_copy_agents,
+        None,
+    )?;
+    let (status, reason) = classify_copy_update_metadata(
+        request
+            .source_metadata
+            .map(|metadata| &metadata.normalized_entry),
+    );
+    result.update_metadata_status = status;
+    result.update_metadata_reason = reason;
+    apply_copy_metadata_result(
+        &mut result,
+        lock_state,
+        request.source_metadata,
+        request.skill_name,
+        request.staged_hash,
+    )
+    .await;
+    Ok(result)
+}
+
+async fn copy_to_wsl_project_v2(
+    request: CopyTargetRequest<'_>,
+    target: &ResolvedCopyProject,
+    guard: &MutationGuard<'_>,
+) -> Result<CopyProjectResult, AppError> {
+    let session = target.session.as_ref().expect("WSL project has a session");
+    let resolver = AgentEnvironmentResolver::new(AgentEnvironmentContext {
+        home: session.home.clone(),
+        config_home: session.config_home.clone(),
+        env: session.environment.clone(),
+    });
+    let plan = build_wsl_copy_target_plan(
+        &resolver,
+        &target.project_path,
+        request.skill_name,
+        request.agents,
+        request.private_copy_agents,
+    );
+    let lock_state = if request.source_metadata.is_some() {
+        Some(prepare_target_lock(target, request.skill_name).await)
+    } else {
+        None
+    };
+    if guard.cancellation().is_cancelled() {
+        return Err(AppError::Custom {
+            message: "Copy was cancelled before materializing the target".to_string(),
+        });
+    }
+    guard.set_cancelable(false);
+    let materialized = materialize_wsl_skill(
+        session,
+        WslMaterializeRequest {
+            source_skill_path: request.staged.linux_repo_path().to_string(),
+            canonical_root: format!(
+                "{}/.agents/skills",
+                target.project_path.trim_end_matches('/')
+            ),
+            install_dir_name: sanitize_name(request.skill_name),
+            context_root: target.project_path.clone(),
+            canonical_mode: InstallMode::Copy,
+            targets: plan.materialize_targets.clone(),
+        },
+    )
+    .await;
+    guard.set_cancelable(true);
+    let materialized = materialized?;
+    let mut result = build_wsl_copy_project_result(
+        &target.project_path,
+        &plan,
+        &materialized,
+        request
+            .source_metadata
+            .map(|metadata| &metadata.normalized_entry),
+    );
+    if !result.success {
+        return Ok(result);
+    }
+    apply_copy_metadata_result(
+        &mut result,
+        lock_state,
+        request.source_metadata,
+        request.skill_name,
+        request.staged_hash,
+    )
+    .await;
+    Ok(result)
+}
+
+async fn apply_copy_metadata_result(
+    result: &mut CopyProjectResult,
+    lock_state: Option<Result<TargetLockState, AppError>>,
+    source_metadata: Option<&CopySourceMetadata>,
+    skill_name: &str,
+    computed_hash: &str,
+) {
+    let (Some(metadata), Some(lock_state)) = (source_metadata, lock_state) else {
+        return;
+    };
+    let write_result = match lock_state {
+        Ok(state) => {
+            commit_target_lock(state, skill_name, &metadata.raw_entry, computed_hash).await
+        }
+        Err(error) => Err(error),
+    };
+    if let Err(error) = write_result {
+        log::warn!("Failed to write copied skill metadata: {error}");
+        result.update_metadata_status = CopyUpdateMetadataStatus::Missing;
+        result.update_metadata_reason = Some("lock-write-failed".to_string());
+    }
+}
+
+fn build_wsl_copy_project_result(
+    target_path: &str,
+    plan: &WslCopyTargetPlan,
+    materialized: &WslMaterializeResult,
+    source_lock_entry: Option<&LocalSkillLockEntry>,
+) -> CopyProjectResult {
+    let failed = materialized
+        .targets
+        .iter()
+        .filter(|target| !target.success)
+        .collect::<Vec<_>>();
+    let successful = materialized
+        .targets
+        .iter()
+        .filter(|target| target.success && !target.skipped)
+        .map(|target| target.agent.clone())
+        .collect::<HashSet<_>>();
+    let (update_metadata_status, update_metadata_reason) =
+        classify_copy_update_metadata(source_lock_entry);
+    CopyProjectResult {
+        project_path: target_path.to_string(),
+        success: failed.is_empty(),
+        error: (!failed.is_empty()).then(|| {
+            failed
+                .iter()
+                .map(|target| {
+                    target
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| format!("Failed to materialize {}", target.agent))
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        }),
+        default_available_agents: plan
+            .default_available_agents
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        private_adapted_agents: plan
+            .private_required_agents
+            .iter()
+            .filter(|agent| successful.contains(&agent.to_string()))
+            .map(ToString::to_string)
+            .collect(),
+        private_copy_agents: plan
+            .private_copy_agents
+            .iter()
+            .filter(|agent| successful.contains(&agent.to_string()))
+            .map(ToString::to_string)
+            .collect(),
+        skipped_agents: materialized
+            .targets
+            .iter()
+            .filter(|target| target.skipped)
+            .map(|target| target.agent.clone())
+            .collect(),
+        update_metadata_status,
+        update_metadata_reason,
+    }
+}
+
+fn copy_failure_result(project_path: &str, error: String) -> CopyProjectResult {
+    CopyProjectResult {
+        project_path: project_path.to_string(),
+        success: false,
+        error: Some(error),
+        default_available_agents: Vec::new(),
+        private_adapted_agents: Vec::new(),
+        private_copy_agents: Vec::new(),
+        skipped_agents: Vec::new(),
+        update_metadata_status: CopyUpdateMetadataStatus::Missing,
+        update_metadata_reason: Some("copy-failed".to_string()),
+    }
 }
 
 fn copy_to_single_project(
@@ -532,11 +1252,7 @@ mod tests {
         write_source_lock(
             source.path(),
             "my-skill",
-            remote_lock_entry(
-                "owner/repo",
-                Some("skills/my-skill/SKILL.md"),
-                Some("remote123"),
-            ),
+            remote_lock_entry("owner/repo", Some("skills/my-skill/SKILL.md"), Some("remote123")),
         );
 
         let result = copy_skill_to_projects(
@@ -609,7 +1325,11 @@ mod tests {
         write_source_lock(
             source.path(),
             "my-skill",
-            remote_lock_entry("owner/repo", Some("skills/my-skill/SKILL.md"), Some("remote123")),
+            remote_lock_entry(
+                "owner/repo",
+                Some("skills/my-skill/SKILL.md"),
+                Some("remote123"),
+            ),
         );
         fs::create_dir(target.path().join("skills-lock.json")).unwrap();
 
@@ -701,6 +1421,127 @@ mod tests {
         assert_eq!(
             project_result.update_metadata_reason.as_deref(),
             Some("missing-remote-hash")
+        );
+    }
+
+    #[test]
+    fn copy_v2_requires_explicit_project_contexts_without_reordering_targets() {
+        let source = crate::environment::types::ContextRef {
+            environment: crate::environment::types::EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            },
+            scope: crate::environment::types::ContextScope::Project {
+                project_id: "source".to_string(),
+            },
+        };
+        let targets = vec![
+            crate::environment::types::ContextRef {
+                environment: crate::environment::types::EnvironmentRef::Host,
+                scope: crate::environment::types::ContextScope::Project {
+                    project_id: "windows-target".to_string(),
+                },
+            },
+            crate::environment::types::ContextRef {
+                environment: crate::environment::types::EnvironmentRef::Wsl {
+                    distro_name: "Debian".to_string(),
+                },
+                scope: crate::environment::types::ContextScope::Project {
+                    project_id: "debian-target".to_string(),
+                },
+            },
+        ];
+
+        let validated = validate_copy_contexts(&source, &targets).expect("valid contexts");
+
+        assert_eq!(validated, targets);
+        let global = crate::environment::types::ContextRef {
+            environment: crate::environment::types::EnvironmentRef::Host,
+            scope: crate::environment::types::ContextScope::Global,
+        };
+        assert!(validate_copy_contexts(&global, &targets).is_err());
+        assert!(validate_copy_contexts(&source, &[global]).is_err());
+    }
+
+    #[test]
+    fn wsl_copy_plan_separates_default_and_private_required_agents() {
+        let resolver = crate::environment::agent_environment::AgentEnvironmentResolver::new(
+            crate::environment::agent_environment::AgentEnvironmentContext {
+                home: "/home/alice".to_string(),
+                config_home: "/home/alice/.config".to_string(),
+                env: Default::default(),
+            },
+        );
+
+        let plan = build_wsl_copy_target_plan(
+            &resolver,
+            "/work/target",
+            "toolkit",
+            &[AgentType::Firebender, AgentType::ClaudeCode],
+            &[],
+        );
+
+        assert!(plan
+            .default_available_agents
+            .contains(&AgentType::Firebender));
+        assert_eq!(plan.materialize_targets.len(), 1);
+        assert_eq!(plan.materialize_targets[0].agent, "claude-code");
+        assert_eq!(
+            plan.materialize_targets[0].skills_root,
+            "/work/target/.claude/skills"
+        );
+    }
+
+    #[test]
+    fn copied_lock_entry_preserves_unknown_fields_and_clears_eve_subagents() {
+        let source = serde_json::json!({
+            "source": "owner/repo",
+            "sourceType": "github",
+            "computedHash": "source-hash",
+            "subagents": ["researcher"],
+            "futureField": { "enabled": true }
+        });
+
+        let copied = build_copied_lock_entry(&source, "target-hash").expect("copy entry");
+
+        assert_eq!(copied["computedHash"], "target-hash");
+        assert!(copied.get("subagents").is_none());
+        assert_eq!(copied["futureField"]["enabled"], true);
+    }
+
+    #[test]
+    fn project_copy_lock_normalization_migrates_legacy_metadata() {
+        let legacy = br#"{
+          "version": 3,
+          "skills": {
+            "toolkit": {
+              "source": "owner/repo",
+              "sourceType": "github",
+              "sourceUrl": "https://github.com/owner/repo",
+              "skillPath": "skills/toolkit/SKILL.md",
+              "skillFolderHash": "remote-hash",
+              "installedAt": "",
+              "updatedAt": ""
+            }
+          }
+        }"#;
+
+        let normalized = normalize_project_copy_lock_bytes(None, Some(legacy)).expect("migrate");
+        let value: serde_json::Value = serde_json::from_slice(&normalized).expect("parse");
+
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["skills"]["toolkit"]["remoteHash"], "remote-hash");
+        assert_eq!(value["skills"]["toolkit"]["computedHash"], "");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn native_host_copy_staging_does_not_require_drvfs_mapping() {
+        let staging = create_host_copy_staging().expect("native staging");
+
+        assert!(staging.host_repo_path().is_dir());
+        assert_eq!(
+            staging.linux_repo_path(),
+            staging.host_repo_path().to_string_lossy()
         );
     }
 }
