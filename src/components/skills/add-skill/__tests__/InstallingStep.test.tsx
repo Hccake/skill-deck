@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { installSkills } from '@/hooks/useTauriApi';
+import { installSkills, installSkillsV2 } from '@/hooks/useTauriApi';
 import type { WizardState } from '../types';
 import { InstallingStep } from '../InstallingStep';
 
@@ -27,9 +27,19 @@ vi.mock('@/hooks/useTauriApi', () => ({
     privateCopyAgents: [],
     targetDetails: [],
   }),
+  installSkillsV2: vi.fn().mockResolvedValue({
+    successful: [],
+    failed: [],
+    symlinkFallbackAgents: [],
+    defaultAvailableAgents: [],
+    privateAdaptedAgents: [],
+    privateCopyAgents: [],
+    targetDetails: [],
+  }),
 }));
 
 const installSkillsMock = vi.mocked(installSkills);
+const installSkillsV2Mock = vi.mocked(installSkillsV2);
 
 function makeState(): WizardState {
   return {
@@ -72,6 +82,7 @@ function makeState(): WizardState {
 describe('InstallingStep', () => {
   beforeEach(() => {
     installSkillsMock.mockClear();
+    installSkillsV2Mock.mockClear();
   });
 
   it('passes concrete Eve targets to installSkills', async () => {
@@ -118,5 +129,29 @@ describe('InstallingStep', () => {
         retry: true,
       }));
     });
+  });
+
+  it('installs into the explicit target context', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'project-1' },
+    } as const;
+
+    render(
+      <InstallingStep
+        state={makeState()}
+        updateState={() => undefined}
+        scope="project"
+        projectPath="/projects/eve-app"
+        context={context}
+      />
+    );
+
+    await waitFor(() => {
+      expect(installSkillsV2Mock).toHaveBeenCalledWith(context, expect.objectContaining({
+        skills: ['demo'],
+      }));
+    });
+    expect(installSkillsMock).not.toHaveBeenCalled();
   });
 });

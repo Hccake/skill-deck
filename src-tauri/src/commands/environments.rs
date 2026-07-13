@@ -26,28 +26,46 @@ pub struct EnvironmentInfo {
 }
 
 pub fn host_environment_info() -> EnvironmentInfo {
+    let display_name = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        other => other,
+    };
     EnvironmentInfo {
         environment: EnvironmentRef::Host,
-        display_name: "Windows".to_string(),
+        display_name: display_name.to_string(),
         status: EnvironmentStatus::Available,
     }
+}
+
+fn environment_infos_from_wsl_discovery(
+    discovery: Result<Vec<String>, AppError>,
+) -> Vec<EnvironmentInfo> {
+    let mut environments = vec![host_environment_info()];
+    match discovery {
+        Ok(distributions) => {
+            environments.extend(
+                distributions
+                    .into_iter()
+                    .map(|distro_name| EnvironmentInfo {
+                        display_name: distro_name.clone(),
+                        environment: EnvironmentRef::Wsl { distro_name },
+                        status: EnvironmentStatus::Available,
+                    }),
+            )
+        }
+        Err(error) => log::warn!("WSL discovery unavailable; continuing with host only: {error}"),
+    }
+    environments
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn list_environments_v2() -> Result<Vec<EnvironmentInfo>, AppError> {
-    let mut environments = vec![host_environment_info()];
-    environments.extend(
-        discover_wsl_distributions()
-            .await?
-            .into_iter()
-            .map(|distro_name| EnvironmentInfo {
-                display_name: distro_name.clone(),
-                environment: EnvironmentRef::Wsl { distro_name },
-                status: EnvironmentStatus::Available,
-            }),
-    );
-    Ok(environments)
+    Ok(environment_infos_from_wsl_discovery(
+        discover_wsl_distributions().await,
+    ))
 }
 
 #[tauri::command]
@@ -177,13 +195,47 @@ pub async fn remove_environment_project_v2(
 
 #[cfg(test)]
 mod tests {
-    use super::host_environment_info;
+    use super::{environment_infos_from_wsl_discovery, host_environment_info};
     use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
+    use crate::error::AppError;
 
     #[test]
     fn host_environment_is_always_available() {
         let host = host_environment_info();
         assert_eq!(host.environment, EnvironmentRef::Host);
         assert_eq!(host.status, EnvironmentStatus::Available);
+        let expected_name = match std::env::consts::OS {
+            "windows" => "Windows",
+            "macos" => "macOS",
+            "linux" => "Linux",
+            other => other,
+        };
+        assert_eq!(host.display_name, expected_name);
+    }
+
+    #[test]
+    fn unavailable_wsl_discovery_keeps_the_host_environment() {
+        let environments = environment_infos_from_wsl_discovery(Err(AppError::Custom {
+            message: "wsl.exe was not found".to_string(),
+        }));
+
+        assert_eq!(environments, vec![host_environment_info()]);
+    }
+
+    #[test]
+    fn discovered_distributions_are_flat_environment_entries() {
+        let environments = environment_infos_from_wsl_discovery(Ok(vec![
+            "Ubuntu-24.04".to_string(),
+            "Debian".to_string(),
+        ]));
+
+        assert_eq!(environments.len(), 3);
+        assert_eq!(
+            environments[1].environment,
+            EnvironmentRef::Wsl {
+                distro_name: "Ubuntu-24.04".to_string(),
+            }
+        );
+        assert_eq!(environments[2].display_name, "Debian");
     }
 }

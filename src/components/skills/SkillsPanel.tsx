@@ -36,7 +36,19 @@ interface SkillsPanelProps {
 
 export function SkillsPanel({ compact }: SkillsPanelProps) {
   const { t } = useTranslation();
-  const { selectedContext } = useContextStore();
+  const { selectedContext, selectedContextRef, hasExplicitContext } = useContextStore();
+  const selectedContextKey = hasExplicitContext
+    ? JSON.stringify(selectedContextRef)
+    : selectedContext;
+  const globalContextKey = hasExplicitContext
+    ? JSON.stringify({
+      environment: selectedContextRef.environment,
+      scope: { scope: 'global' },
+    })
+    : 'global';
+  const projectContextKey = hasExplicitContext && selectedContextRef.scope.scope === 'project'
+    ? selectedContextKey
+    : selectedContext;
 
   // ① Store — 细粒度 selector 订阅
   const globalSkills = useSkillsDataStore((s) => s.globalSkills);
@@ -46,8 +58,8 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const loading = useSkillsDataStore((s) => s.loading);
   const error = useSkillsDataStore((s) => s.error);
   const isSyncing = useSkillsDataStore((s) => s.isSyncing);
-  const isCheckingGlobal = useSkillsDataStore((s) => s.checkingUpdateScopes.has('global'));
-  const isCheckingProject = useSkillsDataStore((s) => s.checkingUpdateScopes.has(selectedContext));
+  const isCheckingGlobal = useSkillsDataStore((s) => s.checkingUpdateScopes.has(globalContextKey));
+  const isCheckingProject = useSkillsDataStore((s) => s.checkingUpdateScopes.has(projectContextKey));
   const syncUpdates = useSkillsDataStore((s) => s.syncUpdates);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const updatingSkills = useSkillsDataStore((s) => s.updatingSkills);
@@ -81,16 +93,16 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
       if (!ignore) syncUpdates(); // 后台检测更新，不阻塞 UI
     });
     return () => { ignore = true; };
-  }, [selectedContext, fetchSkills, syncUpdates]);
+  }, [selectedContextKey, fetchSkills, syncUpdates]);
 
   // ③a 仅在 context 真正切换时关闭详情面板
-  const previousContextRef = useRef(selectedContext);
+  const previousContextRef = useRef(selectedContextKey);
   useEffect(() => {
-    if (previousContextRef.current !== selectedContext) {
+    if (previousContextRef.current !== selectedContextKey) {
       deselectSkill();
-      previousContextRef.current = selectedContext;
+      previousContextRef.current = selectedContextKey;
     }
-  }, [selectedContext, deselectSkill]);
+  }, [selectedContextKey, deselectSkill]);
 
   // Esc 键关闭详情面板
   useEffect(() => {
@@ -112,7 +124,9 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }, [globalSkills, projectSkills, fetchAuditForSkills]);
 
   // ④ Derived state
-  const isProjectSelected = selectedContext !== 'global';
+  const isProjectSelected = hasExplicitContext
+    ? selectedContextRef.scope.scope === 'project'
+    : selectedContext !== 'global';
 
   const filterableAgents = useMemo(() => {
     const agentIds = new Set<string>();

@@ -4,10 +4,16 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
 import { SkillsPanel } from '../SkillsPanel';
+import type { ContextRef } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   contextState: {
     selectedContext: 'global',
+    selectedContextRef: {
+      environment: { kind: 'host' as const },
+      scope: { scope: 'global' as const },
+    } as ContextRef,
+    hasExplicitContext: false,
   },
   skillsDataState: {
     globalSkills: [],
@@ -114,6 +120,11 @@ vi.mock('../EmptyStates', () => ({
 describe('SkillsPanel', () => {
   beforeEach(() => {
     mocks.contextState.selectedContext = 'global';
+    mocks.contextState.selectedContextRef = {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    };
+    mocks.contextState.hasExplicitContext = false;
     mocks.skillsDataState.globalSkills = [];
     mocks.skillsDataState.projectSkills = [];
     mocks.skillsDataState.projectPathExists = true;
@@ -203,6 +214,29 @@ describe('SkillsPanel', () => {
       expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
     });
 
+    expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads and clears details when only the explicit environment changes', async () => {
+    mocks.contextState.hasExplicitContext = true;
+    const { rerender } = render(<SkillsPanel compact />);
+
+    await waitFor(() => {
+      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
+    });
+
+    mocks.skillDetailState.deselectSkill.mockClear();
+    mocks.skillsDataState.fetchSkills.mockClear();
+    mocks.contextState.selectedContextRef = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    };
+
+    rerender(<SkillsPanel compact />);
+
+    await waitFor(() => {
+      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
+    });
     expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);
   });
 });

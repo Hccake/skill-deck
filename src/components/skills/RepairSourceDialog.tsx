@@ -13,11 +13,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { fetchAvailable, installSkills } from '@/hooks/useTauriApi';
+import {
+  fetchAvailable,
+  fetchAvailableV2,
+  installSkills,
+  installSkillsV2,
+} from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
-import type { InstallResults } from '@/bindings';
+import type { InstallParams, InstallResults } from '@/bindings';
 
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
 type RepairPhase = 'idle' | 'validating' | 'installing';
@@ -61,7 +66,10 @@ export function RepairSourceDialog() {
 
   return (
     <Dialog open={Boolean(target)} onOpenChange={(open) => { if (!open) closeRepairSource(); }}>
-      <RepairSourceDialogContent key={`${target.scope}:${target.projectPath ?? ''}:${target.skillName}`} target={target} />
+      <RepairSourceDialogContent
+        key={`${JSON.stringify(target.context ?? null)}:${target.scope}:${target.projectPath ?? ''}:${target.skillName}`}
+        target={target}
+      />
     </Dialog>
   );
 }
@@ -98,7 +106,9 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     setValidationOwner(owner);
     setValidateState('checking');
     try {
-      const result = await fetchAvailable(source.trim());
+      const result = target.context
+        ? await fetchAvailableV2(target.context, source.trim())
+        : await fetchAvailable(source.trim());
       const hasSkill = result.skills.some((skill) => skill.name === target.skillName);
       const nextRequiresRiskConfirmation = result.riskPolicy.kind === 'require-confirmation';
       setRequiresRiskConfirmation(nextRequiresRiskConfirmation);
@@ -130,7 +140,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       const targetAgents = uniqueAgentIds(target.privateAdaptedAgents ?? target.agents);
       const targetPrivateCopyAgents = uniqueAgentIds(target.privateCopyAgents);
       const expectedAgents = uniqueAgentIds([...targetAgents, ...targetPrivateCopyAgents]);
-      const results = await installSkills({
+      const params: InstallParams = {
         source: source.trim(),
         skills: [target.skillName],
         agents: targetAgents,
@@ -141,7 +151,10 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         retry: true,
         preserveExistingModes: true,
         acknowledgeRisk: validation.requiresRiskConfirmation ? riskAcknowledged : true,
-      });
+      };
+      const results = target.context
+        ? await installSkillsV2(target.context, params)
+        : await installSkills(params);
       if (!didRepairInstallSucceed(results, target.skillName, expectedAgents)) {
         toast.error(t('skills.repairSourceDialog.repairFailed'));
         return;

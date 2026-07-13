@@ -145,6 +145,14 @@ export function parseInstallError(
         ],
       };
 
+    case 'mutationBusy':
+      return {
+        message: t('addSkill.error.mutationBusy'),
+        suggestions: [
+          t('addSkill.error.suggestion.retryOrContact'),
+        ],
+      };
+
     case 'custom':
       return {
         message: error.data.message,

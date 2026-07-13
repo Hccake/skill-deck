@@ -3,10 +3,14 @@ import { persist } from 'zustand/middleware';
 import i18n from '@/i18n';
 import {
   getDefaultTargetAgents,
+  getDefaultTargetAgentsV2,
   getLastSelectedAgents,
   listAgents,
+  listAgentsForProjectV2,
   saveDefaultTargetAgents,
+  saveDefaultTargetAgentsV2,
 } from '@/hooks/useTauriApi';
+import { useContextStore } from './context';
 import type { AgentInfo, DefaultTargetAgents } from '@/hooks/useTauriApi';
 import {
   EMPTY_DEFAULT_TARGET_AGENTS,
@@ -65,6 +69,15 @@ function didMigrateAnyLastSelectedAgents(
   return source.some((agentId) => !retained.has(agentId));
 }
 
+function getExplicitGlobalContext() {
+  const { hasExplicitContext, selectedContextRef } = useContextStore.getState();
+  if (!hasExplicitContext) return null;
+  return {
+    environment: selectedContextRef.environment,
+    scope: { scope: 'global' as const },
+  };
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
@@ -96,9 +109,16 @@ export const useSettingsStore = create<SettingsState>()(
 
       loadDefaultTargetAgents: async () => {
         try {
-          const agentsPromise = listAgents();
-          const targetDefaultsPromise = getDefaultTargetAgents().catch(() => null);
-          const lastSelectedPromise = getLastSelectedAgents().catch(() => []);
+          const context = getExplicitGlobalContext();
+          const agentsPromise = context
+            ? listAgentsForProjectV2(context)
+            : listAgents();
+          const targetDefaultsPromise = context
+            ? getDefaultTargetAgentsV2(context).catch(() => null)
+            : getDefaultTargetAgents().catch(() => null);
+          const lastSelectedPromise = context
+            ? Promise.resolve([])
+            : getLastSelectedAgents().catch(() => []);
 
           const [agents, targetDefaults, lastSelected] = await Promise.all([
             agentsPromise,
@@ -128,7 +148,10 @@ export const useSettingsStore = create<SettingsState>()(
           });
 
           if (targetDefaults && defaultTargetsMigrated) {
-            saveDefaultTargetAgents(defaultTargetAgents).catch((error) => {
+        const context = getExplicitGlobalContext();
+        (context
+          ? saveDefaultTargetAgentsV2(context, defaultTargetAgents)
+          : saveDefaultTargetAgents(defaultTargetAgents)).catch((error) => {
               console.error('保存迁移后的默认 agents 失败:', error);
             });
           }
@@ -136,7 +159,10 @@ export const useSettingsStore = create<SettingsState>()(
           console.error('加载默认 agents 失败:', error);
 
           try {
-            const agents = await listAgents();
+            const context = getExplicitGlobalContext();
+            const agents = context
+              ? await listAgentsForProjectV2(context)
+              : await listAgents();
             const defaultTargetAgents = migrateDefaultTargetAgents(DEFAULT_AGENTS, agents);
             set({
               allAgents: agents,
@@ -161,7 +187,10 @@ export const useSettingsStore = create<SettingsState>()(
           defaultTargetAgents: nextDefaults,
         });
 
-        saveDefaultTargetAgents(nextDefaults).catch((error) => {
+        const context = getExplicitGlobalContext();
+        (context
+          ? saveDefaultTargetAgentsV2(context, nextDefaults)
+          : saveDefaultTargetAgents(nextDefaults)).catch((error) => {
           console.error('保存默认 agents 失败，回滚状态:', error);
           set({
             defaultTargetAgents,

@@ -2,6 +2,7 @@ import { useMemo, useCallback, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useContextStore } from '@/stores/context';
+import { environmentKey, useEnvironmentStore } from '@/stores/environment';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { DiscoverListPanel } from '@/components/skills/discover/DiscoverListPanel';
 import { DiscoverDetailPanel } from '@/components/skills/discover/DiscoverDetailPanel';
@@ -29,16 +30,32 @@ export function DiscoverPage() {
   const fetchAllProjectsSkills = useSkillsDataStore((s) => s.fetchAllProjectsSkills);
   const projects = useContextStore((s) => s.projects);
   const projectsLoaded = useContextStore((s) => s.projectsLoaded);
+  const selectedContextRef = useContextStore((s) => s.selectedContextRef);
+  const hasExplicitContext = useContextStore((s) => s.hasExplicitContext);
+  const environmentProjects = useEnvironmentStore((s) => s.projectsByEnvironment);
+  const environmentProjectsLoaded = useEnvironmentStore((s) => s.projectsLoaded);
   const openAddWithPrefill = useSkillDialogStore((s) => s.openAddWithPrefill);
 
   const [activeTab, setActiveTab] = useState<DiscoverTab>('popular');
   const [selectedSkill, setSelectedSkill] = useState<DiscoverSkillSummary | null>(null);
 
   useEffect(() => {
-    if (projectsLoaded) {
+    const explicitKey = environmentKey(selectedContextRef.environment);
+    const ready = hasExplicitContext
+      ? environmentProjectsLoaded[explicitKey]
+      : projectsLoaded;
+    if (ready) {
       fetchAllProjectsSkills();
     }
-  }, [projectsLoaded, projects, fetchAllProjectsSkills]);
+  }, [
+    environmentProjects,
+    environmentProjectsLoaded,
+    fetchAllProjectsSkills,
+    hasExplicitContext,
+    projects,
+    projectsLoaded,
+    selectedContextRef,
+  ]);
 
   const installedSkillLocations = useMemo(() => {
     const map = new Map<string, string[]>();

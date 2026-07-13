@@ -16,6 +16,7 @@ import { ConfirmStep } from '@/components/skills/add-skill/ConfirmStep';
 import { InstallingStep } from '@/components/skills/add-skill/InstallingStep';
 import { CompleteStep } from '@/components/skills/add-skill/CompleteStep';
 import { ErrorStep } from '@/components/skills/add-skill/ErrorStep';
+import { parseWizardContext } from '@/components/skills/add-skill/wizard-context';
 import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
 import type {
   EntryPoint,
@@ -23,12 +24,13 @@ import type {
   WizardStep,
   WizardState,
 } from '@/components/skills/add-skill/types';
-import type { InstallTargetSpec } from '@/bindings';
+import type { ContextRef, InstallTargetSpec } from '@/bindings';
 
 function createInitialState(params: {
   entryPoint: EntryPoint;
   scope: 'global' | 'project';
   projectPath?: string;
+  context?: ContextRef;
   prefillSource?: string;
   prefillSkillName?: string;
 }): WizardState {
@@ -45,6 +47,7 @@ function createInitialState(params: {
     entryPoint: params.entryPoint,
     scope: params.scope,
     projectPath: params.projectPath,
+    context: params.context,
     source,
     fetchStatus: 'idle',
     fetchError: null,
@@ -84,6 +87,7 @@ export function WizardPage() {
     entryPoint: (searchParams.get('entryPoint') ?? 'skills-panel') as EntryPoint,
     scope: (searchParams.get('scope') ?? 'global') as 'global' | 'project',
     projectPath: searchParams.get('projectPath') ?? undefined,
+    context: parseWizardContext(searchParams.get('context')),
     prefillSource: searchParams.get('prefillSource') ?? undefined,
     prefillSkillName: searchParams.get('prefillSkillName') ?? undefined,
   }), [searchParams]);
@@ -91,10 +95,10 @@ export function WizardPage() {
   // Discovery 入口需要 ScopeStep，确保子窗口中 projects 列表已加载
   const { projectsLoaded, loadProjects } = useContextStore();
   useEffect(() => {
-    if (!projectsLoaded) {
+    if (!wizardParams.context && !projectsLoaded) {
       loadProjects();
     }
-  }, [projectsLoaded, loadProjects]);
+  }, [wizardParams.context, projectsLoaded, loadProjects]);
 
   const [state, setState] = useState<WizardState>(() =>
     createInitialState(wizardParams)
@@ -228,6 +232,7 @@ export function WizardPage() {
             updateState={updateState}
             scope={state.scope}
             projectPath={state.projectPath}
+            context={state.context}
           />
         );
       case 'installing':
@@ -238,6 +243,7 @@ export function WizardPage() {
             updateState={updateState}
             scope={state.scope}
             projectPath={state.projectPath}
+            context={state.context}
           />
         );
       case 'complete':

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useGroupRef } from 'react-resizable-panels';
 import { useContextStore } from '@/stores/context';
+import { environmentKey, useEnvironmentStore } from '@/stores/environment';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
@@ -24,6 +25,11 @@ const LIST_VIEW_LAYOUT = {
 
 export function SkillsPage() {
   const selectedContext = useContextStore((s) => s.selectedContext);
+  const selectedContextRef = useContextStore((s) => s.selectedContextRef);
+  const hasExplicitContext = useContextStore((s) => s.hasExplicitContext);
+  const selectedContextKey = hasExplicitContext
+    ? JSON.stringify(selectedContextRef)
+    : selectedContext;
 
   const globalSkills = useSkillsDataStore((s) => s.globalSkills);
   const projectSkills = useSkillsDataStore((s) => s.projectSkills);
@@ -50,9 +56,14 @@ export function SkillsPage() {
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
   const closeCopyToProject = useSkillDialogStore((s) => s.closeCopyToProject);
   const executeCopy = useSkillDialogStore((s) => s.executeCopy);
-  const projects = useContextStore((s) => s.projects);
+  const legacyProjects = useContextStore((s) => s.projects);
+  const projectsByEnvironment = useEnvironmentStore((s) => s.projectsByEnvironment);
+  const copyTargetProjects = hasExplicitContext
+    ? (projectsByEnvironment[environmentKey(selectedContextRef.environment)] ?? [])
+      .map((project) => project.nativePath)
+    : legacyProjects;
   const layoutRef = useGroupRef();
-  const previousContextRef = useRef(selectedContext);
+  const previousContextRef = useRef(selectedContextKey);
 
   const selectedSkill = useMemo(
     () => findSkillByIdentity(selectedSkillRef, globalSkills, projectSkills, selectedContext),
@@ -67,18 +78,27 @@ export function SkillsPage() {
   const selectedSkillUpdateStatus = selectedSkillRef
     ? updatingSkills.get(getSkillIdentityKey(selectedSkillRef))
     : undefined;
-  const selectedSkillCheckScope = selectedSkill?.scope === 'project' ? selectedContext : 'global';
+  const selectedSkillCheckScope = selectedSkill?.scope === 'project'
+    ? (hasExplicitContext && selectedContextRef.scope.scope === 'project'
+      ? selectedContextKey
+      : selectedContext)
+    : (hasExplicitContext
+      ? JSON.stringify({
+        environment: selectedContextRef.environment,
+        scope: { scope: 'global' },
+      })
+      : 'global');
   const isCheckingSelectedSkillUpdates = selectedSkill
     ? checkingUpdateScopes.has(selectedSkillCheckScope)
     : false;
 
   useEffect(() => {
-    const contextChanged = previousContextRef.current !== selectedContext;
-    previousContextRef.current = selectedContext;
+    const contextChanged = previousContextRef.current !== selectedContextKey;
+    previousContextRef.current = selectedContextKey;
 
     if (contextChanged || !selectedSkillRef || selectedSkill) return;
     deselectSkill();
-  }, [deselectSkill, selectedContext, selectedSkill, selectedSkillRef]);
+  }, [deselectSkill, selectedContextKey, selectedSkill, selectedSkillRef]);
 
   const handleDetailDelete = useCallback((skill: InstalledSkill) => {
     if (skill.scope === 'project') {
@@ -222,8 +242,10 @@ export function SkillsPage() {
     <CopyToProjectDialog
       skill={copySkill}
       currentProjectPath={selectedContext}
-      projects={projects}
-      checkExistence={checkSkillInProjects}
+      projects={copyTargetProjects}
+      checkExistence={hasExplicitContext && selectedContextRef.environment.kind === 'wsl'
+        ? undefined
+        : checkSkillInProjects}
       onClose={closeCopyToProject}
       onCopy={executeCopy}
     />

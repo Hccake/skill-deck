@@ -2,6 +2,7 @@
 import i18n from '@/i18n';
 import type {
   AgentType,
+  ContextRef,
   InstalledSkill,
   SkillScope,
   SkillUpdateCheckStatus,
@@ -133,6 +134,7 @@ export interface DeleteTarget {
   skill: SkillListItem;
   scope: SkillScope;
   projectPath?: string;
+  context?: ContextRef;
 }
 
 export interface AddDialogPrefill {
@@ -153,6 +155,7 @@ export interface RepairSourceDraft {
   defaultAvailableAgents?: AgentType[];
   privateAdaptedAgents?: AgentType[];
   privateCopyAgents?: AgentType[];
+  context?: ContextRef;
 }
 
 export function getSkillOperationAgents(
@@ -232,7 +235,8 @@ export function createSkillRepairDraft(
     | 'privateCopyAgents'
   > & { gitRef?: string | null },
   scope: SkillScope,
-  projectPath?: string
+  projectPath?: string,
+  context?: ContextRef,
 ): RepairSourceDraft | null {
   const source = buildRepairSource(skill);
   if (!source) return null;
@@ -248,6 +252,7 @@ export function createSkillRepairDraft(
     defaultAvailableAgents: skill.defaultAvailableAgents ?? [],
     privateAdaptedAgents,
     privateCopyAgents,
+    context,
   };
 }
 

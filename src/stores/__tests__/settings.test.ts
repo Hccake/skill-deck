@@ -5,22 +5,36 @@ import { makeAgentScopeTarget } from '@/test-utils';
 
 const mockGetLastSelectedAgents = vi.fn();
 const mockGetDefaultTargetAgents = vi.fn();
+const mockGetDefaultTargetAgentsV2 = vi.fn();
 const mockSaveDefaultTargetAgents = vi.fn();
+const mockSaveDefaultTargetAgentsV2 = vi.fn();
 const mockListAgents = vi.fn();
+const mockListAgentsForProjectV2 = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   getLastSelectedAgents: (...args: unknown[]) => mockGetLastSelectedAgents(...args),
   getDefaultTargetAgents: (...args: unknown[]) => mockGetDefaultTargetAgents(...args),
+  getDefaultTargetAgentsV2: (...args: unknown[]) => mockGetDefaultTargetAgentsV2(...args),
   saveDefaultTargetAgents: (...args: unknown[]) => mockSaveDefaultTargetAgents(...args),
+  saveDefaultTargetAgentsV2: (...args: unknown[]) => mockSaveDefaultTargetAgentsV2(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
+  listAgentsForProjectV2: (...args: unknown[]) => mockListAgentsForProjectV2(...args),
 }));
 
 import { useSettingsStore } from '../settings';
+import { useContextStore } from '../context';
 
 describe('useSettingsStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
+    mockSaveDefaultTargetAgentsV2.mockResolvedValue(undefined);
+    mockGetDefaultTargetAgentsV2.mockResolvedValue(null);
+    mockListAgentsForProjectV2.mockResolvedValue([]);
+    useContextStore.setState({
+      hasExplicitContext: false,
+      selectedContextRef: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+    });
     useSettingsStore.setState({
       defaultTargetAgents: { global: [], project: [] },
       agentsLoaded: false,
@@ -111,6 +125,27 @@ describe('useSettingsStore', () => {
       });
     });
 
+    it('loads defaults and agents from the explicit environment', async () => {
+      const context = {
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+        scope: { scope: 'global' },
+      } as const;
+      useContextStore.setState({ hasExplicitContext: true, selectedContextRef: context });
+      mockListAgentsForProjectV2.mockResolvedValue(agents);
+      mockGetDefaultTargetAgentsV2.mockResolvedValue({
+        global: ['claude-code'],
+        project: ['claude-code'],
+      });
+
+      await useSettingsStore.getState().loadDefaultTargetAgents();
+
+      expect(mockListAgentsForProjectV2).toHaveBeenCalledWith(context);
+      expect(mockGetDefaultTargetAgentsV2).toHaveBeenCalledWith(context);
+      expect(mockListAgents).not.toHaveBeenCalled();
+      expect(mockGetDefaultTargetAgents).not.toHaveBeenCalled();
+      expect(mockGetLastSelectedAgents).not.toHaveBeenCalled();
+    });
+
     it('migrates lastSelectedAgents independently per scope', async () => {
       mockListAgents.mockResolvedValue(agents);
       mockGetDefaultTargetAgents.mockResolvedValue(null);
@@ -180,6 +215,31 @@ describe('useSettingsStore', () => {
         global: ['claude-code'],
         project: ['claude-code'],
       });
+    });
+
+    it('saves defaults to the selected explicit environment', () => {
+      useSettingsStore.setState({
+        allAgents: agents,
+        defaultTargetAgents: { global: ['antigravity'], project: ['claude-code'] },
+      });
+      useContextStore.setState({
+        hasExplicitContext: true,
+        selectedContextRef: {
+          environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+          scope: { scope: 'project', project_id: 'project-1' },
+        },
+      });
+
+      useSettingsStore.getState().setDefaultTargetAgents('global', ['claude-code']);
+
+      expect(mockSaveDefaultTargetAgentsV2).toHaveBeenCalledWith(
+        {
+          environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+          scope: { scope: 'global' },
+        },
+        { global: ['claude-code'], project: ['claude-code'] },
+      );
+      expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
     });
 
     it('filters default-available agents out of persisted scoped defaults', async () => {

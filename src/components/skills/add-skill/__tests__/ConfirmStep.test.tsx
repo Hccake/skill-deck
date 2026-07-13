@@ -4,7 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
+import { checkOverwrites, checkOverwritesV2, checkSkillAudit } from '@/hooks/useTauriApi';
 import { makeAgentScopeTarget } from '@/test-utils';
 import type { WizardState } from '../types';
 import { ConfirmStep } from '../ConfirmStep';
@@ -48,10 +48,12 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/hooks/useTauriApi', () => ({
   checkOverwrites: vi.fn().mockResolvedValue({}),
+  checkOverwritesV2: vi.fn().mockResolvedValue({}),
   checkSkillAudit: vi.fn().mockResolvedValue(null),
 }));
 
 const checkOverwritesMock = vi.mocked(checkOverwrites);
+const checkOverwritesV2Mock = vi.mocked(checkOverwritesV2);
 const checkSkillAuditMock = vi.mocked(checkSkillAudit);
 
 function deferred<T>() {
@@ -124,6 +126,8 @@ describe('ConfirmStep', () => {
   beforeEach(() => {
     checkOverwritesMock.mockReset();
     checkOverwritesMock.mockResolvedValue({});
+    checkOverwritesV2Mock.mockReset();
+    checkOverwritesV2Mock.mockResolvedValue({});
     checkSkillAuditMock.mockReset();
     checkSkillAuditMock.mockResolvedValue(null);
   });
@@ -171,6 +175,32 @@ describe('ConfirmStep', () => {
       [],
     );
     expect(checkSkillAuditMock).toHaveBeenCalledWith('openclaw/community-skills', ['demo']);
+  });
+
+  it('checks overwrites in the explicit target context', async () => {
+    const updateState = vi.fn();
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    } as const;
+
+    render(
+      <ConfirmStep
+        state={{ ...createState(), confirmReady: false }}
+        updateState={updateState}
+        scope="global"
+        context={context}
+      />
+    );
+
+    await waitFor(() => expect(checkOverwritesV2Mock).toHaveBeenCalledWith(
+      context,
+      ['demo'],
+      ['codex'],
+      [],
+      [],
+    ));
+    expect(checkOverwritesMock).not.toHaveBeenCalled();
   });
 
   it('ignores stale overwrite results from an older confirmation request', async () => {

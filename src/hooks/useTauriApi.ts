@@ -11,6 +11,7 @@ import type {
   DefaultTargetAgents,
   InstallTargetInfo,
   InstallTargetSpec,
+  ContextRef, EnvironmentInfo, EnvironmentRef, ProjectBinding, WslSession, ActiveMutation,
 } from '@/bindings';
 
 export type {
@@ -20,7 +21,8 @@ export type {
   SkillAuditData, SkillAgentDetails, ManageAgentsResult, DuplicateCleanupResult,
   CopySkillResult, CopyProjectResult, ProjectSkillStatus,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
-  InstallTargetInfo, InstallTargetSpec,
+  InstallTargetInfo, InstallTargetSpec, ContextRef, EnvironmentInfo, EnvironmentRef,
+  ProjectBinding, WslSession, ActiveMutation,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -50,6 +52,10 @@ export async function listAgentsForProject(projectPath?: string): Promise<AgentI
   return unwrap(await commands.listAgentsForProject(projectPath ?? null));
 }
 
+export async function listAgentsForProjectV2(context: ContextRef): Promise<AgentInfo[]> {
+  return unwrap(await commands.listAgentsForProjectV2(context));
+}
+
 /**
  * 列出 Eve project 内可安装的具体目标（root agent 与 subagents）。
  */
@@ -65,6 +71,10 @@ export async function listSkills(params?: ListSkillsParams): Promise<ListSkillsR
     scope: params?.scope ?? null,
     projectPath: params?.projectPath ?? null,
   }));
+}
+
+export async function listSkillsV2(context: ContextRef): Promise<ListSkillsResult> {
+  return unwrap(await commands.listSkillsV2(context));
 }
 
 /**
@@ -107,11 +117,24 @@ export async function getDefaultTargetAgents(): Promise<DefaultTargetAgents | nu
   return await commands.getDefaultTargetAgents();
 }
 
+export async function getDefaultTargetAgentsV2(
+  context: ContextRef,
+): Promise<DefaultTargetAgents | null> {
+  return unwrap(await commands.getDefaultTargetAgentsV2(context));
+}
+
 /**
  * 保存 GUI scope-aware 默认安装目标
  */
 export async function saveDefaultTargetAgents(defaults: DefaultTargetAgents): Promise<void> {
   unwrap(await commands.saveDefaultTargetAgents(defaults));
+}
+
+export async function saveDefaultTargetAgentsV2(
+  context: ContextRef,
+  defaults: DefaultTargetAgents,
+): Promise<void> {
+  unwrap(await commands.saveDefaultTargetAgentsV2(context, defaults));
 }
 
 // ============ 安装相关 API ============
@@ -123,11 +146,25 @@ export async function fetchAvailable(source: string): Promise<FetchResult> {
   return unwrap(await commands.fetchAvailable(source));
 }
 
+export async function fetchAvailableV2(
+  context: ContextRef,
+  source: string,
+): Promise<FetchResult> {
+  return unwrap(await commands.fetchAvailableV2(context, source));
+}
+
 /**
  * 安装选中的 skills
  */
 export async function installSkills(params: InstallParams): Promise<InstallResults> {
   return unwrap(await commands.installSkills(params));
+}
+
+export async function installSkillsV2(
+  context: ContextRef,
+  params: InstallParams,
+): Promise<InstallResults> {
+  return unwrap(await commands.installSkillsV2(context, params));
 }
 
 /**
@@ -151,6 +188,22 @@ export async function checkOverwrites(
       agentTargets,
     )
   );
+}
+
+export async function checkOverwritesV2(
+  context: ContextRef,
+  skills: string[],
+  agents: string[],
+  privateCopyAgents: string[] = [],
+  agentTargets: InstallTargetSpec[] = [],
+): Promise<Partial<Record<string, string[]>>> {
+  return unwrap(await commands.checkOverwritesV2(
+    context,
+    skills,
+    agents,
+    privateCopyAgents,
+    agentTargets,
+  ));
 }
 
 // ============ 删除相关 API ============
@@ -180,6 +233,24 @@ export async function removeSkill(params: {
   );
 }
 
+export async function removeSkillV2(
+  context: ContextRef,
+  params: {
+    name: string;
+    agents?: AgentType[];
+    fullRemoval?: boolean;
+    agentTargets?: InstallTargetSpec[];
+  },
+): Promise<RemoveResult> {
+  return unwrap(await commands.removeSkillV2(
+    context,
+    params.name,
+    params.agents ?? null,
+    params.fullRemoval ?? null,
+    params.agentTargets ?? null,
+  ));
+}
+
 /**
  * 查询 skill 的 agent 安装详情（智能删除对话框用）
  */
@@ -191,6 +262,13 @@ export async function getSkillAgentDetails(params: {
   return unwrap(
     await commands.getSkillAgentDetails(params.scope, params.name, params.projectPath ?? null)
   );
+}
+
+export async function getSkillAgentDetailsV2(
+  context: ContextRef,
+  name: string,
+): Promise<SkillAgentDetails> {
+  return unwrap(await commands.getSkillAgentDetailsV2(context, name));
 }
 
 // ============ 项目管理 API ============
@@ -223,6 +301,51 @@ export async function openInExplorer(path: string): Promise<void> {
   unwrap(await commands.openInExplorer(path));
 }
 
+// ============ Environment / mutation API ============
+
+export async function listEnvironments(): Promise<EnvironmentInfo[]> {
+  return unwrap(await commands.listEnvironmentsV2());
+}
+
+export async function connectEnvironment(distroName: string): Promise<WslSession> {
+  return unwrap(await commands.connectEnvironmentV2(distroName));
+}
+
+export async function mapEnvironmentPath(
+  environment: EnvironmentRef,
+  path: string,
+): Promise<string> {
+  return unwrap(await commands.mapEnvironmentPathV2(environment, path));
+}
+
+export async function listEnvironmentProjects(
+  environment: EnvironmentRef,
+): Promise<ProjectBinding[]> {
+  return unwrap(await commands.listEnvironmentProjectsV2(environment));
+}
+
+export async function addEnvironmentProject(
+  environment: EnvironmentRef,
+  nativePath: string,
+): Promise<ProjectBinding[]> {
+  return unwrap(await commands.addEnvironmentProjectV2(environment, nativePath));
+}
+
+export async function removeEnvironmentProject(
+  environment: EnvironmentRef,
+  projectId: string,
+): Promise<ProjectBinding[]> {
+  return unwrap(await commands.removeEnvironmentProjectV2(environment, projectId));
+}
+
+export async function getActiveMutation(): Promise<ActiveMutation | null> {
+  return await commands.getActiveMutation();
+}
+
+export async function requestCancelActiveMutation(): Promise<boolean> {
+  return unwrap(await commands.requestCancelActiveMutation());
+}
+
 // ============ 更新检测 API ============
 
 /**
@@ -233,6 +356,10 @@ export async function checkUpdates(
   projectPath?: string
 ): Promise<SkillUpdateInfo[]> {
   return unwrap(await commands.checkUpdates(scope, projectPath ?? null));
+}
+
+export async function checkUpdatesV2(context: ContextRef): Promise<SkillUpdateInfo[]> {
+  return unwrap(await commands.checkUpdatesV2(context));
 }
 
 /**
@@ -246,6 +373,13 @@ export async function updateSkill(params: {
   return unwrap(await commands.updateSkill(params.scope, params.name, params.projectPath ?? null));
 }
 
+export async function updateSkillV2(
+  context: ContextRef,
+  name: string,
+): Promise<UpdateSkillResponse> {
+  return unwrap(await commands.updateSkillV2(context, name));
+}
+
 /**
  * 批量更新多个 skills（同源 clone 合并）
  */
@@ -255,6 +389,13 @@ export async function updateSkillsBatch(params: {
   projectPath?: string;
 }): Promise<UpdateSkillResponse> {
   return unwrap(await commands.updateSkillsBatch(params.scope, params.names, params.projectPath ?? null));
+}
+
+export async function updateSkillsBatchV2(
+  context: ContextRef,
+  names: string[],
+): Promise<UpdateSkillResponse> {
+  return unwrap(await commands.updateSkillsBatchV2(context, names));
 }
 
 // ============ 安全审计 API ============
@@ -281,6 +422,7 @@ export async function openInstallWizard(params: {
   projectPath?: string;
   prefillSource?: string;
   prefillSkillName?: string;
+  context?: ContextRef;
 }): Promise<void> {
   unwrap(
     await commands.openInstallWizard(
@@ -288,7 +430,8 @@ export async function openInstallWizard(params: {
       params.scope,
       params.projectPath ?? null,
       params.prefillSource ?? null,
-      params.prefillSkillName ?? null
+      params.prefillSkillName ?? null,
+      params.context ?? null,
     )
   );
 }
@@ -318,6 +461,26 @@ export async function manageSkillAgents(params: {
       params.mode,
     )
   );
+}
+
+export async function manageSkillAgentsV2(
+  context: ContextRef,
+  params: {
+    skillName: string;
+    addAgents: AgentType[];
+    removeAgents: AgentType[];
+    privateCopyAgents?: AgentType[];
+    mode: InstallMode;
+  },
+): Promise<ManageAgentsResult> {
+  return unwrap(await commands.manageSkillAgentsV2(
+    context,
+    params.skillName,
+    params.addAgents,
+    params.removeAgents,
+    params.privateCopyAgents ?? [],
+    params.mode,
+  ));
 }
 
 export async function cleanupDuplicateAgentCopy(params: {
@@ -352,6 +515,17 @@ export async function cleanupDuplicateAgentCopies(params: {
   );
 }
 
+export async function cleanupDuplicateAgentCopiesV2(
+  context: ContextRef,
+  params: { skillName: string; agents: AgentType[] },
+): Promise<DuplicateCleanupResult[]> {
+  return unwrap(await commands.cleanupDuplicateAgentCopiesV2(
+    context,
+    params.skillName,
+    params.agents,
+  ));
+}
+
 // ============ 复制 Skill API ============
 
 /**
@@ -373,6 +547,22 @@ export async function copySkillToProjects(params: {
       params.privateCopyAgents ?? [],
     )
   );
+}
+
+export async function copySkillToProjectsV2(params: {
+  skillName: string;
+  source: ContextRef;
+  targets: ContextRef[];
+  agents: string[];
+  privateCopyAgents?: string[];
+}): Promise<CopySkillResult> {
+  return unwrap(await commands.copySkillToProjectsV2(
+    params.skillName,
+    params.source,
+    params.targets,
+    params.agents,
+    params.privateCopyAgents ?? [],
+  ));
 }
 
 /**

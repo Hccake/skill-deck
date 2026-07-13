@@ -17,15 +17,19 @@ vi.mock('react-i18next', () => ({
 
 const listAgentsMock = vi.fn<() => Promise<AgentInfo[]>>();
 const listAgentsForProjectMock = vi.fn<(projectPath?: string) => Promise<AgentInfo[]>>();
+const listAgentsForProjectV2Mock = vi.fn();
 const listEveInstallTargetsMock = vi.fn();
 const getDefaultTargetAgentsMock = vi.fn();
+const getDefaultTargetAgentsV2Mock = vi.fn();
 const getLastSelectedAgentsMock = vi.fn<() => Promise<string[]>>();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listAgents: () => listAgentsMock(),
   listAgentsForProject: (projectPath?: string) => listAgentsForProjectMock(projectPath),
+  listAgentsForProjectV2: (...args: unknown[]) => listAgentsForProjectV2Mock(...args),
   listEveInstallTargets: (projectPath: string) => listEveInstallTargetsMock(projectPath),
   getDefaultTargetAgents: () => getDefaultTargetAgentsMock(),
+  getDefaultTargetAgentsV2: (...args: unknown[]) => getDefaultTargetAgentsV2Mock(...args),
   getLastSelectedAgents: () => getLastSelectedAgentsMock(),
 }));
 
@@ -185,8 +189,10 @@ describe('OptionsStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getDefaultTargetAgentsMock.mockResolvedValue(null);
+    getDefaultTargetAgentsV2Mock.mockResolvedValue(null);
     getLastSelectedAgentsMock.mockResolvedValue([]);
     listAgentsForProjectMock.mockResolvedValue([]);
+    listAgentsForProjectV2Mock.mockResolvedValue([]);
     listEveInstallTargetsMock.mockResolvedValue([]);
   });
 
@@ -211,6 +217,27 @@ describe('OptionsStep', () => {
     await waitFor(() => {
       expect(screen.getByText('all-agents:eve')).toBeDefined();
     });
+  });
+
+  it('loads agents and defaults from the explicit target context', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    } as const;
+    listAgentsForProjectV2Mock.mockResolvedValue([]);
+    getDefaultTargetAgentsV2Mock.mockResolvedValue({ global: [], project: [] });
+
+    render(
+      <OptionsStep
+        state={{ ...createState(), context }}
+        updateState={() => undefined}
+      />
+    );
+
+    await waitFor(() => expect(listAgentsForProjectV2Mock).toHaveBeenCalledWith(context));
+    expect(getDefaultTargetAgentsV2Mock).toHaveBeenCalledWith(context);
+    expect(getLastSelectedAgentsMock).not.toHaveBeenCalled();
+    expect(listAgentsMock).not.toHaveBeenCalled();
   });
 
   it('hides mode radios when only the shared directory is relevant', async () => {

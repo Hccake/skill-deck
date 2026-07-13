@@ -1,14 +1,16 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe, Folder, Check } from 'lucide-react';
 import { useContextStore } from '@/stores/context';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
-import type { SkillScope } from '@/bindings';
+import { listEnvironmentProjects } from '@/hooks/useTauriApi';
+import type { ContextRef, ProjectBinding, SkillScope } from '@/bindings';
 import type { WizardState } from './types';
 
 type ScopeOption = {
   scope: SkillScope;
   projectPath?: string;
+  context?: ContextRef;
   label: string;
   hint: string;
   icon: typeof Globe;
@@ -27,24 +29,62 @@ interface ScopeStepProps {
 
 export function ScopeStep({ state, updateState }: ScopeStepProps) {
   const { t } = useTranslation();
-  const projects = useContextStore((s) => s.projects);
+  const legacyProjects = useContextStore((s) => s.projects);
+  const [environmentProjects, setEnvironmentProjects] = useState<ProjectBinding[]>([]);
+  const explicitEnvironment = state.context?.environment;
+
+  useEffect(() => {
+    if (!explicitEnvironment) {
+      return;
+    }
+    let cancelled = false;
+    listEnvironmentProjects(explicitEnvironment)
+      .then((projects) => {
+        if (!cancelled) setEnvironmentProjects(projects);
+      })
+      .catch((error) => {
+        console.error('Failed to load environment projects:', error);
+        if (!cancelled) setEnvironmentProjects([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [explicitEnvironment]);
 
   const globalOption: ScopeOption = {
     scope: 'global' as SkillScope,
     label: t('addSkill.scopeSelect.global'),
-    hint: t('addSkill.scopeSelect.globalHint', { path: getSharedSkillDirectory('global') }),
+    hint: explicitEnvironment
+      ? t('addSkill.scopeSelect.environmentGlobalHint')
+      : t('addSkill.scopeSelect.globalHint', { path: getSharedSkillDirectory('global') }),
     icon: Globe,
+    context: explicitEnvironment
+      ? { environment: explicitEnvironment, scope: { scope: 'global' } }
+      : undefined,
   };
 
   const projectOptions = useMemo<ScopeOption[]>(() => {
-    return projects.map((path) => ({
+    if (explicitEnvironment) {
+      return environmentProjects.map((project) => ({
+        scope: 'project' as SkillScope,
+        projectPath: project.nativePath,
+        label: project.displayName ?? getProjectName(project.nativePath),
+        hint: project.nativePath,
+        icon: Folder,
+        context: {
+          environment: explicitEnvironment,
+          scope: { scope: 'project', project_id: project.id },
+        },
+      }));
+    }
+    return legacyProjects.map((path) => ({
       scope: 'project' as SkillScope,
       projectPath: path,
       label: getProjectName(path),
       hint: path,
       icon: Folder,
     }));
-  }, [projects]);
+  }, [environmentProjects, explicitEnvironment, legacyProjects]);
 
   const renderRow = (option: ScopeOption, isSelected: boolean) => {
     const Icon = option.icon;
@@ -55,7 +95,11 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
         className={`w-full flex items-center gap-4 px-4 py-3 transition-colors cursor-pointer text-left relative ${
           isSelected ? 'bg-primary/5' : 'hover:bg-muted/50'
         }`}
-        onClick={() => updateState({ scope: option.scope, projectPath: option.projectPath })}
+        onClick={() => updateState({
+          scope: option.scope,
+          projectPath: option.projectPath,
+          ...(explicitEnvironment ? { context: option.context } : {}),
+        })}
       >
         {/* 左侧图标 */}
         <div className={`p-2 rounded-md ${isSelected ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>

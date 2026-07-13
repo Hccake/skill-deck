@@ -28,6 +28,7 @@ pub fn run() {
             commands::config::save_config,
             commands::config::get_last_selected_agents,
             commands::config::get_default_target_agents,
+            commands::config::get_default_target_agents_v2,
             commands::config::save_default_target_agents,
             commands::config::save_default_target_agents_v2,
             commands::config::add_project,

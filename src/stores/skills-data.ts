@@ -2,6 +2,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { useContextStore } from './context';
+import { environmentKey, useEnvironmentStore } from './environment';
 import {
   sortSkills,
   mergeUpdateInfo,
@@ -15,19 +16,57 @@ import {
 } from './skills-utils';
 import {
   listSkills,
+  listSkillsV2,
   listAgents,
   listAgentsForProject,
+  listAgentsForProjectV2,
   checkUpdates,
+  checkUpdatesV2,
   updateSkill as apiUpdateSkill,
+  updateSkillV2 as apiUpdateSkillV2,
   updateSkillsBatch as apiUpdateSkillsBatch,
+  updateSkillsBatchV2 as apiUpdateSkillsBatchV2,
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
 import { getSkillIdentity, getSkillIdentityKey, isSameSkillIdentity } from '@/lib/skills/identity';
-import type { AgentInfo, InstalledSkill, SkillScope, SkillUpdateInfo, SkillAuditData, UpdateSkillItemResult } from '@/bindings';
+import type {
+  AgentInfo,
+  ContextRef,
+  InstalledSkill,
+  SkillScope,
+  SkillUpdateInfo,
+  SkillAuditData,
+  UpdateSkillItemResult,
+} from '@/bindings';
 
 type UpdateCheckResult =
   | { ok: true; updates: SkillUpdateInfo[] }
   | { ok: false };
+
+function getExplicitContextForScope(scope: SkillScope): ContextRef | null {
+  const { hasExplicitContext, selectedContextRef } = useContextStore.getState();
+  if (!hasExplicitContext) return null;
+  if (scope === 'global') {
+    return {
+      environment: selectedContextRef.environment,
+      scope: { scope: 'global' },
+    };
+  }
+  return selectedContextRef.scope.scope === 'project' ? selectedContextRef : null;
+}
+
+function contextCacheKey(context: ContextRef | null, legacyKey: string): string {
+  return context ? JSON.stringify(context) : legacyKey;
+}
+
+function isCurrentContext(context: ContextRef | null, legacySelectedContext: string): boolean {
+  const current = useContextStore.getState();
+  if (context) {
+    return current.hasExplicitContext
+      && JSON.stringify(current.selectedContextRef) === JSON.stringify(context);
+  }
+  return !current.hasExplicitContext && current.selectedContext === legacySelectedContext;
+}
 
 function clearLocalUpdateFlags(
   skills: SkillListItem[],
@@ -56,11 +95,14 @@ function clearLocalUpdateFlags(
 async function checkUpdatesSafely(
   scope: SkillScope,
   projectPath?: string,
+  context?: ContextRef | null,
 ): Promise<UpdateCheckResult> {
   try {
     return {
       ok: true,
-      updates: await checkUpdates(scope, projectPath),
+      updates: context
+        ? await checkUpdatesV2(context)
+        : await checkUpdates(scope, projectPath),
     };
   } catch {
     return { ok: false };
@@ -72,7 +114,44 @@ async function loadSkillsData(
   set: (partial: Partial<SkillsDataState> | ((state: SkillsDataState) => Partial<SkillsDataState>)) => void,
   options: { includeAgents: boolean },
 ) {
-  const { selectedContext } = useContextStore.getState();
+  const { selectedContext, selectedContextRef, hasExplicitContext } = useContextStore.getState();
+  if (hasExplicitContext) {
+    const globalContext: ContextRef = {
+      environment: selectedContextRef.environment,
+      scope: { scope: 'global' },
+    };
+    const projectContext = selectedContextRef.scope.scope === 'project'
+      ? selectedContextRef
+      : null;
+    const [agents, globalResult, projectResult] = await Promise.all([
+      options.includeAgents
+        ? listAgentsForProjectV2(projectContext ?? globalContext)
+        : Promise.resolve(null),
+      listSkillsV2(globalContext),
+      projectContext ? listSkillsV2(projectContext) : Promise.resolve(null),
+    ]);
+    const globalCache = updateInfoCache.get(JSON.stringify(globalContext));
+    const projectCache = projectContext
+      ? updateInfoCache.get(JSON.stringify(projectContext))
+      : null;
+    const partial: Partial<SkillsDataState> = {
+      globalSkills: sortSkills(
+        globalCache ? mergeUpdateInfo(globalResult.skills, globalCache.results) : globalResult.skills
+      ),
+      projectSkills: projectResult
+        ? sortSkills(
+          projectCache
+            ? mergeUpdateInfo(projectResult.skills, projectCache.results)
+            : projectResult.skills
+        )
+        : [],
+      projectPathExists: projectResult?.pathExists ?? true,
+    };
+    if (agents) partial.allAgents = agents;
+    set(partial);
+    return;
+  }
+
   const isProjectSelected = selectedContext !== 'global';
 
   if (isProjectSelected) {
@@ -190,19 +269,28 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   },
 
   syncUpdates: async () => {
-    const contextAtStart = useContextStore.getState().selectedContext;
-    const isProjectSelected = contextAtStart !== 'global';
+    const contextState = useContextStore.getState();
+    const contextAtStart = contextState.selectedContext;
+    const explicitGlobalContext = getExplicitContextForScope('global');
+    const explicitProjectContext = getExplicitContextForScope('project');
+    const isProjectSelected = explicitProjectContext !== null || (
+      !contextState.hasExplicitContext && contextAtStart !== 'global'
+    );
+    const globalCacheKey = contextCacheKey(explicitGlobalContext, 'global');
+    const projectCacheKey = explicitProjectContext
+      ? contextCacheKey(explicitProjectContext, contextAtStart)
+      : contextAtStart;
 
     const now = Date.now();
-    const globalCache = updateInfoCache.get('global');
-    const projectCache = isProjectSelected ? updateInfoCache.get(contextAtStart) : null;
+    const globalCache = updateInfoCache.get(globalCacheKey);
+    const projectCache = isProjectSelected ? updateInfoCache.get(projectCacheKey) : null;
     const globalFresh = globalCache && (now - globalCache.checkedAt) < UPDATE_CHECK_TTL;
     const projectFresh = !isProjectSelected || (projectCache && (now - projectCache.checkedAt) < UPDATE_CHECK_TTL);
     if (globalFresh && projectFresh) return;
 
     const scopesToCheck: string[] = [];
-    if (!globalFresh) scopesToCheck.push('global');
-    if (!projectFresh) scopesToCheck.push(contextAtStart);
+    if (!globalFresh) scopesToCheck.push(globalCacheKey);
+    if (!projectFresh) scopesToCheck.push(projectCacheKey);
     set((state) => {
       const next = new Set(state.checkingUpdateScopes);
       for (const s of scopesToCheck) next.add(s);
@@ -213,17 +301,17 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         const [globalResult, projectResult] = await Promise.all([
           globalFresh
             ? Promise.resolve({ ok: true, updates: globalCache!.results } satisfies UpdateCheckResult)
-            : checkUpdatesSafely('global'),
+            : checkUpdatesSafely('global', undefined, explicitGlobalContext),
           projectFresh
             ? Promise.resolve({ ok: true, updates: projectCache!.results } satisfies UpdateCheckResult)
-            : checkUpdatesSafely('project', contextAtStart),
+            : checkUpdatesSafely('project', contextState.hasExplicitContext ? undefined : contextAtStart, explicitProjectContext),
         ]);
-        if (useContextStore.getState().selectedContext !== contextAtStart) return;
+        if (!isCurrentContext(explicitProjectContext ?? explicitGlobalContext, contextAtStart)) return;
         if (!globalFresh && globalResult.ok) {
-          updateInfoCache.set('global', { results: globalResult.updates, checkedAt: now });
+          updateInfoCache.set(globalCacheKey, { results: globalResult.updates, checkedAt: now });
         }
         if (!projectFresh && projectResult.ok) {
-          updateInfoCache.set(contextAtStart, { results: projectResult.updates, checkedAt: now });
+          updateInfoCache.set(projectCacheKey, { results: projectResult.updates, checkedAt: now });
         }
         set((state) => ({
           globalSkills: globalResult.ok
@@ -236,10 +324,10 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       } else {
         const globalResult = globalFresh
           ? ({ ok: true, updates: globalCache!.results } satisfies UpdateCheckResult)
-          : await checkUpdatesSafely('global');
-        if (useContextStore.getState().selectedContext !== contextAtStart) return;
+          : await checkUpdatesSafely('global', undefined, explicitGlobalContext);
+        if (!isCurrentContext(explicitGlobalContext, contextAtStart)) return;
         if (!globalFresh && globalResult.ok) {
-          updateInfoCache.set('global', { results: globalResult.updates, checkedAt: now });
+          updateInfoCache.set(globalCacheKey, { results: globalResult.updates, checkedAt: now });
         }
         if (globalResult.ok) {
           set((state) => ({
@@ -262,7 +350,8 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     const { selectedContext } = useContextStore.getState();
     const isGlobal = scope === 'global';
     const contextAtStart = selectedContext;
-    const cacheKey = isGlobal ? 'global' : contextAtStart;
+    const context = getExplicitContextForScope(scope);
+    const cacheKey = contextCacheKey(context, isGlobal ? 'global' : contextAtStart);
 
     set((state) => {
       const next = new Set(state.checkingUpdateScopes);
@@ -272,7 +361,9 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
     try {
       const projectPath = isGlobal ? undefined : contextAtStart;
-      const updates = await checkUpdates(scope, projectPath);
+      const updates = context
+        ? await checkUpdatesV2(context)
+        : await checkUpdates(scope, projectPath);
       const now = Date.now();
       updateInfoCache.set(cacheKey, { results: updates, checkedAt: now });
 
@@ -280,7 +371,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         set((state) => ({
           globalSkills: sortSkills(mergeUpdateInfo(state.globalSkills, updates)),
         }));
-      } else if (useContextStore.getState().selectedContext === contextAtStart) {
+      } else if (isCurrentContext(context, contextAtStart)) {
         set((state) => ({
           projectSkills: sortSkills(mergeUpdateInfo(state.projectSkills, updates)),
         }));
@@ -331,7 +422,11 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   updateSkill: async (skillName, scope) => {
     const { updatingSkills } = get();
     const { selectedContext } = useContextStore.getState();
+    const context = getExplicitContextForScope(scope);
     const projectPath = scope === 'project' ? selectedContext : undefined;
+    const cacheProjectKey = context && scope === 'project'
+      ? JSON.stringify(context)
+      : projectPath;
     const skillIdentity = getSkillIdentity(
       { name: skillName, scope } as Pick<InstalledSkill, 'name' | 'scope'>,
       projectPath
@@ -353,7 +448,9 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
 
     try {
-      const response = await apiUpdateSkill({ scope, name: skillName, projectPath });
+      const response = context
+        ? await apiUpdateSkillV2(context, skillName)
+        : await apiUpdateSkill({ scope, name: skillName, projectPath });
       const item = response.results.find((r) => r.name === skillName) ?? response.results[0];
       const agentResults = item?.agentResults ?? [];
       const succeededAgents = agentResults.filter((r) => r.status === 'success').length;
@@ -380,7 +477,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       if (shouldClearUpdateFlag) {
         const shouldClearCannotCheck = target?.updateReason === 'missing-remote-hash';
         if (target?.canCheckForUpdates !== false || shouldClearCannotCheck) {
-          clearUpdateCacheForSkill(skillName, scope, projectPath, {
+          clearUpdateCacheForSkill(skillName, scope, cacheProjectKey, {
             clearCannotCheck: shouldClearCannotCheck,
           });
         }
@@ -458,7 +555,11 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     const { globalSkills, projectSkills } = get();
     const skills = scope === 'project' ? projectSkills : globalSkills;
     const { selectedContext } = useContextStore.getState();
+    const context = getExplicitContextForScope(scope);
     const projectPath = scope === 'project' ? selectedContext : undefined;
+    const cacheProjectKey = context && scope === 'project'
+      ? JSON.stringify(context)
+      : projectPath;
     const plan = buildUpdatePlan(skills, scope, projectPath);
     const updatableNames = new Set(plan.groups.flatMap((group) => group.skillNames));
     const updatable = skills.filter((s) => updatableNames.has(s.name));
@@ -502,11 +603,13 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       });
 
       try {
-        const response = await apiUpdateSkillsBatch({
-          scope,
-          names: group.map((s) => s.name),
-          projectPath,
-        });
+        const response = context
+          ? await apiUpdateSkillsBatchV2(context, group.map((s) => s.name))
+          : await apiUpdateSkillsBatch({
+            scope,
+            names: group.map((s) => s.name),
+            projectPath,
+          });
         itemResults.push(...response.results);
         const successfulSkillNames = new Set<string>();
 
@@ -521,7 +624,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
           if (fullySucceeded) {
             successfulSkillNames.add(skill.name);
             if (skill.canCheckForUpdates !== false) {
-              clearUpdateCacheForSkill(skill.name, scope, projectPath);
+              clearUpdateCacheForSkill(skill.name, scope, cacheProjectKey);
             }
           }
           set((state) => {
@@ -605,7 +708,35 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   cancelUpdateAll: () => { set({ updateAllCancelled: true }); },
 
   fetchAllProjectsSkills: async () => {
-    const { projects } = useContextStore.getState();
+    const contextState = useContextStore.getState();
+    if (contextState.hasExplicitContext) {
+      const context = contextState.selectedContextRef;
+      const bindings = useEnvironmentStore.getState().projectsByEnvironment[
+        environmentKey(context.environment)
+      ] ?? [];
+      if (bindings.length === 0) {
+        set({ allProjectsSkills: new Map() });
+        return;
+      }
+
+      const results = await Promise.all(bindings.map(async (project) => {
+        try {
+          const result = await listSkillsV2({
+            environment: context.environment,
+            scope: { scope: 'project', project_id: project.id },
+          });
+          return [project.nativePath, result.skills] as const;
+        } catch {
+          return [project.nativePath, [] as InstalledSkill[]] as const;
+        }
+      }));
+      if (isCurrentContext(context, contextState.selectedContext)) {
+        set({ allProjectsSkills: new Map(results) });
+      }
+      return;
+    }
+
+    const { projects } = contextState;
     if (projects.length === 0) {
       set({ allProjectsSkills: new Map() });
       return;

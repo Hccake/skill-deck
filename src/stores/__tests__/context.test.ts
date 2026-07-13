@@ -1,6 +1,7 @@
 // src/stores/__tests__/context.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useContextStore } from '../context';
+import type { ContextRef } from '@/bindings';
 
 const mockGetConfig = vi.fn();
 const mockAddProject = vi.fn();
@@ -17,6 +18,11 @@ describe('useContextStore', () => {
     vi.clearAllMocks();
     useContextStore.setState({
       selectedContext: 'global',
+      selectedContextRef: {
+        environment: { kind: 'host' },
+        scope: { scope: 'global' },
+      },
+      hasExplicitContext: false,
       projects: [],
       projectsLoaded: false,
     });
@@ -33,6 +39,29 @@ describe('useContextStore', () => {
       useContextStore.getState().selectContext('global');
       expect(useContextStore.getState().selectedContext).toBe('global');
     });
+  });
+
+  it('keeps an explicit ContextRef when switching environments', () => {
+    const context: ContextRef = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'ubuntu-project' },
+    };
+
+    useContextStore.getState().selectContextRef(context);
+
+    expect(useContextStore.getState().selectedContextRef).toEqual(context);
+  });
+
+  it('keeps the native legacy path for project UI compatibility', () => {
+    const context: ContextRef = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'ubuntu-project' },
+    };
+
+    useContextStore.getState().selectContextRef(context, '/home/me/app');
+
+    expect(useContextStore.getState().selectedContext).toBe('/home/me/app');
+    expect(useContextStore.getState().hasExplicitContext).toBe(true);
   });
 
   describe('toggleProjectContext', () => {

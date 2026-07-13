@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { Progress } from '@/components/ui/progress';
-import { installSkills } from '@/hooks/useTauriApi';
+import { installSkills, installSkillsV2 } from '@/hooks/useTauriApi';
 import { parseInstallError } from '@/utils/parse-install-error';
 import { toAppError } from '@/utils/to-app-error';
 import { getEffectiveInstallMode, type WizardState } from './types';
+import type { ContextRef } from '@/bindings';
 
 /** 克隆进度事件（与 SourceStep 共用后端事件） */
 interface CloneProgress {
@@ -31,9 +32,10 @@ interface InstallingStepProps {
   updateState: (updates: Partial<WizardState>) => void;
   scope: 'global' | 'project';
   projectPath?: string;
+  context?: ContextRef;
 }
 
-export function InstallingStep({ state, updateState, scope, projectPath }: InstallingStepProps) {
+export function InstallingStep({ state, updateState, scope, projectPath, context }: InstallingStepProps) {
   const { t } = useTranslation();
 
   const [phase, setPhase] = useState<InstallPhase>('preparing');
@@ -148,7 +150,9 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
       };
 
       try {
-        const results = await installSkills(params);
+        const results = context
+          ? await installSkillsV2(context, params)
+          : await installSkills(params);
 
         updateStateRef.current({
           installResults: results,
@@ -184,7 +188,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
     }
 
     doInstall();
-  }, []);
+  }, [context]);
 
   // 阶段文字
   const getPhaseText = () => {

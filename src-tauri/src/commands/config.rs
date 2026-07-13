@@ -38,6 +38,38 @@ pub fn get_default_target_agents() -> Option<skill_lock::DefaultTargetAgents> {
     skill_lock::get_default_target_agents()
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn get_default_target_agents_v2(
+    context: ContextRef,
+    registry: State<'_, EnvironmentRegistry>,
+) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
+    match &context.environment {
+        EnvironmentRef::Host => Ok(get_default_target_agents()),
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let (locator, _) = crate::commands::remove::wsl_remove_lock_locators(
+                &ContextRef {
+                    environment: context.environment.clone(),
+                    scope: crate::environment::types::ContextScope::Global,
+                },
+                &session,
+                None,
+            );
+            let Some(bytes) = EnvironmentLockIo::Wsl(session)
+                .read_optional(&locator)
+                .await?
+            else {
+                return Ok(None);
+            };
+            let lock: skill_lock::SkillLockFile = serde_json::from_slice(&bytes)?;
+            Ok(lock.default_target_agents)
+        }
+    }
+}
+
 /// 保存 GUI scope-aware 默认安装目标
 #[tauri::command]
 #[specta::specta]

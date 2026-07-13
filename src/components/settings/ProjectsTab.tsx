@@ -1,16 +1,23 @@
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOpen, Trash2, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
-import { useContextStore } from '@/stores/context';
+import { EnvironmentSelect } from '@/components/environments/EnvironmentSelect';
+import { environmentKey, useEnvironmentStore } from '@/stores/environment';
+import { mapEnvironmentPath } from '@/hooks/useTauriApi';
+import type { EnvironmentRef, ProjectBinding } from '@/bindings';
 
 interface ProjectRowProps {
-  path: string;
-  onRemove?: (path: string) => void;
+  project: ProjectBinding;
+  onRemove: (projectId: string) => void;
 }
 
-function ProjectRow({ path, onRemove }: ProjectRowProps) {
-  const basename = path.split(/[/\\]/).pop() || path;
+function ProjectRow({ project, onRemove }: ProjectRowProps) {
+  const { t } = useTranslation();
+  const basename = project.displayName
+    ?? project.nativePath.split(/[/\\]/).pop()
+    ?? project.nativePath;
 
   return (
     <div className="group flex items-center justify-between px-4 py-3 my-0.5 mx-1.5 rounded-md transition-colors hover:bg-muted/30">
@@ -20,14 +27,17 @@ function ProjectRow({ path, onRemove }: ProjectRowProps) {
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-semibold text-foreground truncate">{basename}</span>
-          <span className="text-[10px] font-mono text-muted-foreground truncate opacity-80 mt-0.5">{path}</span>
+          <span className="text-[10px] font-mono text-muted-foreground truncate opacity-80 mt-0.5">
+            {project.nativePath}
+          </span>
         </div>
       </div>
       <Button
         variant="ghost"
         size="icon"
         className="h-8 w-8 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 cursor-pointer flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all"
-        onClick={() => onRemove?.(path)}
+        onClick={() => onRemove(project.id)}
+        aria-label={t('settings.removeProject')}
       >
         <Trash2 className="h-4 w-4" />
       </Button>
@@ -37,7 +47,38 @@ function ProjectRow({ path, onRemove }: ProjectRowProps) {
 
 export function ProjectsTab() {
   const { t } = useTranslation();
-  const { projects, addProject, removeProject } = useContextStore();
+  const {
+    environments,
+    selectedEnvironment,
+    projectsByEnvironment,
+    projectsLoaded,
+    errors,
+    selectEnvironment,
+    refreshProjects,
+    addProject,
+    removeProject,
+  } = useEnvironmentStore();
+  const selectedKey = environmentKey(selectedEnvironment);
+  const projects = projectsByEnvironment[selectedKey] ?? [];
+  const isLoaded = projectsLoaded[selectedKey] ?? false;
+  const loadError = errors[selectedKey];
+  const selectedStatus = environments.find(
+    (entry) => environmentKey(entry.environment) === selectedKey,
+  )?.status;
+
+  useEffect(() => {
+    if (!isLoaded && !loadError && selectedStatus !== 'connecting') {
+      void refreshProjects(selectedEnvironment).catch(() => undefined);
+    }
+  }, [isLoaded, loadError, refreshProjects, selectedEnvironment, selectedKey, selectedStatus]);
+
+  const handleEnvironmentChange = async (environment: EnvironmentRef) => {
+    try {
+      await selectEnvironment(environment);
+    } catch (error) {
+      console.error('Failed to select environment:', error);
+    }
+  };
 
   const handleAddProject = async () => {
     try {
@@ -46,11 +87,21 @@ export function ProjectsTab() {
         multiple: false,
         title: t('settings.addProject'),
       });
-      if (selected && typeof selected === 'string') {
-        await addProject(selected);
-      }
+      if (!selected || typeof selected !== 'string') return;
+      const nativePath = selectedEnvironment.kind === 'wsl'
+        ? await mapEnvironmentPath(selectedEnvironment, selected)
+        : selected;
+      await addProject(nativePath, selectedEnvironment);
     } catch (error) {
-      console.error('Failed to open folder picker:', error);
+      console.error('Failed to add project:', error);
+    }
+  };
+
+  const handleRemoveProject = async (projectId: string) => {
+    try {
+      await removeProject(projectId, selectedEnvironment);
+    } catch (error) {
+      console.error('Failed to remove project:', error);
     }
   };
 
@@ -69,14 +120,38 @@ export function ProjectsTab() {
           size="sm"
           className="h-8 cursor-pointer gap-1.5 px-3 text-xs font-medium"
           onClick={handleAddProject}
+          aria-label={t('settings.addProject')}
+          disabled={selectedStatus === 'connecting' || selectedStatus === 'unavailable' || selectedStatus === 'error'}
         >
           <Plus className="h-3.5 w-3.5" />
           {t('settings.addProject')}
         </Button>
       </header>
 
+      <EnvironmentSelect
+        environments={environments}
+        value={selectedEnvironment}
+        onChange={handleEnvironmentChange}
+        className="h-9 w-full max-w-xs rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
+      />
+
       <section className="overflow-hidden rounded-lg border border-border/60 bg-background">
-        {projects.length === 0 ? (
+        {loadError ? (
+          <div className="flex flex-col items-center px-6 py-10 text-center">
+            <p className="text-sm text-muted-foreground">{t('context.projectsLoadError')}</p>
+            <Button
+              variant="link"
+              size="sm"
+              onClick={() => void refreshProjects(selectedEnvironment).catch(() => undefined)}
+            >
+              {t('context.environmentRetry')}
+            </Button>
+          </div>
+        ) : !isLoaded ? (
+          <div className="px-6 py-10 text-center text-sm text-muted-foreground">
+            {t('common.loading')}
+          </div>
+        ) : projects.length === 0 ? (
           <div className="flex flex-col items-center px-6 py-10 text-center">
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
               <FolderOpen className="h-5 w-5" />
@@ -90,11 +165,11 @@ export function ProjectsTab() {
           </div>
         ) : (
           <div className="divide-y divide-border/50">
-            {projects.map((path) => (
+            {projects.map((project) => (
               <ProjectRow
-                key={path}
-                path={path}
-                onRemove={(path) => removeProject(path)}
+                key={project.id}
+                project={project}
+                onRemove={(projectId) => void handleRemoveProject(projectId)}
               />
             ))}
           </div>

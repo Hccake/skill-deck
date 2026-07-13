@@ -11,6 +11,7 @@ import { WizardPage } from '@/pages/WizardPage';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useSkillsDataStore } from '@/stores/skills-data';
+import { useEnvironmentStore } from '@/stores/environment';
 import { useUpdaterStore } from '@/stores/updater';
 import { UpdateDialog } from '@/components/update-dialog';
 
@@ -29,10 +30,12 @@ function MainLayout() {
 
 // advanced-init-once: 防止 Strict Mode 双调用
 let didInit = false;
+let didDiscoverEnvironments = false;
 
 function App() {
   const { t } = useTranslation();
   const fetchSkills = useSkillsDataStore((s) => s.fetchSkills);
+  const discoverEnvironments = useEnvironmentStore((s) => s.discoverEnvironments);
   // rerender-defer-reads: 不订阅 error，减少不必要的 App 重渲染
   const { status, checkForUpdate, shouldAutoCheck } = useUpdaterStore();
 
@@ -54,6 +57,14 @@ function App() {
       checkForUpdate();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (window.location.pathname === '/wizard' || didDiscoverEnvironments) return;
+    didDiscoverEnvironments = true;
+    void discoverEnvironments().catch((error) => {
+      console.error('Failed to discover environments:', error);
+    });
+  }, [discoverEnvironments]);
 
   // 错误时弹 toast — rerender-defer-reads: 用 getState() 按需读取 error
   useEffect(() => {

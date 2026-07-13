@@ -1,10 +1,40 @@
 // src-tauri/src/commands/wizard.rs
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
+use crate::environment::types::ContextRef;
+
 const INSTALL_WIZARD_WIDTH: f64 = 680.0;
 const INSTALL_WIZARD_HEIGHT: f64 = 560.0;
 const INSTALL_WIZARD_MIN_WIDTH: f64 = 620.0;
 const INSTALL_WIZARD_MIN_HEIGHT: f64 = 480.0;
+
+fn build_wizard_query(
+    entry_point: &str,
+    scope: &str,
+    project_path: Option<&str>,
+    prefill_source: Option<&str>,
+    prefill_skill_name: Option<&str>,
+    context: Option<&ContextRef>,
+) -> Result<String, crate::error::AppError> {
+    let mut query_parts = vec![
+        format!("entryPoint={}", urlencoding::encode(entry_point)),
+        format!("scope={}", urlencoding::encode(scope)),
+    ];
+    if let Some(path) = project_path {
+        query_parts.push(format!("projectPath={}", urlencoding::encode(path)));
+    }
+    if let Some(source) = prefill_source {
+        query_parts.push(format!("prefillSource={}", urlencoding::encode(source)));
+    }
+    if let Some(name) = prefill_skill_name {
+        query_parts.push(format!("prefillSkillName={}", urlencoding::encode(name)));
+    }
+    if let Some(context) = context {
+        let context_json = serde_json::to_string(context)?;
+        query_parts.push(format!("context={}", urlencoding::encode(&context_json)));
+    }
+    Ok(query_parts.join("&"))
+}
 
 /// 打开安装向导独立窗口
 ///
@@ -20,6 +50,7 @@ pub async fn open_install_wizard(
     project_path: Option<String>,
     prefill_source: Option<String>,
     prefill_skill_name: Option<String>,
+    context: Option<ContextRef>,
 ) -> Result<(), crate::error::AppError> {
     // 如果窗口已存在，聚焦并返回
     if let Some(window) = app.get_webview_window("install-wizard") {
@@ -29,21 +60,14 @@ pub async fn open_install_wizard(
         return Ok(());
     }
 
-    // 构建 query string
-    let mut query_parts = vec![
-        format!("entryPoint={}", entry_point),
-        format!("scope={}", scope),
-    ];
-    if let Some(ref path) = project_path {
-        query_parts.push(format!("projectPath={}", urlencoding::encode(path)));
-    }
-    if let Some(ref source) = prefill_source {
-        query_parts.push(format!("prefillSource={}", urlencoding::encode(source)));
-    }
-    if let Some(ref name) = prefill_skill_name {
-        query_parts.push(format!("prefillSkillName={}", urlencoding::encode(name)));
-    }
-    let query = query_parts.join("&");
+    let query = build_wizard_query(
+        &entry_point,
+        &scope,
+        project_path.as_deref(),
+        prefill_source.as_deref(),
+        prefill_skill_name.as_deref(),
+        context.as_ref(),
+    )?;
     let url = WebviewUrl::App(format!("/wizard?{}", query).into());
 
     let main_window = app
@@ -75,6 +99,7 @@ pub async fn open_install_wizard(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 
     #[test]
     fn install_wizard_uses_wider_default_window() {
@@ -82,5 +107,28 @@ mod tests {
         assert_eq!(INSTALL_WIZARD_HEIGHT, 560.0);
         assert_eq!(INSTALL_WIZARD_MIN_WIDTH, 620.0);
         assert_eq!(INSTALL_WIZARD_MIN_HEIGHT, 480.0);
+    }
+
+    #[test]
+    fn wizard_query_keeps_explicit_context() {
+        let query = build_wizard_query(
+            "skills-panel",
+            "project",
+            Some("/home/me/project"),
+            None,
+            None,
+            Some(&ContextRef {
+                environment: EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu".to_string(),
+                },
+                scope: ContextScope::Project {
+                    project_id: "project-1".to_string(),
+                },
+            }),
+        )
+        .expect("build query");
+
+        assert!(query.contains("context="));
+        assert!(query.contains("projectPath=%2Fhome%2Fme%2Fproject"));
     }
 }

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { fetchAvailable } from '@/hooks/useTauriApi';
+import { fetchAvailable, fetchAvailableV2 } from '@/hooks/useTauriApi';
 import { parseSkillsCommand } from '@/utils/parse-skills-command';
 import { formatAppError } from '@/utils/format-app-error';
 import { toAppError } from '@/utils/to-app-error';
@@ -83,7 +83,9 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         return;
       }
 
-      const result = await fetchAvailable(actualSource);
+      const result = state.context
+        ? await fetchAvailableV2(state.context, actualSource)
+        : await fetchAvailable(actualSource);
 
       if (result.skills.length === 0) {
         updateState({
@@ -127,7 +129,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         riskAcknowledged: false,
       });
     }
-  }, [updateState, onNext, t]);
+  }, [updateState, onNext, state.context, t]);
 
   const handleFetch = useCallback(() => {
     handleFetchWithSource(state.source);

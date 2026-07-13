@@ -7,8 +7,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   listAgents,
   listAgentsForProject,
+  listAgentsForProjectV2,
   listEveInstallTargets,
   getDefaultTargetAgents,
+  getDefaultTargetAgentsV2,
   getLastSelectedAgents,
 } from '@/hooks/useTauriApi';
 import { canCreatePrivateCopy, filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
@@ -54,14 +56,20 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
     async function initAgents() {
       const isProjectScope = scope === 'project';
       const projectPath = state.projectPath;
-      const agentsPromise = isProjectScope
-        ? listAgentsForProject(projectPath)
-        : listAgents();
-      const eveTargetsPromise = isProjectScope && projectPath
+      const agentsPromise = state.context
+        ? listAgentsForProjectV2(state.context)
+        : isProjectScope
+          ? listAgentsForProject(projectPath)
+          : listAgents();
+      const eveTargetsPromise = !state.context && isProjectScope && projectPath
         ? listEveInstallTargets(projectPath).catch(() => [])
         : Promise.resolve([] as InstallTargetInfo[]);
-      const lastSelectedPromise = getLastSelectedAgents();
-      const targetDefaultsPromise = getDefaultTargetAgents().catch(() => null);
+      const lastSelectedPromise = state.context
+        ? Promise.resolve([])
+        : getLastSelectedAgents();
+      const targetDefaultsPromise = state.context
+        ? getDefaultTargetAgentsV2(state.context).catch(() => null)
+        : getDefaultTargetAgents().catch(() => null);
 
       const [allAgents, eveTargets, lastSelected, targetDefaults] = await Promise.all([
         agentsPromise,
@@ -112,7 +120,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
     }
 
     initAgents();
-  }, [scope, state.projectPath]);
+  }, [scope, state.projectPath, state.context]);
 
   const handleSelectionChange = useCallback(
     (agents: string[]) => {

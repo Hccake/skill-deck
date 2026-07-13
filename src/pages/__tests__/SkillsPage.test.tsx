@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { SkillsPage } from '../SkillsPage';
-import type { InstalledSkill } from '@/bindings';
+import type { ContextRef, EnvironmentRef, InstalledSkill } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -16,7 +16,22 @@ vi.mock('react-i18next', () => ({
 const mocks = vi.hoisted(() => ({
   contextState: {
     selectedContext: 'global',
+    selectedContextRef: {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    } as ContextRef,
+    hasExplicitContext: false,
     projects: [] as string[],
+  },
+  environmentState: {
+    selectedEnvironment: { kind: 'host' as const } as EnvironmentRef,
+    projectsByEnvironment: {} as Record<string, Array<{
+      id: string;
+      nativePath: string;
+      displayName: string | null;
+      order: number | null;
+      suppressCrossStorageWarning: boolean;
+    }>>,
   },
   skillsDataState: {
     globalSkills: [] as InstalledSkill[],
@@ -41,7 +56,7 @@ const mocks = vi.hoisted(() => ({
     saveAgentChanges: vi.fn(),
     manageAgentsSkill: null,
     manageAgentsScope: 'global',
-    copySkill: null,
+    copySkill: null as InstalledSkill | null,
     openCopyToProject: vi.fn(),
     closeCopyToProject: vi.fn(),
     executeCopy: vi.fn(),
@@ -71,6 +86,13 @@ function makeSkill(name: string, overrides: Partial<InstalledSkill> = {}): Insta
 
 vi.mock('@/stores/context', () => ({
   useContextStore: (selector: (state: typeof mocks.contextState) => unknown) => selector(mocks.contextState),
+}));
+
+vi.mock('@/stores/environment', () => ({
+  environmentKey: (environment: { kind: string; distro_name?: string }) => (
+    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
+  ),
+  useEnvironmentStore: (selector: (state: typeof mocks.environmentState) => unknown) => selector(mocks.environmentState),
 }));
 
 vi.mock('@/stores/skills-data', () => ({
@@ -148,6 +170,13 @@ vi.mock('@/components/ui/resizable', () => ({
 describe('SkillsPage', () => {
   beforeEach(() => {
     mocks.contextState.selectedContext = 'global';
+    mocks.contextState.selectedContextRef = {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    };
+    mocks.contextState.hasExplicitContext = false;
+    mocks.environmentState.selectedEnvironment = { kind: 'host' };
+    mocks.environmentState.projectsByEnvironment = {};
     mocks.skillsDataState.globalSkills = [];
     mocks.skillsDataState.projectSkills = [];
     mocks.skillsDataState.allAgents = [];
@@ -161,6 +190,7 @@ describe('SkillsPage', () => {
     mocks.skillDetailState.deselectSkill.mockReset();
     mocks.skillDetailState.reloadContent.mockReset();
     mocks.skillDialogState.openDelete.mockReset();
+    mocks.skillDialogState.copySkill = null;
     mocks.resizable.groups.length = 0;
     mocks.resizable.panels.length = 0;
     mocks.resizable.lifecycle.length = 0;
@@ -286,6 +316,62 @@ describe('SkillsPage', () => {
     fireEvent.click(detailButton);
 
     expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith('global');
+  });
+
+  it('uses the explicit environment key for detail update progress', () => {
+    const context: ContextRef = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    };
+    mocks.contextState.hasExplicitContext = true;
+    mocks.contextState.selectedContextRef = context;
+    mocks.skillDetailState.selectedSkillRef = {
+      name: 'toolkit',
+      scope: 'global',
+    };
+    mocks.skillsDataState.globalSkills = [makeSkill('toolkit')];
+    mocks.skillsDataState.checkingUpdateScopes = new Set([JSON.stringify(context)]);
+
+    const { getByText } = render(<SkillsPage />);
+
+    expect(getByText('skill-detail-panel').getAttribute('data-checking-updates')).toBe('true');
+  });
+
+  it('shows copy targets from the selected WSL environment', () => {
+    mocks.contextState.hasExplicitContext = true;
+    mocks.contextState.selectedContext = '/home/me/current';
+    mocks.contextState.selectedContextRef = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'current' },
+    };
+    mocks.environmentState.selectedEnvironment = {
+      kind: 'wsl',
+      distro_name: 'Ubuntu',
+    };
+    mocks.environmentState.projectsByEnvironment = {
+      'wsl:Ubuntu': [
+        {
+          id: 'current',
+          nativePath: '/home/me/current',
+          displayName: null,
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        {
+          id: 'target',
+          nativePath: '/home/me/target',
+          displayName: null,
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+      ],
+    };
+    mocks.skillDialogState.copySkill = makeSkill('toolkit', { scope: 'project' });
+
+    const { getByText, queryByText } = render(<SkillsPage />);
+
+    expect(getByText('/home/me/target')).toBeDefined();
+    expect(queryByText('/home/me/current')).toBeNull();
   });
 
   it('derives the selected skill from the shared skills store', () => {

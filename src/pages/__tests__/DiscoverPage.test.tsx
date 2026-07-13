@@ -4,6 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DiscoverPage } from '../DiscoverPage';
+import type { ContextRef } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -24,6 +25,15 @@ const mocks = vi.hoisted(() => ({
   contextState: {
     projects: [] as string[],
     projectsLoaded: true,
+    selectedContextRef: {
+      environment: { kind: 'host' as const },
+      scope: { scope: 'global' as const },
+    } as ContextRef,
+    hasExplicitContext: false,
+  },
+  environmentState: {
+    projectsByEnvironment: {} as Record<string, unknown[]>,
+    projectsLoaded: {} as Record<string, boolean>,
   },
   resizable: {
     groups: [] as Array<Record<string, unknown>>,
@@ -41,6 +51,13 @@ vi.mock('@/stores/skill-dialog', () => ({
 
 vi.mock('@/stores/context', () => ({
   useContextStore: (selector: (state: typeof mocks.contextState) => unknown) => selector(mocks.contextState),
+}));
+
+vi.mock('@/stores/environment', () => ({
+  environmentKey: (environment: { kind: string; distro_name?: string }) => (
+    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
+  ),
+  useEnvironmentStore: (selector: (state: typeof mocks.environmentState) => unknown) => selector(mocks.environmentState),
 }));
 
 vi.mock('@/components/skills/discover/DiscoverListPanel', () => ({
@@ -72,6 +89,13 @@ describe('DiscoverPage', () => {
     mocks.skillDialogState.openAddWithPrefill.mockReset();
     mocks.contextState.projects = [];
     mocks.contextState.projectsLoaded = true;
+    mocks.contextState.selectedContextRef = {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    };
+    mocks.contextState.hasExplicitContext = false;
+    mocks.environmentState.projectsByEnvironment = {};
+    mocks.environmentState.projectsLoaded = {};
     mocks.resizable.groups.length = 0;
     mocks.resizable.panels.length = 0;
   });
@@ -98,5 +122,22 @@ describe('DiscoverPage', () => {
       defaultSize: '70%',
       minSize: '30%',
     });
+  });
+
+  it('loads installed project locations when the explicit environment is ready', () => {
+    mocks.contextState.projectsLoaded = false;
+    mocks.contextState.hasExplicitContext = true;
+    mocks.contextState.selectedContextRef = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    };
+    mocks.environmentState.projectsByEnvironment = {
+      'wsl:Ubuntu': [{ id: 'project-1', nativePath: '/home/me/app' }],
+    };
+    mocks.environmentState.projectsLoaded = { 'wsl:Ubuntu': true };
+
+    render(<DiscoverPage />);
+
+    expect(mocks.skillsDataState.fetchAllProjectsSkills).toHaveBeenCalledTimes(1);
   });
 });

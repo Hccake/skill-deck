@@ -1252,7 +1252,11 @@ mod tests {
         write_source_lock(
             source.path(),
             "my-skill",
-            remote_lock_entry("owner/repo", Some("skills/my-skill/SKILL.md"), Some("remote123")),
+            remote_lock_entry(
+                "owner/repo",
+                Some("skills/my-skill/SKILL.md"),
+                Some("remote123"),
+            ),
         );
 
         let result = copy_skill_to_projects(
@@ -1300,7 +1304,11 @@ mod tests {
         write_source_lock(
             source.path(),
             "my-skill",
-            remote_lock_entry("owner/repo", Some("skills/my-skill/SKILL.md"), Some("remote123")),
+            remote_lock_entry(
+                "owner/repo",
+                Some("skills/my-skill/SKILL.md"),
+                Some("remote123"),
+            ),
         );
 
         let result = copy_skill_to_projects(

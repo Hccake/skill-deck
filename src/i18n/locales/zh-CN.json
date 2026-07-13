@@ -23,6 +23,11 @@
     "sectionGlobal": "全局",
     "sectionProjects": "项目",
     "noProjects": "暂无项目",
+    "environmentLabel": "开发环境",
+    "environmentConnecting": "正在连接",
+    "environmentUnavailable": "不可用",
+    "environmentRetry": "重试",
+    "projectsLoadError": "无法加载此环境中的项目",
     "openInExplorer": "在文件管理器中打开",
     "remove": "移除",
     "removeConfirm": {
@@ -394,6 +399,7 @@
     "projectsEmpty": "暂无已添加的项目",
     "projectsEmptyHint": "添加项目以管理项目级 Skills",
     "addProject": "添加项目",
+    "removeProject": "移除项目",
     "about": "关于",
     "aboutSections": {
       "tagline": "桌面级 Agent 管理器"
@@ -548,6 +554,7 @@
       "hint": "选择此 Skill 的使用范围。",
       "global": "全局",
       "globalHint": "可在所有项目中使用 · {{path}}",
+      "environmentGlobalHint": "安装到当前环境的全局 Skill 目录",
       "localProjects": "项目"
     },
     "mode": {
@@ -647,6 +654,7 @@
       "invalidSource": "无效的来源格式: {{value}}",
       "pathNotFound": "路径未找到: {{path}}",
       "installFailed": "安装失败",
+      "mutationBusy": "另一个 Skill 操作正在进行中",
       "riskConfirmationRequired": "该来源需要先确认风险后才能安装",
       "parseFailed": "解析失败",
       "suggestion": {

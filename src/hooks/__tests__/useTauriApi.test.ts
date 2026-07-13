@@ -6,7 +6,19 @@ const { mockCommands } = vi.hoisted(() => ({
     listAgents: vi.fn(),
     listSkills: vi.fn(),
     installSkills: vi.fn(),
+    installSkillsV2: vi.fn(),
     updateSkill: vi.fn(),
+    updateSkillV2: vi.fn(),
+    removeSkillV2: vi.fn(),
+    getSkillAgentDetailsV2: vi.fn(),
+    manageSkillAgentsV2: vi.fn(),
+    cleanupDuplicateAgentCopiesV2: vi.fn(),
+    copySkillToProjectsV2: vi.fn(),
+    saveDefaultTargetAgentsV2: vi.fn(),
+    checkOverwritesV2: vi.fn(),
+    checkUpdatesV2: vi.fn(),
+    updateSkillsBatchV2: vi.fn(),
+    mapEnvironmentPathV2: vi.fn(),
     getConfig: vi.fn(),
   },
 }));
@@ -15,7 +27,15 @@ vi.mock('@/bindings', () => ({
   commands: mockCommands,
 }));
 
-import { installSkills, listAgents, listSkills, updateSkill } from '../useTauriApi';
+import {
+  installSkills,
+  installSkillsV2,
+  listAgents,
+  listSkills,
+  mapEnvironmentPath,
+  updateSkill,
+  updateSkillV2,
+} from '../useTauriApi';
 
 describe('useTauriApi unwrap logic', () => {
   beforeEach(() => {
@@ -136,5 +156,49 @@ describe('useTauriApi unwrap logic', () => {
     const result = await updateSkill({ scope: 'global', name: 'test-skill' });
     expect(result).toEqual(response);
     expect(result.results[0].agentResults).toHaveLength(1);
+  });
+
+  it('routes explicit context operations through v2 commands', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'project-1' },
+    } as const;
+    const response = { successful: [], failed: [], symlinkFallbackAgents: [] };
+    mockCommands.installSkillsV2.mockResolvedValue({ status: 'ok', data: response });
+    mockCommands.updateSkillV2.mockResolvedValue({ status: 'ok', data: { results: [], summary: {} } });
+
+    await installSkillsV2(context, {
+      source: 'owner/repo',
+      skills: ['demo'],
+      agents: [],
+      privateCopyAgents: [],
+      scope: 'project',
+      projectPath: null,
+      mode: 'copy',
+      retry: false,
+    });
+    await updateSkillV2(context, 'demo');
+
+    expect(mockCommands.installSkillsV2).toHaveBeenCalledWith(context, expect.objectContaining({
+      skills: ['demo'],
+    }));
+    expect(mockCommands.updateSkillV2).toHaveBeenCalledWith(context, 'demo');
+  });
+
+  it('maps host picker paths through the selected environment', async () => {
+    const environment = { kind: 'wsl', distro_name: 'Ubuntu' } as const;
+    mockCommands.mapEnvironmentPathV2.mockResolvedValue({
+      status: 'ok',
+      data: '/home/me/app',
+    });
+
+    await expect(mapEnvironmentPath(
+      environment,
+      '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
+    )).resolves.toBe('/home/me/app');
+    expect(mockCommands.mapEnvironmentPathV2).toHaveBeenCalledWith(
+      environment,
+      '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
+    );
   });
 });

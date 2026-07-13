@@ -16,9 +16,11 @@ vi.mock('react-i18next', () => ({
 }));
 
 const fetchAvailableMock = vi.fn();
+const fetchAvailableV2Mock = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   fetchAvailable: (source: string) => fetchAvailableMock(source),
+  fetchAvailableV2: (...args: unknown[]) => fetchAvailableV2Mock(...args),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -110,6 +112,7 @@ function Harness({ onNext }: { onNext: () => void }) {
 describe('SourceStep', () => {
   beforeEach(() => {
     fetchAvailableMock.mockReset();
+    fetchAvailableV2Mock.mockReset();
   });
 
   it('stores risk policy from fetchAvailable', async () => {
@@ -162,5 +165,32 @@ describe('SourceStep', () => {
     await waitFor(() => {
       expect(onNext).toHaveBeenCalled();
     });
+  });
+
+  it('fetches from the explicit target context', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    } as const;
+    fetchAvailableV2Mock.mockResolvedValue({
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      gitRef: null,
+      skillFilter: null,
+      riskPolicy: { kind: 'none', code: null },
+      skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' }],
+    });
+
+    render(
+      <SourceStep
+        state={{ ...createState(), source: 'owner/repo', context }}
+        updateState={() => undefined}
+        onNext={() => undefined}
+        autoFetch
+      />
+    );
+
+    await waitFor(() => expect(fetchAvailableV2Mock).toHaveBeenCalledWith(context, 'owner/repo'));
+    expect(fetchAvailableMock).not.toHaveBeenCalled();
   });
 });

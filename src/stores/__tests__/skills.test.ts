@@ -6,38 +6,59 @@ import { useSkillsDataStore } from '../skills-data';
 import { useSkillDetailStore } from '../skill-detail';
 import { useSkillDialogStore } from '../skill-dialog';
 import { useContextStore } from '../context';
+import { useEnvironmentStore } from '../environment';
 import { buildUpdatePlan, clearUpdateCacheForSkill, mergeUpdateInfo, updateInfoCache } from '../skills-utils';
 
 const mockListSkills = vi.fn();
+const mockListSkillsV2 = vi.fn();
 const mockListAgents = vi.fn();
 const mockListAgentsForProject = vi.fn();
+const mockListAgentsForProjectV2 = vi.fn();
 const mockRemoveSkill = vi.fn();
+const mockRemoveSkillV2 = vi.fn();
 const mockGetAgentDetails = vi.fn();
+const mockGetAgentDetailsV2 = vi.fn();
 const mockCheckUpdates = vi.fn();
+const mockCheckUpdatesV2 = vi.fn();
 const mockUpdateSkill = vi.fn();
+const mockUpdateSkillV2 = vi.fn();
 const mockUpdateSkillsBatch = vi.fn();
+const mockUpdateSkillsBatchV2 = vi.fn();
 const mockOpenInstallWizard = vi.fn();
 const mockCheckSkillAudit = vi.fn();
 const mockReadSkillContent = vi.fn();
 const mockManageSkillAgents = vi.fn();
+const mockManageSkillAgentsV2 = vi.fn();
 const mockCleanupDuplicateAgentCopies = vi.fn();
+const mockCleanupDuplicateAgentCopiesV2 = vi.fn();
 const mockCopySkillToProjects = vi.fn();
+const mockCopySkillToProjectsV2 = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mockListSkills(...args),
+  listSkillsV2: (...args: unknown[]) => mockListSkillsV2(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
   listAgentsForProject: (...args: unknown[]) => mockListAgentsForProject(...args),
+  listAgentsForProjectV2: (...args: unknown[]) => mockListAgentsForProjectV2(...args),
   removeSkill: (...args: unknown[]) => mockRemoveSkill(...args),
+  removeSkillV2: (...args: unknown[]) => mockRemoveSkillV2(...args),
   getSkillAgentDetails: (...args: unknown[]) => mockGetAgentDetails(...args),
+  getSkillAgentDetailsV2: (...args: unknown[]) => mockGetAgentDetailsV2(...args),
   checkUpdates: (...args: unknown[]) => mockCheckUpdates(...args),
+  checkUpdatesV2: (...args: unknown[]) => mockCheckUpdatesV2(...args),
   updateSkill: (...args: unknown[]) => mockUpdateSkill(...args),
+  updateSkillV2: (...args: unknown[]) => mockUpdateSkillV2(...args),
   updateSkillsBatch: (...args: unknown[]) => mockUpdateSkillsBatch(...args),
+  updateSkillsBatchV2: (...args: unknown[]) => mockUpdateSkillsBatchV2(...args),
   openInstallWizard: (...args: unknown[]) => mockOpenInstallWizard(...args),
   checkSkillAudit: (...args: unknown[]) => mockCheckSkillAudit(...args),
   readSkillContent: (...args: unknown[]) => mockReadSkillContent(...args),
   manageSkillAgents: (...args: unknown[]) => mockManageSkillAgents(...args),
+  manageSkillAgentsV2: (...args: unknown[]) => mockManageSkillAgentsV2(...args),
   cleanupDuplicateAgentCopies: (...args: unknown[]) => mockCleanupDuplicateAgentCopies(...args),
+  cleanupDuplicateAgentCopiesV2: (...args: unknown[]) => mockCleanupDuplicateAgentCopiesV2(...args),
   copySkillToProjects: (...args: unknown[]) => mockCopySkillToProjects(...args),
+  copySkillToProjectsV2: (...args: unknown[]) => mockCopySkillToProjectsV2(...args),
 }));
 
 vi.mock('sonner', () => ({
@@ -63,11 +84,23 @@ const initialSkillsDataActions = {
 describe('useSkillsStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useContextStore.setState({ selectedContext: 'global' });
+    useContextStore.setState({
+      selectedContext: 'global',
+      hasExplicitContext: false,
+      selectedContextRef: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+    });
+    useEnvironmentStore.setState({
+      selectedEnvironment: { kind: 'host' },
+      projectsByEnvironment: {},
+      projectsLoaded: {},
+    });
     mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
+    mockListSkillsV2.mockResolvedValue({ skills: [], pathExists: true });
     mockListAgents.mockResolvedValue([]);
     mockListAgentsForProject.mockResolvedValue([]);
+    mockListAgentsForProjectV2.mockResolvedValue([]);
     mockCheckUpdates.mockResolvedValue([]);
+    mockCheckUpdatesV2.mockResolvedValue([]);
     mockOpenInstallWizard.mockResolvedValue(undefined);
     updateInfoCache.clear();
     mockUpdateSkillsBatch.mockReset();
@@ -79,6 +112,7 @@ describe('useSkillsStore', () => {
       loading: true,
       error: null,
       auditCache: {},
+      allProjectsSkills: new Map(),
       isSyncing: false,
       checkingUpdateScopes: new Set(),
       updatingSkills: new Map(),
@@ -100,9 +134,49 @@ describe('useSkillsStore', () => {
       manageAgentsSkill: null,
       manageAgentsScope: 'global',
       manageAgentsProjectPath: undefined,
+      manageAgentsContext: undefined,
       copySkill: null,
+      copyContext: undefined,
       repairSourceTarget: null,
     });
+  });
+
+  it('loads Discover project locations from the explicit WSL environment', async () => {
+    const context = {
+      environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
+      scope: { scope: 'global' as const },
+    };
+    useContextStore.setState({
+      selectedContext: 'global',
+      selectedContextRef: context,
+      hasExplicitContext: true,
+    });
+    useEnvironmentStore.setState({
+      selectedEnvironment: context.environment,
+      projectsByEnvironment: {
+        'wsl:Ubuntu': [{
+          id: 'project-1',
+          nativePath: '/home/me/app',
+          displayName: null,
+          order: null,
+          suppressCrossStorageWarning: false,
+        }],
+      },
+      projectsLoaded: { 'wsl:Ubuntu': true },
+    });
+    mockListSkillsV2.mockResolvedValue({
+      skills: [makeSkill('toolkit', { scope: 'project' })],
+      pathExists: true,
+    });
+
+    await useSkillsDataStore.getState().fetchAllProjectsSkills();
+
+    expect(mockListSkillsV2).toHaveBeenCalledWith({
+      environment: context.environment,
+      scope: { scope: 'project', project_id: 'project-1' },
+    });
+    expect(useSkillsDataStore.getState().allProjectsSkills.get('/home/me/app'))
+      .toEqual([expect.objectContaining({ name: 'toolkit' })]);
   });
 
   describe('mergeUpdateInfo', () => {
@@ -366,9 +440,73 @@ describe('useSkillsStore', () => {
       expect(useSkillDialogStore.getState().agentDetails).toBeNull();
       expect(useSkillDialogStore.getState().loadingAgentDetails).toBe(false);
     });
+
+    it('uses v2 details and remove commands for an explicit WSL context', async () => {
+      const context = {
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+        scope: { scope: 'project', project_id: 'project-1' },
+      } as const;
+      const skill = makeSkill('toolkit', { scope: 'project' });
+      mockGetAgentDetailsV2.mockResolvedValue({
+        skillName: 'toolkit',
+        scope: 'project',
+        canonicalPath: '/home/me/project/.agents/skills/toolkit',
+        automaticAgents: [],
+        independentAgents: [],
+        defaultAvailableAgents: [],
+        privateRequiredAgents: [],
+        duplicateCopyAgents: [],
+        privateOnlyAgents: [],
+      });
+      mockRemoveSkillV2.mockResolvedValue({ removed: true, removedPaths: [] });
+      useContextStore.setState({
+        selectedContextRef: context,
+        hasExplicitContext: true,
+      });
+
+      useSkillDialogStore.getState().openDelete(skill, 'project');
+      await vi.waitFor(() => expect(mockGetAgentDetailsV2).toHaveBeenCalledWith(context, 'toolkit'));
+      useContextStore.setState({
+        selectedContextRef: {
+          environment: { kind: 'wsl', distro_name: 'Debian' },
+          scope: { scope: 'project', project_id: 'project-2' },
+        },
+      });
+      await useSkillDialogStore.getState().deleteSkill({ fullRemoval: true });
+
+      expect(mockRemoveSkillV2).toHaveBeenCalledWith(context, {
+        name: 'toolkit',
+        fullRemoval: true,
+        agents: undefined,
+        agentTargets: undefined,
+      });
+      expect(mockRemoveSkill).not.toHaveBeenCalled();
+    });
   });
 
   describe('updateSkill', () => {
+    it('uses updateSkillV2 for an explicit WSL context', async () => {
+      const context = {
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+        scope: { scope: 'global' },
+      } as const;
+      mockUpdateSkillV2.mockResolvedValue({
+        results: [{
+          name: 'toolkit',
+          status: 'success',
+          warnings: [],
+          agentResults: [],
+        }],
+        summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
+      });
+      useContextStore.setState({ selectedContextRef: context, hasExplicitContext: true });
+
+      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+
+      expect(mockUpdateSkillV2).toHaveBeenCalledWith(context, 'toolkit');
+      expect(mockUpdateSkill).not.toHaveBeenCalled();
+    });
+
     it('tracks updating state by scope and name identity', async () => {
       let resolveUpdate: ((value: unknown) => void) | undefined;
       mockUpdateSkill.mockImplementation(

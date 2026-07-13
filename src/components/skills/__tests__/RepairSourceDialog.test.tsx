@@ -9,7 +9,9 @@ import type { FetchResult } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   fetchAvailable: vi.fn(),
+  fetchAvailableV2: vi.fn(),
   installSkills: vi.fn(),
+  installSkillsV2: vi.fn(),
   markSourceRepairSucceeded: vi.fn(),
   syncSkills: vi.fn(),
 }));
@@ -25,7 +27,9 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/hooks/useTauriApi', () => ({
   fetchAvailable: (...args: unknown[]) => mocks.fetchAvailable(...args),
+  fetchAvailableV2: (...args: unknown[]) => mocks.fetchAvailableV2(...args),
   installSkills: (...args: unknown[]) => mocks.installSkills(...args),
+  installSkillsV2: (...args: unknown[]) => mocks.installSkillsV2(...args),
 }));
 
 vi.mock('@/stores/skills-data', () => ({
@@ -56,7 +60,23 @@ describe('RepairSourceDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.fetchAvailable.mockResolvedValue(fetchResult(['toolkit']));
+    mocks.fetchAvailableV2.mockResolvedValue(fetchResult(['toolkit']));
     mocks.installSkills.mockResolvedValue({
+      successful: [{
+        skillName: 'toolkit',
+        agent: 'claude-code',
+        success: true,
+        path: '/agent/toolkit',
+        canonicalPath: '/canonical/toolkit',
+        mode: 'copy',
+        symlinkFailed: false,
+        skipped: false,
+        error: null,
+      }],
+      failed: [],
+      symlinkFallbackAgents: [],
+    });
+    mocks.installSkillsV2.mockResolvedValue({
       successful: [{
         skillName: 'toolkit',
         agent: 'claude-code',
@@ -105,14 +125,49 @@ describe('RepairSourceDialog', () => {
       expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
         source: 'https://github.com/owner/repo#main',
         skills: ['toolkit'],
-      agents: ['claude-code'],
-      scope: 'global',
-      mode: 'copy',
-      preserveExistingModes: true,
-    }));
-  });
+        agents: ['claude-code'],
+        scope: 'global',
+        mode: 'copy',
+        preserveExistingModes: true,
+      }));
+    });
     expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith('toolkit', 'global', undefined);
     expect(mocks.syncSkills).toHaveBeenCalled();
+  });
+
+  it('inherits the target ContextRef for environment-aware repair', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'ubuntu-project' },
+    } as const;
+    useSkillDialogStore.setState({
+      repairSourceTarget: {
+        skillName: 'toolkit',
+        source: 'https://github.com/owner/repo#main',
+        scope: 'project',
+        projectPath: '/work/app',
+        agents: ['claude-code'],
+        gitRef: 'main',
+        context,
+      },
+    });
+
+    render(<RepairSourceDialog />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+
+    await waitFor(() => {
+      expect(mocks.fetchAvailableV2).toHaveBeenCalledWith(
+        context,
+        'https://github.com/owner/repo#main',
+      );
+      expect(mocks.installSkillsV2).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ source: 'https://github.com/owner/repo#main' }),
+      );
+    });
+    expect(mocks.fetchAvailable).not.toHaveBeenCalled();
+    expect(mocks.installSkills).not.toHaveBeenCalled();
   });
 
   it('does not clear repair state or close when install reports failures', async () => {

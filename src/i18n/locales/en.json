@@ -23,6 +23,11 @@
     "sectionGlobal": "Global",
     "sectionProjects": "Projects",
     "noProjects": "No projects",
+    "environmentLabel": "Development environment",
+    "environmentConnecting": "Connecting",
+    "environmentUnavailable": "Unavailable",
+    "environmentRetry": "Retry",
+    "projectsLoadError": "Could not load projects in this environment",
     "openInExplorer": "Open in Explorer",
     "remove": "Remove",
     "removeConfirm": {
@@ -394,6 +399,7 @@
     "projectsEmpty": "No projects added",
     "projectsEmptyHint": "Add a project to manage project-level skills",
     "addProject": "Add Project",
+    "removeProject": "Remove Project",
     "about": "About",
     "aboutSections": {
       "tagline": "Desktop Agent Manager"
@@ -548,6 +554,7 @@
       "hint": "Choose where this Skill can be used.",
       "global": "Global",
       "globalHint": "Available in every project · {{path}}",
+      "environmentGlobalHint": "Install in the current environment's global Skill directory",
       "localProjects": "Projects"
     },
     "mode": {
@@ -647,6 +654,7 @@
       "invalidSource": "Invalid source format: {{value}}",
       "pathNotFound": "Path not found: {{path}}",
       "installFailed": "Installation failed",
+      "mutationBusy": "Another skill operation is already in progress",
       "riskConfirmationRequired": "This source requires risk confirmation before installation",
       "parseFailed": "Parse failed",
       "suggestion": {

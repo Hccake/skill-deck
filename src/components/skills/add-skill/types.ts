@@ -8,6 +8,7 @@ import type {
   InstallResults,
   InstallTargetInfo,
   InstallTargetSpec,
+  ContextRef,
 } from '@/bindings';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
 import { getAgentTarget, isAutomaticAgent, isAdditionalAgent, type InstallScope } from '@/lib/agentTargets';
@@ -31,12 +32,12 @@ type ResultStep = 'installing' | 'complete' | 'error';
 /** 所有向导步骤 */
 export type WizardStep = CoreStep | ResultStep;
 
-/** 固定 5 步流程（所有入口统一） */
-const STEP_FLOW: CoreStep[] = ['scope', 'source', 'skills', 'options', 'confirm'];
+const DISCOVERY_STEP_FLOW: CoreStep[] = ['scope', 'source', 'skills', 'options', 'confirm'];
+const CONTEXT_STEP_FLOW: CoreStep[] = ['source', 'skills', 'options', 'confirm'];
 
 /** 获取步骤流程 */
-export function getStepFlow(_entryPoint?: EntryPoint): CoreStep[] {
-  return STEP_FLOW;
+export function getStepFlow(entryPoint: EntryPoint = 'skills-panel'): CoreStep[] {
+  return entryPoint === 'discovery' ? DISCOVERY_STEP_FLOW : CONTEXT_STEP_FLOW;
 }
 
 type InstallModeState = Pick<WizardState, 'allAgents' | 'selectedAgents' | 'mode' | 'scope'>;
@@ -78,6 +79,7 @@ export interface WizardState {
   // Scope
   scope: 'global' | 'project';
   projectPath?: string;
+  context?: ContextRef;
 
   // Source
   source: string;
