@@ -12,6 +12,32 @@ mod environment;
 mod error;
 mod models;
 
+#[cfg(all(target_os = "windows", debug_assertions))]
+#[doc(hidden)]
+pub mod wsl_integration_support {
+    pub use crate::environment::lock_io::EnvironmentLockIo;
+    pub use crate::environment::path_mapping::{host_path_to_linux_path, wsl_unc_to_linux_path};
+    pub use crate::environment::types::{EnvironmentRef, ProjectBinding, ResourceLocator};
+    pub use crate::environment::wsl::{
+        connect_wsl_environment, discover_wsl_distributions, WslSession,
+    };
+    pub use crate::environment::wsl_protocol::{
+        build_wsl_exec_args, decode_nul_records, run_wsl_script,
+    };
+    pub use crate::error::AppError;
+
+    pub async fn read_wsl_projects(session: &WslSession) -> Result<Vec<ProjectBinding>, AppError> {
+        crate::commands::environments::read_wsl_projects(session).await
+    }
+
+    pub async fn write_wsl_projects(
+        session: &WslSession,
+        projects: Vec<ProjectBinding>,
+    ) -> Result<Vec<ProjectBinding>, AppError> {
+        crate::commands::environments::write_wsl_projects_for_integration(session, projects).await
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 创建 specta builder
@@ -68,6 +94,7 @@ pub fn run() {
             commands::environments::list_environment_projects_v2,
             commands::environments::add_environment_project_v2,
             commands::environments::remove_environment_project_v2,
+            commands::environments::set_environment_project_cross_storage_warning_v2,
             commands::mutations::get_active_mutation,
             commands::mutations::request_cancel_active_mutation,
         ])

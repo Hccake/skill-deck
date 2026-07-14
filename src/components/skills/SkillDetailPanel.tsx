@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatTime } from '@/lib/utils';
 import type { InstalledSkill, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
 import { resolveSkillMaintenanceAction, resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
+import { useMutationStore } from '@/stores/mutation';
 import {
   phaseToI18nKey,
   type SkillUpdatePhase,
@@ -60,6 +61,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onRepairSource,
 }: SkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [copied, setCopied] = useState(false);
   const [checkDone, setCheckDone] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -192,6 +194,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                           size="icon"
                           className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
                           title={t('skills.actions.update')}
+                          disabled={writeBlocked}
                           onClick={handleUpdate}
                       >
                         <ArrowUpCircle className="h-4 w-4" />
@@ -210,6 +213,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                         size="icon"
                         className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
                         title={t('skills.actions.reinstall')}
+                        disabled={writeBlocked}
                         onClick={(event) => event.stopPropagation()}
                       >
                         <Wrench className="h-4 w-4" />
@@ -222,6 +226,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       size="icon"
                       className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
                       title={repairActionTitle}
+                      disabled={writeBlocked}
                       onClick={handleRepairSource}
                     >
                       <Wrench className="h-4 w-4" />
@@ -257,6 +262,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       size="icon"
                       className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
                       title={t('skills.actions.copyToProject')}
+                      disabled={writeBlocked}
                       onClick={handleCopyToProject}
                     >
                       <FolderOutput className="h-4 w-4" />
@@ -267,6 +273,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
                     title={t('skills.manageAgents.title')}
+                    disabled={writeBlocked}
                     onClick={handleManageAgents}
                   >
                     <Pencil className="h-4 w-4" />
@@ -276,6 +283,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
                     title={t('skills.actions.delete')}
+                    disabled={writeBlocked}
                     onClick={handleDelete}
                   >
                     <Trash2 className="h-4 w-4" />

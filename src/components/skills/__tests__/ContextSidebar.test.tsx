@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ContextSidebar } from '../ContextSidebar';
 import zhCN from '@/i18n/locales/zh-CN.json';
 import type { EnvironmentInfo, EnvironmentRef } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -107,6 +108,31 @@ describe('ContextSidebar', () => {
       environment: { kind: 'host' },
       scope: { scope: 'global' },
     };
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables project writes without blocking environment browsing', () => {
+    mocks.environmentState.environments = [
+      mocks.environmentState.environments[0],
+      {
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+        displayName: 'Ubuntu',
+        status: 'available',
+      },
+    ];
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'install',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Installing',
+        cancelable: true,
+      },
+    });
+
+    render(<ContextSidebar />);
+
+    expect((screen.getByRole('button', { name: 'context.addProject' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('combobox', { name: 'context.environmentLabel' }) as HTMLSelectElement).disabled).toBe(false);
   });
 
   it('hides environment switching when only the host exists', () => {

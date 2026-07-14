@@ -19,6 +19,7 @@ const { mockCommands } = vi.hoisted(() => ({
     checkUpdatesV2: vi.fn(),
     updateSkillsBatchV2: vi.fn(),
     mapEnvironmentPathV2: vi.fn(),
+    setEnvironmentProjectCrossStorageWarningV2: vi.fn(),
     getConfig: vi.fn(),
   },
 }));
@@ -33,6 +34,7 @@ import {
   listAgents,
   listSkills,
   mapEnvironmentPath,
+  setEnvironmentProjectCrossStorageWarning,
   updateSkill,
   updateSkillV2,
 } from '../useTauriApi';
@@ -199,6 +201,22 @@ describe('useTauriApi unwrap logic', () => {
     expect(mockCommands.mapEnvironmentPathV2).toHaveBeenCalledWith(
       environment,
       '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
+    );
+  });
+
+  it('persists cross-storage warning suppression through the environment command', async () => {
+    const environment = { kind: 'wsl', distro_name: 'Ubuntu' } as const;
+    mockCommands.setEnvironmentProjectCrossStorageWarningV2.mockResolvedValue({
+      status: 'ok',
+      data: [],
+    });
+
+    await setEnvironmentProjectCrossStorageWarning(environment, 'project-1', true);
+
+    expect(mockCommands.setEnvironmentProjectCrossStorageWarningV2).toHaveBeenCalledWith(
+      environment,
+      'project-1',
+      true,
     );
   });
 });

@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SkillDetailPanel } from '../SkillDetailPanel';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { InstalledSkill } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 const eventMocks = vi.hoisted(() => ({
   callback: null as null | ((event: { payload: { skillName: string; scope?: string; projectPath?: string | null; phase: string } }) => void),
@@ -43,7 +44,47 @@ describe('SkillDetailPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventMocks.callback = null;
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
+
+  it('disables detail write actions while keeping close available', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'install',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Installing',
+        cancelable: true,
+      },
+    });
+
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({ scope: 'project', canRunUpdate: true })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+          onCopyToProject={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    for (const title of [
+      'skills.actions.update',
+      'skills.actions.copyToProject',
+      'skills.manageAgents.title',
+      'skills.actions.delete',
+    ]) {
+      expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(true);
+    }
+    expect((screen.getByTitle('common.close') as HTMLButtonElement).disabled).toBe(false);
+  });
+
 
   it('shows update progress instead of the update button while a skill is updating', () => {
     render(

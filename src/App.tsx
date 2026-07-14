@@ -4,6 +4,8 @@ import { listen } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Header } from '@/components/layout/Header';
+import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
+import { MutationInterruptionDialog } from '@/components/layout/MutationInterruptionDialog';
 import { SkillsPage } from '@/pages/SkillsPage';
 import { DiscoverPage } from '@/pages/DiscoverPage';
 import { SettingsPage } from '@/pages/SettingsPage';
@@ -14,16 +16,21 @@ import { useSkillsDataStore } from '@/stores/skills-data';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useUpdaterStore } from '@/stores/updater';
 import { UpdateDialog } from '@/components/update-dialog';
+import { useProtectedWindowClose } from '@/hooks/useProtectedWindowClose';
 
 /** 主窗口布局 — 带 Header + Toaster */
 function MainLayout() {
+  const closeProtection = useProtectedWindowClose();
+
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
       <Header />
       <main className="flex-1 flex flex-col overflow-hidden">
         <Outlet />
       </main>
+      <MutationStatusBar />
       <Toaster />
+      <MutationInterruptionDialog {...closeProtection.dialogProps} />
     </div>
   );
 }

@@ -1,10 +1,122 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { describe, expect, it } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
 import type { WizardState } from '@/components/skills/add-skill/types';
 import { parseWizardContext } from '@/components/skills/add-skill/wizard-context';
+import { useMutationStore } from '@/stores/mutation';
+import { WizardPage } from '../WizardPage';
+
+const mocks = vi.hoisted(() => ({
+  close: vi.fn().mockResolvedValue(undefined),
+  requestClose: vi.fn().mockResolvedValue('performed'),
+  emit: vi.fn().mockResolvedValue(undefined),
+  loadProjects: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
+
+vi.mock('@tauri-apps/api/webviewWindow', () => ({
+  getCurrentWebviewWindow: () => ({ close: mocks.close }),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({ emit: mocks.emit }));
+
+vi.mock('@/hooks/useMutationMonitor', () => ({
+  useMutationMonitor: vi.fn(),
+}));
+
+vi.mock('@/hooks/useProtectedWindowClose', () => ({
+  useProtectedWindowClose: () => ({
+    requestClose: mocks.requestClose,
+    dialogProps: {
+      open: false,
+      action: 'close',
+      cancelable: false,
+      cancelling: false,
+      onContinueWaiting: vi.fn(),
+      onCancelAndContinue: vi.fn(),
+    },
+  }),
+}));
+
+vi.mock('@/components/layout/MutationInterruptionDialog', () => ({
+  MutationInterruptionDialog: () => <div>wizard-close-protection-dialog</div>,
+}));
+
+vi.mock('@/stores/context', () => ({
+  useContextStore: () => ({
+    projectsLoaded: true,
+    loadProjects: mocks.loadProjects,
+  }),
+}));
+
+vi.mock('@/components/skills/add-skill/StepIndicator', () => ({
+  StepIndicator: () => null,
+}));
+
+vi.mock('@/components/skills/add-skill/ScopeBadge', () => ({
+  ScopeBadge: () => null,
+}));
+
+vi.mock('@/components/skills/add-skill/ScopeStep', () => ({
+  ScopeStep: () => <div>scope-step</div>,
+}));
+
+vi.mock('@/components/skills/add-skill/SourceStep', () => ({
+  SourceStep: ({ updateState }: {
+    updateState: (updates: Partial<WizardState>) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => updateState({
+        source: 'openclaw/community-skills',
+        fetchStatus: 'success',
+        availableSkills: [{
+          name: 'demo',
+          installDirName: 'demo',
+          description: 'Demo',
+          relativePath: 'skills/demo/SKILL.md',
+          pluginName: null,
+        }],
+        selectedSkills: ['demo'],
+        selectedAgents: ['codex'],
+        confirmReady: true,
+      })}
+    >
+      prepare-source
+    </button>
+  ),
+}));
+
+vi.mock('@/components/skills/add-skill/SkillsStep', () => ({
+  SkillsStep: () => <div>skills-step</div>,
+}));
+
+vi.mock('@/components/skills/add-skill/OptionsStep', () => ({
+  OptionsStep: () => <div>options-step</div>,
+}));
+
+vi.mock('@/components/skills/add-skill/ConfirmStep', () => ({
+  ConfirmStep: () => <div>confirm-step</div>,
+}));
+
+vi.mock('@/components/skills/add-skill/InstallingStep', () => ({
+  InstallingStep: () => <div>installing-step</div>,
+}));
+
+vi.mock('@/components/skills/add-skill/CompleteStep', () => ({
+  CompleteStep: () => <div>complete-step</div>,
+}));
+
+vi.mock('@/components/skills/add-skill/ErrorStep', () => ({
+  ErrorStep: () => <div>error-step</div>,
+}));
 
 function createState(overrides: Partial<WizardState> = {}): WizardState {
   return {
@@ -71,5 +183,63 @@ describe('parseWizardContext', () => {
 
   it('ignores malformed wizard context', () => {
     expect(parseWizardContext('{invalid')).toBeUndefined();
+  });
+});
+
+describe('WizardPage mutation guard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useMutationStore.setState({
+      activeMutation: null,
+      loading: false,
+      cancelling: false,
+    });
+  });
+
+  it('disables starting installation while another mutation is active', async () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'update',
+        context: {
+          environment: { kind: 'host' },
+          scope: { scope: 'global' },
+        },
+        statusText: 'Updating toolkit',
+        cancelable: true,
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/wizard?entryPoint=skills-panel']}>
+        <WizardPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'prepare-source' }));
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'addSkill.actions.next' }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.next' }));
+    fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.next' }));
+
+    const install = await screen.findByRole('button', { name: 'addSkill.actions.install' });
+    expect((install as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'addSkill.actions.back' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('routes the cancel action through protected window close', async () => {
+    render(
+      <MemoryRouter initialEntries={['/wizard?entryPoint=skills-panel']}>
+        <WizardPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('wizard-close-protection-dialog')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.cancel' }));
+
+    await waitFor(() => expect(mocks.requestClose).toHaveBeenCalledTimes(1));
+    expect(mocks.close).not.toHaveBeenCalled();
   });
 });

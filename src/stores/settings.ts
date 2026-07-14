@@ -11,6 +11,7 @@ import {
   saveDefaultTargetAgentsV2,
 } from '@/hooks/useTauriApi';
 import { useContextStore } from './context';
+import { isMutationWriteBlocked } from './mutation';
 import type { AgentInfo, DefaultTargetAgents } from '@/hooks/useTauriApi';
 import {
   EMPTY_DEFAULT_TARGET_AGENTS,
@@ -147,7 +148,7 @@ export const useSettingsStore = create<SettingsState>()(
             agentsLoaded: true,
           });
 
-          if (targetDefaults && defaultTargetsMigrated) {
+          if (targetDefaults && defaultTargetsMigrated && !isMutationWriteBlocked()) {
         const context = getExplicitGlobalContext();
         (context
           ? saveDefaultTargetAgentsV2(context, defaultTargetAgents)
@@ -177,6 +178,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       setDefaultTargetAgents: (scope, agents) => {
+        if (isMutationWriteBlocked()) return;
         const { allAgents, defaultTargetAgents } = get();
         const nextDefaults = {
           ...defaultTargetAgents,

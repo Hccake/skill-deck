@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Globe, Folder, Link, Loader2, AlertTriangle, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AgentType, InstallTargetInfo, InstallTargetSpec, SkillAgentDetails } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 /** 从 agentDetails 计算默认全选的 Set（rerender-derived-state-no-effect） */
 function buildDefaultSelection(details: SkillAgentDetails | null): Set<AgentType> {
@@ -43,6 +44,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const loadingDetails = useSkillDialogStore((s) => s.loadingAgentDetails);
   const closeDelete = useSkillDialogStore((s) => s.closeDelete);
   const deleteSkillAction = useSkillDialogStore((s) => s.deleteSkill);
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteCanonical, setDeleteCanonical] = useState(false);
@@ -312,7 +314,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
           <Button
             variant={isFullRemoval ? 'destructive' : 'default'}
             onClick={handleConfirm}
-            disabled={isDeleting || !canConfirm}
+            disabled={writeBlocked || isDeleting || !canConfirm}
           >
             {isDeleting ? (
               <>

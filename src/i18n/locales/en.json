@@ -464,6 +464,44 @@
       "unknown": "Unknown"
     }
   },
+  "mutation": {
+    "host": "This computer",
+    "status": "{{environment}} / {{scope}} · {{status}}",
+    "cancel": "Cancel operation",
+    "cancelling": "Cancelling...",
+    "interruption": {
+      "closeTitle": "An operation is still in progress",
+      "closeDescription": "“{{status}}” is still running. Continue waiting, or cancel the operation before closing the app.",
+      "closeWaitDescription": "“{{status}}” cannot be safely cancelled at this stage. Wait for it to finish before closing the app.",
+      "restartTitle": "An operation is still in progress",
+      "restartDescription": "“{{status}}” is still running. Continue waiting, or cancel the operation before restarting the app.",
+      "restartWaitDescription": "“{{status}}” cannot be safely cancelled at this stage. Wait for it to finish before restarting the app.",
+      "unknownStatus": "Skill operation",
+      "continueWaiting": "Continue waiting",
+      "cancelAndClose": "Cancel and close",
+      "cancelAndRestart": "Cancel and restart",
+      "cancelling": "Cancelling operation...",
+      "checkFailed": "Could not confirm the current operation status. Try again shortly.",
+      "cancelFailed": "Could not cancel the operation. Try again shortly."
+    }
+  },
+  "crossStorage": {
+    "title": "This project is accessed across system storage",
+    "description": "Editing the same project from Windows and WSL at the same time can cause file or Skill lock conflicts. Skill Deck will continue, but it will not merge conflicts automatically.",
+    "dismiss": "Don't show again",
+    "dismissFailed": "Failed to save warning preference",
+    "hostEnvironment": "Windows",
+    "failureGuidance": "{{operation}} failed in the current environment. This project is stored in {{environment}}; switch to that environment and try again.",
+    "operation": {
+      "install": "Installation",
+      "update": "Update",
+      "delete": "Deletion",
+      "manageAgents": "Agent management",
+      "cleanup": "Duplicate-copy cleanup",
+      "copy": "Copy",
+      "repair": "Source repair"
+    }
+  },
   "addSkill": {
     "title": "Install Skills",
     "steps": {

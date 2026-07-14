@@ -2,6 +2,7 @@
 import { useTranslation } from 'react-i18next';
 import { Package, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useMutationStore } from '@/stores/mutation';
 
 interface GlobalEmptyStateProps {
   onAdd: () => void;
@@ -9,6 +10,7 @@ interface GlobalEmptyStateProps {
 
 export function GlobalEmptyState({ onAdd }: GlobalEmptyStateProps) {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-48 py-8">
@@ -31,7 +33,7 @@ export function GlobalEmptyState({ onAdd }: GlobalEmptyStateProps) {
             {t('skills.emptyHint')}
           </p>
 
-          <Button size="default" className="gap-2 shadow-md cursor-pointer" onClick={onAdd}>
+          <Button size="default" className="gap-2 shadow-md cursor-pointer" onClick={onAdd} disabled={writeBlocked}>
             <Package className="h-4 w-4" />
             {t('skills.add')}
           </Button>
@@ -47,6 +49,7 @@ interface ProjectEmptyStateProps {
 
 export function ProjectEmptyState({ onAdd }: ProjectEmptyStateProps) {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
 
   return (
     <div className="relative overflow-hidden border border-dashed border-border/80 bg-accent/20 p-5">
@@ -59,7 +62,7 @@ export function ProjectEmptyState({ onAdd }: ProjectEmptyStateProps) {
           {t('skills.emptyHint')}
         </p>
         {onAdd && (
-          <Button size="sm" variant="outline" className="gap-1.5 cursor-pointer" onClick={onAdd}>
+          <Button size="sm" variant="outline" className="gap-1.5 cursor-pointer" onClick={onAdd} disabled={writeBlocked}>
             <Package className="h-3.5 w-3.5" />
             {t('skills.add')}
           </Button>

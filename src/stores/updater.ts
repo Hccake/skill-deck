@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { platform } from '@tauri-apps/plugin-os';
+import { useMutationStore } from '@/stores/mutation';
 
 const LAST_CHECK_KEY = 'updater_last_check';
 const LAST_CHECK_ERROR_KEY = 'updater_last_check_error';
@@ -166,6 +167,10 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
 }));
 
 /** 用户确认重启 */
-export async function relaunchApp() {
+export async function relaunchApp(): Promise<'relaunched' | 'blocked'> {
+  await useMutationStore.getState().refreshMutation();
+  if (useMutationStore.getState().activeMutation) return 'blocked';
+
   await relaunch();
+  return 'relaunched';
 }

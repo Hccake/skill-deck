@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useEnvironmentStore } from '../environment';
-import type { EnvironmentInfo, ProjectBinding } from '@/bindings';
+import { useMutationStore } from '../mutation';
+import type { ActiveMutation, EnvironmentInfo, ProjectBinding } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   listEnvironments: vi.fn(),
@@ -8,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   listEnvironmentProjects: vi.fn(),
   addEnvironmentProject: vi.fn(),
   removeEnvironmentProject: vi.fn(),
+  setEnvironmentProjectCrossStorageWarning: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
@@ -16,6 +18,9 @@ vi.mock('@/hooks/useTauriApi', () => ({
   listEnvironmentProjects: (...args: unknown[]) => mocks.listEnvironmentProjects(...args),
   addEnvironmentProject: (...args: unknown[]) => mocks.addEnvironmentProject(...args),
   removeEnvironmentProject: (...args: unknown[]) => mocks.removeEnvironmentProject(...args),
+  setEnvironmentProjectCrossStorageWarning: (...args: unknown[]) => (
+    mocks.setEnvironmentProjectCrossStorageWarning(...args)
+  ),
 }));
 
 const host: EnvironmentInfo = {
@@ -35,6 +40,12 @@ const ubuntuProjects: ProjectBinding[] = [{
   order: null,
   suppressCrossStorageWarning: false,
 }];
+const activeMutation: ActiveMutation = {
+  kind: 'update',
+  context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+  statusText: 'Updating',
+  cancelable: true,
+};
 
 describe('useEnvironmentStore', () => {
   beforeEach(() => {
@@ -47,6 +58,7 @@ describe('useEnvironmentStore', () => {
       discoveryState: 'idle',
       errors: {},
     });
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
   it('discovers WSL entries without connecting any distro', async () => {
@@ -111,5 +123,41 @@ describe('useEnvironmentStore', () => {
 
     expect(mocks.addEnvironmentProject).toHaveBeenCalledWith(ubuntu.environment, '/work/app');
     expect(useEnvironmentStore.getState().projectsByEnvironment['wsl:Ubuntu']).toEqual(ubuntuProjects);
+  });
+
+  it('does not change projects while another mutation is active', async () => {
+    useMutationStore.setState({ activeMutation });
+
+    await useEnvironmentStore.getState().addProject('/work/app', ubuntu.environment);
+    await useEnvironmentStore.getState().removeProject('ubuntu-project', ubuntu.environment);
+    await useEnvironmentStore.getState().suppressCrossStorageWarning(
+      'ubuntu-project',
+      ubuntu.environment,
+    );
+
+    expect(mocks.addEnvironmentProject).not.toHaveBeenCalled();
+    expect(mocks.removeEnvironmentProject).not.toHaveBeenCalled();
+    expect(mocks.setEnvironmentProjectCrossStorageWarning).not.toHaveBeenCalled();
+  });
+
+  it('persists warning suppression in the owning environment project registry', async () => {
+    const suppressedProjects = [{
+      ...ubuntuProjects[0],
+      suppressCrossStorageWarning: true,
+    }];
+    mocks.setEnvironmentProjectCrossStorageWarning.mockResolvedValue(suppressedProjects);
+
+    await useEnvironmentStore.getState().suppressCrossStorageWarning(
+      'ubuntu-project',
+      ubuntu.environment,
+    );
+
+    expect(mocks.setEnvironmentProjectCrossStorageWarning).toHaveBeenCalledWith(
+      ubuntu.environment,
+      'ubuntu-project',
+      true,
+    );
+    expect(useEnvironmentStore.getState().projectsByEnvironment['wsl:Ubuntu'])
+      .toEqual(suppressedProjects);
   });
 });

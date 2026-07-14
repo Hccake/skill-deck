@@ -1,0 +1,92 @@
+import { useMemo } from 'react';
+import { LoaderCircle, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/button';
+import { environmentKey, useEnvironmentStore } from '@/stores/environment';
+import { useMutationStore } from '@/stores/mutation';
+import { useMutationMonitor } from '@/hooks/useMutationMonitor';
+
+interface MutationStatusBarProps {
+  pollIntervalMs?: number;
+}
+
+function projectName(nativePath: string): string {
+  const parts = nativePath.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || nativePath;
+}
+
+export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarProps) {
+  const { t } = useTranslation();
+  const activeMutation = useMutationStore((state) => state.activeMutation);
+  const cancelling = useMutationStore((state) => state.cancelling);
+  const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
+  const environments = useEnvironmentStore((state) => state.environments);
+  const projectsByEnvironment = useEnvironmentStore((state) => state.projectsByEnvironment);
+
+  useMutationMonitor(pollIntervalMs);
+
+  const labels = useMemo(() => {
+    if (!activeMutation) return null;
+
+    const key = environmentKey(activeMutation.context.environment);
+    const environment = environments.find(
+      (entry) => environmentKey(entry.environment) === key,
+    );
+    const environmentLabel = environment?.displayName
+      ?? (activeMutation.context.environment.kind === 'host'
+        ? t('mutation.host')
+        : activeMutation.context.environment.distro_name);
+
+    if (activeMutation.context.scope.scope === 'global') {
+      return { environmentLabel, scopeLabel: t('context.global') };
+    }
+
+    const projectId = activeMutation.context.scope.project_id;
+    const project = projectsByEnvironment[key]?.find(
+      (entry) => entry.id === projectId,
+    );
+    return {
+      environmentLabel,
+      scopeLabel: project?.displayName
+        ?? (project ? projectName(project.nativePath) : projectId),
+    };
+  }, [activeMutation, environments, projectsByEnvironment, t]);
+
+  if (!activeMutation || !labels) return null;
+
+  return (
+    <div
+      role="status"
+      className="flex h-9 flex-shrink-0 items-center gap-2 border-t bg-muted/40 px-4 text-xs text-muted-foreground"
+    >
+      <span
+        data-testid="mutation-spinner"
+        className="inline-flex flex-shrink-0 animate-spin text-primary"
+        aria-hidden="true"
+      >
+        <LoaderCircle className="h-3.5 w-3.5" />
+      </span>
+      <span className="min-w-0 flex-1 truncate">
+        {t('mutation.status', {
+          environment: labels.environmentLabel,
+          scope: labels.scopeLabel,
+          status: activeMutation.statusText,
+        })}
+      </span>
+      {cancelling ? (
+        <span className="flex-shrink-0">{t('mutation.cancelling')}</span>
+      ) : activeMutation.cancelable ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 flex-shrink-0 gap-1 px-2"
+          onClick={() => void cancelActiveMutation()}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+          {t('mutation.cancel')}
+        </Button>
+      ) : null}
+    </div>
+  );
+}

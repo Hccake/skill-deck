@@ -9,6 +9,7 @@ import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
 import type { AgentType, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
 import { buildUpdatePlan, type SkillListItem, type UpdatePlan } from '@/stores/skills-utils';
+import { useMutationStore } from '@/stores/mutation';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
@@ -69,6 +70,7 @@ export const SkillsSection = memo(function SkillsSection({
   emptyState,
 }: SkillsSectionProps) {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [updatePlanOpen, setUpdatePlanOpen] = useState(false);
   const [updatePlan, setUpdatePlan] = useState<UpdatePlan | null>(null);
 
@@ -201,6 +203,7 @@ export const SkillsSection = memo(function SkillsSection({
                   size="sm"
                   className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
                   onClick={handleOpenUpdatePlan}
+                  disabled={writeBlocked}
                 >
                   <ArrowUpCircle className="h-3.5 w-3.5 shrink-0" />
                   {t('skills.updateAll')}
@@ -233,6 +236,7 @@ export const SkillsSection = memo(function SkillsSection({
               size="sm"
               className="h-7 px-2.5 sm:px-3 text-xs font-semibold gap-1.5 shadow-none text-primary/80 bg-primary/[0.04] hover:bg-primary/10 hover:text-primary border border-transparent cursor-pointer transition-all"
               onClick={onAdd}
+              disabled={writeBlocked}
             >
               <Plus className="h-3.5 w-3.5 shrink-0" />
               {t('skills.add')}
@@ -272,6 +276,7 @@ export const SkillsSection = memo(function SkillsSection({
                     projectPath={scope === 'project' ? projectPath : undefined}
                     agentDisplayNames={agentDisplayNames}
                     riskLevel={auditCache[skill.name]?.risk}
+                    writeBlocked={writeBlocked}
                     onClick={onSkillClick}
                     onUpdate={(name) => onUpdate(name, scope)}
                     onDelete={onDelete}

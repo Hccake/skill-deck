@@ -1,12 +1,13 @@
 // src/stores/__tests__/skills.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { InstalledSkill, SkillAgentDetails } from '@/bindings';
+import type { ActiveMutation, InstalledSkill, SkillAgentDetails } from '@/bindings';
 import { toast } from 'sonner';
 import { useSkillsDataStore } from '../skills-data';
 import { useSkillDetailStore } from '../skill-detail';
 import { useSkillDialogStore } from '../skill-dialog';
 import { useContextStore } from '../context';
 import { useEnvironmentStore } from '../environment';
+import { useMutationStore } from '../mutation';
 import { buildUpdatePlan, clearUpdateCacheForSkill, mergeUpdateInfo, updateInfoCache } from '../skills-utils';
 
 const mockListSkills = vi.fn();
@@ -65,6 +66,18 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
+vi.mock('@/utils/cross-storage-guidance', () => ({
+  appendCrossStorageFailureGuidance: (
+    message: string,
+    _context: unknown,
+    operation: string,
+  ) => `${message}\nGUIDANCE:${operation}`,
+  getCrossStorageFailureGuidance: (
+    _context: unknown,
+    operation: string,
+  ) => `GUIDANCE:${operation}`,
+}));
+
 const makeSkill = (name: string, overrides: Partial<InstalledSkill> = {}): InstalledSkill => ({
   name,
   description: '',
@@ -76,6 +89,45 @@ const makeSkill = (name: string, overrides: Partial<InstalledSkill> = {}): Insta
   hasUpdate: false,
   ...overrides,
 });
+
+const activeMutation: ActiveMutation = {
+  kind: 'install',
+  context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+  statusText: 'Installing',
+  cancelable: true,
+};
+
+function setExplicitCrossStorageProjectContext() {
+  const context = {
+    environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
+    scope: { scope: 'project' as const, project_id: 'project-1' },
+  };
+  useContextStore.setState({
+    selectedContext: '/mnt/c/Code/app',
+    hasExplicitContext: true,
+    selectedContextRef: context,
+  });
+  useEnvironmentStore.setState({
+    environments: [
+      { environment: { kind: 'host' }, displayName: 'Windows', status: 'available' },
+      {
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+        displayName: 'Ubuntu',
+        status: 'available',
+      },
+    ],
+    projectsByEnvironment: {
+      'wsl:Ubuntu': [{
+        id: 'project-1',
+        nativePath: '/mnt/c/Code/app',
+        displayName: 'app',
+        order: null,
+        suppressCrossStorageWarning: false,
+      }],
+    },
+  });
+  return context;
+}
 
 const initialSkillsDataActions = {
   syncSkills: useSkillsDataStore.getState().syncSkills,
@@ -94,6 +146,7 @@ describe('useSkillsStore', () => {
       projectsByEnvironment: {},
       projectsLoaded: {},
     });
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
     mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
     mockListSkillsV2.mockResolvedValue({ skills: [], pathExists: true });
     mockListAgents.mockResolvedValue([]);
@@ -139,6 +192,38 @@ describe('useSkillsStore', () => {
       copyContext: undefined,
       repairSourceTarget: null,
     });
+  });
+
+  it('blocks every skill write action while another mutation is active', async () => {
+    const skill = makeSkill('toolkit', {
+      hasUpdate: true,
+      canRunUpdate: true,
+      scope: 'global',
+    });
+    useMutationStore.setState({ activeMutation });
+    useSkillsDataStore.setState({ globalSkills: [skill] });
+    useSkillDialogStore.setState({
+      deleteTarget: { skill, scope: 'global' },
+      manageAgentsSkill: skill,
+      manageAgentsScope: 'global',
+      copySkill: skill,
+    });
+
+    useSkillDialogStore.getState().openAdd('global');
+    await useSkillDialogStore.getState().deleteSkill({ fullRemoval: true });
+    await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'copy');
+    await useSkillDialogStore.getState().cleanupDuplicateCopies(['cursor']);
+    await useSkillDialogStore.getState().executeCopy(['/project']);
+    await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+    await useSkillsDataStore.getState().updateAllInSection('global');
+
+    expect(mockOpenInstallWizard).not.toHaveBeenCalled();
+    expect(mockRemoveSkill).not.toHaveBeenCalled();
+    expect(mockManageSkillAgents).not.toHaveBeenCalled();
+    expect(mockCleanupDuplicateAgentCopies).not.toHaveBeenCalled();
+    expect(mockCopySkillToProjects).not.toHaveBeenCalled();
+    expect(mockUpdateSkill).not.toHaveBeenCalled();
+    expect(mockUpdateSkillsBatch).not.toHaveBeenCalled();
   });
 
   it('loads Discover project locations from the explicit WSL environment', async () => {
@@ -482,6 +567,24 @@ describe('useSkillsStore', () => {
       });
       expect(mockRemoveSkill).not.toHaveBeenCalled();
     });
+
+    it('adds storage-owner guidance when project deletion fails', async () => {
+      const context = setExplicitCrossStorageProjectContext();
+      const skill = makeSkill('toolkit', { scope: 'project' });
+      mockRemoveSkillV2.mockRejectedValue(new Error('permission denied'));
+      useSkillDialogStore.setState({
+        deleteTarget: {
+          skill,
+          scope: 'project',
+          projectPath: '/mnt/c/Code/app',
+          context,
+        },
+      });
+
+      await useSkillDialogStore.getState().deleteSkill({ fullRemoval: true });
+
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('GUIDANCE:delete'));
+    });
   });
 
   describe('updateSkill', () => {
@@ -505,6 +608,18 @@ describe('useSkillsStore', () => {
 
       expect(mockUpdateSkillV2).toHaveBeenCalledWith(context, 'toolkit');
       expect(mockUpdateSkill).not.toHaveBeenCalled();
+    });
+
+    it('adds storage-owner guidance when a project update throws', async () => {
+      setExplicitCrossStorageProjectContext();
+      useSkillsDataStore.setState({
+        projectSkills: [makeSkill('toolkit', { scope: 'project', hasUpdate: true })],
+      });
+      mockUpdateSkillV2.mockRejectedValue(new Error('permission denied'));
+
+      await useSkillsDataStore.getState().updateSkill('toolkit', 'project');
+
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('GUIDANCE:update'));
     });
 
     it('tracks updating state by scope and name identity', async () => {
@@ -979,6 +1094,32 @@ describe('useSkillsStore', () => {
       );
     });
 
+    it('stores storage-owner guidance with failed project update results', async () => {
+      setExplicitCrossStorageProjectContext();
+      useSkillsDataStore.setState({
+        projectSkills: [makeSkill('toolkit', {
+          scope: 'project',
+          hasUpdate: true,
+          canRunUpdate: true,
+        })],
+      });
+      mockUpdateSkillsBatchV2.mockResolvedValue({
+        results: [{
+          name: 'toolkit',
+          status: 'failed',
+          error: 'permission denied',
+          warnings: [],
+          agentResults: [],
+        }],
+        summary: { total: 1, succeeded: 0, partial: 0, failed: 1, skipped: 0 },
+      });
+
+      await useSkillsDataStore.getState().updateAllInSection('project');
+
+      expect(useSkillsDataStore.getState().lastUpdateResults?.[0]?.error)
+        .toContain('GUIDANCE:update');
+    });
+
     it('records repairable legacy skills in the update plan without calling batch update', async () => {
       useSkillsDataStore.setState({
         globalSkills: [
@@ -1279,6 +1420,27 @@ describe('useSkillsStore', () => {
       expect(toast.error).toHaveBeenCalled();
     });
 
+    it('adds storage-owner guidance to project Agent management failures', async () => {
+      const context = setExplicitCrossStorageProjectContext();
+      const skill = makeSkill('test', { scope: 'project' });
+      mockManageSkillAgentsV2.mockResolvedValue({
+        added: [],
+        addedResults: [],
+        removed: [],
+        errors: ['cursor: permission denied'],
+      });
+      useSkillDialogStore.setState({
+        manageAgentsSkill: skill,
+        manageAgentsScope: 'project',
+        manageAgentsProjectPath: '/mnt/c/Code/app',
+        manageAgentsContext: context,
+      });
+
+      await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'copy');
+
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('GUIDANCE:manageAgents'));
+    });
+
     it('cleanupDuplicateCopies removes duplicate copies, refreshes details, and syncs skills', async () => {
       const skill = makeSkill('test');
       const refreshedDetails: SkillAgentDetails = {
@@ -1436,6 +1598,25 @@ describe('useSkillsStore', () => {
       await useSkillDialogStore.getState().executeCopy(['/a', '/b']);
 
       expect(toast.error).toHaveBeenCalled();
+    });
+
+    it('adds storage-owner guidance to cross-storage copy failures', async () => {
+      const context = setExplicitCrossStorageProjectContext();
+      const skill = makeSkill('test', { scope: 'project' });
+      mockCopySkillToProjectsV2.mockResolvedValue({
+        results: [{
+          projectPath: '/mnt/c/Code/app',
+          success: false,
+          error: 'permission denied',
+          updateMetadataStatus: 'missing',
+          updateMetadataReason: 'copy-failed',
+        }],
+      });
+      useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+
+      await useSkillDialogStore.getState().executeCopy(['/mnt/c/Code/app']);
+
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('GUIDANCE:copy'));
     });
 
     it('executeCopy shows a normal success toast when copied projects cannot keep update metadata', async () => {

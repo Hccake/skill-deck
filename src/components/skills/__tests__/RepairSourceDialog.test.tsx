@@ -6,6 +6,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { RepairSourceDialog } from '../RepairSourceDialog';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import type { FetchResult } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
+import { toast } from 'sonner';
 
 const mocks = vi.hoisted(() => ({
   fetchAvailable: vi.fn(),
@@ -30,6 +32,18 @@ vi.mock('@/hooks/useTauriApi', () => ({
   fetchAvailableV2: (...args: unknown[]) => mocks.fetchAvailableV2(...args),
   installSkills: (...args: unknown[]) => mocks.installSkills(...args),
   installSkillsV2: (...args: unknown[]) => mocks.installSkillsV2(...args),
+}));
+
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn() },
+}));
+
+vi.mock('@/utils/cross-storage-guidance', () => ({
+  appendCrossStorageFailureGuidance: (
+    message: string,
+    _context: unknown,
+    operation: string,
+  ) => `${message}\nGUIDANCE:${operation}`,
 }));
 
 vi.mock('@/stores/skills-data', () => ({
@@ -91,10 +105,36 @@ describe('RepairSourceDialog', () => {
       failed: [],
       symlinkFallbackAgents: [],
     });
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
     mocks.syncSkills.mockResolvedValue(undefined);
     useSkillDialogStore.setState({
       repairSourceTarget: null,
     });
+  });
+
+  it('disables repair but keeps source validation available during another mutation', () => {
+    useSkillDialogStore.setState({
+      repairSourceTarget: {
+        skillName: 'toolkit',
+        source: 'https://github.com/owner/repo#main',
+        scope: 'global',
+        agents: ['claude-code'],
+        gitRef: 'main',
+      },
+    });
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'update',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Updating',
+        cancelable: true,
+      },
+    });
+
+    render(<RepairSourceDialog />);
+
+    expect((screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'skills.repairSourceDialog.validate' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('shows a read-only source by default and repairs the current skill after source validation', async () => {
@@ -246,6 +286,72 @@ describe('RepairSourceDialog', () => {
     expect(mocks.markSourceRepairSucceeded).not.toHaveBeenCalled();
     expect(mocks.syncSkills).not.toHaveBeenCalled();
     expect(useSkillDialogStore.getState().repairSourceTarget?.skillName).toBe('toolkit');
+  });
+
+  it('adds storage-owner guidance when project source repair reports failures', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'project-1' },
+    } as const;
+    mocks.installSkillsV2.mockResolvedValueOnce({
+      successful: [],
+      failed: [{
+        skillName: 'toolkit',
+        agent: 'claude-code',
+        success: false,
+        path: '/mnt/c/Code/app/.agents/skills/toolkit',
+        canonicalPath: null,
+        mode: 'copy',
+        symlinkFailed: false,
+        skipped: false,
+        error: 'permission denied',
+      }],
+      symlinkFallbackAgents: [],
+    });
+    useSkillDialogStore.setState({
+      repairSourceTarget: {
+        skillName: 'toolkit',
+        source: 'https://github.com/owner/repo#main',
+        scope: 'project',
+        projectPath: '/mnt/c/Code/app',
+        agents: ['claude-code'],
+        gitRef: 'main',
+        context,
+      },
+    });
+
+    render(<RepairSourceDialog />);
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('GUIDANCE:repair'));
+    });
+  });
+
+  it('adds storage-owner guidance when project source repair throws', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'project-1' },
+    } as const;
+    mocks.installSkillsV2.mockRejectedValueOnce(new Error('permission denied'));
+    useSkillDialogStore.setState({
+      repairSourceTarget: {
+        skillName: 'toolkit',
+        source: 'https://github.com/owner/repo#main',
+        scope: 'project',
+        projectPath: '/mnt/c/Code/app',
+        agents: ['claude-code'],
+        gitRef: 'main',
+        context,
+      },
+    });
+
+    render(<RepairSourceDialog />);
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('GUIDANCE:repair'));
+    });
   });
 
   it('does not treat duplicate successful agent results as complete repair', async () => {

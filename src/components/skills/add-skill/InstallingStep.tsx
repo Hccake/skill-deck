@@ -6,6 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import { installSkills, installSkillsV2 } from '@/hooks/useTauriApi';
 import { parseInstallError } from '@/utils/parse-install-error';
 import { toAppError } from '@/utils/to-app-error';
+import { getCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import { getEffectiveInstallMode, type WizardState } from './types';
 import type { ContextRef } from '@/bindings';
 
@@ -168,6 +169,10 @@ export function InstallingStep({ state, updateState, scope, projectPath, context
           selectedSkills,
           availableSkills: installParamsRef.current.availableSkills,
         });
+        const guidance = getCrossStorageFailureGuidance(context, 'install', tRef.current);
+        if (guidance && !installError.suggestions?.includes(guidance)) {
+          installError.suggestions = [...(installError.suggestions ?? []), guidance];
+        }
 
         updateStateRef.current({
           installResults: {

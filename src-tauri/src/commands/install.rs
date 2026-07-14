@@ -2053,6 +2053,60 @@ mod tests {
     }
 
     #[test]
+    fn cli_fixture_survives_gui_global_lock_entry_update() {
+        let bytes = include_bytes!("../../tests/fixtures/locks/cli-unknown-fields.json");
+        let original: serde_json::Value = serde_json::from_slice(bytes).expect("parse fixture");
+        let mut document = LosslessLockDocument::parse(bytes).expect("parse lossless lock");
+        let snapshot = document.snapshot("toolkit");
+        let parsed = parse_source("owner/repo#main").expect("parse source");
+        let skill = crate::core::discovery::DiscoveredSkill {
+            name: "toolkit".to_string(),
+            install_dir_name: "toolkit".to_string(),
+            description: "Toolkit".to_string(),
+            path: std::path::PathBuf::from("/tmp/toolkit"),
+            relative_path: "skills/toolkit".to_string(),
+            plugin_name: Some("core".to_string()),
+        };
+        let replacement = build_wsl_lock_entry(
+            &crate::models::Scope::Global,
+            &parsed,
+            "owner/repo#main",
+            &skill,
+            "new-remote-hash",
+            "unused-computed-hash",
+            None,
+            original["skills"].get("toolkit"),
+        );
+
+        document
+            .replace_entry("toolkit", &snapshot, replacement)
+            .expect("replace target entry");
+        let updated = document.into_value();
+
+        assert_eq!(updated["futureRoot"], original["futureRoot"]);
+        assert_eq!(updated["futureArray"], original["futureArray"]);
+        assert_eq!(
+            updated["skills"]["untouched"],
+            original["skills"]["untouched"]
+        );
+        assert_eq!(
+            updated["skills"]["toolkit"]["futureEntry"],
+            original["skills"]["toolkit"]["futureEntry"]
+        );
+        assert_eq!(updated["skills"]["toolkit"]["cliOnlyFlag"], true);
+        assert_eq!(updated["skills"]["toolkit"]["source"], "owner/repo");
+        assert_eq!(updated["skills"]["toolkit"]["ref"], "main");
+        assert_eq!(
+            updated["skills"]["toolkit"]["skillFolderHash"],
+            "new-remote-hash"
+        );
+        assert_eq!(
+            updated["skills"]["toolkit"]["installedAt"],
+            original["skills"]["toolkit"]["installedAt"]
+        );
+    }
+
+    #[test]
     fn wsl_project_lock_entry_remains_skills_cli_compatible() {
         let parsed = parse_source("/home/alice/source").expect("parse source");
         let skill = crate::core::discovery::DiscoveredSkill {

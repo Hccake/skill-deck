@@ -1,10 +1,11 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SkillsSection } from '../SkillsSection';
 import type { InstalledSkill } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -47,6 +48,41 @@ const makeSkill = (
 });
 
 describe('SkillsSection', () => {
+  beforeEach(() => {
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables write actions but keeps update checks available during another mutation', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'install',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Installing',
+        cancelable: true,
+      },
+    });
+
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global')]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onUpdate={vi.fn(async () => undefined)}
+        onUpdateAll={vi.fn(async () => undefined)}
+        onCancelUpdateAll={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={vi.fn(async () => true)}
+      />
+    );
+
+    expect((screen.getByRole('button', { name: 'skills.updateAll' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'skills.add' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('reads update state using the full skill identity key', () => {
     render(
       <SkillsSection

@@ -2,6 +2,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { useContextStore } from './context';
+import { isMutationWriteBlocked } from './mutation';
 import { environmentKey, useEnvironmentStore } from './environment';
 import {
   sortSkills,
@@ -29,6 +30,7 @@ import {
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
 import { getSkillIdentity, getSkillIdentityKey, isSameSkillIdentity } from '@/lib/skills/identity';
+import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import type {
   AgentInfo,
   ContextRef,
@@ -420,6 +422,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   },
 
   updateSkill: async (skillName, scope) => {
+    if (isMutationWriteBlocked()) return;
     const { updatingSkills } = get();
     const { selectedContext } = useContextStore.getState();
     const context = getExplicitContextForScope(scope);
@@ -460,11 +463,24 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       if (!item || item.status === 'success') {
         toast.success(t('skills.updateSuccess', { name: skillName }));
       } else if (item.status === 'partial') {
-        toast.warning(t('skills.updatePartial', { name: skillName, success: succeededAgents, total: agentResults.length, failed: failedAgents.length, failedAgents: failedAgentNames }));
+        toast.warning(appendCrossStorageFailureGuidance(
+          t('skills.updatePartial', { name: skillName, success: succeededAgents, total: agentResults.length, failed: failedAgents.length, failedAgents: failedAgentNames }),
+          context,
+          'update',
+          t,
+        ));
       } else if (item.status === 'skipped') {
         toast.warning(t('skills.updateSkipped', { name: skillName }));
       } else {
-        toast.error(t('skills.updateError', { name: skillName, error: item.error ?? t('skills.updateFailedUnknown') }));
+        toast.error(appendCrossStorageFailureGuidance(
+          t('skills.updateError', {
+            name: skillName,
+            error: item.error ?? t('skills.updateFailedUnknown'),
+          }),
+          context,
+          'update',
+          t,
+        ));
       }
 
       if (item?.warnings?.length) {
@@ -520,7 +536,15 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         }
       });
     } catch (e) {
-      toast.error(t('skills.updateError', { name: skillName, error: e instanceof Error ? e.message : String(e) }));
+      toast.error(appendCrossStorageFailureGuidance(
+        t('skills.updateError', {
+          name: skillName,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+        context,
+        'update',
+        t,
+      ));
       set((state) => {
         const next = new Map(state.updatingSkills);
         next.set(identityKey, 'failed');
@@ -552,6 +576,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   },
 
   updateAllInSection: async (scope) => {
+    if (isMutationWriteBlocked()) return;
     const { globalSkills, projectSkills } = get();
     const skills = scope === 'project' ? projectSkills : globalSkills;
     const { selectedContext } = useContextStore.getState();
@@ -610,11 +635,23 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             names: group.map((s) => s.name),
             projectPath,
           });
-        itemResults.push(...response.results);
+        const guidedResults = response.results.map((item) => {
+          if (item.status !== 'failed' && item.status !== 'partial') return item;
+          return {
+            ...item,
+            error: appendCrossStorageFailureGuidance(
+              item.error ?? t('skills.updateFailedUnknown'),
+              context,
+              'update',
+              t,
+            ),
+          };
+        });
+        itemResults.push(...guidedResults);
         const successfulSkillNames = new Set<string>();
 
         for (const skill of group) {
-          const item = response.results.find((r) => r.name === skill.name);
+          const item = guidedResults.find((r) => r.name === skill.name);
           // 完成态 (spinner 退出) 与 "可清缓存" 是两个维度:
           //   - partial: spinner 退出 (done),但 hasUpdate 保留,允许用户重试
           //   - failed: spinner 标失败 (failed)
@@ -653,7 +690,12 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
           itemResults.push({
             name: skill.name,
             status: 'failed',
-            error: t('skills.updateFailedUnknown'),
+            error: appendCrossStorageFailureGuidance(
+              t('skills.updateFailedUnknown'),
+              context,
+              'update',
+              t,
+            ),
             warnings: [],
             agentResults: [],
           });

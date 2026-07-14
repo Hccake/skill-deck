@@ -56,6 +56,17 @@ pub(crate) fn remove_project_binding(
     projects
 }
 
+pub(crate) fn set_project_cross_storage_warning_suppressed(
+    mut projects: Vec<ProjectBinding>,
+    project_id: &str,
+    suppressed: bool,
+) -> Vec<ProjectBinding> {
+    if let Some(project) = projects.iter_mut().find(|project| project.id == project_id) {
+        project.suppress_cross_storage_warning = suppressed;
+    }
+    projects
+}
+
 pub struct ProjectsStore {
     path: PathBuf,
 }
@@ -91,6 +102,17 @@ impl ProjectsStore {
 
     pub fn remove(&self, project_id: &str) -> Result<Vec<ProjectBinding>, AppError> {
         let projects = remove_project_binding(self.read()?, project_id);
+        self.write(&projects)?;
+        self.read()
+    }
+
+    pub fn set_cross_storage_warning_suppressed(
+        &self,
+        project_id: &str,
+        suppressed: bool,
+    ) -> Result<Vec<ProjectBinding>, AppError> {
+        let projects =
+            set_project_cross_storage_warning_suppressed(self.read()?, project_id, suppressed);
         self.write(&projects)?;
         self.read()
     }
@@ -235,6 +257,37 @@ mod tests {
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].id, "first");
         assert_eq!(saved[0].native_path, "C:\\Code\\app");
+    }
+
+    #[test]
+    fn projects_store_persists_cross_storage_warning_suppression_per_binding() {
+        let temp = tempdir().expect("tempdir");
+        let store = ProjectsStore::new(temp.path().join("projects.json"));
+        store
+            .write(&[
+                ProjectBinding {
+                    id: "target".to_string(),
+                    native_path: "/mnt/c/Code/app".to_string(),
+                    display_name: None,
+                    order: None,
+                    suppress_cross_storage_warning: false,
+                },
+                ProjectBinding {
+                    id: "other".to_string(),
+                    native_path: "/home/alice/other".to_string(),
+                    display_name: None,
+                    order: None,
+                    suppress_cross_storage_warning: false,
+                },
+            ])
+            .expect("write projects");
+
+        let saved = store
+            .set_cross_storage_warning_suppressed("target", true)
+            .expect("suppress warning");
+
+        assert!(saved[0].suppress_cross_storage_warning);
+        assert!(!saved[1].suppress_cross_storage_warning);
     }
 
     #[test]

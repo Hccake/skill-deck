@@ -23,6 +23,7 @@ import { formatInstalls } from '@/lib/discover/format';
 import type { DiscoverSkillDetail } from '@/lib/discover/api';
 import type { DiscoverAuditRisk, DiscoverSecurityAudit, DiscoverSkillSummary } from '@/lib/discover/types';
 import { delay } from '@/lib/discover-utils';
+import { useMutationStore } from '@/stores/mutation';
 
 const PROSE_WITH_LISTS_CLASS_NAME = 'skill-prose skill-prose-with-lists';
 
@@ -128,6 +129,7 @@ export function DiscoverDetailPanel({
   onInstall,
 }: DiscoverDetailPanelProps) {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [detail, setDetail] = useState<DiscoverSkillDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -231,11 +233,12 @@ export function DiscoverDetailPanel({
               className="h-8 shrink-0 rounded-full px-4 text-[13px] font-medium tracking-wide shadow-sm transition-transform active:scale-95"
               variant="default"
               onClick={() => onInstall(skill)}
+              disabled={writeBlocked}
             >
               <DownloadCloud className="h-3.5 w-3.5" />
               {t('skills.discover.install')}
             </Button>
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 text-muted-foreground hover:bg-accent hover:text-foreground">
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('common.close')} className="h-8 w-8 text-muted-foreground hover:bg-accent hover:text-foreground">
               <X className="h-4 w-4" />
             </Button>
           </div>

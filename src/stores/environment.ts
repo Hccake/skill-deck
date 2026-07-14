@@ -5,8 +5,10 @@ import {
   listEnvironmentProjects,
   listEnvironments,
   removeEnvironmentProject,
+  setEnvironmentProjectCrossStorageWarning,
 } from '@/hooks/useTauriApi';
 import type { EnvironmentInfo, EnvironmentRef, ProjectBinding } from '@/bindings';
+import { isMutationWriteBlocked } from './mutation';
 
 export type EnvironmentDiscoveryState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -23,6 +25,10 @@ interface EnvironmentState {
   refreshProjects: (environment?: EnvironmentRef) => Promise<ProjectBinding[]>;
   addProject: (nativePath: string, environment?: EnvironmentRef) => Promise<ProjectBinding[]>;
   removeProject: (projectId: string, environment?: EnvironmentRef) => Promise<ProjectBinding[]>;
+  suppressCrossStorageWarning: (
+    projectId: string,
+    environment?: EnvironmentRef,
+  ) => Promise<ProjectBinding[]>;
 }
 
 export function environmentKey(environment: EnvironmentRef): string {
@@ -108,6 +114,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
 
   addProject: async (nativePath, environment = get().selectedEnvironment) => {
     const key = environmentKey(environment);
+    if (isMutationWriteBlocked()) return get().projectsByEnvironment[key] ?? [];
     const projects = await addEnvironmentProject(environment, nativePath);
     set((state) => ({
       projectsByEnvironment: { ...state.projectsByEnvironment, [key]: projects },
@@ -118,7 +125,26 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
 
   removeProject: async (projectId, environment = get().selectedEnvironment) => {
     const key = environmentKey(environment);
+    if (isMutationWriteBlocked()) return get().projectsByEnvironment[key] ?? [];
     const projects = await removeEnvironmentProject(environment, projectId);
+    set((state) => ({
+      projectsByEnvironment: { ...state.projectsByEnvironment, [key]: projects },
+      projectsLoaded: { ...state.projectsLoaded, [key]: true },
+    }));
+    return projects;
+  },
+
+  suppressCrossStorageWarning: async (
+    projectId,
+    environment = get().selectedEnvironment,
+  ) => {
+    const key = environmentKey(environment);
+    if (isMutationWriteBlocked()) return get().projectsByEnvironment[key] ?? [];
+    const projects = await setEnvironmentProjectCrossStorageWarning(
+      environment,
+      projectId,
+      true,
+    );
     set((state) => ({
       projectsByEnvironment: { ...state.projectsByEnvironment, [key]: projects },
       projectsLoaded: { ...state.projectsLoaded, [key]: true },

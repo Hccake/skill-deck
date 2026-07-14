@@ -57,6 +57,8 @@ interface SkillCardProps {
   agentDisplayNames?: Map<AgentType, string>;
   /** 安全审计风险等级 */
   riskLevel?: RiskLevel;
+  /** 其他写操作进行中，禁止发起新的 Skill 写入 */
+  writeBlocked?: boolean;
   /** 点击卡片打开详情 */
   onClick?: (skill: InstalledSkill) => void;
   onUpdate?: (skillName: string) => void;
@@ -74,6 +76,7 @@ export const SkillCard = memo(function SkillCard({
   projectPath,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
   riskLevel,
+  writeBlocked = false,
   onClick,
   onUpdate,
   onDelete,
@@ -260,6 +263,7 @@ export const SkillCard = memo(function SkillCard({
                 className="h-7 w-7 text-primary hover:text-primary hover:bg-primary/10 cursor-pointer"
                 aria-label={t('skills.actions.update')}
                 title={t('skills.actions.update')}
+                disabled={writeBlocked}
                 onClick={(e) => {
                   e.stopPropagation();
                   onUpdate?.(skill.name);
@@ -282,6 +286,7 @@ export const SkillCard = memo(function SkillCard({
                   className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
                   aria-label={t('skills.actions.reinstall')}
                   title={t('skills.actions.reinstall')}
+                  disabled={writeBlocked}
                   onClick={(e) => {
                     e.stopPropagation();
                   }}
@@ -297,6 +302,7 @@ export const SkillCard = memo(function SkillCard({
                 className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
                 aria-label={repairActionTitle}
                 title={repairActionTitle}
+                disabled={writeBlocked}
                 onClick={(e) => {
                   e.stopPropagation();
                   onRepairSource?.(skill);
@@ -315,6 +321,7 @@ export const SkillCard = memo(function SkillCard({
                 className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
                 aria-label={t('skills.actions.copyToProject')}
                 title={t('skills.actions.copyToProject')}
+                disabled={writeBlocked}
                 onClick={(e) => {
                   e.stopPropagation();
                   onCopyToProject(skill);
@@ -330,6 +337,7 @@ export const SkillCard = memo(function SkillCard({
                 className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
                 aria-label={t('skills.manageAgents.title')}
                 title={t('skills.manageAgents.title')}
+                disabled={writeBlocked}
                 onClick={(e) => {
                   e.stopPropagation();
                   onManageAgents(skill);
@@ -344,6 +352,7 @@ export const SkillCard = memo(function SkillCard({
               className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
               aria-label={t('skills.actions.delete')}
               title={t('skills.actions.delete')}
+              disabled={writeBlocked}
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete?.(skill);

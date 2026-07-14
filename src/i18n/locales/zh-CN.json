@@ -464,6 +464,44 @@
       "unknown": "未知"
     }
   },
+  "mutation": {
+    "host": "本机",
+    "status": "{{environment}} / {{scope}} · {{status}}",
+    "cancel": "取消操作",
+    "cancelling": "正在取消...",
+    "interruption": {
+      "closeTitle": "操作仍在进行，暂时无法关闭",
+      "closeDescription": "正在执行“{{status}}”。你可以继续等待，或先取消操作再关闭应用。",
+      "closeWaitDescription": "正在执行“{{status}}”，当前步骤无法安全取消。请等待操作完成后再关闭应用。",
+      "restartTitle": "操作仍在进行，暂时无法重启",
+      "restartDescription": "正在执行“{{status}}”。你可以继续等待，或先取消操作再重启应用。",
+      "restartWaitDescription": "正在执行“{{status}}”，当前步骤无法安全取消。请等待操作完成后再重启应用。",
+      "unknownStatus": "Skill 操作",
+      "continueWaiting": "继续等待",
+      "cancelAndClose": "取消操作并关闭",
+      "cancelAndRestart": "取消操作并重启",
+      "cancelling": "正在取消操作...",
+      "checkFailed": "无法确认当前操作状态，请稍后重试",
+      "cancelFailed": "取消操作失败，请稍后重试"
+    }
+  },
+  "crossStorage": {
+    "title": "当前项目通过跨系统存储访问",
+    "description": "Windows 与 WSL 同时修改同一项目时，可能产生文件或 Skill lock 冲突。Skill Deck 会继续执行操作，但不会自动合并冲突。",
+    "dismiss": "不再提示",
+    "dismissFailed": "保存提示设置失败",
+    "hostEnvironment": "Windows",
+    "failureGuidance": "{{operation}}在当前环境失败。该项目实际存储在 {{environment}}；请切换到该环境后重试。",
+    "operation": {
+      "install": "安装",
+      "update": "更新",
+      "delete": "删除",
+      "manageAgents": "Agent 管理",
+      "cleanup": "清理重复副本",
+      "copy": "复制",
+      "repair": "修复来源"
+    }
+  },
   "addSkill": {
     "title": "安装 Skill",
     "steps": {

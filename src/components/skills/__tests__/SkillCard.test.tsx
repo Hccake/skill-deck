@@ -45,6 +45,32 @@ describe('SkillCard', () => {
     eventMocks.callback = null;
   });
 
+  it('disables every card write action when writes are blocked', () => {
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={makeSkill({ scope: 'project', canRunUpdate: true })}
+          displayScope="project"
+          writeBlocked
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onCopyToProject={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    for (const title of [
+      'skills.actions.update',
+      'skills.actions.copyToProject',
+      'skills.manageAgents.title',
+      'skills.actions.delete',
+    ]) {
+      expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+
   it('ignores update-progress events from a different skill identity', () => {
     render(
       <TooltipProvider>

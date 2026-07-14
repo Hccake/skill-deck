@@ -7,6 +7,7 @@ import type { AgentInfo } from '@/hooks/useTauriApi';
 import { InstallPreferencesPage } from '../InstallPreferencesPage';
 import enLocale from '@/i18n/locales/en.json';
 import { makeAgentScopeTarget } from '@/test-utils';
+import { useMutationStore } from '@/stores/mutation';
 
 const mockToggleDefaultTargetAgent = vi.fn();
 const mockSetDefaultTargetAgents = vi.fn();
@@ -125,6 +126,25 @@ describe('InstallPreferencesPage', () => {
       global: [],
       project: [],
     };
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables default target changes while another mutation is active', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'install',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Installing',
+        cancelable: true,
+      },
+    });
+
+    render(<InstallPreferencesPage />);
+
+    const row = screen.getByText('Claude Code').closest('[role="button"]');
+    expect(row?.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(row!);
+    expect(mockToggleDefaultTargetAgent).not.toHaveBeenCalled();
   });
 
   it('shows directly usable agents without requiring a nested expansion', () => {

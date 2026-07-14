@@ -8,6 +8,7 @@ import type { AgentType } from '@/bindings';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { UpdatePlanDialog } from '../UpdatePlanDialog';
 import type { UpdatePlan } from '@/stores/skills-utils';
+import { useMutationStore } from '@/stores/mutation';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -56,6 +57,30 @@ describe('UpdatePlanDialog', () => {
       lastUpdateResults: null,
       lastFailedUpdateNames: [],
     });
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables confirmation while keeping cancel available during another mutation', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'install',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Installing',
+        cancelable: true,
+      },
+    });
+
+    render(
+      <UpdatePlanDialog
+        open
+        plan={plan}
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn(async () => undefined)}
+      />
+    );
+
+    expect((screen.getByRole('button', { name: 'skills.updatePlan.confirm' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'common.cancel' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('shows update scope as grouped skill rows without maintenance items', () => {

@@ -1,10 +1,11 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CopyToProjectDialog } from '../CopyToProjectDialog';
 import type { InstalledSkill } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -31,6 +32,33 @@ const skill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => ({
 });
 
 describe('CopyToProjectDialog', () => {
+  beforeEach(() => {
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables copying while another mutation is active', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'update',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Updating',
+        cancelable: true,
+      },
+    });
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        currentProjectPath="/project-a"
+        projects={['/project-a', '/project-b']}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByText('/project-b'));
+    expect((screen.getByRole('button', { name: 'skills.copyToProject.copy' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('does not show a source note when copied skill can keep update metadata', () => {
     render(
       <CopyToProjectDialog

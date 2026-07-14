@@ -11,6 +11,7 @@ import {
 } from '@/lib/skills/identity';
 import { CompactSkillItem } from './CompactSkillItem';
 import type { InstalledSkill } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 interface CompactSkillListProps {
   globalSkills: InstalledSkill[];
@@ -38,6 +39,7 @@ export const CompactSkillList = memo(function CompactSkillList({
   onSkillClick,
 }: CompactSkillListProps) {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
 
   return (
     <div className="flex-1 relative min-h-0">
@@ -52,7 +54,7 @@ export const CompactSkillList = memo(function CompactSkillList({
                   <span className="font-normal opacity-70">({projectSkills.length})</span>
                 </div>
                 {pathExists && onAddProject && (
-                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddProject} title={t('skills.add')}>
+                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddProject} title={t('skills.add')} disabled={writeBlocked}>
                     <Plus className="h-3.5 w-3.5" />
                   </Button>
                 )}
@@ -77,7 +79,7 @@ export const CompactSkillList = memo(function CompactSkillList({
                   <span className="font-normal opacity-70">({globalSkills.length})</span>
                 </div>
                 {onAddGlobal && (
-                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddGlobal} title={t('skills.add')}>
+                  <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer rounded-md transition-colors" onClick={onAddGlobal} title={t('skills.add')} disabled={writeBlocked}>
                     <Plus className="h-3.5 w-3.5" />
                   </Button>
                 )}

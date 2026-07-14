@@ -2,7 +2,7 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { SkillsPanel } from '../SkillsPanel';
 import type { ContextRef } from '@/bindings';
 
@@ -84,6 +84,10 @@ vi.mock('../CompactSkillList', () => ({
   CompactSkillList: () => <div>compact-skill-list</div>,
 }));
 
+vi.mock('../CrossStorageWarningBanner', () => ({
+  CrossStorageWarningBanner: () => <div>cross-storage-warning</div>,
+}));
+
 vi.mock('../SkillsSection', () => ({
   SkillsSection: ({
     skills,
@@ -162,6 +166,7 @@ describe('SkillsPanel', () => {
     });
 
     expect(mocks.skillDetailState.deselectSkill).not.toHaveBeenCalled();
+    expect(screen.getByText('cross-storage-warning')).toBeDefined();
   });
 
   it('opens the repair source dialog for repairable skills instead of the install wizard', async () => {

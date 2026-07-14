@@ -1,6 +1,6 @@
 // src/stores/__tests__/settings.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AgentInfo } from '@/bindings';
+import type { ActiveMutation, AgentInfo } from '@/bindings';
 import { makeAgentScopeTarget } from '@/test-utils';
 
 const mockGetLastSelectedAgents = vi.fn();
@@ -23,6 +23,14 @@ vi.mock('@/hooks/useTauriApi', () => ({
 
 import { useSettingsStore } from '../settings';
 import { useContextStore } from '../context';
+import { useMutationStore } from '../mutation';
+
+const activeMutation: ActiveMutation = {
+  kind: 'install',
+  context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+  statusText: 'Installing',
+  cancelable: true,
+};
 
 describe('useSettingsStore', () => {
   beforeEach(() => {
@@ -39,6 +47,7 @@ describe('useSettingsStore', () => {
       defaultTargetAgents: { global: [], project: [] },
       agentsLoaded: false,
     });
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
   describe('theme', () => {
@@ -215,6 +224,25 @@ describe('useSettingsStore', () => {
         global: ['claude-code'],
         project: ['claude-code'],
       });
+    });
+
+    it('keeps defaults unchanged while another mutation is active', () => {
+      useSettingsStore.setState({
+        allAgents: agents,
+        defaultTargetAgents: {
+          global: ['antigravity'],
+          project: ['claude-code'],
+        },
+      });
+      useMutationStore.setState({ activeMutation });
+
+      useSettingsStore.getState().setDefaultTargetAgents('global', ['claude-code']);
+
+      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
+        global: ['antigravity'],
+        project: ['claude-code'],
+      });
+      expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
     });
 
     it('saves defaults to the selected explicit environment', () => {

@@ -5,10 +5,10 @@ use tokio::time::Duration;
 
 use crate::core::app_config::get_config_path;
 use crate::core::projects::{
-    add_project_binding, migrate_legacy_projects, remove_project_binding, ProjectsFile,
-    ProjectsStore,
+    add_project_binding, migrate_legacy_projects, remove_project_binding,
+    set_project_cross_storage_warning_suppressed, ProjectsFile, ProjectsStore,
 };
-use crate::environment::path_mapping::wsl_unc_to_linux_path;
+use crate::environment::path_mapping::{host_path_to_linux_path, wsl_unc_to_linux_path};
 use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
 use crate::environment::wsl::{
     connect_wsl_environment, discover_wsl_distributions, EnvironmentRegistry, WslSession,
@@ -87,7 +87,9 @@ pub fn map_environment_path_v2(
 ) -> Result<String, AppError> {
     match environment {
         EnvironmentRef::Host => Ok(path),
-        EnvironmentRef::Wsl { distro_name } => wsl_unc_to_linux_path(&path, &distro_name),
+        EnvironmentRef::Wsl { distro_name } => host_path_to_linux_path(&path)
+            .map(Ok)
+            .unwrap_or_else(|| wsl_unc_to_linux_path(&path, &distro_name)),
     }
 }
 
@@ -136,6 +138,14 @@ async fn write_wsl_projects(
     )
     .await?;
     read_wsl_projects(session).await
+}
+
+#[cfg(all(target_os = "windows", debug_assertions))]
+pub(crate) async fn write_wsl_projects_for_integration(
+    session: &WslSession,
+    projects: Vec<crate::environment::types::ProjectBinding>,
+) -> Result<Vec<crate::environment::types::ProjectBinding>, AppError> {
+    write_wsl_projects(session, projects).await
 }
 
 #[tauri::command]
@@ -193,9 +203,37 @@ pub async fn remove_environment_project_v2(
     }
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn set_environment_project_cross_storage_warning_v2(
+    environment: EnvironmentRef,
+    project_id: String,
+    suppressed: bool,
+    registry: State<'_, EnvironmentRegistry>,
+) -> Result<Vec<crate::environment::types::ProjectBinding>, AppError> {
+    match environment {
+        EnvironmentRef::Host => {
+            host_projects_store()?.set_cross_storage_warning_suppressed(&project_id, suppressed)
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let session = registry.get(&distro_name).ok_or_else(|| AppError::Custom {
+                message: format!("WSL distro '{distro_name}' is not connected"),
+            })?;
+            let projects = set_project_cross_storage_warning_suppressed(
+                read_wsl_projects(&session).await?,
+                &project_id,
+                suppressed,
+            );
+            write_wsl_projects(&session, projects).await
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{environment_infos_from_wsl_discovery, host_environment_info};
+    use super::{
+        environment_infos_from_wsl_discovery, host_environment_info, map_environment_path_v2,
+    };
     use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
     use crate::error::AppError;
 
@@ -211,6 +249,19 @@ mod tests {
             other => other,
         };
         assert_eq!(host.display_name, expected_name);
+    }
+
+    #[test]
+    fn maps_windows_project_paths_into_drvfs_for_wsl_environments() {
+        let mapped = map_environment_path_v2(
+            EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            },
+            r"C:\Code\demo".to_string(),
+        )
+        .expect("map Windows project");
+
+        assert_eq!(mapped, "/mnt/c/Code/demo");
     }
 
     #[test]

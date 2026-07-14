@@ -25,7 +25,7 @@ const mutation: ActiveMutation = {
 describe('useMutationStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useMutationStore.setState({ activeMutation: null, loading: false });
+    useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
   });
 
   it('blocks writes while allowing read-only browsing', async () => {
@@ -44,5 +44,40 @@ describe('useMutationStore', () => {
 
     expect(useMutationStore.getState().isWriteBlocked()).toBe(false);
     expect(useMutationStore.getState().canBrowse()).toBe(true);
+  });
+
+  it('shares one backend request between overlapping refreshes', async () => {
+    let resolveMutation: ((value: ActiveMutation | null) => void) | undefined;
+    mocks.getActiveMutation.mockImplementation(() => new Promise((resolve) => {
+      resolveMutation = resolve;
+    }));
+
+    const firstRefresh = useMutationStore.getState().refreshMutation();
+    const secondRefresh = useMutationStore.getState().refreshMutation();
+
+    expect(mocks.getActiveMutation).toHaveBeenCalledTimes(1);
+
+    resolveMutation?.(mutation);
+    await Promise.all([firstRefresh, secondRefresh]);
+
+    expect(useMutationStore.getState().activeMutation).toEqual(mutation);
+    expect(useMutationStore.getState().loading).toBe(false);
+  });
+
+  it('keeps cancellation pending until a refresh observes completion', async () => {
+    useMutationStore.setState({ activeMutation: mutation });
+    mocks.requestCancelActiveMutation.mockResolvedValue(true);
+    mocks.getActiveMutation
+      .mockResolvedValueOnce(mutation)
+      .mockResolvedValueOnce(null);
+
+    await useMutationStore.getState().cancelActiveMutation();
+
+    expect(useMutationStore.getState().cancelling).toBe(true);
+
+    await useMutationStore.getState().refreshMutation();
+
+    expect(useMutationStore.getState().activeMutation).toBeNull();
+    expect(useMutationStore.getState().cancelling).toBe(false);
   });
 });

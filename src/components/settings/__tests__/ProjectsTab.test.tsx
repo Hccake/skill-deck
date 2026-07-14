@@ -4,6 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { ProjectsTab } from '../ProjectsTab';
+import { useMutationStore } from '@/stores/mutation';
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -62,6 +63,7 @@ describe('ProjectsTab', () => {
     mocks.mapEnvironmentPath.mockResolvedValue('/home/me/new-app');
     mocks.addProject.mockResolvedValue([]);
     mocks.removeProject.mockResolvedValue([]);
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
   it('shows and manages projects in the selected environment', async () => {
@@ -85,5 +87,22 @@ describe('ProjectsTab', () => {
       'project-1',
       { kind: 'wsl', distro_name: 'Ubuntu' },
     );
+  });
+
+  it('disables project writes while keeping environment selection available', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'update',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Updating',
+        cancelable: true,
+      },
+    });
+
+    render(<ProjectsTab />);
+
+    expect((screen.getByRole('button', { name: 'settings.addProject' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'settings.removeProject' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('combobox', { name: 'context.environmentLabel' }) as HTMLSelectElement).disabled).toBe(false);
   });
 });

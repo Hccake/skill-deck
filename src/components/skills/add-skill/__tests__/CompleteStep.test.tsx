@@ -62,6 +62,10 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+vi.mock('@/utils/cross-storage-guidance', () => ({
+  getCrossStorageFailureGuidance: () => 'crossStorage.failureGuidance',
+}));
+
 function makeInstallResult(partial?: Partial<InstallResult>): InstallResult {
   return {
     skillName: 'skill-a',
@@ -138,6 +142,33 @@ describe('CompleteStep', () => {
 
     expect(screen.getByText('2/3 agents')).toBeDefined();
     expect(screen.queryByText('permission denied')).toBeNull();
+  });
+
+  it('shows storage-owner guidance once for failed project installation results', () => {
+    const installResults: InstallResults = {
+      successful: [],
+      failed: [makeInstallResult({
+        success: false,
+        error: 'permission denied',
+      })],
+      symlinkFallbackAgents: [],
+    };
+
+    render(
+      <CompleteStep
+        state={{
+          ...makeState(installResults),
+          scope: 'project',
+          context: {
+            environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+            scope: { scope: 'project', project_id: 'project-1' },
+          },
+        }}
+        onDone={() => undefined}
+      />
+    );
+
+    expect(screen.getByText('crossStorage.failureGuidance')).toBeDefined();
   });
 
   it('does not count skipped project agents as installed coverage', () => {

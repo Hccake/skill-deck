@@ -16,6 +16,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { isAutomaticAgent } from '@/lib/agentTargets';
 import { AgentSelector } from './add-skill/AgentSelector';
 import type { InstalledSkill, SkillScope, AgentInfo, InstallMode, SkillAgentDetails } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 interface ManageAgentsDialogProps {
   skill: InstalledSkill | null;
@@ -88,6 +89,7 @@ function ManageAgentsDialogBody({
   onSave,
 }: ManageAgentsDialogBodyProps) {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<InstallMode>('symlink');
 
@@ -242,7 +244,7 @@ function ManageAgentsDialogBody({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={saving || !hasChanges}
+            disabled={writeBlocked || saving || !hasChanges}
           >
             {saving ? (
               <>

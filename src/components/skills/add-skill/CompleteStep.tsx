@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import type { InstallResult, InstallTargetSpec } from '@/bindings';
 import type { WizardState } from './types';
 
@@ -85,6 +86,9 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
   }
 
   const hasFailures = failedSkillCount > 0;
+  const failureGuidance = hasFailures
+    ? getCrossStorageFailureGuidance(state.context, 'install', t)
+    : null;
   const hasSymlinkFallback = results.symlinkFallbackAgents.length > 0;
   const defaultAvailableAgents = results.defaultAvailableAgents;
   const keptAgentDirectoryAgentIds = new Set(results.privateCopyAgents ?? []);
@@ -126,6 +130,12 @@ export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteS
           </span>
         </div>
       )}
+
+      {failureGuidance ? (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-foreground">
+          {failureGuidance}
+        </div>
+      ) : null}
 
       {/* Results list */}
       <div className="border rounded-md p-3 space-y-2">

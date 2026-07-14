@@ -12,6 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useSkillsDataStore } from '@/stores/skills-data';
+import { useMutationStore } from '@/stores/mutation';
 import type { UpdatePlan } from '@/stores/skills-utils';
 import type { AgentType } from '@/bindings';
 
@@ -65,6 +66,7 @@ export function UpdatePlanDialog({
   const [completed, setCompleted] = useState(false);
   const lastUpdateResults = useSkillsDataStore((s) => s.lastUpdateResults);
   const lastFailedUpdateNames = useSkillsDataStore((s) => s.lastFailedUpdateNames);
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
 
   useEffect(() => {
     if (open) {
@@ -243,7 +245,7 @@ export function UpdatePlanDialog({
                 <Button
                   variant="outline"
                   title={t('skills.updatePlan.retryFailed')}
-                  disabled={retrying}
+                  disabled={writeBlocked || retrying}
                   onClick={() => {
                     void handleRetryFailed();
                   }}
@@ -259,7 +261,7 @@ export function UpdatePlanDialog({
               <Button variant="outline" onClick={() => onOpenChange(false)} disabled={running}>
                 {t('common.cancel')}
               </Button>
-              <Button onClick={handleConfirm} disabled={running || plan.updatableCount === 0}>
+              <Button onClick={handleConfirm} disabled={writeBlocked || running || plan.updatableCount === 0}>
                 {running ? <RotateCcw className="h-4 w-4 animate-spin" /> : null}
                 {t('skills.updatePlan.confirm')}
               </Button>

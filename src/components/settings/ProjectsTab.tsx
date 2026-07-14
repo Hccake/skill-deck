@@ -7,13 +7,15 @@ import { EnvironmentSelect } from '@/components/environments/EnvironmentSelect';
 import { environmentKey, useEnvironmentStore } from '@/stores/environment';
 import { mapEnvironmentPath } from '@/hooks/useTauriApi';
 import type { EnvironmentRef, ProjectBinding } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 interface ProjectRowProps {
   project: ProjectBinding;
   onRemove: (projectId: string) => void;
+  writeBlocked: boolean;
 }
 
-function ProjectRow({ project, onRemove }: ProjectRowProps) {
+function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
   const { t } = useTranslation();
   const basename = project.displayName
     ?? project.nativePath.split(/[/\\]/).pop()
@@ -38,6 +40,7 @@ function ProjectRow({ project, onRemove }: ProjectRowProps) {
         className="h-8 w-8 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 cursor-pointer flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all"
         onClick={() => onRemove(project.id)}
         aria-label={t('settings.removeProject')}
+        disabled={writeBlocked}
       >
         <Trash2 className="h-4 w-4" />
       </Button>
@@ -47,6 +50,7 @@ function ProjectRow({ project, onRemove }: ProjectRowProps) {
 
 export function ProjectsTab() {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const {
     environments,
     selectedEnvironment,
@@ -121,7 +125,7 @@ export function ProjectsTab() {
           className="h-8 cursor-pointer gap-1.5 px-3 text-xs font-medium"
           onClick={handleAddProject}
           aria-label={t('settings.addProject')}
-          disabled={selectedStatus === 'connecting' || selectedStatus === 'unavailable' || selectedStatus === 'error'}
+          disabled={writeBlocked || selectedStatus === 'connecting' || selectedStatus === 'unavailable' || selectedStatus === 'error'}
         >
           <Plus className="h-3.5 w-3.5" />
           {t('settings.addProject')}
@@ -170,6 +174,7 @@ export function ProjectsTab() {
                 key={project.id}
                 project={project}
                 onRemove={(projectId) => void handleRemoveProject(projectId)}
+                writeBlocked={writeBlocked}
               />
             ))}
           </div>

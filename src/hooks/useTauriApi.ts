@@ -338,6 +338,18 @@ export async function removeEnvironmentProject(
   return unwrap(await commands.removeEnvironmentProjectV2(environment, projectId));
 }
 
+export async function setEnvironmentProjectCrossStorageWarning(
+  environment: EnvironmentRef,
+  projectId: string,
+  suppressed: boolean,
+): Promise<ProjectBinding[]> {
+  return unwrap(await commands.setEnvironmentProjectCrossStorageWarningV2(
+    environment,
+    projectId,
+    suppressed,
+  ));
+}
+
 export async function getActiveMutation(): Promise<ActiveMutation | null> {
   return await commands.getActiveMutation();
 }

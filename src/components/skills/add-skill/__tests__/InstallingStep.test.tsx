@@ -38,6 +38,10 @@ vi.mock('@/hooks/useTauriApi', () => ({
   }),
 }));
 
+vi.mock('@/utils/cross-storage-guidance', () => ({
+  getCrossStorageFailureGuidance: () => 'crossStorage.failureGuidance',
+}));
+
 const installSkillsMock = vi.mocked(installSkills);
 const installSkillsV2Mock = vi.mocked(installSkillsV2);
 
@@ -153,5 +157,31 @@ describe('InstallingStep', () => {
       }));
     });
     expect(installSkillsMock).not.toHaveBeenCalled();
+  });
+
+  it('adds storage-owner guidance when project installation throws', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'project-1' },
+    } as const;
+    const updateState = vi.fn();
+    installSkillsV2Mock.mockRejectedValueOnce(new Error('permission denied'));
+
+    render(
+      <InstallingStep
+        state={makeState()}
+        updateState={updateState}
+        scope="project"
+        projectPath="/mnt/c/Code/app"
+        context={context}
+      />
+    );
+
+    await waitFor(() => expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+      step: 'error',
+      installError: expect.objectContaining({
+        suggestions: expect.arrayContaining(['crossStorage.failureGuidance']),
+      }),
+    })));
   });
 });

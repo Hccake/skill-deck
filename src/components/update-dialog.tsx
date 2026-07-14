@@ -17,11 +17,14 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useUpdaterStore, relaunchApp } from '@/stores/updater';
+import { useMutationInterruption } from '@/hooks/useMutationInterruption';
+import { MutationInterruptionDialog } from '@/components/layout/MutationInterruptionDialog';
 
 const RELEASE_URL = 'https://github.com/hccake/skill-deck/releases/latest';
 
 export function UpdateDialog({ open }: { open: boolean }) {
   const { t } = useTranslation();
+  const restartProtection = useMutationInterruption('restart', relaunchApp);
   const {
     status,
     newVersion,
@@ -42,8 +45,9 @@ export function UpdateDialog({ open }: { open: boolean }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
+    <>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent
         className="sm:max-w-lg"
         onInteractOutside={(e) => {
           if (status === 'downloading') e.preventDefault();
@@ -162,14 +166,16 @@ export function UpdateDialog({ open }: { open: boolean }) {
               </Button>
               <Button
                 className="cursor-pointer"
-                onClick={() => relaunchApp()}
+                onClick={() => void restartProtection.requestAction()}
               >
                 {t('settings.update.restartNow')}
               </Button>
             </DialogFooter>
           </>
         ) : null}
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+      <MutationInterruptionDialog {...restartProtection.dialogProps} />
+    </>
   );
 }

@@ -546,6 +546,14 @@ async removeEnvironmentProjectV2(environment: EnvironmentRef, projectId: string)
     else return { status: "error", error: e  as any };
 }
 },
+async setEnvironmentProjectCrossStorageWarningV2(environment: EnvironmentRef, projectId: string, suppressed: boolean) : Promise<Result<ProjectBinding[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_environment_project_cross_storage_warning_v2", { environment, projectId, suppressed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getActiveMutation() : Promise<ActiveMutation | null> {
     return await TAURI_INVOKE("get_active_mutation");
 },

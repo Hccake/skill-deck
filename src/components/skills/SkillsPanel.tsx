@@ -8,6 +8,7 @@ import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { SkillsToolbar } from './SkillsToolbar';
 import { SkillsSection } from './SkillsSection';
 import { CompactSkillList } from './CompactSkillList';
+import { CrossStorageWarningBanner } from './CrossStorageWarningBanner';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { RepairSourceDialog } from './RepairSourceDialog';
 import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
@@ -271,6 +272,8 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           isSyncing={isSyncing}
         />
       </div>
+
+      <CrossStorageWarningBanner />
 
       {/* Skills list content */}
       {compact ? (

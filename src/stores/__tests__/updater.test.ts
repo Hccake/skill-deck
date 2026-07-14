@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockCheck = vi.fn();
 const mockRelaunch = vi.fn();
 const mockPlatform = vi.fn();
+const mockRefreshMutation = vi.fn();
+const mutationState = {
+  activeMutation: null as null | { kind: string },
+};
 
 vi.mock('@tauri-apps/plugin-updater', () => ({
   check: (...args: unknown[]) => mockCheck(...args),
@@ -13,12 +17,22 @@ vi.mock('@tauri-apps/plugin-process', () => ({
 vi.mock('@tauri-apps/plugin-os', () => ({
   platform: () => mockPlatform(),
 }));
+vi.mock('@/stores/mutation', () => ({
+  useMutationStore: {
+    getState: () => ({
+      activeMutation: mutationState.activeMutation,
+      refreshMutation: mockRefreshMutation,
+    }),
+  },
+}));
 
-import { useUpdaterStore } from '../updater';
+import { relaunchApp, useUpdaterStore } from '../updater';
 
 describe('useUpdaterStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mutationState.activeMutation = null;
+    mockRefreshMutation.mockResolvedValue(undefined);
     localStorage.clear();
     useUpdaterStore.setState({
       status: 'idle',
@@ -167,6 +181,26 @@ describe('useUpdaterStore', () => {
       expect(state.newVersion).toBeNull();
       expect(state.releaseNotes).toBeNull();
       expect(state.downloadProgress).toBe(0);
+    });
+  });
+
+  describe('relaunchApp', () => {
+    it('relaunches after refreshing and confirming there is no active mutation', async () => {
+      const result = await relaunchApp();
+
+      expect(mockRefreshMutation).toHaveBeenCalledTimes(1);
+      expect(mockRelaunch).toHaveBeenCalledTimes(1);
+      expect(result).toBe('relaunched');
+    });
+
+    it('blocks relaunch while a mutation is active', async () => {
+      mutationState.activeMutation = { kind: 'install' };
+
+      const result = await relaunchApp();
+
+      expect(mockRefreshMutation).toHaveBeenCalledTimes(1);
+      expect(mockRelaunch).not.toHaveBeenCalled();
+      expect(result).toBe('blocked');
     });
   });
 });

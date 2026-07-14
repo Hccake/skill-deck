@@ -1,11 +1,12 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeleteSkillDialog } from '../DeleteSkillDialog';
 import type { AgentType, InstalledSkill, SkillAgentDetails, SkillScope } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -71,6 +72,23 @@ describe('DeleteSkillDialog', () => {
     mockDialogState.deleteTarget = { skill, scope: 'global' };
     mockDialogState.agentDetails = details;
     mockDialogState.loadingAgentDetails = false;
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables deletion while another mutation is active', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'install',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Installing',
+        cancelable: true,
+      },
+    });
+
+    render(<DeleteSkillDialog />);
+
+    fireEvent.click(screen.getByLabelText('skills.deleteConfirm.deleteCanonical'));
+    expect((screen.getByRole('button', { name: 'skills.deleteConfirm.confirm' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('does not force Agent directory entries to be deleted when deleting from the shared Skill directory', async () => {

@@ -21,6 +21,8 @@ import {
 } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
+import { useMutationStore } from '@/stores/mutation';
+import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
 import type { InstallParams, InstallResults } from '@/bindings';
 
@@ -79,6 +81,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const closeRepairSource = useSkillDialogStore((s) => s.closeRepairSource);
   const markSourceRepairSucceeded = useSkillsDataStore((s) => s.markSourceRepairSucceeded);
   const syncSkills = useSkillsDataStore((s) => s.syncSkills);
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [source, setSource] = useState(target.source);
   const [validateState, setValidateState] = useState<ValidateState>('idle');
   const [validationOwner, setValidationOwner] = useState<ValidationOwner>(null);
@@ -92,7 +95,8 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const isRepairing = repairPhase !== 'idle';
   const isWorking = isChecking || isRepairing;
   const canRepair =
-    !isWorking
+    !writeBlocked
+    && !isWorking
     && validateState !== 'missing'
     && (!requiresRiskConfirmation || riskAcknowledged);
 
@@ -129,8 +133,9 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   }, [isWorking, validateSource]);
 
   const handleRepair = useCallback(async () => {
-    if (isWorking) return;
+    if (writeBlocked || isWorking) return;
     setRepairPhase('validating');
+    let installCompleted = false;
     try {
       const validation = await validateSource('repair');
       if (!validation.ok) return;
@@ -155,8 +160,14 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       const results = target.context
         ? await installSkillsV2(target.context, params)
         : await installSkills(params);
+      installCompleted = true;
       if (!didRepairInstallSucceed(results, target.skillName, expectedAgents)) {
-        toast.error(t('skills.repairSourceDialog.repairFailed'));
+        toast.error(appendCrossStorageFailureGuidance(
+          t('skills.repairSourceDialog.repairFailed'),
+          target.context,
+          'repair',
+          t,
+        ));
         return;
       }
       markSourceRepairSucceeded(target.skillName, target.scope, target.projectPath);
@@ -164,7 +175,10 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       closeRepairSource();
     } catch (error) {
       console.error('[RepairSourceDialog] Failed to repair source:', error);
-      toast.error(String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(installCompleted
+        ? message
+        : appendCrossStorageFailureGuidance(message, target.context, 'repair', t));
     } finally {
       setRepairPhase('idle');
     }
@@ -178,6 +192,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     t,
     target,
     validateSource,
+    writeBlocked,
   ]);
 
   const statusLabel = useMemo(() => {

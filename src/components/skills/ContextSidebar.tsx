@@ -26,6 +26,7 @@ import { environmentKey, useEnvironmentStore } from '@/stores/environment';
 import { mapEnvironmentPath, openInExplorer } from '@/hooks/useTauriApi';
 import type { EnvironmentRef, ProjectBinding } from '@/bindings';
 import { cn } from '@/lib/utils';
+import { useMutationStore } from '@/stores/mutation';
 
 function getProjectName(project: ProjectBinding): string {
   if (project.displayName) return project.displayName;
@@ -75,9 +76,10 @@ interface ProjectContextItemProps {
   environment: EnvironmentRef;
   project: ProjectBinding;
   onRemove: (project: ProjectBinding) => Promise<void>;
+  writeBlocked: boolean;
 }
 
-function ProjectContextItem({ environment, project, onRemove }: ProjectContextItemProps) {
+function ProjectContextItem({ environment, project, onRemove, writeBlocked }: ProjectContextItemProps) {
   const { t } = useTranslation();
   const selectedContextRef = useContextStore((state) => state.selectedContextRef);
   const selectContextRef = useContextStore((state) => state.selectContextRef);
@@ -154,6 +156,7 @@ function ProjectContextItem({ environment, project, onRemove }: ProjectContextIt
                   setDeleteDialogOpen(true);
                 }}
                 aria-label={t('context.remove')}
+                disabled={writeBlocked}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
@@ -180,6 +183,7 @@ function ProjectContextItem({ environment, project, onRemove }: ProjectContextIt
           <ContextMenuItem
             onClick={() => setDeleteDialogOpen(true)}
             className="text-destructive focus:text-destructive cursor-pointer"
+            disabled={writeBlocked}
           >
             <Trash2 className="h-4 w-4 mr-2" />
             {t('context.remove')}
@@ -205,6 +209,7 @@ function ProjectContextItem({ environment, project, onRemove }: ProjectContextIt
                 void handleRemove();
               }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
+              disabled={writeBlocked}
             >
               {t('context.removeConfirm.confirm')}
             </AlertDialogAction>
@@ -217,6 +222,7 @@ function ProjectContextItem({ environment, project, onRemove }: ProjectContextIt
 
 export function ContextSidebar() {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const {
     environments,
     selectedEnvironment,
@@ -331,6 +337,7 @@ export function ContextSidebar() {
                   environment={selectedEnvironment}
                   project={project}
                   onRemove={handleRemoveProject}
+                  writeBlocked={writeBlocked}
                 />
               ))}
             </div>
@@ -343,7 +350,7 @@ export function ContextSidebar() {
           className="w-full flex items-center justify-start gap-1.5 px-3 py-2 rounded-md hover:bg-foreground/[0.04] transition-colors text-muted-foreground hover:text-foreground font-semibold text-sm cursor-pointer"
           onClick={handleAddProject}
           aria-label={t('context.addProject')}
-          disabled={selectedStatus === 'connecting' || selectedStatus === 'unavailable' || selectedStatus === 'error'}
+          disabled={writeBlocked || selectedStatus === 'connecting' || selectedStatus === 'unavailable' || selectedStatus === 'error'}
         >
           <Plus className="h-4 w-4" />
           {t('context.addProject')}

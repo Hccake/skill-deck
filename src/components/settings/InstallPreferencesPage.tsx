@@ -15,6 +15,7 @@ import {
   type InstallScope,
 } from '@/lib/agentTargets';
 import { useSettingsStore } from '@/stores/settings';
+import { useMutationStore } from '@/stores/mutation';
 import type { AgentInfo } from '@/hooks/useTauriApi';
 
 interface ScopeAgentGroups {
@@ -29,6 +30,7 @@ interface ScopeAgentGroups {
 
 export function InstallPreferencesPage() {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
 	  const {
 	    allAgents,
 	    agentsLoaded,
@@ -69,6 +71,7 @@ export function InstallPreferencesPage() {
               agents={allAgents}
               selectedAgents={defaultTargetAgents[scope]}
               loaded={agentsLoaded}
+              writeBlocked={writeBlocked}
               onToggle={(agentId) => toggleDefaultTargetAgent(scope, agentId)}
               onSelectAll={(agents) => setDefaultTargetAgents(scope, agents)}
             />
@@ -84,6 +87,7 @@ function ScopePreferencePanel({
   agents,
   selectedAgents,
   loaded,
+  writeBlocked,
   onToggle,
   onSelectAll,
 }: {
@@ -91,6 +95,7 @@ function ScopePreferencePanel({
   agents: AgentInfo[];
   selectedAgents: string[];
   loaded: boolean;
+  writeBlocked: boolean;
   onToggle: (agentId: string) => void;
   onSelectAll: (agents: string[]) => void;
 }) {
@@ -198,6 +203,7 @@ function ScopePreferencePanel({
                   checked={isAllSelected}
                   onCheckedChange={() => onSelectAll(isAllSelected ? [] : detectedPrivateRequired.map((a) => a.id))}
                   className="h-3.5 w-3.5"
+                  disabled={writeBlocked}
                 />
                 <span className="transition-opacity group-hover:opacity-80">{t('settings.installPreferences.selectAll')}</span>
               </label>
@@ -216,6 +222,7 @@ function ScopePreferencePanel({
                     scope={scope}
                     selected={selectedAgentIds.has(agent.id)}
                     onToggle={onToggle}
+                    disabled={writeBlocked}
                   />
                 ))}
               </div>
@@ -239,6 +246,7 @@ function ScopePreferencePanel({
                       scope={scope}
                       selected={selectedAgentIds.has(agent.id)}
                       onToggle={onToggle}
+                      disabled={writeBlocked}
                       muted
                     />
                   ))}
@@ -261,12 +269,14 @@ function SelectableAgentRow({
   scope,
   selected,
   onToggle,
+  disabled = false,
   muted = false,
 }: {
   agent: AgentInfo;
   scope: InstallScope;
   selected: boolean;
   onToggle: (agentId: string) => void;
+  disabled?: boolean;
   muted?: boolean;
 }) {
   const target = getAgentTarget(agent, scope);
@@ -274,10 +284,11 @@ function SelectableAgentRow({
   return (
     <div
       role="button"
-      tabIndex={0}
-      onClick={() => onToggle(agent.id)}
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled}
+      onClick={() => { if (!disabled) onToggle(agent.id); }}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (!disabled && (event.key === 'Enter' || event.key === ' ')) {
           event.preventDefault();
           onToggle(agent.id);
         }
@@ -285,10 +296,11 @@ function SelectableAgentRow({
       className={cn(
         'group grid w-full cursor-pointer grid-cols-[auto_auto_auto_1fr_auto] items-center gap-3 rounded-md px-3 py-2.5 text-left outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring/35 hover:bg-muted/30',
         selected ? 'bg-primary/5' : 'bg-transparent',
-        muted && !selected ? 'opacity-80' : 'opacity-100'
+        muted && !selected ? 'opacity-80' : 'opacity-100',
+        disabled && 'cursor-not-allowed opacity-50'
       )}
     >
-      <Checkbox checked={selected} className="pointer-events-none" />
+      <Checkbox checked={selected} className="pointer-events-none" disabled={disabled} />
       <AgentIcon agentId={agent.id} className="h-7 w-7 rounded-[5px]" />
       <span className={cn('text-[13px] font-medium leading-tight', selected ? 'text-foreground' : 'text-foreground/90')}>
         {agent.name}

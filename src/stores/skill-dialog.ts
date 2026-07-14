@@ -11,6 +11,7 @@ import {
   type RepairSourceDraft,
 } from './skills-utils';
 import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
+import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import {
   removeSkill as apiRemoveSkill,
   removeSkillV2 as apiRemoveSkillV2,
@@ -25,6 +26,7 @@ import {
   copySkillToProjectsV2 as apiCopySkillToProjectsV2,
 } from '@/hooks/useTauriApi';
 import { useEnvironmentStore, environmentKey } from './environment';
+import { isMutationWriteBlocked } from './mutation';
 import type {
   AgentType,
   InstalledSkill,
@@ -132,6 +134,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   closeDelete: () => set({ deleteTarget: null, agentDetails: null, loadingAgentDetails: false }),
 
   deleteSkill: async ({ fullRemoval, agents, agentTargets }) => {
+    if (isMutationWriteBlocked()) return;
     const { deleteTarget } = get();
     if (!deleteTarget) return;
 
@@ -177,15 +180,21 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       const { useSkillsDataStore } = await import('./skills-data');
       await useSkillsDataStore.getState().fetchSkills();
     } catch (e) {
-      toast.error(t('skills.deleteError', {
-        name: deleteTarget.skill.name,
-        error: e instanceof Error ? e.message : String(e),
-      }));
+      toast.error(appendCrossStorageFailureGuidance(
+        t('skills.deleteError', {
+          name: deleteTarget.skill.name,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+        deleteTarget.context,
+        'delete',
+        t,
+      ));
       set({ deleteTarget: null, agentDetails: null });
     }
   },
 
   openAdd: (scope) => {
+    if (isMutationWriteBlocked()) return;
     const { selectedContext } = useContextStore.getState();
     const context = getExplicitContextForScope(scope);
     openInstallWizard({
@@ -200,6 +209,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   },
 
   openAddWithPrefill: (prefill) => {
+    if (isMutationWriteBlocked()) return;
     const scope = prefill.scope ?? 'global';
     const selectedContext = useContextStore.getState().selectedContext;
     const context = getExplicitContextForScope(scope);
@@ -262,6 +272,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   }),
 
   saveAgentChanges: async (addAgents, removeAgents, mode, privateCopyAgents = [], removePrivateCopyAgents = []) => {
+    if (isMutationWriteBlocked()) return;
     const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath, manageAgentsContext } = get();
     if (!manageAgentsSkill) return;
 
@@ -284,7 +295,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
           });
         const cleanupFailures = cleanupResults.filter((result) => !result.success && !result.skipped);
         if (cleanupFailures.length > 0) {
-          toast.error(cleanupFailures.map((result) => `${result.agent}: ${result.error}`).join('\n'));
+          toast.error(appendCrossStorageFailureGuidance(
+            cleanupFailures.map((result) => `${result.agent}: ${result.error}`).join('\n'),
+            context,
+            'cleanup',
+            t,
+          ));
           return;
         }
       }
@@ -313,7 +329,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       const errors = result.errors.length > 0 ? result.errors : addResultErrors;
 
       if (errors.length > 0) {
-        toast.error(errors.join('\n'));
+        toast.error(appendCrossStorageFailureGuidance(
+          errors.join('\n'),
+          context,
+          'manageAgents',
+          t,
+        ));
       } else {
         toast.success(t('skills.manageAgents.success'));
       }
@@ -325,11 +346,17 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       await useSkillsDataStore.getState().syncSkills();
     } catch (e) {
       console.error('[saveAgentChanges] Failed:', e);
-      toast.error(String(e));
+      toast.error(appendCrossStorageFailureGuidance(
+        e instanceof Error ? e.message : String(e),
+        context,
+        'manageAgents',
+        t,
+      ));
     }
   },
 
   cleanupDuplicateCopies: async (agents) => {
+    if (isMutationWriteBlocked()) return;
     const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath, manageAgentsContext } = get();
     if (!manageAgentsSkill || agents.length === 0) return;
 
@@ -351,7 +378,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
         });
       const failures = results.filter((result) => !result.success && !result.skipped);
       if (failures.length > 0) {
-        toast.error(failures.map((result) => `${result.agent}: ${result.error}`).join('\n'));
+        toast.error(appendCrossStorageFailureGuidance(
+          failures.map((result) => `${result.agent}: ${result.error}`).join('\n'),
+          context,
+          'cleanup',
+          t,
+        ));
       } else {
         toast.success(t('skills.manageAgents.cleanupSuccess'));
       }
@@ -367,7 +399,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       set({ manageAgentDetails: details });
     } catch (e) {
       console.error('[cleanupDuplicateCopies] Failed:', e);
-      toast.error(String(e));
+      toast.error(appendCrossStorageFailureGuidance(
+        e instanceof Error ? e.message : String(e),
+        context,
+        'cleanup',
+        t,
+      ));
     }
   },
 
@@ -381,11 +418,13 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   closeCopyToProject: () => set({ copySkill: null, copyContext: undefined }),
 
   executeCopy: async (targetPaths) => {
+    if (isMutationWriteBlocked()) return;
     const { copySkill, copyContext } = get();
     if (!copySkill) return;
 
     const { selectedContext } = useContextStore.getState();
     const context = copyContext;
+    const targetContextsByPath = new Map<string, ContextRef>();
 
     try {
       const agents = copySkill.privateAdaptedAgents ?? getSkillOperationAgents(copySkill);
@@ -399,13 +438,17 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
           if (context.scope.scope !== 'project' || targets.some((project) => !project)) {
             throw new Error('Selected projects are not available in the current environment');
           }
+          const targetContexts = targets.map((project) => ({
+            environment: context.environment,
+            scope: { scope: 'project' as const, project_id: project!.id },
+          }));
+          targets.forEach((project, index) => {
+            targetContextsByPath.set(project!.nativePath, targetContexts[index]);
+          });
           return apiCopySkillToProjectsV2({
             skillName: copySkill.name,
             source: context,
-            targets: targets.map((project) => ({
-              environment: context.environment,
-              scope: { scope: 'project', project_id: project!.id },
-            })),
+            targets: targetContexts,
             agents,
             privateCopyAgents,
           });
@@ -427,7 +470,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       if (failCount > 0) {
         const errors = result.results
           .filter((r) => !r.success)
-          .map((r) => `${r.projectPath}: ${r.error}`)
+          .map((r) => appendCrossStorageFailureGuidance(
+            `${r.projectPath}: ${r.error}`,
+            targetContextsByPath.get(r.projectPath) ?? context,
+            'copy',
+            t,
+          ))
           .join('\n');
         toast.error(t('skills.copyToProject.partialError', { success: successCount, fail: failCount }) + '\n' + errors);
       } else if (skippedAgents.length > 0) {
@@ -439,7 +487,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       set({ copySkill: null, copyContext: undefined });
     } catch (e) {
       console.error('[executeCopy] Failed:', e);
-      toast.error(String(e));
+      toast.error(appendCrossStorageFailureGuidance(
+        e instanceof Error ? e.message : String(e),
+        context,
+        'copy',
+        t,
+      ));
     }
   },
 }));

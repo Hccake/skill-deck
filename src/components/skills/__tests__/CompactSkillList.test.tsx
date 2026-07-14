@@ -1,10 +1,11 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { describe, expect, it, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import { CompactSkillList } from '../CompactSkillList';
 import type { InstalledSkill } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -31,6 +32,35 @@ function makeSkill(name: string): InstalledSkill {
 }
 
 describe('CompactSkillList', () => {
+  beforeEach(() => {
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables compact add actions while another mutation is active', () => {
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'update',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Updating',
+        cancelable: true,
+      },
+    });
+
+    render(
+      <CompactSkillList
+        globalSkills={[makeSkill('alpha')]}
+        projectSkills={[]}
+        selectedSkillRef={null}
+        isProjectSelected={false}
+        projectTitle="Project Skills"
+        onAddGlobal={vi.fn()}
+        onSkillClick={vi.fn()}
+      />
+    );
+
+    expect((screen.getByTitle('skills.add') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('stretches its scroll area to the full available panel size', () => {
     const { container } = render(
       <div className="h-[480px]">

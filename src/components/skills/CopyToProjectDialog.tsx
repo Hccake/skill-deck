@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { InstalledSkill } from '@/bindings';
+import { useMutationStore } from '@/stores/mutation';
 
 interface CopyToProjectDialogProps {
   skill: InstalledSkill | null;
@@ -39,6 +40,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   onCopy,
 }: CopyToProjectDialogProps) {
   const { t } = useTranslation();
+  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [copying, setCopying] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   /** 已安装此 skill 的项目路径集合 */
@@ -169,7 +171,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
           </Button>
           <Button
             onClick={handleCopy}
-            disabled={copying || selected.size === 0}
+            disabled={writeBlocked || copying || selected.size === 0}
           >
             {copying ? (
               <>

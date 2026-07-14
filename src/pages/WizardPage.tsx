@@ -2,7 +2,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useContextStore } from '@/stores/context';
 import { emit } from '@tauri-apps/api/event';
 import { Button } from '@/components/ui/button';
@@ -18,6 +17,10 @@ import { CompleteStep } from '@/components/skills/add-skill/CompleteStep';
 import { ErrorStep } from '@/components/skills/add-skill/ErrorStep';
 import { parseWizardContext } from '@/components/skills/add-skill/wizard-context';
 import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
+import { useMutationMonitor } from '@/hooks/useMutationMonitor';
+import { useMutationStore } from '@/stores/mutation';
+import { useProtectedWindowClose } from '@/hooks/useProtectedWindowClose';
+import { MutationInterruptionDialog } from '@/components/layout/MutationInterruptionDialog';
 import type {
   EntryPoint,
   CoreStep,
@@ -81,6 +84,10 @@ function createInitialState(params: {
 export function WizardPage() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
+  const writeBlocked = useMutationStore((store) => store.activeMutation !== null);
+  const closeProtection = useProtectedWindowClose();
+
+  useMutationMonitor();
 
   // 从 URL query 解析参数
   const wizardParams = useMemo(() => ({
@@ -138,10 +145,7 @@ export function WizardPage() {
     }
   }, [currentStepIndex, steps, goToStep]);
 
-  // 关闭窗口
-  const closeWizard = useCallback(async () => {
-    await getCurrentWebviewWindow().close();
-  }, []);
+  const closeWizard = closeProtection.requestClose;
 
   // 重试安装 — 清除错误状态，递增 key 强制 InstallingStep 重新挂载
   const handleRetryInstall = useCallback(() => {
@@ -333,7 +337,7 @@ export function WizardPage() {
             {state.step === 'confirm' ? (
               <Button
                 onClick={() => goToStep('installing')}
-                disabled={!canProceed}
+                disabled={!canProceed || writeBlocked}
                 className="min-w-[100px]"
               >
                 {hasOverwrites ? (
@@ -350,6 +354,7 @@ export function WizardPage() {
           </div>
         )}
       </div>
+      <MutationInterruptionDialog {...closeProtection.dialogProps} />
     </div>
   );
 }

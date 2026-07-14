@@ -3,10 +3,11 @@
 import '@/test-utils';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManageAgentsDialog } from '../ManageAgentsDialog';
 import type { AgentInfo, InstalledSkill, SkillAgentDetails } from '@/bindings';
 import { makeAgentScopeTarget } from '@/test-utils';
+import { useMutationStore } from '@/stores/mutation';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -62,6 +63,35 @@ const skill: InstalledSkill = {
 };
 
 describe('ManageAgentsDialog', () => {
+  beforeEach(() => {
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables saving changes while another mutation is active', async () => {
+    const user = userEvent.setup();
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'update',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Updating',
+        cancelable: true,
+      },
+    });
+
+    render(
+      <ManageAgentsDialog
+        skill={skill}
+        scope="project"
+        allAgents={allAgents}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByText('Cursor'));
+    expect((screen.getByRole('button', { name: 'skills.manageAgents.save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('resets selected separate locations when agent metadata changes', () => {
     const automaticCursor: AgentInfo = makeAgent({
       id: 'cursor',

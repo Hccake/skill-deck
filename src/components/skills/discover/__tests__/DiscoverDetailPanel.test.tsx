@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DiscoverDetailPanel } from '../DiscoverDetailPanel';
 import type { DiscoverSkillSummary } from '@/lib/discover/types';
+import { useMutationStore } from '@/stores/mutation';
 
 const mocks = vi.hoisted(() => ({
   getDiscoverSkillDetail: vi.fn(),
@@ -45,6 +46,31 @@ function makeSkill(overrides: Partial<DiscoverSkillSummary>): DiscoverSkillSumma
 describe('DiscoverDetailPanel', () => {
   beforeEach(() => {
     mocks.getDiscoverSkillDetail.mockReset();
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('disables install but keeps close available during another mutation', () => {
+    mocks.getDiscoverSkillDetail.mockReturnValue(new Promise(() => undefined));
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'update',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        statusText: 'Updating',
+        cancelable: true,
+      },
+    });
+
+    render(
+      <DiscoverDetailPanel
+        skill={makeSkill({})}
+        installLocations={[]}
+        onClose={vi.fn()}
+        onInstall={vi.fn()}
+      />
+    );
+
+    expect((screen.getByRole('button', { name: 'skills.discover.install' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'common.close' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   afterEach(() => {
