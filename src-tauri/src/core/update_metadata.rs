@@ -38,6 +38,7 @@ pub fn recover_source_url(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::recover_source_url;
 

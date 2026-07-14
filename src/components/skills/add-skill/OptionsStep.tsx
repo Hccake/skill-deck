@@ -6,14 +6,11 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   listAgents,
-  listAgentsForProject,
-  listAgentsForProjectV2,
   listEveInstallTargets,
   getDefaultTargetAgents,
-  getDefaultTargetAgentsV2,
-  getLastSelectedAgents,
 } from '@/hooks/useTauriApi';
 import { canCreatePrivateCopy, filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
+import { globalContext } from '@/lib/context';
 import { AgentSelector } from './AgentSelector';
 import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
 import { Bot, Copy, Info, Link2, type LucideIcon } from 'lucide-react';
@@ -55,21 +52,14 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   useEffect(() => {
     async function initAgents() {
       const isProjectScope = scope === 'project';
-      const projectPath = state.projectPath;
-      const agentsPromise = state.context
-        ? listAgentsForProjectV2(state.context)
-        : isProjectScope
-          ? listAgentsForProject(projectPath)
-          : listAgents();
-      const eveTargetsPromise = !state.context && isProjectScope && projectPath
-        ? listEveInstallTargets(projectPath).catch(() => [])
+      const agentsPromise = listAgents(state.context);
+      const eveTargetsPromise = isProjectScope
+        ? listEveInstallTargets(state.context).catch(() => [])
         : Promise.resolve([] as InstallTargetInfo[]);
-      const lastSelectedPromise = state.context
-        ? Promise.resolve([])
-        : getLastSelectedAgents();
-      const targetDefaultsPromise = state.context
-        ? getDefaultTargetAgentsV2(state.context).catch(() => null)
-        : getDefaultTargetAgents().catch(() => null);
+      const lastSelectedPromise = Promise.resolve([] as string[]);
+      const targetDefaultsPromise = getDefaultTargetAgents(
+        globalContext(state.context.environment),
+      ).catch(() => null);
 
       const [allAgents, eveTargets, lastSelected, targetDefaults] = await Promise.all([
         agentsPromise,

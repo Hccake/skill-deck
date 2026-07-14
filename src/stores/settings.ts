@@ -3,21 +3,17 @@ import { persist } from 'zustand/middleware';
 import i18n from '@/i18n';
 import {
   getDefaultTargetAgents,
-  getDefaultTargetAgentsV2,
-  getLastSelectedAgents,
   listAgents,
-  listAgentsForProjectV2,
   saveDefaultTargetAgents,
-  saveDefaultTargetAgentsV2,
 } from '@/hooks/useTauriApi';
-import { useContextStore } from './context';
 import { isMutationWriteBlocked } from './mutation';
 import type { AgentInfo, DefaultTargetAgents } from '@/hooks/useTauriApi';
+import type { AppError, EnvironmentRef } from '@/bindings';
+import { environmentKey, globalContext } from '@/lib/context';
 import {
   EMPTY_DEFAULT_TARGET_AGENTS,
   filterAdditionalAgentIds,
   migrateDefaultTargetAgents,
-  type InstallScope,
 } from '@/lib/agentTargets';
 
 export type Theme = 'light' | 'dark';
@@ -25,6 +21,16 @@ export type Locale = 'en' | 'zh-CN';
 
 // CLI 默认选中的 agents（与 vercel-skills CLI 一致）
 const DEFAULT_AGENTS: string[] = ['claude-code', 'opencode', 'codex'];
+
+export interface AgentDefaultsSnapshot {
+  agents: AgentInfo[];
+  defaults: DefaultTargetAgents;
+  loadState: 'idle' | 'loading' | 'ready' | 'error';
+  loadRequestId: number;
+  saveRequestId: number;
+  saving: boolean;
+  error: AppError | null;
+}
 
 interface SettingsState {
   // 主题和语言（保持 localStorage 持久化）
@@ -34,15 +40,12 @@ interface SettingsState {
   setLocale: (locale: Locale) => void;
   toggleTheme: () => void;
 
-  // 默认安装目标（读写 ~/.agents/.skill-lock.json）
-  allAgents: AgentInfo[];
-  defaultTargetAgents: DefaultTargetAgents;
-  defaultTargetsMigrated: boolean;
-  agentsLoaded: boolean;
-  loadDefaultTargetAgents: () => Promise<void>;
-  setDefaultTargetAgents: (scope: InstallScope, agents: string[]) => void;
-  toggleDefaultTargetAgent: (scope: InstallScope, agentId: string) => void;
-  isDefaultTargetAgentSelected: (scope: InstallScope, agentId: string) => boolean;
+  agentDefaultsByEnvironment: Record<string, AgentDefaultsSnapshot>;
+  loadAgentDefaults: (environment: EnvironmentRef) => Promise<void>;
+  saveAgentDefaults: (
+    environment: EnvironmentRef,
+    defaults: DefaultTargetAgents,
+  ) => Promise<void>;
 }
 
 const applyTheme = (theme: Theme) => {
@@ -53,29 +56,30 @@ const applyTheme = (theme: Theme) => {
   root.classList.add(theme);
 };
 
-function didFilterAnyDefaultTargets(
-  source: DefaultTargetAgents,
-  filtered: DefaultTargetAgents,
-): boolean {
-  return (['global', 'project'] as const).some((scope) =>
-    source[scope].some((agentId) => !filtered[scope].includes(agentId))
-  );
-}
-
-function didMigrateAnyLastSelectedAgents(
-  source: string[],
-  filtered: DefaultTargetAgents,
-): boolean {
-  const retained = new Set([...filtered.global, ...filtered.project]);
-  return source.some((agentId) => !retained.has(agentId));
-}
-
-function getExplicitGlobalContext() {
-  const { hasExplicitContext, selectedContextRef } = useContextStore.getState();
-  if (!hasExplicitContext) return null;
+function emptyAgentDefaultsSnapshot(): AgentDefaultsSnapshot {
   return {
-    environment: selectedContextRef.environment,
-    scope: { scope: 'global' as const },
+    agents: [],
+    defaults: {
+      global: [...EMPTY_DEFAULT_TARGET_AGENTS.global],
+      project: [...EMPTY_DEFAULT_TARGET_AGENTS.project],
+    },
+    loadState: 'idle',
+    loadRequestId: 0,
+    saveRequestId: 0,
+    saving: false,
+    error: null,
+  };
+}
+
+function toAppError(error: unknown): AppError {
+  if (error && typeof error === 'object' && 'kind' in error) {
+    return error as AppError;
+  }
+  return {
+    kind: 'custom',
+    data: {
+      message: error instanceof Error ? error.message : String(error),
+    },
   };
 }
 
@@ -102,114 +106,129 @@ export const useSettingsStore = create<SettingsState>()(
         get().setTheme(next);
       },
 
-      // ========== 默认安装目标 ==========
-      allAgents: [],
-      defaultTargetAgents: EMPTY_DEFAULT_TARGET_AGENTS,
-      defaultTargetsMigrated: false,
-      agentsLoaded: false,
+      agentDefaultsByEnvironment: {},
 
-      loadDefaultTargetAgents: async () => {
+      loadAgentDefaults: async (environment) => {
+        const key = environmentKey(environment);
+        const context = globalContext(environment);
+        let requestId = 0;
+        set((state) => {
+          const current = state.agentDefaultsByEnvironment[key]
+            ?? emptyAgentDefaultsSnapshot();
+          requestId = current.loadRequestId + 1;
+          return {
+            agentDefaultsByEnvironment: {
+              ...state.agentDefaultsByEnvironment,
+              [key]: {
+                ...current,
+                loadState: 'loading',
+                loadRequestId: requestId,
+                error: null,
+              },
+            },
+          };
+        });
         try {
-          const context = getExplicitGlobalContext();
-          const agentsPromise = context
-            ? listAgentsForProjectV2(context)
-            : listAgents();
-          const targetDefaultsPromise = context
-            ? getDefaultTargetAgentsV2(context).catch(() => null)
-            : getDefaultTargetAgents().catch(() => null);
-          const lastSelectedPromise = context
-            ? Promise.resolve([])
-            : getLastSelectedAgents().catch(() => []);
-
-          const [agents, targetDefaults, lastSelected] = await Promise.all([
+          const agentsPromise = listAgents(context);
+          const targetDefaultsPromise = getDefaultTargetAgents(context).catch(() => null);
+          const [agents, targetDefaults] = await Promise.all([
             agentsPromise,
             targetDefaultsPromise,
-            lastSelectedPromise,
           ]);
-
-          const migratedDefaults = lastSelected.length > 0
-            ? migrateDefaultTargetAgents(lastSelected, agents)
-            : migrateDefaultTargetAgents(DEFAULT_AGENTS, agents);
-
-          const defaultTargetAgents = targetDefaults
+          const migratedDefaults = migrateDefaultTargetAgents(DEFAULT_AGENTS, agents);
+          const defaults = targetDefaults
             ? {
                 global: filterAdditionalAgentIds(targetDefaults.global, agents, 'global'),
                 project: filterAdditionalAgentIds(targetDefaults.project, agents, 'project'),
               }
             : migratedDefaults;
-          const defaultTargetsMigrated = targetDefaults
-            ? didFilterAnyDefaultTargets(targetDefaults, defaultTargetAgents)
-            : lastSelected.length > 0 && didMigrateAnyLastSelectedAgents(lastSelected, migratedDefaults);
-
-          set({
-            allAgents: agents,
-            defaultTargetAgents,
-            defaultTargetsMigrated,
-            agentsLoaded: true,
+          set((state) => {
+            const current = state.agentDefaultsByEnvironment[key];
+            if (!current || current.loadRequestId !== requestId) return state;
+            return {
+              agentDefaultsByEnvironment: {
+                ...state.agentDefaultsByEnvironment,
+                [key]: {
+                  ...current,
+                  agents,
+                  defaults,
+                  loadState: 'ready',
+                  error: null,
+                },
+              },
+            };
           });
-
-          if (targetDefaults && defaultTargetsMigrated && !isMutationWriteBlocked()) {
-        const context = getExplicitGlobalContext();
-        (context
-          ? saveDefaultTargetAgentsV2(context, defaultTargetAgents)
-          : saveDefaultTargetAgents(defaultTargetAgents)).catch((error) => {
-              console.error('保存迁移后的默认 agents 失败:', error);
-            });
-          }
         } catch (error) {
-          console.error('加载默认 agents 失败:', error);
-
-          try {
-            const context = getExplicitGlobalContext();
-            const agents = context
-              ? await listAgentsForProjectV2(context)
-              : await listAgents();
-            const defaultTargetAgents = migrateDefaultTargetAgents(DEFAULT_AGENTS, agents);
-            set({
-              allAgents: agents,
-              defaultTargetAgents,
-              defaultTargetsMigrated: false,
-              agentsLoaded: true,
-            });
-          } catch {
-            set({ agentsLoaded: true });
-          }
+          set((state) => {
+            const current = state.agentDefaultsByEnvironment[key];
+            if (!current || current.loadRequestId !== requestId) return state;
+            return {
+              agentDefaultsByEnvironment: {
+                ...state.agentDefaultsByEnvironment,
+                [key]: {
+                  ...current,
+                  loadState: 'error',
+                  error: toAppError(error),
+                },
+              },
+            };
+          });
         }
       },
 
-      setDefaultTargetAgents: (scope, agents) => {
+      saveAgentDefaults: async (environment, defaults) => {
         if (isMutationWriteBlocked()) return;
-        const { allAgents, defaultTargetAgents } = get();
+        const key = environmentKey(environment);
+        const context = globalContext(environment);
+        const current = get().agentDefaultsByEnvironment[key]
+          ?? emptyAgentDefaultsSnapshot();
+        const previousDefaults = current.defaults;
         const nextDefaults = {
-          ...defaultTargetAgents,
-          [scope]: filterAdditionalAgentIds(agents, allAgents, scope),
+          global: filterAdditionalAgentIds(defaults.global, current.agents, 'global'),
+          project: filterAdditionalAgentIds(defaults.project, current.agents, 'project'),
         };
-
-        set({
-          defaultTargetAgents: nextDefaults,
-        });
-
-        const context = getExplicitGlobalContext();
-        (context
-          ? saveDefaultTargetAgentsV2(context, nextDefaults)
-          : saveDefaultTargetAgents(nextDefaults)).catch((error) => {
-          console.error('保存默认 agents 失败，回滚状态:', error);
-          set({
-            defaultTargetAgents,
+        const requestId = current.saveRequestId + 1;
+        set((state) => ({
+          agentDefaultsByEnvironment: {
+            ...state.agentDefaultsByEnvironment,
+            [key]: {
+              ...(state.agentDefaultsByEnvironment[key] ?? current),
+              defaults: nextDefaults,
+              saveRequestId: requestId,
+              saving: true,
+              error: null,
+            },
+          },
+        }));
+        try {
+          await saveDefaultTargetAgents(context, nextDefaults);
+        } catch (error) {
+          set((state) => {
+            const latest = state.agentDefaultsByEnvironment[key];
+            if (!latest || latest.saveRequestId !== requestId) return state;
+            return {
+              agentDefaultsByEnvironment: {
+                ...state.agentDefaultsByEnvironment,
+                [key]: {
+                  ...latest,
+                  defaults: previousDefaults,
+                  error: toAppError(error),
+                },
+              },
+            };
           });
-        });
-      },
-
-      toggleDefaultTargetAgent: (scope, agentId) => {
-        const current = get().defaultTargetAgents[scope];
-        const nextAgents = current.includes(agentId)
-          ? current.filter((id) => id !== agentId)
-          : [...current, agentId];
-        get().setDefaultTargetAgents(scope, nextAgents);
-      },
-
-      isDefaultTargetAgentSelected: (scope, agentId) => {
-        return get().defaultTargetAgents[scope].includes(agentId);
+        } finally {
+          set((state) => {
+            const latest = state.agentDefaultsByEnvironment[key];
+            if (!latest || latest.saveRequestId !== requestId) return state;
+            return {
+              agentDefaultsByEnvironment: {
+                ...state.agentDefaultsByEnvironment,
+                [key]: { ...latest, saving: false },
+              },
+            };
+          });
+        }
       },
     }),
     {

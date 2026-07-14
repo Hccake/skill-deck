@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::error::AppError;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[specta(tag = "kind", rename_all = "camelCase")]
@@ -51,7 +53,32 @@ pub struct ResourceLocator {
 pub enum StorageAccess {
     Native,
     CrossStorage,
+    Unsupported,
     Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ProjectStorageInfo {
+    pub access: StorageAccess,
+    pub owner: Option<EnvironmentRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ProjectInfo {
+    pub binding: ProjectBinding,
+    pub storage: ProjectStorageInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct AddProjectResult {
+    pub project: ProjectInfo,
+    pub created: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -64,9 +91,21 @@ pub enum EnvironmentStatus {
     Error,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type, tauri_specta::Event)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct EnvironmentRuntimeEvent {
+    pub environment: EnvironmentRef,
+    pub status: EnvironmentStatus,
+    pub error: Option<AppError>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ContextRef, ContextScope, EnvironmentRef};
+    use super::{
+        AddProjectResult, ContextRef, ContextScope, EnvironmentRef, ProjectBinding, ProjectInfo,
+        ProjectStorageInfo, StorageAccess,
+    };
 
     #[test]
     fn environment_ref_round_trips_host_and_wsl() {
@@ -123,5 +162,30 @@ mod tests {
         };
 
         assert_ne!(ubuntu, debian);
+    }
+
+    #[test]
+    fn project_info_keeps_runtime_storage_outside_the_persisted_binding() {
+        let result = AddProjectResult {
+            project: ProjectInfo {
+                binding: ProjectBinding {
+                    id: "project-1".to_string(),
+                    native_path: "/work/app".to_string(),
+                    display_name: None,
+                    order: None,
+                    suppress_cross_storage_warning: false,
+                },
+                storage: ProjectStorageInfo {
+                    access: StorageAccess::Unknown,
+                    owner: None,
+                },
+            },
+            created: true,
+        };
+
+        let binding = serde_json::to_value(&result.project.binding).expect("serialize binding");
+        assert!(binding.get("storage").is_none());
+        assert_eq!(result.project.storage.access, StorageAccess::Unknown);
+        assert!(result.created);
     }
 }

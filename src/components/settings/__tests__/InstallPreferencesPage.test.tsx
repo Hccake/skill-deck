@@ -3,24 +3,14 @@
 import '@/test-utils';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentInfo } from '@/hooks/useTauriApi';
+import type { AgentInfo, EnvironmentRef } from '@/bindings';
+import type { AgentDefaultsSnapshot } from '@/stores/settings';
 import { InstallPreferencesPage } from '../InstallPreferencesPage';
 import enLocale from '@/i18n/locales/en.json';
 import { makeAgentScopeTarget } from '@/test-utils';
 import { useMutationStore } from '@/stores/mutation';
 
-const mockToggleDefaultTargetAgent = vi.fn();
-const mockSetDefaultTargetAgents = vi.fn();
-
-const mockSettingsState = vi.hoisted(() => ({
-  allAgents: [] as AgentInfo[],
-  agentsLoaded: true,
-  defaultTargetsMigrated: false,
-  defaultTargetAgents: {
-    global: [] as string[],
-    project: [] as string[],
-  },
-}));
+const mockSaveAgentDefaults = vi.fn();
 
 function lookupLocaleKey(key: string): string | undefined {
   const segments = key.split('.');
@@ -40,25 +30,19 @@ vi.mock('react-i18next', () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       const value = lookupLocaleKey(key);
       if (value === undefined) return key;
-      if (options && typeof options === 'object') {
-        return value.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
-          const replacement = options[name];
-          return replacement === undefined ? `{{${name}}}` : String(replacement);
-        });
-      }
-      return value;
+      if (!options) return value;
+      return value.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(options[name] ?? `{{${name}}}`));
     },
   }),
 }));
 
 vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({
-    ...mockSettingsState,
-    toggleDefaultTargetAgent: mockToggleDefaultTargetAgent,
-    setDefaultTargetAgents: mockSetDefaultTargetAgents,
+  useSettingsStore: (selector: (state: unknown) => unknown) => selector({
+    saveAgentDefaults: mockSaveAgentDefaults,
   }),
 }));
 
+const environment: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
 const agents: AgentInfo[] = [
   {
     id: 'amp',
@@ -67,10 +51,7 @@ const agents: AgentInfo[] = [
     globalSkillsDir: '~/.agents/skills',
     detected: true,
     targets: {
-      global: makeAgentScopeTarget({
-        automatic: true,
-        path: '~/.agents/skills',
-      }),
+      global: makeAgentScopeTarget({ automatic: true, path: '~/.agents/skills' }),
       project: makeAgentScopeTarget({
         automatic: true,
         path: './.agents/skills',
@@ -85,10 +66,7 @@ const agents: AgentInfo[] = [
     globalSkillsDir: '~/.claude/skills',
     detected: true,
     targets: {
-      global: makeAgentScopeTarget({
-        automatic: false,
-        path: '~/.claude/skills',
-      }),
+      global: makeAgentScopeTarget({ automatic: false, path: '~/.claude/skills' }),
       project: makeAgentScopeTarget({
         automatic: false,
         path: './.claude/skills',
@@ -103,90 +81,108 @@ const agents: AgentInfo[] = [
     globalSkillsDir: '~/.codeium/windsurf/skills',
     detected: false,
     targets: {
-      global: makeAgentScopeTarget({
-        automatic: false,
-        path: '~/.codeium/windsurf/skills',
-      }),
-      project: makeAgentScopeTarget({
-        automatic: false,
-        path: './.windsurf/skills',
-        sharedPath: './.agents/skills',
-      }),
+      global: makeAgentScopeTarget({ automatic: false, path: '~/.codeium/windsurf/skills' }),
+      project: makeAgentScopeTarget({ automatic: false, path: './.windsurf/skills' }),
     },
   },
 ];
 
+function snapshot(overrides: Partial<AgentDefaultsSnapshot> = {}): AgentDefaultsSnapshot {
+  return {
+    agents,
+    defaults: { global: [], project: [] },
+    loadState: 'ready',
+    loadRequestId: 1,
+    saveRequestId: 0,
+    saving: false,
+    error: null,
+    ...overrides,
+  };
+}
+
+function renderPage(selectedSnapshot = snapshot()) {
+  return render(
+    <InstallPreferencesPage environment={environment} snapshot={selectedSnapshot} />,
+  );
+}
+
 describe('InstallPreferencesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSettingsState.allAgents = agents;
-    mockSettingsState.agentsLoaded = true;
-    mockSettingsState.defaultTargetsMigrated = false;
-    mockSettingsState.defaultTargetAgents = {
-      global: [],
-      project: [],
-    };
+    mockSaveAgentDefaults.mockResolvedValue(undefined);
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
-  it('disables default target changes while another mutation is active', () => {
+  it('saves the next defaults to the explicit environment', () => {
+    renderPage(snapshot({
+      defaults: { global: [], project: ['claude-code'] },
+    }));
+
+    fireEvent.click(screen.getAllByText('Claude Code')[0]);
+
+    expect(mockSaveAgentDefaults).toHaveBeenCalledWith(environment, {
+      global: ['claude-code'],
+      project: ['claude-code'],
+    });
+  });
+
+  it('disables changes while another mutation is active', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'install',
         context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-        statusText: 'Installing',
-        cancelable: true,
+        id: 'mutation-1',
+        phase: 'preparing',
+        progress: null,
+        cancelable: false,
       },
     });
 
-    render(<InstallPreferencesPage />);
-
+    renderPage();
     const row = screen.getByText('Claude Code').closest('[role="button"]');
     expect(row?.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(row!);
-    expect(mockToggleDefaultTargetAgent).not.toHaveBeenCalled();
+    expect(mockSaveAgentDefaults).not.toHaveBeenCalled();
   });
 
-  it('shows directly usable agents without requiring a nested expansion', () => {
-    render(<InstallPreferencesPage />);
+  it('disables changes while the selected environment is saving', () => {
+    renderPage(snapshot({ saving: true }));
+
+    fireEvent.click(screen.getAllByText('Claude Code')[0]);
+
+    expect(mockSaveAgentDefaults).not.toHaveBeenCalled();
+  });
+
+  it('keeps cached rows visible while a refresh is loading', () => {
+    renderPage(snapshot({ loadState: 'loading' }));
+
+    expect(screen.getAllByText('Claude Code').length).toBeGreaterThan(0);
+    expect(screen.getByText('Claude Code').closest('[role="button"]')
+      ?.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('shows directly usable agents without nested selection', () => {
+    renderPage();
 
     expect(screen.getAllByText('Amp').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Ready to use').length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/No selection is needed/).length).toBeGreaterThan(0);
     expect(screen.getByText('Needs separate setup')).toBeDefined();
-    expect(screen.getAllByText(/link or copy/).length).toBeGreaterThan(0);
+  });
+
+  it('selects only detected additional agents when selecting all', () => {
+    renderPage();
+
+    fireEvent.click(screen.getAllByText('Select All')[0]);
+
+    expect(mockSaveAgentDefaults).toHaveBeenCalledWith(environment, {
+      global: ['claude-code'],
+      project: [],
+    });
   });
 
   it('uses global and project labels instead of workspace labels', () => {
     expect(enLocale.settings.installPreferences.globalTitle).toBe('Global');
     expect(enLocale.settings.installPreferences.projectTitle).toBe('Project');
-    expect(enLocale.settings.installPreferences.description).toContain('enabled by default');
     expect(enLocale.settings.installPreferences.description).not.toContain('workspaces');
-    expect(Object.hasOwn(enLocale.settings.installPreferences, 'globalAutomaticPath')).toBe(false);
-    expect(Object.hasOwn(enLocale.settings.installPreferences, 'projectAutomaticPath')).toBe(false);
-  });
-
-  it('toggles an additional global agent from the default target list', () => {
-    render(<InstallPreferencesPage />);
-
-    fireEvent.click(screen.getAllByText('Claude Code')[0]);
-
-    expect(mockToggleDefaultTargetAgent).toHaveBeenCalledWith('global', 'claude-code');
-  });
-
-  it('selects only detected additional agents when selecting all', () => {
-    render(<InstallPreferencesPage />);
-
-    fireEvent.click(screen.getAllByText('Select All')[0]);
-
-    expect(mockSetDefaultTargetAgents).toHaveBeenCalledWith('global', ['claude-code']);
-  });
-
-  it('shows a low-priority notice when default target agents were migrated', () => {
-    mockSettingsState.defaultTargetsMigrated = true;
-
-    render(<InstallPreferencesPage />);
-
-    expect(screen.getByText('Default separate setup was removed where it is no longer needed. These Agents can still use Skills.')).toBeDefined();
   });
 });

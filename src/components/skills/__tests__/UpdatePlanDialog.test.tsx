@@ -65,7 +65,9 @@ describe('UpdatePlanDialog', () => {
       activeMutation: {
         kind: 'install',
         context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-        statusText: 'Installing',
+        id: 'mutation-1',
+        phase: 'preparing',
+        progress: null,
         cancelable: true,
       },
     });

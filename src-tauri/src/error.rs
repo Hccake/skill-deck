@@ -3,7 +3,41 @@ use serde::Serialize;
 use specta::Type;
 use thiserror::Error;
 
-#[derive(Debug, Error, Serialize, Type)]
+use crate::environment::types::EnvironmentRef;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[specta(tag = "kind", rename_all = "camelCase")]
+pub enum LockConflictTarget {
+    Skill {
+        #[serde(rename = "skillName")]
+        skill_name: String,
+    },
+    RootField {
+        field: String,
+    },
+}
+
+impl std::fmt::Display for LockConflictTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Skill { skill_name } => {
+                write!(
+                    formatter,
+                    "Skill lock entry changed externally: {skill_name}"
+                )
+            }
+            Self::RootField { field } => {
+                write!(
+                    formatter,
+                    "Skill lock root field changed externally: {field}"
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Type)]
 #[serde(tag = "kind", content = "data", rename_all = "camelCase")]
 #[specta(tag = "kind", content = "data", rename_all = "camelCase")]
 pub enum AppError {
@@ -68,6 +102,47 @@ pub enum AppError {
 
     #[error("Another Skill operation is already running")]
     MutationBusy,
+
+    #[error("Skill operation was cancelled")]
+    MutationCancelled,
+
+    #[error("WSL environment discovery failed: {message}")]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    EnvironmentDiscoveryFailed { message: String },
+
+    #[error("WSL command timed out")]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    WslCommandTimedOut,
+
+    #[error("WSL {stream} exceeded the {limit}-byte limit")]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    WslOutputLimitExceeded { stream: String, limit: u32 },
+
+    #[error("WSL command failed with exit code {exit_code:?}: {stderr}")]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    WslCommandFailed {
+        #[serde(rename = "exitCode")]
+        exit_code: Option<i32>,
+        stderr: String,
+    },
+
+    #[error("Environment is unavailable: {message}")]
+    EnvironmentUnavailable {
+        environment: EnvironmentRef,
+        message: String,
+    },
+
+    #[error("Path cannot be mapped into the target environment: {path}")]
+    StorageMappingUnsupported {
+        path: String,
+        environment: EnvironmentRef,
+    },
+
+    #[error("Host project migration failed: {message}")]
+    ProjectMigrationFailed { message: String },
+
+    #[error("{target}")]
+    LockConflict { target: LockConflictTarget },
 
     #[error("Invalid agent: {agent}")]
     InvalidAgent { agent: String },

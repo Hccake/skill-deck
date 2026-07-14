@@ -41,7 +41,9 @@ describe('CopyToProjectDialog', () => {
       activeMutation: {
         kind: 'update',
         context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-        statusText: 'Updating',
+        id: 'mutation-1',
+        phase: 'preparing',
+        progress: null,
         cancelable: true,
       },
     });

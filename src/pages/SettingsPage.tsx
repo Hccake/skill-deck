@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Settings2, SlidersHorizontal, GitBranch, FolderOpen, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useContextStore } from '@/stores/context';
-import { useSettingsStore } from '@/stores/settings';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
+import { useProjectStore } from '@/stores/projects';
+import { environmentKey } from '@/lib/context';
+import { useSettingsStore, type AgentDefaultsSnapshot } from '@/stores/settings';
 import { AboutTab } from '@/components/settings/AboutTab';
 import { GeneralTab } from '@/components/settings/GeneralTab';
 import { GitSettingsPage } from '@/components/settings/GitSettingsPage';
@@ -43,6 +45,16 @@ const SETTINGS_SECTIONS: Array<{
 const DEFAULT_SECTION: SettingsSectionId = 'general';
 const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'install-preferences', 'git', 'projects', 'about'];
 
+const EMPTY_AGENT_DEFAULTS_SNAPSHOT: AgentDefaultsSnapshot = {
+  agents: [],
+  defaults: { global: [], project: [] },
+  loadState: 'idle',
+  loadRequestId: 0,
+  saveRequestId: 0,
+  saving: false,
+  error: null,
+};
+
 function isSettingsSection(value: string | null): value is SettingsSectionId {
   return !!value && VALID_SECTION_IDS.includes(value as SettingsSectionId);
 }
@@ -50,20 +62,36 @@ function isSettingsSection(value: string | null): value is SettingsSectionId {
 export function SettingsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { projectsLoaded, loadProjects } = useContextStore();
-  const { agentsLoaded, loadDefaultTargetAgents } = useSettingsStore();
+  const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
+  const selectedEnvironmentKey = environmentKey(selectedContext.environment);
+  const projectLoadState = useProjectStore((state) => state.loadStateByEnvironment[selectedEnvironmentKey]);
+  const refreshProjects = useProjectStore((state) => state.refresh);
+  const agentDefaultsSnapshot = useSettingsStore(
+    (state) => state.agentDefaultsByEnvironment[selectedEnvironmentKey],
+  );
+  const loadAgentDefaults = useSettingsStore((state) => state.loadAgentDefaults);
+  const lastAgentDefaultsEnvironment = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!projectsLoaded) {
-      void loadProjects();
+    if (projectLoadState !== 'ready' && projectLoadState !== 'loading') {
+      void refreshProjects(selectedContext.environment);
     }
-  }, [projectsLoaded, loadProjects]);
+  }, [projectLoadState, refreshProjects, selectedContext.environment]);
 
   useEffect(() => {
-    if (!agentsLoaded) {
-      void loadDefaultTargetAgents();
+    if (lastAgentDefaultsEnvironment.current === selectedEnvironmentKey) return;
+    lastAgentDefaultsEnvironment.current = selectedEnvironmentKey;
+    if (!agentDefaultsSnapshot
+      || agentDefaultsSnapshot.loadState === 'idle'
+      || agentDefaultsSnapshot.loadState === 'error') {
+      void loadAgentDefaults(selectedContext.environment);
     }
-  }, [agentsLoaded, loadDefaultTargetAgents]);
+  }, [
+    agentDefaultsSnapshot,
+    loadAgentDefaults,
+    selectedContext.environment,
+    selectedEnvironmentKey,
+  ]);
 
   const sectionParam = searchParams.get('section');
   const activeSection: SettingsSectionId = isSettingsSection(sectionParam)
@@ -83,7 +111,12 @@ export function SettingsPage() {
   const renderSection = () => {
     switch (activeSection) {
       case 'install-preferences':
-        return <InstallPreferencesPage />;
+        return (
+          <InstallPreferencesPage
+            environment={selectedContext.environment}
+            snapshot={agentDefaultsSnapshot ?? EMPTY_AGENT_DEFAULTS_SNAPSHOT}
+          />
+        );
       case 'git':
         return <GitSettingsPage />;
       case 'projects':

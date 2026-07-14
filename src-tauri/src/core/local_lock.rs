@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
 
 /// Local lock 文件版本号
 /// 对应 CLI: CURRENT_VERSION = 1 (local-lock.ts:6)
@@ -157,51 +155,6 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
     }
 
     Ok(new_lock)
-}
-
-/// 写入项目级 lock 文件
-/// 对应 CLI: writeLocalLock (local-lock.ts:40-53)
-///
-/// - BTreeMap 自动按 key 排序
-/// - 尾部添加换行符
-pub fn write_local_lock(lock: &LocalSkillLockFile, project_path: &str) -> Result<(), AppError> {
-    let lock_path = get_local_lock_path(project_path);
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let content = serde_json::to_string_pretty(lock)? + "\n";
-    let parent = lock_path.parent().unwrap_or(Path::new("."));
-    let mut tmp = NamedTempFile::new_in(parent)?;
-    tmp.write_all(content.as_bytes())?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(&lock_path).map_err(|e| e.error)?;
-    Ok(())
-}
-
-/// 添加 skill 到项目级 lock 文件
-/// 对应 CLI: addSkillToLocalLock (local-lock.ts:55-68)
-pub fn add_skill_to_local_lock(
-    skill_name: &str,
-    entry: LocalSkillLockEntry,
-    project_path: &str,
-) -> Result<(), AppError> {
-    let mut lock = read_local_lock(project_path)?;
-    lock.skills.insert(skill_name.to_string(), entry);
-    write_local_lock(&lock, project_path)
-}
-
-/// 从项目级 lock 文件移除 skill
-/// 对应 CLI: removeSkillFromLocalLock (local-lock.ts:70-79)
-pub fn remove_skill_from_local_lock(
-    skill_name: &str,
-    project_path: &str,
-) -> Result<bool, AppError> {
-    let mut lock = read_local_lock(project_path)?;
-    if lock.skills.remove(skill_name).is_none() {
-        return Ok(false);
-    }
-    write_local_lock(&lock, project_path)?;
-    Ok(true)
 }
 
 /// 计算 skill 文件夹的 SHA-256 哈希
@@ -389,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_write_local_lock() {
+    fn test_read_local_lock_fixture() {
         let temp = tempdir().unwrap();
         let project_path = temp.path().to_string_lossy().to_string();
 
@@ -409,10 +362,14 @@ mod tests {
             },
         );
 
-        write_local_lock(&lock, &project_path).unwrap();
+        let lock_path = get_local_lock_path(&project_path);
+        fs::write(
+            &lock_path,
+            serde_json::to_string_pretty(&lock).unwrap() + "\n",
+        )
+        .unwrap();
 
         // 验证文件存在
-        let lock_path = get_local_lock_path(&project_path);
         assert!(lock_path.exists());
 
         // 验证尾部换行符
@@ -430,45 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_remove_local_lock() {
-        let temp = tempdir().unwrap();
-        let project_path = temp.path().to_string_lossy().to_string();
-
-        // 添加
-        add_skill_to_local_lock(
-            "my-skill",
-            LocalSkillLockEntry {
-                source: "owner/repo".to_string(),
-                ref_name: None,
-                source_type: "github".to_string(),
-                source_url: None,
-                computed_hash: "hash1".to_string(),
-                remote_hash: None,
-                skill_path: None,
-                subagents: None,
-                plugin_name: None,
-            },
-            &project_path,
-        )
-        .unwrap();
-
-        let lock = read_local_lock(&project_path).unwrap();
-        assert_eq!(lock.skills.len(), 1);
-
-        // 移除
-        let removed = remove_skill_from_local_lock("my-skill", &project_path).unwrap();
-        assert!(removed);
-
-        let lock = read_local_lock(&project_path).unwrap();
-        assert!(lock.skills.is_empty());
-
-        // 再次移除不存在的
-        let removed = remove_skill_from_local_lock("my-skill", &project_path).unwrap();
-        assert!(!removed);
-    }
-
-    #[test]
-    fn test_read_write_local_lock_preserves_source_url_when_present() {
+    fn test_read_local_lock_preserves_source_url_when_present() {
         let temp = tempdir().unwrap();
         let project_path = temp.path().to_string_lossy().to_string();
         let lock_path = temp.path().join("skills-lock.json");
@@ -491,12 +410,9 @@ mod tests {
         .unwrap();
 
         let lock = read_local_lock(&project_path).unwrap();
-        write_local_lock(&lock, &project_path).unwrap();
-
-        let written = fs::read_to_string(&lock_path).unwrap();
-        assert!(
-            written.contains("\"sourceUrl\""),
-            "sourceUrl should survive local lock round-trip"
+        assert_eq!(
+            lock.skills["ssh-skill"].source_url.as_deref(),
+            Some("git@github.com:owner/private-repo.git")
         );
     }
 

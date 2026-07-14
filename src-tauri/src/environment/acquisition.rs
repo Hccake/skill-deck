@@ -4,9 +4,13 @@ use tempfile::TempDir;
 use tokio::time::Duration;
 
 use crate::core::mutation::CancellationSignal;
+#[cfg(test)]
 use crate::environment::path_mapping::host_path_to_linux_path;
+use crate::environment::path_mapping::map_windows_path_with_wslpath;
 use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::run_wsl_script;
+use crate::environment::wsl_protocol::{
+    WslCommandRequest, WslCommandRunner, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
+};
 use crate::error::AppError;
 
 const WSL_GIT_CLONE_SCRIPT: &str = r#"
@@ -51,20 +55,26 @@ pub struct HostStagingDir {
 }
 
 impl HostStagingDir {
-    pub fn new() -> Result<Self, AppError> {
+    pub async fn new(session: &WslSession) -> Result<Self, AppError> {
         let temp_dir = tempfile::Builder::new()
             .prefix("skill-deck-")
             .tempdir()
             .map_err(|error| AppError::Io {
                 message: format!("failed to create Host staging directory: {error}"),
             })?;
-        let layout = Self::layout_for_host_root(temp_dir.path())?;
+        let linux_root =
+            map_windows_path_with_wslpath(session, &temp_dir.path().to_string_lossy()).await?;
+        let layout = HostStagingLayout {
+            host_repo_path: temp_dir.path().join("repo"),
+            linux_repo_path: format!("{}/repo", linux_root.trim_end_matches('/')),
+        };
         Ok(Self {
             _temp_dir: temp_dir,
             layout,
         })
     }
 
+    #[cfg(test)]
     pub fn layout_for_host_root(
         host_root: impl AsRef<Path>,
     ) -> Result<HostStagingLayout, AppError> {
@@ -148,15 +158,7 @@ pub fn build_wsl_acquisition_plan(
 }
 
 fn acquisition_cancelled() -> AppError {
-    AppError::Custom {
-        message: "Skill source acquisition was cancelled".to_string(),
-    }
-}
-
-async fn wait_for_cancellation(cancellation: CancellationSignal) {
-    while !cancellation.is_cancelled() {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    AppError::MutationCancelled
 }
 
 async fn run_wsl_acquisition_plan_with<F, Fut>(
@@ -166,16 +168,20 @@ async fn run_wsl_acquisition_plan_with<F, Fut>(
     runner: F,
 ) -> Result<(), AppError>
 where
-    F: FnOnce(WslSession, &'static str, Vec<String>, Duration) -> Fut,
+    F: FnOnce(WslSession, &'static str, Vec<String>, Duration, CancellationSignal) -> Fut,
     Fut: std::future::Future<Output = Result<(), AppError>>,
 {
     if cancellation.is_cancelled() {
         return Err(acquisition_cancelled());
     }
-    tokio::select! {
-        result = runner(session, plan.script, plan.positional_args, plan.timeout) => result,
-        () = wait_for_cancellation(cancellation) => Err(acquisition_cancelled()),
-    }
+    runner(
+        session,
+        plan.script,
+        plan.positional_args,
+        plan.timeout,
+        cancellation,
+    )
+    .await
 }
 
 #[derive(Debug)]
@@ -239,7 +245,7 @@ async fn stage_wsl_source_with_staging<F, Fut>(
     runner: F,
 ) -> Result<StagedWslSource, AppError>
 where
-    F: FnOnce(WslSession, &'static str, Vec<String>, Duration) -> Fut,
+    F: FnOnce(WslSession, &'static str, Vec<String>, Duration, CancellationSignal) -> Fut,
     Fut: std::future::Future<Output = Result<(), AppError>>,
 {
     let plan = build_wsl_acquisition_plan(&session, source, staging.linux_repo_path())?;
@@ -260,14 +266,24 @@ pub async fn stage_wsl_source(
     source: WslAcquisitionSource,
     cancellation: CancellationSignal,
 ) -> Result<StagedWslSource, AppError> {
-    let staging = HostStagingDir::new()?;
+    let staging = HostStagingDir::new(session).await?;
     stage_wsl_source_with_staging(
         session.clone(),
         source,
         cancellation,
         staging,
-        |session, script, positional_args, timeout| async move {
-            run_wsl_script(&session, script, &positional_args, Vec::new(), timeout).await?;
+        |session, script, positional_args, timeout, cancellation| async move {
+            WslCommandRunner::run(WslCommandRequest {
+                session,
+                script,
+                args: positional_args,
+                stdin: Vec::new(),
+                timeout,
+                stdout_limit: DEFAULT_WSL_STDOUT_LIMIT,
+                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+                cancellation: Some(cancellation),
+            })
+            .await?;
             Ok(())
         },
     )
@@ -399,7 +415,7 @@ mod tests {
             session(true),
             plan,
             cancellation,
-            move |_, _, _, _| async move {
+            move |_, _, _, _, _| async move {
                 ran_by_command.store(true, std::sync::atomic::Ordering::Release);
                 Ok(())
             },
@@ -427,9 +443,11 @@ mod tests {
             session(true),
             plan,
             cancellation,
-            |_, _, _, _| async move {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                Ok(())
+            |_, _, _, _, cancellation| async move {
+                while !cancellation.is_cancelled() {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                Err(crate::error::AppError::MutationCancelled)
             },
         );
         let cancel = async move {
@@ -443,6 +461,44 @@ mod tests {
             .expect_err("running acquisition must observe cancellation")
             .to_string()
             .contains("cancelled"));
+    }
+
+    #[tokio::test]
+    async fn cancellation_waits_for_runner_cleanup_before_returning() {
+        let plan = build_wsl_acquisition_plan(
+            &session(true),
+            WslAcquisitionSource::Local {
+                native_path: "/home/alice/code/skills".to_string(),
+            },
+            "/mnt/c/Temp/sd-1/repo",
+        )
+        .expect("build plan");
+        let cancellation = CancellationSignal::default();
+        let cancellation_request = cancellation.clone();
+        let cleanup_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cleanup_from_runner = cleanup_finished.clone();
+        let run = run_wsl_acquisition_plan_with(
+            session(true),
+            plan,
+            cancellation,
+            move |_, _, _, _, cancellation| async move {
+                while !cancellation.is_cancelled() {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                cleanup_from_runner.store(true, std::sync::atomic::Ordering::Release);
+                Err(crate::error::AppError::MutationCancelled)
+            },
+        );
+        let cancel = async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            cancellation_request.cancel();
+        };
+
+        let (result, ()) = tokio::join!(run, cancel);
+
+        assert_eq!(result, Err(crate::error::AppError::MutationCancelled));
+        assert!(cleanup_finished.load(std::sync::atomic::Ordering::Acquire));
     }
 
     #[tokio::test]
@@ -460,7 +516,7 @@ mod tests {
             },
             CancellationSignal::default(),
             staging,
-            move |_, _, _, _| async move {
+            move |_, _, _, _, _| async move {
                 fs::create_dir_all(&repo_for_command).expect("create staged repo");
                 Ok(())
             },
@@ -486,7 +542,7 @@ mod tests {
             },
             CancellationSignal::default(),
             staging,
-            |_, _, _, _| async move { Ok(()) },
+            |_, _, _, _, _| async move { Ok(()) },
         )
         .await
         .expect_err("missing staged repo must fail");
@@ -507,7 +563,7 @@ mod tests {
             },
             CancellationSignal::default(),
             staging,
-            move |_, _, _, _| async move {
+            move |_, _, _, _, _| async move {
                 fs::create_dir_all(repo_for_command.join("plugins/toolkit"))
                     .expect("create staged skill");
                 Ok(())

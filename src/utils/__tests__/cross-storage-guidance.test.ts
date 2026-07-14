@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { TFunction } from 'i18next';
 import { useEnvironmentStore } from '@/stores/environment';
+import { useProjectStore } from '@/stores/projects';
 import {
   appendCrossStorageFailureGuidance,
   getCrossStorageFailureGuidance,
@@ -24,20 +25,31 @@ describe('cross-storage failure guidance', () => {
           status: 'available',
         },
       ],
+    });
+    useProjectStore.setState({
       projectsByEnvironment: {
         host: [{
-          id: 'wsl-project',
-          nativePath: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\app',
-          displayName: 'app',
-          order: null,
-          suppressCrossStorageWarning: false,
+          binding: {
+            id: 'wsl-project',
+            nativePath: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\app',
+            displayName: 'app',
+            order: null,
+            suppressCrossStorageWarning: false,
+          },
+          storage: {
+            access: 'crossStorage',
+            owner: { kind: 'wsl', distro_name: 'Ubuntu' },
+          },
         }],
         'wsl:Ubuntu': [{
-          id: 'windows-project',
-          nativePath: '/mnt/c/Code/app',
-          displayName: 'app',
-          order: null,
-          suppressCrossStorageWarning: false,
+          binding: {
+            id: 'windows-project',
+            nativePath: '/mnt/c/Code/app',
+            displayName: 'app',
+            order: null,
+            suppressCrossStorageWarning: false,
+          },
+          storage: { access: 'crossStorage', owner: { kind: 'host' } },
         }],
       },
     });
@@ -67,14 +79,20 @@ describe('cross-storage failure guidance', () => {
       scope: { scope: 'global' },
     }, 'delete', t)).toBeNull();
 
-    useEnvironmentStore.setState({
+    useProjectStore.setState({
       projectsByEnvironment: {
         'wsl:Ubuntu': [{
-          id: 'native-project',
-          nativePath: '/home/alice/app',
-          displayName: 'app',
-          order: null,
-          suppressCrossStorageWarning: false,
+          binding: {
+            id: 'native-project',
+            nativePath: '/home/alice/app',
+            displayName: 'app',
+            order: null,
+            suppressCrossStorageWarning: false,
+          },
+          storage: {
+            access: 'native',
+            owner: null,
+          },
         }],
       },
     });

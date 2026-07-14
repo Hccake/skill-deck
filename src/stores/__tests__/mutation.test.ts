@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMutationStore } from '../mutation';
-import type { ActiveMutation } from '@/bindings';
+import type { ActiveMutation, MutationSnapshot } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   getActiveMutation: vi.fn(),
@@ -13,23 +13,35 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 const mutation: ActiveMutation = {
+  id: 'mutation-1',
   kind: 'copy',
   context: {
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'project', project_id: 'project-1' },
   },
-  statusText: 'Copying',
+  phase: 'materializing',
+  progress: { subject: 'toolkit', current: 1, total: 2 },
   cancelable: true,
 };
+
+const snapshot = (revision: number, active: ActiveMutation | null): MutationSnapshot => ({
+  revision,
+  active,
+});
 
 describe('useMutationStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
+    useMutationStore.setState({
+      revision: 0,
+      activeMutation: null,
+      loading: false,
+      cancelling: false,
+    });
   });
 
   it('blocks writes while allowing read-only browsing', async () => {
-    mocks.getActiveMutation.mockResolvedValue(mutation);
+    mocks.getActiveMutation.mockResolvedValue(snapshot(1, mutation));
 
     await useMutationStore.getState().refreshMutation();
 
@@ -38,7 +50,8 @@ describe('useMutationStore', () => {
   });
 
   it('clears the write block after the mutation finishes', async () => {
-    mocks.getActiveMutation.mockResolvedValue(null);
+    useMutationStore.setState({ revision: 1, activeMutation: mutation });
+    mocks.getActiveMutation.mockResolvedValue(snapshot(2, null));
 
     await useMutationStore.getState().refreshMutation();
 
@@ -47,7 +60,7 @@ describe('useMutationStore', () => {
   });
 
   it('shares one backend request between overlapping refreshes', async () => {
-    let resolveMutation: ((value: ActiveMutation | null) => void) | undefined;
+    let resolveMutation: ((value: MutationSnapshot) => void) | undefined;
     mocks.getActiveMutation.mockImplementation(() => new Promise((resolve) => {
       resolveMutation = resolve;
     }));
@@ -57,19 +70,29 @@ describe('useMutationStore', () => {
 
     expect(mocks.getActiveMutation).toHaveBeenCalledTimes(1);
 
-    resolveMutation?.(mutation);
+    resolveMutation?.(snapshot(1, mutation));
     await Promise.all([firstRefresh, secondRefresh]);
 
     expect(useMutationStore.getState().activeMutation).toEqual(mutation);
     expect(useMutationStore.getState().loading).toBe(false);
   });
 
+  it('ignores an older query result after a newer finish snapshot', async () => {
+    useMutationStore.setState({ revision: 5, activeMutation: null });
+    mocks.getActiveMutation.mockResolvedValue(snapshot(4, mutation));
+
+    await useMutationStore.getState().refreshMutation();
+
+    expect(useMutationStore.getState().revision).toBe(5);
+    expect(useMutationStore.getState().activeMutation).toBeNull();
+  });
+
   it('keeps cancellation pending until a refresh observes completion', async () => {
-    useMutationStore.setState({ activeMutation: mutation });
+    useMutationStore.setState({ revision: 1, activeMutation: mutation });
     mocks.requestCancelActiveMutation.mockResolvedValue(true);
     mocks.getActiveMutation
-      .mockResolvedValueOnce(mutation)
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce(snapshot(2, mutation))
+      .mockResolvedValueOnce(snapshot(3, null));
 
     await useMutationStore.getState().cancelActiveMutation();
 

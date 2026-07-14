@@ -3,10 +3,9 @@
 use crate::core::agents::AgentType;
 use crate::core::installer::{is_private_copy_installed, is_skill_installed};
 use crate::core::skill::sanitize_name;
-use crate::environment::service::{
-    EnvironmentService, EnvironmentSnapshot, InspectRequest, ResolvedContext,
-};
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::context_resolver::ContextResolver;
+use crate::environment::service::{EnvironmentService, EnvironmentSnapshot, InspectRequest};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::error::AppError;
 use crate::models::{InstallTargetSpec, Scope};
@@ -26,26 +25,6 @@ use tauri::State;
 #[tauri::command]
 #[specta::specta]
 pub async fn check_overwrites(
-    skills: Vec<String>,
-    agents: Vec<String>,
-    private_copy_agents: Vec<String>,
-    scope: Scope,
-    project_path: Option<String>,
-    agent_targets: Vec<InstallTargetSpec>,
-) -> Result<HashMap<String, Vec<String>>, AppError> {
-    check_overwrites_inner(
-        skills,
-        agents,
-        private_copy_agents,
-        scope,
-        project_path,
-        agent_targets,
-    )
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn check_overwrites_v2(
     context: ContextRef,
     skills: Vec<String>,
     agents: Vec<String>,
@@ -55,20 +34,12 @@ pub async fn check_overwrites_v2(
 ) -> Result<HashMap<String, Vec<String>>, AppError> {
     match &context.environment {
         EnvironmentRef::Host => {
-            let (scope, project_path) = match &context.scope {
+            let resolved = ContextResolver::resolve_host(context)?;
+            let (scope, project_path) = match &resolved.context.scope {
                 ContextScope::Global => (Scope::Global, None),
-                ContextScope::Project { project_id } => (
+                ContextScope::Project { .. } => (
                     Scope::Project,
-                    Some(
-                        crate::commands::environments::host_projects_store()?
-                            .read()?
-                            .into_iter()
-                            .find(|project| &project.id == project_id)
-                            .ok_or_else(|| AppError::PathNotFound {
-                                path: project_id.clone(),
-                            })?
-                            .native_path,
-                    ),
+                    resolved.project.map(|project| project.native_path),
                 ),
             };
             check_overwrites_inner(
@@ -81,17 +52,27 @@ pub async fn check_overwrites_v2(
             )
         }
         EnvironmentRef::Wsl { distro_name } => {
-            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
-                message: format!("WSL distro '{distro_name}' is not connected"),
-            })?;
-            let snapshot = inspect_wsl_context(context, session).await?;
-            check_overwrites_from_snapshot(
-                &snapshot,
-                &skills,
-                &agents,
-                &private_copy_agents,
-                &agent_targets,
-            )
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            registry
+                .with_session_retry(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    let skills = skills.clone();
+                    let agents = agents.clone();
+                    let private_copy_agents = private_copy_agents.clone();
+                    let agent_targets = agent_targets.clone();
+                    async move {
+                        let snapshot = inspect_wsl_context(context, session).await?;
+                        check_overwrites_from_snapshot(
+                            &snapshot,
+                            &skills,
+                            &agents,
+                            &private_copy_agents,
+                            &agent_targets,
+                        )
+                    }
+                })
+                .await
         }
     }
 }
@@ -100,42 +81,9 @@ async fn inspect_wsl_context(
     context: ContextRef,
     session: WslSession,
 ) -> Result<EnvironmentSnapshot, AppError> {
-    let project = match &context.scope {
-        ContextScope::Global => None,
-        ContextScope::Project { project_id } => Some(
-            crate::commands::environments::read_wsl_projects(&session)
-                .await?
-                .into_iter()
-                .find(|project| &project.id == project_id)
-                .ok_or_else(|| AppError::PathNotFound {
-                    path: project_id.clone(),
-                })?,
-        ),
-    };
-    let context_path = project
-        .as_ref()
-        .map(|project| project.native_path.clone())
-        .unwrap_or_else(|| session.home.clone());
-    let environment = context.environment.clone();
+    let resolved = ContextResolver::resolve_wsl(context, &session).await?;
     EnvironmentService::Wsl(session.clone())
-        .inspect(&InspectRequest {
-            context: ResolvedContext {
-                context,
-                project,
-                home: ResourceLocator {
-                    environment: environment.clone(),
-                    native_path: session.home,
-                },
-                skill_root: ResourceLocator {
-                    environment: environment.clone(),
-                    native_path: format!("{}/.agents/skills", context_path.trim_end_matches('/')),
-                },
-                lock: ResourceLocator {
-                    environment,
-                    native_path: String::new(),
-                },
-            },
-        })
+        .inspect(&InspectRequest { context: resolved })
         .await
 }
 

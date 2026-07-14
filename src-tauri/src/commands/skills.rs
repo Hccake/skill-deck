@@ -1,18 +1,18 @@
 // list_skills command
 
-use serde::Deserialize;
-use specta::Type;
-
 use crate::core::local_lock::LocalSkillLockEntry;
 use crate::core::skill::{list_installed_skills, InstalledSkill, ListSkillsResult, SkillScope};
 use crate::core::skill_lock::SkillLockEntry;
+use crate::environment::context_resolver::ContextResolver;
 use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::service::SkillEntrySnapshot;
 use crate::environment::service::{EnvironmentService, InspectRequest, ResolvedContext};
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
 use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl_protocol::run_wsl_script;
 use crate::error::AppError;
 use tauri::State;
+use tokio::time::Duration;
 
 fn installed_skill_from_snapshot(
     snapshot: SkillEntrySnapshot,
@@ -242,179 +242,91 @@ mod environment_tests {
     }
 }
 
-/// list_skills 参数
-#[derive(Debug, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct ListSkillsParams {
-    /// 范围: "global" | "project" | null (返回全部)
-    pub scope: Option<String>,
-    /// 项目路径（用于 project scope）
-    pub project_path: Option<String>,
-}
-
-/// 列出已安装的 skills
-/// 对应前端调用: invoke('list_skills', { params })
 #[tauri::command]
 #[specta::specta]
-pub fn list_skills(params: ListSkillsParams) -> Result<ListSkillsResult, AppError> {
-    let scope = match params.scope.as_deref() {
-        Some("global") => Some(SkillScope::Global),
-        Some("project") => Some(SkillScope::Project),
-        _ => None,
-    };
-
-    let cwd = params.project_path.unwrap_or_else(|| {
-        std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| ".".to_string())
-    });
-
-    // 检查路径存在性
-    let path_exists = match scope {
-        Some(SkillScope::Project) => std::path::Path::new(&cwd).is_dir(),
-        _ => true, // global 始终为 true
-    };
-
-    let skills = if path_exists {
-        list_installed_skills(scope, &cwd)?
-    } else {
-        Vec::new()
-    };
-
-    Ok(ListSkillsResult {
-        skills,
-        path_exists,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn list_skills_v2(
+pub async fn list_skills(
     context: ContextRef,
     registry: State<'_, EnvironmentRegistry>,
 ) -> Result<ListSkillsResult, AppError> {
     match &context.environment {
-        EnvironmentRef::Host => list_host_skills_v2(&context),
+        EnvironmentRef::Host => {
+            let resolved = ContextResolver::resolve_host(context)?;
+            list_host_skills(&resolved)
+        }
         EnvironmentRef::Wsl { distro_name } => {
-            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
-                message: format!("WSL distro '{distro_name}' is not connected"),
-            })?;
-            let (project, scope, skill_root) = match &context.scope {
-                ContextScope::Global => (
-                    None,
-                    SkillScope::Global,
-                    format!("{}/.agents/skills", session.home.trim_end_matches('/')),
-                ),
-                ContextScope::Project { project_id } => {
-                    let project = crate::commands::environments::read_wsl_projects(&session)
-                        .await?
-                        .into_iter()
-                        .find(|project| &project.id == project_id)
-                        .ok_or_else(|| AppError::PathNotFound {
-                            path: project_id.clone(),
-                        })?;
-                    let root = format!(
-                        "{}/.agents/skills",
-                        project.native_path.trim_end_matches('/')
-                    );
-                    (Some(project), SkillScope::Project, root)
-                }
-            };
-            let environment = context.environment.clone();
-            let lock_path = match &project {
-                Some(project) => format!(
-                    "{}/skills-lock.json",
-                    project.native_path.trim_end_matches('/')
-                ),
-                None => session
-                    .xdg_state_home
-                    .as_ref()
-                    .filter(|path| !path.trim().is_empty())
-                    .map(|path| format!("{}/skills/.skill-lock.json", path.trim_end_matches('/')))
-                    .unwrap_or_else(|| {
-                        format!(
-                            "{}/.agents/.skill-lock.json",
-                            session.home.trim_end_matches('/')
-                        )
-                    }),
-            };
-            let lock_locator = ResourceLocator {
-                environment: environment.clone(),
-                native_path: lock_path,
-            };
-            let snapshot = EnvironmentService::Wsl(session.clone())
-                .inspect(&InspectRequest {
-                    context: ResolvedContext {
-                        context,
-                        project: project.clone(),
-                        home: ResourceLocator {
-                            environment: environment.clone(),
-                            native_path: session.home.clone(),
-                        },
-                        skill_root: ResourceLocator {
-                            environment: environment.clone(),
-                            native_path: skill_root,
-                        },
-                        lock: ResourceLocator {
-                            environment: environment.clone(),
-                            native_path: lock_locator.native_path.clone(),
-                        },
-                    },
-                })
-                .await?;
-            let lock_io = EnvironmentLockIo::Wsl(session.clone());
-            let mut lock_bytes = lock_io.read_optional(&lock_locator).await.ok().flatten();
-            let mut lock_kind = if project.is_some() {
-                LockKind::Project
-            } else {
-                LockKind::Global
-            };
-            if lock_bytes.is_none() {
-                if let Some(project) = &project {
-                    let legacy_locator = ResourceLocator {
-                        environment,
-                        native_path: format!(
-                            "{}/.agents/.skill-lock.json",
-                            project.native_path.trim_end_matches('/')
-                        ),
-                    };
-                    lock_bytes = lock_io.read_optional(&legacy_locator).await.ok().flatten();
-                    if lock_bytes.is_some() {
-                        lock_kind = LockKind::LegacyProject;
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            registry
+                .with_session_retry(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    async move {
+                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        let scope = match &resolved.context.scope {
+                            ContextScope::Global => SkillScope::Global,
+                            ContextScope::Project { .. } => SkillScope::Project,
+                        };
+                        let lock_locator = resolved.lock.clone();
+                        let snapshot = EnvironmentService::Wsl(session.clone())
+                            .inspect(&InspectRequest {
+                                context: resolved.clone(),
+                            })
+                            .await?;
+                        let lock_io = EnvironmentLockIo::Wsl(session.clone());
+                        let mut lock_bytes =
+                            lock_io.read_optional(&lock_locator).await.ok().flatten();
+                        let mut lock_kind = if resolved.project.is_some() {
+                            LockKind::Project
+                        } else {
+                            LockKind::Global
+                        };
+                        if lock_bytes.is_none() {
+                            if let Some(project) = &resolved.project {
+                                let legacy_locator = ResourceLocator {
+                                    environment: resolved.context.environment.clone(),
+                                    native_path: format!(
+                                        "{}/.agents/.skill-lock.json",
+                                        project.native_path.trim_end_matches('/')
+                                    ),
+                                };
+                                lock_bytes =
+                                    lock_io.read_optional(&legacy_locator).await.ok().flatten();
+                                if lock_bytes.is_some() {
+                                    lock_kind = LockKind::LegacyProject;
+                                }
+                            }
+                        }
+                        let skills = snapshot
+                            .skills
+                            .into_iter()
+                            .map(|skill| installed_skill_from_snapshot(skill, scope))
+                            .collect();
+                        Ok(ListSkillsResult {
+                            path_exists: snapshot.path_exists,
+                            skills: enrich_environment_skills_from_lock(
+                                skills,
+                                lock_bytes.as_deref(),
+                                lock_kind,
+                            ),
+                        })
                     }
-                }
-            }
-            let skills = snapshot
-                .skills
-                .into_iter()
-                .map(|skill| installed_skill_from_snapshot(skill, scope))
-                .collect();
-            Ok(ListSkillsResult {
-                path_exists: snapshot.path_exists,
-                skills: enrich_environment_skills_from_lock(
-                    skills,
-                    lock_bytes.as_deref(),
-                    lock_kind,
-                ),
-            })
+                })
+                .await
         }
     }
 }
 
-fn list_host_skills_v2(context: &ContextRef) -> Result<ListSkillsResult, AppError> {
-    match &context.scope {
+fn list_host_skills(context: &ResolvedContext) -> Result<ListSkillsResult, AppError> {
+    match &context.context.scope {
         ContextScope::Global => Ok(ListSkillsResult {
             skills: list_installed_skills(Some(SkillScope::Global), ".")?,
             path_exists: true,
         }),
-        ContextScope::Project { project_id } => {
-            let project = crate::commands::environments::host_projects_store()?
-                .read()?
-                .into_iter()
-                .find(|project| &project.id == project_id)
+        ContextScope::Project { .. } => {
+            let project = context
+                .project
+                .as_ref()
                 .ok_or_else(|| AppError::PathNotFound {
-                    path: project_id.clone(),
+                    path: context.skill_root.native_path.clone(),
                 })?;
             let path_exists = std::path::Path::new(&project.native_path).is_dir();
             let skills = if path_exists {
@@ -430,11 +342,80 @@ fn list_host_skills_v2(context: &ContextRef) -> Result<ListSkillsResult, AppErro
     }
 }
 
-use crate::core::skill::read_skill_content as core_read_skill_content;
+use crate::core::skill::{
+    read_skill_content as core_read_skill_content, skill_content_from_markdown,
+};
 
 /// Read the markdown body of a skill's SKILL.md
 #[tauri::command]
 #[specta::specta]
-pub fn read_skill_content(canonical_path: String) -> Result<String, AppError> {
-    core_read_skill_content(&canonical_path)
+pub async fn read_skill_content(
+    context: ContextRef,
+    canonical_path: String,
+    registry: State<'_, EnvironmentRegistry>,
+) -> Result<String, AppError> {
+    match &context.environment {
+        EnvironmentRef::Host => {
+            ContextResolver::resolve_host(context)?;
+            core_read_skill_content(&canonical_path)
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            registry
+                .with_session_retry(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    let canonical_path = canonical_path.clone();
+                    async move {
+                        ContextResolver::resolve_wsl(context, &session).await?;
+                        read_wsl_skill_content(&session, &canonical_path).await
+                    }
+                })
+                .await
+        }
+    }
+}
+
+async fn read_wsl_skill_content(
+    session: &crate::environment::wsl::WslSession,
+    canonical_path: &str,
+) -> Result<String, AppError> {
+    const SCRIPT: &str = r#"
+dir=$1
+[ -d "$dir" ] || exit 44
+for candidate in "$dir"/*; do
+  [ -f "$candidate" ] || continue
+  base=${candidate##*/}
+  lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+  if [ "$lower" = 'skill.md' ]; then
+    cat -- "$candidate"
+    exit 0
+  fi
+done
+exit 44
+"#;
+    let output = match run_wsl_script(
+        session,
+        SCRIPT,
+        &[canonical_path.to_string()],
+        Vec::new(),
+        Duration::from_secs(10),
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(AppError::WslCommandFailed {
+            exit_code: Some(44),
+            ..
+        }) => {
+            return Err(AppError::PathNotFound {
+                path: format!("{}/SKILL.md", canonical_path.trim_end_matches('/')),
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let content = String::from_utf8(output).map_err(|error| AppError::InvalidSkillMd {
+        message: error.to_string(),
+    })?;
+    Ok(skill_content_from_markdown(&content))
 }

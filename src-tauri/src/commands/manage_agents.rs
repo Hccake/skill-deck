@@ -9,16 +9,17 @@ use crate::core::agents::AgentType;
 use crate::core::installer::{
     copy_skill_for_agent, copy_skill_for_agent_private, link_skill_for_agent_without_fallback,
 };
-use crate::core::mutation::{MutationGuard, MutationKind, SingleMutationController};
+use crate::core::mutation::{MutationGuard, MutationKind, MutationPhase, SingleMutationController};
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::core::uninstaller::remove_skill;
 use crate::environment::agent_environment::{AgentEnvironmentResolver, AgentEnvironmentTarget};
+use crate::environment::context_resolver::ContextResolver;
 use crate::environment::materialize::{
     materialize_wsl_agent_targets, WslAgentMaterializeRequest, WslAgentMaterializeTarget,
 };
 use crate::environment::service::{EnvironmentService, InspectRequest, ResolvedContext};
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::error::AppError;
 use crate::models::{AgentSkillPresence, InstallMode, Scope};
@@ -118,9 +119,7 @@ fn plan_wsl_agent_additions(
 /// * `add_agents` - 要添加的 agent 列表
 /// * `remove_agents` - 要移除的 agent 列表
 /// * `mode` - 添加 agent 时使用的安装模式
-#[tauri::command]
-#[specta::specta]
-pub fn manage_skill_agents(
+pub fn manage_skill_agents_host(
     skill_name: String,
     scope: Scope,
     project_path: Option<String>,
@@ -263,9 +262,10 @@ pub fn manage_skill_agents(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 #[specta::specta]
-pub async fn manage_skill_agents_v2(
+pub async fn manage_skill_agents(
     context: ContextRef,
     skill_name: String,
     add_agents: Vec<AgentType>,
@@ -275,27 +275,18 @@ pub async fn manage_skill_agents_v2(
     registry: State<'_, EnvironmentRegistry>,
     controller: State<'_, SingleMutationController>,
 ) -> Result<ManageAgentsResult, AppError> {
-    let guard = controller.begin(
-        MutationKind::ManageAgents,
-        context.clone(),
-        "Preparing Agent changes",
-    )?;
+    let guard = controller.begin(MutationKind::ManageAgents, context.clone())?;
     match &context.environment {
         EnvironmentRef::Host => {
-            let (scope, project_path) = match &context.scope {
+            let resolved = ContextResolver::resolve_host(context)?;
+            let (scope, project_path) = match &resolved.context.scope {
                 ContextScope::Global => (Scope::Global, None),
-                ContextScope::Project { project_id } => {
-                    let project = crate::commands::environments::host_projects_store()?
-                        .read()?
-                        .into_iter()
-                        .find(|project| &project.id == project_id)
-                        .ok_or_else(|| AppError::PathNotFound {
-                            path: project_id.clone(),
-                        })?;
-                    (Scope::Project, Some(project.native_path))
-                }
+                ContextScope::Project { .. } => (
+                    Scope::Project,
+                    resolved.project.map(|project| project.native_path),
+                ),
             };
-            manage_skill_agents(
+            manage_skill_agents_host(
                 skill_name,
                 scope,
                 project_path,
@@ -306,27 +297,40 @@ pub async fn manage_skill_agents_v2(
             )
         }
         EnvironmentRef::Wsl { distro_name } => {
-            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
-                message: format!("WSL distro '{distro_name}' is not connected"),
-            })?;
-            manage_skill_agents_wsl_v2(
-                &context,
-                &session,
-                &skill_name,
-                &add_agents,
-                &remove_agents,
-                &private_copy_agents,
-                mode,
-                &guard,
-            )
-            .await
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            let guard = &guard;
+            registry
+                .with_session(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    let skill_name = skill_name.clone();
+                    let add_agents = add_agents.clone();
+                    let remove_agents = remove_agents.clone();
+                    let private_copy_agents = private_copy_agents.clone();
+                    let mode = mode.clone();
+                    async move {
+                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        manage_skill_agents_wsl(
+                            resolved,
+                            &session,
+                            &skill_name,
+                            &add_agents,
+                            &remove_agents,
+                            &private_copy_agents,
+                            mode,
+                            guard,
+                        )
+                        .await
+                    }
+                })
+                .await
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn manage_skill_agents_wsl_v2(
-    context: &ContextRef,
+async fn manage_skill_agents_wsl(
+    context: ResolvedContext,
     session: &WslSession,
     skill_name: &str,
     add_agents: &[AgentType],
@@ -335,43 +339,10 @@ async fn manage_skill_agents_wsl_v2(
     mode: InstallMode,
     guard: &MutationGuard<'_>,
 ) -> Result<ManageAgentsResult, AppError> {
-    let (project, context_root) = match &context.scope {
-        ContextScope::Global => (None, session.home.clone()),
-        ContextScope::Project { project_id } => {
-            let project = crate::commands::environments::read_wsl_projects(session)
-                .await?
-                .into_iter()
-                .find(|project| &project.id == project_id)
-                .ok_or_else(|| AppError::PathNotFound {
-                    path: project_id.clone(),
-                })?;
-            let root = project.native_path.clone();
-            (Some(project), root)
-        }
-    };
-    let is_global = project.is_none();
-    let canonical_root = format!("{}/.agents/skills", context_root.trim_end_matches('/'));
-    let (lock, _) = crate::commands::remove::wsl_remove_lock_locators(
-        context,
-        session,
-        project.as_ref().map(|project| project.native_path.as_str()),
-    );
+    let context_root = context.context_root().to_string();
+    let is_global = context.project.is_none();
     let snapshot = EnvironmentService::Wsl(session.clone())
-        .inspect(&InspectRequest {
-            context: ResolvedContext {
-                context: context.clone(),
-                project,
-                home: ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: session.home.clone(),
-                },
-                skill_root: ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: canonical_root,
-                },
-                lock,
-            },
-        })
+        .inspect(&InspectRequest { context })
         .await?
         .skills
         .into_iter()
@@ -419,7 +390,7 @@ async fn manage_skill_agents_wsl_v2(
         });
     }
     if !add_plan.targets.is_empty() {
-        guard.set_cancelable(false);
+        guard.transition(MutationPhase::Materializing, None, false);
         let materialized = materialize_wsl_agent_targets(
             session,
             WslAgentMaterializeRequest {
@@ -428,7 +399,6 @@ async fn manage_skill_agents_wsl_v2(
             },
         )
         .await;
-        guard.set_cancelable(true);
         for result in materialized? {
             if result.success {
                 added.push(result.agent.clone());
@@ -474,10 +444,9 @@ async fn manage_skill_agents_wsl_v2(
         ));
     }
     if !removal_paths.is_empty() {
-        guard.set_cancelable(false);
+        guard.transition(MutationPhase::Materializing, None, false);
         let removal_results =
             crate::commands::remove::remove_wsl_paths(session, &removal_paths).await;
-        guard.set_cancelable(true);
         for (agent, result) in removal_agents.into_iter().zip(removal_results?) {
             if result.success {
                 removed.push(agent.to_string());
@@ -551,7 +520,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let project_path = temp.path().to_string_lossy().to_string();
 
-        let result = manage_skill_agents(
+        let result = manage_skill_agents_host(
             "nonexistent".to_string(),
             Scope::Project,
             Some(project_path),
@@ -570,7 +539,7 @@ mod tests {
         let project_path = temp.path().to_string_lossy().to_string();
         let canonical = setup_installed_skill(temp.path(), "my-skill");
 
-        let result = manage_skill_agents(
+        let result = manage_skill_agents_host(
             "my-skill".to_string(),
             Scope::Project,
             Some(project_path),
@@ -596,7 +565,7 @@ mod tests {
         let project_path = temp.path().to_string_lossy().to_string();
         setup_installed_skill(temp.path(), "my-skill");
 
-        let result = manage_skill_agents(
+        let result = manage_skill_agents_host(
             "my-skill".to_string(),
             Scope::Project,
             Some(project_path),
@@ -618,7 +587,7 @@ mod tests {
         let project_path = temp.path().to_string_lossy().to_string();
         let canonical = setup_installed_skill(temp.path(), "copy-agent-skill");
 
-        let result = manage_skill_agents(
+        let result = manage_skill_agents_host(
             "copy-agent-skill".to_string(),
             Scope::Project,
             Some(project_path.clone()),
@@ -651,7 +620,7 @@ mod tests {
         let project_path = temp.path().to_string_lossy().to_string();
         let canonical = setup_installed_skill(temp.path(), "private-copy-agent-skill");
 
-        let result = manage_skill_agents(
+        let result = manage_skill_agents_host(
             "private-copy-agent-skill".to_string(),
             Scope::Project,
             Some(project_path.clone()),
@@ -691,7 +660,7 @@ mod tests {
         fs::create_dir_all(&agent_copy).unwrap();
         fs::write(agent_copy.join("SKILL.md"), "# Local edits").unwrap();
 
-        let result = manage_skill_agents(
+        let result = manage_skill_agents_host(
             "duplicate-private-copy-skill".to_string(),
             Scope::Project,
             Some(project_path.clone()),
@@ -723,7 +692,7 @@ mod tests {
         let project_path = temp.path().to_string_lossy().to_string();
         let canonical = setup_installed_skill(temp.path(), "link-agent-skill");
 
-        let result = manage_skill_agents(
+        let result = manage_skill_agents_host(
             "link-agent-skill".to_string(),
             Scope::Project,
             Some(project_path.clone()),

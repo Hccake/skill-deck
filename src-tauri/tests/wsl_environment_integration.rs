@@ -4,7 +4,7 @@ use std::process::Command;
 
 use app_lib::wsl_integration_support::{
     build_wsl_exec_args, connect_wsl_environment, decode_nul_records, discover_wsl_distributions,
-    host_path_to_linux_path, read_wsl_projects, run_wsl_script, write_wsl_projects,
+    map_windows_path_with_wslpath, read_wsl_projects, run_wsl_script, write_wsl_projects,
     wsl_unc_to_linux_path, EnvironmentLockIo, EnvironmentRef, ProjectBinding, ResourceLocator,
     WslSession,
 };
@@ -255,7 +255,9 @@ async fn round_trips_wsl_native_drvfs_and_unc_paths_with_non_ascii_names() {
 
     let host_temp = tempdir().expect("create Windows tempdir");
     let host_path = host_temp.path().to_string_lossy();
-    let drvfs_root = host_path_to_linux_path(&host_path).expect("map Windows tempdir to DrvFS");
+    let drvfs_root = map_windows_path_with_wslpath(&session, &host_path)
+        .await
+        .expect("map Windows tempdir through distro wslpath");
     let drvfs_file = format!("{drvfs_root}/skill deck-项目.txt");
     run_wsl_script(
         &session,

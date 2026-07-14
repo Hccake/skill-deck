@@ -1,6 +1,7 @@
 import type { ContextRef } from '@/bindings';
-import { environmentKey, useEnvironmentStore } from '@/stores/environment';
-import { getProjectStorageOwner } from '@/lib/projectStorage';
+import { useEnvironmentStore } from '@/stores/environment';
+import { useProjectStore } from '@/stores/projects';
+import { environmentKey } from '@/lib/context';
 
 export type CrossStorageOperation =
   | 'install'
@@ -21,15 +22,16 @@ export function getCrossStorageFailureGuidance(
   if (!context || context.scope.scope !== 'project') return null;
   const projectId = context.scope.project_id;
 
-  const state = useEnvironmentStore.getState();
-  const projects = state.projectsByEnvironment[environmentKey(context.environment)] ?? [];
-  const project = projects.find((entry) => entry.id === projectId);
+  const projects = useProjectStore.getState().projectsByEnvironment[
+    environmentKey(context.environment)
+  ] ?? [];
+  const project = projects.find((entry) => entry.binding.id === projectId);
   if (!project) return null;
 
-  const owner = getProjectStorageOwner(context.environment, project.nativePath);
+  const owner = project.storage.owner;
   if (!owner) return null;
 
-  const ownerInfo = state.environments.find(
+  const ownerInfo = useEnvironmentStore.getState().environments.find(
     (entry) => environmentKey(entry.environment) === environmentKey(owner),
   );
   const environmentLabel = ownerInfo?.displayName

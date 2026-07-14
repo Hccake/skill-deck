@@ -1,8 +1,10 @@
 import { useMemo, useCallback, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSkillsDataStore } from '@/stores/skills-data';
-import { useContextStore } from '@/stores/context';
-import { environmentKey, useEnvironmentStore } from '@/stores/environment';
+import { useShallow } from 'zustand/react/shallow';
+import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
+import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { useProjectStore } from '@/stores/projects';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { DiscoverListPanel } from '@/components/skills/discover/DiscoverListPanel';
 import { DiscoverDetailPanel } from '@/components/skills/discover/DiscoverDetailPanel';
@@ -10,6 +12,17 @@ import { Compass } from 'lucide-react';
 import type { DiscoverSkillSummary, DiscoverTab } from '@/lib/discover/types';
 import { getSkillInstallLocations } from '@/lib/discover-utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import type { ContextRef } from '@/bindings';
+
+const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
+const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
+  skills: [],
+  agents: [],
+  pathExists: true,
+  loading: false,
+  error: null,
+  requestId: 0,
+};
 
 const DISCOVER_PANEL_LAYOUT = {
   list: {
@@ -25,37 +38,49 @@ const DISCOVER_PANEL_LAYOUT = {
 
 export function DiscoverPage() {
   const { t } = useTranslation();
-  const globalSkills = useSkillsDataStore((s) => s.globalSkills);
-  const allProjectsSkills = useSkillsDataStore((s) => s.allProjectsSkills);
-  const fetchAllProjectsSkills = useSkillsDataStore((s) => s.fetchAllProjectsSkills);
-  const projects = useContextStore((s) => s.projects);
-  const projectsLoaded = useContextStore((s) => s.projectsLoaded);
-  const selectedContextRef = useContextStore((s) => s.selectedContextRef);
-  const hasExplicitContext = useContextStore((s) => s.hasExplicitContext);
-  const environmentProjects = useEnvironmentStore((s) => s.projectsByEnvironment);
-  const environmentProjectsLoaded = useEnvironmentStore((s) => s.projectsLoaded);
+  const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
+  const selectedEnvironmentKey = environmentKey(selectedContext.environment);
+  const projects = useProjectStore((state) => (
+    state.projectsByEnvironment[selectedEnvironmentKey] ?? EMPTY_PROJECTS
+  ));
+  const projectLoadState = useProjectStore((state) => state.loadStateByEnvironment[selectedEnvironmentKey]);
+  const refreshProjects = useProjectStore((state) => state.refresh);
+  const globalSkillContext = useMemo(
+    () => globalContext(selectedContext.environment),
+    [selectedContext.environment],
+  );
+  const projectContexts = useMemo<ContextRef[]>(() => projects.map((project) => ({
+    environment: selectedContext.environment,
+    scope: { scope: 'project', project_id: project.binding.id },
+  })), [projects, selectedContext.environment]);
+  const projectContextKeys = useMemo(
+    () => projectContexts.map(contextKey),
+    [projectContexts],
+  );
+  const globalSnapshot = useSkillsDataStore((state) => (
+    state.snapshots[contextKey(globalSkillContext)] ?? EMPTY_SNAPSHOT
+  ));
+  const projectSnapshots = useSkillsDataStore(useShallow((state) => (
+    projectContextKeys.map((key) => state.snapshots[key] ?? EMPTY_SNAPSHOT)
+  )));
+  const refreshContext = useSkillsDataStore((state) => state.refreshContext);
   const openAddWithPrefill = useSkillDialogStore((s) => s.openAddWithPrefill);
 
   const [activeTab, setActiveTab] = useState<DiscoverTab>('popular');
   const [selectedSkill, setSelectedSkill] = useState<DiscoverSkillSummary | null>(null);
 
   useEffect(() => {
-    const explicitKey = environmentKey(selectedContextRef.environment);
-    const ready = hasExplicitContext
-      ? environmentProjectsLoaded[explicitKey]
-      : projectsLoaded;
-    if (ready) {
-      fetchAllProjectsSkills();
+    if (projectLoadState !== 'ready' && projectLoadState !== 'loading') {
+      void refreshProjects(selectedContext.environment);
     }
-  }, [
-    environmentProjects,
-    environmentProjectsLoaded,
-    fetchAllProjectsSkills,
-    hasExplicitContext,
-    projects,
-    projectsLoaded,
-    selectedContextRef,
-  ]);
+  }, [projectLoadState, refreshProjects, selectedContext.environment]);
+
+  useEffect(() => {
+    void Promise.all([
+      refreshContext(globalSkillContext, false),
+      ...projectContexts.map((context) => refreshContext(context, false)),
+    ]);
+  }, [globalSkillContext, projectContexts, refreshContext]);
 
   const installedSkillLocations = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -67,19 +92,24 @@ export function DiscoverPage() {
         map.set(key, [location]);
       }
     };
-    for (const s of globalSkills) addEntry(`${s.source ?? ''}::${s.name}`, 'global');
-    for (const [projectPath, skills] of allProjectsSkills) {
-      for (const s of skills) addEntry(`${s.source ?? ''}::${s.name}`, projectPath);
+    for (const skill of globalSnapshot.skills) {
+      addEntry(`${skill.source ?? ''}::${skill.name}`, 'global');
+    }
+    for (let index = 0; index < projects.length; index += 1) {
+      const projectPath = projects[index].binding.nativePath;
+      for (const skill of projectSnapshots[index]?.skills ?? []) {
+        addEntry(`${skill.source ?? ''}::${skill.name}`, projectPath);
+      }
     }
     return map;
-  }, [globalSkills, allProjectsSkills]);
+  }, [globalSnapshot.skills, projectSnapshots, projects]);
 
   const handleInstall = useCallback((skill: DiscoverSkillSummary) => {
     openAddWithPrefill({
       source: skill.source,
       skillName: skill.name,
-    });
-  }, [openAddWithPrefill]);
+    }, selectedContext);
+  }, [openAddWithPrefill, selectedContext]);
 
   const installLocations = selectedSkill
     ? getSkillInstallLocations(installedSkillLocations, selectedSkill)

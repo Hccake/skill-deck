@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn materialize_output_preserves_agent_partial_results() {
-        let output = b"1\0canonical\0/home/alice/.agents/skills/toolkit\0target\0claude-code\0claude-code\0success\0/home/alice/.claude/skills/toolkit\0symlink\01\0\0target\0eve:research\0eve\0failed\0/home/alice/app/agent/subagents/research/skills/toolkit\0copy\00\0permission denied\0target\0amp\0amp\0skipped\0/home/alice/.config/agents/skills/toolkit\0copy\00\0agent root is unavailable\0";
+        let output = b"1\0canonical\0/home/alice/.agents/skills/toolkit\0target\0claude-code\0claude-code\0success\0/home/alice/.claude/skills/toolkit\0symlink\x001\0\0target\0eve:research\0eve\0failed\0/home/alice/app/agent/subagents/research/skills/toolkit\0copy\x000\0permission denied\0target\0amp\0amp\0skipped\0/home/alice/.config/agents/skills/toolkit\0copy\x000\0agent root is unavailable\0";
 
         let result = parse_wsl_materialize_output(output).expect("parse result");
 
@@ -526,7 +526,7 @@ mod tests {
         let result = materialize_wsl_skill_with(session(), request(), |_, script, args, _| async move {
             assert!(!script.contains("/home/alice/.claude/skills"));
             assert_eq!(args[6], "/home/alice/.claude/skills");
-            Ok(b"1\0canonical\0/home/alice/.agents/skills/toolkit\0target\0claude-code\0claude-code\0failed\0/home/alice/.claude/skills/toolkit\0symlink\00\0permission denied\0".to_vec())
+            Ok(b"1\0canonical\0/home/alice/.agents/skills/toolkit\0target\0claude-code\0claude-code\0failed\0/home/alice/.claude/skills/toolkit\0symlink\x000\0permission denied\0".to_vec())
         })
         .await
         .expect("materialize result");

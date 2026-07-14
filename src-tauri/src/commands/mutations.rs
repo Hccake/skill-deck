@@ -1,14 +1,12 @@
 use tauri::State;
 
-use crate::core::mutation::{ActiveMutation, SingleMutationController};
+use crate::core::mutation::{MutationSnapshot, SingleMutationController};
 use crate::error::AppError;
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_active_mutation(
-    controller: State<'_, SingleMutationController>,
-) -> Option<ActiveMutation> {
-    controller.active()
+pub fn get_active_mutation(controller: State<'_, SingleMutationController>) -> MutationSnapshot {
+    controller.snapshot()
 }
 
 #[tauri::command]
@@ -25,6 +23,8 @@ mod tests {
 
     #[test]
     fn new_controller_has_no_active_mutation() {
-        assert!(SingleMutationController::default().active().is_none());
+        let snapshot = SingleMutationController::default().snapshot();
+        assert_eq!(snapshot.revision, 0);
+        assert!(snapshot.active.is_none());
     }
 }

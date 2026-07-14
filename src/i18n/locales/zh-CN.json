@@ -27,12 +27,17 @@
     "environmentConnecting": "正在连接",
     "environmentUnavailable": "不可用",
     "environmentRetry": "重试",
+    "environmentRetryNamed": "重试 {{environment}}",
+    "environmentConnectingTo": "正在连接 {{environment}}…",
+    "environmentDiscoveryFailed": "无法刷新 WSL 环境，Windows 仍可正常使用。",
+    "environmentConnectionFailed": "无法连接 {{environment}}，请在该发行版可用后重试。",
     "projectsLoadError": "无法加载此环境中的项目",
     "openInExplorer": "在文件管理器中打开",
     "remove": "移除",
     "removeConfirm": {
       "title": "移除项目",
       "description": "确定要从 Skill Deck 中移除「{{name}}」吗？这不会删除本地文件。",
+      "unregisterOnly": "此操作只解除 Skill Deck 中的项目注册，项目目录及其中的文件不会发生变化。",
       "cancel": "取消",
       "confirm": "移除"
     }
@@ -467,6 +472,30 @@
   "mutation": {
     "host": "本机",
     "status": "{{environment}} / {{scope}} · {{status}}",
+    "activity": "{{operation}} · {{phase}}",
+    "activityWithSubject": "{{operation}} · {{phase}} · {{subject}}",
+    "kind": {
+      "install": "安装 Skill",
+      "update": "更新 Skill",
+      "remove": "移除 Skill",
+      "copy": "复制 Skill",
+      "manageAgents": "更新 Agent",
+      "duplicateCleanup": "清理重复副本",
+      "repair": "修复来源",
+      "saveAgentDefaults": "保存 Agent 默认值",
+      "batchUpdate": "批量更新 Skill",
+      "projectMigration": "迁移项目配置",
+      "addProject": "添加项目",
+      "removeProject": "移除项目",
+      "updateProjectPreference": "更新项目设置"
+    },
+    "phase": {
+      "preparing": "准备中",
+      "acquiring": "获取来源",
+      "materializing": "写入文件",
+      "committing": "保存元数据",
+      "finishing": "即将完成"
+    },
     "cancel": "取消操作",
     "cancelling": "正在取消...",
     "interruption": {
@@ -487,7 +516,8 @@
   },
   "crossStorage": {
     "title": "当前项目通过跨系统存储访问",
-    "description": "Windows 与 WSL 同时修改同一项目时，可能产生文件或 Skill lock 冲突。Skill Deck 会继续执行操作，但不会自动合并冲突。",
+    "description": "当前通过 {{environment}} 管理项目，项目文件实际存储在 {{owner}}。Windows 与 WSL 同时修改时，可能产生文件或 Skill lock 冲突。",
+    "switchToOwner": "切换到 {{owner}}",
     "dismiss": "不再提示",
     "dismissFailed": "保存提示设置失败",
     "hostEnvironment": "Windows",
@@ -693,6 +723,15 @@
       "pathNotFound": "路径未找到: {{path}}",
       "installFailed": "安装失败",
       "mutationBusy": "另一个 Skill 操作正在进行中",
+      "mutationCancelled": "Skill 操作已取消",
+      "environmentDiscoveryFailed": "无法发现 WSL 环境",
+      "wslCommandTimedOut": "WSL 操作已超时",
+      "wslOutputLimitExceeded": "WSL {{stream}} 输出超过 {{limit}} 字节的安全限制",
+      "wslCommandFailed": "WSL 命令执行失败（退出码：{{exitCode}}）",
+      "environmentUnavailable": "所选环境当前不可用",
+      "storageMappingUnsupported": "所选环境无法访问此路径：{{path}}",
+      "lockConflict": "Skill lock 中的 {{skill}} 已发生变化，请刷新后重试。",
+      "agentDefaultsConflict": "Skill lock 中的 Agent 默认设置已发生变化，请刷新后重试。",
       "riskConfirmationRequired": "该来源需要先确认风险后才能安装",
       "parseFailed": "解析失败",
       "suggestion": {
@@ -712,6 +751,7 @@
         "checkAgentName": "检查 agent 名称是否正确",
         "reselectAgents": "返回上一步重新选择 agents",
         "reviewRiskAndConfirm": "请返回确认步骤，阅读风险提示并手动确认",
+        "chooseAccessiblePath": "请选择所选环境能够访问的路径",
         "retryOrContact": "请检查错误信息并重试，如果问题持续请查看日志"
       },
       "actions": {

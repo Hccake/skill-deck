@@ -26,7 +26,7 @@ interface SkillsSectionProps {
   /** 项目路径（仅 project scope，用于提示信息） */
   projectPath?: string;
   /** 各 skill 的更新状态 */
-  updatingSkills: Map<string, 'queued' | 'updating' | 'done' | 'failed'>;
+  updatingSkills: Map<string, 'updating' | 'done' | 'failed'>;
   /** 是否正在检查更新 */
   isCheckingUpdates?: boolean;
   /** Agent display name 映射（agentId → displayName） */
@@ -36,7 +36,6 @@ interface SkillsSectionProps {
   onSkillClick: (skill: InstalledSkill) => void;
   onUpdate: (skillName: string, scope: SkillScope) => Promise<void>;
   onUpdateAll: (scope: SkillScope) => Promise<void>;
-  onCancelUpdateAll: () => void;
   onDelete: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onManageAgents?: (skill: InstalledSkill) => void;
@@ -60,7 +59,6 @@ export const SkillsSection = memo(function SkillsSection({
   onSkillClick,
   onUpdate,
   onUpdateAll,
-  onCancelUpdateAll,
   onDelete,
   onCopyToProject,
   onManageAgents,
@@ -84,7 +82,7 @@ export const SkillsSection = memo(function SkillsSection({
     );
     if (updatingStatus) {
       totalUpdating++;
-      if (updatingStatus === 'queued' || updatingStatus === 'updating') {
+      if (updatingStatus === 'updating') {
         isAnyUpdating = true;
       } else {
         completedCount++;
@@ -162,10 +160,6 @@ export const SkillsSection = memo(function SkillsSection({
               <span className="font-medium text-primary">
                 {t('skills.updateAllProgress', { completed: completedCount, total: totalUpdating })}
               </span>
-              <Button variant="link" size="sm" className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground ml-2 cursor-pointer font-medium hover:underline"
-                onClick={() => onCancelUpdateAll()}>
-                {t('skills.cancel')}
-              </Button>
             </div>
           ) : updatesCount > 0 ? (
             <div className="flex items-center gap-1.5 text-xs">

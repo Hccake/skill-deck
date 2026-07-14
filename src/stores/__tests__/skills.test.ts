@@ -1,65 +1,45 @@
 // src/stores/__tests__/skills.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ActiveMutation, InstalledSkill, SkillAgentDetails } from '@/bindings';
+import type { ActiveMutation, ContextRef, SkillAgentDetails } from '@/bindings';
 import { toast } from 'sonner';
 import { useSkillsDataStore } from '../skills-data';
 import { useSkillDetailStore } from '../skill-detail';
 import { useSkillDialogStore } from '../skill-dialog';
-import { useContextStore } from '../context';
+import { useWorkspaceContextStore } from '../workspace-context';
 import { useEnvironmentStore } from '../environment';
+import { useProjectStore } from '../projects';
 import { useMutationStore } from '../mutation';
-import { buildUpdatePlan, clearUpdateCacheForSkill, mergeUpdateInfo, updateInfoCache } from '../skills-utils';
+import { buildUpdatePlan, clearUpdateCacheForSkill, mergeUpdateInfo, updateInfoCache, type SkillListItem } from '../skills-utils';
+import { contextKey } from '@/lib/context';
 
 const mockListSkills = vi.fn();
-const mockListSkillsV2 = vi.fn();
 const mockListAgents = vi.fn();
-const mockListAgentsForProject = vi.fn();
-const mockListAgentsForProjectV2 = vi.fn();
 const mockRemoveSkill = vi.fn();
-const mockRemoveSkillV2 = vi.fn();
 const mockGetAgentDetails = vi.fn();
-const mockGetAgentDetailsV2 = vi.fn();
 const mockCheckUpdates = vi.fn();
-const mockCheckUpdatesV2 = vi.fn();
 const mockUpdateSkill = vi.fn();
-const mockUpdateSkillV2 = vi.fn();
 const mockUpdateSkillsBatch = vi.fn();
-const mockUpdateSkillsBatchV2 = vi.fn();
 const mockOpenInstallWizard = vi.fn();
 const mockCheckSkillAudit = vi.fn();
 const mockReadSkillContent = vi.fn();
 const mockManageSkillAgents = vi.fn();
-const mockManageSkillAgentsV2 = vi.fn();
 const mockCleanupDuplicateAgentCopies = vi.fn();
-const mockCleanupDuplicateAgentCopiesV2 = vi.fn();
 const mockCopySkillToProjects = vi.fn();
-const mockCopySkillToProjectsV2 = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mockListSkills(...args),
-  listSkillsV2: (...args: unknown[]) => mockListSkillsV2(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
-  listAgentsForProject: (...args: unknown[]) => mockListAgentsForProject(...args),
-  listAgentsForProjectV2: (...args: unknown[]) => mockListAgentsForProjectV2(...args),
   removeSkill: (...args: unknown[]) => mockRemoveSkill(...args),
-  removeSkillV2: (...args: unknown[]) => mockRemoveSkillV2(...args),
   getSkillAgentDetails: (...args: unknown[]) => mockGetAgentDetails(...args),
-  getSkillAgentDetailsV2: (...args: unknown[]) => mockGetAgentDetailsV2(...args),
   checkUpdates: (...args: unknown[]) => mockCheckUpdates(...args),
-  checkUpdatesV2: (...args: unknown[]) => mockCheckUpdatesV2(...args),
   updateSkill: (...args: unknown[]) => mockUpdateSkill(...args),
-  updateSkillV2: (...args: unknown[]) => mockUpdateSkillV2(...args),
   updateSkillsBatch: (...args: unknown[]) => mockUpdateSkillsBatch(...args),
-  updateSkillsBatchV2: (...args: unknown[]) => mockUpdateSkillsBatchV2(...args),
   openInstallWizard: (...args: unknown[]) => mockOpenInstallWizard(...args),
   checkSkillAudit: (...args: unknown[]) => mockCheckSkillAudit(...args),
   readSkillContent: (...args: unknown[]) => mockReadSkillContent(...args),
   manageSkillAgents: (...args: unknown[]) => mockManageSkillAgents(...args),
-  manageSkillAgentsV2: (...args: unknown[]) => mockManageSkillAgentsV2(...args),
   cleanupDuplicateAgentCopies: (...args: unknown[]) => mockCleanupDuplicateAgentCopies(...args),
-  cleanupDuplicateAgentCopiesV2: (...args: unknown[]) => mockCleanupDuplicateAgentCopiesV2(...args),
   copySkillToProjects: (...args: unknown[]) => mockCopySkillToProjects(...args),
-  copySkillToProjectsV2: (...args: unknown[]) => mockCopySkillToProjectsV2(...args),
 }));
 
 vi.mock('sonner', () => ({
@@ -78,7 +58,7 @@ vi.mock('@/utils/cross-storage-guidance', () => ({
   ) => `GUIDANCE:${operation}`,
 }));
 
-const makeSkill = (name: string, overrides: Partial<InstalledSkill> = {}): InstalledSkill => ({
+const makeSkill = (name: string, overrides: Partial<SkillListItem> = {}): SkillListItem => ({
   name,
   description: '',
   path: `/home/.agents/skills/${name}`,
@@ -90,10 +70,35 @@ const makeSkill = (name: string, overrides: Partial<InstalledSkill> = {}): Insta
   ...overrides,
 });
 
+const hostGlobal: ContextRef = {
+  environment: { kind: 'host' },
+  scope: { scope: 'global' },
+};
+const hostProjectA: ContextRef = {
+  environment: { kind: 'host' },
+  scope: { scope: 'project', project_id: 'project-a' },
+};
+const hostProjectB: ContextRef = {
+  environment: { kind: 'host' },
+  scope: { scope: 'project', project_id: 'project-b' },
+};
+function skillSnapshot(skills: SkillListItem[] = [], pathExists = true) {
+  return {
+    skills,
+    agents: [],
+    pathExists,
+    loading: false,
+    error: null,
+    requestId: 1,
+  };
+}
+
 const activeMutation: ActiveMutation = {
   kind: 'install',
   context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-  statusText: 'Installing',
+  id: 'mutation-1',
+  phase: 'preparing',
+  progress: null,
   cancelable: true,
 };
 
@@ -102,11 +107,7 @@ function setExplicitCrossStorageProjectContext() {
     environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
     scope: { scope: 'project' as const, project_id: 'project-1' },
   };
-  useContextStore.setState({
-    selectedContext: '/mnt/c/Code/app',
-    hasExplicitContext: true,
-    selectedContextRef: context,
-  });
+  useWorkspaceContextStore.setState({ selectedContext: context });
   useEnvironmentStore.setState({
     environments: [
       { environment: { kind: 'host' }, displayName: 'Windows', status: 'available' },
@@ -116,13 +117,18 @@ function setExplicitCrossStorageProjectContext() {
         status: 'available',
       },
     ],
+  });
+  useProjectStore.setState({
     projectsByEnvironment: {
       'wsl:Ubuntu': [{
-        id: 'project-1',
-        nativePath: '/mnt/c/Code/app',
-        displayName: 'app',
-        order: null,
-        suppressCrossStorageWarning: false,
+        binding: {
+          id: 'project-1',
+          nativePath: '/mnt/c/Code/app',
+          displayName: 'app',
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        storage: { access: 'crossStorage', owner: { kind: 'host' } },
       }],
     },
   });
@@ -136,40 +142,37 @@ const initialSkillsDataActions = {
 describe('useSkillsStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useContextStore.setState({
-      selectedContext: 'global',
-      hasExplicitContext: false,
-      selectedContextRef: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-    });
-    useEnvironmentStore.setState({
-      selectedEnvironment: { kind: 'host' },
-      projectsByEnvironment: {},
-      projectsLoaded: {},
+    useWorkspaceContextStore.setState({ selectedContext: hostGlobal });
+    useProjectStore.setState({
+      projectsByEnvironment: {
+        host: ['/project-a', '/project-b', '/a', '/b'].map((nativePath, index) => ({
+          binding: {
+            id: index < 2 ? `project-${index === 0 ? 'a' : 'b'}` : nativePath.slice(1),
+            nativePath,
+            displayName: null,
+            order: null,
+            suppressCrossStorageWarning: false,
+          },
+          storage: { access: 'native' as const, owner: { kind: 'host' as const } },
+        })),
+      },
+      loadStateByEnvironment: {},
+      errorsByEnvironment: {},
     });
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
     mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
-    mockListSkillsV2.mockResolvedValue({ skills: [], pathExists: true });
     mockListAgents.mockResolvedValue([]);
-    mockListAgentsForProject.mockResolvedValue([]);
-    mockListAgentsForProjectV2.mockResolvedValue([]);
     mockCheckUpdates.mockResolvedValue([]);
-    mockCheckUpdatesV2.mockResolvedValue([]);
     mockOpenInstallWizard.mockResolvedValue(undefined);
     updateInfoCache.clear();
+    mockUpdateSkill.mockReset();
     mockUpdateSkillsBatch.mockReset();
     useSkillsDataStore.setState({
-      globalSkills: [],
-      projectSkills: [],
-      projectPathExists: true,
-      allAgents: [],
-      loading: true,
-      error: null,
+      snapshots: {},
       auditCache: {},
-      allProjectsSkills: new Map(),
       isSyncing: false,
       checkingUpdateScopes: new Set(),
       updatingSkills: new Map(),
-      updateAllCancelled: false,
       lastUpdatePlan: null,
       lastUpdateResults: null,
       lastFailedUpdateNames: [],
@@ -201,21 +204,23 @@ describe('useSkillsStore', () => {
       scope: 'global',
     });
     useMutationStore.setState({ activeMutation });
-    useSkillsDataStore.setState({ globalSkills: [skill] });
+    useSkillsDataStore.setState({ snapshots: { [contextKey(hostGlobal)]: skillSnapshot([skill]) } });
     useSkillDialogStore.setState({
-      deleteTarget: { skill, scope: 'global' },
+      deleteTarget: { skill, scope: 'global', context: hostGlobal },
       manageAgentsSkill: skill,
       manageAgentsScope: 'global',
+      manageAgentsContext: hostGlobal,
       copySkill: skill,
+      copyContext: hostGlobal,
     });
 
-    useSkillDialogStore.getState().openAdd('global');
+    useSkillDialogStore.getState().openAdd(hostGlobal);
     await useSkillDialogStore.getState().deleteSkill({ fullRemoval: true });
     await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'copy');
     await useSkillDialogStore.getState().cleanupDuplicateCopies(['cursor']);
     await useSkillDialogStore.getState().executeCopy(['/project']);
-    await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
-    await useSkillsDataStore.getState().updateAllInSection('global');
+    await useSkillsDataStore.getState().updateSkill(hostGlobal, 'toolkit');
+    await useSkillsDataStore.getState().updateAllInSection(hostGlobal);
 
     expect(mockOpenInstallWizard).not.toHaveBeenCalled();
     expect(mockRemoveSkill).not.toHaveBeenCalled();
@@ -224,44 +229,6 @@ describe('useSkillsStore', () => {
     expect(mockCopySkillToProjects).not.toHaveBeenCalled();
     expect(mockUpdateSkill).not.toHaveBeenCalled();
     expect(mockUpdateSkillsBatch).not.toHaveBeenCalled();
-  });
-
-  it('loads Discover project locations from the explicit WSL environment', async () => {
-    const context = {
-      environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
-      scope: { scope: 'global' as const },
-    };
-    useContextStore.setState({
-      selectedContext: 'global',
-      selectedContextRef: context,
-      hasExplicitContext: true,
-    });
-    useEnvironmentStore.setState({
-      selectedEnvironment: context.environment,
-      projectsByEnvironment: {
-        'wsl:Ubuntu': [{
-          id: 'project-1',
-          nativePath: '/home/me/app',
-          displayName: null,
-          order: null,
-          suppressCrossStorageWarning: false,
-        }],
-      },
-      projectsLoaded: { 'wsl:Ubuntu': true },
-    });
-    mockListSkillsV2.mockResolvedValue({
-      skills: [makeSkill('toolkit', { scope: 'project' })],
-      pathExists: true,
-    });
-
-    await useSkillsDataStore.getState().fetchAllProjectsSkills();
-
-    expect(mockListSkillsV2).toHaveBeenCalledWith({
-      environment: context.environment,
-      scope: { scope: 'project', project_id: 'project-1' },
-    });
-    expect(useSkillsDataStore.getState().allProjectsSkills.get('/home/me/app'))
-      .toEqual([expect.objectContaining({ name: 'toolkit' })]);
   });
 
   describe('mergeUpdateInfo', () => {
@@ -316,57 +283,14 @@ describe('useSkillsStore', () => {
     });
   });
 
-  describe('fetchSkills — global scope', () => {
-    it('loads global skills when context is global', async () => {
-      const skills = [makeSkill('toolkit'), makeSkill('analyzer')];
-      mockListAgents.mockResolvedValue([]);
-      mockListSkills.mockResolvedValue({ skills, pathExists: true });
-
-      await useSkillsDataStore.getState().fetchSkills();
-
-      const state = useSkillsDataStore.getState();
-      expect(state.globalSkills).toHaveLength(2);
-      expect(state.globalSkills[0].name).toBe('analyzer');
-      expect(state.globalSkills[1].name).toBe('toolkit');
-      expect(state.projectSkills).toEqual([]);
-      expect(state.loading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-  });
-
-  describe('fetchSkills — project scope', () => {
-    it('loads both global and project skills when project is selected', async () => {
-      useContextStore.setState({ selectedContext: '/my/project' });
-      mockListAgentsForProject.mockResolvedValue([]);
-      mockListSkills
-        .mockResolvedValueOnce({ skills: [makeSkill('global-skill')], pathExists: true })
-        .mockResolvedValueOnce({ skills: [makeSkill('project-skill')], pathExists: true });
-
-      await useSkillsDataStore.getState().fetchSkills();
-
-      const state = useSkillsDataStore.getState();
-      expect(state.globalSkills).toHaveLength(1);
-      expect(state.projectSkills).toHaveLength(1);
-      expect(mockListAgentsForProject).toHaveBeenCalledWith('/my/project');
-      expect(mockListAgents).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('fetchSkills — error handling', () => {
-    it('sets error state on failure', async () => {
-      mockListAgents.mockRejectedValue(new Error('network down'));
-
-      await useSkillsDataStore.getState().fetchSkills();
-
-      expect(useSkillsDataStore.getState().error).toBe('network down');
-      expect(useSkillsDataStore.getState().loading).toBe(false);
-    });
-  });
-
   describe('forceCheckUpdates', () => {
     it('merges cannot-check status into skills instead of treating it as up to date', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [makeSkill('toolkit', { hasUpdate: false, canRunUpdate: true })],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([
+            makeSkill('toolkit', { hasUpdate: false, canRunUpdate: true }),
+          ]),
+        },
       });
       mockCheckUpdates.mockResolvedValue([
         {
@@ -379,9 +303,9 @@ describe('useSkillsStore', () => {
         },
       ]);
 
-      await useSkillsDataStore.getState().forceCheckUpdates('global');
+      await useSkillsDataStore.getState().forceCheckUpdates(hostGlobal);
 
-      expect(useSkillsDataStore.getState().globalSkills[0]).toEqual(
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]).toEqual(
         expect.objectContaining({
           hasUpdate: false,
           canRunUpdate: true,
@@ -392,29 +316,31 @@ describe('useSkillsStore', () => {
     });
 
     it('returns false and preserves cached results when update checking fails', async () => {
-      updateInfoCache.set('global', {
+      updateInfoCache.set(contextKey(hostGlobal), {
         checkedAt: 1,
         results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
       useSkillsDataStore.setState({
-        globalSkills: [makeSkill('toolkit', { hasUpdate: true })],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([makeSkill('toolkit', { hasUpdate: true })]),
+        },
       });
       mockCheckUpdates.mockRejectedValue(new Error('network down'));
 
-      const result = await useSkillsDataStore.getState().forceCheckUpdates('global');
+      const result = await useSkillsDataStore.getState().forceCheckUpdates(hostGlobal);
 
       expect(result).toBe(false);
-      expect(updateInfoCache.get('global')).toEqual({
+      expect(updateInfoCache.get(contextKey(hostGlobal))).toEqual({
         checkedAt: 1,
         results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
-      expect(useSkillsDataStore.getState().globalSkills[0]?.hasUpdate).toBe(true);
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]?.hasUpdate).toBe(true);
     });
 
     it('shows an error toast when a manual update check fails', async () => {
       mockCheckUpdates.mockRejectedValue(new Error('network down'));
 
-      await useSkillsDataStore.getState().forceCheckUpdates('global');
+      await useSkillsDataStore.getState().forceCheckUpdates(hostGlobal);
 
       expect(toast.error).toHaveBeenCalledTimes(1);
     });
@@ -427,14 +353,14 @@ describe('useSkillsStore', () => {
         skillName: 'toolkit',
         scope: 'project',
         projectPath: 'D:\\Code\\project-a',
-      });
+      }, hostProjectA);
 
       expect(mockOpenInstallWizard).toHaveBeenCalledWith({
         entryPoint: 'discovery',
-        scope: 'project',
         projectPath: 'D:\\Code\\project-a',
         prefillSource: 'https://github.com/owner/repo#main',
         prefillSkillName: 'toolkit',
+        context: hostProjectA,
       });
     });
 
@@ -447,7 +373,7 @@ describe('useSkillsStore', () => {
           gitRef: 'main',
           agents: ['claude-code'],
         }),
-        'project',
+        hostProjectA,
         'D:\\Code\\project-a'
       );
 
@@ -468,7 +394,7 @@ describe('useSkillsStore', () => {
           sourceUrl: null,
           gitRef: null,
         }),
-        'global'
+        hostGlobal,
       );
 
       expect(useSkillDialogStore.getState().repairSourceTarget).toBeNull();
@@ -490,7 +416,7 @@ describe('useSkillsStore', () => {
       };
       mockGetAgentDetails.mockResolvedValue(details);
 
-      useSkillDialogStore.getState().openDelete(skill, 'global');
+      useSkillDialogStore.getState().openDelete(skill, hostGlobal);
 
       expect(useSkillDialogStore.getState().deleteTarget).toBeTruthy();
       expect(useSkillDialogStore.getState().deleteTarget!.skill.name).toBe('test-skill');
@@ -504,7 +430,7 @@ describe('useSkillsStore', () => {
 
     it('closeDelete clears all delete state', () => {
       useSkillDialogStore.setState({
-        deleteTarget: { skill: makeSkill('x'), scope: 'global' },
+        deleteTarget: { skill: makeSkill('x'), scope: 'global', context: hostGlobal },
         agentDetails: {
           skillName: 'x',
           scope: 'global',
@@ -526,13 +452,13 @@ describe('useSkillsStore', () => {
       expect(useSkillDialogStore.getState().loadingAgentDetails).toBe(false);
     });
 
-    it('uses v2 details and remove commands for an explicit WSL context', async () => {
+    it('uses canonical details and remove commands for an explicit WSL context', async () => {
       const context = {
         environment: { kind: 'wsl', distro_name: 'Ubuntu' },
         scope: { scope: 'project', project_id: 'project-1' },
       } as const;
       const skill = makeSkill('toolkit', { scope: 'project' });
-      mockGetAgentDetailsV2.mockResolvedValue({
+      mockGetAgentDetails.mockResolvedValue({
         skillName: 'toolkit',
         scope: 'project',
         canonicalPath: '/home/me/project/.agents/skills/toolkit',
@@ -543,35 +469,31 @@ describe('useSkillsStore', () => {
         duplicateCopyAgents: [],
         privateOnlyAgents: [],
       });
-      mockRemoveSkillV2.mockResolvedValue({ removed: true, removedPaths: [] });
-      useContextStore.setState({
-        selectedContextRef: context,
-        hasExplicitContext: true,
-      });
+      mockRemoveSkill.mockResolvedValue({ removed: true, removedPaths: [] });
+      useWorkspaceContextStore.setState({ selectedContext: context });
 
-      useSkillDialogStore.getState().openDelete(skill, 'project');
-      await vi.waitFor(() => expect(mockGetAgentDetailsV2).toHaveBeenCalledWith(context, 'toolkit'));
-      useContextStore.setState({
-        selectedContextRef: {
+      useSkillDialogStore.getState().openDelete(skill, context);
+      await vi.waitFor(() => expect(mockGetAgentDetails).toHaveBeenCalledWith(context, 'toolkit'));
+      useWorkspaceContextStore.setState({
+        selectedContext: {
           environment: { kind: 'wsl', distro_name: 'Debian' },
           scope: { scope: 'project', project_id: 'project-2' },
         },
       });
       await useSkillDialogStore.getState().deleteSkill({ fullRemoval: true });
 
-      expect(mockRemoveSkillV2).toHaveBeenCalledWith(context, {
+      expect(mockRemoveSkill).toHaveBeenCalledWith(context, {
         name: 'toolkit',
         fullRemoval: true,
         agents: undefined,
         agentTargets: undefined,
       });
-      expect(mockRemoveSkill).not.toHaveBeenCalled();
     });
 
     it('adds storage-owner guidance when project deletion fails', async () => {
       const context = setExplicitCrossStorageProjectContext();
       const skill = makeSkill('toolkit', { scope: 'project' });
-      mockRemoveSkillV2.mockRejectedValue(new Error('permission denied'));
+      mockRemoveSkill.mockRejectedValue(new Error('permission denied'));
       useSkillDialogStore.setState({
         deleteTarget: {
           skill,
@@ -588,12 +510,12 @@ describe('useSkillsStore', () => {
   });
 
   describe('updateSkill', () => {
-    it('uses updateSkillV2 for an explicit WSL context', async () => {
+    it('uses updateSkill for an explicit WSL context', async () => {
       const context = {
         environment: { kind: 'wsl', distro_name: 'Ubuntu' },
         scope: { scope: 'global' },
       } as const;
-      mockUpdateSkillV2.mockResolvedValue({
+      mockUpdateSkill.mockResolvedValue({
         results: [{
           name: 'toolkit',
           status: 'success',
@@ -602,22 +524,23 @@ describe('useSkillsStore', () => {
         }],
         summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
       });
-      useContextStore.setState({ selectedContextRef: context, hasExplicitContext: true });
+      await useSkillsDataStore.getState().updateSkill(context, 'toolkit');
 
-      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
-
-      expect(mockUpdateSkillV2).toHaveBeenCalledWith(context, 'toolkit');
-      expect(mockUpdateSkill).not.toHaveBeenCalled();
+      expect(mockUpdateSkill).toHaveBeenCalledWith(context, 'toolkit');
     });
 
     it('adds storage-owner guidance when a project update throws', async () => {
-      setExplicitCrossStorageProjectContext();
+      const context = setExplicitCrossStorageProjectContext();
       useSkillsDataStore.setState({
-        projectSkills: [makeSkill('toolkit', { scope: 'project', hasUpdate: true })],
+        snapshots: {
+          [contextKey(context)]: skillSnapshot([
+            makeSkill('toolkit', { scope: 'project', hasUpdate: true }),
+          ]),
+        },
       });
-      mockUpdateSkillV2.mockRejectedValue(new Error('permission denied'));
+      mockUpdateSkill.mockRejectedValue(new Error('permission denied'));
 
-      await useSkillsDataStore.getState().updateSkill('toolkit', 'project');
+      await useSkillsDataStore.getState().updateSkill(context, 'toolkit');
 
       expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('GUIDANCE:update'));
     });
@@ -631,7 +554,7 @@ describe('useSkillsStore', () => {
           })
       );
 
-      const updatePromise = useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+      const updatePromise = useSkillsDataStore.getState().updateSkill(hostGlobal, 'toolkit');
 
       expect(useSkillsDataStore.getState().updatingSkills.get('global:toolkit')).toBe('updating');
 
@@ -654,8 +577,9 @@ describe('useSkillsStore', () => {
 
     it('shows partial + warning feedback using update response details', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [makeSkill('toolkit', { hasUpdate: true })],
-        projectSkills: [],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([makeSkill('toolkit', { hasUpdate: true })]),
+        },
       });
 
       mockUpdateSkill.mockResolvedValue({
@@ -674,7 +598,7 @@ describe('useSkillsStore', () => {
       });
 
       // 提前 seed cache,模拟前一次 check_updates 的结果
-      updateInfoCache.set('global', {
+      updateInfoCache.set(contextKey(hostGlobal), {
         results: [{
           name: 'toolkit',
           source: 'owner/repo',
@@ -686,22 +610,18 @@ describe('useSkillsStore', () => {
         checkedAt: Date.now(),
       });
 
-      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+      await useSkillsDataStore.getState().updateSkill(hostGlobal, 'toolkit');
 
-      expect(mockUpdateSkill).toHaveBeenCalledWith({
-        scope: 'global',
-        name: 'toolkit',
-        projectPath: undefined,
-      });
+      expect(mockUpdateSkill).toHaveBeenCalledWith(hostGlobal, 'toolkit');
       expect(toast.warning).toHaveBeenCalledTimes(2);
       expect(toast.success).not.toHaveBeenCalled();
       expect(toast.error).not.toHaveBeenCalled();
 
       // Fix 2 回归:partial 不应清缓存,失败 agent 信息应留在 UI
-      expect(updateInfoCache.get('global')?.results[0]?.hasUpdate).toBe(true);
-      expect(updateInfoCache.get('global')?.results[0]?.status).toBe('update-available');
+      expect(updateInfoCache.get(contextKey(hostGlobal))?.results[0]?.hasUpdate).toBe(true);
+      expect(updateInfoCache.get(contextKey(hostGlobal))?.results[0]?.status).toBe('update-available');
       // 列表里的 hasUpdate 也应保留
-      expect(useSkillsDataStore.getState().globalSkills[0]?.hasUpdate).toBe(true);
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]?.hasUpdate).toBe(true);
     });
 
     it('refreshes selected skill content after a successful update while keeping identity selection', async () => {
@@ -711,11 +631,13 @@ describe('useSkillsStore', () => {
       });
 
       useSkillsDataStore.setState({
-        globalSkills: [makeSkill('toolkit', { hasUpdate: true })],
-        projectSkills: [],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([makeSkill('toolkit', { hasUpdate: true })]),
+        },
       });
       useSkillDetailStore.setState({
         selectedSkillRef: { name: 'toolkit', scope: 'global', projectPath: null },
+        selectedContext: hostGlobal,
         skillContent: '# Old content',
         loadingContent: false,
       });
@@ -733,11 +655,11 @@ describe('useSkillsStore', () => {
       mockListSkills.mockResolvedValue({ skills: [updatedSkill], pathExists: true });
       mockReadSkillContent.mockResolvedValue('# New content');
 
-      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+      await useSkillsDataStore.getState().updateSkill(hostGlobal, 'toolkit');
 
       await vi.waitFor(() => {
-        expect(useSkillsDataStore.getState().globalSkills[0]?.hasUpdate).toBe(false);
-        expect(useSkillsDataStore.getState().globalSkills[0]?.updatedAt).toBe('2026-04-07T12:00:00.000Z');
+        expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]?.hasUpdate).toBe(false);
+        expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]?.updatedAt).toBe('2026-04-07T12:00:00.000Z');
         expect(useSkillDetailStore.getState().selectedSkillRef).toEqual({
           name: 'toolkit',
           scope: 'global',
@@ -748,17 +670,19 @@ describe('useSkillsStore', () => {
     });
 
     it('clears the original project update cache even if context changes before completion', async () => {
-      useContextStore.setState({ selectedContext: '/project-a' });
+      useWorkspaceContextStore.setState({ selectedContext: hostProjectA });
       useSkillsDataStore.setState({
-        projectSkills: [
-          makeSkill('toolkit', { scope: 'project', canCheckForUpdates: true }),
-        ],
+        snapshots: {
+          [contextKey(hostProjectA)]: skillSnapshot([
+            makeSkill('toolkit', { scope: 'project', canCheckForUpdates: true }),
+          ]),
+        },
       });
-      updateInfoCache.set('/project-a', {
+      updateInfoCache.set(contextKey(hostProjectA), {
         checkedAt: Date.now(),
         results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
-      updateInfoCache.set('/project-b', {
+      updateInfoCache.set(contextKey(hostProjectB), {
         checkedAt: Date.now(),
         results: [{ name: 'toolkit', source: 'owner/repo', hasUpdate: true, status: 'update-available', gitRef: null }],
       });
@@ -771,8 +695,8 @@ describe('useSkillsStore', () => {
           })
       );
 
-      const updatePromise = useSkillsDataStore.getState().updateSkill('toolkit', 'project');
-      useContextStore.setState({ selectedContext: '/project-b' });
+      const updatePromise = useSkillsDataStore.getState().updateSkill(hostProjectA, 'toolkit');
+      useWorkspaceContextStore.setState({ selectedContext: hostProjectB });
 
       const finishUpdate = resolveUpdate;
       if (finishUpdate) {
@@ -790,18 +714,19 @@ describe('useSkillsStore', () => {
 
       await updatePromise;
 
-      expect(updateInfoCache.get('/project-a')?.results[0]?.hasUpdate).toBe(false);
-      expect(updateInfoCache.get('/project-b')?.results[0]?.hasUpdate).toBe(true);
+      expect(updateInfoCache.get(contextKey(hostProjectA))?.results[0]?.hasUpdate).toBe(false);
+      expect(updateInfoCache.get(contextKey(hostProjectB))?.results[0]?.hasUpdate).toBe(true);
     });
 
     it('preserves cannot-check cache status when the skill cannot be checked for updates', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [
-          makeSkill('toolkit', { canCheckForUpdates: false }),
-        ],
-        projectSkills: [],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([
+            makeSkill('toolkit', { canCheckForUpdates: false }),
+          ]),
+        },
       });
-      updateInfoCache.set('global', {
+      updateInfoCache.set(contextKey(hostGlobal), {
         checkedAt: Date.now(),
         results: [{
           name: 'toolkit',
@@ -824,9 +749,9 @@ describe('useSkillsStore', () => {
         summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
       });
 
-      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+      await useSkillsDataStore.getState().updateSkill(hostGlobal, 'toolkit');
 
-      const cached = updateInfoCache.get('global');
+      const cached = updateInfoCache.get(contextKey(hostGlobal));
       expect(cached?.results[0]?.status).toBe('cannot-check');
       expect(cached?.results[0]?.reason).toBe('missing-skill-path');
     });
@@ -855,20 +780,19 @@ describe('useSkillsStore', () => {
 
     it('does not run ordinary update for upstream-deleted skills', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [
-          {
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([{
             ...makeSkill('demo', {
               hasUpdate: false,
               canRunUpdate: true,
               updateReason: 'deleted-upstream',
             }),
             updateStatus: 'deleted-upstream',
-          },
-        ],
-        projectSkills: [],
+          }]),
+        },
       });
 
-      await useSkillsDataStore.getState().updateSkill('demo', 'global');
+      await useSkillsDataStore.getState().updateSkill(hostGlobal, 'demo');
 
       expect(mockUpdateSkill).not.toHaveBeenCalled();
       expect(toast.info).toHaveBeenCalledWith('skills.updatePlan.deletedUpstreamDescription');
@@ -876,19 +800,18 @@ describe('useSkillsStore', () => {
 
     it('clears missing version metadata after a successful direct reinstall', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [
-          {
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([{
             ...makeSkill('toolkit', {
               canCheckForUpdates: false,
               canRunUpdate: true,
               updateReason: 'missing-remote-hash',
             }),
             updateStatus: 'cannot-check',
-          },
-        ],
-        projectSkills: [],
+          }]),
+        },
       });
-      updateInfoCache.set('global', {
+      updateInfoCache.set(contextKey(hostGlobal), {
         checkedAt: Date.now(),
         results: [{
           name: 'toolkit',
@@ -911,15 +834,15 @@ describe('useSkillsStore', () => {
         summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
       });
 
-      await useSkillsDataStore.getState().updateSkill('toolkit', 'global');
+      await useSkillsDataStore.getState().updateSkill(hostGlobal, 'toolkit');
 
-      const cached = updateInfoCache.get('global');
+      const cached = updateInfoCache.get(contextKey(hostGlobal));
       expect(cached?.results[0]).toEqual(expect.objectContaining({
         hasUpdate: false,
         status: 'up-to-date',
         reason: null,
       }));
-      expect(useSkillsDataStore.getState().globalSkills[0]).toEqual(expect.objectContaining({
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]).toEqual(expect.objectContaining({
         hasUpdate: false,
         updateStatus: 'up-to-date',
         updateReason: null,
@@ -928,19 +851,18 @@ describe('useSkillsStore', () => {
 
     it('clears missing source metadata after a successful source repair', () => {
       useSkillsDataStore.setState({
-        globalSkills: [
-          {
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([{
             ...makeSkill('toolkit', {
               canCheckForUpdates: false,
               canRunUpdate: false,
               updateReason: 'missing-skill-path',
             }),
             updateStatus: 'cannot-check',
-          },
-        ],
-        projectSkills: [],
+          }]),
+        },
       });
-      updateInfoCache.set('global', {
+      updateInfoCache.set(contextKey(hostGlobal), {
         checkedAt: Date.now(),
         results: [{
           name: 'toolkit',
@@ -952,15 +874,15 @@ describe('useSkillsStore', () => {
         }],
       });
 
-      useSkillsDataStore.getState().markSourceRepairSucceeded('toolkit', 'global');
+      useSkillsDataStore.getState().markSourceRepairSucceeded(hostGlobal, 'toolkit');
 
-      const cached = updateInfoCache.get('global');
+      const cached = updateInfoCache.get(contextKey(hostGlobal));
       expect(cached?.results[0]).toEqual(expect.objectContaining({
         hasUpdate: false,
         status: 'up-to-date',
         reason: null,
       }));
-      expect(useSkillsDataStore.getState().globalSkills[0]).toEqual(expect.objectContaining({
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]).toEqual(expect.objectContaining({
         hasUpdate: false,
         updateStatus: 'up-to-date',
         updateReason: null,
@@ -968,22 +890,23 @@ describe('useSkillsStore', () => {
     });
 
     it('does not clear the visible project list when source repair completed for another project', () => {
-      useContextStore.setState({ selectedContext: '/project-b' });
+      useWorkspaceContextStore.setState({ selectedContext: hostProjectB });
+      const projectSkill = {
+        ...makeSkill('toolkit', {
+          scope: 'project' as const,
+          canCheckForUpdates: false,
+          canRunUpdate: false,
+          updateReason: 'missing-skill-path',
+        }),
+        updateStatus: 'cannot-check' as const,
+      };
       useSkillsDataStore.setState({
-        globalSkills: [],
-        projectSkills: [
-          {
-            ...makeSkill('toolkit', {
-              scope: 'project',
-              canCheckForUpdates: false,
-              canRunUpdate: false,
-              updateReason: 'missing-skill-path',
-            }),
-            updateStatus: 'cannot-check',
-          },
-        ],
+        snapshots: {
+          [contextKey(hostProjectA)]: skillSnapshot([projectSkill]),
+          [contextKey(hostProjectB)]: skillSnapshot([projectSkill]),
+        },
       });
-      updateInfoCache.set('/project-a', {
+      updateInfoCache.set(contextKey(hostProjectA), {
         checkedAt: Date.now(),
         results: [{
           name: 'toolkit',
@@ -995,14 +918,14 @@ describe('useSkillsStore', () => {
         }],
       });
 
-      useSkillsDataStore.getState().markSourceRepairSucceeded('toolkit', 'project', '/project-a');
+      useSkillsDataStore.getState().markSourceRepairSucceeded(hostProjectA, 'toolkit');
 
-      const cached = updateInfoCache.get('/project-a');
+      const cached = updateInfoCache.get(contextKey(hostProjectA));
       expect(cached?.results[0]).toEqual(expect.objectContaining({
         status: 'up-to-date',
         reason: null,
       }));
-      expect(useSkillsDataStore.getState().projectSkills[0]).toEqual(expect.objectContaining({
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostProjectB)].skills[0]).toEqual(expect.objectContaining({
         updateStatus: 'cannot-check',
         updateReason: 'missing-skill-path',
       }));
@@ -1071,8 +994,11 @@ describe('useSkillsStore', () => {
 
     it('stores the last update plan and item results for update-all inspection', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [makeSkill('toolkit', { hasUpdate: true, canRunUpdate: true })],
-        projectSkills: [],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([
+            makeSkill('toolkit', { hasUpdate: true, canRunUpdate: true }),
+          ]),
+        },
       });
       mockListSkills.mockRejectedValue(new Error('sync failed'));
       mockUpdateSkillsBatch.mockResolvedValue({
@@ -1086,7 +1012,7 @@ describe('useSkillsStore', () => {
         summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
       });
 
-      await useSkillsDataStore.getState().updateAllInSection('global');
+      await useSkillsDataStore.getState().updateAllInSection(hostGlobal);
 
       expect(useSkillsDataStore.getState().lastUpdatePlan?.updatableCount).toBe(1);
       expect(useSkillsDataStore.getState().lastUpdateResults?.[0]).toEqual(
@@ -1095,15 +1021,15 @@ describe('useSkillsStore', () => {
     });
 
     it('stores storage-owner guidance with failed project update results', async () => {
-      setExplicitCrossStorageProjectContext();
+      const context = setExplicitCrossStorageProjectContext();
       useSkillsDataStore.setState({
-        projectSkills: [makeSkill('toolkit', {
-          scope: 'project',
-          hasUpdate: true,
-          canRunUpdate: true,
-        })],
+        snapshots: {
+          [contextKey(context)]: skillSnapshot([makeSkill('toolkit', {
+            scope: 'project', hasUpdate: true, canRunUpdate: true,
+          })]),
+        },
       });
-      mockUpdateSkillsBatchV2.mockResolvedValue({
+      mockUpdateSkillsBatch.mockResolvedValue({
         results: [{
           name: 'toolkit',
           status: 'failed',
@@ -1114,7 +1040,7 @@ describe('useSkillsStore', () => {
         summary: { total: 1, succeeded: 0, partial: 0, failed: 1, skipped: 0 },
       });
 
-      await useSkillsDataStore.getState().updateAllInSection('project');
+      await useSkillsDataStore.getState().updateAllInSection(context);
 
       expect(useSkillsDataStore.getState().lastUpdateResults?.[0]?.error)
         .toContain('GUIDANCE:update');
@@ -1122,7 +1048,8 @@ describe('useSkillsStore', () => {
 
     it('records repairable legacy skills in the update plan without calling batch update', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([
           makeSkill('legacy', {
             hasUpdate: false,
             canRunUpdate: false,
@@ -1130,21 +1057,23 @@ describe('useSkillsStore', () => {
             source: 'owner/repo',
             sourceUrl: 'https://github.com/owner/repo',
           }),
-        ],
-        projectSkills: [],
+          ]),
+        },
       });
 
-      await useSkillsDataStore.getState().updateAllInSection('global');
+      await useSkillsDataStore.getState().updateAllInSection(hostGlobal);
 
       expect(mockUpdateSkillsBatch).not.toHaveBeenCalled();
       expect(useSkillsDataStore.getState().lastUpdatePlan?.repairableCount).toBe(1);
-      expect(useSkillsDataStore.getState().globalSkills[0]?.updateReason).toBe('missing-skill-path');
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]?.updateReason)
+        .toBe('missing-skill-path');
     });
 
     it('optimistically clears local hasUpdate flags after successful batch updates', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [makeSkill('toolkit', { hasUpdate: true })],
-        projectSkills: [],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([makeSkill('toolkit', { hasUpdate: true })]),
+        },
       });
       mockUpdateSkill.mockReset();
       mockListSkills.mockRejectedValue(new Error('sync failed'));
@@ -1159,14 +1088,15 @@ describe('useSkillsStore', () => {
         summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
       });
 
-      await useSkillsDataStore.getState().updateAllInSection('global');
+      await useSkillsDataStore.getState().updateAllInSection(hostGlobal);
 
-      expect(useSkillsDataStore.getState().globalSkills[0]?.hasUpdate).toBe(false);
+      expect(useSkillsDataStore.getState().snapshots[contextKey(hostGlobal)].skills[0]?.hasUpdate).toBe(false);
     });
 
-    it('batches same-source skills separately when their refs differ', async () => {
+    it('sends one batch request when update candidates use different refs', async () => {
       useSkillsDataStore.setState({
-        globalSkills: [
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([
           makeSkill('toolkit-main', {
             hasUpdate: true,
             source: 'owner/repo',
@@ -1179,11 +1109,11 @@ describe('useSkillsStore', () => {
             sourceUrl: 'https://github.com/owner/repo',
             gitRef: 'dev',
           }),
-        ],
-        projectSkills: [],
+          ]),
+        },
       });
       mockListSkills.mockRejectedValue(new Error('sync failed'));
-      mockUpdateSkillsBatch.mockImplementation(async ({ names }: { names: string[] }) => ({
+      mockUpdateSkillsBatch.mockImplementation(async (_context: ContextRef, names: string[]) => ({
         results: names.map((name) => ({
           name,
           status: 'success',
@@ -1200,12 +1130,43 @@ describe('useSkillsStore', () => {
         },
       }));
 
-      await useSkillsDataStore.getState().updateAllInSection('global');
+      await useSkillsDataStore.getState().updateAllInSection(hostGlobal);
 
-      expect(mockUpdateSkillsBatch).toHaveBeenCalledTimes(2);
-      expect(
-        mockUpdateSkillsBatch.mock.calls.map(([params]) => params.names)
-      ).toEqual([['toolkit-main'], ['toolkit-dev']]);
+      expect(mockUpdateSkillsBatch).toHaveBeenCalledTimes(1);
+      expect(mockUpdateSkillsBatch).toHaveBeenCalledWith(
+        hostGlobal,
+        ['toolkit-main', 'toolkit-dev'],
+      );
+      expect(useSkillsDataStore.getState().lastUpdateResults).toHaveLength(2);
+    });
+
+    it('marks every requested skill failed when the single batch request rejects', async () => {
+      useSkillsDataStore.setState({
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([
+            makeSkill('toolkit-main', {
+              hasUpdate: true,
+              source: 'owner/repo',
+              sourceUrl: 'https://github.com/owner/repo',
+              gitRef: 'main',
+            }),
+            makeSkill('toolkit-dev', {
+              hasUpdate: true,
+              source: 'owner/repo',
+              sourceUrl: 'https://github.com/owner/repo',
+              gitRef: 'dev',
+            }),
+          ]),
+        },
+      });
+      mockListSkills.mockRejectedValue(new Error('sync failed'));
+      mockUpdateSkillsBatch.mockRejectedValue(new Error('batch failed'));
+
+      await useSkillsDataStore.getState().updateAllInSection(hostGlobal);
+
+      expect(mockUpdateSkillsBatch).toHaveBeenCalledTimes(1);
+      expect(useSkillsDataStore.getState().lastUpdateResults?.map((item) => item.status))
+        .toEqual(['failed', 'failed']);
     });
   });
 
@@ -1286,18 +1247,22 @@ describe('useSkillsStore', () => {
     it('reloadContent resolves the latest selected skill from skills-data', async () => {
       useSkillDetailStore.setState({
         selectedSkillRef: { name: 'commit', scope: 'global', projectPath: null },
+        selectedContext: hostGlobal,
         skillContent: '# Old content',
         loadingContent: false,
       });
       useSkillsDataStore.setState({
-        globalSkills: [makeSkill('commit', { canonicalPath: '/fresh/commit' })],
-        projectSkills: [],
+        snapshots: {
+          [contextKey(hostGlobal)]: skillSnapshot([
+            makeSkill('commit', { canonicalPath: '/fresh/commit' }),
+          ]),
+        },
       });
       mockReadSkillContent.mockResolvedValue('# Fresh content');
 
       await useSkillDetailStore.getState().reloadContent();
 
-      expect(mockReadSkillContent).toHaveBeenCalledWith('/fresh/commit');
+      expect(mockReadSkillContent).toHaveBeenCalledWith(hostGlobal, '/fresh/commit');
       expect(useSkillDetailStore.getState().skillContent).toBe('# Fresh content');
     });
   });
@@ -1305,8 +1270,8 @@ describe('useSkillsStore', () => {
   describe('manageAgents', () => {
     it('openManageAgents sets target skill and scope', () => {
       const skill = makeSkill('test', { scope: 'project' });
-      useContextStore.setState({ selectedContext: '/project-a' });
-      useSkillDialogStore.getState().openManageAgents(skill, 'project');
+      useWorkspaceContextStore.setState({ selectedContext: hostProjectA });
+      useSkillDialogStore.getState().openManageAgents(skill, hostProjectA);
       expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
       expect(useSkillDialogStore.getState().manageAgentsScope).toBe('project');
       expect(useSkillDialogStore.getState().manageAgentsProjectPath).toBe('/project-a');
@@ -1326,13 +1291,11 @@ describe('useSkillsStore', () => {
       mockListSkills.mockResolvedValue({ skills: [makeSkill('test', { agents: ['claude-code', 'cursor'] })], pathExists: true });
       mockListAgents.mockResolvedValue([]);
 
-      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global', manageAgentsContext: hostGlobal });
       await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'copy');
 
-      expect(mockManageSkillAgents).toHaveBeenCalledWith({
+      expect(mockManageSkillAgents).toHaveBeenCalledWith(hostGlobal, {
         skillName: 'test',
-        scope: 'global',
-        projectPath: undefined,
         addAgents: ['cursor'],
         removeAgents: [],
         privateCopyAgents: [],
@@ -1346,13 +1309,11 @@ describe('useSkillsStore', () => {
       const skill = makeSkill('test');
       mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: [] });
 
-      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global', manageAgentsContext: hostGlobal });
       await useSkillDialogStore.getState().saveAgentChanges([], [], 'copy', ['firebender']);
 
-      expect(mockManageSkillAgents).toHaveBeenCalledWith({
+      expect(mockManageSkillAgents).toHaveBeenCalledWith(hostGlobal, {
         skillName: 'test',
-        scope: 'global',
-        projectPath: undefined,
         addAgents: [],
         removeAgents: [],
         privateCopyAgents: ['firebender'],
@@ -1367,19 +1328,15 @@ describe('useSkillsStore', () => {
       ]);
       mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: [] });
 
-      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global', manageAgentsContext: hostGlobal });
       await useSkillDialogStore.getState().saveAgentChanges([], [], 'copy', [], ['firebender']);
 
-      expect(mockCleanupDuplicateAgentCopies).toHaveBeenCalledWith({
+      expect(mockCleanupDuplicateAgentCopies).toHaveBeenCalledWith(hostGlobal, {
         skillName: 'test',
-        scope: 'global',
-        projectPath: undefined,
         agents: ['firebender'],
       });
-      expect(mockManageSkillAgents).toHaveBeenCalledWith({
+      expect(mockManageSkillAgents).toHaveBeenCalledWith(hostGlobal, {
         skillName: 'test',
-        scope: 'global',
-        projectPath: undefined,
         addAgents: [],
         removeAgents: [],
         privateCopyAgents: [],
@@ -1389,19 +1346,17 @@ describe('useSkillsStore', () => {
 
     it('saveAgentChanges keeps the project path from when the dialog was opened', async () => {
       const skill = makeSkill('test', { scope: 'project' });
-      useContextStore.setState({ selectedContext: '/project-a' });
+      useWorkspaceContextStore.setState({ selectedContext: hostProjectA });
       mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: [] });
       mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
 
-      useSkillDialogStore.getState().openManageAgents(skill, 'project');
-      useContextStore.setState({ selectedContext: '/project-b' });
+      useSkillDialogStore.getState().openManageAgents(skill, hostProjectA);
+      useWorkspaceContextStore.setState({ selectedContext: hostProjectB });
 
       await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'symlink');
 
-      expect(mockManageSkillAgents).toHaveBeenCalledWith({
+      expect(mockManageSkillAgents).toHaveBeenCalledWith(hostProjectA, {
         skillName: 'test',
-        scope: 'project',
-        projectPath: '/project-a',
         addAgents: ['cursor'],
         removeAgents: [],
         privateCopyAgents: [],
@@ -1414,7 +1369,7 @@ describe('useSkillsStore', () => {
       mockManageSkillAgents.mockResolvedValue({ added: [], addedResults: [], removed: [], errors: ['cursor: failed'] });
       mockListSkills.mockResolvedValue({ skills: [], pathExists: true });
 
-      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global' });
+      useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsScope: 'global', manageAgentsContext: hostGlobal });
       await useSkillDialogStore.getState().saveAgentChanges(['cursor'], [], 'symlink');
 
       expect(toast.error).toHaveBeenCalled();
@@ -1423,7 +1378,7 @@ describe('useSkillsStore', () => {
     it('adds storage-owner guidance to project Agent management failures', async () => {
       const context = setExplicitCrossStorageProjectContext();
       const skill = makeSkill('test', { scope: 'project' });
-      mockManageSkillAgentsV2.mockResolvedValue({
+      mockManageSkillAgents.mockResolvedValue({
         added: [],
         addedResults: [],
         removed: [],
@@ -1471,6 +1426,7 @@ describe('useSkillsStore', () => {
       useSkillDialogStore.setState({
         manageAgentsSkill: skill,
         manageAgentsScope: 'global',
+        manageAgentsContext: hostGlobal,
         manageAgentDetails: {
           ...refreshedDetails,
           duplicateCopyAgents: [{
@@ -1485,14 +1441,12 @@ describe('useSkillsStore', () => {
       });
       await useSkillDialogStore.getState().cleanupDuplicateCopies(['firebender']);
 
-      expect(mockCleanupDuplicateAgentCopies).toHaveBeenCalledWith({
+      expect(mockCleanupDuplicateAgentCopies).toHaveBeenCalledWith(hostGlobal, {
         skillName: 'test',
-        scope: 'global',
-        projectPath: undefined,
         agents: ['firebender'],
       });
-      expect(mockGetAgentDetails).toHaveBeenCalledWith({ scope: 'global', name: 'test', projectPath: undefined });
-      expect(syncSkills).toHaveBeenCalledTimes(1);
+      expect(mockGetAgentDetails).toHaveBeenCalledWith(hostGlobal, 'test');
+      expect(syncSkills).toHaveBeenCalledWith(hostGlobal);
       expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(refreshedDetails);
       expect(toast.success).toHaveBeenCalled();
     });
@@ -1501,7 +1455,7 @@ describe('useSkillsStore', () => {
   describe('copyToProject', () => {
     it('openCopyToProject sets target skill', () => {
       const skill = makeSkill('test', { scope: 'project' });
-      useSkillDialogStore.getState().openCopyToProject(skill);
+      useSkillDialogStore.getState().openCopyToProject(skill, hostProjectA);
       expect(useSkillDialogStore.getState().copySkill).toBe(skill);
     });
 
@@ -1533,13 +1487,13 @@ describe('useSkillsStore', () => {
         }],
       });
 
-      useSkillDialogStore.setState({ copySkill: skill });
+      useSkillDialogStore.setState({ copySkill: skill, copyContext: hostProjectA });
       await useSkillDialogStore.getState().executeCopy(['/project-b']);
 
       expect(mockCopySkillToProjects).toHaveBeenCalledWith({
         skillName: 'test',
-        sourceProjectPath: 'global',
-        targetProjectPaths: ['/project-b'],
+        source: hostProjectA,
+        targets: [hostProjectB],
         agents: ['claude-code'],
         privateCopyAgents: ['firebender'],
       });
@@ -1567,7 +1521,7 @@ describe('useSkillsStore', () => {
         }],
       });
 
-      useSkillDialogStore.setState({ copySkill: skill });
+      useSkillDialogStore.setState({ copySkill: skill, copyContext: hostProjectA });
       await useSkillDialogStore.getState().executeCopy(['/project-b']);
 
       expect(toast.warning).toHaveBeenCalledWith('skills.copyToProject.skippedAgents');
@@ -1594,7 +1548,7 @@ describe('useSkillsStore', () => {
         ],
       });
 
-      useSkillDialogStore.setState({ copySkill: skill });
+      useSkillDialogStore.setState({ copySkill: skill, copyContext: hostProjectA });
       await useSkillDialogStore.getState().executeCopy(['/a', '/b']);
 
       expect(toast.error).toHaveBeenCalled();
@@ -1603,7 +1557,7 @@ describe('useSkillsStore', () => {
     it('adds storage-owner guidance to cross-storage copy failures', async () => {
       const context = setExplicitCrossStorageProjectContext();
       const skill = makeSkill('test', { scope: 'project' });
-      mockCopySkillToProjectsV2.mockResolvedValue({
+      mockCopySkillToProjects.mockResolvedValue({
         results: [{
           projectPath: '/mnt/c/Code/app',
           success: false,
@@ -1635,7 +1589,7 @@ describe('useSkillsStore', () => {
         }],
       });
 
-      useSkillDialogStore.setState({ copySkill: skill });
+      useSkillDialogStore.setState({ copySkill: skill, copyContext: hostProjectA });
       await useSkillDialogStore.getState().executeCopy(['/project-b']);
 
       expect(toast.success).toHaveBeenCalledWith('skills.copyToProject.success');
@@ -1671,7 +1625,7 @@ describe('useSkillsStore', () => {
         ],
       });
 
-      useSkillDialogStore.setState({ copySkill: skill });
+      useSkillDialogStore.setState({ copySkill: skill, copyContext: hostProjectA });
       await useSkillDialogStore.getState().executeCopy(['/a', '/b']);
 
       expect(toast.error).toHaveBeenCalled();

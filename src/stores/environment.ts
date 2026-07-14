@@ -1,38 +1,26 @@
 import { create } from 'zustand';
-import {
-  addEnvironmentProject,
-  connectEnvironment,
-  listEnvironmentProjects,
-  listEnvironments,
-  removeEnvironmentProject,
-  setEnvironmentProjectCrossStorageWarning,
-} from '@/hooks/useTauriApi';
-import type { EnvironmentInfo, EnvironmentRef, ProjectBinding } from '@/bindings';
-import { isMutationWriteBlocked } from './mutation';
+import { connectEnvironment, listEnvironments } from '@/hooks/useTauriApi';
+import type {
+  AppError,
+  EnvironmentInfo,
+  EnvironmentRef,
+  EnvironmentRuntimeEvent,
+} from '@/bindings';
+import { environmentKey } from '@/lib/context';
+import { toAppError } from '@/utils/to-app-error';
+
+export { environmentKey } from '@/lib/context';
 
 export type EnvironmentDiscoveryState = 'idle' | 'loading' | 'ready' | 'error';
 
 interface EnvironmentState {
   environments: EnvironmentInfo[];
-  selectedEnvironment: EnvironmentRef;
-  projectsByEnvironment: Record<string, ProjectBinding[]>;
-  projectsLoaded: Record<string, boolean>;
   discoveryState: EnvironmentDiscoveryState;
-  errors: Record<string, string | null>;
-
-  discoverEnvironments: () => Promise<void>;
-  selectEnvironment: (environment: EnvironmentRef) => Promise<void>;
-  refreshProjects: (environment?: EnvironmentRef) => Promise<ProjectBinding[]>;
-  addProject: (nativePath: string, environment?: EnvironmentRef) => Promise<ProjectBinding[]>;
-  removeProject: (projectId: string, environment?: EnvironmentRef) => Promise<ProjectBinding[]>;
-  suppressCrossStorageWarning: (
-    projectId: string,
-    environment?: EnvironmentRef,
-  ) => Promise<ProjectBinding[]>;
-}
-
-export function environmentKey(environment: EnvironmentRef): string {
-  return environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`;
+  discoveryError: AppError | null;
+  errorsByEnvironment: Record<string, AppError | null>;
+  discover: () => Promise<void>;
+  connect: (environment: EnvironmentRef) => Promise<void>;
+  applyRuntimeEvent: (event: EnvironmentRuntimeEvent) => void;
 }
 
 function updateEnvironment(
@@ -40,115 +28,88 @@ function updateEnvironment(
   environment: EnvironmentRef,
   patch: Partial<EnvironmentInfo>,
 ): EnvironmentInfo[] {
+  const key = environmentKey(environment);
   return environments.map((entry) => (
-    environmentKey(entry.environment) === environmentKey(environment)
-      ? { ...entry, ...patch }
-      : entry
+    environmentKey(entry.environment) === key ? { ...entry, ...patch } : entry
   ));
 }
 
-export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
+export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
   environments: [],
-  selectedEnvironment: { kind: 'host' },
-  projectsByEnvironment: {},
-  projectsLoaded: {},
   discoveryState: 'idle',
-  errors: {},
+  discoveryError: null,
+  errorsByEnvironment: {},
 
-  discoverEnvironments: async () => {
-    set({ discoveryState: 'loading' });
+  discover: async () => {
+    set({ discoveryState: 'loading', discoveryError: null });
     try {
-      const environments = await listEnvironments();
-      set({ environments, discoveryState: 'ready' });
+      const snapshot = await listEnvironments();
+      set({
+        environments: snapshot.environments,
+        discoveryState: snapshot.error ? 'error' : 'ready',
+        discoveryError: snapshot.error,
+      });
     } catch (error) {
-      set({ discoveryState: 'error' });
+      set({
+        discoveryState: 'error',
+        discoveryError: toAppError(error),
+      });
       throw error;
     }
   },
 
-  selectEnvironment: async (environment) => {
+  connect: async (environment) => {
+    const key = environmentKey(environment);
     set((state) => ({
-      selectedEnvironment: environment,
       environments: updateEnvironment(state.environments, environment, {
         status: environment.kind === 'host' ? 'available' : 'connecting',
       }),
-      errors: { ...state.errors, [environmentKey(environment)]: null },
+      errorsByEnvironment: {
+        ...state.errorsByEnvironment,
+        [key]: null,
+      },
     }));
+    if (environment.kind === 'host') return;
+
     try {
-      if (environment.kind === 'wsl') {
-        await connectEnvironment(environment.distro_name);
-      }
-      await get().refreshProjects(environment);
+      await connectEnvironment(environment.distro_name);
+      set((state) => ({
+        environments: updateEnvironment(state.environments, environment, {
+          status: 'available',
+        }),
+      }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const appError = toAppError(error);
       set((state) => ({
         environments: updateEnvironment(state.environments, environment, {
           status: 'unavailable',
         }),
-        errors: { ...state.errors, [environmentKey(environment)]: message },
+        errorsByEnvironment: {
+          ...state.errorsByEnvironment,
+          [key]: appError,
+        },
       }));
       throw error;
     }
   },
 
-  refreshProjects: async (environment = get().selectedEnvironment) => {
-    const key = environmentKey(environment);
-    try {
-      const projects = await listEnvironmentProjects(environment);
-      set((state) => ({
-        projectsByEnvironment: { ...state.projectsByEnvironment, [key]: projects },
-        projectsLoaded: { ...state.projectsLoaded, [key]: true },
-        errors: { ...state.errors, [key]: null },
-        environments: updateEnvironment(state.environments, environment, { status: 'available' }),
-      }));
-      return projects;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      set((state) => ({
-        projectsLoaded: { ...state.projectsLoaded, [key]: false },
-        errors: { ...state.errors, [key]: message },
-      }));
-      throw error;
-    }
-  },
+  applyRuntimeEvent: (event) => {
+    const key = environmentKey(event.environment);
+    set((state) => {
+      const discovered = state.environments.some(
+        (entry) => environmentKey(entry.environment) === key,
+      );
+      if (!discovered) return state;
 
-  addProject: async (nativePath, environment = get().selectedEnvironment) => {
-    const key = environmentKey(environment);
-    if (isMutationWriteBlocked()) return get().projectsByEnvironment[key] ?? [];
-    const projects = await addEnvironmentProject(environment, nativePath);
-    set((state) => ({
-      projectsByEnvironment: { ...state.projectsByEnvironment, [key]: projects },
-      projectsLoaded: { ...state.projectsLoaded, [key]: true },
-    }));
-    return projects;
-  },
-
-  removeProject: async (projectId, environment = get().selectedEnvironment) => {
-    const key = environmentKey(environment);
-    if (isMutationWriteBlocked()) return get().projectsByEnvironment[key] ?? [];
-    const projects = await removeEnvironmentProject(environment, projectId);
-    set((state) => ({
-      projectsByEnvironment: { ...state.projectsByEnvironment, [key]: projects },
-      projectsLoaded: { ...state.projectsLoaded, [key]: true },
-    }));
-    return projects;
-  },
-
-  suppressCrossStorageWarning: async (
-    projectId,
-    environment = get().selectedEnvironment,
-  ) => {
-    const key = environmentKey(environment);
-    if (isMutationWriteBlocked()) return get().projectsByEnvironment[key] ?? [];
-    const projects = await setEnvironmentProjectCrossStorageWarning(
-      environment,
-      projectId,
-      true,
-    );
-    set((state) => ({
-      projectsByEnvironment: { ...state.projectsByEnvironment, [key]: projects },
-      projectsLoaded: { ...state.projectsLoaded, [key]: true },
-    }));
-    return projects;
+      return {
+        environments: updateEnvironment(state.environments, event.environment, {
+          status: event.status,
+        }),
+        errorsByEnvironment: {
+          ...state.errorsByEnvironment,
+          [key]: event.status === 'available' ? null : event.error,
+        },
+      };
+    });
   },
 }));

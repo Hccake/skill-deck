@@ -9,6 +9,7 @@ pub mod git;
 pub mod github_api;
 pub mod installer;
 pub mod local_lock;
+pub mod lock_repository;
 pub mod lossless_lock;
 pub mod mutation;
 pub mod paths;

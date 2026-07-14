@@ -1,0 +1,37 @@
+{
+  "version": 3,
+  "futureRoot": {
+    "schema": 7,
+    "enabled": true
+  },
+  "futureArray": [
+    "keep",
+    {
+      "nested": true
+    }
+  ],
+  "skills": {
+    "toolkit": {
+      "source": "owner/old-repo",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/owner/old-repo",
+      "ref": "legacy",
+      "skillPath": "skills/toolkit",
+      "skillFolderHash": "old-remote-hash",
+      "installedAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-02T00:00:00.000Z",
+      "pluginName": "legacy-plugin",
+      "cliOnlyFlag": true,
+      "futureEntry": {
+        "mode": "preserve",
+        "revision": 3
+      }
+    },
+    "review": {
+      "source": "owner/review",
+      "futureEntry": {
+        "keep": true
+      }
+    }
+  }
+}

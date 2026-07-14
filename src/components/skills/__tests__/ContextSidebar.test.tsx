@@ -2,241 +2,266 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { ContextSidebar } from '../ContextSidebar';
-import zhCN from '@/i18n/locales/zh-CN.json';
-import type { EnvironmentInfo, EnvironmentRef } from '@/bindings';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ContextRef, EnvironmentInfo, EnvironmentRef, ProjectInfo } from '@/bindings';
+import type { ProjectRemovalRequest } from '@/stores/project-removal';
 import { useMutationStore } from '@/stores/mutation';
+import { ContextSidebar } from '../ContextSidebar';
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
-  mapEnvironmentPath: vi.fn(),
   openInExplorer: vi.fn(),
-  selectEnvironment: vi.fn(),
-  refreshProjects: vi.fn(),
-  addProject: vi.fn(),
-  removeProject: vi.fn(),
-  selectContextRef: vi.fn(),
-  environmentState: {
-    environments: [{
-      environment: { kind: 'host' as const },
-      displayName: 'Windows',
-      status: 'available' as const,
-    }] as EnvironmentInfo[],
-    selectedEnvironment: { kind: 'host' as const } as EnvironmentRef,
-    projectsByEnvironment: {
-      host: [],
-    } as Record<string, Array<{
-      id: string;
-      nativePath: string;
-      displayName: string | null;
-      order: number | null;
-      suppressCrossStorageWarning: boolean;
-    }>>,
-    projectsLoaded: { host: true } as Record<string, boolean>,
-    discoveryState: 'ready' as const,
-    errors: {} as Record<string, string | null>,
-  },
-  contextState: {
-    selectedContext: 'global',
-    projects: [] as string[],
-    projectsLoaded: true,
-    selectedContextRef: {
+  switchEnvironment: vi.fn(),
+  selectGlobal: vi.fn(),
+  selectProject: vi.fn(),
+  refresh: vi.fn(),
+  add: vi.fn(),
+  captureProjectRemoval: vi.fn(),
+  environments: [{
+    environment: { kind: 'host' as const },
+    displayName: 'Windows',
+    status: 'available' as const,
+  }] as EnvironmentInfo[],
+  workspace: {
+    selectedContext: {
       environment: { kind: 'host' as const },
       scope: { scope: 'global' as const },
-    },
+    } as ContextRef,
+    pendingEnvironment: null as EnvironmentRef | null,
+    contextRevision: 0,
+  },
+  projects: {
+    projectsByEnvironment: { host: [] } as Record<string, ProjectInfo[]>,
+    loadStateByEnvironment: { host: 'ready' as const } as Record<string, 'idle' | 'loading' | 'ready' | 'error'>,
+    errorsByEnvironment: {} as Record<string, unknown>,
   },
 }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
-
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open }));
-
+vi.mock('@/hooks/useTauriApi', () => ({ openInExplorer: mocks.openInExplorer }));
 vi.mock('@/stores/environment', () => ({
-  environmentKey: (environment: { kind: string; distro_name?: string }) => (
+  environmentKey: (environment: EnvironmentRef) => (
     environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
   ),
-  useEnvironmentStore: (selector?: (state: unknown) => unknown) => {
-    const state = {
-    ...mocks.environmentState,
-    selectEnvironment: mocks.selectEnvironment,
-    refreshProjects: mocks.refreshProjects,
-    addProject: mocks.addProject,
-    removeProject: mocks.removeProject,
-    };
-    return selector ? selector(state) : state;
-  },
+  useEnvironmentStore: (selector: (state: { environments: EnvironmentInfo[] }) => unknown) => (
+    selector({ environments: mocks.environments })
+  ),
+}));
+vi.mock('@/stores/projects', () => ({
+  useProjectStore: (selector: (state: unknown) => unknown) => selector({
+    ...mocks.projects,
+    refresh: mocks.refresh,
+    add: mocks.add,
+  }),
+}));
+vi.mock('@/stores/workspace-context', () => ({
+  useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
+    ...mocks.workspace,
+    switchEnvironment: mocks.switchEnvironment,
+    selectGlobal: mocks.selectGlobal,
+    selectProject: mocks.selectProject,
+  }),
+}));
+vi.mock('@/stores/project-removal', () => ({
+  captureProjectRemoval: (...args: unknown[]) => mocks.captureProjectRemoval(...args),
+}));
+vi.mock('@/components/projects/RemoveProjectDialog', () => ({
+  RemoveProjectDialog: ({
+    request,
+    onRemoved,
+  }: {
+    request: ProjectRemovalRequest | null;
+    onRemoved?: (request: ProjectRemovalRequest) => void;
+  }) => request ? (
+    <button type="button" onClick={() => onRemoved?.(request)}>
+      complete-removal
+    </button>
+  ) : null,
 }));
 
-vi.mock('@/stores/context', () => ({
-  useContextStore: (selector?: (state: unknown) => unknown) => {
-    const state = {
-    ...mocks.contextState,
-    selectContextRef: mocks.selectContextRef,
-    loadProjects: vi.fn(),
-    addProject: mocks.addProject,
-    removeProject: mocks.removeProject,
-    selectContext: vi.fn(),
-    toggleProjectContext: vi.fn(),
-    };
-    return selector ? selector(state) : state;
+const ubuntu: EnvironmentInfo = {
+  environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+  displayName: 'Ubuntu',
+  status: 'available',
+};
+const project = (id: string): ProjectInfo => ({
+  binding: {
+    id,
+    nativePath: `C:\\Code\\${id}`,
+    displayName: null,
+    order: null,
+    suppressCrossStorageWarning: false,
   },
-}));
-
-vi.mock('@/hooks/useTauriApi', () => ({
-  mapEnvironmentPath: (...args: unknown[]) => mocks.mapEnvironmentPath(...args),
-  openInExplorer: (...args: unknown[]) => mocks.openInExplorer(...args),
-}));
+  storage: { access: 'native', owner: { kind: 'host' } },
+});
 
 describe('ContextSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.environmentState.environments = [{
+    mocks.switchEnvironment.mockResolvedValue(undefined);
+    mocks.environments = [{
       environment: { kind: 'host' },
       displayName: 'Windows',
       status: 'available',
     }];
-    mocks.environmentState.selectedEnvironment = { kind: 'host' } as EnvironmentRef;
-    mocks.environmentState.projectsByEnvironment = { host: [] };
-    mocks.environmentState.projectsLoaded = { host: true };
-    mocks.environmentState.discoveryState = 'ready';
-    mocks.environmentState.errors = {};
-    mocks.contextState.selectedContext = 'global';
-    mocks.contextState.selectedContextRef = {
+    mocks.workspace.selectedContext = {
       environment: { kind: 'host' },
       scope: { scope: 'global' },
     };
-    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
-  });
-
-  it('disables project writes without blocking environment browsing', () => {
-    mocks.environmentState.environments = [
-      mocks.environmentState.environments[0],
-      {
-        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-        displayName: 'Ubuntu',
-        status: 'available',
-      },
-    ];
+    mocks.workspace.pendingEnvironment = null;
+    mocks.workspace.contextRevision = 0;
+    mocks.projects.projectsByEnvironment = { host: [] };
+    mocks.projects.loadStateByEnvironment = { host: 'ready' };
+    mocks.projects.errorsByEnvironment = {};
+    mocks.captureProjectRemoval.mockImplementation((
+      environment: EnvironmentRef,
+      target: ProjectInfo,
+      contextRevision: number,
+    ) => ({
+      environment,
+      projectId: target.binding.id,
+      projectName: target.binding.id,
+      contextRevision,
+    }));
     useMutationStore.setState({
-      activeMutation: {
-        kind: 'install',
-        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-        statusText: 'Installing',
-        cancelable: true,
-      },
+      revision: 0,
+      activeMutation: null,
+      cancelling: false,
+      loading: false,
     });
-
-    render(<ContextSidebar />);
-
-    expect((screen.getByRole('button', { name: 'context.addProject' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('combobox', { name: 'context.environmentLabel' }) as HTMLSelectElement).disabled).toBe(false);
   });
 
-  it('hides environment switching when only the host exists', () => {
+  it('hides environment switching when only Host exists', () => {
     render(<ContextSidebar />);
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
   });
 
-  it('shows discovered WSL distributions as flat environment options', () => {
-    mocks.environmentState.environments = [
-      mocks.environmentState.environments[0],
-      {
-        environment: { kind: 'wsl', distro_name: 'Ubuntu-24.04' },
-        displayName: 'Ubuntu 24.04',
-        status: 'available',
-      },
-      {
-        environment: { kind: 'wsl', distro_name: 'Debian' },
-        displayName: 'Debian',
-        status: 'available',
-      },
-    ];
-
+  it('switches environments through the workspace transaction', () => {
+    mocks.environments = [mocks.environments[0], ubuntu];
     render(<ContextSidebar />);
 
-    const select = screen.getByRole('combobox', { name: 'context.environmentLabel' });
-    expect(select).toBeDefined();
-    expect(screen.getByRole('option', { name: 'Ubuntu 24.04' })).toBeDefined();
-    expect(screen.getByRole('option', { name: 'Debian' })).toBeDefined();
+    fireEvent.change(screen.getByRole('combobox', { name: 'context.environmentLabel' }), {
+      target: { value: 'wsl:Ubuntu' },
+    });
+
+    expect(mocks.switchEnvironment).toHaveBeenCalledWith(ubuntu.environment);
   });
 
-  it('prevents overlapping environment switches while WSL is connecting', () => {
-    mocks.environmentState.environments = [
-      mocks.environmentState.environments[0],
-      {
-        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-        displayName: 'Ubuntu',
-        status: 'connecting',
-      },
-    ];
-    mocks.environmentState.selectedEnvironment = {
-      kind: 'wsl',
-      distro_name: 'Ubuntu',
-    } as EnvironmentRef;
-    mocks.environmentState.projectsByEnvironment = { 'wsl:Ubuntu': [] };
-    mocks.environmentState.projectsLoaded = { 'wsl:Ubuntu': false };
-
+  it('disables environment selection during a pending switch', () => {
+    mocks.environments = [mocks.environments[0], ubuntu];
+    mocks.workspace.pendingEnvironment = ubuntu.environment;
     render(<ContextSidebar />);
 
     expect((screen.getByRole('combobox', {
       name: 'context.environmentLabel',
     }) as HTMLSelectElement).disabled).toBe(true);
-    expect(mocks.refreshProjects).not.toHaveBeenCalled();
   });
 
-  it('renders every project in one scrollable list', () => {
-    mocks.environmentState.projectsByEnvironment = {
-      host: [
-        { id: 'a', nativePath: 'C:\\Code\\a', displayName: null, order: null, suppressCrossStorageWarning: false },
-        { id: 'b', nativePath: 'C:\\Code\\b', displayName: null, order: null, suppressCrossStorageWarning: false },
-        { id: 'c', nativePath: 'C:\\Code\\c', displayName: null, order: null, suppressCrossStorageWarning: false },
-      ],
-    };
-
+  it('renders every project in one scrollable list and selects by stable ID', () => {
+    mocks.projects.projectsByEnvironment = { host: [project('a'), project('b'), project('c')] };
     const { container } = render(<ContextSidebar />);
 
+    fireEvent.click(screen.getByText('C:\\Code\\b'));
+
+    expect(mocks.selectProject).toHaveBeenCalledWith('b');
     expect(screen.getByText('C:\\Code\\a')).toBeDefined();
-    expect(screen.getByText('C:\\Code\\b')).toBeDefined();
     expect(screen.getByText('C:\\Code\\c')).toBeDefined();
-    expect(container.querySelector('[data-testid="context-sidebar-scroll"]')?.classList.contains('overflow-y-auto')).toBe(true);
+    expect(container.querySelector('[data-testid="context-sidebar-scroll"]')?.classList)
+      .toContain('overflow-y-auto');
   });
 
-  it('maps a selected UNC folder before adding it to WSL', async () => {
-    mocks.environmentState.environments = [
-      mocks.environmentState.environments[0],
-      {
-        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-        displayName: 'Ubuntu',
-        status: 'available',
-      },
-    ];
-    mocks.environmentState.selectedEnvironment = { kind: 'wsl', distro_name: 'Ubuntu' } as EnvironmentRef;
-    mocks.environmentState.projectsByEnvironment = { 'wsl:Ubuntu': [] };
-    mocks.environmentState.projectsLoaded = { 'wsl:Ubuntu': true };
-    mocks.open.mockResolvedValue('\\\\wsl.localhost\\Ubuntu\\home\\me\\app');
-    mocks.mapEnvironmentPath.mockResolvedValue('/home/me/app');
-    mocks.addProject.mockResolvedValue([]);
+  it('keeps environment and Global fixed while only projects scroll', () => {
+    mocks.environments = [mocks.environments[0], ubuntu];
+    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    const { container } = render(<ContextSidebar />);
 
+    const projectScroll = screen.getByTestId('context-sidebar-scroll');
+    const environmentSelect = screen.getByRole('combobox', { name: 'context.environmentLabel' });
+    const globalButton = screen.getByRole('button', { name: /context.global/ });
+
+    expect(projectScroll.contains(environmentSelect)).toBe(false);
+    expect(projectScroll.contains(globalButton)).toBe(false);
+    expect(container.querySelectorAll('[data-testid="context-sidebar-scroll"]')).toHaveLength(1);
+  });
+
+  it('uses sibling buttons, full-text tooltips, and large-list containment for project rows', () => {
+    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    const { container } = render(<ContextSidebar />);
+
+    const row = container.querySelector('[data-project-id="a"]');
+    expect(row).not.toBeNull();
+    const buttons = within(row as HTMLElement).getAllByRole('button');
+    expect(buttons).toHaveLength(3);
+    expect(buttons.every((button) => button.querySelector('button') === null)).toBe(true);
+    expect(buttons[0].tagName).toBe('BUTTON');
+    expect(row?.classList.contains('project-context-item')).toBe(true);
+    expect(screen.getByText('a').getAttribute('title')).toBe('a');
+    expect(screen.getByText('C:\\Code\\a').getAttribute('title')).toBe('C:\\Code\\a');
+  });
+
+  it('restores focus to the next project, then Global when no project remains', async () => {
+    mocks.projects.projectsByEnvironment = { host: [project('a'), project('b'), project('c')] };
+    const firstView = render(<ContextSidebar />);
+    const rowB = firstView.container.querySelector('[data-project-id="b"]') as HTMLElement;
+
+    fireEvent.click(within(rowB).getByRole('button', { name: 'context.remove' }));
+    fireEvent.click(screen.getByRole('button', { name: 'complete-removal' }));
+
+    const rowC = firstView.container.querySelector('[data-project-id="c"]') as HTMLElement;
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(rowC).getAllByRole('button')[0]);
+    });
+    firstView.unmount();
+
+    mocks.projects.projectsByEnvironment = { host: [project('only')] };
+    const secondView = render(<ContextSidebar />);
+    const onlyRow = secondView.container.querySelector('[data-project-id="only"]') as HTMLElement;
+    fireEvent.click(within(onlyRow).getByRole('button', { name: 'context.remove' }));
+    fireEvent.click(screen.getByRole('button', { name: 'complete-removal' }));
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /context.global/ }));
+    });
+  });
+
+  it('passes the raw picker path and captured environment to ProjectStore', async () => {
+    const rawPath = '\\\\wsl.localhost\\Ubuntu\\home\\me\\app';
+    mocks.environments = [mocks.environments[0], ubuntu];
+    mocks.workspace.selectedContext = {
+      environment: ubuntu.environment,
+      scope: { scope: 'global' },
+    };
+    mocks.projects.projectsByEnvironment = { 'wsl:Ubuntu': [] };
+    mocks.projects.loadStateByEnvironment = { 'wsl:Ubuntu': 'ready' };
+    mocks.open.mockResolvedValue(rawPath);
+    mocks.add.mockResolvedValue({ created: true });
     render(<ContextSidebar />);
+
     fireEvent.click(screen.getByRole('button', { name: 'context.addProject' }));
 
-    await waitFor(() => expect(mocks.mapEnvironmentPath).toHaveBeenCalledWith(
-      { kind: 'wsl', distro_name: 'Ubuntu' },
-      '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
-    ));
-    expect(mocks.addProject).toHaveBeenCalledWith(
-      '/home/me/app',
-      { kind: 'wsl', distro_name: 'Ubuntu' },
-    );
+    await waitFor(() => expect(mocks.add).toHaveBeenCalledWith(ubuntu.environment, rawPath));
   });
 
-  it('uses availability-scope language instead of treating global as a workspace', () => {
-    expect(zhCN.context.global).toBe('全局');
-    expect(zhCN.context.globalSubtitle).toBe('所有项目可用');
-    expect(zhCN.context.sectionGlobal).toBe('全局');
-    expect(zhCN.context.sectionProjects).toBe('项目');
+  it('disables project writes without blocking environment browsing', () => {
+    mocks.environments = [mocks.environments[0], ubuntu];
+    useMutationStore.setState({
+      activeMutation: {
+        kind: 'install',
+        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        id: 'mutation-1',
+        phase: 'preparing',
+        progress: null,
+        cancelable: true,
+      },
+    });
+    render(<ContextSidebar />);
+
+    expect((screen.getByRole('button', { name: 'context.addProject' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    expect((screen.getByRole('combobox', { name: 'context.environmentLabel' }) as HTMLSelectElement).disabled)
+      .toBe(false);
   });
 });

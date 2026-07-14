@@ -4,34 +4,70 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { SkillsPanel } from '../SkillsPanel';
-import type { ContextRef } from '@/bindings';
+import type { ContextRef, InstalledSkill, ProjectInfo } from '@/bindings';
+
+const hostGlobal: ContextRef = {
+  environment: { kind: 'host' },
+  scope: { scope: 'global' },
+};
+const ubuntuGlobal: ContextRef = {
+  environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+  scope: { scope: 'global' },
+};
+const ubuntuProject: ContextRef = {
+  environment: ubuntuGlobal.environment,
+  scope: { scope: 'project', project_id: 'project-a' },
+};
+
+function makeSkill(name: string, scope: 'global' | 'project' = 'global'): InstalledSkill {
+  return {
+    name,
+    description: '',
+    path: `/skills/${name}`,
+    canonicalPath: `/canonical/${name}`,
+    scope,
+    agents: [],
+    hasUpdate: false,
+    canRunUpdate: false,
+    canCheckForUpdates: false,
+    updateReason: 'missing-skill-path',
+    source: 'owner/repo',
+    sourceUrl: 'https://github.com/owner/repo',
+  };
+}
+
+function snapshot(skills: InstalledSkill[] = [], loading = false) {
+  return {
+    skills,
+    agents: [],
+    pathExists: true,
+    loading,
+    error: null,
+    requestId: 1,
+  };
+}
 
 const mocks = vi.hoisted(() => ({
-  contextState: {
-    selectedContext: 'global',
-    selectedContextRef: {
+  workspaceContextState: {
+    selectedContext: {
       environment: { kind: 'host' as const },
       scope: { scope: 'global' as const },
     } as ContextRef,
-    hasExplicitContext: false,
+  },
+  projectState: {
+    projectsByEnvironment: {} as Record<string, ProjectInfo[]>,
   },
   skillsDataState: {
-    globalSkills: [],
-    projectSkills: [],
-    projectPathExists: true,
-    allAgents: [],
-    loading: false,
-    error: null as string | null,
+    snapshots: {} as Record<string, ReturnType<typeof snapshot>>,
     isSyncing: false,
     checkingUpdateScopes: new Set<string>(),
-    updatingSkills: new Map<string, 'queued' | 'updating' | 'done' | 'failed'>(),
-    syncUpdates: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    forceCheckUpdates: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    updateAllInSection: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    cancelUpdateAll: vi.fn(),
-    fetchSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    syncSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    updateSkill: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    updatingSkills: new Map<string, 'updating' | 'done' | 'failed'>(),
+    refreshWorkspace: vi.fn().mockResolvedValue(undefined),
+    syncUpdates: vi.fn().mockResolvedValue(undefined),
+    forceCheckUpdates: vi.fn().mockResolvedValue(true),
+    updateAllInSection: vi.fn().mockResolvedValue(undefined),
+    syncSkills: vi.fn().mockResolvedValue(undefined),
+    updateSkill: vi.fn().mockResolvedValue(undefined),
     auditCache: {},
     fetchAuditForSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   },
@@ -56,9 +92,14 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-vi.mock('@/stores/context', () => ({
-  useContextStore: (selector?: (state: typeof mocks.contextState) => unknown) =>
-    selector ? selector(mocks.contextState) : mocks.contextState,
+vi.mock('@/stores/workspace-context', () => ({
+  useWorkspaceContextStore: (selector: (state: typeof mocks.workspaceContextState) => unknown) =>
+    selector(mocks.workspaceContextState),
+}));
+
+vi.mock('@/stores/projects', () => ({
+  useProjectStore: (selector: (state: typeof mocks.projectState) => unknown) =>
+    selector(mocks.projectState),
 }));
 
 vi.mock('@/stores/skills-data', () => ({
@@ -92,9 +133,17 @@ vi.mock('../SkillsSection', () => ({
   SkillsSection: ({
     skills,
     onRepairSource,
+    onCheckUpdates,
+    onUpdate,
+    onUpdateAll,
+    scope,
   }: {
     skills: Array<{ name: string; scope: 'global' | 'project' }>;
     onRepairSource?: (skill: { name: string; scope: 'global' | 'project' }) => void;
+    onCheckUpdates?: () => Promise<boolean>;
+    onUpdate: (name: string, scope: 'global' | 'project') => Promise<void>;
+    onUpdateAll: (scope: 'global' | 'project') => Promise<void>;
+    scope: 'global' | 'project';
   }) => (
     <div>
       skills-section
@@ -108,6 +157,19 @@ vi.mock('../SkillsSection', () => ({
           repair
         </button>
       ))}
+      <button type="button" data-testid={`check:${scope}`} onClick={() => void onCheckUpdates?.()}>
+        check
+      </button>
+      <button
+        type="button"
+        data-testid={`update:${scope}`}
+        onClick={() => void onUpdate(skills[0]?.name ?? 'missing', scope)}
+      >
+        update
+      </button>
+      <button type="button" data-testid={`update-all:${scope}`} onClick={() => void onUpdateAll(scope)}>
+        update all
+      </button>
     </div>
   ),
 }));
@@ -123,26 +185,18 @@ vi.mock('../EmptyStates', () => ({
 
 describe('SkillsPanel', () => {
   beforeEach(() => {
-    mocks.contextState.selectedContext = 'global';
-    mocks.contextState.selectedContextRef = {
-      environment: { kind: 'host' },
-      scope: { scope: 'global' },
+    mocks.workspaceContextState.selectedContext = hostGlobal;
+    mocks.projectState.projectsByEnvironment = {};
+    mocks.skillsDataState.snapshots = {
+      'host/global': snapshot(),
     };
-    mocks.contextState.hasExplicitContext = false;
-    mocks.skillsDataState.globalSkills = [];
-    mocks.skillsDataState.projectSkills = [];
-    mocks.skillsDataState.projectPathExists = true;
-    mocks.skillsDataState.allAgents = [];
-    mocks.skillsDataState.loading = false;
-    mocks.skillsDataState.error = null;
     mocks.skillsDataState.isSyncing = false;
     mocks.skillsDataState.checkingUpdateScopes = new Set();
     mocks.skillsDataState.updatingSkills = new Map();
+    mocks.skillsDataState.refreshWorkspace.mockClear();
     mocks.skillsDataState.syncUpdates.mockClear();
     mocks.skillsDataState.forceCheckUpdates.mockClear();
     mocks.skillsDataState.updateAllInSection.mockClear();
-    mocks.skillsDataState.cancelUpdateAll.mockClear();
-    mocks.skillsDataState.fetchSkills.mockClear();
     mocks.skillsDataState.syncSkills.mockClear();
     mocks.skillsDataState.updateSkill.mockClear();
     mocks.skillsDataState.auditCache = {};
@@ -162,7 +216,7 @@ describe('SkillsPanel', () => {
     render(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(hostGlobal);
     });
 
     expect(mocks.skillDetailState.deselectSkill).not.toHaveBeenCalled();
@@ -170,78 +224,86 @@ describe('SkillsPanel', () => {
   });
 
   it('opens the repair source dialog for repairable skills instead of the install wizard', async () => {
-    mocks.skillsDataState.globalSkills = [
-      {
-        name: 'toolkit',
-        description: '',
-        path: '/skills/toolkit',
-        canonicalPath: '/canonical/toolkit',
-        scope: 'global',
-        agents: [],
-        hasUpdate: false,
-        canRunUpdate: false,
-        canCheckForUpdates: false,
-        updateReason: 'missing-skill-path',
-        source: 'owner/repo',
-        sourceUrl: 'https://github.com/owner/repo',
-      },
-    ] as never;
+    mocks.skillsDataState.snapshots = {
+      'host/global': snapshot([makeSkill('toolkit')]),
+    };
 
     render(<SkillsPanel compact={false} />);
 
     await waitFor(() => {
-      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(hostGlobal);
     });
 
     document.querySelector<HTMLButtonElement>('[data-testid="repair:global:toolkit"]')?.click();
 
     expect(mocks.skillDialogState.openRepairSource).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'toolkit', scope: 'global' }),
-      'global'
+      hostGlobal,
     );
     expect(mocks.skillDialogState.openAdd).not.toHaveBeenCalled();
   });
 
-  it('clears the selected skill when the selected context changes', async () => {
-    const { rerender } = render(<SkillsPanel compact />);
+  it('keeps cached rows visible while the committed context refreshes', () => {
+    mocks.skillsDataState.snapshots = {
+      'host/global': snapshot([makeSkill('cached')], true),
+    };
 
-    await waitFor(() => {
-      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
-    });
+    render(<SkillsPanel compact={false} />);
 
-    mocks.skillDetailState.deselectSkill.mockClear();
-    mocks.skillsDataState.fetchSkills.mockClear();
-    mocks.contextState.selectedContext = 'D:\\Code\\project-a';
-
-    rerender(<SkillsPanel compact />);
-
-    await waitFor(() => {
-      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
-    });
-
-    expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('repair:global:cached')).toBeDefined();
   });
 
-  it('reloads and clears details when only the explicit environment changes', async () => {
-    mocks.contextState.hasExplicitContext = true;
+  it('refreshes and clears details when the committed context changes', async () => {
     const { rerender } = render(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(hostGlobal);
     });
 
     mocks.skillDetailState.deselectSkill.mockClear();
-    mocks.skillsDataState.fetchSkills.mockClear();
-    mocks.contextState.selectedContextRef = {
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      scope: { scope: 'global' },
+    mocks.skillsDataState.refreshWorkspace.mockClear();
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    mocks.skillsDataState.snapshots = {
+      ...mocks.skillsDataState.snapshots,
+      'wsl:Ubuntu/global': snapshot(),
     };
 
     rerender(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsDataState.fetchSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(ubuntuGlobal);
     });
+
     expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the exact section context to check and update actions', () => {
+    mocks.workspaceContextState.selectedContext = ubuntuProject;
+    mocks.projectState.projectsByEnvironment = {
+      'wsl:Ubuntu': [{
+        binding: {
+          id: 'project-a',
+          nativePath: '/home/me/project-a',
+          displayName: null,
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        storage: { access: 'native', owner: ubuntuProject.environment },
+      }],
+    };
+    mocks.skillsDataState.snapshots = {
+      'wsl:Ubuntu/global': snapshot([makeSkill('global-skill')]),
+      'wsl:Ubuntu/project:project-a': snapshot([makeSkill('project-skill', 'project')]),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    document.querySelector<HTMLButtonElement>('[data-testid="check:project"]')?.click();
+    document.querySelector<HTMLButtonElement>('[data-testid="update:project"]')?.click();
+    document.querySelector<HTMLButtonElement>('[data-testid="update-all:project"]')?.click();
+
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(ubuntuProject);
+    expect(mocks.skillsDataState.updateSkill).toHaveBeenCalledWith(ubuntuProject, 'project-skill');
+    expect(mocks.skillsDataState.updateAllInSection).toHaveBeenCalledWith(ubuntuProject);
   });
 });

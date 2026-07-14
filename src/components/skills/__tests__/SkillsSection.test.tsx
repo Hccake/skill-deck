@@ -20,7 +20,7 @@ vi.mock('../SkillCard', () => ({
     onRepairSource,
   }: {
     skill: InstalledSkill;
-    updateStatus?: 'queued' | 'updating' | 'done' | 'failed';
+    updateStatus?: 'updating' | 'done' | 'failed';
     onRepairSource?: (skill: InstalledSkill) => void;
   }) => (
     <div data-testid={`skill-card:${skill.scope}:${skill.name}`}>
@@ -57,7 +57,9 @@ describe('SkillsSection', () => {
       activeMutation: {
         kind: 'install',
         context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-        statusText: 'Installing',
+        id: 'mutation-1',
+        phase: 'preparing',
+        progress: null,
         cancelable: true,
       },
     });
@@ -71,7 +73,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -93,7 +94,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />
@@ -113,7 +113,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -130,7 +129,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -147,7 +145,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -170,7 +167,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -200,7 +196,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -221,7 +216,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -244,7 +238,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onRepairSource={onRepairSource}
         onAdd={vi.fn()}
@@ -275,7 +268,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={onUpdateAll}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />
@@ -310,7 +302,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -354,7 +345,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />
@@ -388,7 +378,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onRepairSource={vi.fn()}
         onAdd={vi.fn()}
@@ -426,7 +415,6 @@ describe('SkillsSection', () => {
         onSkillClick={vi.fn()}
         onUpdate={vi.fn(async () => undefined)}
         onUpdateAll={vi.fn(async () => undefined)}
-        onCancelUpdateAll={vi.fn()}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />

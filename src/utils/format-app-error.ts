@@ -38,6 +38,35 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.error.riskConfirmationRequired');
     case 'mutationBusy':
       return t('addSkill.error.mutationBusy');
+    case 'mutationCancelled':
+      return t('addSkill.error.mutationCancelled');
+    case 'environmentDiscoveryFailed':
+      return t('addSkill.error.environmentDiscoveryFailed');
+    case 'wslCommandTimedOut':
+      return t('addSkill.error.wslCommandTimedOut');
+    case 'wslOutputLimitExceeded':
+      return t('addSkill.error.wslOutputLimitExceeded', {
+        stream: error.data.stream,
+        limit: error.data.limit,
+      });
+    case 'wslCommandFailed':
+      return t('addSkill.error.wslCommandFailed', {
+        exitCode: error.data.exitCode ?? t('common.unknown'),
+      });
+    case 'environmentUnavailable':
+      return t('addSkill.error.environmentUnavailable');
+    case 'storageMappingUnsupported':
+      return t('addSkill.error.storageMappingUnsupported', {
+        path: error.data.path,
+      });
+    case 'projectMigrationFailed':
+      return error.data.message;
+    case 'lockConflict': {
+      const { target } = error.data;
+      return target.kind === 'skill'
+        ? t('addSkill.error.lockConflict', { skill: target.skillName })
+        : t('addSkill.error.agentDefaultsConflict');
+    }
     case 'io':
     case 'yaml':
     case 'json':

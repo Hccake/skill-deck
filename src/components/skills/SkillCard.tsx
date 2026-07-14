@@ -50,7 +50,7 @@ interface SkillCardProps {
   /** 是否存在冲突（同时在 project 和 global 安装） */
   hasConflict?: boolean;
   /** 更新状态（来自 updatingSkills Map） */
-  updateStatus?: 'queued' | 'updating' | 'done' | 'failed';
+  updateStatus?: 'updating' | 'done' | 'failed';
   /** 当前 project scope 的项目路径 */
   projectPath?: string;
   /** Agent display name 映射（agentId → displayName） */
@@ -236,11 +236,6 @@ export const SkillCard = memo(function SkillCard({
 
           {/* Action buttons — React2: 三元条件渲染 (rendering-conditional-render) */}
           <div className="flex shrink-0 items-center gap-1">
-            {updateStatus === 'queued' ? (
-              <Badge variant="outline" className="text-xs text-muted-foreground">
-                {t('skills.queued')}
-              </Badge>
-            ) : null}
             {updateStatus === 'updating' ? (
               <Badge variant="outline" className="text-xs text-primary animate-pulse">
                 <span ref={phaseBadgeRef}>{t('skills.updatePhaseCloning')}</span>

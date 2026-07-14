@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useMutationStore } from '@/stores/mutation';
+import { formatMutationStatus } from '@/lib/mutationStatus';
 
 export type MutationInterruptionAction = 'close' | 'restart';
 export type ProtectedActionResult = 'performed' | 'relaunched' | 'blocked';
@@ -82,7 +83,7 @@ export function useMutationInterruption(
     dialogProps: {
       open,
       action,
-      statusText: activeMutation?.statusText,
+      statusText: activeMutation ? formatMutationStatus(activeMutation, t) : undefined,
       cancelable: activeMutation?.cancelable ?? false,
       cancelling,
       onContinueWaiting: continueWaiting,

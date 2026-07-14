@@ -196,9 +196,9 @@ pub fn discover_skills(
                 base_path,
                 &options,
                 priority_dir.bounded_depth_two,
-                if priority_dir.filter_locked_agent_project_skills {
-                    Some(&locked_project_skill_names)
-                } else if is_in_cli_agent_project_skill_dir(base_path, &priority_dir.path) {
+                if priority_dir.filter_locked_agent_project_skills
+                    || is_in_cli_agent_project_skill_dir(base_path, &priority_dir.path)
+                {
                     Some(&locked_project_skill_names)
                 } else {
                     None
@@ -233,6 +233,7 @@ pub fn discover_skills(
 }
 
 /// 获取优先搜索目录列表（与 CLI 一致）
+#[cfg(test)]
 fn get_priority_search_dirs(search_path: &Path) -> Vec<PathBuf> {
     get_priority_search_dir_specs(search_path)
         .into_iter()
@@ -334,7 +335,7 @@ fn read_child_dirs(dir: &Path) -> Vec<PathBuf> {
                     && path
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .is_none_or(|name| !SKIP_DIRS.contains(&name))
+                        .map_or(true, |name| !SKIP_DIRS.contains(&name))
             })
             .collect(),
         Err(_) => Vec::new(),

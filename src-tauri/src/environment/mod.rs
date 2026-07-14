@@ -1,5 +1,7 @@
 pub mod acquisition;
 pub mod agent_environment;
+pub mod context_resolver;
+#[cfg(test)]
 pub mod host;
 pub mod lock_io;
 pub mod materialize;

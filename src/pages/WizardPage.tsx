@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useContextStore } from '@/stores/context';
+import { useProjectStore } from '@/stores/projects';
 import { emit } from '@tauri-apps/api/event';
 import { Button } from '@/components/ui/button';
 import { StepIndicator } from '@/components/skills/add-skill/StepIndicator';
@@ -16,6 +16,7 @@ import { InstallingStep } from '@/components/skills/add-skill/InstallingStep';
 import { CompleteStep } from '@/components/skills/add-skill/CompleteStep';
 import { ErrorStep } from '@/components/skills/add-skill/ErrorStep';
 import { parseWizardContext } from '@/components/skills/add-skill/wizard-context';
+import { globalContext } from '@/lib/context';
 import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { useMutationStore } from '@/stores/mutation';
@@ -33,7 +34,7 @@ function createInitialState(params: {
   entryPoint: EntryPoint;
   scope: 'global' | 'project';
   projectPath?: string;
-  context?: ContextRef;
+  context: ContextRef;
   prefillSource?: string;
   prefillSkillName?: string;
 }): WizardState {
@@ -90,22 +91,25 @@ export function WizardPage() {
   useMutationMonitor();
 
   // 从 URL query 解析参数
-  const wizardParams = useMemo(() => ({
-    entryPoint: (searchParams.get('entryPoint') ?? 'skills-panel') as EntryPoint,
-    scope: (searchParams.get('scope') ?? 'global') as 'global' | 'project',
-    projectPath: searchParams.get('projectPath') ?? undefined,
-    context: parseWizardContext(searchParams.get('context')),
-    prefillSource: searchParams.get('prefillSource') ?? undefined,
-    prefillSkillName: searchParams.get('prefillSkillName') ?? undefined,
-  }), [searchParams]);
+  const wizardParams = useMemo(() => {
+    const context = parseWizardContext(searchParams.get('context'))
+      ?? globalContext({ kind: 'host' });
+    return {
+      entryPoint: (searchParams.get('entryPoint') ?? 'skills-panel') as EntryPoint,
+      scope: context.scope.scope,
+      projectPath: searchParams.get('projectPath') ?? undefined,
+      context,
+      prefillSource: searchParams.get('prefillSource') ?? undefined,
+      prefillSkillName: searchParams.get('prefillSkillName') ?? undefined,
+    };
+  }, [searchParams]);
 
-  // Discovery 入口需要 ScopeStep，确保子窗口中 projects 列表已加载
-  const { projectsLoaded, loadProjects } = useContextStore();
+  const refreshProjects = useProjectStore((store) => store.refresh);
   useEffect(() => {
-    if (!wizardParams.context && !projectsLoaded) {
-      loadProjects();
+    if (wizardParams.entryPoint === 'discovery') {
+      void refreshProjects(wizardParams.context.environment);
     }
-  }, [wizardParams.context, projectsLoaded, loadProjects]);
+  }, [refreshProjects, wizardParams.context.environment, wizardParams.entryPoint]);
 
   const [state, setState] = useState<WizardState>(() =>
     createInitialState(wizardParams)
@@ -236,7 +240,6 @@ export function WizardPage() {
             updateState={updateState}
             scope={state.scope}
             projectPath={state.projectPath}
-            context={state.context}
           />
         );
       case 'installing':
@@ -247,7 +250,6 @@ export function WizardPage() {
             updateState={updateState}
             scope={state.scope}
             projectPath={state.projectPath}
-            context={state.context}
           />
         );
       case 'complete':

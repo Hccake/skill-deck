@@ -41,7 +41,7 @@ impl EnvironmentLockIo {
                 )
                 .await?;
                 match output.split_first() {
-                    Some((b'0', rest)) if rest.is_empty() => Ok(None),
+                    Some((b'0', [])) => Ok(None),
                     Some((b'1', rest)) => Ok(Some(rest.to_vec())),
                     _ => Err(AppError::Custom {
                         message: "invalid optional lock response".to_string(),
@@ -51,6 +51,7 @@ impl EnvironmentLockIo {
         }
     }
 
+    #[cfg(any(target_os = "windows", test))]
     pub async fn read(&self, locator: &ResourceLocator) -> Result<Vec<u8>, AppError> {
         match self {
             Self::Host => Ok(fs::read(&locator.native_path)?),
@@ -93,7 +94,7 @@ impl EnvironmentLockIo {
     }
 }
 
-fn write_host_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
+pub(crate) fn write_host_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let mut temp = NamedTempFile::new_in(parent)?;

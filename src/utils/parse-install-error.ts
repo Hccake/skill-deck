@@ -153,6 +153,73 @@ export function parseInstallError(
         ],
       };
 
+    case 'mutationCancelled':
+      return {
+        message: t('addSkill.error.mutationCancelled'),
+      };
+
+    case 'environmentDiscoveryFailed':
+      return {
+        message: t('addSkill.error.environmentDiscoveryFailed'),
+        details: error.data.message,
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'wslCommandTimedOut':
+      return {
+        message: t('addSkill.error.wslCommandTimedOut'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'wslOutputLimitExceeded':
+      return {
+        message: t('addSkill.error.wslOutputLimitExceeded', {
+          stream: error.data.stream,
+          limit: error.data.limit,
+        }),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'wslCommandFailed':
+      return {
+        message: t('addSkill.error.wslCommandFailed', {
+          exitCode: error.data.exitCode ?? t('common.unknown'),
+        }),
+        details: error.data.stderr || undefined,
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'environmentUnavailable':
+      return {
+        message: t('addSkill.error.environmentUnavailable'),
+        details: error.data.message,
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'storageMappingUnsupported':
+      return {
+        message: t('addSkill.error.storageMappingUnsupported', {
+          path: error.data.path,
+        }),
+        suggestions: [t('addSkill.error.suggestion.chooseAccessiblePath')],
+      };
+
+    case 'projectMigrationFailed':
+      return {
+        message: error.data.message,
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'lockConflict': {
+      const { target } = error.data;
+      return {
+        message: target.kind === 'skill'
+          ? t('addSkill.error.lockConflict', { skill: target.skillName })
+          : t('addSkill.error.agentDefaultsConflict'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+    }
+
     case 'custom':
       return {
         message: error.data.message,

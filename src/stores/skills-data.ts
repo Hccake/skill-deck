@@ -1,15 +1,14 @@
 // src/stores/skills-data.ts
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { useContextStore } from './context';
 import { isMutationWriteBlocked } from './mutation';
-import { environmentKey, useEnvironmentStore } from './environment';
+import { useProjectStore } from './projects';
 import {
   sortSkills,
   mergeUpdateInfo,
   updateInfoCache,
   UPDATE_CHECK_TTL,
-  clearUpdateCacheForSkill,
+  clearUpdateCacheForContextSkill,
   buildUpdatePlan,
   type SkillListItem,
   type UpdatePlan,
@@ -17,20 +16,15 @@ import {
 } from './skills-utils';
 import {
   listSkills,
-  listSkillsV2,
   listAgents,
-  listAgentsForProject,
-  listAgentsForProjectV2,
   checkUpdates,
-  checkUpdatesV2,
   updateSkill as apiUpdateSkill,
-  updateSkillV2 as apiUpdateSkillV2,
   updateSkillsBatch as apiUpdateSkillsBatch,
-  updateSkillsBatchV2 as apiUpdateSkillsBatchV2,
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
 import { getSkillIdentity, getSkillIdentityKey, isSameSkillIdentity } from '@/lib/skills/identity';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
+import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import type {
   AgentInfo,
   ContextRef,
@@ -44,31 +38,6 @@ import type {
 type UpdateCheckResult =
   | { ok: true; updates: SkillUpdateInfo[] }
   | { ok: false };
-
-function getExplicitContextForScope(scope: SkillScope): ContextRef | null {
-  const { hasExplicitContext, selectedContextRef } = useContextStore.getState();
-  if (!hasExplicitContext) return null;
-  if (scope === 'global') {
-    return {
-      environment: selectedContextRef.environment,
-      scope: { scope: 'global' },
-    };
-  }
-  return selectedContextRef.scope.scope === 'project' ? selectedContextRef : null;
-}
-
-function contextCacheKey(context: ContextRef | null, legacyKey: string): string {
-  return context ? JSON.stringify(context) : legacyKey;
-}
-
-function isCurrentContext(context: ContextRef | null, legacySelectedContext: string): boolean {
-  const current = useContextStore.getState();
-  if (context) {
-    return current.hasExplicitContext
-      && JSON.stringify(current.selectedContextRef) === JSON.stringify(context);
-  }
-  return !current.hasExplicitContext && current.selectedContext === legacySelectedContext;
-}
 
 function clearLocalUpdateFlags(
   skills: SkillListItem[],
@@ -95,265 +64,241 @@ function clearLocalUpdateFlags(
 }
 
 async function checkUpdatesSafely(
-  scope: SkillScope,
-  projectPath?: string,
-  context?: ContextRef | null,
+  context: ContextRef,
 ): Promise<UpdateCheckResult> {
   try {
     return {
       ok: true,
-      updates: context
-        ? await checkUpdatesV2(context)
-        : await checkUpdates(scope, projectPath),
+      updates: await checkUpdates(context),
     };
   } catch {
     return { ok: false };
   }
 }
 
-/** 内部共享加载逻辑 — fetchSkills 和 syncSkills 的唯一数据源 */
-async function loadSkillsData(
-  set: (partial: Partial<SkillsDataState> | ((state: SkillsDataState) => Partial<SkillsDataState>)) => void,
-  options: { includeAgents: boolean },
-) {
-  const { selectedContext, selectedContextRef, hasExplicitContext } = useContextStore.getState();
-  if (hasExplicitContext) {
-    const globalContext: ContextRef = {
-      environment: selectedContextRef.environment,
-      scope: { scope: 'global' },
-    };
-    const projectContext = selectedContextRef.scope.scope === 'project'
-      ? selectedContextRef
-      : null;
-    const [agents, globalResult, projectResult] = await Promise.all([
-      options.includeAgents
-        ? listAgentsForProjectV2(projectContext ?? globalContext)
-        : Promise.resolve(null),
-      listSkillsV2(globalContext),
-      projectContext ? listSkillsV2(projectContext) : Promise.resolve(null),
-    ]);
-    const globalCache = updateInfoCache.get(JSON.stringify(globalContext));
-    const projectCache = projectContext
-      ? updateInfoCache.get(JSON.stringify(projectContext))
-      : null;
-    const partial: Partial<SkillsDataState> = {
-      globalSkills: sortSkills(
-        globalCache ? mergeUpdateInfo(globalResult.skills, globalCache.results) : globalResult.skills
-      ),
-      projectSkills: projectResult
-        ? sortSkills(
-          projectCache
-            ? mergeUpdateInfo(projectResult.skills, projectCache.results)
-            : projectResult.skills
-        )
-        : [],
-      projectPathExists: projectResult?.pathExists ?? true,
-    };
-    if (agents) partial.allAgents = agents;
-    set(partial);
-    return;
-  }
-
-  const isProjectSelected = selectedContext !== 'global';
-
-  if (isProjectSelected) {
-    const [agents, globalResult, projectResult] = await Promise.all([
-      options.includeAgents ? listAgentsForProject(selectedContext) : Promise.resolve(null),
-      listSkills({ scope: 'global' }),
-      listSkills({ scope: 'project', projectPath: selectedContext }),
-    ]);
-
-    const globalCache = updateInfoCache.get('global');
-    const projectCache = updateInfoCache.get(selectedContext);
-    const partial: Partial<SkillsDataState> = {
-      globalSkills: sortSkills(
-        globalCache ? mergeUpdateInfo(globalResult.skills, globalCache.results) : globalResult.skills
-      ),
-      projectSkills: sortSkills(
-        projectCache ? mergeUpdateInfo(projectResult.skills, projectCache.results) : projectResult.skills
-      ),
-      projectPathExists: projectResult.pathExists,
-    };
-    if (agents) partial.allAgents = agents;
-    set(partial);
-  } else {
-    const [agents, globalResult] = await Promise.all([
-      options.includeAgents ? listAgents() : Promise.resolve(null),
-      listSkills({ scope: 'global' }),
-    ]);
-
-    const globalCache = updateInfoCache.get('global');
-    const partial: Partial<SkillsDataState> = {
-      globalSkills: sortSkills(
-        globalCache ? mergeUpdateInfo(globalResult.skills, globalCache.results) : globalResult.skills
-      ),
-      projectSkills: [],
-      projectPathExists: true,
-    };
-    if (agents) partial.allAgents = agents;
-    set(partial);
-  }
+function projectPathForContext(context: ContextRef): string | undefined {
+  const scope = context.scope;
+  if (scope.scope !== 'project') return undefined;
+  const projects = useProjectStore.getState().projectsByEnvironment[
+    environmentKey(context.environment)
+  ] ?? [];
+  return projects.find((project) => project.binding.id === scope.project_id)
+    ?.binding.nativePath;
 }
 
 interface SkillsDataState {
-  // Data
-  globalSkills: SkillListItem[];
-  projectSkills: SkillListItem[];
-  projectPathExists: boolean;
-  /** Discover 页使用：所有已注册 project 的 skills（key = projectPath） */
-  allProjectsSkills: Map<string, SkillListItem[]>;
-  allAgents: AgentInfo[];
-  loading: boolean;
-  error: string | null;
+  snapshots: Record<string, ContextSkillSnapshot>;
   auditCache: Record<string, SkillAuditData>;
 
   // Operation state
   isSyncing: boolean;
   checkingUpdateScopes: Set<string>;
-  updatingSkills: Map<string, 'queued' | 'updating' | 'done' | 'failed'>;
-  updateAllCancelled: boolean;
+  updatingSkills: Map<string, 'updating' | 'done' | 'failed'>;
   lastUpdatePlan: UpdatePlan | null;
   lastUpdateResults: UpdateSkillItemResult[] | null;
   lastFailedUpdateNames: string[];
 
   // Actions
-  fetchSkills: () => Promise<void>;
-  syncSkills: () => Promise<void>;
-  syncUpdates: () => Promise<void>;
-  forceCheckUpdates: (scope: SkillScope) => Promise<boolean>;
+  refreshContext: (context: ContextRef, includeAgents?: boolean) => Promise<void>;
+  refreshWorkspace: (context: ContextRef) => Promise<void>;
+  invalidateContexts: (contexts: ContextRef[]) => void;
+  syncSkills: (context: ContextRef) => Promise<void>;
+  syncUpdates: (context: ContextRef) => Promise<void>;
+  forceCheckUpdates: (context: ContextRef) => Promise<boolean>;
   fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
-  updateSkill: (skillName: string, scope: SkillScope) => Promise<void>;
-  markSourceRepairSucceeded: (skillName: string, scope: SkillScope, projectPath?: string) => void;
-  updateAllInSection: (scope: SkillScope) => Promise<void>;
-  cancelUpdateAll: () => void;
-  /** 加载所有已注册 project 的 skills（供 Discover 页使用） */
-  fetchAllProjectsSkills: () => Promise<void>;
+  updateSkill: (context: ContextRef, skillName: string) => Promise<void>;
+  markSourceRepairSucceeded: (context: ContextRef, skillName: string) => void;
+  updateAllInSection: (context: ContextRef) => Promise<void>;
+}
+
+export interface ContextSkillSnapshot {
+  skills: SkillListItem[];
+  agents: AgentInfo[];
+  pathExists: boolean;
+  loading: boolean;
+  error: string | null;
+  requestId: number;
+}
+
+function emptyContextSnapshot(): ContextSkillSnapshot {
+  return {
+    skills: [],
+    agents: [],
+    pathExists: true,
+    loading: false,
+    error: null,
+    requestId: 0,
+  };
+}
+
+const contextRequestGenerations = new Map<string, number>();
+
+function nextContextRequestGeneration(key: string): number {
+  const generation = (contextRequestGenerations.get(key) ?? 0) + 1;
+  contextRequestGenerations.set(key, generation);
+  return generation;
 }
 
 export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
-  globalSkills: [],
-  projectSkills: [],
-  projectPathExists: true,
-  allAgents: [],
-  loading: true,
-  error: null,
+  snapshots: {},
   auditCache: {},
 
   isSyncing: false,
   checkingUpdateScopes: new Set(),
   updatingSkills: new Map(),
-  updateAllCancelled: false,
   lastUpdatePlan: null,
   lastUpdateResults: null,
   lastFailedUpdateNames: [],
-  allProjectsSkills: new Map(),
+  refreshContext: async (context, includeAgents = true) => {
+    const key = contextKey(context);
+    const current = get().snapshots[key] ?? emptyContextSnapshot();
+    const requestId = nextContextRequestGeneration(key);
+    set((state) => ({
+      snapshots: {
+        ...state.snapshots,
+        [key]: {
+          ...(state.snapshots[key] ?? emptyContextSnapshot()),
+          loading: true,
+          error: null,
+          requestId,
+        },
+      },
+    }));
 
-  fetchSkills: async () => {
     try {
-      set({ loading: true, error: null });
-      await loadSkillsData(set, { includeAgents: true });
-    } catch (e) {
-      set({ error: e instanceof Error ? e.message : 'Failed to load skills' });
-    } finally {
-      set({ loading: false });
+      const [result, agents] = await Promise.all([
+        listSkills(context),
+        includeAgents
+          ? listAgents(context)
+          : Promise.resolve(current.agents),
+      ]);
+      const updateCache = updateInfoCache.get(key);
+      const skills = sortSkills(
+        updateCache ? mergeUpdateInfo(result.skills, updateCache.results) : result.skills,
+      );
+      set((state) => {
+        if (state.snapshots[key]?.requestId !== requestId) return {};
+        return {
+          snapshots: {
+            ...state.snapshots,
+            [key]: {
+              skills,
+              agents,
+              pathExists: result.pathExists,
+              loading: false,
+              error: null,
+              requestId,
+            },
+          },
+        };
+      });
+    } catch (error) {
+      set((state) => {
+        if (state.snapshots[key]?.requestId !== requestId) return {};
+        return {
+          snapshots: {
+            ...state.snapshots,
+            [key]: {
+              ...state.snapshots[key],
+              loading: false,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          },
+        };
+      });
     }
   },
 
-  syncSkills: async () => {
+  refreshWorkspace: async (context) => {
+    if (context.scope.scope === 'global') {
+      await get().refreshContext(context, true);
+      return;
+    }
+    await Promise.all([
+      get().refreshContext(globalContext(context.environment), false),
+      get().refreshContext(context, true),
+    ]);
+  },
+
+  invalidateContexts: (contexts) => {
+    set((state) => {
+      const keys = new Set(contexts.map(contextKey));
+      for (const key of keys) nextContextRequestGeneration(key);
+      return {
+        snapshots: Object.fromEntries(
+          Object.entries(state.snapshots).filter(([key]) => !keys.has(key)),
+        ),
+      };
+    });
+  },
+
+  syncSkills: async (context) => {
     set({ isSyncing: true });
     try {
-      await loadSkillsData(set, { includeAgents: false });
-    } catch (e) {
-      set({ error: e instanceof Error ? e.message : 'Failed to sync skills' });
+      await get().refreshWorkspace(context);
     } finally {
       set({ isSyncing: false });
     }
   },
 
-  syncUpdates: async () => {
-    const contextState = useContextStore.getState();
-    const contextAtStart = contextState.selectedContext;
-    const explicitGlobalContext = getExplicitContextForScope('global');
-    const explicitProjectContext = getExplicitContextForScope('project');
-    const isProjectSelected = explicitProjectContext !== null || (
-      !contextState.hasExplicitContext && contextAtStart !== 'global'
-    );
-    const globalCacheKey = contextCacheKey(explicitGlobalContext, 'global');
-    const projectCacheKey = explicitProjectContext
-      ? contextCacheKey(explicitProjectContext, contextAtStart)
-      : contextAtStart;
-
+  syncUpdates: async (context) => {
+    const contexts = context.scope.scope === 'project'
+      ? [globalContext(context.environment), context]
+      : [context];
     const now = Date.now();
-    const globalCache = updateInfoCache.get(globalCacheKey);
-    const projectCache = isProjectSelected ? updateInfoCache.get(projectCacheKey) : null;
-    const globalFresh = globalCache && (now - globalCache.checkedAt) < UPDATE_CHECK_TTL;
-    const projectFresh = !isProjectSelected || (projectCache && (now - projectCache.checkedAt) < UPDATE_CHECK_TTL);
-    if (globalFresh && projectFresh) return;
-
-    const scopesToCheck: string[] = [];
-    if (!globalFresh) scopesToCheck.push(globalCacheKey);
-    if (!projectFresh) scopesToCheck.push(projectCacheKey);
+    const contextsToCheck = contexts.filter((candidate) => {
+      const cached = updateInfoCache.get(contextKey(candidate));
+      return !cached || now - cached.checkedAt >= UPDATE_CHECK_TTL;
+    });
+    const keysToCheck = contextsToCheck.map(contextKey);
     set((state) => {
       const next = new Set(state.checkingUpdateScopes);
-      for (const s of scopesToCheck) next.add(s);
+      for (const key of keysToCheck) next.add(key);
       return { checkingUpdateScopes: next };
     });
     try {
-      if (isProjectSelected) {
-        const [globalResult, projectResult] = await Promise.all([
-          globalFresh
-            ? Promise.resolve({ ok: true, updates: globalCache!.results } satisfies UpdateCheckResult)
-            : checkUpdatesSafely('global', undefined, explicitGlobalContext),
-          projectFresh
-            ? Promise.resolve({ ok: true, updates: projectCache!.results } satisfies UpdateCheckResult)
-            : checkUpdatesSafely('project', contextState.hasExplicitContext ? undefined : contextAtStart, explicitProjectContext),
-        ]);
-        if (!isCurrentContext(explicitProjectContext ?? explicitGlobalContext, contextAtStart)) return;
-        if (!globalFresh && globalResult.ok) {
-          updateInfoCache.set(globalCacheKey, { results: globalResult.updates, checkedAt: now });
-        }
-        if (!projectFresh && projectResult.ok) {
-          updateInfoCache.set(projectCacheKey, { results: projectResult.updates, checkedAt: now });
-        }
-        set((state) => ({
-          globalSkills: globalResult.ok
-            ? sortSkills(mergeUpdateInfo(state.globalSkills, globalResult.updates))
-            : state.globalSkills,
-          projectSkills: projectResult.ok
-            ? sortSkills(mergeUpdateInfo(state.projectSkills, projectResult.updates))
-            : state.projectSkills,
-        }));
-      } else {
-        const globalResult = globalFresh
-          ? ({ ok: true, updates: globalCache!.results } satisfies UpdateCheckResult)
-          : await checkUpdatesSafely('global', undefined, explicitGlobalContext);
-        if (!isCurrentContext(explicitGlobalContext, contextAtStart)) return;
-        if (!globalFresh && globalResult.ok) {
-          updateInfoCache.set(globalCacheKey, { results: globalResult.updates, checkedAt: now });
-        }
-        if (globalResult.ok) {
-          set((state) => ({
-            globalSkills: sortSkills(mergeUpdateInfo(state.globalSkills, globalResult.updates)),
-          }));
+      const checkedResults = await Promise.all(
+        contextsToCheck.map(async (candidate) => ({
+          context: candidate,
+          result: await checkUpdatesSafely(candidate),
+        })),
+      );
+      for (const { context: checkedContext, result } of checkedResults) {
+        if (result.ok) {
+          updateInfoCache.set(contextKey(checkedContext), {
+            results: result.updates,
+            checkedAt: now,
+          });
         }
       }
+
+      set((state) => {
+        const snapshots = { ...state.snapshots };
+        for (const candidate of contexts) {
+          const key = contextKey(candidate);
+          const cached = updateInfoCache.get(key);
+          if (!cached) continue;
+          const current = snapshots[key] ?? emptyContextSnapshot();
+          snapshots[key] = {
+            ...current,
+            skills: sortSkills(mergeUpdateInfo(current.skills, cached.results)),
+          };
+        }
+        return { snapshots };
+      });
     } catch {
       // 静默失败 — 更新检测是非关键路径
     } finally {
       set((state) => {
         const next = new Set(state.checkingUpdateScopes);
-        for (const s of scopesToCheck) next.delete(s);
+        for (const key of keysToCheck) next.delete(key);
         return { checkingUpdateScopes: next };
       });
     }
   },
 
-  forceCheckUpdates: async (scope) => {
-    const { selectedContext } = useContextStore.getState();
-    const isGlobal = scope === 'global';
-    const contextAtStart = selectedContext;
-    const context = getExplicitContextForScope(scope);
-    const cacheKey = contextCacheKey(context, isGlobal ? 'global' : contextAtStart);
+  forceCheckUpdates: async (context) => {
+    const cacheKey = contextKey(context);
 
     set((state) => {
       const next = new Set(state.checkingUpdateScopes);
@@ -362,22 +307,21 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
 
     try {
-      const projectPath = isGlobal ? undefined : contextAtStart;
-      const updates = context
-        ? await checkUpdatesV2(context)
-        : await checkUpdates(scope, projectPath);
+      const updates = await checkUpdates(context);
       const now = Date.now();
       updateInfoCache.set(cacheKey, { results: updates, checkedAt: now });
-
-      if (isGlobal) {
-        set((state) => ({
-          globalSkills: sortSkills(mergeUpdateInfo(state.globalSkills, updates)),
-        }));
-      } else if (isCurrentContext(context, contextAtStart)) {
-        set((state) => ({
-          projectSkills: sortSkills(mergeUpdateInfo(state.projectSkills, updates)),
-        }));
-      }
+      set((state) => {
+        const current = state.snapshots[cacheKey] ?? emptyContextSnapshot();
+        return {
+          snapshots: {
+            ...state.snapshots,
+            [cacheKey]: {
+              ...current,
+              skills: sortSkills(mergeUpdateInfo(current.skills, updates)),
+            },
+          },
+        };
+      });
       return true;
     } catch (e) {
       toast.error(t('skills.checkUpdatesError', {
@@ -421,15 +365,12 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     set({ auditCache: newCache });
   },
 
-  updateSkill: async (skillName, scope) => {
+  updateSkill: async (context, skillName) => {
     if (isMutationWriteBlocked()) return;
     const { updatingSkills } = get();
-    const { selectedContext } = useContextStore.getState();
-    const context = getExplicitContextForScope(scope);
-    const projectPath = scope === 'project' ? selectedContext : undefined;
-    const cacheProjectKey = context && scope === 'project'
-      ? JSON.stringify(context)
-      : projectPath;
+    const scope = context.scope.scope;
+    const projectPath = projectPathForContext(context);
+    const snapshotKey = contextKey(context);
     const skillIdentity = getSkillIdentity(
       { name: skillName, scope } as Pick<InstalledSkill, 'name' | 'scope'>,
       projectPath
@@ -437,7 +378,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     const identityKey = getSkillIdentityKey(skillIdentity);
     if (updatingSkills.has(identityKey)) return;
 
-    const skillsList = scope === 'global' ? get().globalSkills : get().projectSkills;
+    const skillsList = get().snapshots[snapshotKey]?.skills ?? [];
     const target = skillsList.find((s) => s.name === skillName);
     if (target?.updateStatus === 'deleted-upstream' || target?.updateReason === 'deleted-upstream') {
       toast.info(t('skills.updatePlan.deletedUpstreamDescription'));
@@ -451,9 +392,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
 
     try {
-      const response = context
-        ? await apiUpdateSkillV2(context, skillName)
-        : await apiUpdateSkill({ scope, name: skillName, projectPath });
+      const response = await apiUpdateSkill(context, skillName);
       const item = response.results.find((r) => r.name === skillName) ?? response.results[0];
       const agentResults = item?.agentResults ?? [];
       const succeededAgents = agentResults.filter((r) => r.status === 'success').length;
@@ -493,22 +432,27 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       if (shouldClearUpdateFlag) {
         const shouldClearCannotCheck = target?.updateReason === 'missing-remote-hash';
         if (target?.canCheckForUpdates !== false || shouldClearCannotCheck) {
-          clearUpdateCacheForSkill(skillName, scope, cacheProjectKey, {
+          clearUpdateCacheForContextSkill(skillName, context, {
             clearCannotCheck: shouldClearCannotCheck,
           });
         }
-        set((state) => ({
-          globalSkills: scope === 'global'
-            ? clearLocalUpdateFlags(state.globalSkills, scope, new Set([skillName]), {
-              clearCannotCheck: shouldClearCannotCheck,
-            })
-            : state.globalSkills,
-          projectSkills: scope === 'project'
-            ? clearLocalUpdateFlags(state.projectSkills, scope, new Set([skillName]), {
-              clearCannotCheck: shouldClearCannotCheck,
-            })
-            : state.projectSkills,
-        }));
+        set((state) => {
+          const current = state.snapshots[snapshotKey] ?? emptyContextSnapshot();
+          return {
+            snapshots: {
+              ...state.snapshots,
+              [snapshotKey]: {
+                ...current,
+                skills: clearLocalUpdateFlags(
+                  current.skills,
+                  scope,
+                  new Set([skillName]),
+                  { clearCannotCheck: shouldClearCannotCheck },
+                ),
+              },
+            },
+          };
+        });
       }
 
       set((state) => {
@@ -527,7 +471,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       const { useSkillDetailStore } = await import('./skill-detail');
 
       // fire-and-forget: 不阻塞等待列表刷新 (async-defer-await)
-      get().syncSkills().finally(() => {
+      get().syncSkills(context).finally(() => {
         if (
           shouldClearUpdateFlag &&
           isSameSkillIdentity(useSkillDetailStore.getState().selectedSkillRef, skillIdentity)
@@ -560,31 +504,35 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     }
   },
 
-  markSourceRepairSucceeded: (skillName, scope, projectPath) => {
-    clearUpdateCacheForSkill(skillName, scope, projectPath, { clearCannotCheck: true });
-    const selectedContext = useContextStore.getState().selectedContext;
-    const shouldUpdateVisibleProject =
-      scope === 'project' && selectedContext === projectPath;
-    set((state) => ({
-      globalSkills: scope === 'global'
-        ? clearLocalUpdateFlags(state.globalSkills, scope, new Set([skillName]), { clearCannotCheck: true })
-        : state.globalSkills,
-      projectSkills: shouldUpdateVisibleProject
-        ? clearLocalUpdateFlags(state.projectSkills, scope, new Set([skillName]), { clearCannotCheck: true })
-        : state.projectSkills,
-    }));
+  markSourceRepairSucceeded: (context, skillName) => {
+    clearUpdateCacheForContextSkill(skillName, context, { clearCannotCheck: true });
+    const key = contextKey(context);
+    const scope = context.scope.scope;
+    set((state) => {
+      const current = state.snapshots[key] ?? emptyContextSnapshot();
+      return {
+        snapshots: {
+          ...state.snapshots,
+          [key]: {
+            ...current,
+            skills: clearLocalUpdateFlags(
+              current.skills,
+              scope,
+              new Set([skillName]),
+              { clearCannotCheck: true },
+            ),
+          },
+        },
+      };
+    });
   },
 
-  updateAllInSection: async (scope) => {
+  updateAllInSection: async (context) => {
     if (isMutationWriteBlocked()) return;
-    const { globalSkills, projectSkills } = get();
-    const skills = scope === 'project' ? projectSkills : globalSkills;
-    const { selectedContext } = useContextStore.getState();
-    const context = getExplicitContextForScope(scope);
-    const projectPath = scope === 'project' ? selectedContext : undefined;
-    const cacheProjectKey = context && scope === 'project'
-      ? JSON.stringify(context)
-      : projectPath;
+    const scope = context.scope.scope;
+    const snapshotKey = contextKey(context);
+    const skills = get().snapshots[snapshotKey]?.skills ?? [];
+    const projectPath = projectPathForContext(context);
     const plan = buildUpdatePlan(skills, scope, projectPath);
     const updatableNames = new Set(plan.groups.flatMap((group) => group.skillNames));
     const updatable = skills.filter((s) => updatableNames.has(s.name));
@@ -592,136 +540,88 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     set({ lastUpdatePlan: plan, lastUpdateResults: null, lastFailedUpdateNames: [] });
     if (updatable.length === 0) return;
 
-    set({ updateAllCancelled: false });
     set((state) => {
       const next = new Map(state.updatingSkills);
       for (const s of updatable) {
-        next.set(getSkillIdentityKey({ name: s.name, scope: s.scope, projectPath }), 'queued');
+        next.set(getSkillIdentityKey({ name: s.name, scope: s.scope, projectPath }), 'updating');
       }
       return { updatingSkills: next };
     });
 
-    const bySource = new Map<string, typeof updatable>();
-    for (const skill of updatable) {
-      const key = `${skill.sourceUrl ?? skill.source ?? '__no_source__'}::${skill.gitRef ?? ''}`;
-      const group = bySource.get(key);
-      if (group) {
-        group.push(skill);
-      } else {
-        bySource.set(key, [skill]);
-      }
+    let itemResults: UpdateSkillItemResult[];
+    try {
+      const response = await apiUpdateSkillsBatch(
+        context,
+        updatable.map((skill) => skill.name),
+      );
+      const responseByName = new Map(response.results.map((item) => [item.name, item]));
+      itemResults = updatable.map((skill) => {
+        const item = responseByName.get(skill.name) ?? {
+          name: skill.name,
+          status: 'failed' as const,
+          error: t('skills.updateFailedUnknown'),
+          warnings: [],
+          agentResults: [],
+        };
+        if (item.status !== 'failed' && item.status !== 'partial') return item;
+        return {
+          ...item,
+          error: appendCrossStorageFailureGuidance(
+            item.error ?? t('skills.updateFailedUnknown'),
+            context,
+            'update',
+            t,
+          ),
+        };
+      });
+    } catch {
+      itemResults = updatable.map((skill) => ({
+        name: skill.name,
+        status: 'failed',
+        error: appendCrossStorageFailureGuidance(
+          t('skills.updateFailedUnknown'),
+          context,
+          'update',
+          t,
+        ),
+        warnings: [],
+        agentResults: [],
+      }));
     }
 
-    const results: { name: string; success: boolean }[] = [];
-    const itemResults: UpdateSkillItemResult[] = [];
-
-    const groupPromises = Array.from(bySource.entries()).map(async ([, group]) => {
-      if (get().updateAllCancelled) return;
-
-      set((state) => {
-        const next = new Map(state.updatingSkills);
-        for (const s of group) {
-          const identityKey = getSkillIdentityKey({ name: s.name, scope: s.scope, projectPath });
-          if (next.get(identityKey) === 'queued') next.set(identityKey, 'updating');
-        }
-        return { updatingSkills: next };
-      });
-
-      try {
-        const response = context
-          ? await apiUpdateSkillsBatchV2(context, group.map((s) => s.name))
-          : await apiUpdateSkillsBatch({
-            scope,
-            names: group.map((s) => s.name),
-            projectPath,
-          });
-        const guidedResults = response.results.map((item) => {
-          if (item.status !== 'failed' && item.status !== 'partial') return item;
-          return {
-            ...item,
-            error: appendCrossStorageFailureGuidance(
-              item.error ?? t('skills.updateFailedUnknown'),
-              context,
-              'update',
-              t,
-            ),
-          };
-        });
-        itemResults.push(...guidedResults);
-        const successfulSkillNames = new Set<string>();
-
-        for (const skill of group) {
-          const item = guidedResults.find((r) => r.name === skill.name);
-          // 完成态 (spinner 退出) 与 "可清缓存" 是两个维度:
-          //   - partial: spinner 退出 (done),但 hasUpdate 保留,允许用户重试
-          //   - failed: spinner 标失败 (failed)
-          const finished = !item || item.status === 'success' || item.status === 'partial';
-          const fullySucceeded = !item || item.status === 'success';
-          results.push({ name: skill.name, success: finished });
-          if (fullySucceeded) {
-            successfulSkillNames.add(skill.name);
-            if (skill.canCheckForUpdates !== false) {
-              clearUpdateCacheForSkill(skill.name, scope, cacheProjectKey);
-            }
-          }
-          set((state) => {
-            const next = new Map(state.updatingSkills);
-            next.set(
-              getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }),
-              finished ? 'done' : 'failed'
-            );
-            return { updatingSkills: next };
-          });
-        }
-
-        if (successfulSkillNames.size > 0) {
-          set((state) => ({
-            globalSkills: scope === 'global'
-              ? clearLocalUpdateFlags(state.globalSkills, scope, successfulSkillNames)
-              : state.globalSkills,
-            projectSkills: scope === 'project'
-              ? clearLocalUpdateFlags(state.projectSkills, scope, successfulSkillNames)
-              : state.projectSkills,
-          }));
-        }
-      } catch {
-        for (const skill of group) {
-          results.push({ name: skill.name, success: false });
-          itemResults.push({
-            name: skill.name,
-            status: 'failed',
-            error: appendCrossStorageFailureGuidance(
-              t('skills.updateFailedUnknown'),
-              context,
-              'update',
-              t,
-            ),
-            warnings: [],
-            agentResults: [],
-          });
-          set((state) => {
-            const next = new Map(state.updatingSkills);
-            next.set(getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }), 'failed');
-            return { updatingSkills: next };
-          });
-        }
+    const resultByName = new Map(itemResults.map((item) => [item.name, item]));
+    const successfulSkillNames = new Set(
+      itemResults.filter((item) => item.status === 'success').map((item) => item.name),
+    );
+    for (const skill of updatable) {
+      if (successfulSkillNames.has(skill.name) && skill.canCheckForUpdates !== false) {
+        clearUpdateCacheForContextSkill(skill.name, context);
       }
+    }
+    set((state) => {
+      const nextUpdating = new Map(state.updatingSkills);
+      for (const skill of updatable) {
+        const item = resultByName.get(skill.name);
+        nextUpdating.set(
+          getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }),
+          item?.status === 'failed' ? 'failed' : 'done',
+        );
+      }
+      const current = state.snapshots[snapshotKey] ?? emptyContextSnapshot();
+      return {
+        updatingSkills: nextUpdating,
+        snapshots: successfulSkillNames.size === 0 ? state.snapshots : {
+          ...state.snapshots,
+          [snapshotKey]: {
+            ...current,
+            skills: clearLocalUpdateFlags(current.skills, scope, successfulSkillNames),
+          },
+        },
+      };
     });
 
-    await Promise.all(groupPromises);
-
-    if (get().updateAllCancelled) {
-      set((state) => {
-        const next = new Map(state.updatingSkills);
-        for (const [name, status] of next) {
-          if (status === 'queued') next.delete(name);
-        }
-        return { updatingSkills: next };
-      });
-    }
-
-    const succeeded = results.filter((r) => r.success).length;
-    const failedItems = results.filter((r) => !r.success);
+    const failedItems = itemResults.filter((item) => item.status === 'failed');
+    const succeeded = itemResults.length - failedItems.length;
     set({
       lastUpdateResults: itemResults,
       lastFailedUpdateNames: itemResults
@@ -729,9 +629,9 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         .map((item) => item.name),
     });
     const failedPart = failedItems.length > 0
-      ? t('skills.updateAllFailed', { failed: failedItems.length, failedNames: failedItems.map((r) => r.name).join(', ') })
+      ? t('skills.updateAllFailed', { failed: failedItems.length, failedNames: failedItems.map((item) => item.name).join(', ') })
       : '';
-    toast.info(t('skills.updateAllSummary', { total: results.length, succeeded, failedPart }));
+    toast.info(t('skills.updateAllSummary', { total: itemResults.length, succeeded, failedPart }));
 
     setTimeout(() => {
       set((state) => {
@@ -744,60 +644,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     }, 1500);
 
     // fire-and-forget (async-defer-await)
-    get().syncSkills();
+    get().syncSkills(context);
   },
 
-  cancelUpdateAll: () => { set({ updateAllCancelled: true }); },
-
-  fetchAllProjectsSkills: async () => {
-    const contextState = useContextStore.getState();
-    if (contextState.hasExplicitContext) {
-      const context = contextState.selectedContextRef;
-      const bindings = useEnvironmentStore.getState().projectsByEnvironment[
-        environmentKey(context.environment)
-      ] ?? [];
-      if (bindings.length === 0) {
-        set({ allProjectsSkills: new Map() });
-        return;
-      }
-
-      const results = await Promise.all(bindings.map(async (project) => {
-        try {
-          const result = await listSkillsV2({
-            environment: context.environment,
-            scope: { scope: 'project', project_id: project.id },
-          });
-          return [project.nativePath, result.skills] as const;
-        } catch {
-          return [project.nativePath, [] as InstalledSkill[]] as const;
-        }
-      }));
-      if (isCurrentContext(context, contextState.selectedContext)) {
-        set({ allProjectsSkills: new Map(results) });
-      }
-      return;
-    }
-
-    const { projects } = contextState;
-    if (projects.length === 0) {
-      set({ allProjectsSkills: new Map() });
-      return;
-    }
-
-    try {
-      const results = await Promise.all(
-        projects.map(async (projectPath) => {
-          try {
-            const result = await listSkills({ scope: 'project', projectPath });
-            return [projectPath, result.skills] as const;
-          } catch {
-            return [projectPath, [] as InstalledSkill[]] as const;
-          }
-        })
-      );
-      set({ allProjectsSkills: new Map(results) });
-    } catch {
-      set({ allProjectsSkills: new Map() });
-    }
-  },
 }));

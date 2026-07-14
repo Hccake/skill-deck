@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "futureRoot": {
+    "schema": 8,
+    "enabled": true
+  },
+  "skills": {
+    "toolkit": {
+      "source": "owner/old-repo",
+      "ref": "legacy",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/owner/old-repo",
+      "computedHash": "old-computed-hash",
+      "remoteHash": "old-remote-hash",
+      "skillPath": "skills/toolkit",
+      "subagents": [
+        "reviewer"
+      ],
+      "pluginName": "legacy-plugin",
+      "cliOnlyFlag": true,
+      "futureEntry": {
+        "mode": "preserve",
+        "revision": 4
+      }
+    },
+    "review": {
+      "source": "owner/review",
+      "futureEntry": {
+        "keep": true
+      }
+    }
+  }
+}

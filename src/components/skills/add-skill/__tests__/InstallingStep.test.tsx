@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { installSkills, installSkillsV2 } from '@/hooks/useTauriApi';
+import { installSkills } from '@/hooks/useTauriApi';
 import type { WizardState } from '../types';
 import { InstallingStep } from '../InstallingStep';
 
@@ -27,15 +27,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
     privateCopyAgents: [],
     targetDetails: [],
   }),
-  installSkillsV2: vi.fn().mockResolvedValue({
-    successful: [],
-    failed: [],
-    symlinkFallbackAgents: [],
-    defaultAvailableAgents: [],
-    privateAdaptedAgents: [],
-    privateCopyAgents: [],
-    targetDetails: [],
-  }),
 }));
 
 vi.mock('@/utils/cross-storage-guidance', () => ({
@@ -43,7 +34,6 @@ vi.mock('@/utils/cross-storage-guidance', () => ({
 }));
 
 const installSkillsMock = vi.mocked(installSkills);
-const installSkillsV2Mock = vi.mocked(installSkillsV2);
 
 function makeState(): WizardState {
   return {
@@ -51,6 +41,10 @@ function makeState(): WizardState {
     entryPoint: 'skills-panel',
     scope: 'project',
     projectPath: '/projects/eve-app',
+    context: {
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'eve-app' },
+    },
     source: 'owner/repo',
     fetchStatus: 'success',
     fetchError: null,
@@ -86,7 +80,6 @@ function makeState(): WizardState {
 describe('InstallingStep', () => {
   beforeEach(() => {
     installSkillsMock.mockClear();
-    installSkillsV2Mock.mockClear();
   });
 
   it('passes concrete Eve targets to installSkills', async () => {
@@ -100,7 +93,7 @@ describe('InstallingStep', () => {
     );
 
     await waitFor(() => {
-      expect(installSkillsMock).toHaveBeenCalledWith(expect.objectContaining({
+      expect(installSkillsMock).toHaveBeenCalledWith(makeState().context, expect.objectContaining({
         agents: [],
         agentTargets: [
           { agent: 'eve', subagent: null },
@@ -126,7 +119,7 @@ describe('InstallingStep', () => {
     );
 
     await waitFor(() => {
-      expect(installSkillsMock).toHaveBeenCalledWith(expect.objectContaining({
+      expect(installSkillsMock).toHaveBeenCalledWith(makeState().context, expect.objectContaining({
         skills: ['demo'],
         agents: [],
         agentTargets: [{ agent: 'eve', subagent: 'research' }],
@@ -143,20 +136,18 @@ describe('InstallingStep', () => {
 
     render(
       <InstallingStep
-        state={makeState()}
+        state={{ ...makeState(), context }}
         updateState={() => undefined}
         scope="project"
         projectPath="/projects/eve-app"
-        context={context}
       />
     );
 
     await waitFor(() => {
-      expect(installSkillsV2Mock).toHaveBeenCalledWith(context, expect.objectContaining({
+      expect(installSkillsMock).toHaveBeenCalledWith(context, expect.objectContaining({
         skills: ['demo'],
       }));
     });
-    expect(installSkillsMock).not.toHaveBeenCalled();
   });
 
   it('adds storage-owner guidance when project installation throws', async () => {
@@ -165,15 +156,14 @@ describe('InstallingStep', () => {
       scope: { scope: 'project', project_id: 'project-1' },
     } as const;
     const updateState = vi.fn();
-    installSkillsV2Mock.mockRejectedValueOnce(new Error('permission denied'));
+    installSkillsMock.mockRejectedValueOnce(new Error('permission denied'));
 
     render(
       <InstallingStep
-        state={makeState()}
+        state={{ ...makeState(), context }}
         updateState={updateState}
         scope="project"
         projectPath="/mnt/c/Code/app"
-        context={context}
       />
     );
 

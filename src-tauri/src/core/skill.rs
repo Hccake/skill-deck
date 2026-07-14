@@ -674,17 +674,18 @@ pub fn read_skill_content(canonical_path: &str) -> Result<String, AppError> {
         path: skill_md.to_string_lossy().to_string(),
     })?;
 
-    // Strip YAML frontmatter if present
+    Ok(skill_content_from_markdown(&content))
+}
+
+pub fn skill_content_from_markdown(content: &str) -> String {
     if let Some(stripped) = content.strip_prefix("---") {
         if let Some(end) = stripped.find("---") {
-            // Skip past the closing --- and any trailing newline
             let body_start = 3 + end + 3;
-            return Ok(content[body_start..].trim_start_matches('\n').to_string());
+            return content[body_start..].trim_start_matches('\n').to_string();
         }
     }
 
-    // No frontmatter — return full content
-    Ok(content)
+    content.to_string()
 }
 
 #[cfg(test)]
@@ -740,6 +741,14 @@ Content.
 
         let result = parse_skill_md(file.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn skill_content_from_markdown_strips_frontmatter() {
+        let content = "---\nname: toolkit\ndescription: Toolkit\n---\n\n# Toolkit\n";
+
+        assert_eq!(skill_content_from_markdown(content), "# Toolkit\n");
+        assert_eq!(skill_content_from_markdown("# Plain\n"), "# Plain\n");
     }
 
     #[test]

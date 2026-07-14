@@ -316,6 +316,11 @@
   }
 }
 
+.project-context-item {
+  content-visibility: auto;
+  contain-intrinsic-size: 52px;
+}
+
 /* Modern App Scrollbar Overlay */
 ::-webkit-scrollbar {
   width: 14px;

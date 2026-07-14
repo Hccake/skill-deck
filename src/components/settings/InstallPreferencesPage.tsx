@@ -17,6 +17,8 @@ import {
 import { useSettingsStore } from '@/stores/settings';
 import { useMutationStore } from '@/stores/mutation';
 import type { AgentInfo } from '@/hooks/useTauriApi';
+import type { EnvironmentRef } from '@/bindings';
+import type { AgentDefaultsSnapshot } from '@/stores/settings';
 
 interface ScopeAgentGroups {
   detectedDefaultAvailable: AgentInfo[];
@@ -28,17 +30,25 @@ interface ScopeAgentGroups {
   isAllSelected: boolean;
 }
 
-export function InstallPreferencesPage() {
+export function InstallPreferencesPage({
+  environment,
+  snapshot,
+}: {
+  environment: EnvironmentRef;
+  snapshot: AgentDefaultsSnapshot;
+}) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
-	  const {
-	    allAgents,
-	    agentsLoaded,
-	    defaultTargetAgents,
-	    defaultTargetsMigrated,
-	    toggleDefaultTargetAgent,
-	    setDefaultTargetAgents,
-	  } = useSettingsStore();
+  const mutationActive = useMutationStore((state) => state.activeMutation !== null);
+  const saveAgentDefaults = useSettingsStore((state) => state.saveAgentDefaults);
+  const writeBlocked = mutationActive || snapshot.loadState !== 'ready' || snapshot.saving;
+  const loaded = snapshot.agents.length > 0 || snapshot.loadState === 'ready';
+
+  const saveScope = (scope: InstallScope, agents: string[]) => {
+    void saveAgentDefaults(environment, {
+      ...snapshot.defaults,
+      [scope]: agents,
+    });
+  };
 
   return (
     <div className="space-y-5 pb-8">
@@ -48,18 +58,12 @@ export function InstallPreferencesPage() {
             {t('settings.installPreferences.title')}
           </h2>
         </div>
-	        <p className="text-sm leading-6 text-muted-foreground">
-	          {t('settings.installPreferences.description')}
-	        </p>
-	      </header>
+        <p className="text-sm leading-6 text-muted-foreground">
+          {t('settings.installPreferences.description')}
+        </p>
+      </header>
 
-	      {defaultTargetsMigrated && (
-	        <div className="max-w-3xl rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs leading-5 text-muted-foreground">
-	          {t('settings.installPreferences.migratedDefaultTargets')}
-	        </div>
-	      )}
-
-	      <Tabs defaultValue="global" className="max-w-3xl">
+      <Tabs defaultValue="global" className="max-w-3xl">
         <TabsList className="grid w-full max-w-xs grid-cols-2">
           <TabsTrigger value="global">{t('settings.installPreferences.globalTitle')}</TabsTrigger>
           <TabsTrigger value="project">{t('settings.installPreferences.projectTitle')}</TabsTrigger>
@@ -68,12 +72,20 @@ export function InstallPreferencesPage() {
           <TabsContent key={scope} value={scope} className="mt-0 focus-visible:outline-none focus-visible:ring-0">
             <ScopePreferencePanel
               scope={scope}
-              agents={allAgents}
-              selectedAgents={defaultTargetAgents[scope]}
-              loaded={agentsLoaded}
+              agents={snapshot.agents}
+              selectedAgents={snapshot.defaults[scope]}
+              loaded={loaded}
               writeBlocked={writeBlocked}
-              onToggle={(agentId) => toggleDefaultTargetAgent(scope, agentId)}
-              onSelectAll={(agents) => setDefaultTargetAgents(scope, agents)}
+              onToggle={(agentId) => {
+                const selected = snapshot.defaults[scope];
+                saveScope(
+                  scope,
+                  selected.includes(agentId)
+                    ? selected.filter((id) => id !== agentId)
+                    : [...selected, agentId],
+                );
+              }}
+              onSelectAll={(agents) => saveScope(scope, agents)}
             />
           </TabsContent>
         ))}

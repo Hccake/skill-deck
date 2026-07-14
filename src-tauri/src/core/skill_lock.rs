@@ -3,9 +3,6 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::HashMap;
-use std::io::Write;
-use std::path::Path;
-use tempfile::NamedTempFile;
 
 use super::paths::PATHS;
 use crate::error::AppError;
@@ -217,131 +214,11 @@ pub fn get_skill_from_lock(skill_name: &str) -> Result<Option<SkillLockEntry>, A
     Ok(lock.skills.get(skill_name).cloned())
 }
 
-/// 写入 skill-lock.json
-/// 对应 CLI: writeSkillLock (skill-lock.ts:99-108)
-pub fn write_skill_lock(lock: &SkillLockFile) -> Result<(), AppError> {
-    let lock_path = get_skill_lock_path();
-
-    // 确保目录存在
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // 序列化为 pretty JSON 并写入
-    let content = serde_json::to_string_pretty(lock)? + "\n";
-    let parent = lock_path.parent().unwrap_or(Path::new("."));
-    let mut tmp = NamedTempFile::new_in(parent)?;
-    tmp.write_all(content.as_bytes())?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(&lock_path).map_err(|e| e.error)?;
-
-    Ok(())
-}
-
-/// 写入指定 scope 的 skill-lock.json
-#[allow(dead_code)]
-pub fn write_scoped_lock(lock: &SkillLockFile, project_path: Option<&str>) -> Result<(), AppError> {
-    let lock_path = get_scoped_lock_path(project_path);
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let content = serde_json::to_string_pretty(lock)? + "\n";
-    let parent = lock_path.parent().unwrap_or(Path::new("."));
-    let mut tmp = NamedTempFile::new_in(parent)?;
-    tmp.write_all(content.as_bytes())?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(&lock_path).map_err(|e| e.error)?;
-    Ok(())
-}
-
-/// 添加或更新 skill 到 lock 文件
-/// 对应 CLI: addSkillToLock (skill-lock.ts:227-242)
-#[allow(clippy::too_many_arguments)]
-pub fn add_skill_to_lock(
-    skill_name: &str,
-    source: &str,
-    source_type: &str,
-    source_url: &str,
-    ref_name: Option<&str>,
-    skill_path: Option<&str>,
-    skill_folder_hash: &str,
-    plugin_name: Option<&str>,
-) -> Result<(), AppError> {
-    let mut lock = read_skill_lock().unwrap_or_else(|_| SkillLockFile::empty());
-
-    let now = chrono::Utc::now()
-        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-        .to_string();
-
-    // 保留原有的 installed_at
-    let installed_at = lock
-        .skills
-        .get(skill_name)
-        .map(|e| e.installed_at.clone())
-        .unwrap_or_else(|| now.clone());
-
-    let entry = SkillLockEntry {
-        source: source.to_string(),
-        source_type: source_type.to_string(),
-        source_url: source_url.to_string(),
-        ref_name: ref_name.map(|s| s.to_string()),
-        skill_path: skill_path.map(|s| s.to_string()),
-        skill_folder_hash: skill_folder_hash.to_string(),
-        installed_at,
-        updated_at: now,
-        plugin_name: plugin_name.map(|s| s.to_string()),
-    };
-
-    lock.skills.insert(skill_name.to_string(), entry);
-
-    write_skill_lock(&lock)
-}
-
-/// 从 lock 文件移除 skill
-/// 对应 CLI: removeSkillFromLock (skill-lock.ts:247-254)
-pub fn remove_skill_from_lock(skill_name: &str) -> Result<bool, AppError> {
-    let mut lock = read_skill_lock()?;
-
-    if lock.skills.remove(skill_name).is_none() {
-        return Ok(false);
-    }
-
-    write_skill_lock(&lock)?;
-    Ok(true)
-}
-
-/// 应用 GUI 的 scope-aware 默认安装目标，并同步 CLI 兼容字段
-pub fn apply_default_target_agents(lock: &mut SkillLockFile, defaults: DefaultTargetAgents) {
-    let mut union = Vec::<String>::new();
-    for id in defaults.global.iter().chain(defaults.project.iter()) {
-        if !union.contains(id) {
-            union.push(id.clone());
-        }
-    }
-    lock.default_target_agents = Some(defaults);
-    lock.last_selected_agents = Some(union);
-}
-
-/// 保存 GUI scope-aware 默认安装目标
-pub fn save_default_target_agents(defaults: DefaultTargetAgents) -> Result<(), AppError> {
-    let mut lock = read_skill_lock().unwrap_or_else(|_| SkillLockFile::empty());
-    apply_default_target_agents(&mut lock, defaults);
-    write_skill_lock(&lock)
-}
-
 /// 获取 GUI scope-aware 默认安装目标
-pub fn get_default_target_agents() -> Option<DefaultTargetAgents> {
+pub fn get_default_target_agents_host() -> Option<DefaultTargetAgents> {
     read_skill_lock()
         .ok()
         .and_then(|lock| lock.default_target_agents)
-}
-
-/// 获取最后选择的 agents
-/// 对应 CLI: getLastSelectedAgents (skill-lock.ts:292-295)
-pub fn get_last_selected_agents() -> Option<Vec<String>> {
-    read_skill_lock()
-        .ok()
-        .and_then(|lock| lock.last_selected_agents)
 }
 
 #[cfg(test)]
@@ -625,26 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_default_target_agents_syncs_last_selected_union() {
-        let mut lock = SkillLockFile::empty();
-        let defaults = DefaultTargetAgents {
-            global: vec!["cursor".to_string(), "claude-code".to_string()],
-            project: vec!["opencode".to_string(), "claude-code".to_string()],
-        };
-
-        apply_default_target_agents(&mut lock, defaults);
-
-        assert_eq!(
-            lock.default_target_agents.as_ref().unwrap().global,
-            vec!["cursor", "claude-code"]
-        );
-        assert_eq!(
-            lock.last_selected_agents.unwrap(),
-            vec!["cursor", "claude-code", "opencode"]
-        );
-    }
-
-    #[test]
     fn test_serialize_skill_lock_file() {
         let lock = SkillLockFile::empty();
         let json = serde_json::to_string(&lock).unwrap();
@@ -653,47 +510,5 @@ mod tests {
         // 空的 Option 字段不应该被序列化
         assert!(!json.contains("dismissed"));
         assert!(!json.contains("lastSelectedAgents"));
-    }
-
-    #[test]
-    fn test_write_scoped_lock_ends_with_newline() {
-        let temp = tempdir().unwrap();
-        let project_path = temp.path().to_string_lossy().to_string();
-
-        let lock = SkillLockFile::empty();
-        write_scoped_lock(&lock, Some(&project_path)).unwrap();
-
-        let lock_path = temp.path().join(".agents").join(".skill-lock.json");
-        let content = std::fs::read_to_string(&lock_path).unwrap();
-        assert!(
-            content.ends_with('\n'),
-            "skill-lock should end with newline"
-        );
-    }
-
-    #[test]
-    fn test_write_scoped_lock_atomic_roundtrip() {
-        let temp = tempdir().unwrap();
-        let project_path = temp.path().to_string_lossy().to_string();
-
-        let mut lock = SkillLockFile::empty();
-        lock.skills.insert(
-            "test".to_string(),
-            SkillLockEntry {
-                source: "owner/repo".to_string(),
-                source_type: "github".to_string(),
-                source_url: "https://github.com/owner/repo".to_string(),
-                ref_name: None,
-                skill_path: Some("skills/test/SKILL.md".to_string()),
-                skill_folder_hash: "abc123".to_string(),
-                installed_at: "2024-01-01T00:00:00Z".to_string(),
-                updated_at: "2024-01-01T00:00:00Z".to_string(),
-                plugin_name: None,
-            },
-        );
-
-        write_scoped_lock(&lock, Some(&project_path)).unwrap();
-        let read_back = read_scoped_lock(Some(&project_path)).unwrap();
-        assert!(read_back.skills.contains_key("test"));
     }
 }

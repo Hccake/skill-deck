@@ -1053,6 +1053,7 @@ impl AgentType {
     }
 
     /// 转换为 AgentInfo（前端使用）
+    #[cfg(test)]
     pub fn to_agent_info(self) -> AgentInfo {
         self.to_agent_info_for_project(".")
     }

@@ -11,9 +11,7 @@ import { toast } from 'sonner';
 
 const mocks = vi.hoisted(() => ({
   fetchAvailable: vi.fn(),
-  fetchAvailableV2: vi.fn(),
   installSkills: vi.fn(),
-  installSkillsV2: vi.fn(),
   markSourceRepairSucceeded: vi.fn(),
   syncSkills: vi.fn(),
 }));
@@ -29,9 +27,7 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/hooks/useTauriApi', () => ({
   fetchAvailable: (...args: unknown[]) => mocks.fetchAvailable(...args),
-  fetchAvailableV2: (...args: unknown[]) => mocks.fetchAvailableV2(...args),
   installSkills: (...args: unknown[]) => mocks.installSkills(...args),
-  installSkillsV2: (...args: unknown[]) => mocks.installSkillsV2(...args),
 }));
 
 vi.mock('sonner', () => ({
@@ -70,27 +66,16 @@ const fetchResult = (skillNames: string[], kind: 'none' | 'require-confirmation'
   })),
 });
 
+const hostGlobal = {
+  environment: { kind: 'host' },
+  scope: { scope: 'global' },
+} as const;
+
 describe('RepairSourceDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.fetchAvailable.mockResolvedValue(fetchResult(['toolkit']));
-    mocks.fetchAvailableV2.mockResolvedValue(fetchResult(['toolkit']));
     mocks.installSkills.mockResolvedValue({
-      successful: [{
-        skillName: 'toolkit',
-        agent: 'claude-code',
-        success: true,
-        path: '/agent/toolkit',
-        canonicalPath: '/canonical/toolkit',
-        mode: 'copy',
-        symlinkFailed: false,
-        skipped: false,
-        error: null,
-      }],
-      failed: [],
-      symlinkFallbackAgents: [],
-    });
-    mocks.installSkillsV2.mockResolvedValue({
       successful: [{
         skillName: 'toolkit',
         agent: 'claude-code',
@@ -118,6 +103,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: 'main',
       },
@@ -125,8 +111,10 @@ describe('RepairSourceDialog', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'update',
-        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-        statusText: 'Updating',
+        context: hostGlobal,
+        id: 'mutation-1',
+        phase: 'preparing',
+        progress: null,
         cancelable: true,
       },
     });
@@ -143,6 +131,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: 'main',
       },
@@ -162,7 +151,7 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.objectContaining({
         source: 'https://github.com/owner/repo#main',
         skills: ['toolkit'],
         agents: ['claude-code'],
@@ -171,8 +160,8 @@ describe('RepairSourceDialog', () => {
         preserveExistingModes: true,
       }));
     });
-    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith('toolkit', 'global', undefined);
-    expect(mocks.syncSkills).toHaveBeenCalled();
+    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith(hostGlobal, 'toolkit');
+    expect(mocks.syncSkills).toHaveBeenCalledWith(hostGlobal);
   });
 
   it('inherits the target ContextRef for environment-aware repair', async () => {
@@ -197,17 +186,15 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.fetchAvailableV2).toHaveBeenCalledWith(
+      expect(mocks.fetchAvailable).toHaveBeenCalledWith(
         context,
         'https://github.com/owner/repo#main',
       );
-      expect(mocks.installSkillsV2).toHaveBeenCalledWith(
+      expect(mocks.installSkills).toHaveBeenCalledWith(
         context,
         expect.objectContaining({ source: 'https://github.com/owner/repo#main' }),
       );
     });
-    expect(mocks.fetchAvailable).not.toHaveBeenCalled();
-    expect(mocks.installSkills).not.toHaveBeenCalled();
   });
 
   it('does not clear repair state or close when install reports failures', async () => {
@@ -231,6 +218,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: 'main',
       },
@@ -241,12 +229,12 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalled();
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.anything());
     });
 
     expect(mocks.markSourceRepairSucceeded).not.toHaveBeenCalled();
     expect(mocks.syncSkills).not.toHaveBeenCalled();
-  expect(useSkillDialogStore.getState().repairSourceTarget?.skillName).toBe('toolkit');
+    expect(useSkillDialogStore.getState().repairSourceTarget?.skillName).toBe('toolkit');
   });
 
   it('does not clear repair state when install only reports skipped results', async () => {
@@ -270,6 +258,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: 'main',
       },
@@ -280,7 +269,7 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalled();
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.anything());
     });
 
     expect(mocks.markSourceRepairSucceeded).not.toHaveBeenCalled();
@@ -293,7 +282,7 @@ describe('RepairSourceDialog', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'project', project_id: 'project-1' },
     } as const;
-    mocks.installSkillsV2.mockResolvedValueOnce({
+    mocks.installSkills.mockResolvedValueOnce({
       successful: [],
       failed: [{
         skillName: 'toolkit',
@@ -333,7 +322,7 @@ describe('RepairSourceDialog', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'project', project_id: 'project-1' },
     } as const;
-    mocks.installSkillsV2.mockRejectedValueOnce(new Error('permission denied'));
+    mocks.installSkills.mockRejectedValueOnce(new Error('permission denied'));
     useSkillDialogStore.setState({
       repairSourceTarget: {
         skillName: 'toolkit',
@@ -388,6 +377,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code', 'cursor'],
         gitRef: 'main',
       },
@@ -398,7 +388,7 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalled();
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.anything());
     });
 
     expect(mocks.markSourceRepairSucceeded).not.toHaveBeenCalled();
@@ -412,6 +402,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code', 'claude-code'],
         gitRef: 'main',
       },
@@ -422,7 +413,7 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.objectContaining({
         agents: ['claude-code'],
       }));
     });
@@ -449,6 +440,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['codex', 'firebender'],
         defaultAvailableAgents: ['codex', 'firebender'],
         privateAdaptedAgents: [],
@@ -462,13 +454,13 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.objectContaining({
         agents: [],
         privateCopyAgents: [],
         retry: true,
       }));
     });
-    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith('toolkit', 'global', undefined);
+    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith(hostGlobal, 'toolkit');
   });
 
   it('repairs private adapted and existing independent-copy targets separately', async () => {
@@ -505,6 +497,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['codex', 'cursor', 'firebender'],
         defaultAvailableAgents: ['codex', 'firebender'],
         privateAdaptedAgents: ['cursor'],
@@ -518,13 +511,13 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.objectContaining({
         agents: ['cursor'],
         privateCopyAgents: ['firebender'],
         retry: true,
       }));
     });
-    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith('toolkit', 'global', undefined);
+    expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith(hostGlobal, 'toolkit');
   });
 
   it('treats canonical-only repair as successful when no target agents are associated', async () => {
@@ -548,6 +541,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: [],
         gitRef: 'main',
       },
@@ -558,9 +552,9 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith('toolkit', 'global', undefined);
+      expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith(hostGlobal, 'toolkit');
     });
-    expect(mocks.syncSkills).toHaveBeenCalled();
+    expect(mocks.syncSkills).toHaveBeenCalledWith(hostGlobal);
   });
 
   it('renders repair context as compact summary rows', () => {
@@ -569,6 +563,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code', 'codex'],
         gitRef: 'main',
       },
@@ -586,6 +581,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: 'main',
       },
@@ -613,6 +609,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'openclaw/community-skills',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: null,
       },
@@ -632,7 +629,7 @@ describe('RepairSourceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
 
     await waitFor(() => {
-      expect(mocks.installSkills).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.objectContaining({
         acknowledgeRisk: true,
       }));
     });
@@ -645,6 +642,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'openclaw/community-skills',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: null,
       },
@@ -697,6 +695,7 @@ describe('RepairSourceDialog', () => {
         skillName: 'toolkit',
         source: 'https://github.com/owner/repo#main',
         scope: 'global',
+        context: hostGlobal,
         agents: ['claude-code'],
         gitRef: 'main',
       },
@@ -711,11 +710,16 @@ describe('RepairSourceDialog', () => {
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'skills.repairSourceDialog.validate' }).disabled).toBe(true);
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'skills.repairSourceDialog.validating' }).disabled).toBe(true);
     expect(mocks.fetchAvailable).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchAvailable).toHaveBeenCalledWith(
+      hostGlobal,
+      'https://github.com/owner/repo#main',
+    );
 
     resolveFetch(fetchResult(['toolkit']));
 
     await waitFor(() => {
       expect(mocks.installSkills).toHaveBeenCalledTimes(1);
+      expect(mocks.installSkills).toHaveBeenCalledWith(hostGlobal, expect.anything());
     });
 
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'skills.repairSourceDialog.repairing' }).disabled).toBe(true);
@@ -723,7 +727,7 @@ describe('RepairSourceDialog', () => {
     resolveInstall();
 
     await waitFor(() => {
-      expect(mocks.syncSkills).toHaveBeenCalled();
+      expect(mocks.syncSkills).toHaveBeenCalledWith(hostGlobal);
     });
   });
 });

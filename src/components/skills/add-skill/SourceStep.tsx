@@ -8,14 +8,17 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { fetchAvailable, fetchAvailableV2 } from '@/hooks/useTauriApi';
+import { fetchAvailable } from '@/hooks/useTauriApi';
 import { parseSkillsCommand } from '@/utils/parse-skills-command';
 import { formatAppError } from '@/utils/format-app-error';
 import { toAppError } from '@/utils/to-app-error';
 import { SkillSearch } from '../skill-search/SkillSearch';
 import type { SearchSkill } from '../skill-search/SkillSearch';
 import { useSkillsDataStore } from '@/stores/skills-data';
+import { contextKey, globalContext } from '@/lib/context';
 import type { WizardState } from './types';
+
+const EMPTY_SKILLS: never[] = [];
 
 /** 克隆进度事件 */
 interface CloneProgress {
@@ -37,8 +40,14 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
 
   // 已安装 skill key 集合（用于 SkillSearch 组件）
-  const globalSkills = useSkillsDataStore((s) => s.globalSkills);
-  const projectSkills = useSkillsDataStore((s) => s.projectSkills);
+  const globalKey = contextKey(globalContext(state.context.environment));
+  const projectKey = state.context.scope.scope === 'project'
+    ? contextKey(state.context)
+    : null;
+  const globalSkills = useSkillsDataStore((s) => s.snapshots[globalKey]?.skills ?? EMPTY_SKILLS);
+  const projectSkills = useSkillsDataStore((s) => (
+    projectKey ? s.snapshots[projectKey]?.skills ?? EMPTY_SKILLS : EMPTY_SKILLS
+  ));
   const installedSkillKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const s of globalSkills) keys.add(`${s.source ?? ''}::${s.name}`);
@@ -83,9 +92,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         return;
       }
 
-      const result = state.context
-        ? await fetchAvailableV2(state.context, actualSource)
-        : await fetchAvailable(actualSource);
+      const result = await fetchAvailable(state.context, actualSource);
 
       if (result.skills.length === 0) {
         updateState({

@@ -14,7 +14,9 @@ const mutation: ActiveMutation = {
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'global' },
   },
-  statusText: 'Installing toolkit',
+  id: 'mutation-1',
+  phase: 'preparing',
+  progress: null,
   cancelable: true,
 };
 
@@ -66,6 +68,7 @@ describe('useProtectedWindowClose', () => {
       return mocks.unlisten;
     });
     useMutationStore.setState({
+      revision: 0,
       activeMutation: null,
       loading: false,
       cancelling: false,
@@ -73,7 +76,7 @@ describe('useProtectedWindowClose', () => {
   });
 
   it('closes normally after confirming there is no active mutation', async () => {
-    mocks.getActiveMutation.mockResolvedValue(null);
+    mocks.getActiveMutation.mockResolvedValue({ revision: 1, active: null });
     render(<CloseHarness />);
     await waitFor(() => expect(mocks.closeHandler).toBeDefined());
 
@@ -85,7 +88,7 @@ describe('useProtectedWindowClose', () => {
   });
 
   it('keeps the window open when the user chooses to continue waiting', async () => {
-    mocks.getActiveMutation.mockResolvedValue(mutation);
+    mocks.getActiveMutation.mockResolvedValue({ revision: 1, active: mutation });
     render(<CloseHarness />);
     await waitFor(() => expect(mocks.closeHandler).toBeDefined());
 
@@ -106,9 +109,9 @@ describe('useProtectedWindowClose', () => {
 
   it('cancels the mutation and closes only after polling observes completion', async () => {
     mocks.getActiveMutation
-      .mockResolvedValueOnce(mutation)
-      .mockResolvedValueOnce(mutation)
-      .mockResolvedValue(null);
+      .mockResolvedValueOnce({ revision: 1, active: mutation })
+      .mockResolvedValueOnce({ revision: 2, active: mutation })
+      .mockResolvedValue({ revision: 3, active: null });
     mocks.requestCancelActiveMutation.mockResolvedValue(true);
     render(<CloseHarness />);
     await waitFor(() => expect(mocks.closeHandler).toBeDefined());
@@ -130,7 +133,10 @@ describe('useProtectedWindowClose', () => {
   });
 
   it('does not offer cancellation when the active mutation is not cancelable', async () => {
-    mocks.getActiveMutation.mockResolvedValue({ ...mutation, cancelable: false });
+    mocks.getActiveMutation.mockResolvedValue({
+      revision: 1,
+      active: { ...mutation, cancelable: false },
+    });
     render(<CloseHarness />);
     await waitFor(() => expect(mocks.closeHandler).toBeDefined());
 

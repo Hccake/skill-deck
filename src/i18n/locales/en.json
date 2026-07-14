@@ -27,12 +27,17 @@
     "environmentConnecting": "Connecting",
     "environmentUnavailable": "Unavailable",
     "environmentRetry": "Retry",
+    "environmentRetryNamed": "Retry {{environment}}",
+    "environmentConnectingTo": "Connecting to {{environment}}…",
+    "environmentDiscoveryFailed": "WSL environments could not be refreshed. Windows remains available.",
+    "environmentConnectionFailed": "Could not connect to {{environment}}. Retry when the distribution is available.",
     "projectsLoadError": "Could not load projects in this environment",
     "openInExplorer": "Open in Explorer",
     "remove": "Remove",
     "removeConfirm": {
       "title": "Remove Project",
       "description": "Remove \"{{name}}\" from Skill Deck? This will not delete local files.",
+      "unregisterOnly": "Only the Skill Deck registration is removed. The project directory and its files remain unchanged.",
       "cancel": "Cancel",
       "confirm": "Remove"
     }
@@ -467,6 +472,30 @@
   "mutation": {
     "host": "This computer",
     "status": "{{environment}} / {{scope}} · {{status}}",
+    "activity": "{{operation}} · {{phase}}",
+    "activityWithSubject": "{{operation}} · {{phase}} · {{subject}}",
+    "kind": {
+      "install": "Installing",
+      "update": "Updating",
+      "remove": "Removing",
+      "copy": "Copying",
+      "manageAgents": "Updating agents",
+      "duplicateCleanup": "Cleaning duplicates",
+      "repair": "Repairing source",
+      "saveAgentDefaults": "Saving agent defaults",
+      "batchUpdate": "Updating skills",
+      "projectMigration": "Migrating projects",
+      "addProject": "Adding project",
+      "removeProject": "Removing project",
+      "updateProjectPreference": "Updating project"
+    },
+    "phase": {
+      "preparing": "Preparing",
+      "acquiring": "Fetching source",
+      "materializing": "Writing files",
+      "committing": "Saving metadata",
+      "finishing": "Finishing"
+    },
     "cancel": "Cancel operation",
     "cancelling": "Cancelling...",
     "interruption": {
@@ -487,7 +516,8 @@
   },
   "crossStorage": {
     "title": "This project is accessed across system storage",
-    "description": "Editing the same project from Windows and WSL at the same time can cause file or Skill lock conflicts. Skill Deck will continue, but it will not merge conflicts automatically.",
+    "description": "You are managing this project from {{environment}}, while its files are stored in {{owner}}. Concurrent Windows and WSL edits can cause file or Skill lock conflicts.",
+    "switchToOwner": "Switch to {{owner}}",
     "dismiss": "Don't show again",
     "dismissFailed": "Failed to save warning preference",
     "hostEnvironment": "Windows",
@@ -693,6 +723,15 @@
       "pathNotFound": "Path not found: {{path}}",
       "installFailed": "Installation failed",
       "mutationBusy": "Another skill operation is already in progress",
+      "mutationCancelled": "The skill operation was cancelled",
+      "environmentDiscoveryFailed": "WSL environments could not be discovered",
+      "wslCommandTimedOut": "The WSL operation timed out",
+      "wslOutputLimitExceeded": "The WSL {{stream}} output exceeded the {{limit}} byte safety limit",
+      "wslCommandFailed": "The WSL command failed (exit code: {{exitCode}})",
+      "environmentUnavailable": "The selected environment is unavailable",
+      "storageMappingUnsupported": "The path cannot be accessed from the selected environment: {{path}}",
+      "lockConflict": "{{skill}} changed in the Skill lock. Refresh and try again.",
+      "agentDefaultsConflict": "Agent defaults changed in the Skill lock. Refresh and try again.",
       "riskConfirmationRequired": "This source requires risk confirmation before installation",
       "parseFailed": "Parse failed",
       "suggestion": {
@@ -712,6 +751,7 @@
         "checkAgentName": "Check that the agent name is correct",
         "reselectAgents": "Go back and reselect agents",
         "reviewRiskAndConfirm": "Go back to the confirmation step, review the risk warning, and confirm manually",
+        "chooseAccessiblePath": "Choose a path that is accessible from the selected environment",
         "retryOrContact": "Check the error details and retry, or check logs if the issue persists"
       },
       "actions": {

@@ -1,17 +1,20 @@
 // src/stores/skill-detail.ts
 import { create } from 'zustand';
 import { readSkillContent as apiReadSkillContent } from '@/hooks/useTauriApi';
-import { useContextStore } from './context';
+import { useWorkspaceContextStore } from './workspace-context';
+import { useProjectStore } from './projects';
+import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import {
   findSkillByIdentity,
   getSkillIdentity,
   getSkillIdentityKey,
   type SkillIdentity,
 } from '@/lib/skills/identity';
-import type { InstalledSkill } from '@/bindings';
+import type { ContextRef, InstalledSkill } from '@/bindings';
 
 interface SkillDetailState {
   selectedSkillRef: SkillIdentity | null;
+  selectedContext: ContextRef | null;
   skillContent: string | null;
   loadingContent: boolean;
 
@@ -20,83 +23,111 @@ interface SkillDetailState {
   reloadContent: () => Promise<void>;
 }
 
-function getSelectedSkillKey(identity: SkillIdentity | null): string | null {
-  return identity ? getSkillIdentityKey(identity) : null;
+function getContextualSelectionKey(
+  context: ContextRef | null,
+  identity: SkillIdentity | null,
+): string | null {
+  return context && identity
+    ? `${contextKey(context)}:${getSkillIdentityKey(identity)}`
+    : null;
+}
+
+function projectPathForContext(context: ContextRef): string | undefined {
+  const scope = context.scope;
+  if (scope.scope !== 'project') return undefined;
+  const projects = useProjectStore.getState().projectsByEnvironment[
+    environmentKey(context.environment)
+  ] ?? [];
+  return projects.find((project) => project.binding.id === scope.project_id)?.binding.nativePath;
 }
 
 function getSelectionIdentity(skill: InstalledSkill): SkillIdentity {
-  const projectPath =
-    skill.scope === 'project' ? useContextStore.getState().selectedContext : undefined;
+  const context = useWorkspaceContextStore.getState().selectedContext;
+  const projectPath = skill.scope === 'project' ? projectPathForContext(context) : undefined;
   return getSkillIdentity(skill, projectPath);
 }
 
-async function resolveSelectedSkill(identity: SkillIdentity): Promise<InstalledSkill | null> {
+async function resolveSelectedSkill(
+  identity: SkillIdentity,
+  context: ContextRef,
+): Promise<InstalledSkill | null> {
   const { useSkillsDataStore } = await import('./skills-data');
-  const { globalSkills, projectSkills } = useSkillsDataStore.getState();
+  const snapshots = useSkillsDataStore.getState().snapshots;
+  const globalSkills = snapshots[contextKey(globalContext(context.environment))]?.skills ?? [];
+  const projectSkills = context.scope.scope === 'project'
+    ? snapshots[contextKey(context)]?.skills ?? []
+    : [];
   return findSkillByIdentity(
     identity,
     globalSkills,
     projectSkills,
-    useContextStore.getState().selectedContext
+    projectPathForContext(context),
   );
 }
 
 export const useSkillDetailStore = create<SkillDetailState>()((set, get) => ({
   selectedSkillRef: null,
+  selectedContext: null,
   skillContent: null,
   loadingContent: false,
 
   selectSkill: async (skill) => {
     const nextSelectedSkillRef = getSelectionIdentity(skill);
-    const nextSelectedSkillKey = getSelectedSkillKey(nextSelectedSkillRef);
+    const selectedContext = useWorkspaceContextStore.getState().selectedContext;
+    const nextSelectedSkillKey = getContextualSelectionKey(selectedContext, nextSelectedSkillRef);
 
     // js-early-exit: same skill → no-op (use reloadContent for retry)
-    if (getSelectedSkillKey(get().selectedSkillRef) === nextSelectedSkillKey) return;
+    const currentSelectionKey = getContextualSelectionKey(
+      get().selectedContext,
+      get().selectedSkillRef,
+    );
+    if (currentSelectionKey === nextSelectedSkillKey) return;
 
     set({
       selectedSkillRef: nextSelectedSkillRef,
+      selectedContext,
       skillContent: null,
       loadingContent: true,
     });
 
     try {
-      const content = await apiReadSkillContent(skill.canonicalPath);
+      const content = await apiReadSkillContent(selectedContext, skill.canonicalPath);
       // Race condition guard: only apply if still the same skill
-      if (getSelectedSkillKey(get().selectedSkillRef) === nextSelectedSkillKey) {
+      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === nextSelectedSkillKey) {
         set({ skillContent: content, loadingContent: false });
       }
     } catch (e) {
-      if (getSelectedSkillKey(get().selectedSkillRef) === nextSelectedSkillKey) {
+      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === nextSelectedSkillKey) {
         console.error('[selectSkill] Failed to read content:', e);
         set({ skillContent: null, loadingContent: false });
       }
     }
   },
 
-  deselectSkill: () => set({ selectedSkillRef: null, skillContent: null, loadingContent: false }),
+  deselectSkill: () => set({ selectedSkillRef: null, selectedContext: null, skillContent: null, loadingContent: false }),
 
   reloadContent: async () => {
-    const { selectedSkillRef } = get();
-    if (!selectedSkillRef) return;
+    const { selectedSkillRef, selectedContext } = get();
+    if (!selectedSkillRef || !selectedContext) return;
 
-    const selectedSkillKey = getSelectedSkillKey(selectedSkillRef);
+    const selectedSkillKey = getContextualSelectionKey(selectedContext, selectedSkillRef);
     set({ skillContent: null, loadingContent: true });
 
     try {
-      const selectedSkill = await resolveSelectedSkill(selectedSkillRef);
+      const selectedSkill = await resolveSelectedSkill(selectedSkillRef, selectedContext);
       if (!selectedSkill) {
-        if (getSelectedSkillKey(get().selectedSkillRef) === selectedSkillKey) {
+        if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey) {
           set({ skillContent: null, loadingContent: false });
         }
         return;
       }
 
-      const content = await apiReadSkillContent(selectedSkill.canonicalPath);
-      if (getSelectedSkillKey(get().selectedSkillRef) === selectedSkillKey) {
+      const content = await apiReadSkillContent(selectedContext, selectedSkill.canonicalPath);
+      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey) {
         set({ skillContent: content, loadingContent: false });
       }
     } catch {
-      if (getSelectedSkillKey(get().selectedSkillRef) === selectedSkillKey) {
+      if (getContextualSelectionKey(get().selectedContext, get().selectedSkillRef) === selectedSkillKey) {
         set({ skillContent: null, loadingContent: false });
       }
     }

@@ -1,9 +1,10 @@
 #[cfg(debug_assertions)]
 use specta_typescript::Typescript;
-use tauri::Manager;
-use tauri_specta::{collect_commands, collect_events, Builder};
+use tauri::{Emitter, Manager};
+use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
 use core::mutation::SingleMutationController;
+use environment::types::EnvironmentRuntimeEvent;
 use environment::wsl::EnvironmentRegistry;
 
 mod commands;
@@ -16,7 +17,9 @@ mod models;
 #[doc(hidden)]
 pub mod wsl_integration_support {
     pub use crate::environment::lock_io::EnvironmentLockIo;
-    pub use crate::environment::path_mapping::{host_path_to_linux_path, wsl_unc_to_linux_path};
+    pub use crate::environment::path_mapping::{
+        map_windows_path_with_wslpath, wsl_unc_to_linux_path,
+    };
     pub use crate::environment::types::{EnvironmentRef, ProjectBinding, ResourceLocator};
     pub use crate::environment::wsl::{
         connect_wsl_environment, discover_wsl_distributions, WslSession,
@@ -38,78 +41,65 @@ pub mod wsl_integration_support {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    // 创建 specta builder
-    let builder = Builder::<tauri::Wry>::new()
+fn specta_builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             commands::agents::list_agents,
-            commands::agents::list_agents_for_project,
-            commands::agents::list_agents_for_project_v2,
             commands::agents::list_eve_install_targets,
             commands::skills::list_skills,
-            commands::skills::list_skills_v2,
             commands::skills::read_skill_content,
             commands::config::get_config,
             commands::config::save_config,
-            commands::config::get_last_selected_agents,
             commands::config::get_default_target_agents,
-            commands::config::get_default_target_agents_v2,
             commands::config::save_default_target_agents,
-            commands::config::save_default_target_agents_v2,
-            commands::config::add_project,
-            commands::config::remove_project,
-            commands::config::check_project_path,
             commands::config::open_in_explorer,
             commands::install::fetch_available,
-            commands::install::fetch_available_v2,
             commands::install::install_skills,
-            commands::install::install_skills_v2,
             commands::overwrites::check_overwrites,
-            commands::overwrites::check_overwrites_v2,
             commands::remove::remove_skill,
-            commands::remove::remove_skill_v2,
             commands::remove_details::get_skill_agent_details,
-            commands::remove_details::get_skill_agent_details_v2,
             commands::duplicate_copies::cleanup_duplicate_agent_copy,
             commands::duplicate_copies::cleanup_duplicate_agent_copies,
-            commands::duplicate_copies::cleanup_duplicate_agent_copy_v2,
-            commands::duplicate_copies::cleanup_duplicate_agent_copies_v2,
             commands::update::check_updates,
-            commands::update::check_updates_v2,
             commands::update::update_skill,
-            commands::update::update_skill_v2,
             commands::update::update_skills_batch,
-            commands::update::update_skills_batch_v2,
             commands::wizard::open_install_wizard,
             commands::audit::check_skill_audit,
             commands::manage_agents::manage_skill_agents,
-            commands::manage_agents::manage_skill_agents_v2,
             commands::copy_skill::copy_skill_to_projects,
-            commands::copy_skill::copy_skill_to_projects_v2,
-            commands::copy_skill::check_skill_in_projects,
-            commands::environments::list_environments_v2,
-            commands::environments::connect_environment_v2,
-            commands::environments::map_environment_path_v2,
-            commands::environments::list_environment_projects_v2,
-            commands::environments::add_environment_project_v2,
-            commands::environments::remove_environment_project_v2,
-            commands::environments::set_environment_project_cross_storage_warning_v2,
+            commands::environments::list_environments,
+            commands::environments::connect_environment,
+            commands::environments::map_environment_path,
+            commands::environments::list_environment_projects,
+            commands::environments::add_environment_project,
+            commands::environments::remove_environment_project,
+            commands::environments::set_environment_project_cross_storage_warning,
+            commands::environments::retry_host_project_migration,
             commands::mutations::get_active_mutation,
             commands::mutations::request_cancel_active_mutation,
         ])
-        .events(collect_events![]);
+        .events(collect_events![EnvironmentRuntimeEvent])
+}
 
-    // Debug 模式下导出 TypeScript 绑定
-    #[cfg(debug_assertions)]
+#[cfg(debug_assertions)]
+fn export_typescript_bindings(builder: &Builder<tauri::Wry>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/bindings.ts");
     builder
         .export(
             Typescript::default()
                 .formatter(specta_typescript::formatter::prettier)
                 .header("// 此文件由 tauri-specta 自动生成，请勿手动修改\n// This file is auto-generated by tauri-specta. Do not edit manually."),
-            "../src/bindings.ts",
+            path,
         )
         .expect("Failed to export typescript bindings");
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let builder = specta_builder();
+
+    #[cfg(debug_assertions)]
+    export_typescript_bindings(&builder);
 
     tauri::Builder::default()
         .manage(EnvironmentRegistry::default())
@@ -128,6 +118,23 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
+            app.manage(commands::environments::initialize_host_project_migration());
+            let environment_app_handle = app.handle().clone();
+            app.state::<EnvironmentRegistry>()
+                .set_listener(move |event| {
+                    if let Err(error) = event.emit(&environment_app_handle) {
+                        log::warn!("Failed to emit environment runtime state: {error}");
+                    }
+                });
+            let mutation_app_handle = app.handle().clone();
+            app.state::<SingleMutationController>()
+                .set_listener(move |snapshot| {
+                    if let Err(error) = mutation_app_handle
+                        .emit(core::mutation::MUTATION_STATE_CHANGED_EVENT, snapshot)
+                    {
+                        log::warn!("Failed to emit mutation state: {error}");
+                    }
+                });
             builder.mount_events(app);
 
             #[cfg(debug_assertions)]
@@ -140,4 +147,39 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod command_surface_tests {
+    #[test]
+    #[ignore = "explicit developer action regenerates src/bindings.ts"]
+    fn export_bindings() {
+        super::export_typescript_bindings(&super::specta_builder());
+    }
+
+    #[test]
+    fn registered_command_surface_is_canonical() {
+        let source = include_str!("lib.rs");
+        let registration = source
+            .split("collect_commands![")
+            .nth(1)
+            .and_then(|source| source.split("])").next())
+            .expect("registered command list");
+
+        assert!(!registration.contains("_v2"));
+        assert!(registration.contains("commands::agents::list_agents,"));
+        assert!(registration.contains("commands::skills::list_skills,"));
+        for removed in [
+            "commands::agents::list_agents_host,",
+            "commands::config::add_project,",
+            "commands::config::remove_project,",
+            "commands::config::check_project_path,",
+            "commands::copy_skill::check_skill_in_projects,",
+        ] {
+            assert!(
+                !registration.contains(removed),
+                "legacy command remains: {removed}"
+            );
+        }
+    }
 }

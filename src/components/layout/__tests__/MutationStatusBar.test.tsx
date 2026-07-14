@@ -4,7 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MutationStatusBar } from '../MutationStatusBar';
-import type { ActiveMutation, EnvironmentInfo, ProjectBinding } from '@/bindings';
+import type { ActiveMutation, EnvironmentInfo, ProjectInfo } from '@/bindings';
 
 const mutation: ActiveMutation = {
   kind: 'update',
@@ -12,12 +12,13 @@ const mutation: ActiveMutation = {
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'project', project_id: 'project-1' },
   },
-  statusText: 'Updating toolkit',
+  id: 'mutation-1',
+  phase: 'preparing',
+  progress: null,
   cancelable: true,
 };
 
 const mocks = vi.hoisted(() => ({
-  refreshMutation: vi.fn().mockResolvedValue(undefined),
   cancelActiveMutation: vi.fn().mockResolvedValue(true),
   mutationState: {
     activeMutation: null as ActiveMutation | null,
@@ -25,7 +26,9 @@ const mocks = vi.hoisted(() => ({
   },
   environmentState: {
     environments: [] as EnvironmentInfo[],
-    projectsByEnvironment: {} as Record<string, ProjectBinding[]>,
+  },
+  projectState: {
+    projectsByEnvironment: {} as Record<string, ProjectInfo[]>,
   },
 }));
 
@@ -43,9 +46,12 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/stores/mutation', () => ({
   useMutationStore: (selector: (state: unknown) => unknown) => selector({
     ...mocks.mutationState,
-    refreshMutation: mocks.refreshMutation,
     cancelActiveMutation: mocks.cancelActiveMutation,
   }),
+}));
+
+vi.mock('@/hooks/useMutationMonitor', () => ({
+  useMutationMonitor: vi.fn(),
 }));
 
 vi.mock('@/stores/environment', () => ({
@@ -55,28 +61,17 @@ vi.mock('@/stores/environment', () => ({
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector(mocks.environmentState),
 }));
 
+vi.mock('@/stores/projects', () => ({
+  useProjectStore: (selector: (state: unknown) => unknown) => selector(mocks.projectState),
+}));
+
 describe('MutationStatusBar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.mutationState.activeMutation = null;
     mocks.mutationState.cancelling = false;
     mocks.environmentState.environments = [];
-    mocks.environmentState.projectsByEnvironment = {};
-  });
-
-  it('refreshes immediately, on focus, and while the main window stays open', async () => {
-    vi.useFakeTimers();
-
-    render(<MutationStatusBar pollIntervalMs={2_000} />);
-    await vi.waitFor(() => expect(mocks.refreshMutation).toHaveBeenCalledTimes(1));
-
-    window.dispatchEvent(new Event('focus'));
-    await vi.waitFor(() => expect(mocks.refreshMutation).toHaveBeenCalledTimes(2));
-
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(mocks.refreshMutation).toHaveBeenCalledTimes(3);
-
-    vi.useRealTimers();
+    mocks.projectState.projectsByEnvironment = {};
   });
 
   it('shows the mutation environment, project, status, and cancel action', async () => {
@@ -86,19 +81,22 @@ describe('MutationStatusBar', () => {
       displayName: 'Ubuntu 24.04',
       status: 'available',
     }];
-    mocks.environmentState.projectsByEnvironment = {
+    mocks.projectState.projectsByEnvironment = {
       'wsl:Ubuntu': [{
-        id: 'project-1',
-        nativePath: '/home/user/cgp-be',
-        displayName: 'cgp-be',
-        order: null,
-        suppressCrossStorageWarning: false,
+        binding: {
+          id: 'project-1',
+          nativePath: '/home/user/cgp-be',
+          displayName: 'cgp-be',
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        storage: { access: 'native', owner: mutation.context.environment },
       }],
     };
 
     render(<MutationStatusBar />);
 
-    expect(screen.getByText('Ubuntu 24.04 / cgp-be - Updating toolkit')).toBeDefined();
+    expect(screen.getByText('Ubuntu 24.04 / cgp-be - mutation.activity')).toBeDefined();
     const spinner = screen.getByTestId('mutation-spinner');
     expect(spinner.className).toContain('animate-spin');
     expect(spinner.querySelector('svg')?.className.baseVal).not.toContain('animate-spin');

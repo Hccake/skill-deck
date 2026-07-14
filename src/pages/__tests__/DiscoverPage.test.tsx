@@ -14,26 +14,29 @@ vi.mock('react-i18next', () => ({
 
 const mocks = vi.hoisted(() => ({
   skillsDataState: {
-    globalSkills: [] as Array<{ name: string; source?: string | null }>,
-    projectSkills: [] as Array<{ name: string; source?: string | null }>,
-    allProjectsSkills: new Map<string, Array<{ name: string; source?: string | null }>>(),
-    fetchAllProjectsSkills: vi.fn(),
+    snapshots: {} as Record<string, {
+      skills: Array<{ name: string; source?: string | null }>;
+      agents: unknown[];
+      pathExists: boolean;
+      loading: boolean;
+      error: string | null;
+      requestId: number;
+    }>,
+    refreshContext: vi.fn().mockResolvedValue(undefined),
   },
   skillDialogState: {
     openAddWithPrefill: vi.fn(),
   },
-  contextState: {
-    projects: [] as string[],
-    projectsLoaded: true,
-    selectedContextRef: {
+  workspaceContextState: {
+    selectedContext: {
       environment: { kind: 'host' as const },
       scope: { scope: 'global' as const },
     } as ContextRef,
-    hasExplicitContext: false,
   },
-  environmentState: {
+  projectState: {
     projectsByEnvironment: {} as Record<string, unknown[]>,
-    projectsLoaded: {} as Record<string, boolean>,
+    loadStateByEnvironment: {} as Record<string, string>,
+    refresh: vi.fn().mockResolvedValue([]),
   },
   resizable: {
     groups: [] as Array<Record<string, unknown>>,
@@ -49,15 +52,14 @@ vi.mock('@/stores/skill-dialog', () => ({
   useSkillDialogStore: (selector: (state: typeof mocks.skillDialogState) => unknown) => selector(mocks.skillDialogState),
 }));
 
-vi.mock('@/stores/context', () => ({
-  useContextStore: (selector: (state: typeof mocks.contextState) => unknown) => selector(mocks.contextState),
+vi.mock('@/stores/workspace-context', () => ({
+  useWorkspaceContextStore: (selector: (state: typeof mocks.workspaceContextState) => unknown) =>
+    selector(mocks.workspaceContextState),
 }));
 
-vi.mock('@/stores/environment', () => ({
-  environmentKey: (environment: { kind: string; distro_name?: string }) => (
-    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
-  ),
-  useEnvironmentStore: (selector: (state: typeof mocks.environmentState) => unknown) => selector(mocks.environmentState),
+vi.mock('@/stores/projects', () => ({
+  useProjectStore: (selector: (state: typeof mocks.projectState) => unknown) =>
+    selector(mocks.projectState),
 }));
 
 vi.mock('@/components/skills/discover/DiscoverListPanel', () => ({
@@ -82,20 +84,22 @@ vi.mock('@/components/ui/resizable', () => ({
 
 describe('DiscoverPage', () => {
   beforeEach(() => {
-    mocks.skillsDataState.globalSkills = [];
-    mocks.skillsDataState.projectSkills = [];
-    mocks.skillsDataState.allProjectsSkills = new Map();
-    mocks.skillsDataState.fetchAllProjectsSkills.mockReset();
+    mocks.skillsDataState.snapshots = {
+      'host/global': {
+        skills: [], agents: [], pathExists: true, loading: false, error: null, requestId: 1,
+      },
+    };
+    mocks.skillsDataState.refreshContext.mockReset();
+    mocks.skillsDataState.refreshContext.mockResolvedValue(undefined);
     mocks.skillDialogState.openAddWithPrefill.mockReset();
-    mocks.contextState.projects = [];
-    mocks.contextState.projectsLoaded = true;
-    mocks.contextState.selectedContextRef = {
+    mocks.workspaceContextState.selectedContext = {
       environment: { kind: 'host' },
       scope: { scope: 'global' },
     };
-    mocks.contextState.hasExplicitContext = false;
-    mocks.environmentState.projectsByEnvironment = {};
-    mocks.environmentState.projectsLoaded = {};
+    mocks.projectState.projectsByEnvironment = {};
+    mocks.projectState.loadStateByEnvironment = { host: 'ready' };
+    mocks.projectState.refresh.mockReset();
+    mocks.projectState.refresh.mockResolvedValue([]);
     mocks.resizable.groups.length = 0;
     mocks.resizable.panels.length = 0;
   });
@@ -124,20 +128,37 @@ describe('DiscoverPage', () => {
     });
   });
 
-  it('loads installed project locations when the explicit environment is ready', () => {
-    mocks.contextState.projectsLoaded = false;
-    mocks.contextState.hasExplicitContext = true;
-    mocks.contextState.selectedContextRef = {
+  it('refreshes context-keyed install locations for the committed environment', () => {
+    mocks.workspaceContextState.selectedContext = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
-    mocks.environmentState.projectsByEnvironment = {
-      'wsl:Ubuntu': [{ id: 'project-1', nativePath: '/home/me/app' }],
+    mocks.projectState.projectsByEnvironment = {
+      'wsl:Ubuntu': [{
+        binding: {
+          id: 'project-1',
+          nativePath: '/home/me/app',
+          displayName: null,
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        storage: {
+          access: 'native',
+          owner: { kind: 'wsl', distro_name: 'Ubuntu' },
+        },
+      }],
     };
-    mocks.environmentState.projectsLoaded = { 'wsl:Ubuntu': true };
+    mocks.projectState.loadStateByEnvironment = { 'wsl:Ubuntu': 'ready' };
 
     render(<DiscoverPage />);
 
-    expect(mocks.skillsDataState.fetchAllProjectsSkills).toHaveBeenCalledTimes(1);
+    expect(mocks.skillsDataState.refreshContext).toHaveBeenCalledWith({
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    }, false);
+    expect(mocks.skillsDataState.refreshContext).toHaveBeenCalledWith({
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'project-1' },
+    }, false);
   });
 });

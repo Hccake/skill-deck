@@ -1,8 +1,9 @@
 // src/components/skills/SkillsPanel.tsx
 import { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useContextStore } from '@/stores/context';
-import { useSkillsDataStore } from '@/stores/skills-data';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
+import { useProjectStore } from '@/stores/projects';
+import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { SkillsToolbar } from './SkillsToolbar';
@@ -13,7 +14,18 @@ import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { RepairSourceDialog } from './RepairSourceDialog';
 import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
+import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import type { AgentType, InstalledSkill } from '@/bindings';
+
+const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
+  skills: [],
+  agents: [],
+  pathExists: true,
+  loading: false,
+  error: null,
+  requestId: 0,
+};
+const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 
 /** 按搜索关键词 + agent 筛选过滤 skills — 单次遍历 (js-combine-iterations) */
 function filterSkills<T extends InstalledSkill>(skills: T[], searchQuery: string, agentFilter: string): T[] {
@@ -37,36 +49,45 @@ interface SkillsPanelProps {
 
 export function SkillsPanel({ compact }: SkillsPanelProps) {
   const { t } = useTranslation();
-  const { selectedContext, selectedContextRef, hasExplicitContext } = useContextStore();
-  const selectedContextKey = hasExplicitContext
-    ? JSON.stringify(selectedContextRef)
-    : selectedContext;
-  const globalContextKey = hasExplicitContext
-    ? JSON.stringify({
-      environment: selectedContextRef.environment,
-      scope: { scope: 'global' },
-    })
-    : 'global';
-  const projectContextKey = hasExplicitContext && selectedContextRef.scope.scope === 'project'
-    ? selectedContextKey
-    : selectedContext;
+  const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
+  const selectedContextKey = contextKey(selectedContext);
+  const selectedGlobalContext = globalContext(selectedContext.environment);
+  const globalContextKey = contextKey(selectedGlobalContext);
+  const isProjectSelected = selectedContext.scope.scope === 'project';
+  const projectContextKey = isProjectSelected ? selectedContextKey : null;
+  const projects = useProjectStore((state) => (
+    state.projectsByEnvironment[environmentKey(selectedContext.environment)] ?? EMPTY_PROJECTS
+  ));
+  const selectedScope = selectedContext.scope;
+  const selectedProject = selectedScope.scope === 'project'
+    ? projects.find((project) => project.binding.id === selectedScope.project_id)
+    : null;
+  const projectPath = selectedProject?.binding.nativePath;
 
   // ① Store — 细粒度 selector 订阅
-  const globalSkills = useSkillsDataStore((s) => s.globalSkills);
-  const projectSkills = useSkillsDataStore((s) => s.projectSkills);
-  const projectPathExists = useSkillsDataStore((s) => s.projectPathExists);
-  const allAgents = useSkillsDataStore((s) => s.allAgents);
-  const loading = useSkillsDataStore((s) => s.loading);
-  const error = useSkillsDataStore((s) => s.error);
+  const globalSnapshot = useSkillsDataStore((state) => (
+    state.snapshots[globalContextKey] ?? EMPTY_SNAPSHOT
+  ));
+  const projectSnapshot = useSkillsDataStore((state) => (
+    projectContextKey ? state.snapshots[projectContextKey] ?? EMPTY_SNAPSHOT : EMPTY_SNAPSHOT
+  ));
+  const globalSkills = globalSnapshot.skills;
+  const projectSkills = isProjectSelected ? projectSnapshot.skills : EMPTY_SNAPSHOT.skills;
+  const projectPathExists = projectSnapshot.pathExists;
+  const allAgents = isProjectSelected ? projectSnapshot.agents : globalSnapshot.agents;
+  const loading = (globalSnapshot.loading && globalSkills.length === 0)
+    || (isProjectSelected && projectSnapshot.loading && projectSkills.length === 0);
+  const error = projectSnapshot.error ?? globalSnapshot.error;
   const isSyncing = useSkillsDataStore((s) => s.isSyncing);
   const isCheckingGlobal = useSkillsDataStore((s) => s.checkingUpdateScopes.has(globalContextKey));
-  const isCheckingProject = useSkillsDataStore((s) => s.checkingUpdateScopes.has(projectContextKey));
+  const isCheckingProject = useSkillsDataStore((s) => (
+    projectContextKey ? s.checkingUpdateScopes.has(projectContextKey) : false
+  ));
   const syncUpdates = useSkillsDataStore((s) => s.syncUpdates);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const updatingSkills = useSkillsDataStore((s) => s.updatingSkills);
   const updateAllInSection = useSkillsDataStore((s) => s.updateAllInSection);
-  const cancelUpdateAll = useSkillsDataStore((s) => s.cancelUpdateAll);
-  const fetchSkills = useSkillsDataStore((s) => s.fetchSkills);
+  const refreshWorkspace = useSkillsDataStore((s) => s.refreshWorkspace);
   const syncSkills = useSkillsDataStore((s) => s.syncSkills);
   const storeUpdateSkill = useSkillsDataStore((s) => s.updateSkill);
   const auditCache = useSkillsDataStore((s) => s.auditCache);
@@ -90,11 +111,11 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   // ③ 数据初始化 — mount / selectedContext 变化时重新获取，然后自动检测更新
   useEffect(() => {
     let ignore = false;
-    fetchSkills().then(() => {
-      if (!ignore) syncUpdates(); // 后台检测更新，不阻塞 UI
+    refreshWorkspace(selectedContext).then(() => {
+      if (!ignore) void syncUpdates(selectedContext);
     });
     return () => { ignore = true; };
-  }, [selectedContextKey, fetchSkills, syncUpdates]);
+  }, [selectedContext, selectedContextKey, refreshWorkspace, syncUpdates]);
 
   // ③a 仅在 context 真正切换时关闭详情面板
   const previousContextRef = useRef(selectedContextKey);
@@ -123,11 +144,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
       fetchAuditForSkills(skillsWithSource);
     }
   }, [globalSkills, projectSkills, fetchAuditForSkills]);
-
-  // ④ Derived state
-  const isProjectSelected = hasExplicitContext
-    ? selectedContextRef.scope.scope === 'project'
-    : selectedContext !== 'global';
 
   const filterableAgents = useMemo(() => {
     const agentIds = new Set<string>();
@@ -168,44 +184,66 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }, [globalSkills, projectSkills]);
 
   const handleDeleteGlobal = useCallback((skill: InstalledSkill) => {
-    openDelete(skill, 'global');
-  }, [openDelete]);
+    openDelete(skill, selectedGlobalContext);
+  }, [openDelete, selectedGlobalContext]);
 
   const handleDeleteProject = useCallback((skill: InstalledSkill) => {
-    openDelete(skill, 'project', selectedContext);
-  }, [openDelete, selectedContext]);
+    openDelete(skill, selectedContext, projectPath);
+  }, [openDelete, projectPath, selectedContext]);
 
   const handleManageAgentsGlobal = useCallback((skill: InstalledSkill) => {
-    openManageAgents(skill, 'global');
-  }, [openManageAgents]);
+    openManageAgents(skill, selectedGlobalContext);
+  }, [openManageAgents, selectedGlobalContext]);
 
   const handleManageAgentsProject = useCallback((skill: InstalledSkill) => {
-    openManageAgents(skill, 'project');
-  }, [openManageAgents]);
+    openManageAgents(skill, selectedContext, projectPath);
+  }, [openManageAgents, projectPath, selectedContext]);
 
   const handleAddGlobal = useCallback(() => {
-    openAdd('global');
-  }, [openAdd]);
+    openAdd(selectedGlobalContext);
+  }, [openAdd, selectedGlobalContext]);
 
   const handleAddProject = useCallback(() => {
-    openAdd('project');
-  }, [openAdd]);
+    openAdd(selectedContext, projectPath);
+  }, [openAdd, projectPath, selectedContext]);
 
   const handleRepairGlobal = useCallback((skill: InstalledSkill) => {
-    openRepairSource(skill, 'global');
-  }, [openRepairSource]);
+    openRepairSource(skill, selectedGlobalContext);
+  }, [openRepairSource, selectedGlobalContext]);
 
   const handleRepairProject = useCallback((skill: InstalledSkill) => {
-    openRepairSource(skill, 'project', selectedContext);
-  }, [openRepairSource, selectedContext]);
+    openRepairSource(skill, selectedContext, projectPath);
+  }, [openRepairSource, projectPath, selectedContext]);
+
+  const handleCopyToProject = useCallback((skill: InstalledSkill) => {
+    openCopyToProject(skill, selectedContext);
+  }, [openCopyToProject, selectedContext]);
 
   const handleCheckProjectUpdates = useCallback(() => {
-    return forceCheckUpdates('project');
-  }, [forceCheckUpdates]);
+    return forceCheckUpdates(selectedContext);
+  }, [forceCheckUpdates, selectedContext]);
 
   const handleCheckGlobalUpdates = useCallback(() => {
-    return forceCheckUpdates('global');
-  }, [forceCheckUpdates]);
+    return forceCheckUpdates(selectedGlobalContext);
+  }, [forceCheckUpdates, selectedGlobalContext]);
+
+  const handleSync = useCallback(() => syncSkills(selectedContext), [selectedContext, syncSkills]);
+  const handleUpdateGlobal = useCallback(
+    (skillName: string) => storeUpdateSkill(selectedGlobalContext, skillName),
+    [selectedGlobalContext, storeUpdateSkill],
+  );
+  const handleUpdateProject = useCallback(
+    (skillName: string) => storeUpdateSkill(selectedContext, skillName),
+    [selectedContext, storeUpdateSkill],
+  );
+  const handleUpdateAllGlobal = useCallback(
+    () => updateAllInSection(selectedGlobalContext),
+    [selectedGlobalContext, updateAllInSection],
+  );
+  const handleUpdateAllProject = useCallback(
+    () => updateAllInSection(selectedContext),
+    [selectedContext, updateAllInSection],
+  );
 
   // 缓存 emptyState JSX (rerender-memo-with-default-value)
   const projectEmptyState = useMemo(
@@ -268,7 +306,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           selectedAgent={selectedAgentFilter}
           onAgentChange={setSelectedAgentFilter}
           filterableAgents={filterableAgents}
-          onSync={syncSkills}
+          onSync={handleSync}
           isSyncing={isSyncing}
         />
       </div>
@@ -284,7 +322,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           selectedSkillRef={selectedSkillRef}
           isProjectSelected={isProjectSelected}
           projectTitle={t('skills.projectSkills')}
-          projectPath={selectedContext}
+          projectPath={projectPath}
           pathExists={projectPathExists}
           onAddProject={handleAddProject}
           onAddGlobal={handleAddGlobal}
@@ -301,17 +339,16 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               scope="project"
               conflictSkillNames={conflictSkillNames}
               pathExists={projectPathExists}
-              projectPath={selectedContext}
+              projectPath={projectPath}
               updatingSkills={updatingSkills}
               isCheckingUpdates={isCheckingProject}
               agentDisplayNames={agentDisplayNames}
               auditCache={auditCache}
               onSkillClick={selectSkill}
-              onUpdate={storeUpdateSkill}
-              onUpdateAll={updateAllInSection}
-              onCancelUpdateAll={cancelUpdateAll}
+              onUpdate={handleUpdateProject}
+              onUpdateAll={handleUpdateAllProject}
               onDelete={handleDeleteProject}
-              onCopyToProject={openCopyToProject}
+              onCopyToProject={handleCopyToProject}
               onManageAgents={handleManageAgentsProject}
               onRepairSource={handleRepairProject}
               onAdd={handleAddProject}
@@ -331,9 +368,8 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             agentDisplayNames={agentDisplayNames}
             auditCache={auditCache}
             onSkillClick={selectSkill}
-            onUpdate={storeUpdateSkill}
-            onUpdateAll={updateAllInSection}
-            onCancelUpdateAll={cancelUpdateAll}
+            onUpdate={handleUpdateGlobal}
+            onUpdateAll={handleUpdateAllGlobal}
             onDelete={handleDeleteGlobal}
             onManageAgents={handleManageAgentsGlobal}
             onRepairSource={handleRepairGlobal}

@@ -8,6 +8,7 @@ import { useState } from 'react';
 import type { WizardState } from '../types';
 import { SourceStep } from '../SourceStep';
 import type { SearchSkill } from '../../skill-search/SkillSearch';
+import { contextKey } from '@/lib/context';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -16,40 +17,51 @@ vi.mock('react-i18next', () => ({
 }));
 
 const fetchAvailableMock = vi.fn();
-const fetchAvailableV2Mock = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  fetchAvailable: (source: string) => fetchAvailableMock(source),
-  fetchAvailableV2: (...args: unknown[]) => fetchAvailableV2Mock(...args),
+  fetchAvailable: (...args: unknown[]) => fetchAvailableMock(...args),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 
+const hostGlobal = {
+  environment: { kind: 'host' },
+  scope: { scope: 'global' },
+} as const;
+
+const skillSnapshots: Record<string, { skills: Array<{ name: string; source: string }> }> = {};
+
 vi.mock('@/stores/skills-data', () => ({
-  useSkillsDataStore: (selector: (state: { globalSkills: []; projectSkills: [] }) => unknown) =>
-    selector({
-      globalSkills: [],
-      projectSkills: [],
-    }),
+  useSkillsDataStore: (selector: (state: { snapshots: typeof skillSnapshots }) => unknown) =>
+    selector({ snapshots: skillSnapshots }),
 }));
 
-function SearchResultStub({ onInstall }: { onInstall: (skill: SearchSkill) => void }) {
+function SearchResultStub({
+  installedSkillKeys,
+  onInstall,
+}: {
+  installedSkillKeys: Set<string>;
+  onInstall: (skill: SearchSkill) => void;
+}) {
   return (
-    <button
-      type="button"
-      onClick={() =>
-        onInstall({
-          name: 'demo',
-          slug: 'demo',
-          source: 'openclaw/community-skills',
-          installs: 10,
-        })
-      }
-    >
-      install search result
-    </button>
+    <>
+      <span data-testid="installed-skill-keys">{[...installedSkillKeys].join(',')}</span>
+      <button
+        type="button"
+        onClick={() =>
+          onInstall({
+            name: 'demo',
+            slug: 'demo',
+            source: 'openclaw/community-skills',
+            installs: 10,
+          })
+        }
+      >
+        install search result
+      </button>
+    </>
   );
 }
 
@@ -66,6 +78,7 @@ function createState(): WizardState {
     step: 'source',
     entryPoint: 'skills-panel',
     scope: 'global',
+    context: hostGlobal,
     projectPath: undefined,
     source: '',
     fetchStatus: 'idle',
@@ -112,10 +125,10 @@ function Harness({ onNext }: { onNext: () => void }) {
 describe('SourceStep', () => {
   beforeEach(() => {
     fetchAvailableMock.mockReset();
-    fetchAvailableV2Mock.mockReset();
+    for (const key of Object.keys(skillSnapshots)) delete skillSnapshots[key];
   });
 
-  it('stores risk policy from fetchAvailable', async () => {
+  it('stores risk policy from fetchAvailable for Host Global', async () => {
     const onNext = vi.fn();
 
     fetchAvailableMock.mockResolvedValue({
@@ -140,6 +153,7 @@ describe('SourceStep', () => {
       expect(onNext).toHaveBeenCalled();
       expect(screen.getByTestId('risk-policy').textContent).toBe('require-confirmation');
     });
+    expect(fetchAvailableMock).toHaveBeenCalledWith(hostGlobal, 'openclaw/community-skills');
   });
 
   it('fetches a selected search result without waiting for a timer tick', async () => {
@@ -160,7 +174,10 @@ describe('SourceStep', () => {
     await user.click(screen.getByRole('tab', { name: 'addSkill.source.tabs.search' }));
     await user.click(await screen.findByText('install search result'));
 
-    expect(fetchAvailableMock).toHaveBeenCalledWith('openclaw/community-skills@demo');
+    expect(fetchAvailableMock).toHaveBeenCalledWith(
+      hostGlobal,
+      'openclaw/community-skills@demo',
+    );
 
     await waitFor(() => {
       expect(onNext).toHaveBeenCalled();
@@ -172,7 +189,7 @@ describe('SourceStep', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     } as const;
-    fetchAvailableV2Mock.mockResolvedValue({
+    fetchAvailableMock.mockResolvedValue({
       sourceType: 'github',
       sourceUrl: 'https://github.com/owner/repo',
       gitRef: null,
@@ -190,7 +207,24 @@ describe('SourceStep', () => {
       />
     );
 
-    await waitFor(() => expect(fetchAvailableV2Mock).toHaveBeenCalledWith(context, 'owner/repo'));
-    expect(fetchAvailableMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(context, 'owner/repo'));
+  });
+
+  it('marks installed skills from the wizard context snapshot only', async () => {
+    const otherContext = {
+      environment: { kind: 'wsl', distro_name: 'Debian' },
+      scope: { scope: 'global' },
+    } as const;
+    skillSnapshots[contextKey(hostGlobal)] = {
+      skills: [{ name: 'host-skill', source: 'owner/host' }],
+    };
+    skillSnapshots[contextKey(otherContext)] = {
+      skills: [{ name: 'debian-skill', source: 'owner/debian' }],
+    };
+
+    render(<Harness onNext={() => undefined} />);
+    await userEvent.click(screen.getByRole('tab', { name: 'addSkill.source.tabs.search' }));
+
+    expect(screen.getByTestId('installed-skill-keys').textContent).toBe('owner/host::host-skill');
   });
 });

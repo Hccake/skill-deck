@@ -1,27 +1,159 @@
+use tokio::time::Duration;
+
+use crate::environment::types::EnvironmentRef;
+use crate::environment::wsl::WslSession;
+use crate::environment::wsl_protocol::run_wsl_script;
 use crate::error::AppError;
 
-pub fn wsl_unc_to_linux_path(path: &str, distro_name: &str) -> Result<String, AppError> {
+pub(crate) fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
     let normalized = path.replace('/', "\\");
-    let without_prefix = normalized
-        .strip_prefix("\\\\wsl.localhost\\")
-        .or_else(|| normalized.strip_prefix("\\\\wsl$\\"))
-        .ok_or_else(|| AppError::Path {
-            message: format!("not a WSL UNC path: {path}"),
-        })?;
+    let lower = normalized.to_ascii_lowercase();
+    let prefix_len = if lower.starts_with("\\\\wsl.localhost\\") {
+        "\\\\wsl.localhost\\".len()
+    } else if lower.starts_with("\\\\wsl$\\") {
+        "\\\\wsl$\\".len()
+    } else {
+        return None;
+    };
+    let without_prefix = &normalized[prefix_len..];
     let (distro, remainder) = without_prefix
         .split_once('\\')
         .unwrap_or((without_prefix, ""));
+    Some((
+        distro.to_string(),
+        normalize_posix_path(&remainder.replace('\\', "/")),
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WindowsStorageOwner {
+    Host,
+    Wsl { distro_name: String },
+    Unknown,
+}
+
+pub(crate) fn windows_storage_owner(path: &str) -> WindowsStorageOwner {
+    if let Some((distro_name, _)) = parse_wsl_unc_path(path) {
+        return WindowsStorageOwner::Wsl { distro_name };
+    }
+    let normalized = path.trim().replace('/', "\\");
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 3 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() && bytes[2] == b'\\' {
+        return WindowsStorageOwner::Host;
+    }
+    if let Some(remainder) = normalized.strip_prefix("\\\\") {
+        let mut components = remainder
+            .split('\\')
+            .filter(|component| !component.is_empty());
+        if components.next().is_some() && components.next().is_some() {
+            return WindowsStorageOwner::Host;
+        }
+    }
+    WindowsStorageOwner::Unknown
+}
+
+fn normalize_posix_path(path: &str) -> String {
+    let rooted = path.starts_with('/');
+    let mut components: Vec<&str> = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." if components.last().is_some_and(|last| *last != "..") => {
+                components.pop();
+            }
+            ".." if !rooted => components.push(component),
+            ".." => {}
+            _ => components.push(component),
+        }
+    }
+    let joined = components.join("/");
+    if rooted {
+        if joined.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{joined}")
+        }
+    } else if joined.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{joined}")
+    }
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn wsl_unc_to_linux_path(path: &str, distro_name: &str) -> Result<String, AppError> {
+    let (distro, linux_path) = parse_wsl_unc_path(path).ok_or_else(|| AppError::Path {
+        message: format!("not a WSL UNC path: {path}"),
+    })?;
     if !distro.eq_ignore_ascii_case(distro_name) {
         return Err(AppError::Path {
             message: format!("path belongs to WSL distro '{distro}', expected '{distro_name}'"),
         });
     }
-    if remainder.is_empty() {
-        return Ok("/".to_string());
-    }
-    Ok(format!("/{}", remainder.replace('\\', "/")))
+    Ok(linux_path)
 }
 
+pub fn map_wsl_input_without_wslpath(
+    distro_name: &str,
+    path: &str,
+) -> Result<Option<String>, AppError> {
+    if path.trim().starts_with('/') {
+        return Ok(Some(normalize_posix_path(path.trim())));
+    }
+    if let Some((owner_distro, linux_path)) = parse_wsl_unc_path(path) {
+        if owner_distro.eq_ignore_ascii_case(distro_name) {
+            return Ok(Some(linux_path));
+        }
+        return Err(AppError::StorageMappingUnsupported {
+            path: path.to_string(),
+            environment: EnvironmentRef::Wsl {
+                distro_name: distro_name.to_string(),
+            },
+        });
+    }
+    Ok(None)
+}
+
+pub fn parse_wslpath_output(bytes: &[u8]) -> Result<String, AppError> {
+    let mut fields = bytes.split(|byte| *byte == 0);
+    let version = fields.next().unwrap_or_default();
+    let mapped = fields.next().unwrap_or_default();
+    if version != b"1" || mapped.is_empty() || fields.any(|field| !field.is_empty()) {
+        return Err(AppError::Custom {
+            message: "invalid wslpath response".to_string(),
+        });
+    }
+    String::from_utf8(mapped.to_vec()).map_err(|error| AppError::Custom {
+        message: format!("invalid UTF-8 in wslpath response: {error}"),
+    })
+}
+
+pub async fn map_windows_path_with_wslpath(
+    session: &WslSession,
+    path: &str,
+) -> Result<String, AppError> {
+    const SCRIPT: &str = r#"mapped=$(wslpath -u -- "$1") || exit $?; printf '1\0%s\0' "$mapped""#;
+    match run_wsl_script(
+        session,
+        SCRIPT,
+        &[path.to_string()],
+        Vec::new(),
+        Duration::from_secs(10),
+    )
+    .await
+    {
+        Ok(output) => parse_wslpath_output(&output),
+        Err(AppError::WslCommandFailed { .. }) => Err(AppError::StorageMappingUnsupported {
+            path: path.to_string(),
+            environment: EnvironmentRef::Wsl {
+                distro_name: session.distro_name.clone(),
+            },
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn linux_path_to_host_path(path: &str) -> Option<String> {
     let remainder = path.strip_prefix("/mnt/")?;
     let (drive, tail) = remainder.split_once('/').unwrap_or((remainder, ""));
@@ -36,6 +168,7 @@ pub fn linux_path_to_host_path(path: &str) -> Option<String> {
     }
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn host_path_to_linux_path(path: &str) -> Option<String> {
     let bytes = path.as_bytes();
     if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
@@ -55,7 +188,12 @@ pub fn host_path_to_linux_path(path: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{host_path_to_linux_path, linux_path_to_host_path, wsl_unc_to_linux_path};
+    use super::{
+        host_path_to_linux_path, linux_path_to_host_path, map_wsl_input_without_wslpath,
+        parse_wslpath_output, wsl_unc_to_linux_path,
+    };
+    use crate::environment::types::EnvironmentRef;
+    use crate::error::AppError;
 
     #[test]
     fn maps_current_distro_unc_to_linux_path() {
@@ -100,5 +238,51 @@ mod tests {
             "/mnt/d/Code/demo"
         );
         assert!(host_path_to_linux_path(r"\\server\share\demo").is_none());
+    }
+
+    #[test]
+    fn maps_native_and_current_distro_inputs_without_wslpath() {
+        assert_eq!(
+            map_wsl_input_without_wslpath("Ubuntu", "/work/./app/").expect("native input"),
+            Some("/work/app".to_string())
+        );
+        assert_eq!(
+            map_wsl_input_without_wslpath("Ubuntu", r"\\wsl.localhost\Ubuntu\home\alice\项目",)
+                .expect("current distro UNC"),
+            Some("/home/alice/项目".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_inputs_require_wslpath_and_other_distro_unc_is_rejected() {
+        assert_eq!(
+            map_wsl_input_without_wslpath("Ubuntu", r"C:\Code\app").expect("drive input"),
+            None
+        );
+        assert_eq!(
+            map_wsl_input_without_wslpath("Ubuntu", r"\\server\share\app")
+                .expect("network UNC input"),
+            None
+        );
+        assert!(matches!(
+            map_wsl_input_without_wslpath(
+                "Ubuntu",
+                r"\\wsl.localhost\Debian\home\alice\app",
+            ),
+            Err(AppError::StorageMappingUnsupported {
+                environment: EnvironmentRef::Wsl { distro_name },
+                ..
+            }) if distro_name == "Ubuntu"
+        ));
+    }
+
+    #[test]
+    fn parses_only_versioned_wslpath_output() {
+        assert_eq!(
+            parse_wslpath_output(b"1\0/custom/c/Code/app\0").expect("wslpath output"),
+            "/custom/c/Code/app"
+        );
+        assert!(parse_wslpath_output(b"2\0/mnt/c/Code/app\0").is_err());
+        assert!(parse_wslpath_output(b"1\0").is_err());
     }
 }

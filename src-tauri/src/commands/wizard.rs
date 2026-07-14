@@ -1,7 +1,7 @@
 // src-tauri/src/commands/wizard.rs
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::environment::types::ContextRef;
+use crate::environment::types::{ContextRef, ContextScope};
 
 const INSTALL_WIZARD_WIDTH: f64 = 680.0;
 const INSTALL_WIZARD_HEIGHT: f64 = 560.0;
@@ -10,12 +10,15 @@ const INSTALL_WIZARD_MIN_HEIGHT: f64 = 480.0;
 
 fn build_wizard_query(
     entry_point: &str,
-    scope: &str,
+    context: &ContextRef,
     project_path: Option<&str>,
     prefill_source: Option<&str>,
     prefill_skill_name: Option<&str>,
-    context: Option<&ContextRef>,
 ) -> Result<String, crate::error::AppError> {
+    let scope = match context.scope {
+        ContextScope::Global => "global",
+        ContextScope::Project { .. } => "project",
+    };
     let mut query_parts = vec![
         format!("entryPoint={}", urlencoding::encode(entry_point)),
         format!("scope={}", urlencoding::encode(scope)),
@@ -29,10 +32,8 @@ fn build_wizard_query(
     if let Some(name) = prefill_skill_name {
         query_parts.push(format!("prefillSkillName={}", urlencoding::encode(name)));
     }
-    if let Some(context) = context {
-        let context_json = serde_json::to_string(context)?;
-        query_parts.push(format!("context={}", urlencoding::encode(&context_json)));
-    }
+    let context_json = serde_json::to_string(context)?;
+    query_parts.push(format!("context={}", urlencoding::encode(&context_json)));
     Ok(query_parts.join("&"))
 }
 
@@ -46,11 +47,10 @@ fn build_wizard_query(
 pub async fn open_install_wizard(
     app: AppHandle,
     entry_point: String,
-    scope: String,
+    context: ContextRef,
     project_path: Option<String>,
     prefill_source: Option<String>,
     prefill_skill_name: Option<String>,
-    context: Option<ContextRef>,
 ) -> Result<(), crate::error::AppError> {
     // 如果窗口已存在，聚焦并返回
     if let Some(window) = app.get_webview_window("install-wizard") {
@@ -62,11 +62,10 @@ pub async fn open_install_wizard(
 
     let query = build_wizard_query(
         &entry_point,
-        &scope,
+        &context,
         project_path.as_deref(),
         prefill_source.as_deref(),
         prefill_skill_name.as_deref(),
-        context.as_ref(),
     )?;
     let url = WebviewUrl::App(format!("/wizard?{}", query).into());
 
@@ -111,24 +110,39 @@ mod tests {
 
     #[test]
     fn wizard_query_keeps_explicit_context() {
+        let context = ContextRef {
+            environment: EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            },
+            scope: ContextScope::Project {
+                project_id: "project-1".to_string(),
+            },
+        };
         let query = build_wizard_query(
             "skills-panel",
-            "project",
+            &context,
             Some("/home/me/project"),
             None,
             None,
-            Some(&ContextRef {
-                environment: EnvironmentRef::Wsl {
-                    distro_name: "Ubuntu".to_string(),
-                },
-                scope: ContextScope::Project {
-                    project_id: "project-1".to_string(),
-                },
-            }),
         )
         .expect("build query");
 
         assert!(query.contains("context="));
+        assert!(query.contains("scope=project"));
         assert!(query.contains("projectPath=%2Fhome%2Fme%2Fproject"));
+    }
+
+    #[test]
+    fn wizard_query_derives_global_scope_from_context() {
+        let context = ContextRef {
+            environment: EnvironmentRef::Host,
+            scope: ContextScope::Global,
+        };
+
+        let query =
+            build_wizard_query("skills-panel", &context, None, None, None).expect("build query");
+
+        assert!(query.contains("scope=global"));
+        assert!(query.contains("context="));
     }
 }

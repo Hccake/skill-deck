@@ -11,7 +11,6 @@ use crate::core::skill::SkillFrontmatter;
 use crate::environment::agent_environment::{
     AgentEnvironmentContext, AgentEnvironmentResolver, AgentEnvironmentTarget,
 };
-use crate::environment::host::inspect_host_context;
 use crate::environment::types::{ContextRef, ContextScope, ProjectBinding, ResourceLocator};
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{decode_nul_records, run_wsl_script};
@@ -121,27 +120,13 @@ pub struct EnvironmentSnapshot {
     pub skills: Vec<SkillEntrySnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AcquireRequest {
-    Git { source: String },
-    HostArchive { bytes: Vec<u8> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyRequest {
-    pub context: ResolvedContext,
-    pub operation: String,
-}
-
 pub enum EnvironmentService {
-    Host,
     Wsl(WslSession),
 }
 
 impl EnvironmentService {
     pub async fn inspect(&self, request: &InspectRequest) -> Result<EnvironmentSnapshot, AppError> {
         match self {
-            Self::Host => inspect_host_context(request),
             Self::Wsl(session) => inspect_wsl_context(session, request).await,
         }
     }
@@ -487,7 +472,7 @@ mod tests {
     #[test]
     fn parses_versioned_wsl_inspect_records() {
         let snapshot = parse_wsl_inspect_output(
-            b"2\01\0skill\0-\0/home/alice/.agents/skills/toolkit\0---\nname: toolkit\ndescription: Toolkit\n---\n\0skill\0-\0/home/alice/.agents/skills/review\0---\nname: review\ndescription: Review\n---\n\0",
+            b"2\x001\0skill\0-\0/home/alice/.agents/skills/toolkit\0---\nname: toolkit\ndescription: Toolkit\n---\n\0skill\0-\0/home/alice/.agents/skills/review\0---\nname: review\ndescription: Review\n---\n\0",
             &[],
         )
         .expect("parse inspect output");
@@ -504,7 +489,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_wsl_inspect_protocol_version() {
-        assert!(parse_wsl_inspect_output(b"1\01\0skill\0-\0/path\0content\0", &[]).is_err());
+        assert!(parse_wsl_inspect_output(b"1\x001\0skill\0-\0/path\0content\0", &[]).is_err());
     }
 
     #[test]
@@ -529,7 +514,7 @@ mod tests {
                 detection_paths: vec!["/home/alice/.claude".to_string()],
             },
         ];
-        let bytes = b"2\01\0detected\0codex\01\0detected\0claude-code\00\0skill\0-\0/work/app/.agents/skills/toolkit\0---\nname: toolkit\ndescription: Shared toolkit\n---\nBody\0skill\0claude-code\0/work/app/.claude/skills/toolkit\0---\nname: toolkit\ndescription: Private toolkit\n---\nBody\0";
+        let bytes = b"2\x001\0detected\0codex\x001\0detected\0claude-code\x000\0skill\0-\0/work/app/.agents/skills/toolkit\0---\nname: toolkit\ndescription: Shared toolkit\n---\nBody\0skill\0claude-code\0/work/app/.claude/skills/toolkit\0---\nname: toolkit\ndescription: Private toolkit\n---\nBody\0";
 
         let snapshot = parse_wsl_inspect_output(bytes, &targets).expect("parse inspect output");
 
@@ -560,7 +545,7 @@ mod tests {
                 "/work/app/package.json".to_string(),
             ],
         }];
-        let bytes = b"2\01\0eve-package\0{\"devDependencies\":{\"eve\":\"^0.11.5\"}}\0";
+        let bytes = b"2\x001\0eve-package\0{\"devDependencies\":{\"eve\":\"^0.11.5\"}}\0";
 
         let snapshot = parse_wsl_inspect_output(bytes, &targets).expect("parse inspect output");
 
@@ -583,7 +568,7 @@ mod tests {
         }];
         let frontmatter = "---\nname: toolkit\ndescription: Toolkit\n---\n";
         let bytes = format!(
-            "2\01\0eve-package\0{{\"dependencies\":{{\"eve\":\"1\"}}}}\0skill\0eve:root\0/work/app/agent/skills/toolkit\0{frontmatter}\0skill\0eve:research\0/work/app/agent/subagents/research/skills/toolkit\0{frontmatter}\0"
+            "2\x001\0eve-package\0{{\"dependencies\":{{\"eve\":\"1\"}}}}\0skill\0eve:root\0/work/app/agent/skills/toolkit\0{frontmatter}\0skill\0eve:research\0/work/app/agent/subagents/research/skills/toolkit\0{frontmatter}\0"
         );
 
         let snapshot =
@@ -609,7 +594,7 @@ mod tests {
             default_available: false,
             detection_paths: Vec::new(),
         }];
-        let bytes = b"2\01\0detected\0eve\01\0skill\0eve:research\0/work/app/agent/subagents/research/skills/toolkit\0---\nname: toolkit\ndescription: Toolkit\n---\n\0";
+        let bytes = b"2\x001\0detected\0eve\x001\0skill\0eve:research\0/work/app/agent/subagents/research/skills/toolkit\0---\nname: toolkit\ndescription: Toolkit\n---\n\0";
 
         let snapshot = parse_wsl_inspect_output(bytes, &targets).expect("parse inspect output");
         let skill = &snapshot.skills[0];

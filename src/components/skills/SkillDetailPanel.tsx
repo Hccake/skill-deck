@@ -20,7 +20,7 @@ import {
   useSkillUpdateProgressListener,
 } from './update-progress';
 
-type SkillUpdateStatus = 'queued' | 'updating' | 'done' | 'failed';
+type SkillUpdateStatus = 'updating' | 'done' | 'failed';
 
 interface SkillDetailPanelProps {
   skill: InstalledSkill & {
@@ -142,7 +142,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     }, 800);
   }, [isCheckingUpdates, onCheckUpdates]);
 
-  const isUpdateInProgress = updateStatus === 'queued' || updateStatus === 'updating';
+  const isUpdateInProgress = updateStatus === 'updating';
   const showCheckDone = checkDone && !isCheckingUpdates && !skill.hasUpdate;
   const isDeletedUpstream = skill.updateStatus === 'deleted-upstream' || skill.updateReason === 'deleted-upstream';
   const showCannotCheckStatus = isDeletedUpstream
@@ -170,11 +170,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                   {skill.name}
                 </h2>
                 <div className="flex shrink-0 flex-wrap justify-end gap-1 pt-1">
-                  {updateStatus === 'queued' ? (
-                    <Badge variant="outline" className="h-8 px-2 text-xs text-muted-foreground">
-                      {t('skills.queued')}
-                    </Badge>
-                  ) : null}
                   {updateStatus === 'updating' ? (
                     <UpdatingStatusBadge skill={skill} projectPath={projectPath} />
                   ) : null}

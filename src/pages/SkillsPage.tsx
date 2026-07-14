@@ -1,18 +1,29 @@
 // src/pages/SkillsPage.tsx
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useGroupRef } from 'react-resizable-panels';
-import { useContextStore } from '@/stores/context';
-import { environmentKey, useEnvironmentStore } from '@/stores/environment';
-import { useSkillsDataStore } from '@/stores/skills-data';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
+import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { useProjectStore } from '@/stores/projects';
+import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { findSkillByIdentity, getSkillIdentityKey } from '@/lib/skills/identity';
 import { ContextSidebar, SkillsPanel, SkillDetailPanel } from '@/components/skills';
 import { ManageAgentsDialog } from '@/components/skills/ManageAgentsDialog';
 import { CopyToProjectDialog } from '@/components/skills/CopyToProjectDialog';
-import { checkSkillInProjects } from '@/hooks/useTauriApi';
+import { listSkills } from '@/hooks/useTauriApi';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import type { InstalledSkill, SkillScope } from '@/bindings';
+import type { ContextRef, InstalledSkill, SkillScope } from '@/bindings';
+
+const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
+  skills: [],
+  agents: [],
+  pathExists: true,
+  loading: false,
+  error: null,
+  requestId: 0,
+};
+const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 
 const SPLIT_VIEW_LAYOUT = {
   'skills-list-panel': 22,
@@ -24,15 +35,29 @@ const LIST_VIEW_LAYOUT = {
 } as const;
 
 export function SkillsPage() {
-  const selectedContext = useContextStore((s) => s.selectedContext);
-  const selectedContextRef = useContextStore((s) => s.selectedContextRef);
-  const hasExplicitContext = useContextStore((s) => s.hasExplicitContext);
-  const selectedContextKey = hasExplicitContext
-    ? JSON.stringify(selectedContextRef)
-    : selectedContext;
-
-  const globalSkills = useSkillsDataStore((s) => s.globalSkills);
-  const projectSkills = useSkillsDataStore((s) => s.projectSkills);
+  const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
+  const selectedContextKey = contextKey(selectedContext);
+  const selectedGlobalContext = globalContext(selectedContext.environment);
+  const globalContextKey = contextKey(selectedGlobalContext);
+  const projectContextKey = selectedContext.scope.scope === 'project'
+    ? selectedContextKey
+    : null;
+  const projects = useProjectStore((state) => (
+    state.projectsByEnvironment[environmentKey(selectedContext.environment)] ?? EMPTY_PROJECTS
+  ));
+  const selectedScope = selectedContext.scope;
+  const selectedProject = selectedScope.scope === 'project'
+    ? projects.find((project) => project.binding.id === selectedScope.project_id)
+    : null;
+  const selectedProjectPath = selectedProject?.binding.nativePath;
+  const globalSnapshot = useSkillsDataStore((state) => (
+    state.snapshots[globalContextKey] ?? EMPTY_SNAPSHOT
+  ));
+  const projectSnapshot = useSkillsDataStore((state) => (
+    projectContextKey ? state.snapshots[projectContextKey] ?? EMPTY_SNAPSHOT : EMPTY_SNAPSHOT
+  ));
+  const globalSkills = globalSnapshot.skills;
+  const projectSkills = projectSnapshot.skills;
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
   const skillContent = useSkillDetailStore((s) => s.skillContent);
   const loadingContent = useSkillDetailStore((s) => s.loadingContent);
@@ -44,7 +69,9 @@ export function SkillsPage() {
   const updatingSkills = useSkillsDataStore((s) => s.updatingSkills);
   const openDelete = useSkillDialogStore((s) => s.openDelete);
   const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
-  const allAgents = useSkillsDataStore((s) => s.allAgents);
+  const allAgents = selectedContext.scope.scope === 'project'
+    ? projectSnapshot.agents
+    : globalSnapshot.agents;
   const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
   const closeManageAgents = useSkillDialogStore((s) => s.closeManageAgents);
   const saveAgentChanges = useSkillDialogStore((s) => s.saveAgentChanges);
@@ -56,18 +83,38 @@ export function SkillsPage() {
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
   const closeCopyToProject = useSkillDialogStore((s) => s.closeCopyToProject);
   const executeCopy = useSkillDialogStore((s) => s.executeCopy);
-  const legacyProjects = useContextStore((s) => s.projects);
-  const projectsByEnvironment = useEnvironmentStore((s) => s.projectsByEnvironment);
-  const copyTargetProjects = hasExplicitContext
-    ? (projectsByEnvironment[environmentKey(selectedContextRef.environment)] ?? [])
-      .map((project) => project.nativePath)
-    : legacyProjects;
+  const copyTargetProjects = projects.map((project) => project.binding.nativePath);
+  const checkCopyTargetExistence = useCallback(async (
+    skillName: string,
+    projectPaths: string[],
+  ) => {
+    const projectsByPath = new Map(
+      projects.map((project) => [project.binding.nativePath, project]),
+    );
+    return Promise.all(projectPaths.map(async (projectPath) => {
+      const project = projectsByPath.get(projectPath);
+      if (!project) return { projectPath, hasSkill: false };
+      const context: ContextRef = {
+        environment: selectedContext.environment,
+        scope: { scope: 'project', project_id: project.binding.id },
+      };
+      try {
+        const result = await listSkills(context);
+        return {
+          projectPath,
+          hasSkill: result.skills.some((skill) => skill.name === skillName),
+        };
+      } catch {
+        return { projectPath, hasSkill: false };
+      }
+    }));
+  }, [projects, selectedContext.environment]);
   const layoutRef = useGroupRef();
   const previousContextRef = useRef(selectedContextKey);
 
   const selectedSkill = useMemo(
-    () => findSkillByIdentity(selectedSkillRef, globalSkills, projectSkills, selectedContext),
-    [globalSkills, projectSkills, selectedContext, selectedSkillRef]
+    () => findSkillByIdentity(selectedSkillRef, globalSkills, projectSkills, selectedProjectPath),
+    [globalSkills, projectSkills, selectedProjectPath, selectedSkillRef]
   );
   const previousSplitViewRef = useRef(Boolean(selectedSkill));
 
@@ -79,15 +126,8 @@ export function SkillsPage() {
     ? updatingSkills.get(getSkillIdentityKey(selectedSkillRef))
     : undefined;
   const selectedSkillCheckScope = selectedSkill?.scope === 'project'
-    ? (hasExplicitContext && selectedContextRef.scope.scope === 'project'
-      ? selectedContextKey
-      : selectedContext)
-    : (hasExplicitContext
-      ? JSON.stringify({
-        environment: selectedContextRef.environment,
-        scope: { scope: 'global' },
-      })
-      : 'global');
+    ? selectedContextKey
+    : globalContextKey;
   const isCheckingSelectedSkillUpdates = selectedSkill
     ? checkingUpdateScopes.has(selectedSkillCheckScope)
     : false;
@@ -102,37 +142,40 @@ export function SkillsPage() {
 
   const handleDetailDelete = useCallback((skill: InstalledSkill) => {
     if (skill.scope === 'project') {
-      openDelete(skill, 'project', selectedContext);
+      openDelete(skill, selectedContext, selectedProjectPath);
     } else {
-      openDelete(skill, 'global');
+      openDelete(skill, selectedGlobalContext);
     }
-  }, [openDelete, selectedContext]);
+  }, [openDelete, selectedContext, selectedGlobalContext, selectedProjectPath]);
 
   const handleDetailUpdate = useCallback((name: string, scope: SkillScope) => {
-    storeUpdateSkill(name, scope);
-  }, [storeUpdateSkill]);
+    const context = scope === 'project' ? selectedContext : selectedGlobalContext;
+    return storeUpdateSkill(context, name);
+  }, [selectedContext, selectedGlobalContext, storeUpdateSkill]);
 
   const handleManageAgents = useCallback((skill: InstalledSkill) => {
-    const scope = skill.scope;
-    openManageAgents(skill, scope);
-  }, [openManageAgents]);
+    const context = skill.scope === 'project' ? selectedContext : selectedGlobalContext;
+    openManageAgents(skill, context, selectedProjectPath);
+  }, [openManageAgents, selectedContext, selectedGlobalContext, selectedProjectPath]);
 
   const handleDetailCheckUpdates = useCallback(() => {
     if (!selectedSkill) return Promise.resolve(false);
-    return forceCheckUpdates(selectedSkill.scope);
-  }, [forceCheckUpdates, selectedSkill]);
+    return forceCheckUpdates(
+      selectedSkill.scope === 'project' ? selectedContext : selectedGlobalContext,
+    );
+  }, [forceCheckUpdates, selectedContext, selectedGlobalContext, selectedSkill]);
 
   const handleCopyToProject = useCallback((skill: InstalledSkill) => {
-    openCopyToProject(skill);
-  }, [openCopyToProject]);
+    openCopyToProject(skill, selectedContext);
+  }, [openCopyToProject, selectedContext]);
 
   const handleRepairSource = useCallback((skill: InstalledSkill) => {
     openRepairSource(
       skill,
-      skill.scope,
-      skill.scope === 'project' ? selectedContext : undefined
+      skill.scope === 'project' ? selectedContext : selectedGlobalContext,
+      skill.scope === 'project' ? selectedProjectPath : undefined
     );
-  }, [openRepairSource, selectedContext]);
+  }, [openRepairSource, selectedContext, selectedGlobalContext, selectedProjectPath]);
 
   useLayoutEffect(() => {
     const hasDetail = Boolean(selectedSkill);
@@ -210,7 +253,7 @@ export function SkillsPage() {
                   agentDisplayNames={agentDisplayNames}
                   updateStatus={selectedSkillUpdateStatus}
                   isCheckingUpdates={isCheckingSelectedSkillUpdates}
-                  projectPath={selectedSkill.scope === 'project' ? selectedContext : undefined}
+                  projectPath={selectedSkill.scope === 'project' ? selectedProjectPath : undefined}
                   onClose={deselectSkill}
                   onCheckUpdates={handleDetailCheckUpdates}
                   onUpdate={handleDetailUpdate}
@@ -241,11 +284,9 @@ export function SkillsPage() {
     {/* Copy to Project Dialog */}
     <CopyToProjectDialog
       skill={copySkill}
-      currentProjectPath={selectedContext}
+      currentProjectPath={selectedProjectPath ?? ''}
       projects={copyTargetProjects}
-      checkExistence={hasExplicitContext && selectedContextRef.environment.kind === 'wsl'
-        ? undefined
-        : checkSkillInProjects}
+      checkExistence={checkCopyTargetExistence}
       onClose={closeCopyToProject}
       onCopy={executeCopy}
     />

@@ -7,10 +7,9 @@ use crate::core::agents::AgentType;
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
 use crate::environment::agent_environment::{AgentEnvironmentContext, AgentEnvironmentResolver};
-use crate::environment::service::{
-    EnvironmentService, InspectRequest, ResolvedContext, SkillEntrySnapshot,
-};
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::context_resolver::ContextResolver;
+use crate::environment::service::{EnvironmentService, InspectRequest, SkillEntrySnapshot};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::environment::wsl_protocol::{decode_nul_records, run_wsl_script};
 use crate::error::AppError;
@@ -219,9 +218,7 @@ async fn inspect_wsl_private_symlinks(
 /// 查询 skill 的 agent 安装详情
 ///
 /// 对话框挂载时调用，返回自动应用/独立安装分组信息
-#[tauri::command]
-#[specta::specta]
-pub async fn get_skill_agent_details(
+pub async fn get_skill_agent_details_host(
     scope: Scope,
     name: String,
     project_path: Option<String>,
@@ -296,36 +293,33 @@ pub async fn get_skill_agent_details(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_skill_agent_details_v2(
+pub async fn get_skill_agent_details(
     context: ContextRef,
     name: String,
     registry: State<'_, EnvironmentRegistry>,
 ) -> Result<SkillAgentDetails, AppError> {
     match &context.environment {
         EnvironmentRef::Host => {
-            let (scope, project_path) = match &context.scope {
+            let resolved = ContextResolver::resolve_host(context)?;
+            let (scope, project_path) = match &resolved.context.scope {
                 ContextScope::Global => (Scope::Global, None),
-                ContextScope::Project { project_id } => (
+                ContextScope::Project { .. } => (
                     Scope::Project,
-                    Some(
-                        crate::commands::environments::host_projects_store()?
-                            .read()?
-                            .into_iter()
-                            .find(|project| &project.id == project_id)
-                            .ok_or_else(|| AppError::PathNotFound {
-                                path: project_id.clone(),
-                            })?
-                            .native_path,
-                    ),
+                    resolved.project.map(|project| project.native_path),
                 ),
             };
-            get_skill_agent_details(scope, name, project_path).await
+            get_skill_agent_details_host(scope, name, project_path).await
         }
         EnvironmentRef::Wsl { distro_name } => {
-            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
-                message: format!("WSL distro '{distro_name}' is not connected"),
-            })?;
-            get_wsl_skill_agent_details(context, name, session).await
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            registry
+                .with_session_retry(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    let name = name.clone();
+                    async move { get_wsl_skill_agent_details(context, name, session).await }
+                })
+                .await
         }
     }
 }
@@ -335,45 +329,18 @@ async fn get_wsl_skill_agent_details(
     name: String,
     session: WslSession,
 ) -> Result<SkillAgentDetails, AppError> {
-    let (scope, project) = match &context.scope {
-        ContextScope::Global => (Scope::Global, None),
-        ContextScope::Project { project_id } => (
-            Scope::Project,
-            Some(
-                crate::commands::environments::read_wsl_projects(&session)
-                    .await?
-                    .into_iter()
-                    .find(|project| &project.id == project_id)
-                    .ok_or_else(|| AppError::PathNotFound {
-                        path: project_id.clone(),
-                    })?,
-            ),
-        ),
+    let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+    let scope = match &resolved.context.scope {
+        ContextScope::Global => Scope::Global,
+        ContextScope::Project { .. } => Scope::Project,
     };
-    let project_path = project
+    let project_path = resolved
+        .project
         .as_ref()
         .map(|project| project.native_path.clone())
         .unwrap_or_else(|| session.home.clone());
-    let environment = context.environment.clone();
     let snapshot = EnvironmentService::Wsl(session.clone())
-        .inspect(&InspectRequest {
-            context: ResolvedContext {
-                context,
-                project,
-                home: ResourceLocator {
-                    environment: environment.clone(),
-                    native_path: session.home.clone(),
-                },
-                skill_root: ResourceLocator {
-                    environment: environment.clone(),
-                    native_path: format!("{}/.agents/skills", project_path.trim_end_matches('/')),
-                },
-                lock: ResourceLocator {
-                    environment,
-                    native_path: String::new(),
-                },
-            },
-        })
+        .inspect(&InspectRequest { context: resolved })
         .await?;
     let skill = snapshot
         .skills
@@ -497,8 +464,8 @@ mod tests {
 
     #[test]
     fn parses_wsl_private_symlink_flags() {
-        let agents =
-            parse_wsl_symlink_agents(b"1\0claude-code\01\0eve\00\0").expect("parse symlink flags");
+        let agents = parse_wsl_symlink_agents(b"1\0claude-code\x001\0eve\x000\0")
+            .expect("parse symlink flags");
 
         assert_eq!(agents, HashSet::from([AgentType::ClaudeCode]));
     }
@@ -517,9 +484,10 @@ mod tests {
             )
             .unwrap();
 
-            let details = get_skill_agent_details(Scope::Project, "demo".to_string(), Some(cwd))
-                .await
-                .unwrap();
+            let details =
+                get_skill_agent_details_host(Scope::Project, "demo".to_string(), Some(cwd))
+                    .await
+                    .unwrap();
 
             let target_ids: Vec<_> = details
                 .eve_targets

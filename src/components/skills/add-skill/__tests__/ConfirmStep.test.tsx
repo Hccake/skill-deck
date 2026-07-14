@@ -4,7 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { checkOverwrites, checkOverwritesV2, checkSkillAudit } from '@/hooks/useTauriApi';
+import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import { makeAgentScopeTarget } from '@/test-utils';
 import type { WizardState } from '../types';
 import { ConfirmStep } from '../ConfirmStep';
@@ -48,12 +48,10 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/hooks/useTauriApi', () => ({
   checkOverwrites: vi.fn().mockResolvedValue({}),
-  checkOverwritesV2: vi.fn().mockResolvedValue({}),
   checkSkillAudit: vi.fn().mockResolvedValue(null),
 }));
 
 const checkOverwritesMock = vi.mocked(checkOverwrites);
-const checkOverwritesV2Mock = vi.mocked(checkOverwritesV2);
 const checkSkillAuditMock = vi.mocked(checkSkillAudit);
 
 function deferred<T>() {
@@ -71,6 +69,7 @@ function createState(): WizardState {
     step: 'confirm',
     entryPoint: 'skills-panel',
     scope: 'global',
+    context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
     projectPath: undefined,
     source: 'openclaw/community-skills',
     fetchStatus: 'success',
@@ -126,8 +125,6 @@ describe('ConfirmStep', () => {
   beforeEach(() => {
     checkOverwritesMock.mockReset();
     checkOverwritesMock.mockResolvedValue({});
-    checkOverwritesV2Mock.mockReset();
-    checkOverwritesV2Mock.mockResolvedValue({});
     checkSkillAuditMock.mockReset();
     checkSkillAuditMock.mockResolvedValue(null);
   });
@@ -167,10 +164,9 @@ describe('ConfirmStep', () => {
       expect(updateState).toHaveBeenCalledWith({ overwrites: {}, confirmReady: true });
     });
     expect(checkOverwritesMock).toHaveBeenCalledWith(
+      createState().context,
       ['demo'],
       ['warp'],
-      'global',
-      undefined,
       [],
       [],
     );
@@ -186,21 +182,19 @@ describe('ConfirmStep', () => {
 
     render(
       <ConfirmStep
-        state={{ ...createState(), confirmReady: false }}
+        state={{ ...createState(), context, confirmReady: false }}
         updateState={updateState}
         scope="global"
-        context={context}
       />
     );
 
-    await waitFor(() => expect(checkOverwritesV2Mock).toHaveBeenCalledWith(
+    await waitFor(() => expect(checkOverwritesMock).toHaveBeenCalledWith(
       context,
       ['demo'],
       ['codex'],
       [],
       [],
     ));
-    expect(checkOverwritesMock).not.toHaveBeenCalled();
   });
 
   it('ignores stale overwrite results from an older confirmation request', async () => {
@@ -265,6 +259,10 @@ describe('ConfirmStep', () => {
         state={{
           ...createState(),
           scope: 'project',
+          context: {
+            environment: { kind: 'host' },
+            scope: { scope: 'project', project_id: 'eve-app' },
+          },
           projectPath: '/projects/eve-app',
           selectedAgents: ['eve'],
           selectedAgentTargets: [
@@ -304,6 +302,10 @@ describe('ConfirmStep', () => {
         state={{
           ...createState(),
           scope: 'project',
+          context: {
+            environment: { kind: 'host' },
+            scope: { scope: 'project', project_id: 'eve-app' },
+          },
           projectPath: '/projects/eve-app',
           selectedAgents: ['eve'],
           selectedAgentTargets: [{ agent: 'eve', subagent: 'research' }],
@@ -326,10 +328,12 @@ describe('ConfirmStep', () => {
       expect(updateState).toHaveBeenCalledWith({ overwrites: {}, confirmReady: true });
     });
     expect(checkOverwritesMock).toHaveBeenCalledWith(
+      {
+        environment: { kind: 'host' },
+        scope: { scope: 'project', project_id: 'eve-app' },
+      },
       ['demo'],
       [],
-      'project',
-      '/projects/eve-app',
       [],
       [{ agent: 'eve', subagent: 'research' }],
     );

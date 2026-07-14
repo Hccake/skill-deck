@@ -7,10 +7,12 @@
 //! GUI 增强：支持 full_removal（完全删除）和 agents 指定（部分移除）
 
 use crate::core::agents::AgentType;
-use crate::core::lossless_lock::LosslessLockDocument;
-use crate::core::mutation::{MutationKind, SingleMutationController};
+use crate::core::lock_repository::{LockMutationTargets, LockRepository, LockTarget};
+use crate::core::lossless_lock::LockSchema;
+use crate::core::mutation::{MutationKind, MutationPhase, SingleMutationController};
 use crate::core::uninstaller;
 use crate::environment::agent_environment::{AgentEnvironmentContext, AgentEnvironmentResolver};
+use crate::environment::context_resolver::ContextResolver;
 use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::service::{EnvironmentService, InspectRequest, ResolvedContext};
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
@@ -50,6 +52,7 @@ struct WslRemovePlan {
 }
 
 impl WslRemovePlan {
+    #[cfg(test)]
     fn ordered_paths(&self) -> Vec<&str> {
         self.agent_paths
             .iter()
@@ -129,30 +132,6 @@ pub(crate) async fn remove_wsl_paths(
 #[tauri::command]
 #[specta::specta]
 pub async fn remove_skill(
-    scope: Scope,
-    name: String,
-    project_path: Option<String>,
-    agents: Option<Vec<AgentType>>,
-    full_removal: Option<bool>,
-    agent_targets: Option<Vec<InstallTargetSpec>>,
-) -> Result<RemoveResult, AppError> {
-    let full = full_removal.unwrap_or(true);
-    let target_agents = agents;
-    let eve_targets = resolve_eve_targets(agent_targets.as_deref());
-
-    uninstaller::remove_skill(
-        &name,
-        &scope,
-        project_path.as_deref(),
-        full,
-        target_agents.as_deref(),
-        eve_targets.as_deref(),
-    )
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn remove_skill_v2(
     context: ContextRef,
     name: String,
     agents: Option<Vec<AgentType>>,
@@ -161,94 +140,172 @@ pub async fn remove_skill_v2(
     registry: State<'_, EnvironmentRegistry>,
     controller: State<'_, SingleMutationController>,
 ) -> Result<RemoveResult, AppError> {
-    let guard = controller.begin(MutationKind::Remove, context.clone(), "Preparing removal")?;
+    let guard = controller.begin(MutationKind::Remove, context.clone())?;
     let full = full_removal.unwrap_or(true);
     let eve_targets = resolve_eve_targets(agent_targets.as_deref());
     match &context.environment {
         EnvironmentRef::Host => {
-            let (scope, project_path) = resolve_host_remove_context(&context)?;
-            uninstaller::remove_skill(
+            let resolved = ContextResolver::resolve_host(context)?;
+            let (scope, project_path) = match resolved.context.scope {
+                ContextScope::Global => (Scope::Global, None),
+                ContextScope::Project { .. } => (
+                    Scope::Project,
+                    resolved.project.map(|project| project.native_path),
+                ),
+            };
+            let lock_repository = LockRepository::new(EnvironmentLockIo::Host);
+            let mut lock_transaction = if full {
+                Some(
+                    lock_repository
+                        .begin(
+                            host_remove_lock_target(&scope, project_path.as_deref())?,
+                            LockMutationTargets {
+                                entries: vec![name.clone()],
+                                default_target_agents: false,
+                            },
+                        )
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let (source, source_type) = lock_transaction
+                .as_ref()
+                .and_then(|transaction| transaction.initial_entry(&name))
+                .map(lock_entry_source)
+                .unwrap_or((None, None));
+            let mut result = uninstaller::remove_skill(
                 &name,
                 &scope,
                 project_path.as_deref(),
                 full,
                 agents.as_deref(),
                 eve_targets.as_deref(),
-            )
+            )?;
+            if full && result.success {
+                let transaction = lock_transaction
+                    .as_mut()
+                    .expect("full removal captured lock transaction");
+                transaction.remove_entry(&name)?;
+                guard.transition(MutationPhase::Committing, None, false);
+                lock_transaction
+                    .take()
+                    .expect("full removal captured lock transaction")
+                    .commit()
+                    .await?;
+                result.source = source;
+                result.source_type = source_type;
+            }
+            Ok(result)
         }
         EnvironmentRef::Wsl { distro_name } => {
-            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
-                message: format!("WSL distro '{distro_name}' is not connected"),
-            })?;
-            remove_skill_wsl_v2(
-                &context,
-                &session,
-                &name,
-                agents.as_deref(),
-                full,
-                eve_targets.as_deref(),
-                &guard,
-            )
-            .await
-        }
-    }
-}
-
-fn resolve_host_remove_context(context: &ContextRef) -> Result<(Scope, Option<String>), AppError> {
-    match &context.scope {
-        ContextScope::Global => Ok((Scope::Global, None)),
-        ContextScope::Project { project_id } => {
-            let project = crate::commands::environments::host_projects_store()?
-                .read()?
-                .into_iter()
-                .find(|project| &project.id == project_id)
-                .ok_or_else(|| AppError::PathNotFound {
-                    path: project_id.clone(),
-                })?;
-            Ok((Scope::Project, Some(project.native_path)))
-        }
-    }
-}
-
-pub(crate) fn wsl_remove_lock_locators(
-    context: &ContextRef,
-    session: &WslSession,
-    project_path: Option<&str>,
-) -> (ResourceLocator, Option<ResourceLocator>) {
-    match project_path {
-        Some(project_path) => (
-            ResourceLocator {
-                environment: context.environment.clone(),
-                native_path: format!("{}/skills-lock.json", project_path.trim_end_matches('/')),
-            },
-            Some(ResourceLocator {
-                environment: context.environment.clone(),
-                native_path: format!(
-                    "{}/.agents/.skill-lock.json",
-                    project_path.trim_end_matches('/')
-                ),
-            }),
-        ),
-        None => (
-            ResourceLocator {
-                environment: context.environment.clone(),
-                native_path: session
-                    .xdg_state_home
-                    .as_ref()
-                    .filter(|path| !path.trim().is_empty())
-                    .map(|path| format!("{}/skills/.skill-lock.json", path.trim_end_matches('/')))
-                    .unwrap_or_else(|| {
-                        format!(
-                            "{}/.agents/.skill-lock.json",
-                            session.home.trim_end_matches('/')
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            let guard = &guard;
+            registry
+                .with_session(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    let name = name.clone();
+                    let agents = agents.clone();
+                    let eve_targets = eve_targets.clone();
+                    async move {
+                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        remove_skill_wsl(
+                            resolved,
+                            &session,
+                            &name,
+                            agents.as_deref(),
+                            full,
+                            eve_targets.as_deref(),
+                            guard,
                         )
-                    }),
-            },
-            None,
-        ),
+                        .await
+                    }
+                })
+                .await
+        }
     }
 }
 
+fn host_remove_lock_target(
+    scope: &Scope,
+    project_path: Option<&str>,
+) -> Result<LockTarget, AppError> {
+    match scope {
+        Scope::Global => Ok(LockTarget {
+            primary: ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: crate::core::skill_lock::get_skill_lock_path()
+                    .to_string_lossy()
+                    .to_string(),
+            },
+            legacy: None,
+            schema: LockSchema::Global,
+        }),
+        Scope::Project => {
+            let project_path = project_path.ok_or_else(|| AppError::InvalidSource {
+                value: "Project path is required for project scope".to_string(),
+            })?;
+            let project_path = std::path::Path::new(project_path);
+            Ok(LockTarget {
+                primary: ResourceLocator {
+                    environment: EnvironmentRef::Host,
+                    native_path: project_path
+                        .join("skills-lock.json")
+                        .to_string_lossy()
+                        .to_string(),
+                },
+                legacy: Some(ResourceLocator {
+                    environment: EnvironmentRef::Host,
+                    native_path: project_path
+                        .join(".agents/.skill-lock.json")
+                        .to_string_lossy()
+                        .to_string(),
+                }),
+                schema: LockSchema::Project,
+            })
+        }
+    }
+}
+
+fn lock_entry_source(entry: &serde_json::Value) -> (Option<String>, Option<String>) {
+    (
+        entry
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        entry
+            .get("sourceType")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+    )
+}
+
+fn wsl_remove_resources(
+    context: &ResolvedContext,
+) -> (Scope, String, ResourceLocator, Option<ResourceLocator>) {
+    let (scope, root) = match &context.context.scope {
+        ContextScope::Global => (Scope::Global, context.home.native_path.clone()),
+        ContextScope::Project { .. } => (
+            Scope::Project,
+            context
+                .project
+                .as_ref()
+                .map(|project| project.native_path.clone())
+                .unwrap_or_else(|| context.home.native_path.clone()),
+        ),
+    };
+    let legacy = context.project.as_ref().map(|project| ResourceLocator {
+        environment: context.context.environment.clone(),
+        native_path: format!(
+            "{}/.agents/.skill-lock.json",
+            project.native_path.trim_end_matches('/')
+        ),
+    });
+    (scope, root, context.lock.clone(), legacy)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_wsl_remove_plan(
     session: &WslSession,
     scope: &Scope,
@@ -322,13 +379,14 @@ fn should_remove_wsl_canonical(
     selected_agents: Option<&[AgentType]>,
     linked_agents: &[AgentType],
 ) -> bool {
-    full && selected_agents
-        .is_none_or(|selected| linked_agents.iter().all(|agent| selected.contains(agent)))
+    full && selected_agents.map_or(true, |selected| {
+        linked_agents.iter().all(|agent| selected.contains(agent))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn remove_skill_wsl_v2(
-    context: &ContextRef,
+async fn remove_skill_wsl(
+    context: ResolvedContext,
     session: &WslSession,
     name: &str,
     agents: Option<&[AgentType]>,
@@ -336,58 +394,39 @@ async fn remove_skill_wsl_v2(
     eve_targets: Option<&[Option<String>]>,
     guard: &crate::core::mutation::MutationGuard<'_>,
 ) -> Result<RemoveResult, AppError> {
-    let (scope, project) = match &context.scope {
-        ContextScope::Global => (Scope::Global, None),
-        ContextScope::Project { project_id } => {
-            let project = crate::commands::environments::read_wsl_projects(session)
-                .await?
-                .into_iter()
-                .find(|project| &project.id == project_id)
-                .ok_or_else(|| AppError::PathNotFound {
-                    path: project_id.clone(),
-                })?;
-            (Scope::Project, Some(project))
-        }
+    let (scope, context_root, primary_lock, legacy_lock) = wsl_remove_resources(&context);
+    let lock_schema = match scope {
+        Scope::Global => LockSchema::Global,
+        Scope::Project => LockSchema::Project,
     };
-    let project_path = project.as_ref().map(|project| project.native_path.as_str());
-    let context_root = project_path.unwrap_or(session.home.as_str());
-    let io = EnvironmentLockIo::Wsl(session.clone());
-    let (primary_lock, legacy_lock) = wsl_remove_lock_locators(context, session, project_path);
-    let primary_bytes = io.read_optional(&primary_lock).await?;
-    let (lock_locator, initial_bytes) = match (primary_bytes, legacy_lock) {
-        (Some(bytes), _) => (primary_lock, bytes),
-        (None, Some(legacy)) => match io.read_optional(&legacy).await? {
-            Some(bytes) => (legacy, bytes),
-            None => (primary_lock, br#"{"skills":{}}"#.to_vec()),
-        },
-        (None, None) => (primary_lock, br#"{"skills":{}}"#.to_vec()),
+    let lock_repository = LockRepository::new(EnvironmentLockIo::Wsl(session.clone()));
+    let mut lock_transaction = if full {
+        Some(
+            lock_repository
+                .begin(
+                    LockTarget {
+                        primary: primary_lock,
+                        legacy: legacy_lock,
+                        schema: lock_schema,
+                    },
+                    LockMutationTargets {
+                        entries: vec![name.to_string()],
+                        default_target_agents: false,
+                    },
+                )
+                .await?,
+        )
+    } else {
+        None
     };
-    let initial_document = LosslessLockDocument::parse(&initial_bytes)?;
-    let initial_snapshot = initial_document.snapshot(name);
-    let initial_value: serde_json::Value = serde_json::from_slice(&initial_bytes)?;
-    let source = initial_value["skills"][name]["source"]
-        .as_str()
-        .map(str::to_string);
-    let source_type = initial_value["skills"][name]["sourceType"]
-        .as_str()
-        .map(str::to_string);
-    let canonical_root = format!("{}/.agents/skills", context_root.trim_end_matches('/'));
+    let (source, source_type) = lock_transaction
+        .as_ref()
+        .and_then(|transaction| transaction.initial_entry(name))
+        .map(lock_entry_source)
+        .unwrap_or((None, None));
+    let canonical_root = context.skill_root.native_path.clone();
     let snapshot = EnvironmentService::Wsl(session.clone())
-        .inspect(&InspectRequest {
-            context: ResolvedContext {
-                context: context.clone(),
-                project: project.clone(),
-                home: ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: session.home.clone(),
-                },
-                skill_root: ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: canonical_root.clone(),
-                },
-                lock: lock_locator.clone(),
-            },
-        })
+        .inspect(&InspectRequest { context })
         .await?
         .skills
         .into_iter()
@@ -413,7 +452,7 @@ async fn remove_skill_wsl_v2(
     let plan = build_wsl_remove_plan(
         session,
         &scope,
-        context_root,
+        &context_root,
         name,
         agents,
         full,
@@ -425,7 +464,7 @@ async fn remove_skill_wsl_v2(
             message: "Skill removal was cancelled".to_string(),
         });
     }
-    guard.set_cancelable(false);
+    guard.transition(MutationPhase::Materializing, None, false);
     let agent_results = remove_wsl_paths(session, &plan.agent_paths).await?;
     let failures: Vec<_> = agent_results
         .iter()
@@ -470,13 +509,15 @@ async fn remove_skill_wsl_v2(
         }
     }
     if full {
-        let latest_bytes = io
-            .read_optional(&lock_locator)
-            .await?
-            .unwrap_or_else(|| br#"{"skills":{}}"#.to_vec());
-        let mut latest_document = LosslessLockDocument::parse(&latest_bytes)?;
-        latest_document.remove_entry(name, &initial_snapshot)?;
-        io.write_atomic(&lock_locator, latest_document.to_pretty_bytes()?)
+        let transaction = lock_transaction
+            .as_mut()
+            .expect("full removal captured lock transaction");
+        transaction.remove_entry(name)?;
+        guard.transition(MutationPhase::Committing, None, false);
+        lock_transaction
+            .take()
+            .expect("full removal captured lock transaction")
+            .commit()
             .await?;
     }
     Ok(RemoveResult {
@@ -513,6 +554,50 @@ fn resolve_eve_targets(agent_targets: Option<&[InstallTargetSpec]>) -> Option<Ve
 #[cfg(test)]
 mod environment_tests {
     use super::*;
+
+    #[test]
+    fn wsl_remove_resources_keep_primary_and_project_legacy_locks() {
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        };
+        let project = crate::environment::types::ProjectBinding {
+            id: "app".to_string(),
+            native_path: "/work/app".to_string(),
+            display_name: None,
+            order: None,
+            suppress_cross_storage_warning: false,
+        };
+        let resolved = ResolvedContext {
+            context: ContextRef {
+                environment: environment.clone(),
+                scope: ContextScope::Project {
+                    project_id: project.id.clone(),
+                },
+            },
+            project: Some(project),
+            home: ResourceLocator {
+                environment: environment.clone(),
+                native_path: "/home/alice".to_string(),
+            },
+            skill_root: ResourceLocator {
+                environment: environment.clone(),
+                native_path: "/work/app/.agents/skills".to_string(),
+            },
+            lock: ResourceLocator {
+                environment,
+                native_path: "/work/app/skills-lock.json".to_string(),
+            },
+        };
+
+        let (_, root, primary, legacy) = wsl_remove_resources(&resolved);
+
+        assert_eq!(root, "/work/app");
+        assert_eq!(primary.native_path, "/work/app/skills-lock.json");
+        assert_eq!(
+            legacy.unwrap().native_path,
+            "/work/app/.agents/.skill-lock.json"
+        );
+    }
 
     #[test]
     fn wsl_remove_plan_orders_agent_paths_before_canonical() {

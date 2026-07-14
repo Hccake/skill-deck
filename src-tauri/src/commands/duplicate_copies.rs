@@ -2,10 +2,11 @@
 
 use crate::core::agent_availability::detect_agent_presence;
 use crate::core::agents::AgentType;
-use crate::core::mutation::{MutationGuard, MutationKind, SingleMutationController};
+use crate::core::mutation::{MutationGuard, MutationKind, MutationPhase, SingleMutationController};
 use crate::environment::agent_environment::{AgentEnvironmentContext, AgentEnvironmentResolver};
+use crate::environment::context_resolver::ContextResolver;
 use crate::environment::service::{EnvironmentService, InspectRequest, ResolvedContext};
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::error::AppError;
 use crate::models::{AgentSkillPresence, Scope};
@@ -25,76 +26,34 @@ pub struct DuplicateCleanupResult {
 
 #[tauri::command]
 #[specta::specta]
-pub fn cleanup_duplicate_agent_copy(
-    skill_name: String,
-    agent: AgentType,
-    scope: Scope,
-    project_path: Option<String>,
-) -> Result<DuplicateCleanupResult, AppError> {
-    cleanup_duplicate_agent_copy_inner(&skill_name, agent, &scope, project_path.as_deref())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn cleanup_duplicate_agent_copies(
-    skill_name: String,
-    scope: Scope,
-    project_path: Option<String>,
-    agents: Vec<AgentType>,
-) -> Result<Vec<DuplicateCleanupResult>, AppError> {
-    Ok(agents
-        .into_iter()
-        .map(|agent| {
-            cleanup_duplicate_agent_copy_inner(&skill_name, agent, &scope, project_path.as_deref())
-                .unwrap_or_else(|error| DuplicateCleanupResult {
-                    agent,
-                    success: false,
-                    skipped: false,
-                    path: String::new(),
-                    error: Some(error.to_string()),
-                })
-        })
-        .collect())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn cleanup_duplicate_agent_copy_v2(
+pub async fn cleanup_duplicate_agent_copy(
     context: ContextRef,
     skill_name: String,
     agent: AgentType,
     registry: State<'_, EnvironmentRegistry>,
     controller: State<'_, SingleMutationController>,
 ) -> Result<DuplicateCleanupResult, AppError> {
-    let guard = controller.begin(
-        MutationKind::DuplicateCleanup,
-        context.clone(),
-        "Preparing duplicate cleanup",
-    )?;
+    let guard = controller.begin(MutationKind::DuplicateCleanup, context.clone())?;
     let mut results =
-        cleanup_duplicate_agent_copies_v2_inner(&context, &skill_name, &[agent], &registry, &guard)
+        cleanup_duplicate_agent_copies_inner(&context, &skill_name, &[agent], &registry, &guard)
             .await?;
     Ok(results.pop().expect("one cleanup result"))
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn cleanup_duplicate_agent_copies_v2(
+pub async fn cleanup_duplicate_agent_copies(
     context: ContextRef,
     skill_name: String,
     agents: Vec<AgentType>,
     registry: State<'_, EnvironmentRegistry>,
     controller: State<'_, SingleMutationController>,
 ) -> Result<Vec<DuplicateCleanupResult>, AppError> {
-    let guard = controller.begin(
-        MutationKind::DuplicateCleanup,
-        context.clone(),
-        "Preparing duplicate cleanup",
-    )?;
-    cleanup_duplicate_agent_copies_v2_inner(&context, &skill_name, &agents, &registry, &guard).await
+    let guard = controller.begin(MutationKind::DuplicateCleanup, context.clone())?;
+    cleanup_duplicate_agent_copies_inner(&context, &skill_name, &agents, &registry, &guard).await
 }
 
-async fn cleanup_duplicate_agent_copies_v2_inner(
+async fn cleanup_duplicate_agent_copies_inner(
     context: &ContextRef,
     skill_name: &str,
     agents: &[AgentType],
@@ -103,18 +62,13 @@ async fn cleanup_duplicate_agent_copies_v2_inner(
 ) -> Result<Vec<DuplicateCleanupResult>, AppError> {
     match &context.environment {
         EnvironmentRef::Host => {
-            let (scope, project_path) = match &context.scope {
+            let resolved = ContextResolver::resolve_host(context.clone())?;
+            let (scope, project_path) = match &resolved.context.scope {
                 ContextScope::Global => (Scope::Global, None),
-                ContextScope::Project { project_id } => {
-                    let project = crate::commands::environments::host_projects_store()?
-                        .read()?
-                        .into_iter()
-                        .find(|project| &project.id == project_id)
-                        .ok_or_else(|| AppError::PathNotFound {
-                            path: project_id.clone(),
-                        })?;
-                    (Scope::Project, Some(project.native_path))
-                }
+                ContextScope::Project { .. } => (
+                    Scope::Project,
+                    resolved.project.map(|project| project.native_path),
+                ),
             };
             Ok(agents
                 .iter()
@@ -137,10 +91,28 @@ async fn cleanup_duplicate_agent_copies_v2_inner(
                 .collect())
         }
         EnvironmentRef::Wsl { distro_name } => {
-            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
-                message: format!("WSL distro '{distro_name}' is not connected"),
-            })?;
-            cleanup_duplicate_agent_copies_wsl(context, &session, skill_name, agents, guard).await
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            let skill_name = skill_name.to_string();
+            let agents = agents.to_vec();
+            registry
+                .with_session(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    let skill_name = skill_name.clone();
+                    let agents = agents.clone();
+                    async move {
+                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        cleanup_duplicate_agent_copies_wsl(
+                            resolved,
+                            &session,
+                            &skill_name,
+                            &agents,
+                            guard,
+                        )
+                        .await
+                    }
+                })
+                .await
         }
     }
 }
@@ -172,49 +144,16 @@ fn wsl_duplicate_skill_path(
 }
 
 async fn cleanup_duplicate_agent_copies_wsl(
-    context: &ContextRef,
+    context: ResolvedContext,
     session: &WslSession,
     skill_name: &str,
     agents: &[AgentType],
     guard: &MutationGuard<'_>,
 ) -> Result<Vec<DuplicateCleanupResult>, AppError> {
-    let (project, context_root) = match &context.scope {
-        ContextScope::Global => (None, session.home.clone()),
-        ContextScope::Project { project_id } => {
-            let project = crate::commands::environments::read_wsl_projects(session)
-                .await?
-                .into_iter()
-                .find(|project| &project.id == project_id)
-                .ok_or_else(|| AppError::PathNotFound {
-                    path: project_id.clone(),
-                })?;
-            let root = project.native_path.clone();
-            (Some(project), root)
-        }
-    };
-    let is_global = project.is_none();
-    let (lock, _) = crate::commands::remove::wsl_remove_lock_locators(
-        context,
-        session,
-        project.as_ref().map(|project| project.native_path.as_str()),
-    );
-    let canonical_root = format!("{}/.agents/skills", context_root.trim_end_matches('/'));
+    let context_root = context.context_root().to_string();
+    let is_global = context.project.is_none();
     let snapshot = EnvironmentService::Wsl(session.clone())
-        .inspect(&InspectRequest {
-            context: ResolvedContext {
-                context: context.clone(),
-                project,
-                home: ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: session.home.clone(),
-                },
-                skill_root: ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: canonical_root,
-                },
-                lock,
-            },
-        })
+        .inspect(&InspectRequest { context })
         .await?
         .skills
         .into_iter()
@@ -249,7 +188,7 @@ async fn cleanup_duplicate_agent_copies_wsl(
                 message: "Duplicate cleanup was cancelled".to_string(),
             });
         }
-        guard.set_cancelable(false);
+        guard.transition(MutationPhase::Materializing, None, false);
         let removal =
             crate::commands::remove::remove_wsl_paths(session, std::slice::from_ref(&path))
                 .await?
@@ -263,7 +202,6 @@ async fn cleanup_duplicate_agent_copies_wsl(
             path: removal.path,
             error: removal.error,
         });
-        guard.set_cancelable(true);
     }
     Ok(results)
 }
@@ -331,10 +269,10 @@ mod tests {
         std::fs::write(canonical.join("SKILL.md"), "---\nname: demo\n---\n").unwrap();
         std::fs::write(private.join("SKILL.md"), "---\nname: demo\n---\n").unwrap();
 
-        let result = cleanup_duplicate_agent_copy(
-            skill_name.clone(),
+        let result = cleanup_duplicate_agent_copy_inner(
+            &skill_name,
             AgentType::Firebender,
-            Scope::Global,
+            &Scope::Global,
             None,
         )
         .unwrap();

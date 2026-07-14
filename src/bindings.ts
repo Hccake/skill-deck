@@ -6,33 +6,9 @@
 
 
 export const commands = {
-/**
- * 列出所有 Agents（包括未安装的）
- * 返回完整信息供前端使用，前端无需额外计算
- * 对应前端调用: invoke('list_agents')
- */
-async listAgents() : Promise<Result<AgentInfo[], AppError>> {
+async listAgents(context: ContextRef) : Promise<Result<AgentInfo[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_agents") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * 按指定项目路径列出 Agents，供 project-only Agent 使用真实项目上下文检测。
- */
-async listAgentsForProject(projectPath: string | null) : Promise<Result<AgentInfo[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("list_agents_for_project", { projectPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async listAgentsForProjectV2(context: ContextRef) : Promise<Result<AgentInfo[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("list_agents_for_project_v2", { context }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_agents", { context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -41,29 +17,17 @@ async listAgentsForProjectV2(context: ContextRef) : Promise<Result<AgentInfo[], 
 /**
  * 列出指定项目内 Eve 可安装的具体目标：root agent 与已存在 subagents。
  */
-async listEveInstallTargets(projectPath: string) : Promise<Result<InstallTargetInfo[], AppError>> {
+async listEveInstallTargets(context: ContextRef) : Promise<Result<InstallTargetInfo[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_eve_install_targets", { projectPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_eve_install_targets", { context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 列出已安装的 skills
- * 对应前端调用: invoke('list_skills', { params })
- */
-async listSkills(params: ListSkillsParams) : Promise<Result<ListSkillsResult, AppError>> {
+async listSkills(context: ContextRef) : Promise<Result<ListSkillsResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_skills", { params }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async listSkillsV2(context: ContextRef) : Promise<Result<ListSkillsResult, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("list_skills_v2", { context }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_skills", { context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -72,9 +36,9 @@ async listSkillsV2(context: ContextRef) : Promise<Result<ListSkillsResult, AppEr
 /**
  * Read the markdown body of a skill's SKILL.md
  */
-async readSkillContent(canonicalPath: string) : Promise<Result<string, AppError>> {
+async readSkillContent(context: ContextRef, canonicalPath: string) : Promise<Result<string, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("read_skill_content", { canonicalPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("read_skill_content", { context, canonicalPath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -104,75 +68,21 @@ async saveConfig(config: SkillDeckConfig) : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 获取上次选择的 agents
- * 读取 ~/.agents/.skill-lock.json 中的 lastSelectedAgents
- */
-async getLastSelectedAgents() : Promise<string[]> {
-    return await TAURI_INVOKE("get_last_selected_agents");
-},
-/**
- * 获取 GUI scope-aware 默认安装目标
- */
-async getDefaultTargetAgents() : Promise<DefaultTargetAgents | null> {
-    return await TAURI_INVOKE("get_default_target_agents");
-},
-async getDefaultTargetAgentsV2(context: ContextRef) : Promise<Result<DefaultTargetAgents | null, AppError>> {
+async getDefaultTargetAgents(context: ContextRef) : Promise<Result<DefaultTargetAgents | null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_default_target_agents_v2", { context }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_default_target_agents", { context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 保存 GUI scope-aware 默认安装目标
- */
-async saveDefaultTargetAgents(defaults: DefaultTargetAgents) : Promise<Result<null, AppError>> {
+async saveDefaultTargetAgents(context: ContextRef, defaults: DefaultTargetAgents) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_default_target_agents", { defaults }) };
+    return { status: "ok", data: await TAURI_INVOKE("save_default_target_agents", { context, defaults }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
-},
-async saveDefaultTargetAgentsV2(context: ContextRef, defaults: DefaultTargetAgents) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_default_target_agents_v2", { context, defaults }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * 添加项目路径
- * 已存在则忽略，返回更新后的 projects 列表
- */
-async addProject(path: string) : Promise<Result<string[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("add_project", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * 移除项目路径
- * 返回更新后的 projects 列表
- */
-async removeProject(path: string) : Promise<Result<string[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_project", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * 检查项目路径是否存在
- */
-async checkProjectPath(path: string) : Promise<boolean> {
-    return await TAURI_INVOKE("check_project_path", { path });
 },
 /**
  * 在系统文件管理器中打开路径
@@ -185,51 +95,17 @@ async openInExplorer(path: string) : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 从来源获取可用的 skills 列表
- *
- * # Arguments
- * * `source` - 来源字符串（支持 9 种格式）
- *
- * # Returns
- * * `FetchResult` - 包含来源信息和可用 skills 列表
- */
-async fetchAvailable(source: string) : Promise<Result<FetchResult, AppError>> {
+async fetchAvailable(context: ContextRef, source: string) : Promise<Result<FetchResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fetch_available", { source }) };
+    return { status: "ok", data: await TAURI_INVOKE("fetch_available", { context, source }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async fetchAvailableV2(context: ContextRef, source: string) : Promise<Result<FetchResult, AppError>> {
+async installSkills(context: ContextRef, params: InstallParams) : Promise<Result<InstallResults, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fetch_available_v2", { context, source }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * 安装选中的 skills
- *
- * # Arguments
- * * `params` - 安装参数（来源、选中的 skills、agents、scope、mode）
- *
- * # Returns
- * * `InstallResults` - 安装结果汇总
- */
-async installSkills(params: InstallParams) : Promise<Result<InstallResults, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("install_skills", { params }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async installSkillsV2(context: ContextRef, params: InstallParams) : Promise<Result<InstallResults, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("install_skills_v2", { context, params }) };
+    return { status: "ok", data: await TAURI_INVOKE("install_skills", { context, params }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -247,17 +123,9 @@ async installSkillsV2(context: ContextRef, params: InstallParams) : Promise<Resu
  * # Returns
  * * `HashMap<String, Vec<String>>` - { skill_name: [agent_ids that will be overwritten] }
  */
-async checkOverwrites(skills: string[], agents: string[], privateCopyAgents: string[], scope: Scope, projectPath: string | null, agentTargets: InstallTargetSpec[]) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
+async checkOverwrites(context: ContextRef, skills: string[], agents: string[], privateCopyAgents: string[], agentTargets: InstallTargetSpec[]) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { skills, agents, privateCopyAgents, scope, projectPath, agentTargets }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async checkOverwritesV2(context: ContextRef, skills: string[], agents: string[], privateCopyAgents: string[], agentTargets: InstallTargetSpec[]) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("check_overwrites_v2", { context, skills, agents, privateCopyAgents, agentTargets }) };
+    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { context, skills, agents, privateCopyAgents, agentTargets }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -274,70 +142,33 @@ async checkOverwritesV2(context: ContextRef, skills: string[], agents: string[],
  * * `full_removal` - 是否完全删除（true = 删除一切，false = 仅删除指定 agents 的 symlink）
  * * `agent_targets` - 具体目标列表；目前用于 Eve root/subagent 删除
  */
-async removeSkill(scope: Scope, name: string, projectPath: string | null, agents: AgentType[] | null, fullRemoval: boolean | null, agentTargets: InstallTargetSpec[] | null) : Promise<Result<RemoveResult, AppError>> {
+async removeSkill(context: ContextRef, name: string, agents: AgentType[] | null, fullRemoval: boolean | null, agentTargets: InstallTargetSpec[] | null) : Promise<Result<RemoveResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { scope, name, projectPath, agents, fullRemoval, agentTargets }) };
+    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { context, name, agents, fullRemoval, agentTargets }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async removeSkillV2(context: ContextRef, name: string, agents: AgentType[] | null, fullRemoval: boolean | null, agentTargets: InstallTargetSpec[] | null) : Promise<Result<RemoveResult, AppError>> {
+async getSkillAgentDetails(context: ContextRef, name: string) : Promise<Result<SkillAgentDetails, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_skill_v2", { context, name, agents, fullRemoval, agentTargets }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_skill_agent_details", { context, name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 查询 skill 的 agent 安装详情
- *
- * 对话框挂载时调用，返回自动应用/独立安装分组信息
- */
-async getSkillAgentDetails(scope: Scope, name: string, projectPath: string | null) : Promise<Result<SkillAgentDetails, AppError>> {
+async cleanupDuplicateAgentCopy(context: ContextRef, skillName: string, agent: AgentType) : Promise<Result<DuplicateCleanupResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_skill_agent_details", { scope, name, projectPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copy", { context, skillName, agent }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async getSkillAgentDetailsV2(context: ContextRef, name: string) : Promise<Result<SkillAgentDetails, AppError>> {
+async cleanupDuplicateAgentCopies(context: ContextRef, skillName: string, agents: AgentType[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_skill_agent_details_v2", { context, name }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cleanupDuplicateAgentCopy(skillName: string, agent: AgentType, scope: Scope, projectPath: string | null) : Promise<Result<DuplicateCleanupResult, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copy", { skillName, agent, scope, projectPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cleanupDuplicateAgentCopies(skillName: string, scope: Scope, projectPath: string | null, agents: AgentType[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copies", { skillName, scope, projectPath, agents }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cleanupDuplicateAgentCopyV2(context: ContextRef, skillName: string, agent: AgentType) : Promise<Result<DuplicateCleanupResult, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copy_v2", { context, skillName, agent }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cleanupDuplicateAgentCopiesV2(context: ContextRef, skillName: string, agents: AgentType[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copies_v2", { context, skillName, agents }) };
+    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copies", { context, skillName, agents }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -352,17 +183,9 @@ async cleanupDuplicateAgentCopiesV2(context: ContextRef, skillName: string, agen
  * 3. 对可检查的来源按 source/ref 分组，目前 GitHub 走 Trees API
  * 4. 比对记录的版本 hash 与远端 hash
  */
-async checkUpdates(scope: Scope, projectPath: string | null) : Promise<Result<SkillUpdateInfo[], AppError>> {
+async checkUpdates(context: ContextRef) : Promise<Result<SkillUpdateInfo[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_updates", { scope, projectPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async checkUpdatesV2(context: ContextRef) : Promise<Result<SkillUpdateInfo[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("check_updates_v2", { context }) };
+    return { status: "ok", data: await TAURI_INVOKE("check_updates", { context }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -374,17 +197,9 @@ async checkUpdatesV2(context: ContextRef) : Promise<Result<SkillUpdateInfo[], Ap
  * 本质是"重新安装"：从 lock 文件读取来源信息，构造安装 URL，复用安装逻辑。
  * 与 CLI update 命令行为一致。
  */
-async updateSkill(scope: Scope, name: string, projectPath: string | null) : Promise<Result<UpdateSkillResponse, AppError>> {
+async updateSkill(context: ContextRef, name: string) : Promise<Result<UpdateSkillResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skill", { scope, name, projectPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateSkillV2(context: ContextRef, name: string) : Promise<Result<UpdateSkillResponse, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skill_v2", { context, name }) };
+    return { status: "ok", data: await TAURI_INVOKE("update_skill", { context, name }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -396,17 +211,9 @@ async updateSkillV2(context: ContextRef, name: string) : Promise<Result<UpdateSk
  * 按 source 分组，每组只 clone 一次仓库，然后从同一 clone 中安装所有该组的 skills。
  * 对于 N 个同源 skills，从 clone N 次降为 clone 1 次。
  */
-async updateSkillsBatch(scope: Scope, names: string[], projectPath: string | null) : Promise<Result<UpdateSkillResponse, AppError>> {
+async updateSkillsBatch(context: ContextRef, names: string[]) : Promise<Result<UpdateSkillResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skills_batch", { scope, names, projectPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateSkillsBatchV2(context: ContextRef, names: string[]) : Promise<Result<UpdateSkillResponse, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skills_batch_v2", { context, names }) };
+    return { status: "ok", data: await TAURI_INVOKE("update_skills_batch", { context, names }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -419,9 +226,9 @@ async updateSkillsBatchV2(context: ContextRef, names: string[]) : Promise<Result
  * 而 WebviewWindowBuilder::build() 也需要主线程，会导致死锁。
  * async command 在异步线程执行，build() 可以安全回调主线程。
  */
-async openInstallWizard(entryPoint: string, scope: string, projectPath: string | null, prefillSource: string | null, prefillSkillName: string | null, context: ContextRef | null) : Promise<Result<null, AppError>> {
+async openInstallWizard(entryPoint: string, context: ContextRef, projectPath: string | null, prefillSource: string | null, prefillSkillName: string | null) : Promise<Result<null, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("open_install_wizard", { entryPoint, scope, projectPath, prefillSource, prefillSkillName, context }) };
+    return { status: "ok", data: await TAURI_INVOKE("open_install_wizard", { entryPoint, context, projectPath, prefillSource, prefillSkillName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -438,123 +245,87 @@ async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 管理 skill 的 agent 支持（添加/移除）
- *
- * # Arguments
- * * `skill_name` - skill 名称
- * * `scope` - 安装范围
- * * `project_path` - Project scope 时的项目路径
- * * `add_agents` - 要添加的 agent 列表
- * * `remove_agents` - 要移除的 agent 列表
- * * `mode` - 添加 agent 时使用的安装模式
- */
-async manageSkillAgents(skillName: string, scope: Scope, projectPath: string | null, addAgents: AgentType[], removeAgents: AgentType[], privateCopyAgents: AgentType[], mode: InstallMode) : Promise<Result<ManageAgentsResult, AppError>> {
+async manageSkillAgents(context: ContextRef, skillName: string, addAgents: AgentType[], removeAgents: AgentType[], privateCopyAgents: AgentType[], mode: InstallMode) : Promise<Result<ManageAgentsResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents", { skillName, scope, projectPath, addAgents, removeAgents, privateCopyAgents, mode }) };
+    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents", { context, skillName, addAgents, removeAgents, privateCopyAgents, mode }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async manageSkillAgentsV2(context: ContextRef, skillName: string, addAgents: AgentType[], removeAgents: AgentType[], privateCopyAgents: AgentType[], mode: InstallMode) : Promise<Result<ManageAgentsResult, AppError>> {
+async copySkillToProjects(skillName: string, source: ContextRef, targets: ContextRef[], agents: string[], privateCopyAgents: string[]) : Promise<Result<CopySkillResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents_v2", { context, skillName, addAgents, removeAgents, privateCopyAgents, mode }) };
+    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects", { skillName, source, targets, agents, privateCopyAgents }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 复制项目级 skill 到其他项目
- *
- * # Arguments
- * * `skill_name` - skill 名称
- * * `source_project_path` - 源项目路径
- * * `target_project_paths` - 目标项目路径列表
- * * `agents` - 要安装的 agent 列表（与源 skill 相同）
- */
-async copySkillToProjects(skillName: string, sourceProjectPath: string, targetProjectPaths: string[], agents: string[], privateCopyAgents: string[]) : Promise<Result<CopySkillResult, AppError>> {
+async listEnvironments() : Promise<Result<EnvironmentDiscoverySnapshot, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects", { skillName, sourceProjectPath, targetProjectPaths, agents, privateCopyAgents }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_environments") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async copySkillToProjectsV2(skillName: string, source: ContextRef, targets: ContextRef[], agents: string[], privateCopyAgents: string[]) : Promise<Result<CopySkillResult, AppError>> {
+async connectEnvironment(distroName: string) : Promise<Result<WslSession, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects_v2", { skillName, source, targets, agents, privateCopyAgents }) };
+    return { status: "ok", data: await TAURI_INVOKE("connect_environment", { distroName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 检查 skill 在哪些项目中已存在
- *
- * 返回每个项目路径是否存在该 skill 的 canonical dir
- */
-async checkSkillInProjects(skillName: string, projectPaths: string[]) : Promise<ProjectSkillStatus[]> {
-    return await TAURI_INVOKE("check_skill_in_projects", { skillName, projectPaths });
-},
-async listEnvironmentsV2() : Promise<Result<EnvironmentInfo[], AppError>> {
+async mapEnvironmentPath(environment: EnvironmentRef, path: string) : Promise<Result<string, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_environments_v2") };
+    return { status: "ok", data: await TAURI_INVOKE("map_environment_path", { environment, path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async connectEnvironmentV2(distroName: string) : Promise<Result<WslSession, AppError>> {
+async listEnvironmentProjects(environment: EnvironmentRef) : Promise<Result<ProjectInfo[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("connect_environment_v2", { distroName }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_environment_projects", { environment }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async mapEnvironmentPathV2(environment: EnvironmentRef, path: string) : Promise<Result<string, AppError>> {
+async addEnvironmentProject(environment: EnvironmentRef, nativePath: string) : Promise<Result<AddProjectResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("map_environment_path_v2", { environment, path }) };
+    return { status: "ok", data: await TAURI_INVOKE("add_environment_project", { environment, nativePath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async listEnvironmentProjectsV2(environment: EnvironmentRef) : Promise<Result<ProjectBinding[], AppError>> {
+async removeEnvironmentProject(environment: EnvironmentRef, projectId: string) : Promise<Result<ProjectInfo[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_environment_projects_v2", { environment }) };
+    return { status: "ok", data: await TAURI_INVOKE("remove_environment_project", { environment, projectId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async addEnvironmentProjectV2(environment: EnvironmentRef, nativePath: string) : Promise<Result<ProjectBinding[], AppError>> {
+async setEnvironmentProjectCrossStorageWarning(environment: EnvironmentRef, projectId: string, suppressed: boolean) : Promise<Result<ProjectInfo, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_environment_project_v2", { environment, nativePath }) };
+    return { status: "ok", data: await TAURI_INVOKE("set_environment_project_cross_storage_warning", { environment, projectId, suppressed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async removeEnvironmentProjectV2(environment: EnvironmentRef, projectId: string) : Promise<Result<ProjectBinding[], AppError>> {
+async retryHostProjectMigration() : Promise<Result<ProjectInfo[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_environment_project_v2", { environment, projectId }) };
+    return { status: "ok", data: await TAURI_INVOKE("retry_host_project_migration") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async setEnvironmentProjectCrossStorageWarningV2(environment: EnvironmentRef, projectId: string, suppressed: boolean) : Promise<Result<ProjectBinding[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_environment_project_cross_storage_warning_v2", { environment, projectId, suppressed }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getActiveMutation() : Promise<ActiveMutation | null> {
+async getActiveMutation() : Promise<MutationSnapshot> {
     return await TAURI_INVOKE("get_active_mutation");
 },
 async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
@@ -570,6 +341,11 @@ async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
 /** user-defined events **/
 
 
+export const events = __makeEvents__<{
+environmentRuntimeEvent: EnvironmentRuntimeEvent
+}>({
+environmentRuntimeEvent: "environment-runtime-event"
+})
 
 /** user-defined constants **/
 
@@ -577,7 +353,8 @@ async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
 
 /** user-defined types **/
 
-export type ActiveMutation = { kind: MutationKind; context: ContextRef; statusText: string; cancelable: boolean }
+export type ActiveMutation = { id: string; kind: MutationKind; context: ContextRef; phase: MutationPhase; progress: MutationProgress | null; cancelable: boolean }
+export type AddProjectResult = { project: ProjectInfo; created: boolean }
 export type AgentAvailabilityKind = "shared-only" | "shared-compatible" | "private-required" | "unknown" | "unsupported"
 /**
  * Agent 信息（返回给前端）
@@ -614,7 +391,7 @@ export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
  */
-{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
+{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
 /**
  * 可用的 Skill 信息（fetch_available 返回）
  */
@@ -714,8 +491,10 @@ export type CopyUpdateMetadataStatus = "preserved" | "incomplete" | "missing"
  */
 export type DefaultTargetAgents = { global: string[]; project: string[] }
 export type DuplicateCleanupResult = { agent: AgentType; success: boolean; skipped: boolean; path: string; error: string | null }
+export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null }
 export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus }
 export type EnvironmentRef = { kind: "host" } | { kind: "wsl"; distro_name: string }
+export type EnvironmentRuntimeEvent = { environment: EnvironmentRef; status: EnvironmentStatus; error: AppError | null }
 export type EnvironmentStatus = "available" | "connecting" | "unavailable" | "error"
 /**
  * fetch_available 返回结果
@@ -983,18 +762,6 @@ privateOnlyAgents?: AgentType[] | null;
  */
 privateCopyAgents?: AgentType[] | null }
 /**
- * list_skills 参数
- */
-export type ListSkillsParams = {
-/**
- * 范围: "global" | "project" | null (返回全部)
- */
-scope: string | null;
-/**
- * 项目路径（用于 project scope）
- */
-projectPath: string | null }
-/**
  * list_skills 返回结果
  * 包含 skills 列表和路径存在性信息
  */
@@ -1003,6 +770,7 @@ export type ListSkillsResult = { skills: InstalledSkill[];
  * 项目目录是否存在（project scope 时有意义，global 始终为 true）
  */
 pathExists: boolean }
+export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
 /**
  * 单个 agent 添加操作结果
  */
@@ -1027,12 +795,13 @@ removed: string[];
  * 错误信息列表
  */
 errors: string[] }
-export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "saveAgentDefaults" | "batchUpdate"
+export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "saveAgentDefaults" | "batchUpdate" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference"
+export type MutationPhase = "preparing" | "acquiring" | "materializing" | "committing" | "finishing"
+export type MutationProgress = { subject: string | null; current: number | null; total: number | null }
+export type MutationSnapshot = { revision: number; active: ActiveMutation | null }
 export type ProjectBinding = { id: string; nativePath: string; displayName: string | null; order: number | null; suppressCrossStorageWarning?: boolean }
-/**
- * 项目中 skill 存在状态
- */
-export type ProjectSkillStatus = { projectPath: string; hasSkill: boolean }
+export type ProjectInfo = { binding: ProjectBinding; storage: ProjectStorageInfo }
+export type ProjectStorageInfo = { access: StorageAccess; owner: EnvironmentRef | null }
 /**
  * 单个 skill 的删除结果
  * 对应 CLI: remove.ts 第 148-195 行的 results 数组元素
@@ -1140,6 +909,7 @@ export type SkillScope = "global" | "project"
  */
 export type SkillUpdateCheckStatus = "update-available" | "up-to-date" | "cannot-check" | "deleted-upstream"
 export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; reason?: string | null; gitRef?: string | null; sourceUrl?: string | null; skillPath?: string | null }
+export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"
 /**
  * agent 级更新结果
  */

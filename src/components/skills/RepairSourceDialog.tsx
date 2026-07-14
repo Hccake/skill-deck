@@ -15,9 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import {
   fetchAvailable,
-  fetchAvailableV2,
   installSkills,
-  installSkillsV2,
 } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
@@ -69,7 +67,7 @@ export function RepairSourceDialog() {
   return (
     <Dialog open={Boolean(target)} onOpenChange={(open) => { if (!open) closeRepairSource(); }}>
       <RepairSourceDialogContent
-        key={`${JSON.stringify(target.context ?? null)}:${target.scope}:${target.projectPath ?? ''}:${target.skillName}`}
+        key={`${JSON.stringify(target.context)}:${target.scope}:${target.projectPath ?? ''}:${target.skillName}`}
         target={target}
       />
     </Dialog>
@@ -110,9 +108,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     setValidationOwner(owner);
     setValidateState('checking');
     try {
-      const result = target.context
-        ? await fetchAvailableV2(target.context, source.trim())
-        : await fetchAvailable(source.trim());
+      const result = await fetchAvailable(target.context, source.trim());
       const hasSkill = result.skills.some((skill) => skill.name === target.skillName);
       const nextRequiresRiskConfirmation = result.riskPolicy.kind === 'require-confirmation';
       setRequiresRiskConfirmation(nextRequiresRiskConfirmation);
@@ -157,9 +153,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         preserveExistingModes: true,
         acknowledgeRisk: validation.requiresRiskConfirmation ? riskAcknowledged : true,
       };
-      const results = target.context
-        ? await installSkillsV2(target.context, params)
-        : await installSkills(params);
+      const results = await installSkills(target.context, params);
       installCompleted = true;
       if (!didRepairInstallSucceed(results, target.skillName, expectedAgents)) {
         toast.error(appendCrossStorageFailureGuidance(
@@ -170,8 +164,8 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         ));
         return;
       }
-      markSourceRepairSucceeded(target.skillName, target.scope, target.projectPath);
-      await syncSkills();
+      markSourceRepairSucceeded(target.context, target.skillName);
+      await syncSkills(target.context);
       closeRepairSource();
     } catch (error) {
       console.error('[RepairSourceDialog] Failed to repair source:', error);

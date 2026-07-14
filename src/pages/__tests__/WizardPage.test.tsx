@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn().mockResolvedValue(undefined),
   requestClose: vi.fn().mockResolvedValue('performed'),
   emit: vi.fn().mockResolvedValue(undefined),
-  loadProjects: vi.fn().mockResolvedValue(undefined),
+  refreshProjects: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -49,11 +49,9 @@ vi.mock('@/components/layout/MutationInterruptionDialog', () => ({
   MutationInterruptionDialog: () => <div>wizard-close-protection-dialog</div>,
 }));
 
-vi.mock('@/stores/context', () => ({
-  useContextStore: () => ({
-    projectsLoaded: true,
-    loadProjects: mocks.loadProjects,
-  }),
+vi.mock('@/stores/projects', () => ({
+  useProjectStore: (selector: (state: { refresh: typeof mocks.refreshProjects }) => unknown) =>
+    selector({ refresh: mocks.refreshProjects }),
 }));
 
 vi.mock('@/components/skills/add-skill/StepIndicator', () => ({
@@ -124,6 +122,10 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     entryPoint: 'skills-panel',
     scope: 'global',
     projectPath: undefined,
+    context: {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    },
     source: 'openclaw/community-skills',
     fetchStatus: 'success',
     fetchError: null,
@@ -184,6 +186,13 @@ describe('parseWizardContext', () => {
   it('ignores malformed wizard context', () => {
     expect(parseWizardContext('{invalid')).toBeUndefined();
   });
+
+  it('rejects structurally incomplete wizard context', () => {
+    expect(parseWizardContext(JSON.stringify({
+      environment: { kind: 'wsl' },
+      scope: { scope: 'project' },
+    }))).toBeUndefined();
+  });
 });
 
 describe('WizardPage mutation guard', () => {
@@ -196,6 +205,25 @@ describe('WizardPage mutation guard', () => {
     });
   });
 
+  it('loads projects for the environment frozen in the wizard URL', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    };
+
+    render(
+      <MemoryRouter initialEntries={[
+        `/wizard?entryPoint=discovery&context=${encodeURIComponent(JSON.stringify(context))}`,
+      ]}>
+        <WizardPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(mocks.refreshProjects).toHaveBeenCalledWith(context.environment);
+    });
+  });
+
   it('disables starting installation while another mutation is active', async () => {
     useMutationStore.setState({
       activeMutation: {
@@ -204,7 +232,9 @@ describe('WizardPage mutation guard', () => {
           environment: { kind: 'host' },
           scope: { scope: 'global' },
         },
-        statusText: 'Updating toolkit',
+        id: 'mutation-1',
+        phase: 'preparing',
+        progress: null,
         cancelable: true,
       },
     });

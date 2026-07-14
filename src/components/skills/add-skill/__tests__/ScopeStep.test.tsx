@@ -1,13 +1,15 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ScopeStep } from '../ScopeStep';
 import type { WizardState } from '../types';
 
 const mocks = vi.hoisted(() => ({
-  listEnvironmentProjects: vi.fn(),
+  projectState: {
+    projectsByEnvironment: {} as Record<string, unknown[]>,
+  },
 }));
 
 vi.mock('react-i18next', () => ({
@@ -21,13 +23,9 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-vi.mock('@/stores/context', () => ({
-  useContextStore: (selector: (state: { projects: string[] }) => unknown) =>
-    selector({ projects: ['D:/Code/hccake/skill-deck'] }),
-}));
-
-vi.mock('@/hooks/useTauriApi', () => ({
-  listEnvironmentProjects: (...args: unknown[]) => mocks.listEnvironmentProjects(...args),
+vi.mock('@/stores/projects', () => ({
+  useProjectStore: (selector: (state: typeof mocks.projectState) => unknown) =>
+    selector(mocks.projectState),
 }));
 
 function createState(): WizardState {
@@ -36,6 +34,10 @@ function createState(): WizardState {
     entryPoint: 'skills-panel',
     scope: 'global',
     projectPath: undefined,
+    context: {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    },
     source: '',
     fetchStatus: 'idle',
     fetchError: null,
@@ -67,7 +69,7 @@ function createState(): WizardState {
 describe('ScopeStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.listEnvironmentProjects.mockResolvedValue([]);
+    mocks.projectState.projectsByEnvironment = {};
   });
 
   it('uses the normalized shared directory path in the global option', () => {
@@ -77,27 +79,30 @@ describe('ScopeStep', () => {
     expect(screen.queryByText('Global hint: ~/.agents/skills/')).toBeNull();
   });
 
-  it('loads projects from the explicit environment and updates the project ContextRef', async () => {
+  it('reads projects from the captured environment and updates the project ContextRef', () => {
     const state = createState();
     state.entryPoint = 'discovery';
     state.context = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
-    mocks.listEnvironmentProjects.mockResolvedValue([{
-      id: 'project-1',
-      nativePath: '/home/me/app',
-      displayName: null,
-      order: null,
-      suppressCrossStorageWarning: false,
-    }]);
+    mocks.projectState.projectsByEnvironment = { 'wsl:Ubuntu': [{
+      binding: {
+        id: 'project-1',
+        nativePath: '/home/me/app',
+        displayName: null,
+        order: null,
+        suppressCrossStorageWarning: false,
+      },
+      storage: {
+        access: 'native',
+        owner: { kind: 'wsl', distro_name: 'Ubuntu' },
+      },
+    }] };
     const updateState = vi.fn();
 
     render(<ScopeStep state={state} updateState={updateState} />);
 
-    await waitFor(() => expect(mocks.listEnvironmentProjects).toHaveBeenCalledWith(
-      { kind: 'wsl', distro_name: 'Ubuntu' },
-    ));
     fireEvent.click(screen.getByText('/home/me/app').closest('button')!);
 
     expect(updateState).toHaveBeenCalledWith({

@@ -47,6 +47,7 @@ const EXCLUDE_DIRS: &[&str] = &[".git", "__pycache__", "__pypackages__"];
 ///
 /// # Returns
 /// * `InstallResult` - 安装结果（成功或失败信息）
+#[cfg(test)]
 pub fn install_skill_for_agent(
     skill_path: &Path,
     skill_name: &str,
@@ -125,6 +126,7 @@ pub fn install_skill_for_agent(
 }
 
 /// Symlink 模式安装
+#[cfg(test)]
 fn install_with_symlink(
     skill_path: &Path,
     skill_name: &str,
@@ -203,6 +205,7 @@ fn symlink_canonical_to_agent_inner(
 }
 
 /// Copy 模式安装
+#[cfg(test)]
 fn install_with_copy(
     skill_path: &Path,
     skill_name: &str,
@@ -844,6 +847,7 @@ fn duration_ms(duration: std::time::Duration) -> u32 {
 /// Install a single skill to multiple agents, returning per-agent results.
 ///
 /// Shared core function used by both install and update commands.
+#[cfg(test)]
 pub fn install_skill_to_agents(
     skill_path: &Path,
     skill_name: &str,
@@ -882,6 +886,7 @@ pub fn install_skill_to_agents(
     results
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn install_skill_to_agent_groups(
     skill_path: &Path,
     skill_name: &str,

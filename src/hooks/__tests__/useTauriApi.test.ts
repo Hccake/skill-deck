@@ -5,21 +5,22 @@ const { mockCommands } = vi.hoisted(() => ({
   mockCommands: {
     listAgents: vi.fn(),
     listSkills: vi.fn(),
+    listEveInstallTargets: vi.fn(),
+    readSkillContent: vi.fn(),
     installSkills: vi.fn(),
-    installSkillsV2: vi.fn(),
     updateSkill: vi.fn(),
-    updateSkillV2: vi.fn(),
-    removeSkillV2: vi.fn(),
-    getSkillAgentDetailsV2: vi.fn(),
-    manageSkillAgentsV2: vi.fn(),
-    cleanupDuplicateAgentCopiesV2: vi.fn(),
-    copySkillToProjectsV2: vi.fn(),
-    saveDefaultTargetAgentsV2: vi.fn(),
-    checkOverwritesV2: vi.fn(),
-    checkUpdatesV2: vi.fn(),
-    updateSkillsBatchV2: vi.fn(),
-    mapEnvironmentPathV2: vi.fn(),
-    setEnvironmentProjectCrossStorageWarningV2: vi.fn(),
+    removeSkill: vi.fn(),
+    getSkillAgentDetails: vi.fn(),
+    manageSkillAgents: vi.fn(),
+    cleanupDuplicateAgentCopies: vi.fn(),
+    copySkillToProjects: vi.fn(),
+    saveDefaultTargetAgents: vi.fn(),
+    checkOverwrites: vi.fn(),
+    checkUpdates: vi.fn(),
+    updateSkillsBatch: vi.fn(),
+    mapEnvironmentPath: vi.fn(),
+    setEnvironmentProjectCrossStorageWarning: vi.fn(),
+    openInstallWizard: vi.fn(),
     getConfig: vi.fn(),
   },
 }));
@@ -30,14 +31,20 @@ vi.mock('@/bindings', () => ({
 
 import {
   installSkills,
-  installSkillsV2,
   listAgents,
+  listEveInstallTargets,
   listSkills,
   mapEnvironmentPath,
+  openInstallWizard,
+  readSkillContent,
   setEnvironmentProjectCrossStorageWarning,
   updateSkill,
-  updateSkillV2,
 } from '../useTauriApi';
+
+const context = {
+  environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+  scope: { scope: 'project', project_id: 'project-1' },
+} as const;
 
 describe('useTauriApi unwrap logic', () => {
   beforeEach(() => {
@@ -47,97 +54,39 @@ describe('useTauriApi unwrap logic', () => {
   it('unwraps successful Result<T, E> to T', async () => {
     const agents = [{ id: 'claude-code', name: 'Claude Code', detected: true }];
     mockCommands.listAgents.mockResolvedValue({ status: 'ok', data: agents });
-    const result = await listAgents();
+    const result = await listAgents(context);
     expect(result).toEqual(agents);
+    expect(mockCommands.listAgents).toHaveBeenCalledWith(context);
   });
 
   it('throws error from Result<T, E> when status is error', async () => {
     const appError = { kind: 'io', data: { message: 'file not found' } };
     mockCommands.listAgents.mockResolvedValue({ status: 'error', error: appError });
-    await expect(listAgents()).rejects.toEqual(appError);
+    await expect(listAgents(context)).rejects.toEqual(appError);
   });
 
-  it('passes parameters correctly through wrapper functions', async () => {
+  it('passes explicit context to listSkills', async () => {
     mockCommands.listSkills.mockResolvedValue({
       status: 'ok',
       data: { skills: [], pathExists: true },
     });
-    await listSkills({ scope: 'global' });
-    expect(mockCommands.listSkills).toHaveBeenCalledWith({
-      scope: 'global',
-      projectPath: null,
-    });
+    await listSkills(context);
+    expect(mockCommands.listSkills).toHaveBeenCalledWith(context);
   });
 
-  it('defaults optional params to null', async () => {
-    mockCommands.listSkills.mockResolvedValue({
-      status: 'ok',
-      data: { skills: [], pathExists: true },
-    });
-    await listSkills();
-    expect(mockCommands.listSkills).toHaveBeenCalledWith({
-      scope: null,
-      projectPath: null,
-    });
-  });
+  it('passes explicit context to context-sensitive read commands', async () => {
+    mockCommands.readSkillContent.mockResolvedValue({ status: 'ok', data: '# Toolkit' });
+    mockCommands.listEveInstallTargets.mockResolvedValue({ status: 'ok', data: [] });
 
-  it('passes projectPath when provided', async () => {
-    mockCommands.listSkills.mockResolvedValue({
-      status: 'ok',
-      data: { skills: [], pathExists: true },
-    });
-    await listSkills({ scope: 'project', projectPath: '/my/project' });
-    expect(mockCommands.listSkills).toHaveBeenCalledWith({
-      scope: 'project',
-      projectPath: '/my/project',
-    });
-  });
+    await expect(readSkillContent(context, '/work/app/.agents/skills/toolkit'))
+      .resolves.toBe('# Toolkit');
+    await expect(listEveInstallTargets(context)).resolves.toEqual([]);
 
-  it('passes retry flag to installSkills command', async () => {
-    mockCommands.installSkills.mockResolvedValue({
-      status: 'ok',
-      data: {
-        successful: [],
-        failed: [],
-        symlinkFallbackAgents: [],
-      },
-    });
-    await installSkills({
-      source: 'owner/repo',
-      skills: ['skill-a'],
-      agents: ['cursor'],
-      scope: 'global',
-      projectPath: null,
-      mode: 'symlink',
-      retry: true,
-    });
-    expect(mockCommands.installSkills).toHaveBeenCalledWith(
-      expect.objectContaining({ retry: true })
+    expect(mockCommands.readSkillContent).toHaveBeenCalledWith(
+      context,
+      '/work/app/.agents/skills/toolkit',
     );
-  });
-
-  it('passes explicit private copy agents to installSkills command', async () => {
-    mockCommands.installSkills.mockResolvedValue({
-      status: 'ok',
-      data: { successful: [], failed: [], symlinkFallbackAgents: [] },
-    });
-
-    await installSkills({
-      source: 'owner/repo',
-      skills: ['demo'],
-      agents: [],
-      privateCopyAgents: ['firebender'],
-      scope: 'global',
-      projectPath: null,
-      mode: 'copy',
-      retry: false,
-      preserveExistingModes: false,
-      acknowledgeRisk: false,
-    });
-
-    expect(mockCommands.installSkills).toHaveBeenCalledWith(
-      expect.objectContaining({ privateCopyAgents: ['firebender'] })
-    );
+    expect(mockCommands.listEveInstallTargets).toHaveBeenCalledWith(context);
   });
 
   it('unwraps updateSkill response with structured results', async () => {
@@ -155,21 +104,18 @@ describe('useTauriApi unwrap logic', () => {
       summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
     };
     mockCommands.updateSkill.mockResolvedValue({ status: 'ok', data: response });
-    const result = await updateSkill({ scope: 'global', name: 'test-skill' });
+    const result = await updateSkill(context, 'test-skill');
     expect(result).toEqual(response);
     expect(result.results[0].agentResults).toHaveLength(1);
+    expect(mockCommands.updateSkill).toHaveBeenCalledWith(context, 'test-skill');
   });
 
-  it('routes explicit context operations through v2 commands', async () => {
-    const context = {
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      scope: { scope: 'project', project_id: 'project-1' },
-    } as const;
+  it('routes explicit context operations through canonical commands', async () => {
     const response = { successful: [], failed: [], symlinkFallbackAgents: [] };
-    mockCommands.installSkillsV2.mockResolvedValue({ status: 'ok', data: response });
-    mockCommands.updateSkillV2.mockResolvedValue({ status: 'ok', data: { results: [], summary: {} } });
+    mockCommands.installSkills.mockResolvedValue({ status: 'ok', data: response });
+    mockCommands.updateSkill.mockResolvedValue({ status: 'ok', data: { results: [], summary: {} } });
 
-    await installSkillsV2(context, {
+    await installSkills(context, {
       source: 'owner/repo',
       skills: ['demo'],
       agents: [],
@@ -179,17 +125,17 @@ describe('useTauriApi unwrap logic', () => {
       mode: 'copy',
       retry: false,
     });
-    await updateSkillV2(context, 'demo');
+    await updateSkill(context, 'demo');
 
-    expect(mockCommands.installSkillsV2).toHaveBeenCalledWith(context, expect.objectContaining({
+    expect(mockCommands.installSkills).toHaveBeenCalledWith(context, expect.objectContaining({
       skills: ['demo'],
     }));
-    expect(mockCommands.updateSkillV2).toHaveBeenCalledWith(context, 'demo');
+    expect(mockCommands.updateSkill).toHaveBeenCalledWith(context, 'demo');
   });
 
   it('maps host picker paths through the selected environment', async () => {
     const environment = { kind: 'wsl', distro_name: 'Ubuntu' } as const;
-    mockCommands.mapEnvironmentPathV2.mockResolvedValue({
+    mockCommands.mapEnvironmentPath.mockResolvedValue({
       status: 'ok',
       data: '/home/me/app',
     });
@@ -198,7 +144,7 @@ describe('useTauriApi unwrap logic', () => {
       environment,
       '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
     )).resolves.toBe('/home/me/app');
-    expect(mockCommands.mapEnvironmentPathV2).toHaveBeenCalledWith(
+    expect(mockCommands.mapEnvironmentPath).toHaveBeenCalledWith(
       environment,
       '\\\\wsl.localhost\\Ubuntu\\home\\me\\app',
     );
@@ -206,17 +152,35 @@ describe('useTauriApi unwrap logic', () => {
 
   it('persists cross-storage warning suppression through the environment command', async () => {
     const environment = { kind: 'wsl', distro_name: 'Ubuntu' } as const;
-    mockCommands.setEnvironmentProjectCrossStorageWarningV2.mockResolvedValue({
+    mockCommands.setEnvironmentProjectCrossStorageWarning.mockResolvedValue({
       status: 'ok',
       data: [],
     });
 
     await setEnvironmentProjectCrossStorageWarning(environment, 'project-1', true);
 
-    expect(mockCommands.setEnvironmentProjectCrossStorageWarningV2).toHaveBeenCalledWith(
+    expect(mockCommands.setEnvironmentProjectCrossStorageWarning).toHaveBeenCalledWith(
       environment,
       'project-1',
       true,
+    );
+  });
+
+  it('opens the wizard with one required context identity', async () => {
+    mockCommands.openInstallWizard.mockResolvedValue({ status: 'ok', data: null });
+
+    await openInstallWizard({
+      entryPoint: 'skills-panel',
+      context,
+      projectPath: '/work/app',
+    });
+
+    expect(mockCommands.openInstallWizard).toHaveBeenCalledWith(
+      'skills-panel',
+      context,
+      '/work/app',
+      null,
+      null,
     );
   });
 });

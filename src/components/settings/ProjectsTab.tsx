@@ -1,25 +1,32 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOpen, Trash2, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
 import { EnvironmentSelect } from '@/components/environments/EnvironmentSelect';
-import { environmentKey, useEnvironmentStore } from '@/stores/environment';
-import { mapEnvironmentPath } from '@/hooks/useTauriApi';
-import type { EnvironmentRef, ProjectBinding } from '@/bindings';
+import { RemoveProjectDialog } from '@/components/projects/RemoveProjectDialog';
+import { useEnvironmentStore } from '@/stores/environment';
+import { useProjectStore } from '@/stores/projects';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
+import {
+  captureProjectRemoval,
+  type ProjectRemovalRequest,
+} from '@/stores/project-removal';
+import { environmentKey, sameEnvironment } from '@/lib/context';
+import type { ProjectInfo } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
 
 interface ProjectRowProps {
-  project: ProjectBinding;
-  onRemove: (projectId: string) => void;
+  project: ProjectInfo;
+  onRemove: (project: ProjectInfo) => void;
   writeBlocked: boolean;
 }
 
 function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
   const { t } = useTranslation();
-  const basename = project.displayName
-    ?? project.nativePath.split(/[/\\]/).pop()
-    ?? project.nativePath;
+  const basename = project.binding.displayName
+    ?? project.binding.nativePath.split(/[/\\]/).pop()
+    ?? project.binding.nativePath;
 
   return (
     <div className="group flex items-center justify-between px-4 py-3 my-0.5 mx-1.5 rounded-md transition-colors hover:bg-muted/30">
@@ -30,15 +37,15 @@ function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-semibold text-foreground truncate">{basename}</span>
           <span className="text-[10px] font-mono text-muted-foreground truncate opacity-80 mt-0.5">
-            {project.nativePath}
+            {project.binding.nativePath}
           </span>
         </div>
       </div>
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 cursor-pointer flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all"
-        onClick={() => onRemove(project.id)}
+        className="h-8 w-8 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 cursor-pointer flex-shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 transition-colors transition-opacity"
+        onClick={() => onRemove(project)}
         aria-label={t('settings.removeProject')}
         disabled={writeBlocked}
       >
@@ -51,40 +58,38 @@ function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
 export function ProjectsTab() {
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
-  const {
-    environments,
-    selectedEnvironment,
-    projectsByEnvironment,
-    projectsLoaded,
-    errors,
-    selectEnvironment,
-    refreshProjects,
-    addProject,
-    removeProject,
-  } = useEnvironmentStore();
-  const selectedKey = environmentKey(selectedEnvironment);
-  const projects = projectsByEnvironment[selectedKey] ?? [];
-  const isLoaded = projectsLoaded[selectedKey] ?? false;
-  const loadError = errors[selectedKey];
+  const environments = useEnvironmentStore((state) => state.environments);
+  const discoveryState = useEnvironmentStore((state) => state.discoveryState);
+  const discoveryError = useEnvironmentStore((state) => state.discoveryError);
+  const connectionErrors = useEnvironmentStore((state) => state.errorsByEnvironment);
+  const discover = useEnvironmentStore((state) => state.discover);
+  const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
+  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
+  const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
+  const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
+  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
+  const loadStateByEnvironment = useProjectStore((state) => state.loadStateByEnvironment);
+  const errorsByEnvironment = useProjectStore((state) => state.errorsByEnvironment);
+  const refresh = useProjectStore((state) => state.refresh);
+  const add = useProjectStore((state) => state.add);
+  const [removalRequest, setRemovalRequest] = useState<ProjectRemovalRequest | null>(null);
+  const environment = selectedContext.environment;
+  const key = environmentKey(environment);
+  const projects = projectsByEnvironment[key] ?? [];
+  const loadState = loadStateByEnvironment[key] ?? 'idle';
+  const loadError = errorsByEnvironment[key];
   const selectedStatus = environments.find(
-    (entry) => environmentKey(entry.environment) === selectedKey,
+    (entry) => sameEnvironment(entry.environment, environment),
   )?.status;
 
   useEffect(() => {
-    if (!isLoaded && !loadError && selectedStatus !== 'connecting') {
-      void refreshProjects(selectedEnvironment).catch(() => undefined);
+    if (loadState === 'idle' && !pendingEnvironment && selectedStatus === 'available') {
+      void refresh(environment).catch(() => undefined);
     }
-  }, [isLoaded, loadError, refreshProjects, selectedEnvironment, selectedKey, selectedStatus]);
+  }, [environment, loadState, pendingEnvironment, refresh, selectedStatus]);
 
-  const handleEnvironmentChange = async (environment: EnvironmentRef) => {
-    try {
-      await selectEnvironment(environment);
-    } catch (error) {
-      console.error('Failed to select environment:', error);
-    }
-  };
-
-  const handleAddProject = async () => {
+  const addProject = async () => {
+    const targetEnvironment = environment;
     try {
       const selected = await open({
         directory: true,
@@ -92,20 +97,9 @@ export function ProjectsTab() {
         title: t('settings.addProject'),
       });
       if (!selected || typeof selected !== 'string') return;
-      const nativePath = selectedEnvironment.kind === 'wsl'
-        ? await mapEnvironmentPath(selectedEnvironment, selected)
-        : selected;
-      await addProject(nativePath, selectedEnvironment);
+      await add(targetEnvironment, selected);
     } catch (error) {
       console.error('Failed to add project:', error);
-    }
-  };
-
-  const handleRemoveProject = async (projectId: string) => {
-    try {
-      await removeProject(projectId, selectedEnvironment);
-    } catch (error) {
-      console.error('Failed to remove project:', error);
     }
   };
 
@@ -116,16 +110,14 @@ export function ProjectsTab() {
           <h2 className="text-lg font-semibold tracking-tight text-foreground">
             {t('settings.projects')}
           </h2>
-          <p className="text-sm text-muted-foreground">
-            {t('settings.projectsHint')}
-          </p>
+          <p className="text-sm text-muted-foreground">{t('settings.projectsHint')}</p>
         </div>
         <Button
           size="sm"
           className="h-8 cursor-pointer gap-1.5 px-3 text-xs font-medium"
-          onClick={handleAddProject}
+          onClick={() => void addProject()}
           aria-label={t('settings.addProject')}
-          disabled={writeBlocked || selectedStatus === 'connecting' || selectedStatus === 'unavailable' || selectedStatus === 'error'}
+          disabled={writeBlocked || pendingEnvironment !== null || selectedStatus !== 'available'}
         >
           <Plus className="h-3.5 w-3.5" />
           {t('settings.addProject')}
@@ -134,8 +126,21 @@ export function ProjectsTab() {
 
       <EnvironmentSelect
         environments={environments}
-        value={selectedEnvironment}
-        onChange={handleEnvironmentChange}
+        value={environment}
+        onChange={(target) => void switchEnvironment(target).catch((error) => {
+          console.error('Failed to switch environment:', error);
+        })}
+        disabled={pendingEnvironment !== null}
+        discoveryState={discoveryState}
+        discoveryError={discoveryError}
+        connectionErrors={connectionErrors}
+        pendingEnvironment={pendingEnvironment}
+        onRetryDiscovery={() => discover().catch((error) => {
+          console.error('Failed to discover environments:', error);
+        })}
+        onRetryConnection={(target) => switchEnvironment(target).catch((error) => {
+          console.error('Failed to reconnect environment:', error);
+        })}
         className="h-9 w-full max-w-xs rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
       />
 
@@ -146,12 +151,12 @@ export function ProjectsTab() {
             <Button
               variant="link"
               size="sm"
-              onClick={() => void refreshProjects(selectedEnvironment).catch(() => undefined)}
+              onClick={() => void refresh(environment).catch(() => undefined)}
             >
               {t('context.environmentRetry')}
             </Button>
           </div>
-        ) : !isLoaded ? (
+        ) : loadState !== 'ready' ? (
           <div className="px-6 py-10 text-center text-sm text-muted-foreground">
             {t('common.loading')}
           </div>
@@ -160,9 +165,7 @@ export function ProjectsTab() {
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
               <FolderOpen className="h-5 w-5" />
             </div>
-            <p className="mb-1 text-sm font-medium text-foreground">
-              {t('settings.projectsEmpty')}
-            </p>
+            <p className="mb-1 text-sm font-medium text-foreground">{t('settings.projectsEmpty')}</p>
             <p className="max-w-[260px] text-xs leading-5 text-muted-foreground">
               {t('settings.projectsEmptyHint')}
             </p>
@@ -171,15 +174,21 @@ export function ProjectsTab() {
           <div className="divide-y divide-border/50">
             {projects.map((project) => (
               <ProjectRow
-                key={project.id}
+                key={project.binding.id}
                 project={project}
-                onRemove={(projectId) => void handleRemoveProject(projectId)}
+                onRemove={(target) => setRemovalRequest(captureProjectRemoval(
+                  environment,
+                  target,
+                  contextRevision,
+                ))}
                 writeBlocked={writeBlocked}
               />
             ))}
           </div>
         )}
       </section>
+
+      <RemoveProjectDialog request={removalRequest} onClose={() => setRemovalRequest(null)} />
     </div>
   );
 }

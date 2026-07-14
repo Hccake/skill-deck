@@ -3,13 +3,15 @@ import {
   getActiveMutation,
   requestCancelActiveMutation,
 } from '@/hooks/useTauriApi';
-import type { ActiveMutation } from '@/bindings';
+import type { ActiveMutation, MutationSnapshot } from '@/bindings';
 
 interface MutationState {
+  revision: number;
   activeMutation: ActiveMutation | null;
   loading: boolean;
   cancelling: boolean;
   refreshMutation: () => Promise<void>;
+  acceptSnapshot: (snapshot: MutationSnapshot) => void;
   cancelActiveMutation: () => Promise<boolean>;
   isWriteBlocked: () => boolean;
   canBrowse: () => boolean;
@@ -18,9 +20,21 @@ interface MutationState {
 let refreshPromise: Promise<void> | null = null;
 
 export const useMutationStore = create<MutationState>()((set, get) => ({
+  revision: 0,
   activeMutation: null,
   loading: false,
   cancelling: false,
+
+  acceptSnapshot: (snapshot) => {
+    set((state) => {
+      if (snapshot.revision <= state.revision) return state;
+      return {
+        revision: snapshot.revision,
+        activeMutation: snapshot.active,
+        cancelling: snapshot.active ? state.cancelling : false,
+      };
+    });
+  },
 
   refreshMutation: () => {
     if (refreshPromise) return refreshPromise;
@@ -28,11 +42,7 @@ export const useMutationStore = create<MutationState>()((set, get) => ({
     set({ loading: true });
     refreshPromise = (async () => {
       try {
-        const activeMutation = await getActiveMutation();
-        set({
-          activeMutation,
-          cancelling: activeMutation ? get().cancelling : false,
-        });
+        get().acceptSnapshot(await getActiveMutation());
       } finally {
         set({ loading: false });
         refreshPromise = null;

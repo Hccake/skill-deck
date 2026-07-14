@@ -5,12 +5,17 @@ use crate::core::agents::{AgentInfo, AgentTargets, AgentType};
 use crate::environment::agent_environment::{
     AgentEnvironmentContext, AgentEnvironmentResolver, AgentEnvironmentTarget,
 };
+use crate::environment::context_resolver::ContextResolver;
 use crate::environment::service::{EnvironmentService, InspectRequest, ResolvedContext};
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::types::{ContextRef, EnvironmentRef};
+#[cfg(test)]
+use crate::environment::types::{ContextScope, ResourceLocator};
 use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+use crate::environment::wsl_protocol::{decode_nul_records, run_wsl_script};
 use crate::error::AppError;
 use crate::models::InstallTargetInfo;
 use tauri::State;
+use tokio::time::Duration;
 
 fn agent_info_from_environment_targets(
     agent: AgentType,
@@ -42,23 +47,8 @@ fn agent_info_from_environment_targets(
     }
 }
 
-/// 列出所有 Agents（包括未安装的）
-/// 返回完整信息供前端使用，前端无需额外计算
-/// 对应前端调用: invoke('list_agents')
-#[tauri::command]
-#[specta::specta]
-pub fn list_agents() -> Result<Vec<AgentInfo>, AppError> {
-    let agents: Vec<AgentInfo> = AgentType::all()
-        .map(|agent| agent.to_agent_info())
-        .collect();
-
-    Ok(agents)
-}
-
 /// 按指定项目路径列出 Agents，供 project-only Agent 使用真实项目上下文检测。
-#[tauri::command]
-#[specta::specta]
-pub fn list_agents_for_project(project_path: Option<String>) -> Result<Vec<AgentInfo>, AppError> {
+pub fn list_agents_host(project_path: Option<String>) -> Result<Vec<AgentInfo>, AppError> {
     let cwd = project_path.unwrap_or_else(|| ".".to_string());
     let agents: Vec<AgentInfo> = AgentType::all()
         .map(|agent| agent.to_agent_info_for_project(&cwd))
@@ -69,32 +59,25 @@ pub fn list_agents_for_project(project_path: Option<String>) -> Result<Vec<Agent
 
 #[tauri::command]
 #[specta::specta]
-pub async fn list_agents_for_project_v2(
+pub async fn list_agents(
     context: ContextRef,
     registry: State<'_, EnvironmentRegistry>,
 ) -> Result<Vec<AgentInfo>, AppError> {
     match &context.environment {
         EnvironmentRef::Host => {
-            let project_path = match &context.scope {
-                ContextScope::Global => None,
-                ContextScope::Project { project_id } => Some(
-                    crate::commands::environments::host_projects_store()?
-                        .read()?
-                        .into_iter()
-                        .find(|project| &project.id == project_id)
-                        .ok_or_else(|| AppError::PathNotFound {
-                            path: project_id.clone(),
-                        })?
-                        .native_path,
-                ),
-            };
-            list_agents_for_project(project_path)
+            let resolved = ContextResolver::resolve_host(context)?;
+            let project_path = resolved.project.map(|project| project.native_path);
+            list_agents_host(project_path)
         }
         EnvironmentRef::Wsl { distro_name } => {
-            let session = registry.get(distro_name).ok_or_else(|| AppError::Custom {
-                message: format!("WSL distro '{distro_name}' is not connected"),
-            })?;
-            list_wsl_agents_for_context(context, session).await
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            registry
+                .with_session_retry(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    async move { list_wsl_agents_for_context(context, session).await }
+                })
+                .await
         }
     }
 }
@@ -103,43 +86,14 @@ async fn list_wsl_agents_for_context(
     context: ContextRef,
     session: WslSession,
 ) -> Result<Vec<AgentInfo>, AppError> {
-    let project = match &context.scope {
-        ContextScope::Global => None,
-        ContextScope::Project { project_id } => Some(
-            crate::commands::environments::read_wsl_projects(&session)
-                .await?
-                .into_iter()
-                .find(|project| &project.id == project_id)
-                .ok_or_else(|| AppError::PathNotFound {
-                    path: project_id.clone(),
-                })?,
-        ),
-    };
-    let project_path = project
+    let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+    let project_path = resolved
+        .project
         .as_ref()
         .map(|project| project.native_path.clone())
         .unwrap_or_else(|| session.home.clone());
-    let environment = context.environment.clone();
-    let skill_root = format!("{}/.agents/skills", project_path.trim_end_matches('/'));
     let snapshot = EnvironmentService::Wsl(session.clone())
-        .inspect(&InspectRequest {
-            context: ResolvedContext {
-                context,
-                project: project.clone(),
-                home: ResourceLocator {
-                    environment: environment.clone(),
-                    native_path: session.home.clone(),
-                },
-                skill_root: ResourceLocator {
-                    environment: environment.clone(),
-                    native_path: skill_root,
-                },
-                lock: ResourceLocator {
-                    environment,
-                    native_path: String::new(),
-                },
-            },
-        })
+        .inspect(&InspectRequest { context: resolved })
         .await?;
     let resolver = AgentEnvironmentResolver::new(AgentEnvironmentContext {
         home: session.home,
@@ -163,10 +117,114 @@ async fn list_wsl_agents_for_context(
 /// 列出指定项目内 Eve 可安装的具体目标：root agent 与已存在 subagents。
 #[tauri::command]
 #[specta::specta]
-pub fn list_eve_install_targets(project_path: String) -> Result<Vec<InstallTargetInfo>, AppError> {
+pub async fn list_eve_install_targets(
+    context: ContextRef,
+    registry: State<'_, EnvironmentRegistry>,
+) -> Result<Vec<InstallTargetInfo>, AppError> {
+    match &context.environment {
+        EnvironmentRef::Host => {
+            let resolved = ContextResolver::resolve_host(context)?;
+            list_host_eve_install_targets(&resolved)
+        }
+        EnvironmentRef::Wsl { distro_name } => {
+            let distro_name = distro_name.clone();
+            let retry_context = context.clone();
+            registry
+                .with_session_retry(&distro_name, move |session| {
+                    let context = retry_context.clone();
+                    async move {
+                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        list_wsl_eve_install_targets(&resolved, &session).await
+                    }
+                })
+                .await
+        }
+    }
+}
+
+fn list_host_eve_install_targets(
+    context: &ResolvedContext,
+) -> Result<Vec<InstallTargetInfo>, AppError> {
+    let Some(project) = &context.project else {
+        return Ok(Vec::new());
+    };
     Ok(crate::core::eve::eve_install_targets_for_project(
-        &project_path,
+        &project.native_path,
     ))
+}
+
+async fn list_wsl_eve_install_targets(
+    context: &ResolvedContext,
+    session: &WslSession,
+) -> Result<Vec<InstallTargetInfo>, AppError> {
+    let Some(project) = &context.project else {
+        return Ok(Vec::new());
+    };
+    const SCRIPT: &str = r#"
+project=$1
+if [ ! -d "$project/agent" ] || [ ! -f "$project/package.json" ]; then
+  printf '0\0'
+  exit 0
+fi
+printf '1\0'
+cat -- "$project/package.json"
+printf '\0'
+for dir in "$project/agent/subagents"/*; do
+  [ -d "$dir" ] || continue
+  printf '%s\0' "${dir##*/}"
+done
+"#;
+    let output = run_wsl_script(
+        session,
+        SCRIPT,
+        std::slice::from_ref(&project.native_path),
+        Vec::new(),
+        Duration::from_secs(10),
+    )
+    .await?;
+    let records = decode_nul_records(&output);
+    if records.first().map(String::as_str) != Some("1") {
+        return Ok(Vec::new());
+    }
+    let package: serde_json::Value = records
+        .get(1)
+        .ok_or_else(|| AppError::Custom {
+            message: "invalid WSL Eve project response".to_string(),
+        })
+        .and_then(|raw| Ok(serde_json::from_str(raw)?))?;
+    let has_eve = ["dependencies", "devDependencies"]
+        .into_iter()
+        .any(|section| {
+            package
+                .get(section)
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|dependencies| dependencies.contains_key("eve"))
+        });
+    if !has_eve {
+        return Ok(Vec::new());
+    }
+
+    let project_path = project.native_path.trim_end_matches('/');
+    let mut targets = vec![InstallTargetInfo {
+        target_id: crate::core::eve::eve_target_id(None),
+        agent: AgentType::Eve,
+        display_name: crate::core::eve::eve_target_label(None),
+        subagent: None,
+        path: format!("{project_path}/agent/skills"),
+    }];
+    let mut subagents = records.into_iter().skip(2).collect::<Vec<_>>();
+    subagents.sort();
+    targets.extend(subagents.into_iter().map(|subagent| {
+        let path_name = crate::core::skill::sanitize_name(&subagent);
+        InstallTargetInfo {
+            target_id: crate::core::eve::eve_target_id(Some(&subagent)),
+            agent: AgentType::Eve,
+            display_name: crate::core::eve::eve_target_label(Some(&subagent)),
+            subagent: Some(subagent),
+            path: format!("{project_path}/agent/subagents/{path_name}/skills"),
+        }
+    }));
+    Ok(targets)
 }
 
 #[cfg(test)]
@@ -177,6 +235,7 @@ mod tests {
     use crate::environment::agent_environment::{
         AgentEnvironmentContext, AgentEnvironmentResolver,
     };
+    use crate::environment::types::ProjectBinding;
 
     #[test]
     fn builds_agent_info_with_wsl_native_targets_and_detection() {
@@ -209,8 +268,7 @@ mod tests {
         )
         .unwrap();
 
-        let agents =
-            list_agents_for_project(Some(temp.path().to_string_lossy().to_string())).unwrap();
+        let agents = list_agents_host(Some(temp.path().to_string_lossy().to_string())).unwrap();
         let eve = agents
             .iter()
             .find(|agent| agent.id == AgentType::Eve)
@@ -230,10 +288,72 @@ mod tests {
         )
         .unwrap();
 
-        let targets = list_eve_install_targets(temp.path().to_string_lossy().to_string()).unwrap();
+        let project = ProjectBinding {
+            id: "eve-app".to_string(),
+            native_path: temp.path().to_string_lossy().to_string(),
+            display_name: None,
+            order: None,
+            suppress_cross_storage_warning: false,
+        };
+        let resolved = ResolvedContext {
+            context: ContextRef {
+                environment: EnvironmentRef::Host,
+                scope: ContextScope::Project {
+                    project_id: project.id.clone(),
+                },
+            },
+            project: Some(project),
+            home: ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: temp.path().to_string_lossy().to_string(),
+            },
+            skill_root: ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: temp
+                    .path()
+                    .join(".agents/skills")
+                    .to_string_lossy()
+                    .to_string(),
+            },
+            lock: ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: temp
+                    .path()
+                    .join("skills-lock.json")
+                    .to_string_lossy()
+                    .to_string(),
+            },
+        };
+
+        let targets = list_host_eve_install_targets(&resolved).unwrap();
 
         assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].target_id, "eve:root");
         assert_eq!(targets[1].target_id, "eve:research");
+    }
+
+    #[test]
+    fn list_eve_install_targets_returns_none_for_global_context() {
+        let resolved = ResolvedContext {
+            context: ContextRef {
+                environment: EnvironmentRef::Host,
+                scope: ContextScope::Global,
+            },
+            project: None,
+            home: ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: "/home/alice".to_string(),
+            },
+            skill_root: ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: "/home/alice/.agents/skills".to_string(),
+            },
+            lock: ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: "/home/alice/.agents/.skill-lock.json".to_string(),
+            },
+        };
+
+        assert!(list_host_eve_install_targets(&resolved).unwrap().is_empty());
     }
 }

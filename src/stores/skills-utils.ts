@@ -1,5 +1,6 @@
 // src/stores/skills-utils.ts
 import i18n from '@/i18n';
+import { contextKey } from '@/lib/context';
 import type {
   AgentType,
   ContextRef,
@@ -69,6 +70,20 @@ export function clearUpdateCacheForSkill(
   }
 }
 
+export function clearUpdateCacheForContextSkill(
+  skillName: string,
+  context: ContextRef,
+  options: { clearCannotCheck?: boolean } = {},
+) {
+  const cached = updateInfoCache.get(contextKey(context));
+  if (!cached) return;
+  cached.results = cached.results.map((result) =>
+    result.name === skillName && (result.hasUpdate || options.clearCannotCheck)
+      ? clearCachedUpdateResult(result)
+      : result
+  );
+}
+
 function clearCachedUpdateResult(result: SkillUpdateInfo): SkillUpdateInfo {
   if (result.status === 'deleted-upstream' || result.reason === 'deleted-upstream') {
     return result;
@@ -134,7 +149,7 @@ export interface DeleteTarget {
   skill: SkillListItem;
   scope: SkillScope;
   projectPath?: string;
-  context?: ContextRef;
+  context: ContextRef;
 }
 
 export interface AddDialogPrefill {
@@ -155,7 +170,7 @@ export interface RepairSourceDraft {
   defaultAvailableAgents?: AgentType[];
   privateAdaptedAgents?: AgentType[];
   privateCopyAgents?: AgentType[];
-  context?: ContextRef;
+  context: ContextRef;
 }
 
 export function getSkillOperationAgents(
@@ -234,12 +249,12 @@ export function createSkillRepairDraft(
     | 'privateAdaptedAgents'
     | 'privateCopyAgents'
   > & { gitRef?: string | null },
-  scope: SkillScope,
+  context: ContextRef,
   projectPath?: string,
-  context?: ContextRef,
 ): RepairSourceDraft | null {
   const source = buildRepairSource(skill);
   if (!source) return null;
+  const scope = context.scope.scope;
   const privateAdaptedAgents = skill.privateAdaptedAgents ?? skill.agents;
   const privateCopyAgents = skill.privateCopyAgents ?? [];
   return {

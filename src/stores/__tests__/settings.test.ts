@@ -1,318 +1,271 @@
-// src/stores/__tests__/settings.test.ts
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ActiveMutation, AgentInfo } from '@/bindings';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  ActiveMutation,
+  AgentInfo,
+  ContextRef,
+  DefaultTargetAgents,
+  EnvironmentRef,
+} from '@/bindings';
 import { makeAgentScopeTarget } from '@/test-utils';
 
-const mockGetLastSelectedAgents = vi.fn();
 const mockGetDefaultTargetAgents = vi.fn();
-const mockGetDefaultTargetAgentsV2 = vi.fn();
 const mockSaveDefaultTargetAgents = vi.fn();
-const mockSaveDefaultTargetAgentsV2 = vi.fn();
 const mockListAgents = vi.fn();
-const mockListAgentsForProjectV2 = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  getLastSelectedAgents: (...args: unknown[]) => mockGetLastSelectedAgents(...args),
   getDefaultTargetAgents: (...args: unknown[]) => mockGetDefaultTargetAgents(...args),
-  getDefaultTargetAgentsV2: (...args: unknown[]) => mockGetDefaultTargetAgentsV2(...args),
   saveDefaultTargetAgents: (...args: unknown[]) => mockSaveDefaultTargetAgents(...args),
-  saveDefaultTargetAgentsV2: (...args: unknown[]) => mockSaveDefaultTargetAgentsV2(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
-  listAgentsForProjectV2: (...args: unknown[]) => mockListAgentsForProjectV2(...args),
 }));
 
 import { useSettingsStore } from '../settings';
-import { useContextStore } from '../context';
 import { useMutationStore } from '../mutation';
+
+const host: EnvironmentRef = { kind: 'host' };
+const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
+const debian: EnvironmentRef = { kind: 'wsl', distro_name: 'Debian' };
 
 const activeMutation: ActiveMutation = {
   kind: 'install',
-  context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-  statusText: 'Installing',
-  cancelable: true,
+  context: { environment: host, scope: { scope: 'global' } },
+  id: 'mutation-1',
+  phase: 'preparing',
+  progress: null,
+  cancelable: false,
 };
+
+const agents: AgentInfo[] = [
+  {
+    id: 'antigravity',
+    name: 'Antigravity',
+    skillsDir: '.agents/skills',
+    globalSkillsDir: '~/.gemini/antigravity/skills',
+    detected: true,
+    targets: {
+      global: makeAgentScopeTarget({ automatic: false, path: '~/.gemini/antigravity/skills' }),
+      project: makeAgentScopeTarget({ automatic: true, path: '.agents/skills' }),
+    },
+  },
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    skillsDir: '.claude/skills',
+    globalSkillsDir: '~/.claude/skills',
+    detected: true,
+    targets: {
+      global: makeAgentScopeTarget({ automatic: false, path: '~/.claude/skills' }),
+      project: makeAgentScopeTarget({ automatic: false, path: '.claude/skills' }),
+    },
+  },
+];
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function readySnapshot(defaults: DefaultTargetAgents) {
+  return {
+    agents,
+    defaults,
+    loadState: 'ready' as const,
+    loadRequestId: 1,
+    saveRequestId: 0,
+    saving: false,
+    error: null,
+  };
+}
 
 describe('useSettingsStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockListAgents.mockResolvedValue(agents);
+    mockGetDefaultTargetAgents.mockResolvedValue(null);
     mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
-    mockSaveDefaultTargetAgentsV2.mockResolvedValue(undefined);
-    mockGetDefaultTargetAgentsV2.mockResolvedValue(null);
-    mockListAgentsForProjectV2.mockResolvedValue([]);
-    useContextStore.setState({
-      hasExplicitContext: false,
-      selectedContextRef: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-    });
-    useSettingsStore.setState({
-      defaultTargetAgents: { global: [], project: [] },
-      agentsLoaded: false,
-    });
+    useSettingsStore.setState({ agentDefaultsByEnvironment: {} });
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
-  describe('theme', () => {
-    it('toggles theme between light and dark', () => {
-      useSettingsStore.setState({ theme: 'light' });
-      useSettingsStore.getState().toggleTheme();
-      expect(useSettingsStore.getState().theme).toBe('dark');
+  it('updates theme and locale independently of environment snapshots', () => {
+    useSettingsStore.setState({ theme: 'light', locale: 'en' });
+    useSettingsStore.getState().toggleTheme();
+    useSettingsStore.getState().setLocale('zh-CN');
 
-      useSettingsStore.getState().toggleTheme();
-      expect(useSettingsStore.getState().theme).toBe('light');
+    expect(useSettingsStore.getState().theme).toBe('dark');
+    expect(useSettingsStore.getState().locale).toBe('zh-CN');
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment).toEqual({});
+  });
+
+  it('loads filtered persisted defaults without a hidden migration save', async () => {
+    mockGetDefaultTargetAgents.mockResolvedValue({
+      global: ['antigravity', 'claude-code'],
+      project: ['antigravity', 'claude-code'],
     });
 
-    it('sets specific theme', () => {
-      useSettingsStore.getState().setTheme('dark');
-      expect(useSettingsStore.getState().theme).toBe('dark');
+    await useSettingsStore.getState().loadAgentDefaults(host);
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.defaults).toEqual({
+      global: ['antigravity', 'claude-code'],
+      project: ['claude-code'],
+    });
+    expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
+  });
+
+  it('falls back to compatible CLI defaults when scoped defaults are absent', async () => {
+    await useSettingsStore.getState().loadAgentDefaults(host);
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.defaults).toEqual({
+      global: ['claude-code'],
+      project: ['claude-code'],
     });
   });
 
-  describe('locale', () => {
-    it('sets locale', () => {
-      useSettingsStore.getState().setLocale('zh-CN');
-      expect(useSettingsStore.getState().locale).toBe('zh-CN');
-    });
+  it('keeps Host and Ubuntu loads isolated when they resolve out of order', async () => {
+    const hostDefaults = deferred<DefaultTargetAgents | null>();
+    const ubuntuDefaults = deferred<DefaultTargetAgents | null>();
+    mockGetDefaultTargetAgents.mockImplementation((context: ContextRef) =>
+      context.environment.kind === 'host' ? hostDefaults.promise : ubuntuDefaults.promise);
+
+    const hostLoad = useSettingsStore.getState().loadAgentDefaults(host);
+    const ubuntuLoad = useSettingsStore.getState().loadAgentDefaults(ubuntu);
+    ubuntuDefaults.resolve({ global: ['claude-code'], project: [] });
+    await ubuntuLoad;
+    hostDefaults.resolve({ global: [], project: ['claude-code'] });
+    await hostLoad;
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.defaults)
+      .toEqual({ global: [], project: ['claude-code'] });
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].defaults)
+      .toEqual({ global: ['claude-code'], project: [] });
   });
 
-  describe('scope-aware defaults', () => {
-    const agents: AgentInfo[] = [
-      {
-        id: 'antigravity',
-        name: 'Antigravity',
-        skillsDir: '.agents/skills',
-        globalSkillsDir: '~/.gemini/antigravity/skills',
-        detected: true,
-        targets: {
-          global: makeAgentScopeTarget({
-            automatic: false,
-            path: '~/.gemini/antigravity/skills',
-          }),
-          project: makeAgentScopeTarget({
-            automatic: true,
-            path: '.agents/skills',
-            sharedPath: './.agents/skills',
-          }),
-        },
+  it('ignores an older load result for the same environment', async () => {
+    const first = deferred<DefaultTargetAgents | null>();
+    const second = deferred<DefaultTargetAgents | null>();
+    mockGetDefaultTargetAgents
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const firstLoad = useSettingsStore.getState().loadAgentDefaults(ubuntu);
+    const secondLoad = useSettingsStore.getState().loadAgentDefaults(ubuntu);
+    second.resolve({ global: ['claude-code'], project: [] });
+    await secondLoad;
+    first.resolve({ global: [], project: ['claude-code'] });
+    await firstLoad;
+
+    const snapshot = useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'];
+    expect(snapshot.defaults).toEqual({ global: ['claude-code'], project: [] });
+    expect(snapshot.loadRequestId).toBe(2);
+  });
+
+  it('stores a typed load error only for the failing environment', async () => {
+    mockListAgents.mockImplementation((context: ContextRef) =>
+      context.environment.kind === 'host'
+        ? Promise.reject(new Error('host unavailable'))
+        : Promise.resolve(agents));
+
+    await Promise.all([
+      useSettingsStore.getState().loadAgentDefaults(host),
+      useSettingsStore.getState().loadAgentDefaults(ubuntu),
+    ]);
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.loadState).toBe('error');
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.error?.kind).toBe('custom');
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].loadState)
+      .toBe('ready');
+  });
+
+  it('sets saving immediately and keeps the captured environment while another loads', async () => {
+    const save = deferred<void>();
+    mockSaveDefaultTargetAgents.mockReturnValue(save.promise);
+    useSettingsStore.setState({
+      agentDefaultsByEnvironment: {
+        'wsl:Ubuntu': readySnapshot({ global: [], project: [] }),
       },
-      {
-        id: 'claude-code',
-        name: 'Claude Code',
-        skillsDir: '.claude/skills',
-        globalSkillsDir: '~/.claude/skills',
-        detected: true,
-        targets: {
-          global: makeAgentScopeTarget({
-            automatic: false,
-            path: '~/.claude/skills',
-          }),
-          project: makeAgentScopeTarget({
-            automatic: false,
-            path: '.claude/skills',
-            sharedPath: './.agents/skills',
-          }),
-        },
-      },
-    ];
-
-    it('loads persisted defaultTargetAgents when available', async () => {
-      mockListAgents.mockResolvedValue(agents);
-      mockGetDefaultTargetAgents.mockResolvedValue({
-        global: ['antigravity', 'claude-code'],
-        project: ['antigravity', 'claude-code'],
-      });
-      mockGetLastSelectedAgents.mockResolvedValue(['ignored']);
-
-      await useSettingsStore.getState().loadDefaultTargetAgents();
-
-      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
-        global: ['antigravity', 'claude-code'],
-        project: ['claude-code'],
-      });
-      expect(useSettingsStore.getState().agentsLoaded).toBe(true);
-      expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith({
-        global: ['antigravity', 'claude-code'],
-        project: ['claude-code'],
-      });
     });
+    const defaults = { global: ['claude-code'], project: [] };
 
-    it('loads defaults and agents from the explicit environment', async () => {
-      const context = {
-        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-        scope: { scope: 'global' },
-      } as const;
-      useContextStore.setState({ hasExplicitContext: true, selectedContextRef: context });
-      mockListAgentsForProjectV2.mockResolvedValue(agents);
-      mockGetDefaultTargetAgentsV2.mockResolvedValue({
-        global: ['claude-code'],
-        project: ['claude-code'],
-      });
+    const pendingSave = useSettingsStore.getState().saveAgentDefaults(ubuntu, defaults);
+    void useSettingsStore.getState().loadAgentDefaults(debian);
 
-      await useSettingsStore.getState().loadDefaultTargetAgents();
-
-      expect(mockListAgentsForProjectV2).toHaveBeenCalledWith(context);
-      expect(mockGetDefaultTargetAgentsV2).toHaveBeenCalledWith(context);
-      expect(mockListAgents).not.toHaveBeenCalled();
-      expect(mockGetDefaultTargetAgents).not.toHaveBeenCalled();
-      expect(mockGetLastSelectedAgents).not.toHaveBeenCalled();
-    });
-
-    it('migrates lastSelectedAgents independently per scope', async () => {
-      mockListAgents.mockResolvedValue(agents);
-      mockGetDefaultTargetAgents.mockResolvedValue(null);
-      mockGetLastSelectedAgents.mockResolvedValue(['antigravity', 'claude-code']);
-
-      await useSettingsStore.getState().loadDefaultTargetAgents();
-
-      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
-        global: ['antigravity', 'claude-code'],
-        project: ['claude-code'],
-      });
-    });
-
-    it('falls back to lastSelectedAgents when scoped defaults fail to load', async () => {
-      mockListAgents.mockResolvedValue(agents);
-      mockGetDefaultTargetAgents.mockRejectedValue(new Error('read failed'));
-      mockGetLastSelectedAgents.mockResolvedValue(['antigravity', 'claude-code']);
-
-      await useSettingsStore.getState().loadDefaultTargetAgents();
-
-      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
-        global: ['antigravity', 'claude-code'],
-        project: ['claude-code'],
-      });
-    });
-
-    it('starts default target requests without waiting for agents to finish loading', async () => {
-      let resolveAgents!: (value: AgentInfo[]) => void;
-      mockListAgents.mockReturnValue(new Promise<AgentInfo[]>((resolve) => {
-        resolveAgents = resolve;
-      }));
-      mockGetDefaultTargetAgents.mockResolvedValue({
-        global: ['claude-code'],
-        project: ['claude-code'],
-      });
-      mockGetLastSelectedAgents.mockResolvedValue([]);
-
-      const loadPromise = useSettingsStore.getState().loadDefaultTargetAgents();
-
-      await Promise.resolve();
-
-      expect(mockListAgents).toHaveBeenCalledTimes(1);
-      expect(mockGetDefaultTargetAgents).toHaveBeenCalledTimes(1);
-      expect(mockGetLastSelectedAgents).toHaveBeenCalledTimes(1);
-
-      resolveAgents(agents);
-      await loadPromise;
-    });
-
-    it('saves one scope without losing the other scope', () => {
-      mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
-      useSettingsStore.setState({
-        allAgents: agents,
-        defaultTargetAgents: {
-          global: ['antigravity'],
-          project: ['claude-code'],
-        },
-      });
-
-      useSettingsStore.getState().setDefaultTargetAgents('global', ['claude-code']);
-
-      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
-        global: ['claude-code'],
-        project: ['claude-code'],
-      });
-      expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith({
-        global: ['claude-code'],
-        project: ['claude-code'],
-      });
-    });
-
-    it('keeps defaults unchanged while another mutation is active', () => {
-      useSettingsStore.setState({
-        allAgents: agents,
-        defaultTargetAgents: {
-          global: ['antigravity'],
-          project: ['claude-code'],
-        },
-      });
-      useMutationStore.setState({ activeMutation });
-
-      useSettingsStore.getState().setDefaultTargetAgents('global', ['claude-code']);
-
-      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
-        global: ['antigravity'],
-        project: ['claude-code'],
-      });
-      expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
-    });
-
-    it('saves defaults to the selected explicit environment', () => {
-      useSettingsStore.setState({
-        allAgents: agents,
-        defaultTargetAgents: { global: ['antigravity'], project: ['claude-code'] },
-      });
-      useContextStore.setState({
-        hasExplicitContext: true,
-        selectedContextRef: {
-          environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-          scope: { scope: 'project', project_id: 'project-1' },
-        },
-      });
-
-      useSettingsStore.getState().setDefaultTargetAgents('global', ['claude-code']);
-
-      expect(mockSaveDefaultTargetAgentsV2).toHaveBeenCalledWith(
-        {
-          environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-          scope: { scope: 'global' },
-        },
-        { global: ['claude-code'], project: ['claude-code'] },
-      );
-      expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
-    });
-
-    it('filters default-available agents out of persisted scoped defaults', async () => {
-      const scopedAgents: AgentInfo[] = [
-        ...agents,
-        {
-          id: 'firebender',
-          name: 'Firebender',
-          skillsDir: '.agents/skills',
-          globalSkillsDir: '~/.firebender/skills',
-          detected: true,
-          targets: {
-            global: makeAgentScopeTarget({
-              automatic: true,
-              availability: 'shared-compatible',
-              defaultAvailable: true,
-              path: '~/.agents/skills',
-              privatePath: '~/.firebender/skills',
-            }),
-            project: makeAgentScopeTarget({
-              automatic: true,
-              path: '.agents/skills',
-              sharedPath: './.agents/skills',
-            }),
-          },
-        },
-      ];
-      mockListAgents.mockResolvedValue(scopedAgents);
-      mockGetDefaultTargetAgents.mockResolvedValue({
-        global: ['firebender', 'claude-code'],
-        project: ['firebender', 'claude-code'],
-      });
-      mockGetLastSelectedAgents.mockResolvedValue([]);
-
-      await useSettingsStore.getState().loadDefaultTargetAgents();
-
-      expect(useSettingsStore.getState().defaultTargetAgents).toEqual({
-        global: ['claude-code'],
-        project: ['claude-code'],
-      });
-      expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith({
-        global: ['claude-code'],
-        project: ['claude-code'],
-      });
-    });
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].saving).toBe(true);
+    expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith(
+      { environment: ubuntu, scope: { scope: 'global' } },
+      defaults,
+    );
+    save.resolve();
+    await pendingSave;
   });
 
+  it('rolls back only the failed environment', async () => {
+    mockSaveDefaultTargetAgents.mockRejectedValue(new Error('save failed'));
+    const ubuntuDefaults = { global: [], project: ['claude-code'] };
+    const debianDefaults = { global: ['claude-code'], project: [] };
+    useSettingsStore.setState({
+      agentDefaultsByEnvironment: {
+        'wsl:Ubuntu': readySnapshot(ubuntuDefaults),
+        'wsl:Debian': readySnapshot(debianDefaults),
+      },
+    });
+
+    await useSettingsStore.getState().saveAgentDefaults(
+      ubuntu,
+      { global: ['claude-code'], project: [] },
+    );
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].defaults)
+      .toEqual(ubuntuDefaults);
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Debian'].defaults)
+      .toEqual(debianDefaults);
+  });
+
+  it('does not let an older failed save roll back a newer success', async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    mockSaveDefaultTargetAgents
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    useSettingsStore.setState({
+      agentDefaultsByEnvironment: {
+        'wsl:Ubuntu': readySnapshot({ global: [], project: [] }),
+      },
+    });
+    const oldSave = useSettingsStore.getState().saveAgentDefaults(
+      ubuntu,
+      { global: ['claude-code'], project: [] },
+    );
+    const newest = { global: [], project: ['claude-code'] };
+    const newSave = useSettingsStore.getState().saveAgentDefaults(ubuntu, newest);
+
+    second.resolve();
+    await newSave;
+    first.reject(new Error('stale failure'));
+    await oldSave;
+
+    const snapshot = useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'];
+    expect(snapshot.defaults).toEqual(newest);
+    expect(snapshot.saving).toBe(false);
+    expect(snapshot.saveRequestId).toBe(2);
+  });
+
+  it('does not optimistically update or call the API while a mutation is active', async () => {
+    const original = { global: [], project: ['claude-code'] };
+    useSettingsStore.setState({
+      agentDefaultsByEnvironment: { host: readySnapshot(original) },
+    });
+    useMutationStore.setState({ activeMutation });
+
+    await useSettingsStore.getState().saveAgentDefaults(
+      host,
+      { global: ['claude-code'], project: [] },
+    );
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.defaults).toEqual(original);
+    expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
+  });
 });

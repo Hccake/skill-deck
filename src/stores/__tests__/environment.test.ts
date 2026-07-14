@@ -1,26 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppError, EnvironmentInfo, EnvironmentRuntimeEvent } from '@/bindings';
 import { useEnvironmentStore } from '../environment';
-import { useMutationStore } from '../mutation';
-import type { ActiveMutation, EnvironmentInfo, ProjectBinding } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   listEnvironments: vi.fn(),
   connectEnvironment: vi.fn(),
-  listEnvironmentProjects: vi.fn(),
-  addEnvironmentProject: vi.fn(),
-  removeEnvironmentProject: vi.fn(),
-  setEnvironmentProjectCrossStorageWarning: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listEnvironments: (...args: unknown[]) => mocks.listEnvironments(...args),
   connectEnvironment: (...args: unknown[]) => mocks.connectEnvironment(...args),
-  listEnvironmentProjects: (...args: unknown[]) => mocks.listEnvironmentProjects(...args),
-  addEnvironmentProject: (...args: unknown[]) => mocks.addEnvironmentProject(...args),
-  removeEnvironmentProject: (...args: unknown[]) => mocks.removeEnvironmentProject(...args),
-  setEnvironmentProjectCrossStorageWarning: (...args: unknown[]) => (
-    mocks.setEnvironmentProjectCrossStorageWarning(...args)
-  ),
 }));
 
 const host: EnvironmentInfo = {
@@ -33,18 +22,10 @@ const ubuntu: EnvironmentInfo = {
   displayName: 'Ubuntu',
   status: 'available',
 };
-const ubuntuProjects: ProjectBinding[] = [{
-  id: 'ubuntu-project',
-  nativePath: '/work/app',
-  displayName: null,
-  order: null,
-  suppressCrossStorageWarning: false,
-}];
-const activeMutation: ActiveMutation = {
-  kind: 'update',
-  context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-  statusText: 'Updating',
-  cancelable: true,
+const debian: EnvironmentInfo = {
+  environment: { kind: 'wsl', distro_name: 'Debian' },
+  displayName: 'Debian',
+  status: 'available',
 };
 
 describe('useEnvironmentStore', () => {
@@ -52,112 +33,147 @@ describe('useEnvironmentStore', () => {
     vi.clearAllMocks();
     useEnvironmentStore.setState({
       environments: [],
-      selectedEnvironment: { kind: 'host' },
-      projectsByEnvironment: {},
-      projectsLoaded: {},
       discoveryState: 'idle',
-      errors: {},
+      discoveryError: null,
+      errorsByEnvironment: {},
     });
-    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
-  it('discovers WSL entries without connecting any distro', async () => {
-    mocks.listEnvironments.mockResolvedValue([host, ubuntu]);
+  it('discovers environments without connecting a distribution', async () => {
+    mocks.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
 
-    await useEnvironmentStore.getState().discoverEnvironments();
+    await useEnvironmentStore.getState().discover();
 
-    expect(mocks.listEnvironments).toHaveBeenCalledTimes(1);
-    expect(mocks.connectEnvironment).not.toHaveBeenCalled();
     expect(useEnvironmentStore.getState().environments).toEqual([host, ubuntu]);
+    expect(useEnvironmentStore.getState().discoveryState).toBe('ready');
+    expect(mocks.connectEnvironment).not.toHaveBeenCalled();
   });
 
-  it('connects and loads projects only after selecting a WSL environment', async () => {
-    mocks.listEnvironments.mockResolvedValue([host, ubuntu]);
-    mocks.connectEnvironment.mockResolvedValue({ distroName: 'Ubuntu' });
-    mocks.listEnvironmentProjects.mockResolvedValue(ubuntuProjects);
-    await useEnvironmentStore.getState().discoverEnvironments();
+  it('keeps Host usable and exposes a typed discovery error', async () => {
+    const error: AppError = {
+      kind: 'environmentDiscoveryFailed',
+      data: { message: 'wsl.exe is blocked' },
+    };
+    mocks.listEnvironments.mockResolvedValue({ environments: [host], error });
 
-    await useEnvironmentStore.getState().selectEnvironment(ubuntu.environment);
+    await useEnvironmentStore.getState().discover();
 
-    expect(mocks.connectEnvironment).toHaveBeenCalledWith('Ubuntu');
-    expect(mocks.listEnvironmentProjects).toHaveBeenCalledWith(ubuntu.environment);
-    expect(useEnvironmentStore.getState().selectedEnvironment).toEqual(ubuntu.environment);
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [host],
+      discoveryState: 'error',
+      discoveryError: error,
+    });
   });
 
-  it('shows a connecting state while a WSL session is being opened', async () => {
+  it('treats Host connection as immediately available', async () => {
+    useEnvironmentStore.setState({ environments: [host, ubuntu] });
+
+    await useEnvironmentStore.getState().connect(host.environment);
+
+    expect(mocks.connectEnvironment).not.toHaveBeenCalled();
+    expect(useEnvironmentStore.getState().environments[0].status).toBe('available');
+  });
+
+  it('exposes WSL connecting state without owning selected context', async () => {
     let finishConnect: (() => void) | undefined;
-    mocks.listEnvironments.mockResolvedValue([host, ubuntu]);
+    useEnvironmentStore.setState({ environments: [host, ubuntu] });
     mocks.connectEnvironment.mockImplementation(() => new Promise<void>((resolve) => {
       finishConnect = resolve;
     }));
-    mocks.listEnvironmentProjects.mockResolvedValue(ubuntuProjects);
-    await useEnvironmentStore.getState().discoverEnvironments();
 
-    const selection = useEnvironmentStore.getState().selectEnvironment(ubuntu.environment);
+    const connection = useEnvironmentStore.getState().connect(ubuntu.environment);
 
     expect(useEnvironmentStore.getState().environments[1].status).toBe('connecting');
+    expect('selectedEnvironment' in useEnvironmentStore.getState()).toBe(false);
     finishConnect?.();
-    await selection;
+    await connection;
     expect(useEnvironmentStore.getState().environments[1].status).toBe('available');
   });
 
-  it('keeps discovered entries and marks the selected environment unavailable on query failure', async () => {
-    mocks.listEnvironments.mockResolvedValue([host, ubuntu]);
-    await useEnvironmentStore.getState().discoverEnvironments();
-    mocks.connectEnvironment.mockRejectedValue(new Error('WSL is unavailable'));
+  it('stores a typed error only for the failed environment', async () => {
+    const error: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution stopped' },
+    };
+    useEnvironmentStore.setState({ environments: [host, ubuntu] });
+    mocks.connectEnvironment.mockRejectedValue(error);
 
-    await expect(
-      useEnvironmentStore.getState().selectEnvironment(ubuntu.environment)
-    ).rejects.toThrow('WSL is unavailable');
+    await expect(useEnvironmentStore.getState().connect(ubuntu.environment)).rejects.toEqual(error);
 
-    const state = useEnvironmentStore.getState();
-    expect(state.environments).toHaveLength(2);
-    expect(state.environments[1].status).toBe('unavailable');
-    expect(state.environments[0]).toEqual(host);
+    expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({
+      'wsl:Ubuntu': error,
+    });
+    expect(useEnvironmentStore.getState().environments[0]).toEqual(host);
+    expect(useEnvironmentStore.getState().environments[1].status).toBe('unavailable');
   });
 
-  it('uses an explicit environment snapshot for project writes', async () => {
-    mocks.addEnvironmentProject.mockResolvedValue(ubuntuProjects);
+  it('applies an unavailable runtime event only to the discovered distribution', () => {
+    const error: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution stopped' },
+    };
+    const event: EnvironmentRuntimeEvent = {
+      environment: ubuntu.environment,
+      status: 'unavailable',
+      error,
+    };
+    useEnvironmentStore.setState({ environments: [host, ubuntu, debian] });
 
-    await useEnvironmentStore.getState().addProject('/work/app', ubuntu.environment);
+    useEnvironmentStore.getState().applyRuntimeEvent(event);
 
-    expect(mocks.addEnvironmentProject).toHaveBeenCalledWith(ubuntu.environment, '/work/app');
-    expect(useEnvironmentStore.getState().projectsByEnvironment['wsl:Ubuntu']).toEqual(ubuntuProjects);
+    expect(useEnvironmentStore.getState().environments).toEqual([
+      host,
+      { ...ubuntu, status: 'unavailable' },
+      debian,
+    ]);
+    expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({
+      'wsl:Ubuntu': error,
+    });
   });
 
-  it('does not change projects while another mutation is active', async () => {
-    useMutationStore.setState({ activeMutation });
+  it('clears only the recovered distribution error on an available runtime event', () => {
+    const ubuntuError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution stopped' },
+    };
+    const debianError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: debian.environment, message: 'distribution stopped' },
+    };
+    useEnvironmentStore.setState({
+      environments: [host, { ...ubuntu, status: 'unavailable' }, debian],
+      errorsByEnvironment: {
+        'wsl:Ubuntu': ubuntuError,
+        'wsl:Debian': debianError,
+      },
+    });
 
-    await useEnvironmentStore.getState().addProject('/work/app', ubuntu.environment);
-    await useEnvironmentStore.getState().removeProject('ubuntu-project', ubuntu.environment);
-    await useEnvironmentStore.getState().suppressCrossStorageWarning(
-      'ubuntu-project',
-      ubuntu.environment,
-    );
+    useEnvironmentStore.getState().applyRuntimeEvent({
+      environment: ubuntu.environment,
+      status: 'available',
+      error: null,
+    });
 
-    expect(mocks.addEnvironmentProject).not.toHaveBeenCalled();
-    expect(mocks.removeEnvironmentProject).not.toHaveBeenCalled();
-    expect(mocks.setEnvironmentProjectCrossStorageWarning).not.toHaveBeenCalled();
+    expect(useEnvironmentStore.getState().environments).toEqual([host, ubuntu, debian]);
+    expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({
+      'wsl:Ubuntu': null,
+      'wsl:Debian': debianError,
+    });
   });
 
-  it('persists warning suppression in the owning environment project registry', async () => {
-    const suppressedProjects = [{
-      ...ubuntuProjects[0],
-      suppressCrossStorageWarning: true,
-    }];
-    mocks.setEnvironmentProjectCrossStorageWarning.mockResolvedValue(suppressedProjects);
+  it('ignores runtime events for distributions not returned by discovery', () => {
+    useEnvironmentStore.setState({ environments: [host, ubuntu] });
 
-    await useEnvironmentStore.getState().suppressCrossStorageWarning(
-      'ubuntu-project',
-      ubuntu.environment,
-    );
+    useEnvironmentStore.getState().applyRuntimeEvent({
+      environment: debian.environment,
+      status: 'unavailable',
+      error: {
+        kind: 'environmentUnavailable',
+        data: { environment: debian.environment, message: 'distribution stopped' },
+      },
+    });
 
-    expect(mocks.setEnvironmentProjectCrossStorageWarning).toHaveBeenCalledWith(
-      ubuntu.environment,
-      'ubuntu-project',
-      true,
-    );
-    expect(useEnvironmentStore.getState().projectsByEnvironment['wsl:Ubuntu'])
-      .toEqual(suppressedProjects);
+    expect(useEnvironmentStore.getState().environments).toEqual([host, ubuntu]);
+    expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({});
   });
 });

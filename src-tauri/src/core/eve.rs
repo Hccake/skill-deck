@@ -142,7 +142,7 @@ pub fn normalize_eve_skill_md(raw: &str) -> String {
     let mut kept = serde_yaml::Mapping::new();
     for key in ["description", "license"] {
         if let Some(value) = mapping
-            .get(&serde_yaml::Value::String(key.to_string()))
+            .get(serde_yaml::Value::String(key.to_string()))
             .and_then(|value| value.as_str())
         {
             kept.insert(
@@ -153,7 +153,7 @@ pub fn normalize_eve_skill_md(raw: &str) -> String {
     }
 
     if let Some(metadata) = mapping
-        .get(&serde_yaml::Value::String("metadata".to_string()))
+        .get(serde_yaml::Value::String("metadata".to_string()))
         .and_then(|value| value.as_mapping())
     {
         let mut meta = serde_yaml::Mapping::new();

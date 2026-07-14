@@ -3,8 +3,10 @@ import { LoaderCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { environmentKey, useEnvironmentStore } from '@/stores/environment';
+import { useProjectStore } from '@/stores/projects';
 import { useMutationStore } from '@/stores/mutation';
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
+import { formatMutationStatus } from '@/lib/mutationStatus';
 
 interface MutationStatusBarProps {
   pollIntervalMs?: number;
@@ -21,7 +23,7 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
   const cancelling = useMutationStore((state) => state.cancelling);
   const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
   const environments = useEnvironmentStore((state) => state.environments);
-  const projectsByEnvironment = useEnvironmentStore((state) => state.projectsByEnvironment);
+  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
 
   useMutationMonitor(pollIntervalMs);
 
@@ -43,12 +45,12 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
 
     const projectId = activeMutation.context.scope.project_id;
     const project = projectsByEnvironment[key]?.find(
-      (entry) => entry.id === projectId,
+      (entry) => entry.binding.id === projectId,
     );
     return {
       environmentLabel,
-      scopeLabel: project?.displayName
-        ?? (project ? projectName(project.nativePath) : projectId),
+      scopeLabel: project?.binding.displayName
+        ?? (project ? projectName(project.binding.nativePath) : projectId),
     };
   }, [activeMutation, environments, projectsByEnvironment, t]);
 
@@ -70,7 +72,7 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
         {t('mutation.status', {
           environment: labels.environmentLabel,
           scope: labels.scopeLabel,
-          status: activeMutation.statusText,
+          status: formatMutationStatus(activeMutation, t),
         })}
       </span>
       {cancelling ? (

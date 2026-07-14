@@ -1,7 +1,6 @@
 // src/stores/skill-dialog.ts
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { useContextStore } from './context';
 import {
   createSkillRepairDraft,
   getSkillOperationAgents,
@@ -14,18 +13,14 @@ import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import {
   removeSkill as apiRemoveSkill,
-  removeSkillV2 as apiRemoveSkillV2,
   getSkillAgentDetails as apiGetAgentDetails,
-  getSkillAgentDetailsV2 as apiGetAgentDetailsV2,
   openInstallWizard,
   manageSkillAgents as apiManageSkillAgents,
-  manageSkillAgentsV2 as apiManageSkillAgentsV2,
   cleanupDuplicateAgentCopies as apiCleanupDuplicateAgentCopies,
-  cleanupDuplicateAgentCopiesV2 as apiCleanupDuplicateAgentCopiesV2,
   copySkillToProjects as apiCopySkillToProjects,
-  copySkillToProjectsV2 as apiCopySkillToProjectsV2,
 } from '@/hooks/useTauriApi';
-import { useEnvironmentStore, environmentKey } from './environment';
+import { useProjectStore } from './projects';
+import { environmentKey } from '@/lib/context';
 import { isMutationWriteBlocked } from './mutation';
 import type {
   AgentType,
@@ -59,23 +54,22 @@ interface SkillDialogState {
   repairSourceTarget: RepairSourceDraft | null;
 
   // Actions
-  openDelete: (skill: InstalledSkill, scope: SkillScope, projectPath?: string) => void;
+  openDelete: (skill: InstalledSkill, context: ContextRef, projectPath?: string) => void;
   closeDelete: () => void;
   deleteSkill: (params: {
     fullRemoval: boolean;
     agents?: AgentType[];
     agentTargets?: InstallTargetSpec[];
   }) => Promise<void>;
-  openAdd: (scope: SkillScope) => void;
-  openAddWithPrefill: (prefill: AddDialogPrefill) => void;
+  openAdd: (context: ContextRef, projectPath?: string) => void;
+  openAddWithPrefill: (prefill: AddDialogPrefill, context: ContextRef) => void;
   openRepairSource: (
     skill: InstalledSkill,
-    scope: SkillScope,
+    context: ContextRef,
     projectPath?: string,
-    context?: ContextRef,
   ) => void;
   closeRepairSource: () => void;
-  openManageAgents: (skill: InstalledSkill, scope: SkillScope) => void;
+  openManageAgents: (skill: InstalledSkill, context: ContextRef, projectPath?: string) => void;
   closeManageAgents: () => void;
   saveAgentChanges: (
     addAgents: string[],
@@ -85,21 +79,18 @@ interface SkillDialogState {
     removePrivateCopyAgents?: string[],
   ) => Promise<void>;
   cleanupDuplicateCopies: (agents: string[]) => Promise<void>;
-  openCopyToProject: (skill: InstalledSkill) => void;
+  openCopyToProject: (skill: InstalledSkill, context: ContextRef) => void;
   closeCopyToProject: () => void;
   executeCopy: (targetPaths: string[]) => Promise<void>;
 }
 
-function getExplicitContextForScope(scope: SkillScope): ContextRef | null {
-  const { hasExplicitContext, selectedContextRef } = useContextStore.getState();
-  if (!hasExplicitContext) return null;
-  if (scope === 'global') {
-    return {
-      environment: selectedContextRef.environment,
-      scope: { scope: 'global' },
-    };
-  }
-  return selectedContextRef.scope.scope === 'project' ? selectedContextRef : null;
+function projectPathForContext(context: ContextRef): string | undefined {
+  const scope = context.scope;
+  if (scope.scope !== 'project') return undefined;
+  const projects = useProjectStore.getState().projectsByEnvironment[
+    environmentKey(context.environment)
+  ] ?? [];
+  return projects.find((project) => project.binding.id === scope.project_id)?.binding.nativePath;
 }
 
 export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
@@ -116,16 +107,14 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   copyContext: undefined,
   repairSourceTarget: null,
 
-  openDelete: (skill, scope, projectPath) => {
-    const context = getExplicitContextForScope(scope);
+  openDelete: (skill, context, projectPath = projectPathForContext(context)) => {
+    const scope = context.scope.scope;
     set({
-      deleteTarget: { skill, scope, projectPath, context: context ?? undefined },
+      deleteTarget: { skill, scope, projectPath, context },
       agentDetails: null,
       loadingAgentDetails: true,
     });
-    (context
-      ? apiGetAgentDetailsV2(context, skill.name)
-      : apiGetAgentDetails({ scope, name: skill.name, projectPath }))
+    apiGetAgentDetails(context, skill.name)
       .then((details) => set({ agentDetails: details }))
       .catch((e) => console.warn('Failed to fetch agent details:', e))
       .finally(() => set({ loadingAgentDetails: false }));
@@ -140,23 +129,12 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
     try {
       const context = deleteTarget.context;
-      if (context) {
-        await apiRemoveSkillV2(context, {
-          name: deleteTarget.skill.name,
-          fullRemoval,
-          agents,
-          agentTargets,
-        });
-      } else {
-        await apiRemoveSkill({
-          scope: deleteTarget.scope,
-          name: deleteTarget.skill.name,
-          projectPath: deleteTarget.projectPath,
-          fullRemoval,
-          agents,
-          agentTargets,
-        });
-      }
+      await apiRemoveSkill(context, {
+        name: deleteTarget.skill.name,
+        fullRemoval,
+        agents,
+        agentTargets,
+      });
       const removedTargetCount = (agents?.length ?? 0) + (agentTargets?.length ?? 0);
       const msg = fullRemoval
         ? t('skills.deleteSuccess', { name: deleteTarget.skill.name })
@@ -178,7 +156,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
       // Refresh skills list
       const { useSkillsDataStore } = await import('./skills-data');
-      await useSkillsDataStore.getState().fetchSkills();
+      await useSkillsDataStore.getState().syncSkills(context);
     } catch (e) {
       toast.error(appendCrossStorageFailureGuidance(
         t('skills.deleteError', {
@@ -193,49 +171,43 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
     }
   },
 
-  openAdd: (scope) => {
+  openAdd: (context, projectPath = projectPathForContext(context)) => {
     if (isMutationWriteBlocked()) return;
-    const { selectedContext } = useContextStore.getState();
-    const context = getExplicitContextForScope(scope);
+    const scope = context.scope.scope;
     openInstallWizard({
       entryPoint: 'skills-panel',
-      scope,
-      projectPath: scope === 'project' ? selectedContext : undefined,
-      context: context ?? undefined,
+      projectPath: scope === 'project' ? projectPath : undefined,
+      context,
     }).catch((e) => {
       console.error('[openAdd] Failed to open wizard:', e);
       toast.error(String(e));
     });
   },
 
-  openAddWithPrefill: (prefill) => {
+  openAddWithPrefill: (prefill, context) => {
     if (isMutationWriteBlocked()) return;
-    const scope = prefill.scope ?? 'global';
-    const selectedContext = useContextStore.getState().selectedContext;
-    const context = getExplicitContextForScope(scope);
+    const scope = prefill.scope ?? context.scope.scope;
     const projectPath =
       scope === 'project'
-        ? prefill.projectPath ?? (selectedContext !== 'global' ? selectedContext : undefined)
+        ? prefill.projectPath ?? projectPathForContext(context)
         : undefined;
     openInstallWizard({
       entryPoint: 'discovery',
-      scope,
       projectPath,
       prefillSource: prefill.source,
       prefillSkillName: prefill.skillName,
-      context: context ?? undefined,
+      context,
     }).catch((e) => {
       console.error('[openAddWithPrefill] Failed to open wizard:', e);
       toast.error(String(e));
     });
   },
 
-  openRepairSource: (skill, scope, projectPath, context) => {
+  openRepairSource: (skill, context, projectPath = projectPathForContext(context)) => {
     const repairSourceTarget = createSkillRepairDraft(
       skill,
-      scope,
+      context,
       projectPath,
-      context ?? getExplicitContextForScope(scope) ?? undefined,
     );
     if (!repairSourceTarget) return;
     set({ repairSourceTarget });
@@ -243,21 +215,18 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
   closeRepairSource: () => set({ repairSourceTarget: null }),
 
-  openManageAgents: (skill, scope) => {
-    const manageAgentsProjectPath =
-      scope === 'project' ? useContextStore.getState().selectedContext : undefined;
-    const context = getExplicitContextForScope(scope);
+  openManageAgents: (skill, context, projectPath = projectPathForContext(context)) => {
+    const scope = context.scope.scope;
+    const manageAgentsProjectPath = scope === 'project' ? projectPath : undefined;
     set({
       manageAgentsSkill: skill,
       manageAgentsScope: scope,
       manageAgentsProjectPath,
-      manageAgentsContext: context ?? undefined,
+      manageAgentsContext: context,
       manageAgentDetails: null,
       loadingManageAgentDetails: true,
     });
-    (context
-      ? apiGetAgentDetailsV2(context, skill.name)
-      : apiGetAgentDetails({ scope, name: skill.name, projectPath: manageAgentsProjectPath }))
+    apiGetAgentDetails(context, skill.name)
       .then((details) => set({ manageAgentDetails: details }))
       .catch((e) => console.warn('Failed to fetch manage agent details:', e))
       .finally(() => set({ loadingManageAgentDetails: false }));
@@ -273,26 +242,18 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
   saveAgentChanges: async (addAgents, removeAgents, mode, privateCopyAgents = [], removePrivateCopyAgents = []) => {
     if (isMutationWriteBlocked()) return;
-    const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath, manageAgentsContext } = get();
+    const { manageAgentsSkill, manageAgentsContext } = get();
     if (!manageAgentsSkill) return;
 
-    const scope = manageAgentsScope === 'project' ? 'project' : 'global';
-    const projectPath = scope === 'project' ? manageAgentsProjectPath : undefined;
     const context = manageAgentsContext;
+    if (!context) return;
 
     try {
       if (removePrivateCopyAgents.length > 0) {
-        const cleanupResults = context
-          ? await apiCleanupDuplicateAgentCopiesV2(context, {
-            skillName: manageAgentsSkill.name,
-            agents: removePrivateCopyAgents as AgentType[],
-          })
-          : await apiCleanupDuplicateAgentCopies({
-            skillName: manageAgentsSkill.name,
-            scope,
-            projectPath,
-            agents: removePrivateCopyAgents as AgentType[],
-          });
+        const cleanupResults = await apiCleanupDuplicateAgentCopies(context, {
+          skillName: manageAgentsSkill.name,
+          agents: removePrivateCopyAgents as AgentType[],
+        });
         const cleanupFailures = cleanupResults.filter((result) => !result.success && !result.skipped);
         if (cleanupFailures.length > 0) {
           toast.error(appendCrossStorageFailureGuidance(
@@ -305,23 +266,13 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
         }
       }
 
-      const result = context
-        ? await apiManageSkillAgentsV2(context, {
-          skillName: manageAgentsSkill.name,
-          addAgents: addAgents as AgentType[],
-          removeAgents: removeAgents as AgentType[],
-          privateCopyAgents: privateCopyAgents as AgentType[],
-          mode,
-        })
-        : await apiManageSkillAgents({
-          skillName: manageAgentsSkill.name,
-          scope,
-          projectPath,
-          addAgents: addAgents as AgentType[],
-          removeAgents: removeAgents as AgentType[],
-          privateCopyAgents: privateCopyAgents as AgentType[],
-          mode,
-        });
+      const result = await apiManageSkillAgents(context, {
+        skillName: manageAgentsSkill.name,
+        addAgents: addAgents as AgentType[],
+        removeAgents: removeAgents as AgentType[],
+        privateCopyAgents: privateCopyAgents as AgentType[],
+        mode,
+      });
 
       const addResultErrors = result.addedResults
         .filter((item) => !item.success && item.error)
@@ -343,7 +294,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
       // Refresh skills list and detail panel
       const { useSkillsDataStore } = await import('./skills-data');
-      await useSkillsDataStore.getState().syncSkills();
+      await useSkillsDataStore.getState().syncSkills(context);
     } catch (e) {
       console.error('[saveAgentChanges] Failed:', e);
       toast.error(appendCrossStorageFailureGuidance(
@@ -357,25 +308,17 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
 
   cleanupDuplicateCopies: async (agents) => {
     if (isMutationWriteBlocked()) return;
-    const { manageAgentsSkill, manageAgentsScope, manageAgentsProjectPath, manageAgentsContext } = get();
+    const { manageAgentsSkill, manageAgentsContext } = get();
     if (!manageAgentsSkill || agents.length === 0) return;
 
-    const scope = manageAgentsScope === 'project' ? 'project' : 'global';
-    const projectPath = scope === 'project' ? manageAgentsProjectPath : undefined;
     const context = manageAgentsContext;
+    if (!context) return;
 
     try {
-      const results = context
-        ? await apiCleanupDuplicateAgentCopiesV2(context, {
-          skillName: manageAgentsSkill.name,
-          agents: agents as AgentType[],
-        })
-        : await apiCleanupDuplicateAgentCopies({
-          skillName: manageAgentsSkill.name,
-          scope,
-          projectPath,
-          agents: agents as AgentType[],
-        });
+      const results = await apiCleanupDuplicateAgentCopies(context, {
+        skillName: manageAgentsSkill.name,
+        agents: agents as AgentType[],
+      });
       const failures = results.filter((result) => !result.success && !result.skipped);
       if (failures.length > 0) {
         toast.error(appendCrossStorageFailureGuidance(
@@ -389,11 +332,9 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
       }
 
       const [details] = await Promise.all([
-        context
-          ? apiGetAgentDetailsV2(context, manageAgentsSkill.name)
-          : apiGetAgentDetails({ scope, name: manageAgentsSkill.name, projectPath }),
+        apiGetAgentDetails(context, manageAgentsSkill.name),
         import('./skills-data').then(({ useSkillsDataStore }) =>
-          useSkillsDataStore.getState().syncSkills()
+          useSkillsDataStore.getState().syncSkills(context)
         ),
       ]);
       set({ manageAgentDetails: details });
@@ -408,10 +349,10 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
     }
   },
 
-  openCopyToProject: (skill) => {
+  openCopyToProject: (skill, context) => {
     set({
       copySkill: skill,
-      copyContext: getExplicitContextForScope('project') ?? undefined,
+      copyContext: context,
     });
   },
 
@@ -420,46 +361,36 @@ export const useSkillDialogStore = create<SkillDialogState>()((set, get) => ({
   executeCopy: async (targetPaths) => {
     if (isMutationWriteBlocked()) return;
     const { copySkill, copyContext } = get();
-    if (!copySkill) return;
-
-    const { selectedContext } = useContextStore.getState();
+    if (!copySkill || !copyContext) return;
     const context = copyContext;
     const targetContextsByPath = new Map<string, ContextRef>();
 
     try {
       const agents = copySkill.privateAdaptedAgents ?? getSkillOperationAgents(copySkill);
       const privateCopyAgents = copySkill.privateCopyAgents ?? [];
-      const result = context
-        ? await (async () => {
-          const { projectsByEnvironment } = useEnvironmentStore.getState();
-          const bindings = projectsByEnvironment[environmentKey(context.environment)] ?? [];
-          const byPath = new Map(bindings.map((project) => [project.nativePath, project]));
-          const targets = targetPaths.map((path) => byPath.get(path));
-          if (context.scope.scope !== 'project' || targets.some((project) => !project)) {
-            throw new Error('Selected projects are not available in the current environment');
-          }
-          const targetContexts = targets.map((project) => ({
-            environment: context.environment,
-            scope: { scope: 'project' as const, project_id: project!.id },
-          }));
-          targets.forEach((project, index) => {
-            targetContextsByPath.set(project!.nativePath, targetContexts[index]);
-          });
-          return apiCopySkillToProjectsV2({
-            skillName: copySkill.name,
-            source: context,
-            targets: targetContexts,
-            agents,
-            privateCopyAgents,
-          });
-        })()
-        : await apiCopySkillToProjects({
+      const result = await (async () => {
+        const { projectsByEnvironment } = useProjectStore.getState();
+        const projects = projectsByEnvironment[environmentKey(context.environment)] ?? [];
+        const byPath = new Map(projects.map((project) => [project.binding.nativePath, project]));
+        const targets = targetPaths.map((path) => byPath.get(path));
+        if (context.scope.scope !== 'project' || targets.some((project) => !project)) {
+          throw new Error('Selected projects are not available in the current environment');
+        }
+        const targetContexts = targets.map((project) => ({
+          environment: context.environment,
+          scope: { scope: 'project' as const, project_id: project!.binding.id },
+        }));
+        targets.forEach((project, index) => {
+          targetContextsByPath.set(project!.binding.nativePath, targetContexts[index]);
+        });
+        return apiCopySkillToProjects({
           skillName: copySkill.name,
-          sourceProjectPath: selectedContext,
-          targetProjectPaths: targetPaths,
+          source: context,
+          targets: targetContexts,
           agents,
           privateCopyAgents,
         });
+      })();
 
       const successCount = result.results.filter((r) => r.success).length;
       const failCount = result.results.filter((r) => !r.success).length;

@@ -15,22 +15,14 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-const listAgentsMock = vi.fn<() => Promise<AgentInfo[]>>();
-const listAgentsForProjectMock = vi.fn<(projectPath?: string) => Promise<AgentInfo[]>>();
-const listAgentsForProjectV2Mock = vi.fn();
+const listAgentsMock = vi.fn();
 const listEveInstallTargetsMock = vi.fn();
 const getDefaultTargetAgentsMock = vi.fn();
-const getDefaultTargetAgentsV2Mock = vi.fn();
-const getLastSelectedAgentsMock = vi.fn<() => Promise<string[]>>();
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  listAgents: () => listAgentsMock(),
-  listAgentsForProject: (projectPath?: string) => listAgentsForProjectMock(projectPath),
-  listAgentsForProjectV2: (...args: unknown[]) => listAgentsForProjectV2Mock(...args),
-  listEveInstallTargets: (projectPath: string) => listEveInstallTargetsMock(projectPath),
-  getDefaultTargetAgents: () => getDefaultTargetAgentsMock(),
-  getDefaultTargetAgentsV2: (...args: unknown[]) => getDefaultTargetAgentsV2Mock(...args),
-  getLastSelectedAgents: () => getLastSelectedAgentsMock(),
+  listAgents: (...args: unknown[]) => listAgentsMock(...args),
+  listEveInstallTargets: (...args: unknown[]) => listEveInstallTargetsMock(...args),
+  getDefaultTargetAgents: (...args: unknown[]) => getDefaultTargetAgentsMock(...args),
 }));
 
 vi.mock('../AgentSelector', () => ({
@@ -103,6 +95,10 @@ function createState(): WizardState {
     entryPoint: 'skills-panel',
     scope: 'global',
     projectPath: undefined,
+    context: {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    },
     source: 'test/repo',
     fetchStatus: 'success',
     fetchError: null,
@@ -146,6 +142,10 @@ function ProjectHarness() {
     ...createState(),
     scope: 'project',
     projectPath: '/projects/eve-app',
+    context: {
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'eve-app' },
+    },
   }));
   return (
     <OptionsStep
@@ -189,16 +189,12 @@ describe('OptionsStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getDefaultTargetAgentsMock.mockResolvedValue(null);
-    getDefaultTargetAgentsV2Mock.mockResolvedValue(null);
-    getLastSelectedAgentsMock.mockResolvedValue([]);
-    listAgentsForProjectMock.mockResolvedValue([]);
-    listAgentsForProjectV2Mock.mockResolvedValue([]);
+    listAgentsMock.mockResolvedValue([]);
     listEveInstallTargetsMock.mockResolvedValue([]);
   });
 
   it('loads project-aware agents using the selected project path', async () => {
-    listAgentsMock.mockResolvedValue([]);
-    listAgentsForProjectMock.mockResolvedValue([
+    listAgentsMock.mockResolvedValue([
       makeAgent({
         id: 'eve',
         name: 'Eve',
@@ -211,12 +207,39 @@ describe('OptionsStep', () => {
     render(<ProjectHarness />);
 
     await waitFor(() => {
-      expect(listAgentsForProjectMock).toHaveBeenCalledWith('/projects/eve-app');
+      expect(listAgentsMock).toHaveBeenCalledWith({
+        environment: { kind: 'host' },
+        scope: { scope: 'project', project_id: 'eve-app' },
+      });
     });
-    expect(listAgentsMock).not.toHaveBeenCalled();
+    expect(getDefaultTargetAgentsMock).toHaveBeenCalledWith({
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    });
+    expect(listEveInstallTargetsMock).toHaveBeenCalledWith({
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'eve-app' },
+    });
     await waitFor(() => {
       expect(screen.getByText('all-agents:eve')).toBeDefined();
     });
+  });
+
+  it('loads Eve targets from a WSL project context', async () => {
+    const context = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'eve-app' },
+    } as const;
+    listAgentsMock.mockResolvedValue([]);
+
+    render(
+      <OptionsStep
+        state={{ ...createState(), scope: 'project', context }}
+        updateState={() => undefined}
+      />
+    );
+
+    await waitFor(() => expect(listEveInstallTargetsMock).toHaveBeenCalledWith(context));
   });
 
   it('loads agents and defaults from the explicit target context', async () => {
@@ -224,8 +247,8 @@ describe('OptionsStep', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     } as const;
-    listAgentsForProjectV2Mock.mockResolvedValue([]);
-    getDefaultTargetAgentsV2Mock.mockResolvedValue({ global: [], project: [] });
+    listAgentsMock.mockResolvedValue([]);
+    getDefaultTargetAgentsMock.mockResolvedValue({ global: [], project: [] });
 
     render(
       <OptionsStep
@@ -234,10 +257,8 @@ describe('OptionsStep', () => {
       />
     );
 
-    await waitFor(() => expect(listAgentsForProjectV2Mock).toHaveBeenCalledWith(context));
-    expect(getDefaultTargetAgentsV2Mock).toHaveBeenCalledWith(context);
-    expect(getLastSelectedAgentsMock).not.toHaveBeenCalled();
-    expect(listAgentsMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(listAgentsMock).toHaveBeenCalledWith(context));
+    expect(getDefaultTargetAgentsMock).toHaveBeenCalledWith(context);
   });
 
   it('hides mode radios when only the shared directory is relevant', async () => {
@@ -269,7 +290,7 @@ describe('OptionsStep', () => {
   });
 
   it('passes scope to the agent selector and uses persisted defaults for that scope', async () => {
-    listAgentsForProjectMock.mockResolvedValue([
+    listAgentsMock.mockResolvedValue([
       makeScopeAwareAgent({
         id: 'antigravity',
         name: 'Antigravity',
@@ -316,14 +337,12 @@ describe('OptionsStep', () => {
       global: ['claude-code'],
       project: ['claude-code'],
     });
-    getLastSelectedAgentsMock.mockResolvedValue([]);
 
     render(<Harness />);
 
     await waitFor(() => {
       expect(listAgentsMock).toHaveBeenCalledTimes(1);
       expect(getDefaultTargetAgentsMock).toHaveBeenCalledTimes(1);
-      expect(getLastSelectedAgentsMock).toHaveBeenCalledTimes(1);
     });
 
     resolveAgents([

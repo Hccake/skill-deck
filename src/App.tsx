@@ -13,14 +13,17 @@ import { WizardPage } from '@/pages/WizardPage';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useSkillsDataStore } from '@/stores/skills-data';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useUpdaterStore } from '@/stores/updater';
 import { UpdateDialog } from '@/components/update-dialog';
 import { useProtectedWindowClose } from '@/hooks/useProtectedWindowClose';
+import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
 
 /** 主窗口布局 — 带 Header + Toaster */
 function MainLayout() {
   const closeProtection = useProtectedWindowClose();
+  useEnvironmentRuntimeMonitor();
 
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
@@ -41,20 +44,21 @@ let didDiscoverEnvironments = false;
 
 function App() {
   const { t } = useTranslation();
-  const fetchSkills = useSkillsDataStore((s) => s.fetchSkills);
-  const discoverEnvironments = useEnvironmentStore((s) => s.discoverEnvironments);
+  const refreshWorkspace = useSkillsDataStore((s) => s.refreshWorkspace);
+  const discoverEnvironments = useEnvironmentStore((s) => s.discover);
   // rerender-defer-reads: 不订阅 error，减少不必要的 App 重渲染
   const { status, checkForUpdate, shouldAutoCheck } = useUpdaterStore();
 
   // 监听向导窗口完成事件
   useEffect(() => {
     const unlisten = listen('wizard-result', () => {
-      fetchSkills();
+      const committedContext = useWorkspaceContextStore.getState().selectedContext;
+      void refreshWorkspace(committedContext);
     });
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [fetchSkills]);
+  }, [refreshWorkspace]);
 
   // advanced-init-once: 启动时自动检查更新，guard 防止 Strict Mode 双调用
   useEffect(() => {

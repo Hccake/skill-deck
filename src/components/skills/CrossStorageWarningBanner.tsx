@@ -3,41 +3,62 @@ import { TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { useContextStore } from '@/stores/context';
-import { environmentKey, useEnvironmentStore } from '@/stores/environment';
+import { useWorkspaceContextStore } from '@/stores/workspace-context';
+import { useEnvironmentStore } from '@/stores/environment';
+import { useProjectStore } from '@/stores/projects';
+import { environmentKey, sameEnvironment } from '@/lib/context';
 import { useMutationStore } from '@/stores/mutation';
-import { isCrossStorageProject } from '@/lib/projectStorage';
-import type { ProjectBinding } from '@/bindings';
+import type { ProjectInfo } from '@/bindings';
 
-const EMPTY_PROJECTS: ProjectBinding[] = [];
+const EMPTY_PROJECTS: ProjectInfo[] = [];
 
 export function CrossStorageWarningBanner() {
   const { t } = useTranslation();
-  const selectedContextRef = useContextStore((state) => state.selectedContextRef);
-  const environment = selectedContextRef.environment;
-  const environmentProjects = useEnvironmentStore((state) => (
+  const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
+  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
+  const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
+  const environments = useEnvironmentStore((state) => state.environments);
+  const environment = selectedContext.environment;
+  const environmentProjects = useProjectStore((state) => (
     state.projectsByEnvironment[environmentKey(environment)] ?? EMPTY_PROJECTS
   ));
-  const suppressWarning = useEnvironmentStore((state) => state.suppressCrossStorageWarning);
+  const setCrossStorageWarning = useProjectStore((state) => state.setCrossStorageWarning);
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [dismissing, setDismissing] = useState(false);
 
-  if (selectedContextRef.scope.scope !== 'project') return null;
-  const projectId = selectedContextRef.scope.project_id;
+  if (selectedContext.scope.scope !== 'project') return null;
+  const projectId = selectedContext.scope.project_id;
 
   const project = environmentProjects.find(
-    (entry) => entry.id === projectId,
+    (entry) => entry.binding.id === projectId,
   );
   if (!project
-    || project.suppressCrossStorageWarning
-    || !isCrossStorageProject(environment, project.nativePath)) {
+    || project.binding.suppressCrossStorageWarning
+    || project.storage.access !== 'crossStorage') {
     return null;
   }
+  const owner = project.storage.owner;
+  const currentInfo = environments.find(
+    (entry) => sameEnvironment(entry.environment, environment),
+  );
+  const ownerInfo = owner ? environments.find(
+    (entry) => sameEnvironment(entry.environment, owner),
+  ) : null;
+  const currentLabel = currentInfo?.displayName
+    ?? (environment.kind === 'host' ? t('crossStorage.hostEnvironment') : environment.distro_name);
+  const ownerLabel = owner
+    ? ownerInfo?.displayName
+      ?? (owner.kind === 'host' ? t('crossStorage.hostEnvironment') : owner.distro_name)
+    : t('common.unknown');
+  const canSwitchToOwner = owner !== null
+    && ownerInfo !== undefined
+    && ownerInfo !== null
+    && !sameEnvironment(owner, environment);
 
   const handleDismiss = async () => {
     setDismissing(true);
     try {
-      await suppressWarning(project.id, environment);
+      await setCrossStorageWarning(environment, project.binding.id, true);
     } catch (error) {
       console.error('Failed to suppress cross-storage warning:', error);
       toast.error(t('crossStorage.dismissFailed'));
@@ -55,19 +76,38 @@ export function CrossStorageWarningBanner() {
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold">{t('crossStorage.title')}</p>
         <p className="mt-0.5 text-xs leading-5 text-amber-900/75 dark:text-amber-100/70">
-          {t('crossStorage.description')}
+          {t('crossStorage.description', {
+            environment: currentLabel,
+            owner: ownerLabel,
+          })}
         </p>
       </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-7 flex-shrink-0 px-2 text-xs hover:bg-amber-500/10"
-        onClick={() => void handleDismiss()}
-        disabled={writeBlocked || dismissing}
-      >
-        {t('crossStorage.dismiss')}
-      </Button>
+      <div className="flex flex-shrink-0 flex-wrap justify-end gap-1.5">
+        {canSwitchToOwner ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => void switchEnvironment(owner).catch((error) => {
+              console.error('Failed to switch to storage owner:', error);
+            })}
+            disabled={pendingEnvironment !== null}
+          >
+            {t('crossStorage.switchToOwner', { owner: ownerLabel })}
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs hover:bg-amber-500/10"
+          onClick={() => void handleDismiss()}
+          disabled={writeBlocked || dismissing}
+        >
+          {t('crossStorage.dismiss')}
+        </Button>
+      </div>
     </div>
   );
 }

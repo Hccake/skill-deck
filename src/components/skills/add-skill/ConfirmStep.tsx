@@ -22,9 +22,9 @@ import {
   isDefaultAvailableAgent,
   isPrivateRequiredAgent,
 } from '@/lib/agentTargets';
-import { checkOverwrites, checkOverwritesV2, checkSkillAudit } from '@/hooks/useTauriApi';
+import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
-import type { ContextRef, InstallTargetInfo, InstallTargetSpec } from '@/bindings';
+import type { InstallTargetInfo, InstallTargetSpec } from '@/bindings';
 import { RiskBadge } from '../RiskBadge';
 import { getEffectiveInstallMode, type WizardState } from './types';
 
@@ -50,10 +50,9 @@ interface ConfirmStepProps {
   updateState: (updates: Partial<WizardState>) => void;
   scope: 'global' | 'project';
   projectPath?: string;
-  context?: ContextRef;
 }
 
-export function ConfirmStep({ state, updateState, scope, projectPath, context }: ConfirmStepProps) {
+export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmStepProps) {
   const { t } = useTranslation();
 
   const updateStateRef = useRef(updateState);
@@ -86,21 +85,12 @@ export function ConfirmStep({ state, updateState, scope, projectPath, context }:
 
     const overwritePromise: Promise<Record<string, string[]>> =
       overwriteAgentIds.length > 0 || selectedAgentTargets.length > 0
-      ? context
-        ? checkOverwritesV2(
-          context,
+      ? checkOverwrites(
+          state.context,
           state.selectedSkills,
           overwriteAgentIds,
           state.privateCopyAgents,
           selectedAgentTargets,
-        )
-        : checkOverwrites(
-          state.selectedSkills,
-          overwriteAgentIds,
-          scope,
-          scope === 'project' ? projectPath : undefined,
-          state.privateCopyAgents,
-          selectedAgentTargets
         )
       : Promise.resolve({});
 
@@ -131,7 +121,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath, context }:
     return () => {
       cancelled = true;
     };
-  }, [state.selectedSkills, state.selectedAgents, state.selectedAgentTargets, state.privateCopyAgents, state.allAgents, state.source, scope, projectPath, context]);
+  }, [state.selectedSkills, state.selectedAgents, state.selectedAgentTargets, state.privateCopyAgents, state.allAgents, state.source, state.context, scope, projectPath]);
 
   // 覆盖统计
   const availableSkillMap = useMemo(

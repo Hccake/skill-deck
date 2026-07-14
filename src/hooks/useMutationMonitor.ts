@@ -1,8 +1,11 @@
 import { useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { useMutationStore } from '@/stores/mutation';
+import type { MutationSnapshot } from '@/bindings';
 
-export function useMutationMonitor(pollIntervalMs = 2_000) {
+export function useMutationMonitor(_pollIntervalMs = 2_000) {
   const refreshMutation = useMutationStore((state) => state.refreshMutation);
+  const acceptSnapshot = useMutationStore((state) => state.acceptSnapshot);
 
   useEffect(() => {
     const refresh = () => {
@@ -11,13 +14,30 @@ export function useMutationMonitor(pollIntervalMs = 2_000) {
       });
     };
 
-    refresh();
-    window.addEventListener('focus', refresh);
-    const interval = window.setInterval(refresh, pollIntervalMs);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<MutationSnapshot>('mutation-state-changed', (event) => {
+      acceptSnapshot(event.payload);
+    }).then((stopListening) => {
+      if (disposed) {
+        stopListening();
+      } else {
+        unlisten = stopListening;
+        window.addEventListener('focus', refresh);
+        refresh();
+      }
+    }).catch((error) => {
+      console.error('Failed to monitor mutation state:', error);
+      if (!disposed) {
+        window.addEventListener('focus', refresh);
+        refresh();
+      }
+    });
 
     return () => {
+      disposed = true;
       window.removeEventListener('focus', refresh);
-      window.clearInterval(interval);
+      unlisten?.();
     };
-  }, [pollIntervalMs, refreshMutation]);
+  }, [acceptSnapshot, refreshMutation]);
 }

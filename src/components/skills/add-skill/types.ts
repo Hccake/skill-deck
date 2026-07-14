@@ -79,7 +79,7 @@ export interface WizardState {
   // Scope
   scope: 'global' | 'project';
   projectPath?: string;
-  context?: ContextRef;
+  context: ContextRef;
 
   // Source
   source: string;

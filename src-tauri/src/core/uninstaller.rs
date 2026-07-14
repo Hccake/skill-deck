@@ -3,7 +3,7 @@
 //! 完全复刻 CLI remove.ts 的删除逻辑：
 //! 1. 遍历 target agents，删除各 agent 目录下的 skill（对应 CLI remove.ts:152-168）
 //! 2. 删除 canonical 目录（对应 CLI remove.ts:170-171）
-//! 3. 更新 lock file（仅 Global scope）（对应 CLI remove.ts:173-178）
+//! 3. lock file 由 command 层的 repository transaction 更新
 //!
 //! 与 CLI 的差异：
 //! - agent 检测 fallback：CLI 用 `Object.keys(agents)` 全部 agents，Rust 用 `AgentType::all()` 枚举迭代（等价）
@@ -11,14 +11,13 @@
 //! - 错误收集：CLI 用 `results` 数组收集批量结果，GUI 是单个删除返回 `RemoveResult`
 
 use crate::core::agents::AgentType;
-use crate::core::local_lock::{read_local_lock, remove_skill_from_local_lock};
+use crate::core::local_lock::read_local_lock;
 use crate::core::paths::canonical_skills_dir;
 use crate::core::skill::sanitize_name;
-use crate::core::skill_lock::{get_skill_from_lock, remove_skill_from_lock};
 use crate::error::AppError;
 use crate::models::{RemoveResult, Scope};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 删除 skill
 ///
@@ -45,7 +44,6 @@ pub fn remove_skill(
     let is_global = matches!(scope, Scope::Global);
     let cwd = project_path.unwrap_or(".");
     let sanitized_name = sanitize_name(skill_name);
-
     // 1. 确定要操作的 agents
     let mut agents_to_remove: Vec<AgentType> = resolve_agents_to_remove(target_agents);
     let eve_targets_to_remove =
@@ -103,8 +101,8 @@ pub fn remove_skill(
         }
     }
 
-    // 3. 完全删除模式：清理 canonical 目录 + lock file
-    let (source, source_type) = if full_removal {
+    // 3. 完全删除模式只清理 canonical 目录。lock 由 command 层提交。
+    if full_removal {
         // 删除 canonical 目录（带共享保护）
         let canonical_path = canonical_skills_dir(is_global, cwd).join(&sanitized_name);
         let should_remove_canonical = if is_global {
@@ -138,43 +136,14 @@ pub fn remove_skill(
         if should_remove_canonical {
             let _ = remove_path(&canonical_path);
         }
-
-        // 更新 lock file
-        if is_global {
-            let lock_entry = get_skill_from_lock(skill_name).ok().flatten();
-            let effective_source = lock_entry
-                .as_ref()
-                .map(|e| e.source.clone())
-                .unwrap_or_else(|| "local".to_string());
-            let effective_source_type = lock_entry
-                .as_ref()
-                .map(|e| e.source_type.clone())
-                .unwrap_or_else(|| "local".to_string());
-            let _ = remove_skill_from_lock(skill_name);
-            (Some(effective_source), Some(effective_source_type))
-        } else {
-            if let Some(project_dir) = project_path {
-                let local_lock = crate::core::local_lock::read_local_lock(project_dir).ok();
-                let lock_entry = local_lock.and_then(|l| l.skills.get(skill_name).cloned());
-                let effective_source = lock_entry.as_ref().map(|e| e.source.clone());
-                let effective_source_type = lock_entry.as_ref().map(|e| e.source_type.clone());
-                let _ = remove_skill_from_local_lock(skill_name, project_dir);
-                (effective_source, effective_source_type)
-            } else {
-                (None, None)
-            }
-        }
-    } else {
-        // 部分移除：不删 canonical、不更新 lock
-        (None, None)
-    };
+    }
 
     Ok(RemoveResult {
         skill_name: skill_name.to_string(),
         success: true,
         removed_paths,
-        source,
-        source_type,
+        source: None,
+        source_type: None,
         error: None,
     })
 }
@@ -296,7 +265,7 @@ fn remove_path(path: &PathBuf) -> Result<(), AppError> {
     }
 }
 
-fn is_link_path(path: &PathBuf) -> bool {
+fn is_link_path(path: &Path) -> bool {
     path.symlink_metadata()
         .map(|metadata| {
             let is_link = metadata.file_type().is_symlink();
@@ -389,6 +358,23 @@ mod tests {
         assert!(result.success);
         assert!(!canonical.exists());
         assert!(private.exists());
+    }
+
+    #[test]
+    fn full_removal_leaves_lock_ownership_to_the_command_layer() {
+        let temp = tempdir().unwrap();
+        let canonical = temp.path().join(".agents/skills/demo");
+        fs::create_dir_all(&canonical).unwrap();
+        fs::write(canonical.join("SKILL.md"), "# Demo").unwrap();
+        let lock_path = temp.path().join("skills-lock.json");
+        let lock = br#"{"version":1,"futureRoot":{"keep":true},"skills":{"demo":{"source":"owner/repo","futureEntry":7}}}"#;
+        fs::write(&lock_path, lock).unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+
+        remove_skill("demo", &Scope::Project, Some(&cwd), true, Some(&[]), None)
+            .expect("remove files");
+
+        assert_eq!(fs::read(lock_path).unwrap(), lock);
     }
 
     #[test]

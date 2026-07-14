@@ -86,6 +86,7 @@ function makeState(installResults: InstallResults): WizardState {
     step: 'complete',
     entryPoint: 'skills-panel',
     scope: 'global',
+    context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
     source: 'test/repo',
     fetchStatus: 'success',
     fetchError: null,
