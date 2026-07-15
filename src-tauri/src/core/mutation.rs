@@ -92,6 +92,14 @@ struct MutationState {
 struct ControllerState {
     revision: u32,
     mutation: Option<MutationState>,
+    termination_requested: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminationAdmission {
+    Acquired,
+    AlreadyRequested,
+    Blocked(MutationSnapshot),
 }
 
 #[derive(Default)]
@@ -112,6 +120,9 @@ impl SingleMutationController {
             .state
             .lock()
             .expect("mutation controller lock poisoned");
+        if state.termination_requested {
+            return Err(AppError::ApplicationTerminating);
+        }
         if state.mutation.is_some() {
             return Err(AppError::MutationBusy);
         }
@@ -175,6 +186,32 @@ impl SingleMutationController {
         }
         state.cancellation.cancel();
         Ok(true)
+    }
+
+    pub fn request_termination(&self) -> TerminationAdmission {
+        let mut state = self
+            .state
+            .lock()
+            .expect("mutation controller lock poisoned");
+        if state.termination_requested {
+            return TerminationAdmission::AlreadyRequested;
+        }
+        if state.mutation.is_some() {
+            return TerminationAdmission::Blocked(snapshot_from_state(&state));
+        }
+        state.termination_requested = true;
+        TerminationAdmission::Acquired
+    }
+
+    pub fn with_idle<T>(&self, action: impl FnOnce() -> T) -> Result<T, Box<MutationSnapshot>> {
+        let state = self
+            .state
+            .lock()
+            .expect("mutation controller lock poisoned");
+        if state.mutation.is_some() {
+            return Err(Box::new(snapshot_from_state(&state)));
+        }
+        Ok(action())
     }
 
     fn publish(&self, snapshot: MutationSnapshot) {
@@ -261,8 +298,12 @@ impl Drop for MutationGuard<'_> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use super::{MutationKind, MutationPhase, MutationProgress, SingleMutationController};
+    use super::{
+        MutationKind, MutationPhase, MutationProgress, SingleMutationController,
+        TerminationAdmission,
+    };
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::error::AppError;
 
     fn host_global() -> ContextRef {
         ContextRef {
@@ -455,5 +496,73 @@ mod tests {
 
         guard.transition(MutationPhase::Committing, None, true);
         assert!(!controller.request_cancel().expect("request cancel"));
+    }
+
+    #[test]
+    fn active_mutation_blocks_application_termination() {
+        let controller = SingleMutationController::default();
+        let guard = controller
+            .begin(MutationKind::Install, host_global())
+            .expect("begin mutation");
+
+        let admission = controller.request_termination();
+
+        let TerminationAdmission::Blocked(snapshot) = admission else {
+            panic!("active mutation must block application termination");
+        };
+        assert_eq!(
+            snapshot.active.as_ref().map(|active| active.kind),
+            Some(MutationKind::Install)
+        );
+
+        drop(guard);
+        assert_eq!(
+            controller.request_termination(),
+            TerminationAdmission::Acquired
+        );
+    }
+
+    #[test]
+    fn termination_admission_rejects_new_mutations() {
+        let controller = SingleMutationController::default();
+        assert_eq!(
+            controller.request_termination(),
+            TerminationAdmission::Acquired
+        );
+
+        let result = controller.begin(MutationKind::Update, host_global());
+
+        assert!(matches!(result, Err(AppError::ApplicationTerminating)));
+    }
+
+    #[test]
+    fn repeated_termination_request_is_idempotent() {
+        let controller = SingleMutationController::default();
+
+        assert_eq!(
+            controller.request_termination(),
+            TerminationAdmission::Acquired
+        );
+        assert_eq!(
+            controller.request_termination(),
+            TerminationAdmission::AlreadyRequested
+        );
+    }
+
+    #[test]
+    fn idle_action_runs_only_without_an_active_mutation() {
+        let controller = SingleMutationController::default();
+        let guard = controller
+            .begin(MutationKind::Remove, host_global())
+            .expect("begin mutation");
+        let mut performed = false;
+
+        let blocked = controller.with_idle(|| performed = true);
+
+        assert!(blocked.is_err());
+        assert!(!performed);
+
+        drop(guard);
+        assert_eq!(controller.with_idle(|| 42), Ok(42));
     }
 }

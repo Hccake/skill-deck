@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Header } from '@/components/layout/Header';
 import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
-import { MutationInterruptionDialog } from '@/components/layout/MutationInterruptionDialog';
 import { SkillsPage } from '@/pages/SkillsPage';
 import { DiscoverPage } from '@/pages/DiscoverPage';
 import { SettingsPage } from '@/pages/SettingsPage';
@@ -17,12 +16,11 @@ import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useUpdaterStore } from '@/stores/updater';
 import { UpdateDialog } from '@/components/update-dialog';
-import { useProtectedWindowClose } from '@/hooks/useProtectedWindowClose';
 import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
+import { WindowLifecycleProvider } from '@/lifecycle/WindowLifecycleProvider';
 
 /** 主窗口布局 — 带 Header + Toaster */
 function MainLayout() {
-  const closeProtection = useProtectedWindowClose();
   useEnvironmentRuntimeMonitor();
 
   return (
@@ -32,8 +30,6 @@ function MainLayout() {
         <Outlet />
       </main>
       <MutationStatusBar />
-      <Toaster />
-      <MutationInterruptionDialog {...closeProtection.dialogProps} />
     </div>
   );
 }
@@ -88,22 +84,25 @@ function App() {
   const showUpdateDialog = status === 'available' || status === 'downloading' || status === 'ready';
 
   return (
-    <BrowserRouter>
-      <TooltipProvider>
-        <Routes>
-          {/* 向导窗口路由 — 独立布局，无 Header，必须在通配符之前 */}
-          <Route path="/wizard" element={<WizardPage />} />
+    <WindowLifecycleProvider>
+      <BrowserRouter>
+        <TooltipProvider>
+          <Routes>
+            {/* 向导窗口路由 — 独立布局，无 Header，必须在通配符之前 */}
+            <Route path="/wizard" element={<WizardPage />} />
 
-          {/* 主窗口路由 — Layout Route 包裹 */}
-          <Route element={<MainLayout />}>
-            <Route path="/" element={<SkillsPage />} />
-            <Route path="/discover" element={<DiscoverPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
-        </Routes>
-        <UpdateDialog open={showUpdateDialog} />
-      </TooltipProvider>
-    </BrowserRouter>
+            {/* 主窗口路由 — Layout Route 包裹 */}
+            <Route element={<MainLayout />}>
+              <Route path="/" element={<SkillsPage />} />
+              <Route path="/discover" element={<DiscoverPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+          </Routes>
+          <UpdateDialog open={showUpdateDialog} />
+          <Toaster />
+        </TooltipProvider>
+      </BrowserRouter>
+    </WindowLifecycleProvider>
   );
 }
 

@@ -103,6 +103,9 @@ pub enum AppError {
     #[error("Another Skill operation is already running")]
     MutationBusy,
 
+    #[error("The application is terminating")]
+    ApplicationTerminating,
+
     #[error("Skill operation was cancelled")]
     MutationCancelled,
 

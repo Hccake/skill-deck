@@ -9,7 +9,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import type { MutationInterruptionDialogProps } from '@/hooks/useMutationInterruption';
+import type { LifecycleAction } from '@/bindings';
+
+export interface MutationInterruptionDialogProps {
+  open: boolean;
+  action: LifecycleAction;
+  statusText?: string;
+  cancelable: boolean;
+  cancelling: boolean;
+  onContinueWaiting: () => void;
+  onCancelAndContinue: () => void;
+}
 
 export function MutationInterruptionDialog({
   open,
@@ -21,7 +31,11 @@ export function MutationInterruptionDialog({
   onCancelAndContinue,
 }: MutationInterruptionDialogProps) {
   const { t } = useTranslation();
-  const actionName = action === 'close' ? 'close' : 'restart';
+  const actionName = action === 'closeCurrentWindow'
+    ? 'closeWindow'
+    : action === 'quitApplication'
+      ? 'quit'
+      : 'restart';
   const descriptionKey = cancelable
     ? `mutation.interruption.${actionName}Description`
     : `mutation.interruption.${actionName}WaitDescription`;
@@ -63,7 +77,13 @@ export function MutationInterruptionDialog({
             </Button>
           ) : cancelable ? (
             <Button type="button" variant="destructive" onClick={onCancelAndContinue}>
-              {t(`mutation.interruption.cancelAnd${action === 'close' ? 'Close' : 'Restart'}`)}
+              {t(`mutation.interruption.${
+                action === 'closeCurrentWindow'
+                  ? 'cancelAndCloseWindow'
+                  : action === 'quitApplication'
+                    ? 'cancelAndQuit'
+                    : 'cancelAndRestart'
+              }`)}
             </Button>
           ) : null}
         </AlertDialogFooter>

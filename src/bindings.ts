@@ -111,6 +111,14 @@ async installSkills(context: ContextRef, params: InstallParams) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+async executeLifecycleAction(action: LifecycleAction) : Promise<Result<LifecycleActionOutcome, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("execute_lifecycle_action", { action }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * 检测哪些 skill × agent 组合会被覆盖
  *
@@ -342,9 +350,11 @@ async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
 
 
 export const events = __makeEvents__<{
-environmentRuntimeEvent: EnvironmentRuntimeEvent
+environmentRuntimeEvent: EnvironmentRuntimeEvent,
+lifecycleActionRequestedEvent: LifecycleActionRequestedEvent
 }>({
-environmentRuntimeEvent: "environment-runtime-event"
+environmentRuntimeEvent: "environment-runtime-event",
+lifecycleActionRequestedEvent: "lifecycle-action-requested-event"
 })
 
 /** user-defined constants **/
@@ -391,7 +401,7 @@ export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
  */
-{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
+{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "applicationTerminating" } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
 /**
  * 可用的 Skill 信息（fetch_available 返回）
  */
@@ -761,6 +771,9 @@ privateOnlyAgents?: AgentType[] | null;
  * 需要额外保留到 Agent 目录的默认可用 Agents
  */
 privateCopyAgents?: AgentType[] | null }
+export type LifecycleAction = "closeCurrentWindow" | "quitApplication" | "restartApplication"
+export type LifecycleActionOutcome = { status: "performed" } | { status: "delegated" } | { status: "blocked"; snapshot: MutationSnapshot }
+export type LifecycleActionRequestedEvent = { action: LifecycleAction }
 /**
  * list_skills 返回结果
  * 包含 skills 列表和路径存在性信息

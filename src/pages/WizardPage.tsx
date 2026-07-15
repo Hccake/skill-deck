@@ -20,8 +20,7 @@ import { globalContext } from '@/lib/context';
 import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { useMutationStore } from '@/stores/mutation';
-import { useProtectedWindowClose } from '@/hooks/useProtectedWindowClose';
-import { MutationInterruptionDialog } from '@/components/layout/MutationInterruptionDialog';
+import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
 import type {
   EntryPoint,
   CoreStep,
@@ -86,7 +85,7 @@ export function WizardPage() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const writeBlocked = useMutationStore((store) => store.activeMutation !== null);
-  const closeProtection = useProtectedWindowClose();
+  const { requestAction } = useWindowLifecycle();
 
   useMutationMonitor();
 
@@ -149,7 +148,10 @@ export function WizardPage() {
     }
   }, [currentStepIndex, steps, goToStep]);
 
-  const closeWizard = closeProtection.requestClose;
+  const closeWizard = useCallback(
+    () => requestAction('closeCurrentWindow'),
+    [requestAction],
+  );
 
   // 重试安装 — 清除错误状态，递增 key 强制 InstallingStep 重新挂载
   const handleRetryInstall = useCallback(() => {
@@ -356,7 +358,6 @@ export function WizardPage() {
           </div>
         )}
       </div>
-      <MutationInterruptionDialog {...closeProtection.dialogProps} />
     </div>
   );
 }

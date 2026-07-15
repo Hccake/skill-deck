@@ -3,6 +3,7 @@ use specta_typescript::Typescript;
 use tauri::{Emitter, Manager};
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
+use commands::lifecycle::LifecycleActionRequestedEvent;
 use core::mutation::SingleMutationController;
 use environment::types::EnvironmentRuntimeEvent;
 use environment::wsl::EnvironmentRegistry;
@@ -55,6 +56,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::config::open_in_explorer,
             commands::install::fetch_available,
             commands::install::install_skills,
+            commands::lifecycle::execute_lifecycle_action,
             commands::overwrites::check_overwrites,
             commands::remove::remove_skill,
             commands::remove_details::get_skill_agent_details,
@@ -78,7 +80,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::mutations::get_active_mutation,
             commands::mutations::request_cancel_active_mutation,
         ])
-        .events(collect_events![EnvironmentRuntimeEvent])
+        .events(collect_events![
+            EnvironmentRuntimeEvent,
+            LifecycleActionRequestedEvent
+        ])
 }
 
 #[cfg(debug_assertions)]
@@ -114,7 +119,6 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
@@ -167,6 +171,7 @@ mod command_surface_tests {
             .expect("registered command list");
 
         assert!(!registration.contains("_v2"));
+        assert!(registration.contains("commands::lifecycle::execute_lifecycle_action,"));
         assert!(registration.contains("commands::agents::list_agents,"));
         assert!(registration.contains("commands::skills::list_skills,"));
         for removed in [
@@ -181,5 +186,17 @@ mod command_surface_tests {
                 "legacy command remains: {removed}"
             );
         }
+    }
+
+    #[test]
+    fn registered_event_surface_includes_lifecycle_requests() {
+        let source = include_str!("lib.rs");
+        let registration = source
+            .split("collect_events![")
+            .nth(1)
+            .and_then(|source| source.split("])").next())
+            .expect("registered event list");
+
+        assert!(registration.contains("LifecycleActionRequestedEvent"));
     }
 }

@@ -7,8 +7,7 @@ import { UpdateDialog } from '../update-dialog';
 import { AboutTab } from '../settings/AboutTab';
 
 const mocks = vi.hoisted(() => ({
-  requestAction: vi.fn().mockResolvedValue('blocked'),
-  relaunchApp: vi.fn().mockResolvedValue('blocked'),
+  requestAction: vi.fn().mockResolvedValue(undefined),
   updaterState: {
     status: 'ready',
     newVersion: '2.0.0',
@@ -32,25 +31,10 @@ vi.mock('@tauri-apps/api/app', () => ({
 
 vi.mock('@/stores/updater', () => ({
   useUpdaterStore: () => mocks.updaterState,
-  relaunchApp: mocks.relaunchApp,
 }));
 
-vi.mock('@/hooks/useMutationInterruption', () => ({
-  useMutationInterruption: () => ({
-    requestAction: mocks.requestAction,
-    dialogProps: {
-      open: true,
-      action: 'restart',
-      cancelable: true,
-      cancelling: false,
-      onContinueWaiting: vi.fn(),
-      onCancelAndContinue: vi.fn(),
-    },
-  }),
-}));
-
-vi.mock('@/components/layout/MutationInterruptionDialog', () => ({
-  MutationInterruptionDialog: () => <div>restart-protection-dialog</div>,
+vi.mock('@/lifecycle/useWindowLifecycle', () => ({
+  useWindowLifecycle: () => ({ requestAction: mocks.requestAction }),
 }));
 
 describe('relaunch protection entry points', () => {
@@ -64,8 +48,7 @@ describe('relaunch protection entry points', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.update.restartNow' }));
 
     await waitFor(() => expect(mocks.requestAction).toHaveBeenCalledTimes(1));
-    expect(mocks.relaunchApp).not.toHaveBeenCalled();
-    expect(screen.getByText('restart-protection-dialog')).toBeDefined();
+    expect(mocks.requestAction).toHaveBeenCalledWith('restartApplication');
   });
 
   it('routes the About tab restart action through mutation protection', async () => {
@@ -74,7 +57,6 @@ describe('relaunch protection entry points', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.update.restartNow' }));
 
     await waitFor(() => expect(mocks.requestAction).toHaveBeenCalledTimes(1));
-    expect(mocks.relaunchApp).not.toHaveBeenCalled();
-    expect(screen.getByText('restart-protection-dialog')).toBeDefined();
+    expect(mocks.requestAction).toHaveBeenCalledWith('restartApplication');
   });
 });

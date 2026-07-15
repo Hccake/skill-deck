@@ -38,6 +38,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.error.riskConfirmationRequired');
     case 'mutationBusy':
       return t('addSkill.error.mutationBusy');
+    case 'applicationTerminating':
+      return t('addSkill.error.applicationTerminating');
     case 'mutationCancelled':
       return t('addSkill.error.mutationCancelled');
     case 'environmentDiscoveryFailed':

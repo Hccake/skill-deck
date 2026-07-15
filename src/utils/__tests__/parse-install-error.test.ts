@@ -45,6 +45,11 @@ describe('parseInstallError', () => {
 
   it.each<[AppError, string, string | undefined]>([
     [
+      { kind: 'applicationTerminating' },
+      'addSkill.error.applicationTerminating',
+      undefined,
+    ],
+    [
       { kind: 'mutationCancelled' },
       'addSkill.error.mutationCancelled',
       undefined,

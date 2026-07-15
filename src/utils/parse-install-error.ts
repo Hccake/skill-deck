@@ -153,6 +153,12 @@ export function parseInstallError(
         ],
       };
 
+    case 'applicationTerminating':
+      return {
+        message: t('addSkill.error.applicationTerminating'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
     case 'mutationCancelled':
       return {
         message: t('addSkill.error.mutationCancelled'),

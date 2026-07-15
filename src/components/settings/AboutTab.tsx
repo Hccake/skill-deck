@@ -5,17 +5,15 @@ import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
 import { useUpdaterStore } from '@/stores/updater';
 import { Progress } from '@/components/ui/progress';
-import { relaunchApp } from '@/stores/updater';
 import { COMPATIBLE_CLI_VERSION } from '@/constants';
-import { useMutationInterruption } from '@/hooks/useMutationInterruption';
-import { MutationInterruptionDialog } from '@/components/layout/MutationInterruptionDialog';
+import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
 
 import logoUrl from '@/assets/logo.png';
 
 export function AboutTab() {
   const { t } = useTranslation();
   const { status: updateStatus, newVersion, downloadProgress, lastCheckTime, checkForUpdate } = useUpdaterStore();
-  const restartProtection = useMutationInterruption('restart', relaunchApp);
+  const { requestAction } = useWindowLifecycle();
 
   const [version, setVersion] = useState('');
 
@@ -112,7 +110,7 @@ export function AboutTab() {
             </div>
           ) : updateStatus === 'ready' ? (
             <div className="flex flex-col items-center space-y-2">
-              <Button onClick={() => void restartProtection.requestAction()} className="h-9 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs gap-2 w-48 transition-all font-semibold">
+              <Button onClick={() => void requestAction('restartApplication')} className="h-9 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs gap-2 w-48 transition-all font-semibold">
                 <RefreshCw className="h-3.5 w-3.5" />
                 {t('settings.update.restartNow')}
               </Button>
@@ -153,8 +151,6 @@ export function AboutTab() {
       <div className="mt-auto text-[10px] text-muted-foreground/50 text-center pt-8 pb-2 font-medium">
         Copyright &copy; {new Date().getFullYear()} hccake. All rights reserved.
       </div>
-
-      <MutationInterruptionDialog {...restartProtection.dialogProps} />
 
     </div>
   );

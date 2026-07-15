@@ -6,6 +6,7 @@ pub mod copy_skill;
 pub mod duplicate_copies;
 pub mod environments;
 pub mod install;
+pub mod lifecycle;
 pub mod manage_agents;
 pub mod mutations;
 pub mod overwrites;

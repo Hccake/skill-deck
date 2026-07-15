@@ -8,7 +8,6 @@
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-close",
     "dialog:allow-open",
     {
       "identifier": "http:default",
@@ -19,7 +18,6 @@
       ]
     },
     "updater:default",
-    "process:default",
     "os:default",
     "opener:default"
   ]

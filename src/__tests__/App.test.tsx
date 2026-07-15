@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   discoverEnvironments: vi.fn(),
   refreshWorkspace: vi.fn(),
   listen: vi.fn().mockResolvedValue(() => undefined),
-  requestClose: vi.fn().mockResolvedValue('performed'),
   monitorEnvironmentRuntime: vi.fn(),
   wizardResultHandler: null as null | (() => void),
 }));
@@ -25,21 +24,13 @@ vi.mock('@/components/layout/Header', () => ({ Header: () => null }));
 vi.mock('@/components/layout/MutationStatusBar', () => ({
   MutationStatusBar: () => <div>mutation-status-bar</div>,
 }));
-vi.mock('@/components/layout/MutationInterruptionDialog', () => ({
-  MutationInterruptionDialog: () => <div>close-protection-dialog</div>,
-}));
-vi.mock('@/hooks/useProtectedWindowClose', () => ({
-  useProtectedWindowClose: () => ({
-    requestClose: mocks.requestClose,
-    dialogProps: {
-      open: false,
-      action: 'close',
-      cancelable: false,
-      cancelling: false,
-      onContinueWaiting: vi.fn(),
-      onCancelAndContinue: vi.fn(),
-    },
-  }),
+vi.mock('@/lifecycle/WindowLifecycleProvider', () => ({
+  WindowLifecycleProvider: ({ children }: { children: React.ReactNode }) => (
+    <div>
+      <span>window-lifecycle-provider</span>
+      {children}
+    </div>
+  ),
 }));
 vi.mock('@/hooks/useEnvironmentRuntimeMonitor', () => ({
   useEnvironmentRuntimeMonitor: mocks.monitorEnvironmentRuntime,
@@ -48,7 +39,7 @@ vi.mock('@/pages/SkillsPage', () => ({ SkillsPage: () => null }));
 vi.mock('@/pages/DiscoverPage', () => ({ DiscoverPage: () => null }));
 vi.mock('@/pages/SettingsPage', () => ({ SettingsPage: () => null }));
 vi.mock('@/pages/WizardPage', () => ({ WizardPage: () => null }));
-vi.mock('@/components/ui/sonner', () => ({ Toaster: () => null }));
+vi.mock('@/components/ui/sonner', () => ({ Toaster: () => <div>window-toaster</div> }));
 vi.mock('@/components/ui/tooltip', () => ({ TooltipProvider: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/update-dialog', () => ({ UpdateDialog: () => null }));
 vi.mock('@/stores/skills-data', () => ({
@@ -105,10 +96,10 @@ describe('App', () => {
     expect(screen.getByText('mutation-status-bar')).toBeDefined();
   });
 
-  it('mounts close protection in the main window', () => {
+  it('mounts one lifecycle provider for the current window', () => {
     render(<App />);
 
-    expect(screen.getByText('close-protection-dialog')).toBeDefined();
+    expect(screen.getAllByText('window-lifecycle-provider')).toHaveLength(1);
   });
 
   it('mounts the environment runtime monitor once in the main layout', () => {
@@ -117,5 +108,13 @@ describe('App', () => {
     render(<App />);
 
     expect(mocks.monitorEnvironmentRuntime).toHaveBeenCalledTimes(callsBeforeRender + 1);
+  });
+
+  it('mounts lifecycle error toasts in the wizard window', () => {
+    window.history.pushState({}, '', '/wizard');
+
+    render(<App />);
+
+    expect(screen.getByText('window-toaster')).toBeDefined();
   });
 });

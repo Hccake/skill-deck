@@ -11,8 +11,7 @@ import { useMutationStore } from '@/stores/mutation';
 import { WizardPage } from '../WizardPage';
 
 const mocks = vi.hoisted(() => ({
-  close: vi.fn().mockResolvedValue(undefined),
-  requestClose: vi.fn().mockResolvedValue('performed'),
+  requestAction: vi.fn().mockResolvedValue(undefined),
   emit: vi.fn().mockResolvedValue(undefined),
   refreshProjects: vi.fn().mockResolvedValue([]),
 }));
@@ -21,32 +20,14 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('@tauri-apps/api/webviewWindow', () => ({
-  getCurrentWebviewWindow: () => ({ close: mocks.close }),
-}));
-
 vi.mock('@tauri-apps/api/event', () => ({ emit: mocks.emit }));
 
 vi.mock('@/hooks/useMutationMonitor', () => ({
   useMutationMonitor: vi.fn(),
 }));
 
-vi.mock('@/hooks/useProtectedWindowClose', () => ({
-  useProtectedWindowClose: () => ({
-    requestClose: mocks.requestClose,
-    dialogProps: {
-      open: false,
-      action: 'close',
-      cancelable: false,
-      cancelling: false,
-      onContinueWaiting: vi.fn(),
-      onCancelAndContinue: vi.fn(),
-    },
-  }),
-}));
-
-vi.mock('@/components/layout/MutationInterruptionDialog', () => ({
-  MutationInterruptionDialog: () => <div>wizard-close-protection-dialog</div>,
+vi.mock('@/lifecycle/useWindowLifecycle', () => ({
+  useWindowLifecycle: () => ({ requestAction: mocks.requestAction }),
 }));
 
 vi.mock('@/stores/projects', () => ({
@@ -259,17 +240,17 @@ describe('WizardPage mutation guard', () => {
     expect((screen.getByRole('button', { name: 'addSkill.actions.back' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('routes the cancel action through protected window close', async () => {
+  it('routes the cancel action through the window lifecycle context', async () => {
     render(
       <MemoryRouter initialEntries={['/wizard?entryPoint=skills-panel']}>
         <WizardPage />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('wizard-close-protection-dialog')).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.cancel' }));
 
-    await waitFor(() => expect(mocks.requestClose).toHaveBeenCalledTimes(1));
-    expect(mocks.close).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mocks.requestAction).toHaveBeenCalledWith('closeCurrentWindow');
+    });
   });
 });
