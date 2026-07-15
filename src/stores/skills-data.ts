@@ -24,9 +24,11 @@ import {
 } from '@/hooks/useTauriApi';
 import { getSkillIdentity, getSkillIdentityKey, isSameSkillIdentity } from '@/lib/skills/identity';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
+import { toAppError } from '@/utils/to-app-error';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import type {
   AgentInfo,
+  AppError,
   ContextRef,
   InstalledSkill,
   SkillScope,
@@ -116,7 +118,7 @@ export interface ContextSkillSnapshot {
   agents: AgentInfo[];
   pathExists: boolean;
   loading: boolean;
-  error: string | null;
+  error: AppError | null;
   requestId: number;
 }
 
@@ -201,7 +203,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             [key]: {
               ...state.snapshots[key],
               loading: false,
-              error: error instanceof Error ? error.message : String(error),
+              error: toAppError(error),
             },
           },
         };

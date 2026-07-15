@@ -94,6 +94,19 @@ describe('context-keyed Skill snapshots', () => {
       .toBe('debian-skill');
   });
 
+  it('keeps a structured AppError when loading a context fails', async () => {
+    const error = {
+      kind: 'custom',
+      data: { message: 'invalid WSL inspect record' },
+    } as const;
+    mocks.listSkills.mockRejectedValue(error);
+
+    await useSkillsDataStore.getState().refreshContext(ubuntuGlobal, false);
+
+    expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuGlobal)].error)
+      .toEqual(error);
+  });
+
   it('ignores an older response for the same context key', async () => {
     const first = deferred<ListSkillsResult>();
     const second = deferred<ListSkillsResult>();

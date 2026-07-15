@@ -4,7 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { SkillsPanel } from '../SkillsPanel';
-import type { ContextRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import type { AppError, ContextRef, InstalledSkill, ProjectInfo } from '@/bindings';
 
 const hostGlobal: ContextRef = {
   environment: { kind: 'host' },
@@ -36,13 +36,17 @@ function makeSkill(name: string, scope: 'global' | 'project' = 'global'): Instal
   };
 }
 
-function snapshot(skills: InstalledSkill[] = [], loading = false) {
+function snapshot(
+  skills: InstalledSkill[] = [],
+  loading = false,
+  error: AppError | null = null,
+) {
   return {
     skills,
     agents: [],
     pathExists: true,
     loading,
-    error: null,
+    error,
     requestId: 1,
   };
 }
@@ -251,6 +255,28 @@ describe('SkillsPanel', () => {
     render(<SkillsPanel compact={false} />);
 
     expect(screen.getByTestId('repair:global:cached')).toBeDefined();
+  });
+
+  it('formats a structured load error and retries the committed context', async () => {
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    mocks.skillsDataState.snapshots = {
+      'wsl:Ubuntu/global': snapshot([], false, {
+        kind: 'custom',
+        data: { message: 'invalid WSL inspect record' },
+      }),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    await waitFor(() => {
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(ubuntuGlobal);
+    });
+    mocks.skillsDataState.refreshWorkspace.mockClear();
+
+    expect(screen.getByText('invalid WSL inspect record')).toBeDefined();
+    screen.getByRole('button', { name: 'skills.retry' }).click();
+
+    expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(ubuntuGlobal);
   });
 
   it('refreshes and clears details when the committed context changes', async () => {

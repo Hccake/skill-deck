@@ -61,7 +61,7 @@ while [ "$#" -ge 5 ]; do
       cat -- "$d2"
       printf '\0'
     else
-      printf 'detected\0eve\00\0'
+      printf 'detected\0%s\0%s\0' eve 0
     fi
     [ -n "$root" ] && scan_root eve:root "$root"
     for subagent in "$d1/subagents"/*; do
@@ -467,6 +467,49 @@ mod tests {
             .any(|window| { window == b"BODY_MUST_NOT_BE_TRANSFERRED" }));
         let snapshot = parse_wsl_inspect_output(&output.stdout, &[]).expect("parse snapshot");
         assert_eq!(snapshot.skills[0].description, "Toolkit");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wsl_inspect_script_reports_missing_eve_without_corrupting_protocol() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("project");
+        let canonical = root.join(".agents/skills");
+        std::fs::create_dir_all(&canonical).expect("create canonical root");
+        let eve_root = root.join("agent");
+        let package_json = root.join("package.json");
+        let targets = vec![AgentEnvironmentTarget {
+            agent: AgentType::Eve,
+            display_name: "Eve".to_string(),
+            shared_path: canonical.to_string_lossy().into_owned(),
+            private_path: Some(eve_root.join("skills").to_string_lossy().into_owned()),
+            availability: AgentAvailabilityKind::PrivateRequired,
+            default_available: false,
+            detection_paths: vec![
+                eve_root.to_string_lossy().into_owned(),
+                package_json.to_string_lossy().into_owned(),
+            ],
+        }];
+        let args = vec![
+            root.to_string_lossy().into_owned(),
+            canonical.to_string_lossy().into_owned(),
+            "eve".to_string(),
+            targets[0].private_path.clone().expect("private path"),
+            eve_root.to_string_lossy().into_owned(),
+            package_json.to_string_lossy().into_owned(),
+            String::new(),
+        ];
+
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(WSL_INSPECT_SCRIPT)
+            .arg("--")
+            .args(args)
+            .output()
+            .expect("run inspect script");
+
+        let snapshot = parse_wsl_inspect_output(&output.stdout, &targets).expect("parse snapshot");
+        assert!(snapshot.detected_agents.is_empty());
     }
 
     #[test]

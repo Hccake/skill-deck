@@ -46,6 +46,8 @@
     "title": "My Skills",
     "empty": "暂无已安装的 Skill",
     "emptyHint": "点击「添加」安装你的第一个 Skill",
+    "loadError": "无法加载 Skills",
+    "retry": "重试",
     "add": "添加",
     "enabled": "已启用: {{count}}/{{total}} 个 Agent",
     "scope": {

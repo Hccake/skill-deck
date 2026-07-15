@@ -64,6 +64,11 @@ fn environment_infos_from_wsl_discovery(
             environments.extend(
                 distributions
                     .into_iter()
+                    .filter(|distro_name| {
+                        !["docker-desktop", "docker-desktop-data"]
+                            .iter()
+                            .any(|internal| distro_name.eq_ignore_ascii_case(internal))
+                    })
                     .map(|distro_name| EnvironmentInfo {
                         display_name: distro_name.clone(),
                         environment: EnvironmentRef::Wsl { distro_name },
@@ -665,7 +670,9 @@ mod tests {
     fn discovered_distributions_are_flat_environment_entries() {
         let snapshot = environment_infos_from_wsl_discovery(Ok(vec![
             "Ubuntu-24.04".to_string(),
+            "docker-desktop".to_string(),
             "Debian".to_string(),
+            "docker-desktop-data".to_string(),
         ]));
 
         assert_eq!(snapshot.error, None);

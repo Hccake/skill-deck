@@ -1,6 +1,7 @@
 // src/components/skills/SkillsPanel.tsx
 import { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { RefreshCw } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useProjectStore } from '@/stores/projects';
 import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
@@ -14,7 +15,9 @@ import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { RepairSourceDialog } from './RepairSourceDialog';
 import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { formatAppError } from '@/utils/format-app-error';
 import type { AgentType, InstalledSkill } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
@@ -289,8 +292,21 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   // Error state
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-destructive">{error}</div>
+      <div className="flex h-full items-center justify-center px-6">
+        <div role="alert" className="max-w-md text-center">
+          <p className="text-sm font-medium text-foreground">{t('skills.loadError')}</p>
+          <p className="mt-1 text-xs text-destructive">{formatAppError(error, t)}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            onClick={() => void refreshWorkspace(selectedContext)}
+          >
+            <RefreshCw className="size-4" aria-hidden="true" />
+            {t('skills.retry')}
+          </Button>
+        </div>
       </div>
     );
   }

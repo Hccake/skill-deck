@@ -46,6 +46,8 @@
     "title": "My Skills",
     "empty": "No skills installed",
     "emptyHint": "Click \"Add\" to install your first skill",
+    "loadError": "Unable to load skills",
+    "retry": "Retry",
     "add": "Add",
     "enabled": "Enabled: {{count}}/{{total}} agents",
     "scope": {
