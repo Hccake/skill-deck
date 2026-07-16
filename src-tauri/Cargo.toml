@@ -6,13 +6,17 @@ authors = ["you"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+wsl-integration-tests = []
 
 [build-dependencies]
 tauri-build = { version = "2.5.4", features = [] }
@@ -64,6 +68,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # 延迟初始化单例
 once_cell = "1"
+unicode-normalization = "0.1"
 sha2 = "0.10.9"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-single-instance = "2"
@@ -78,3 +83,4 @@ junction = "1"
 
 [dev-dependencies]
 tempfile = "3"
+tauri = { version = "2.10.0", features = ["test"] }
