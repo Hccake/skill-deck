@@ -1,8 +1,13 @@
 // src-tauri/src/core/mod.rs
 pub mod agent_availability;
+pub mod agent_definition;
+pub mod agent_registry;
+pub mod agent_settings;
 pub mod agents;
 pub mod app_config;
 pub mod audit;
+pub mod builtin_agent_definitions;
+pub mod custom_agent_repository;
 pub mod discovery;
 pub mod eve;
 pub mod git;

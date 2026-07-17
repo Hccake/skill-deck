@@ -10,3 +10,9 @@ pub mod service;
 pub mod types;
 pub mod wsl;
 pub mod wsl_protocol;
+
+#[allow(unused_imports)]
+pub use agent_environment::{
+    AgentRuntimeSnapshot, DetectionState, DirectoryPresenceState, EnvironmentContext,
+    ResolvedAgent, ResolvedAgentScope, ResolvedPathPresence,
+};
