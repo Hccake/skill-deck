@@ -8,6 +8,7 @@
 //!
 //! 与 CLI git.ts 行为一致
 
+use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
@@ -68,6 +69,7 @@ pub fn clone_repo_with_progress<F>(
     url: &str,
     git_ref: Option<&str>,
     on_progress: F,
+    cancellation: CancellationSignal,
 ) -> Result<CloneResult, AppError>
 where
     F: Fn(CloneProgress),
@@ -107,6 +109,7 @@ where
         &mut cmd,
         Duration::from_secs(timeout_secs),
         &on_progress,
+        &cancellation,
     );
 
     match result {
@@ -181,6 +184,8 @@ fn apply_clone_env(cmd: &mut Command) {
 /// 命令执行结果
 struct CommandOutput {
     success: bool,
+    status_code: Option<i32>,
+    stdout: String,
     stderr: String,
     elapsed_secs: u64,
 }
@@ -190,6 +195,7 @@ fn execute_with_timeout_and_progress<F>(
     cmd: &mut Command,
     timeout: Duration,
     on_progress: &F,
+    cancellation: &CancellationSignal,
 ) -> Result<CommandOutput, AppError>
 where
     F: Fn(CloneProgress),
@@ -197,7 +203,7 @@ where
     use std::process::Stdio;
 
     // 设置 stderr 捕获
-    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     // Windows: 隐藏控制台窗口
     #[cfg(windows)]
@@ -205,6 +211,10 @@ where
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    if cancellation.is_cancelled() {
+        return Err(AppError::MutationCancelled);
     }
 
     let mut child = cmd.spawn().map_err(|e| AppError::GitCloneFailed {
@@ -219,6 +229,16 @@ where
         match child.try_wait() {
             Ok(Some(status)) => {
                 // 进程已结束
+                let stdout = child
+                    .stdout
+                    .take()
+                    .map(|mut output| {
+                        use std::io::Read;
+                        let mut buffer = String::new();
+                        output.read_to_string(&mut buffer).ok();
+                        buffer
+                    })
+                    .unwrap_or_default();
                 let stderr = child
                     .stderr
                     .take()
@@ -232,11 +252,19 @@ where
 
                 return Ok(CommandOutput {
                     success: status.success(),
+                    status_code: status.code(),
+                    stdout,
                     stderr,
                     elapsed_secs: start.elapsed().as_secs(),
                 });
             }
             Ok(None) => {
+                if cancellation.is_cancelled() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(AppError::MutationCancelled);
+                }
+
                 // 进程仍在运行
                 let elapsed = start.elapsed();
                 let elapsed_secs = elapsed.as_secs();
@@ -306,12 +334,86 @@ pub fn compute_local_tree_sha(repo_path: &Path, folder_path: &str) -> Option<Str
     if !output.status.success() {
         return None;
     }
-    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if sha.is_empty() {
-        None
-    } else {
-        Some(sha)
+    normalize_git_object_id(String::from_utf8_lossy(&output.stdout).trim())
+}
+
+pub fn compute_local_ref_revision(repo_path: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .ok()?;
+    output.status.success().then(|| {
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_ascii_lowercase()
+    })
+}
+
+pub fn probe_remote_ref_revision(
+    url: &str,
+    git_ref: Option<&str>,
+    cancellation: CancellationSignal,
+) -> Result<String, AppError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("ls-remote").arg("--exit-code").arg(url);
+    match git_ref.filter(|value| !value.is_empty()) {
+        Some(value) if value.starts_with("refs/") => {
+            cmd.arg(value);
+            if value.starts_with("refs/tags/") {
+                cmd.arg(format!("{value}^{{}}"));
+            }
+        }
+        Some(value) => {
+            cmd.arg(format!("refs/heads/{value}"))
+                .arg(format!("refs/tags/{value}^{{}}"))
+                .arg(format!("refs/tags/{value}"));
+        }
+        None => {
+            cmd.arg("HEAD");
+        }
     }
+    apply_clone_env(&mut cmd);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = execute_with_timeout_and_progress(
+        &mut cmd,
+        Duration::from_secs(resolve_clone_timeout_secs()),
+        &|_| {},
+        &cancellation,
+    )?;
+    if !output.success {
+        if output.status_code == Some(2) {
+            return Err(AppError::GitRefNotFound {
+                ref_name: git_ref.unwrap_or("HEAD").to_string(),
+            });
+        }
+        return Err(classify_git_error(&output.stderr, url));
+    }
+
+    let lines = output.stdout;
+    let revision = lines
+        .lines()
+        .find(|line| line.ends_with("^{}"))
+        .or_else(|| lines.lines().next())
+        .and_then(|line| line.split_whitespace().next())
+        .and_then(normalize_git_object_id)
+        .ok_or_else(|| AppError::GitRefNotFound {
+            ref_name: git_ref.unwrap_or("HEAD").to_string(),
+        })?;
+    Ok(revision)
+}
+
+fn normalize_git_object_id(value: &str) -> Option<String> {
+    (matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
 }
 
 /// 分类 Git 错误（与 CLI 行为一致）
@@ -559,6 +661,23 @@ mod tests {
     }
 
     #[test]
+    fn git_object_id_validation_accepts_sha1_and_sha256_only() {
+        assert_eq!(
+            normalize_git_object_id(&"A".repeat(40)),
+            Some("a".repeat(40))
+        );
+        assert_eq!(
+            normalize_git_object_id(&"b".repeat(64)),
+            Some("b".repeat(64))
+        );
+        assert_eq!(normalize_git_object_id(&"c".repeat(63)), None);
+        assert_eq!(
+            normalize_git_object_id(&format!("{}z", "d".repeat(39))),
+            None
+        );
+    }
+
+    #[test]
     fn test_build_error_progress_uses_real_elapsed_not_timeout() {
         let started = std::time::Instant::now();
         let err = AppError::GitCloneFailed {
@@ -569,5 +688,30 @@ mod tests {
         assert!(matches!(progress.phase, ClonePhase::Error));
         assert_eq!(progress.timeout_secs, 120);
         assert_eq!(progress.message, Some(err.to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn active_child_is_killed_and_waited_when_clone_is_cancelled() {
+        let cancellation = CancellationSignal::default();
+        let cancel_from_thread = cancellation.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            cancel_from_thread.cancel();
+        });
+        let mut command = Command::new("sleep");
+        command.arg("10");
+        let started = std::time::Instant::now();
+
+        let result = execute_with_timeout_and_progress(
+            &mut command,
+            Duration::from_secs(10),
+            &|_| {},
+            &cancellation,
+        );
+        canceller.join().unwrap();
+
+        assert!(matches!(result, Err(AppError::MutationCancelled)));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

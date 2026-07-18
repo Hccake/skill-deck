@@ -9,6 +9,28 @@ pub struct NormalizedUpdateMetadata {
     pub ref_name: Option<String>,
     pub skill_path: Option<String>,
     pub remote_hash: Option<String>,
+    pub computed_hash: Option<String>,
+}
+
+impl NormalizedUpdateMetadata {
+    pub fn comparison_baseline(&self) -> Option<&str> {
+        match self.source_type.as_str() {
+            "github" => self
+                .remote_hash
+                .as_deref()
+                .filter(|value| !value.is_empty()),
+            "git" | "gitlab" => self
+                .computed_hash
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    self.remote_hash
+                        .as_deref()
+                        .filter(|value| !value.is_empty())
+                }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,12 +62,79 @@ pub fn recover_source_url(
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::recover_source_url;
+    use super::*;
+
+    fn global(source_type: &str, baseline: &str) -> NormalizedUpdateMetadata {
+        normalize_global_lock_entry(&SkillLockEntry {
+            source: "acme/tools".into(),
+            source_type: source_type.into(),
+            source_url: format!("https://example.com/acme/tools-{source_type}.git"),
+            ref_name: Some("main".into()),
+            skill_path: Some("skills/demo".into()),
+            skill_folder_hash: baseline.into(),
+            installed_at: String::new(),
+            updated_at: String::new(),
+            plugin_name: None,
+        })
+    }
+
+    fn project(
+        source_type: &str,
+        computed_hash: &str,
+        upstream_revision: Option<&str>,
+    ) -> NormalizedUpdateMetadata {
+        normalize_local_lock_entry(&LocalSkillLockEntry {
+            source: "acme/tools".into(),
+            ref_name: Some("main".into()),
+            source_type: source_type.into(),
+            source_url: Some(format!("https://example.com/acme/tools-{source_type}.git")),
+            computed_hash: computed_hash.into(),
+            remote_hash: upstream_revision.map(str::to_string),
+            skill_path: Some("skills/demo".into()),
+            subagents: None,
+            plugin_name: None,
+        })
+    }
 
     #[test]
     fn test_recover_source_url_does_not_invent_github_url_for_empty_source() {
         assert_eq!(recover_source_url("", "github", None), None);
         assert_eq!(recover_source_url("", "github", Some("")), None);
+    }
+
+    #[test]
+    fn provider_and_scope_choose_the_correct_comparison_baseline() {
+        let cases = [
+            (global("github", "github-tree"), Some("github-tree")),
+            (global("gitlab", "global-cli-hash"), Some("global-cli-hash")),
+            (global("git", "global-cli-hash"), Some("global-cli-hash")),
+            (
+                project("github", "project-local-hash", Some("github-tree")),
+                Some("github-tree"),
+            ),
+            (
+                project("gitlab", "project-cli-hash", None),
+                Some("project-cli-hash"),
+            ),
+            (
+                project("git", "project-cli-hash", None),
+                Some("project-cli-hash"),
+            ),
+        ];
+
+        for (metadata, expected) in cases {
+            assert_eq!(metadata.comparison_baseline(), expected);
+            assert!(derive_update_capability(&metadata).can_check_for_updates);
+        }
+    }
+
+    #[test]
+    fn project_generic_git_keeps_computed_hash_out_of_upstream_revision() {
+        let metadata = project("git", "project-cli-hash", None);
+
+        assert_eq!(metadata.computed_hash.as_deref(), Some("project-cli-hash"));
+        assert_eq!(metadata.remote_hash, None);
+        assert_eq!(metadata.comparison_baseline(), Some("project-cli-hash"));
     }
 }
 
@@ -65,6 +154,7 @@ pub fn normalize_global_lock_entry(entry: &SkillLockEntry) -> NormalizedUpdateMe
         } else {
             Some(entry.skill_folder_hash.clone())
         },
+        computed_hash: None,
     }
 }
 
@@ -80,6 +170,7 @@ pub fn normalize_local_lock_entry(entry: &LocalSkillLockEntry) -> NormalizedUpda
         ref_name: entry.ref_name.clone(),
         skill_path: entry.skill_path.clone(),
         remote_hash: entry.remote_hash.clone(),
+        computed_hash: (!entry.computed_hash.is_empty()).then(|| entry.computed_hash.clone()),
     }
 }
 
@@ -94,7 +185,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
         };
     }
 
-    if metadata.source_type != "github" {
+    if !matches!(metadata.source_type.as_str(), "github" | "gitlab" | "git") {
         return UpdateCapability {
             can_check_for_updates: false,
             can_run_update: true,
@@ -110,7 +201,7 @@ pub fn derive_update_capability(metadata: &NormalizedUpdateMetadata) -> UpdateCa
         };
     }
 
-    if metadata.remote_hash.as_deref().unwrap_or("").is_empty() {
+    if metadata.comparison_baseline().is_none() {
         return UpdateCapability {
             can_check_for_updates: false,
             can_run_update: true,

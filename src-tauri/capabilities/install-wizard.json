@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "install-wizard",
+  "description": "Permissions for the isolated install wizard",
+  "windows": ["install-wizard"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "install-wizard-commands"
+  ]
+}

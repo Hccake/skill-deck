@@ -1,22 +1,34 @@
 #[cfg(debug_assertions)]
-use specta_typescript::Typescript;
+use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri::{Emitter, Manager};
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
 use commands::lifecycle::LifecycleActionRequestedEvent;
-use core::mutation::SingleMutationController;
+use commands::ManagedAgentRegistry;
+use environment::maintenance::RuntimeMaintenanceChanged;
 use environment::types::EnvironmentRuntimeEvent;
-use environment::wsl::EnvironmentRegistry;
+use runtime::RuntimeServiceGraph;
 
+mod application;
 mod commands;
 mod core;
 mod environment;
 mod error;
 mod models;
+mod runtime;
+mod storage;
 
-#[cfg(all(target_os = "windows", debug_assertions))]
+#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[path = "test_support/native_workflow.rs"]
+mod native_workflow_integration_support;
+#[cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]
+#[path = "test_support/wsl_workflow.rs"]
+mod wsl_workflow_integration_support;
+
+#[cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]
 #[doc(hidden)]
 pub mod wsl_integration_support {
+    pub use crate::core::mutation::CancellationSignal;
     pub use crate::environment::lock_io::EnvironmentLockIo;
     pub use crate::environment::path_mapping::{
         map_windows_path_with_wslpath, wsl_unc_to_linux_path,
@@ -26,26 +38,114 @@ pub mod wsl_integration_support {
         connect_wsl_environment, discover_wsl_distributions, WslSession,
     };
     pub use crate::environment::wsl_protocol::{
-        build_wsl_exec_args, decode_nul_records, run_wsl_script,
+        decode_nul_records, WslExecutionFeature, WslOperationDescriptor, WslOperationExecutor,
+        WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
     };
     pub use crate::error::AppError;
 
+    pub fn build_wsl_exec_args(
+        distro_name: &str,
+        user: &str,
+        script: &str,
+        positional_args: &[String],
+    ) -> Vec<String> {
+        crate::environment::wsl_protocol::build_wsl_exec_args(
+            distro_name,
+            user,
+            script,
+            positional_args,
+        )
+    }
+
+    pub async fn run_wsl_script(
+        session: &WslSession,
+        script: &'static str,
+        positional_args: &[String],
+        stdin_payload: Vec<u8>,
+        timeout: tokio::time::Duration,
+    ) -> Result<Vec<u8>, AppError> {
+        crate::environment::wsl_protocol::run_wsl_script(
+            session,
+            script,
+            positional_args,
+            stdin_payload,
+            timeout,
+        )
+        .await
+    }
+
     pub async fn read_wsl_projects(session: &WslSession) -> Result<Vec<ProjectBinding>, AppError> {
-        crate::commands::environments::read_wsl_projects(session).await
+        crate::environment::project_service::read_wsl_projects(session).await
     }
 
     pub async fn write_wsl_projects(
         session: &WslSession,
         projects: Vec<ProjectBinding>,
     ) -> Result<Vec<ProjectBinding>, AppError> {
-        crate::commands::environments::write_wsl_projects_for_integration(session, projects).await
+        crate::environment::project_service::write_wsl_projects_for_integration(session, projects)
+            .await
+    }
+
+    pub async fn run_full_wsl_mutation_workflow(
+        session: WslSession,
+        root: String,
+    ) -> Result<(), AppError> {
+        crate::wsl_workflow_integration_support::run_full_wsl_mutation_workflow(session, root).await
+    }
+
+    pub async fn session_loss_invalidates_preview(
+        session: WslSession,
+        root: String,
+    ) -> Result<(), AppError> {
+        crate::wsl_workflow_integration_support::session_loss_invalidates_preview(session, root)
+            .await
+    }
+
+    pub async fn cli_lock_conflict_preserves_external_change(
+        session: WslSession,
+        root: String,
+    ) -> Result<(), AppError> {
+        crate::wsl_workflow_integration_support::cli_lock_conflict_preserves_external_change(
+            session, root,
+        )
+        .await
+    }
+
+    pub async fn reconnect_reindexes_recovery_and_sweeps_payloads(
+        session: WslSession,
+        root: String,
+    ) -> Result<(), AppError> {
+        crate::wsl_workflow_integration_support::reconnect_reindexes_recovery_and_sweeps_payloads(
+            session, root,
+        )
+        .await
+    }
+
+    pub async fn marker_before_batch_stage_failure_converges_after_reconnect(
+        session: WslSession,
+        root: String,
+    ) -> Result<(), AppError> {
+        crate::wsl_workflow_integration_support::marker_before_batch_stage_failure_converges_after_reconnect(
+            session,
+            root,
+        )
+        .await
     }
 }
 
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
+            commands::source_acquisition::acquire_selected_payloads,
+            commands::agents::list_agent_selection_groups,
             commands::agents::list_agents,
+            commands::agents::get_agent_settings_snapshot,
+            commands::agents::validate_custom_agent_draft,
+            commands::agents::save_custom_agent,
+            commands::agents::delete_custom_agent,
+            commands::agents::delete_invalid_custom_agent,
+            commands::agents::preview_custom_agent_delete,
+            commands::agents::duplicate_custom_agent_draft,
             commands::agents::list_eve_install_targets,
             commands::skills::list_skills,
             commands::skills::read_skill_content,
@@ -53,21 +153,29 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::config::save_config,
             commands::config::get_default_target_agents,
             commands::config::save_default_target_agents,
-            commands::config::open_in_explorer,
             commands::install::fetch_available,
-            commands::install::install_skills,
+            commands::install_workflow::preview_install,
+            commands::install_workflow::install_skills,
             commands::lifecycle::execute_lifecycle_action,
-            commands::overwrites::check_overwrites,
+            commands::remove::preview_remove,
             commands::remove::remove_skill,
-            commands::remove_details::get_skill_agent_details,
-            commands::duplicate_copies::cleanup_duplicate_agent_copy,
+            commands::recovery::list_recovery_resources,
+            commands::recovery::get_recovery_resource_status,
+            commands::recovery::confirm_recovery_resource_resolved,
+            commands::recovery::open_recovery_resource,
+            commands::recovery::retry_runtime_maintenance,
+            commands::resources::open_skill_resource,
+            commands::resources::open_config_resource,
             commands::duplicate_copies::cleanup_duplicate_agent_copies,
             commands::update::check_updates,
+            commands::update::preview_update,
             commands::update::update_skill,
             commands::update::update_skills_batch,
             commands::wizard::open_install_wizard,
             commands::audit::check_skill_audit,
+            commands::manage_agents::preview_manage_skill_agents,
             commands::manage_agents::manage_skill_agents,
+            commands::copy_skill::preview_copy_skill_to_projects,
             commands::copy_skill::copy_skill_to_projects,
             commands::environments::list_environments,
             commands::environments::connect_environment,
@@ -78,37 +186,66 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::environments::set_environment_project_cross_storage_warning,
             commands::environments::retry_host_project_migration,
             commands::mutations::get_active_mutation,
+            commands::mutations::get_backend_activity,
             commands::mutations::request_cancel_active_mutation,
+            commands::agent_configuration::request_agent_configuration,
+            commands::agent_configuration::complete_agent_configuration,
+            commands::updater::check_application_update,
+            commands::updater::download_and_install_application_update,
         ])
         .events(collect_events![
             EnvironmentRuntimeEvent,
-            LifecycleActionRequestedEvent
+            RuntimeMaintenanceChanged,
+            LifecycleActionRequestedEvent,
+            commands::agent_configuration::AgentConfigurationRequestedEvent,
+            commands::agent_configuration::AgentConfigurationCompletedEvent,
         ])
 }
 
 #[cfg(debug_assertions)]
+fn bindings_output_path(override_path: Option<std::ffi::OsString>) -> std::path::PathBuf {
+    override_path
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/bindings.ts")
+        })
+}
+
+#[cfg(debug_assertions)]
+fn normalize_generated_bindings(path: &std::path::Path) -> std::io::Result<()> {
+    let content = std::fs::read_to_string(path)?;
+    let mut normalized = content
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    normalized.push('\n');
+    std::fs::write(path, normalized)
+}
+
+#[cfg(debug_assertions)]
 fn export_typescript_bindings(builder: &Builder<tauri::Wry>) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/bindings.ts");
+    let path = bindings_output_path(std::env::var_os("SKILL_DECK_BINDINGS_OUT"));
     builder
         .export(
             Typescript::default()
-                .formatter(specta_typescript::formatter::prettier)
+                .bigint(BigIntExportBehavior::Number)
                 .header("// 此文件由 tauri-specta 自动生成，请勿手动修改\n// This file is auto-generated by tauri-specta. Do not edit manually."),
-            path,
+            &path,
         )
         .expect("Failed to export typescript bindings");
+    normalize_generated_bindings(&path).expect("Failed to normalize typescript bindings");
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = specta_builder();
+    let agent_registry = ManagedAgentRegistry::for_current_user();
 
     #[cfg(debug_assertions)]
     export_typescript_bindings(&builder);
 
     tauri::Builder::default()
-        .manage(EnvironmentRegistry::default())
-        .manage(SingleMutationController::default())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -122,23 +259,70 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
-            app.manage(commands::environments::initialize_host_project_migration());
+            let payload_cache_root = app.path().app_cache_dir()?.join("payload-sessions");
+            let recovery_root = app.path().app_local_data_dir()?.join("recovery");
+            let runtime = RuntimeServiceGraph::new(
+                &payload_cache_root,
+                recovery_root,
+                agent_registry.clone(),
+            )?;
+            let environments = runtime.environments_arc();
+            let maintenance = runtime.maintenance().clone();
+
+            let maintenance_app_handle = app.handle().clone();
+            maintenance.set_listener(move |status| {
+                if let Err(error) =
+                    (RuntimeMaintenanceChanged { status }).emit(&maintenance_app_handle)
+                {
+                    log::warn!("Failed to emit runtime maintenance state: {error}");
+                }
+            })?;
+
             let environment_app_handle = app.handle().clone();
-            app.state::<EnvironmentRegistry>()
-                .set_listener(move |event| {
-                    if let Err(error) = event.emit(&environment_app_handle) {
-                        log::warn!("Failed to emit environment runtime state: {error}");
+            let maintenance_for_environments = maintenance.clone();
+            environments.set_listener(move |event| {
+                if let Err(error) = event.clone().emit(&environment_app_handle) {
+                    log::warn!("Failed to emit environment runtime state: {error}");
+                }
+                if event.status == environment::types::EnvironmentStatus::Available
+                    && matches!(
+                        event.environment,
+                        environment::types::EnvironmentRef::Wsl { .. }
+                    )
+                {
+                    let environment = event.environment;
+                    if let Err(error) = maintenance_for_environments.register(environment.clone()) {
+                        log::warn!("Failed to register WSL runtime maintenance: {error}");
+                        return;
                     }
-                });
+                    let maintenance = maintenance_for_environments.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(error) = maintenance.start(environment).await {
+                            log::warn!("Failed to run WSL runtime maintenance: {error}");
+                        }
+                    });
+                }
+            });
+
             let mutation_app_handle = app.handle().clone();
-            app.state::<SingleMutationController>()
-                .set_listener(move |snapshot| {
-                    if let Err(error) = mutation_app_handle
-                        .emit(core::mutation::MUTATION_STATE_CHANGED_EVENT, snapshot)
-                    {
-                        log::warn!("Failed to emit mutation state: {error}");
-                    }
-                });
+            runtime.mutation().set_listener(move |snapshot| {
+                if let Err(error) =
+                    mutation_app_handle.emit(core::mutation::MUTATION_STATE_CHANGED_EVENT, snapshot)
+                {
+                    log::warn!("Failed to emit mutation state: {error}");
+                }
+            });
+
+            let host_environment = environment::types::EnvironmentRef::Host;
+            maintenance.register(host_environment.clone())?;
+            let host_maintenance = maintenance.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = host_maintenance.start(host_environment).await {
+                    log::warn!("Failed to run Host runtime maintenance: {error}");
+                }
+            });
+
+            app.manage(runtime);
             builder.mount_events(app);
 
             #[cfg(debug_assertions)]
@@ -155,6 +339,47 @@ pub fn run() {
 
 #[cfg(test)]
 mod command_surface_tests {
+    use std::collections::BTreeSet;
+
+    fn registered_commands() -> BTreeSet<String> {
+        let source = include_str!("lib.rs");
+        source
+            .split("collect_commands![")
+            .nth(1)
+            .and_then(|source| source.split("])").next())
+            .expect("registered command list")
+            .lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_suffix(',')
+                    .and_then(|entry| entry.rsplit("::").next())
+                    .filter(|entry| !entry.is_empty())
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    fn app_manifest_commands() -> BTreeSet<String> {
+        include_str!("../app_commands.rs")
+            .lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix('"')
+                    .and_then(|line| line.strip_suffix("\","))
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bindings_output_path_prefers_explicit_override() {
+        let override_path = std::ffi::OsString::from("/tmp/generated-bindings.ts");
+        assert_eq!(
+            super::bindings_output_path(Some(override_path)),
+            std::path::PathBuf::from("/tmp/generated-bindings.ts")
+        );
+    }
+
     #[test]
     #[ignore = "explicit developer action regenerates src/bindings.ts"]
     fn export_bindings() {
@@ -162,41 +387,28 @@ mod command_surface_tests {
     }
 
     #[test]
-    fn registered_command_surface_is_canonical() {
-        let source = include_str!("lib.rs");
-        let registration = source
-            .split("collect_commands![")
-            .nth(1)
-            .and_then(|source| source.split("])").next())
-            .expect("registered command list");
+    fn exported_bindings_have_no_trailing_whitespace() {
+        let temp_dir = tempfile::tempdir().expect("create bindings temp directory");
+        let output_path = temp_dir.path().join("bindings.ts");
+        std::env::set_var("SKILL_DECK_BINDINGS_OUT", &output_path);
+        super::export_typescript_bindings(&super::specta_builder());
+        std::env::remove_var("SKILL_DECK_BINDINGS_OUT");
 
-        assert!(!registration.contains("_v2"));
-        assert!(registration.contains("commands::lifecycle::execute_lifecycle_action,"));
-        assert!(registration.contains("commands::agents::list_agents,"));
-        assert!(registration.contains("commands::skills::list_skills,"));
-        for removed in [
-            "commands::agents::list_agents_host,",
-            "commands::config::add_project,",
-            "commands::config::remove_project,",
-            "commands::config::check_project_path,",
-            "commands::copy_skill::check_skill_in_projects,",
-        ] {
-            assert!(
-                !registration.contains(removed),
-                "legacy command remains: {removed}"
-            );
-        }
+        let content = std::fs::read_to_string(output_path).expect("read generated bindings");
+        let invalid_lines = content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| (line.ends_with([' ', '\t'])).then_some(index + 1))
+            .collect::<Vec<_>>();
+
+        assert!(
+            invalid_lines.is_empty(),
+            "generated bindings contain trailing whitespace on lines {invalid_lines:?}"
+        );
     }
 
     #[test]
-    fn registered_event_surface_includes_lifecycle_requests() {
-        let source = include_str!("lib.rs");
-        let registration = source
-            .split("collect_events![")
-            .nth(1)
-            .and_then(|source| source.split("])").next())
-            .expect("registered event list");
-
-        assert!(registration.contains("LifecycleActionRequestedEvent"));
+    fn registered_commands_match_the_app_manifest_inventory() {
+        assert_eq!(registered_commands(), app_manifest_commands());
     }
 }
