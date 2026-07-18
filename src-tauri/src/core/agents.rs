@@ -1,7 +1,6 @@
 // Agent 配置与检测
 // 完整对应 CLI: agents.ts
 
-use crate::core::agent_availability::{AgentAvailability, AgentAvailabilityKind};
 use crate::core::paths::PATHS;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -16,46 +15,6 @@ pub struct AgentConfig {
     pub display_name: &'static str,
     pub skills_dir: &'static str,
     pub global_skills_dir: Option<PathBuf>,
-}
-
-/// Agent 在单个安装范围下的目标能力
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct AgentScopeTarget {
-    pub supported: bool,
-    pub automatic: bool,
-    pub path: String,
-    pub availability: AgentAvailabilityKind,
-    pub default_available: bool,
-    pub shared_path: String,
-    pub install_path: String,
-    pub read_paths: Vec<String>,
-    pub private_path: Option<String>,
-}
-
-/// Agent 在全局和项目两个安装范围下的目标能力
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct AgentTargets {
-    pub global: AgentScopeTarget,
-    pub project: AgentScopeTarget,
-}
-
-/// Agent 信息（返回给前端）
-/// 对应 CLI: 综合 AgentConfig + detectInstalled 结果
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct AgentInfo {
-    pub id: AgentType,
-    pub name: String,
-    pub skills_dir: String,
-    pub global_skills_dir: String,
-    pub detected: bool,
-    /// 按安装范围计算后的目标能力
-    pub targets: AgentTargets,
 }
 
 /// Agent 类型枚举
@@ -872,6 +831,7 @@ impl AgentType {
 
     /// 检测 Agent 是否已安装
     /// 完整对应 CLI: 每个 agent 的 detectInstalled 函数
+    #[cfg(test)]
     pub fn is_installed(&self) -> bool {
         let cwd = std::env::current_dir().unwrap_or_default();
 
@@ -976,86 +936,9 @@ impl AgentType {
 
     /// 检测所有已安装的 Agent
     /// 对应 CLI: detectInstalledAgents (agents.ts:378-386)
+    #[cfg(test)]
     pub fn detect_installed() -> Vec<AgentType> {
         Self::all().filter(|agent| agent.is_installed()).collect()
-    }
-
-    /// 检测 Agent 是否在指定项目路径可用。
-    pub fn is_installed_for_project(&self, cwd: &str) -> bool {
-        match self {
-            Self::Eve => crate::core::eve::is_eve_project(cwd),
-            _ => self.is_installed(),
-        }
-    }
-
-    /// 获取指定安装范围下的目标能力
-    pub fn scope_target(&self, is_global: bool, cwd: &str) -> AgentScopeTarget {
-        let config = self.config();
-        let availability = self.availability_for_scope(is_global, cwd);
-
-        let path = if is_global {
-            config.global_skills_dir.clone().unwrap_or_default()
-        } else {
-            std::path::PathBuf::from(cwd).join(config.skills_dir)
-        };
-
-        AgentScopeTarget {
-            supported: availability.supported,
-            automatic: availability.default_available,
-            path: if is_global {
-                path.to_string_lossy().to_string()
-            } else {
-                config.skills_dir.to_string()
-            },
-            availability: availability.kind,
-            default_available: availability.default_available,
-            shared_path: availability.shared_path,
-            install_path: availability.install_path,
-            read_paths: availability.read_paths,
-            private_path: availability.private_path,
-        }
-    }
-
-    /// 获取 Agent 在指定安装范围下的共享目录可用性
-    pub fn availability_for_scope(&self, is_global: bool, cwd: &str) -> AgentAvailability {
-        crate::core::agent_availability::availability_for_agent(*self, is_global, cwd)
-    }
-
-    /// 判断 Agent 在指定安装范围下是否自动读取共享目录
-    pub fn is_automatic_for_scope(&self, is_global: bool, cwd: &str) -> bool {
-        self.availability_for_scope(is_global, cwd)
-            .default_available
-    }
-
-    /// 获取指定安装范围下自动读取共享目录的 Agent
-    pub fn get_automatic_agents_for_scope(is_global: bool, cwd: &str) -> Vec<AgentType> {
-        crate::core::agent_availability::default_available_agents(is_global, cwd)
-    }
-
-    /// 转换为指定项目路径下的 AgentInfo（前端使用）
-    pub fn to_agent_info_for_project(self, cwd: &str) -> AgentInfo {
-        let config = self.config();
-
-        AgentInfo {
-            id: self,
-            name: config.display_name.to_string(),
-            skills_dir: config.skills_dir.to_string(),
-            global_skills_dir: config
-                .global_skills_dir
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            detected: self.is_installed_for_project(cwd),
-            targets: AgentTargets {
-                global: self.scope_target(true, cwd),
-                project: self.scope_target(false, cwd),
-            },
-        }
-    }
-
-    /// 转换为 AgentInfo（前端使用）
-    #[cfg(test)]
-    pub fn to_agent_info(self) -> AgentInfo {
-        self.to_agent_info_for_project(".")
     }
 }
 
@@ -1084,32 +967,6 @@ mod tests {
             assert_eq!(config.display_name, "Eve");
             assert_eq!(config.skills_dir, "agent/skills");
             assert!(config.global_skills_dir.is_none());
-        }
-
-        #[test]
-        fn test_eve_project_aware_detection() {
-            let _guard = ENV_LOCK.lock().unwrap();
-            let temp = tempfile::tempdir().unwrap();
-            std::fs::create_dir_all(temp.path().join("agent")).unwrap();
-            std::fs::write(
-                temp.path().join("package.json"),
-                r#"{"devDependencies":{"eve":"^0.11.5"}}"#,
-            )
-            .unwrap();
-
-            assert!(AgentType::Eve.is_installed_for_project(&temp.path().to_string_lossy()));
-            assert!(
-                AgentType::Eve
-                    .to_agent_info_for_project(&temp.path().to_string_lossy())
-                    .detected
-            );
-            assert!(
-                !AgentType::Eve
-                    .to_agent_info_for_project(".")
-                    .targets
-                    .global
-                    .supported
-            );
         }
 
         #[test]
@@ -1292,26 +1149,6 @@ mod tests {
     }
 
     #[test]
-    fn test_project_automatic_agents_include_all_matching_targets() {
-        let automatic_agents = AgentType::get_automatic_agents_for_scope(false, ".");
-
-        assert!(
-            automatic_agents.contains(&AgentType::Replit),
-            "project automatic resolution should depend on the target directory only"
-        );
-    }
-
-    #[test]
-    fn test_agent_info_fields() {
-        let info = AgentType::Replit.to_agent_info();
-        assert!(info.targets.project.automatic);
-
-        let info = AgentType::Warp.to_agent_info();
-        assert!(info.targets.global.automatic);
-        assert!(info.targets.project.automatic);
-    }
-
-    #[test]
     fn test_detect_installed_returns_vec() {
         let installed = AgentType::detect_installed();
         assert!(installed.len() <= AgentType::all().count());
@@ -1322,7 +1159,6 @@ mod tests {
         let config = AgentType::Cortex.config();
         assert_eq!(config.name, "cortex");
         assert_eq!(config.skills_dir, ".cortex/skills");
-        assert!(!AgentType::Cortex.to_agent_info().targets.project.automatic);
     }
 
     #[test]
@@ -1365,120 +1201,8 @@ mod tests {
     }
 
     #[test]
-    fn test_zed_is_automatic_for_both_scopes() {
-        let info = AgentType::Zed.to_agent_info();
-        assert!(info.targets.project.supported);
-        assert!(info.targets.project.automatic);
-        assert_eq!(info.targets.project.path, ".agents/skills");
-        assert!(info.targets.global.supported);
-        assert!(info.targets.global.automatic);
-        assert!(info
-            .targets
-            .global
-            .path
-            .replace('\\', "/")
-            .ends_with(".agents/skills"));
-    }
-
-    #[test]
     fn test_antigravity_uses_shared_project_dir() {
         let config = AgentType::Antigravity.config();
         assert_eq!(config.skills_dir, ".agents/skills");
-    }
-
-    #[test]
-    fn test_antigravity_is_project_automatic_but_global_additional() {
-        let info = AgentType::Antigravity.to_agent_info();
-
-        assert!(info.targets.project.supported);
-        assert!(info.targets.project.automatic);
-        assert_eq!(info.targets.project.path, ".agents/skills");
-
-        assert!(info.targets.global.supported);
-        assert!(!info.targets.global.automatic);
-        assert!(info.targets.global.path.contains(".gemini"));
-        assert!(info.targets.global.path.contains("antigravity"));
-    }
-
-    #[test]
-    fn test_warp_is_automatic_for_both_scopes() {
-        let info = AgentType::Warp.to_agent_info();
-
-        assert!(info.targets.project.automatic);
-        assert!(info.targets.global.automatic);
-    }
-
-    #[test]
-    fn test_claude_code_is_additional_for_both_scopes() {
-        let info = AgentType::ClaudeCode.to_agent_info();
-
-        assert!(info.targets.project.supported);
-        assert!(!info.targets.project.automatic);
-        assert!(info.targets.global.supported);
-        assert!(!info.targets.global.automatic);
-    }
-
-    #[test]
-    fn agent_availability_firebender_global_is_shared_compatible_by_default() {
-        use crate::core::agent_availability::AgentAvailabilityKind;
-
-        let availability = AgentType::Firebender.availability_for_scope(true, ".");
-
-        assert_eq!(availability.kind, AgentAvailabilityKind::SharedCompatible);
-        assert!(availability.default_available);
-        assert!(availability.private_path.is_some());
-    }
-
-    #[test]
-    fn agent_availability_antigravity_global_requires_private_install() {
-        use crate::core::agent_availability::AgentAvailabilityKind;
-
-        let availability = AgentType::Antigravity.availability_for_scope(true, ".");
-
-        assert_eq!(availability.kind, AgentAvailabilityKind::PrivateRequired);
-        assert!(!availability.default_available);
-    }
-
-    #[test]
-    fn agent_availability_cline_global_requires_private_install() {
-        use crate::core::agent_availability::AgentAvailabilityKind;
-
-        let availability = AgentType::Cline.availability_for_scope(true, ".");
-
-        assert_eq!(availability.kind, AgentAvailabilityKind::PrivateRequired);
-        assert!(!availability.default_available);
-        let private_path = availability
-            .private_path
-            .expect("Cline private path should be available");
-        assert!(private_path.replace('\\', "/").contains(".cline/skills"));
-        assert_ne!(private_path, availability.shared_path);
-    }
-
-    #[test]
-    fn agent_availability_warp_global_defaults_to_shared() {
-        use crate::core::agent_availability::AgentAvailabilityKind;
-
-        let availability = AgentType::Warp.availability_for_scope(true, ".");
-
-        assert!(availability.default_available);
-        if availability.kind == AgentAvailabilityKind::SharedOnly {
-            assert!(availability.private_path.is_none());
-        }
-    }
-
-    #[test]
-    fn agent_availability_antigravity_project_defaults_to_shared_project_dir() {
-        let availability = AgentType::Antigravity.availability_for_scope(false, ".");
-
-        assert!(availability.default_available);
-        assert!(AgentType::Antigravity.is_automatic_for_scope(false, "."));
-    }
-
-    #[test]
-    fn agent_availability_cursor_global_is_not_default_available() {
-        let availability = AgentType::Cursor.availability_for_scope(true, ".");
-
-        assert!(!availability.default_available);
-        assert!(!AgentType::Cursor.is_automatic_for_scope(true, "."));
     }
 }

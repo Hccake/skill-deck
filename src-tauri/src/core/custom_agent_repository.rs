@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use tempfile::NamedTempFile;
 
 use super::agent_definition::{AgentFieldError, AgentId, CustomAgentDefinition};
@@ -16,6 +16,7 @@ pub const CUSTOM_AGENT_SCHEMA_VERSION: u32 = 1;
 pub struct CustomAgentFile {
     pub schema_version: u32,
     pub records: Vec<CustomAgentRecord>,
+    pub root_extensions: Map<String, Value>,
 }
 
 impl Default for CustomAgentFile {
@@ -23,11 +24,13 @@ impl Default for CustomAgentFile {
         Self {
             schema_version: CUSTOM_AGENT_SCHEMA_VERSION,
             records: Vec::new(),
+            root_extensions: Map::new(),
         }
     }
 }
 
 impl CustomAgentFile {
+    #[cfg(test)]
     pub fn valid_records(&self) -> impl Iterator<Item = (&CustomAgentDefinition, &Value)> {
         self.records.iter().filter_map(|record| match record {
             CustomAgentRecord::Valid { definition, raw } => Some((definition, raw)),
@@ -35,6 +38,7 @@ impl CustomAgentFile {
         })
     }
 
+    #[cfg(test)]
     pub fn invalid_records(&self) -> impl Iterator<Item = (usize, &Value, &[AgentFieldError])> {
         self.records.iter().filter_map(|record| match record {
             CustomAgentRecord::Invalid { index, raw, errors } => {
@@ -60,6 +64,7 @@ impl CustomAgentRepository {
         Ok(Self::new(config_path.with_file_name("custom-agents.json")))
     }
 
+    #[cfg(test)]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -126,7 +131,7 @@ impl CustomAgentRepository {
         {
             let existing_raw = match record {
                 CustomAgentRecord::Valid { raw, .. } => raw,
-                CustomAgentRecord::DisabledConflict { .. } | CustomAgentRecord::Invalid { .. } => {
+                CustomAgentRecord::Invalid { .. } => {
                     unreachable!("record_definition only matches persisted valid records")
                 }
             };
@@ -154,7 +159,27 @@ impl CustomAgentRepository {
         if file.records.len() != previous_len {
             refresh_invalid_indices(&mut file.records);
             self.save(&file)?;
+        } else {
+            return Err(AppError::InvalidAgent {
+                agent: id.to_string(),
+            });
         }
+        Ok(file)
+    }
+
+    pub fn delete_invalid(&self, index: usize) -> Result<CustomAgentFile, AppError> {
+        let mut file = self.load()?;
+        if !matches!(
+            file.records.get(index),
+            Some(CustomAgentRecord::Invalid { .. })
+        ) {
+            return Err(AppError::Json {
+                message: format!("custom agent record at index {index} is not invalid"),
+            });
+        }
+        file.records.remove(index);
+        refresh_invalid_indices(&mut file.records);
+        self.save(&file)?;
         Ok(file)
     }
 
@@ -183,7 +208,7 @@ impl CustomAgentRepository {
 fn record_definition(record: &CustomAgentRecord) -> Option<&CustomAgentDefinition> {
     match record {
         CustomAgentRecord::Valid { definition, .. } => Some(definition),
-        CustomAgentRecord::DisabledConflict { .. } | CustomAgentRecord::Invalid { .. } => None,
+        CustomAgentRecord::Invalid { .. } => None,
     }
 }
 
@@ -331,9 +356,6 @@ fn validate_records(records: &[CustomAgentRecord]) -> Result<(), AppError> {
                 definition.validate().map_err(invalid_definition_error)?;
             }
             CustomAgentRecord::Invalid { .. } => {}
-            CustomAgentRecord::DisabledConflict { .. } => {
-                return Err(derived_conflict_error());
-            }
         }
     }
     Ok(())
@@ -345,18 +367,9 @@ fn invalid_definition_error(error: AgentFieldError) -> AppError {
     }
 }
 
-fn derived_conflict_error() -> AppError {
-    AppError::Custom {
-        message: "derived conflict records cannot be persisted".to_string(),
-    }
-}
-
 fn unsupported_schema_error(version: u64) -> AppError {
-    AppError::Custom {
-        message: format!(
-            "custom agent schemaVersion {version} is unsupported; the repository is read-only"
-        ),
-    }
+    let _ = version;
+    AppError::ConfigurationReadOnly
 }
 
 fn serialize_file(file: &CustomAgentFile) -> Result<Vec<u8>, AppError> {
@@ -367,13 +380,15 @@ fn serialize_file(file: &CustomAgentFile) -> Result<Vec<u8>, AppError> {
             CustomAgentRecord::Valid { raw, .. } | CustomAgentRecord::Invalid { raw, .. } => {
                 Ok(raw.clone())
             }
-            CustomAgentRecord::DisabledConflict { .. } => Err(derived_conflict_error()),
         })
         .collect::<Result<Vec<_>, AppError>>()?;
-    let mut bytes = serde_json::to_vec_pretty(&json!({
-        "schemaVersion": file.schema_version,
-        "agents": agents,
-    }))?;
+    let mut root = file.root_extensions.clone();
+    root.insert(
+        "schemaVersion".to_string(),
+        Value::from(file.schema_version),
+    );
+    root.insert("agents".to_string(), Value::Array(agents));
+    let mut bytes = serde_json::to_vec_pretty(&Value::Object(root))?;
     bytes.push(b'\n');
     Ok(bytes)
 }
@@ -422,6 +437,11 @@ fn parse_file(bytes: &[u8]) -> Result<CustomAgentFile, ReadFailure> {
     Ok(CustomAgentFile {
         schema_version: schema_version as u32,
         records,
+        root_extensions: object
+            .iter()
+            .filter(|(key, _)| key.as_str() != "schemaVersion" && key.as_str() != "agents")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
     })
 }
 
@@ -516,6 +536,7 @@ mod tests {
         CustomAgentFile {
             schema_version: CUSTOM_AGENT_SCHEMA_VERSION,
             records,
+            root_extensions: Map::new(),
         }
     }
 
@@ -607,17 +628,63 @@ mod tests {
         let before = fs::read(&path).expect("read future schema fixture");
 
         let load_error = repository.load().expect_err("future schema must fail");
-        assert!(matches!(
-            load_error,
-            AppError::Custom { ref message } if message.contains("read-only")
-        ));
+        assert_eq!(load_error, AppError::ConfigurationReadOnly);
         let save_error = repository
             .upsert(definition("new-agent"))
             .expect_err("future schema must block mutation");
+        assert_eq!(save_error, AppError::ConfigurationReadOnly);
+        assert_eq!(fs::read(path).expect("read unchanged fixture"), before);
+    }
+
+    #[test]
+    fn delete_invalid_record_preserves_all_other_raw_records() {
+        let before = json!({
+            "schemaVersion": 1,
+            "agents": [raw_definition("ok-agent"), { "broken": true }, { "future": 7 }]
+        });
+        let (_temp, repository) = repository_with_value(before);
+
+        let after = repository.delete_invalid(1).expect("delete invalid record");
+
+        assert_eq!(after.records.len(), 2);
         assert!(matches!(
-            save_error,
-            AppError::Custom { ref message } if message.contains("read-only")
+            &after.records[1],
+            CustomAgentRecord::Invalid { index: 1, raw, .. }
+                if *raw == json!({ "future": 7 })
         ));
+    }
+
+    #[test]
+    fn delete_invalid_preserves_same_schema_root_extensions() {
+        let (_temp, repository) = repository_with_value(json!({
+            "schemaVersion": 1,
+            "rootExtension": { "keep": [1, 2, 3] },
+            "agents": [raw_definition("ok-agent"), { "broken": true }]
+        }));
+
+        repository.delete_invalid(1).expect("delete invalid record");
+
+        let stored: Value =
+            serde_json::from_slice(&fs::read(repository.path()).expect("read stored repository"))
+                .expect("parse stored repository");
+        assert_eq!(stored["rootExtension"], json!({ "keep": [1, 2, 3] }));
+    }
+
+    #[test]
+    fn delete_invalid_rejects_future_schema_without_modifying_bytes() {
+        let value = json!({
+            "schemaVersion": CUSTOM_AGENT_SCHEMA_VERSION + 1,
+            "agents": [{ "broken": true }]
+        });
+        let (temp, repository) = repository_with_value(value);
+        let path = temp.path().join("custom-agents.json");
+        let before = fs::read(&path).expect("read future schema fixture");
+
+        let error = repository
+            .delete_invalid(0)
+            .expect_err("future schema must remain read-only");
+
+        assert_eq!(error, AppError::ConfigurationReadOnly);
         assert_eq!(fs::read(path).expect("read unchanged fixture"), before);
     }
 
@@ -1020,28 +1087,6 @@ mod tests {
     }
 
     #[test]
-    fn disabled_conflict_records_are_never_serialized() {
-        let temp = tempdir().expect("tempdir");
-        let repository = CustomAgentRepository::new(temp.path().join("custom-agents.json"));
-        let conflict = definition("conflict-agent");
-        let conflict_file = file(vec![CustomAgentRecord::DisabledConflict {
-            definition: conflict.clone(),
-            builtin: conflict.normalize().expect("normalize builtin fixture"),
-            raw: serde_json::to_value(&conflict).expect("serialize conflict"),
-        }]);
-
-        let error = repository
-            .save(&conflict_file)
-            .expect_err("derived conflict must not be persisted");
-
-        assert!(matches!(
-            error,
-            AppError::Custom { ref message } if message.contains("derived conflict")
-        ));
-        assert!(!repository.path().exists());
-    }
-
-    #[test]
     fn valid_record_can_be_deleted_by_id_even_when_registry_may_classify_it_as_conflict() {
         let temp = tempdir().expect("tempdir");
         let repository = CustomAgentRepository::new(temp.path().join("custom-agents.json"));
@@ -1057,6 +1102,27 @@ mod tests {
 
         assert!(saved.records.is_empty());
         assert!(repository.load().unwrap().records.is_empty());
+    }
+
+    #[test]
+    fn delete_missing_definition_returns_invalid_agent_without_writing() {
+        let (_temp, repository) = repository_with_value(json!({
+            "schemaVersion": 1,
+            "agents": [raw_definition("kept-agent")]
+        }));
+        let before = fs::read(repository.path()).expect("repository bytes");
+
+        let error = repository
+            .delete(&AgentId::parse("missing-agent").unwrap())
+            .expect_err("missing definition must not be a successful no-op");
+
+        assert_eq!(
+            error,
+            AppError::InvalidAgent {
+                agent: "missing-agent".to_string(),
+            }
+        );
+        assert_eq!(fs::read(repository.path()).unwrap(), before);
     }
 
     #[test]

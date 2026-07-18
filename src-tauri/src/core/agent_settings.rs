@@ -11,11 +11,6 @@ pub enum CustomAgentRecord {
         definition: CustomAgentDefinition,
         raw: serde_json::Value,
     },
-    DisabledConflict {
-        definition: CustomAgentDefinition,
-        builtin: AgentDefinition,
-        raw: serde_json::Value,
-    },
     Invalid {
         index: usize,
         raw: serde_json::Value,
@@ -24,6 +19,7 @@ pub enum CustomAgentRecord {
 }
 
 impl CustomAgentRecord {
+    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
     pub fn valid(definition: CustomAgentDefinition) -> Self {
         let raw = serde_json::to_value(&definition)
             .expect("custom definition must serialize for a valid record");
@@ -68,7 +64,7 @@ pub struct DisabledAgentConflict {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct InvalidCustomAgentRecord {
-    pub index: usize,
+    pub index: u32,
     pub raw: RawJsonValue,
     pub errors: Vec<AgentFieldError>,
 }
@@ -94,8 +90,18 @@ impl AgentSettingsRecords {
             disabled_conflicts: self.disabled_conflicts.clone(),
             invalid_custom_records: self.invalid_custom_records.clone(),
             current_environment,
+            custom_storage_issue: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct AgentStorageIssue {
+    pub code: String,
+    pub message: String,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -108,6 +114,7 @@ pub struct AgentSettingsSnapshot {
     pub disabled_conflicts: Vec<DisabledAgentConflict>,
     pub invalid_custom_records: Vec<InvalidCustomAgentRecord>,
     pub current_environment: EnvironmentRef,
+    pub custom_storage_issue: Option<AgentStorageIssue>,
 }
 
 #[cfg(test)]
@@ -217,5 +224,6 @@ mod tests {
         assert_eq!(snapshot.disabled_conflicts[0].raw.0, conflict_raw);
         assert_eq!(snapshot.invalid_custom_records, vec![invalid]);
         assert_eq!(snapshot.current_environment, EnvironmentRef::Host);
+        assert_eq!(snapshot.custom_storage_issue, None);
     }
 }

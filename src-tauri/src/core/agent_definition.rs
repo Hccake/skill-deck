@@ -156,6 +156,7 @@ impl PathSpec {
         Self::Absolute { path: path.into() }
     }
 
+    #[cfg(test)]
     fn contains_project(&self) -> bool {
         match self {
             Self::Project { .. } => true,
@@ -168,6 +169,7 @@ impl PathSpec {
         }
     }
 
+    #[cfg(test)]
     fn contains_absolute(&self) -> bool {
         match self {
             Self::Absolute { .. } => true,
@@ -180,6 +182,7 @@ impl PathSpec {
         }
     }
 
+    #[cfg(test)]
     fn validate(&self, field: &str) -> Result<(), AgentFieldError> {
         match self {
             Self::Home { relative_path }
@@ -239,6 +242,7 @@ pub struct ScopeDefinition {
 }
 
 impl ScopeDefinition {
+    #[cfg(test)]
     fn validate(&self, field: &str) -> Result<(), AgentFieldError> {
         if self.enabled && !self.reads_shared && self.private_path.is_none() {
             return Err(AgentFieldError::new(field, "invalidScope"));
@@ -308,6 +312,7 @@ pub struct AgentDefinition {
 }
 
 impl AgentDefinition {
+    #[cfg(test)]
     pub fn validate(&self) -> Result<(), AgentFieldError> {
         self.id.validate()?;
         if self.display_name.trim().is_empty() {
@@ -382,6 +387,7 @@ pub enum CustomPathSpec {
 }
 
 impl CustomPathSpec {
+    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
     pub fn based(base: CustomPathBase, relative_path: impl Into<String>) -> Self {
         Self::Based {
             base,
@@ -389,6 +395,7 @@ impl CustomPathSpec {
         }
     }
 
+    #[cfg(test)]
     pub fn absolute(path: impl Into<String>) -> Self {
         Self::Absolute { path: path.into() }
     }
@@ -441,6 +448,7 @@ pub struct CustomScopeDefinition {
 }
 
 impl CustomScopeDefinition {
+    #[cfg(test)]
     pub fn normalize(&self) -> Result<ScopeDefinition, AgentFieldError> {
         self.normalize_at("")
     }
@@ -530,12 +538,6 @@ impl CustomAgentDefinition {
             return Err(AgentFieldError::new("detectionPaths", "required"));
         }
         for (index, path) in self.detection_paths.iter().enumerate() {
-            if path.is_project_based() {
-                return Err(AgentFieldError::new(
-                    format!("detectionPaths[{index}].base"),
-                    "projectBaseNotAllowed",
-                ));
-            }
             path.validate(&format!("detectionPaths[{index}]"))?;
         }
         Ok(())
@@ -596,9 +598,7 @@ fn validate_absolute_path(value: &str, field: &str) -> Result<(), AgentFieldErro
             .count()
     });
     let unc_absolute = unc_components.is_some_and(|count| count >= 3);
-    let separator_body = if drive_absolute {
-        &normalized[2..]
-    } else if normalized.starts_with("//") {
+    let separator_body = if drive_absolute || normalized.starts_with("//") {
         &normalized[2..]
     } else {
         normalized.strip_prefix('/').unwrap_or(&normalized)
@@ -950,14 +950,27 @@ mod tests {
     }
 
     #[test]
-    fn detection_paths_reject_project_base_with_stable_field_path() {
+    fn custom_project_detection_is_valid() {
         let mut definition = valid_custom_definition();
-        definition.detection_paths = vec![custom_path(CustomPathBase::Project, ".demo")];
+        definition.detection_paths =
+            vec![CustomPathSpec::based(CustomPathBase::Project, ".my-agent")];
 
-        assert_eq!(
-            definition.validate().unwrap_err().field,
-            "detectionPaths[0].base"
-        );
+        definition
+            .validate()
+            .expect("project detection is supported");
+    }
+
+    #[test]
+    fn custom_definition_round_trips_project_detection_paths() {
+        let mut definition = valid_custom_definition();
+        definition.detection_paths =
+            vec![CustomPathSpec::based(CustomPathBase::Project, ".my-agent")];
+
+        let encoded = serde_json::to_string(&definition).expect("serialize definition");
+        let decoded: CustomAgentDefinition =
+            serde_json::from_str(&encoded).expect("deserialize definition");
+
+        assert_eq!(decoded.detection_paths, definition.detection_paths);
     }
 
     #[test]

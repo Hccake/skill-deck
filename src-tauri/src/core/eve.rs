@@ -1,7 +1,15 @@
+use crate::core::agent_definition::AgentId;
 use crate::core::agents::AgentType;
 use crate::core::skill::sanitize_name;
+use crate::core::skill_payload::{
+    verify_skill_payload_integrity, PayloadEntry, PayloadEntryKind, SkillPayload,
+    SkillPayloadManifest,
+};
+use crate::error::AppError;
 use crate::models::InstallTargetInfo;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,7 +103,8 @@ pub fn eve_install_targets_for_project(cwd: &str) -> Vec<InstallTargetInfo> {
 
     let mut targets = vec![InstallTargetInfo {
         target_id: eve_target_id(None),
-        agent: AgentType::Eve,
+        agent: AgentId::parse(AgentType::Eve.to_string())
+            .expect("built-in Eve Agent ID must be valid"),
         display_name: eve_target_label(None),
         subagent: None,
         path: eve_skills_dir_for_target(cwd, None)
@@ -107,7 +116,8 @@ pub fn eve_install_targets_for_project(cwd: &str) -> Vec<InstallTargetInfo> {
         let subagent = lock_subagent_value(Some(&subagent));
         InstallTargetInfo {
             target_id: eve_target_id(Some(&subagent)),
-            agent: AgentType::Eve,
+            agent: AgentId::parse(AgentType::Eve.to_string())
+                .expect("built-in Eve Agent ID must be valid"),
             display_name: eve_target_label(Some(&subagent)),
             path: eve_skills_dir_for_target(cwd, Some(&subagent))
                 .to_string_lossy()
@@ -178,6 +188,80 @@ pub fn normalize_eve_skill_md(raw: &str) -> String {
     format!("---\n{}---\n{}", yaml, content)
 }
 
+pub fn derive_eve_skill_payload(canonical: &SkillPayload) -> Result<SkillPayload, AppError> {
+    verify_skill_payload_integrity(canonical)?;
+    let skill_entry = canonical
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.kind == PayloadEntryKind::File
+                && !entry.relative_path.contains('/')
+                && entry.relative_path.eq_ignore_ascii_case("SKILL.md")
+        })
+        .min_by_key(|entry| (entry.relative_path != "SKILL.md", &entry.relative_path))
+        .ok_or_else(|| AppError::InvalidSkillMd {
+            message: "canonical payload does not contain a root SKILL.md".to_string(),
+        })?;
+    let raw = canonical
+        .blobs
+        .get(
+            skill_entry
+                .blob_id
+                .as_deref()
+                .ok_or(AppError::StalePayload)?,
+        )
+        .ok_or(AppError::StalePayload)?;
+    let raw = std::str::from_utf8(raw).map_err(|error| AppError::InvalidSkillMd {
+        message: format!("SKILL.md is not valid UTF-8: {error}"),
+    })?;
+    let normalized = normalize_eve_skill_md(raw).into_bytes();
+    let normalized_hash = format!("{:x}", Sha256::digest(&normalized));
+
+    let mut entries = canonical
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.relative_path.contains('/')
+                || !entry.relative_path.eq_ignore_ascii_case("SKILL.md")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    entries.push(PayloadEntry {
+        relative_path: "SKILL.md".to_string(),
+        kind: PayloadEntryKind::File,
+        blob_id: Some(normalized_hash.clone()),
+        content_hash: Some(normalized_hash.clone()),
+        size: normalized.len() as u64,
+        executable: false,
+    });
+    let manifest = SkillPayloadManifest::from_entries(entries)?;
+    let mut blobs = BTreeMap::new();
+    for entry in &manifest.entries {
+        let Some(blob_id) = entry.blob_id.as_deref() else {
+            continue;
+        };
+        let blob = if blob_id == normalized_hash {
+            normalized.clone()
+        } else {
+            canonical
+                .blobs
+                .get(blob_id)
+                .cloned()
+                .ok_or(AppError::StalePayload)?
+        };
+        blobs.entry(blob_id.to_string()).or_insert(blob);
+    }
+    let payload = SkillPayload {
+        entries: manifest.entries,
+        blobs,
+        payload_root_hash: manifest.payload_root_hash,
+        payload_id: manifest.payload_id,
+    };
+    verify_skill_payload_integrity(&payload)?;
+    Ok(payload)
+}
+
+#[cfg(test)]
 pub fn paths_overlap(left: &Path, right: &Path) -> bool {
     let normalize = |path: &Path| {
         path.canonicalize().unwrap_or_else(|_| {
@@ -288,6 +372,52 @@ mod tests {
         assert!(normalized.contains("keep: value"));
         assert!(!normalized.contains("skip: 1"));
         assert!(normalized.contains("# Demo"));
+    }
+
+    #[test]
+    fn eve_payload_derivation_changes_only_root_skill_md() {
+        let temp = tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("scripts")).unwrap();
+        std::fs::write(
+            temp.path().join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("scripts/run.sh"), "#!/bin/sh\necho demo\n").unwrap();
+        let canonical = crate::core::skill_payload::build_skill_payload(temp.path()).unwrap();
+        let canonical_id = canonical.payload_id.clone();
+
+        let derived = derive_eve_skill_payload(&canonical).unwrap();
+
+        assert_eq!(canonical.payload_id, canonical_id);
+        assert_ne!(derived.payload_id, canonical.payload_id);
+        let skill_entry = derived
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == "SKILL.md")
+            .unwrap();
+        let skill_md = std::str::from_utf8(
+            derived
+                .blobs
+                .get(skill_entry.blob_id.as_deref().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(!skill_md.contains("name:"));
+        assert!(skill_md.contains("description: Demo"));
+        let script_entry = derived
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == "scripts/run.sh")
+            .unwrap();
+        assert_eq!(
+            derived
+                .blobs
+                .get(script_entry.blob_id.as_deref().unwrap())
+                .unwrap(),
+            b"#!/bin/sh\necho demo\n"
+        );
+        crate::core::skill_payload::verify_skill_payload_integrity(&derived).unwrap();
     }
 
     #[test]

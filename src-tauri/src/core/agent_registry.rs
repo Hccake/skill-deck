@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::agent_definition::{AgentDefinition, AgentId};
 use super::agent_settings::{
@@ -39,6 +39,14 @@ impl AgentRegistry {
         Self::build(builtin_agent_definitions(), custom_records)
     }
 
+    /// Builds a path-independent fallback when agent storage cannot be located.
+    ///
+    /// Built-in definitions still depend on the legacy `PATHS` singleton. Once
+    /// that dependency is removed, this fallback can safely expose Built-ins.
+    pub fn empty_unavailable() -> Self {
+        Self::build(Vec::new(), Vec::new())
+    }
+
     pub fn build(
         builtin_definitions: Vec<AgentDefinition>,
         custom_records: Vec<CustomAgentRecord>,
@@ -46,13 +54,33 @@ impl AgentRegistry {
         let mut active_definitions = BTreeMap::new();
         let mut builtin_ids_and_aliases = BTreeMap::new();
 
-        for definition in builtin_definitions {
+        let custom_ids = custom_records
+            .iter()
+            .filter_map(|record| match record {
+                CustomAgentRecord::Valid { definition, .. } => Some(definition.id.clone()),
+                CustomAgentRecord::Invalid { .. } => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let mut original_builtins = BTreeMap::new();
+
+        for definition in &builtin_definitions {
             let id = definition.id.clone();
             builtin_ids_and_aliases.insert(id.clone(), id.clone());
             for alias in &definition.aliases {
                 builtin_ids_and_aliases.insert(alias.clone(), id.clone());
             }
-            active_definitions.insert(id, definition);
+            original_builtins.insert(id, definition.clone());
+        }
+
+        for definition in builtin_definitions {
+            if custom_ids.contains(&definition.id) {
+                continue;
+            }
+            let mut active_definition = definition;
+            active_definition
+                .aliases
+                .retain(|alias| !custom_ids.contains(alias));
+            active_definitions.insert(active_definition.id.clone(), active_definition);
         }
 
         let active_builtin = active_definitions.values().cloned().collect();
@@ -67,17 +95,15 @@ impl AgentRegistry {
                     settings_records
                         .invalid_custom_records
                         .push(InvalidCustomAgentRecord {
-                            index,
+                            index: u32::try_from(index)
+                                .expect("custom Agent record index must fit in u32"),
                             raw: raw.into(),
                             errors,
                         });
                 }
-                CustomAgentRecord::Valid { definition, raw }
-                | CustomAgentRecord::DisabledConflict {
-                    definition, raw, ..
-                } => {
+                CustomAgentRecord::Valid { definition, raw } => {
                     if let Some(builtin_id) = builtin_ids_and_aliases.get(&definition.id) {
-                        let builtin = active_definitions
+                        let builtin = original_builtins
                             .get(builtin_id)
                             .expect("built-in lookup must reference an active definition")
                             .clone();
@@ -95,7 +121,8 @@ impl AgentRegistry {
                         settings_records
                             .invalid_custom_records
                             .push(InvalidCustomAgentRecord {
-                                index,
+                                index: u32::try_from(index)
+                                    .expect("custom Agent record index must fit in u32"),
                                 raw: raw.into(),
                                 errors: vec![super::agent_definition::AgentFieldError::new(
                                     "id",
@@ -196,26 +223,23 @@ mod tests {
     }
 
     #[test]
-    fn builtin_definition_wins_id_collision() {
+    fn canonical_builtin_id_conflict_suppresses_both_runtime_definitions_until_removed() {
         let builtin = standard_definition("foo", AgentSource::Builtin);
         let custom = CustomAgentRecord::valid(standard_custom_definition("foo"));
 
         let registry = AgentRegistry::build(vec![builtin], vec![custom]);
 
-        assert_eq!(
-            registry
-                .snapshot()
-                .get(&AgentId::parse("foo").unwrap())
-                .unwrap()
-                .source,
-            AgentSource::Builtin
-        );
+        assert!(!registry
+            .snapshot()
+            .active_definitions
+            .contains_key(&AgentId::parse("foo").unwrap()));
+        assert!(registry.settings_records().active_builtin.is_empty());
         assert_eq!(registry.settings_records().disabled_conflicts.len(), 1);
         assert!(registry.settings_records().active_custom.is_empty());
     }
 
     #[test]
-    fn builtin_definition_wins_alias_collision() {
+    fn builtin_alias_conflict_keeps_canonical_id_but_suppresses_the_conflicting_alias() {
         let mut builtin = standard_definition("foo", AgentSource::Builtin);
         builtin.aliases.push(AgentId::parse("old-foo").unwrap());
         let custom = CustomAgentRecord::valid(standard_custom_definition("old-foo"));
@@ -225,12 +249,45 @@ mod tests {
         assert_eq!(
             registry
                 .snapshot()
+                .get(&AgentId::parse("foo").unwrap())
+                .unwrap()
+                .id,
+            AgentId::parse("foo").unwrap()
+        );
+        assert!(registry
+            .snapshot()
+            .get(&AgentId::parse("old-foo").unwrap())
+            .is_none());
+        assert_eq!(registry.settings_records().disabled_conflicts.len(), 1);
+        assert_eq!(
+            registry.settings_records().disabled_conflicts[0]
+                .builtin
+                .aliases,
+            vec![AgentId::parse("old-foo").unwrap()]
+        );
+    }
+
+    #[test]
+    fn rebuilding_after_conflicting_custom_removal_restores_builtin_definitions() {
+        let mut builtin = standard_definition("foo", AgentSource::Builtin);
+        builtin.aliases.push(AgentId::parse("old-foo").unwrap());
+        let conflict = CustomAgentRecord::valid(standard_custom_definition("old-foo"));
+
+        let conflicted = AgentRegistry::build(vec![builtin.clone()], vec![conflict]);
+        let restored = AgentRegistry::build(vec![builtin], vec![]);
+
+        assert!(conflicted
+            .snapshot()
+            .get(&AgentId::parse("old-foo").unwrap())
+            .is_none());
+        assert_eq!(
+            restored
+                .snapshot()
                 .get(&AgentId::parse("old-foo").unwrap())
                 .unwrap()
                 .id,
             AgentId::parse("foo").unwrap()
         );
-        assert_eq!(registry.settings_records().disabled_conflicts.len(), 1);
     }
 
     #[test]
@@ -293,16 +350,28 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_registry_is_empty_with_a_stable_revision() {
+        let first = AgentRegistry::empty_unavailable();
+        let second = AgentRegistry::empty_unavailable();
+
+        assert!(first.snapshot().active_definitions.is_empty());
+        assert!(first.settings_records().active_builtin.is_empty());
+        assert!(first.settings_records().active_custom.is_empty());
+        assert!(first.settings_records().disabled_conflicts.is_empty());
+        assert!(first.settings_records().invalid_custom_records.is_empty());
+        assert_eq!(first.snapshot().revision, second.snapshot().revision);
+        assert_eq!(first.snapshot().revision.len(), 64);
+    }
+
+    #[test]
     fn stale_disabled_conflict_is_recomputed_from_current_builtins() {
         let definition = standard_custom_definition("foo");
-        let stale_builtin = standard_definition("foo", AgentSource::Builtin);
         let raw = serde_json::json!({
             "id": "foo",
             "futureField": { "mustSurvive": true }
         });
-        let record = CustomAgentRecord::DisabledConflict {
+        let record = CustomAgentRecord::Valid {
             definition: definition.clone(),
-            builtin: stale_builtin,
             raw: raw.clone(),
         };
 
