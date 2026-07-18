@@ -11,6 +11,36 @@ pub enum EnvironmentRef {
     Wsl { distro_name: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum EnvironmentKey {
+    Host,
+    Wsl(String),
+}
+
+impl EnvironmentKey {
+    pub fn from_ref(environment: &EnvironmentRef) -> Self {
+        match environment {
+            EnvironmentRef::Host => Self::Host,
+            EnvironmentRef::Wsl { distro_name } => {
+                Self::Wsl(normalized_wsl_distro_name(distro_name))
+            }
+        }
+    }
+
+    pub fn wsl(distro_name: &str) -> Self {
+        Self::Wsl(normalized_wsl_distro_name(distro_name))
+    }
+}
+
+pub fn normalized_wsl_distro_name(distro_name: &str) -> String {
+    distro_name.to_ascii_lowercase()
+}
+
+pub fn same_environment_identity(left: &EnvironmentRef, right: &EnvironmentRef) -> bool {
+    EnvironmentKey::from_ref(left) == EnvironmentKey::from_ref(right)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(tag = "scope", rename_all = "camelCase")]
 #[specta(tag = "scope", rename_all = "camelCase")]
@@ -95,6 +125,7 @@ pub enum EnvironmentStatus {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct EnvironmentRuntimeEvent {
+    pub revision: u64,
     pub environment: EnvironmentRef,
     pub status: EnvironmentStatus,
     pub error: Option<AppError>,
@@ -103,8 +134,8 @@ pub struct EnvironmentRuntimeEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        AddProjectResult, ContextRef, ContextScope, EnvironmentRef, ProjectBinding, ProjectInfo,
-        ProjectStorageInfo, StorageAccess,
+        same_environment_identity, AddProjectResult, ContextRef, ContextScope, EnvironmentKey,
+        EnvironmentRef, ProjectBinding, ProjectInfo, ProjectStorageInfo, StorageAccess,
     };
 
     #[test]
@@ -120,6 +151,39 @@ mod tests {
                 serde_json::from_str(&json).expect("deserialize environment");
             assert_eq!(decoded, environment);
         }
+    }
+
+    #[test]
+    fn environment_key_normalizes_wsl_identity_without_changing_display_name() {
+        let display = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu-24.04".to_string(),
+        };
+
+        assert_eq!(
+            EnvironmentKey::from_ref(&display),
+            EnvironmentKey::Wsl("ubuntu-24.04".to_string())
+        );
+        assert_eq!(
+            serde_json::to_value(&display).expect("serialize display environment"),
+            serde_json::json!({ "kind": "wsl", "distro_name": "Ubuntu-24.04" })
+        );
+    }
+
+    #[test]
+    fn environment_identity_is_case_insensitive_only_within_the_same_wsl_distro() {
+        let ubuntu = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        };
+        let ubuntu_upper = EnvironmentRef::Wsl {
+            distro_name: "UBUNTU".to_string(),
+        };
+        let debian = EnvironmentRef::Wsl {
+            distro_name: "Debian".to_string(),
+        };
+
+        assert!(same_environment_identity(&ubuntu, &ubuntu_upper));
+        assert!(!same_environment_identity(&ubuntu, &debian));
+        assert!(!same_environment_identity(&EnvironmentRef::Host, &ubuntu));
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub fn normalize_skill_folder_path(skill_path: &str) -> String {
     trimmed.trim_end_matches('/').to_string()
 }
 
+#[cfg(test)]
 pub fn relative_skill_path(root: &Path, skill_md: &Path) -> String {
     skill_md
         .strip_prefix(root)

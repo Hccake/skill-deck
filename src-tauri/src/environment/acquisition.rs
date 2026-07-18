@@ -1,119 +1,15 @@
-use std::path::{Path, PathBuf};
-
-use tempfile::TempDir;
 use tokio::time::Duration;
+use uuid::Uuid;
 
 use crate::core::mutation::CancellationSignal;
-#[cfg(test)]
-use crate::environment::path_mapping::host_path_to_linux_path;
-use crate::environment::path_mapping::map_windows_path_with_wslpath;
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{
-    WslCommandRequest, WslCommandRunner, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
+    no_wsl_exit_mapping, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+    DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
 };
 use crate::error::AppError;
 
-const WSL_GIT_CLONE_SCRIPT: &str = r#"
-url=$1
-dest=$2
-git_ref=$3
-distro=$4
-command -v git >/dev/null 2>&1 || {
-  printf "Git is not available in WSL distro '%s'. Please install Git in that distro and try again.\n" "$distro" >&2
-  exit 127
-}
-parent=${dest%/*}
-rm -rf -- "$dest"
-mkdir -p -- "$parent"
-if [ -n "$git_ref" ]; then
-  git clone --depth 1 --progress --branch "$git_ref" -- "$url" "$dest"
-else
-  git clone --depth 1 --progress -- "$url" "$dest"
-fi
-"#;
-
-const WSL_LOCAL_COPY_SCRIPT: &str = r#"
-src=$1
-dest=$2
-[ -d "$src" ] || { printf 'Local source directory not found: %s\n' "$src" >&2; exit 2; }
-parent=${dest%/*}
-rm -rf -- "$dest"
-mkdir -p -- "$parent" "$dest"
-cp -RL -- "$src"/. "$dest"/
-"#;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostStagingLayout {
-    pub host_repo_path: PathBuf,
-    pub linux_repo_path: String,
-}
-
-#[derive(Debug)]
-pub struct HostStagingDir {
-    _temp_dir: TempDir,
-    layout: HostStagingLayout,
-}
-
-impl HostStagingDir {
-    pub async fn new(session: &WslSession) -> Result<Self, AppError> {
-        let temp_dir = tempfile::Builder::new()
-            .prefix("skill-deck-")
-            .tempdir()
-            .map_err(|error| AppError::Io {
-                message: format!("failed to create Host staging directory: {error}"),
-            })?;
-        let linux_root =
-            map_windows_path_with_wslpath(session, &temp_dir.path().to_string_lossy()).await?;
-        let layout = HostStagingLayout {
-            host_repo_path: temp_dir.path().join("repo"),
-            linux_repo_path: format!("{}/repo", linux_root.trim_end_matches('/')),
-        };
-        Ok(Self {
-            _temp_dir: temp_dir,
-            layout,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn layout_for_host_root(
-        host_root: impl AsRef<Path>,
-    ) -> Result<HostStagingLayout, AppError> {
-        let host_root = host_root.as_ref();
-        let linux_root =
-            host_path_to_linux_path(&host_root.to_string_lossy()).ok_or_else(|| {
-                AppError::Path {
-                    message: format!(
-                        "Host staging directory is not available through standard WSL DrvFS: {}",
-                        host_root.display()
-                    ),
-                }
-            })?;
-        Ok(HostStagingLayout {
-            host_repo_path: host_root.join("repo"),
-            linux_repo_path: format!("{}/repo", linux_root.trim_end_matches('/')),
-        })
-    }
-
-    pub fn host_repo_path(&self) -> &Path {
-        &self.layout.host_repo_path
-    }
-
-    pub fn linux_repo_path(&self) -> &str {
-        &self.layout.linux_repo_path
-    }
-
-    #[cfg(test)]
-    fn from_temp_dir_for_test(temp_dir: TempDir, linux_root: &str) -> Self {
-        let layout = HostStagingLayout {
-            host_repo_path: temp_dir.path().join("repo"),
-            linux_repo_path: format!("{}/repo", linux_root.trim_end_matches('/')),
-        };
-        Self {
-            _temp_dir: temp_dir,
-            layout,
-        }
-    }
-}
+const WSL_SOURCE_ACQUISITION_SCRIPT: &str = include_str!("wsl/scripts/source-acquisition.sh");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WslAcquisitionSource {
@@ -129,31 +25,52 @@ pub enum WslAcquisitionSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WslAcquisitionPlan {
     pub script: &'static str,
+    pub subcommand: &'static str,
     pub positional_args: Vec<String>,
     pub timeout: Duration,
 }
 
-pub fn build_wsl_acquisition_plan(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WslNativeSourcePlan {
+    native_root: String,
+    operation: Option<WslAcquisitionPlan>,
+    cleanup_root: Option<String>,
+}
+
+fn build_wsl_native_source_plan(
     session: &WslSession,
     source: WslAcquisitionSource,
-    linux_repo_path: &str,
-) -> Result<WslAcquisitionPlan, AppError> {
+    managed_repo_path: &str,
+) -> Result<WslNativeSourcePlan, AppError> {
     match source {
-        WslAcquisitionSource::Git { url, git_ref } => Ok(WslAcquisitionPlan {
-            script: WSL_GIT_CLONE_SCRIPT,
-            positional_args: vec![
-                url,
-                linux_repo_path.to_string(),
-                git_ref.unwrap_or_default(),
-                session.distro_name.clone(),
-            ],
-            timeout: Duration::from_secs(120),
+        WslAcquisitionSource::Git { url, git_ref } => Ok(WslNativeSourcePlan {
+            native_root: managed_repo_path.to_string(),
+            operation: Some(WslAcquisitionPlan {
+                script: WSL_SOURCE_ACQUISITION_SCRIPT,
+                subcommand: "git",
+                positional_args: vec![
+                    url,
+                    managed_repo_path.to_string(),
+                    git_ref.unwrap_or_default(),
+                    session.distro_name.clone(),
+                ],
+                timeout: Duration::from_secs(120),
+            }),
+            cleanup_root: Some(managed_repo_path.to_string()),
         }),
-        WslAcquisitionSource::Local { native_path } => Ok(WslAcquisitionPlan {
-            script: WSL_LOCAL_COPY_SCRIPT,
-            positional_args: vec![native_path, linux_repo_path.to_string()],
-            timeout: Duration::from_secs(120),
-        }),
+        WslAcquisitionSource::Local { native_path } => {
+            if !native_path.starts_with('/') {
+                return Err(AppError::UnsafePath {
+                    path: native_path,
+                    reason: "WSL local Source must use an absolute POSIX path".to_string(),
+                });
+            }
+            Ok(WslNativeSourcePlan {
+                native_root: native_path,
+                operation: None,
+                cleanup_root: None,
+            })
+        }
     }
 }
 
@@ -166,10 +83,17 @@ async fn run_wsl_acquisition_plan_with<F, Fut>(
     plan: WslAcquisitionPlan,
     cancellation: CancellationSignal,
     runner: F,
-) -> Result<(), AppError>
+) -> Result<Vec<u8>, AppError>
 where
-    F: FnOnce(WslSession, &'static str, Vec<String>, Duration, CancellationSignal) -> Fut,
-    Fut: std::future::Future<Output = Result<(), AppError>>,
+    F: FnOnce(
+        WslSession,
+        &'static str,
+        &'static str,
+        Vec<String>,
+        Duration,
+        CancellationSignal,
+    ) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<u8>, AppError>>,
 {
     if cancellation.is_cancelled() {
         return Err(acquisition_cancelled());
@@ -177,6 +101,7 @@ where
     runner(
         session,
         plan.script,
+        plan.subcommand,
         plan.positional_args,
         plan.timeout,
         cancellation,
@@ -185,124 +110,220 @@ where
 }
 
 #[derive(Debug)]
-pub struct StagedWslSource {
-    staging: HostStagingDir,
-}
-
-impl StagedWslSource {
-    pub fn host_repo_path(&self) -> &Path {
-        self.staging.host_repo_path()
-    }
-
-    pub fn linux_repo_path(&self) -> &str {
-        self.staging.linux_repo_path()
-    }
-
-    pub fn linux_path_for_host_path(&self, host_path: &Path) -> Result<String, AppError> {
-        let relative =
-            host_path
-                .strip_prefix(self.host_repo_path())
-                .map_err(|_| AppError::Path {
-                    message: format!(
-                        "discovered path is outside the staged source: {}",
-                        host_path.display()
-                    ),
-                })?;
-        let mut segments = Vec::new();
-        for component in relative.components() {
-            match component {
-                std::path::Component::Normal(segment) => {
-                    segments.push(segment.to_string_lossy().to_string())
-                }
-                std::path::Component::CurDir => {}
-                _ => {
-                    return Err(AppError::Path {
-                        message: format!(
-                            "discovered path escapes the staged source: {}",
-                            host_path.display()
-                        ),
-                    })
-                }
-            }
-        }
-        if segments.is_empty() {
-            Ok(self.linux_repo_path().to_string())
-        } else {
-            Ok(format!(
-                "{}/{}",
-                self.linux_repo_path().trim_end_matches('/'),
-                segments.join("/")
-            ))
-        }
-    }
-}
-
-async fn stage_wsl_source_with_staging<F, Fut>(
+pub struct WslNativeSource {
     session: WslSession,
-    source: WslAcquisitionSource,
-    cancellation: CancellationSignal,
-    staging: HostStagingDir,
-    runner: F,
-) -> Result<StagedWslSource, AppError>
-where
-    F: FnOnce(WslSession, &'static str, Vec<String>, Duration, CancellationSignal) -> Fut,
-    Fut: std::future::Future<Output = Result<(), AppError>>,
-{
-    let plan = build_wsl_acquisition_plan(&session, source, staging.linux_repo_path())?;
-    run_wsl_acquisition_plan_with(session, plan, cancellation, runner).await?;
-    if !staging.host_repo_path().is_dir() {
-        return Err(AppError::InstallFailed {
-            message: format!(
-                "WSL source acquisition did not create the Host staging directory: {}",
-                staging.host_repo_path().display()
-            ),
-        });
-    }
-    Ok(StagedWslSource { staging })
+    native_root: String,
+    cleanup_root: Option<String>,
+    ref_revision: Option<String>,
 }
 
-pub async fn stage_wsl_source(
+impl WslNativeSource {
+    pub fn native_root(&self) -> &str {
+        &self.native_root
+    }
+
+    pub fn ref_revision(&self) -> Option<&str> {
+        self.ref_revision.as_deref()
+    }
+}
+
+impl Drop for WslNativeSource {
+    fn drop(&mut self) {
+        let Some(native_root) = self.cleanup_root.take() else {
+            return;
+        };
+        let session = self.session.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let descriptor = WslOperationDescriptor {
+                    subcommand: "cleanup",
+                    script: WSL_SOURCE_ACQUISITION_SCRIPT,
+                    required_features: &[],
+                    map_exit: no_wsl_exit_mapping,
+                };
+                let _ = WslOperationExecutor::execute(
+                    &descriptor,
+                    WslOperationRequest {
+                        session,
+                        args: vec![native_root],
+                        stdin: Vec::new(),
+                        timeout: Duration::from_secs(10),
+                        stdout_limit: 64,
+                        stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+                        cancellation: None,
+                    },
+                )
+                .await;
+            });
+        }
+    }
+}
+
+pub async fn acquire_wsl_source_native(
     session: &WslSession,
     source: WslAcquisitionSource,
     cancellation: CancellationSignal,
-) -> Result<StagedWslSource, AppError> {
-    let staging = HostStagingDir::new(session).await?;
-    stage_wsl_source_with_staging(
-        session.clone(),
-        source,
-        cancellation,
-        staging,
-        |session, script, positional_args, timeout, cancellation| async move {
-            WslCommandRunner::run(WslCommandRequest {
-                session,
-                script,
-                args: positional_args,
-                stdin: Vec::new(),
-                timeout,
-                stdout_limit: DEFAULT_WSL_STDOUT_LIMIT,
-                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                cancellation: Some(cancellation),
-            })
-            .await?;
-            Ok(())
-        },
-    )
-    .await
+) -> Result<WslNativeSource, AppError> {
+    let managed_root = format!("/tmp/skill-deck-discovery-{}/repo", Uuid::new_v4().simple());
+    let plan = build_wsl_native_source_plan(session, source, &managed_root)?;
+    let ref_revision = if let Some(operation) = plan.operation {
+        let response = run_wsl_acquisition_plan_with(
+            session.clone(),
+            operation,
+            cancellation,
+            |session, script, subcommand, positional_args, timeout, cancellation| async move {
+                let descriptor = WslOperationDescriptor {
+                    subcommand,
+                    script,
+                    required_features: &[],
+                    map_exit: no_wsl_exit_mapping,
+                };
+                WslOperationExecutor::execute(
+                    &descriptor,
+                    WslOperationRequest {
+                        session,
+                        args: positional_args,
+                        stdin: Vec::new(),
+                        timeout,
+                        stdout_limit: DEFAULT_WSL_STDOUT_LIMIT,
+                        stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+                        cancellation: Some(cancellation),
+                    },
+                )
+                .await
+                .map(|output| output.stdout)
+            },
+        )
+        .await?;
+        Some(parse_wsl_git_acquisition_response(&response)?)
+    } else if cancellation.is_cancelled() {
+        return Err(acquisition_cancelled());
+    } else {
+        None
+    };
+    Ok(WslNativeSource {
+        session: session.clone(),
+        native_root: plan.native_root,
+        cleanup_root: plan.cleanup_root,
+        ref_revision,
+    })
+}
+
+fn parse_wsl_git_acquisition_response(bytes: &[u8]) -> Result<String, AppError> {
+    let fields = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
+    if fields.len() != 3 || fields[0] != b"1" || !fields[2].is_empty() {
+        return Err(acquisition_protocol_error());
+    }
+    let revision = std::str::from_utf8(fields[1]).map_err(|_| acquisition_protocol_error())?;
+    if !matches!(revision.len(), 40 | 64) || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(acquisition_protocol_error());
+    }
+    Ok(revision.to_ascii_lowercase())
+}
+
+fn acquisition_protocol_error() -> AppError {
+    AppError::ConfigurationCorrupted {
+        message: "invalid WSL source acquisition response".to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
-
-    use tempfile::tempdir;
+    use std::process::Command;
 
     use super::{
-        build_wsl_acquisition_plan, run_wsl_acquisition_plan_with, stage_wsl_source_with_staging,
-        HostStagingDir, WslAcquisitionSource,
+        build_wsl_native_source_plan, run_wsl_acquisition_plan_with, WslAcquisitionPlan,
+        WslAcquisitionSource,
     };
     use crate::core::mutation::CancellationSignal;
     use crate::environment::wsl::WslSession;
+
+    fn git(cwd: &std::path::Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .expect("git command");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    #[test]
+    fn source_acquisition_response_requires_versioned_git_head() {
+        let revision_40 = "a".repeat(40);
+        let revision_64 = "b".repeat(64);
+        assert_eq!(
+            super::parse_wsl_git_acquisition_response(format!("1\0{revision_40}\0").as_bytes())
+                .unwrap(),
+            revision_40
+        );
+        assert_eq!(
+            super::parse_wsl_git_acquisition_response(format!("1\0{revision_64}\0").as_bytes())
+                .unwrap(),
+            revision_64
+        );
+        for invalid in [
+            b"2\0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0".as_slice(),
+            b"1\0short\0".as_slice(),
+            b"1\0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0extra\0".as_slice(),
+            b"1\0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_slice(),
+        ] {
+            assert!(super::parse_wsl_git_acquisition_response(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn git_acquisition_reports_cloned_head_even_if_source_advances_after_clone() {
+        let temp = tempfile::tempdir().expect("temp");
+        let source = temp.path().join("source");
+        fs::create_dir(&source).expect("source");
+        git(&source, &["init", "-b", "main"]);
+        git(&source, &["config", "user.email", "test@example.com"]);
+        git(&source, &["config", "user.name", "Skill Deck Test"]);
+        fs::write(source.join("SKILL.md"), b"first").expect("first");
+        git(&source, &["add", "SKILL.md"]);
+        git(&source, &["commit", "-m", "first"]);
+        let cloned_revision = git(&source, &["rev-parse", "HEAD"]);
+        let managed_root = std::path::PathBuf::from(format!(
+            "/tmp/skill-deck-discovery-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let destination = managed_root.join("repo");
+
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::WSL_SOURCE_ACQUISITION_SCRIPT)
+            .arg("--")
+            .arg("git")
+            .arg(&source)
+            .arg(&destination)
+            .arg("")
+            .arg("Ubuntu")
+            .output()
+            .expect("acquisition script");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let reported = super::parse_wsl_git_acquisition_response(&output.stdout).unwrap();
+
+        fs::write(source.join("SKILL.md"), b"second").expect("second");
+        git(&source, &["add", "SKILL.md"]);
+        git(&source, &["commit", "-m", "second"]);
+        let advanced_revision = git(&source, &["rev-parse", "HEAD"]);
+
+        assert_eq!(reported, cloned_revision);
+        assert_ne!(reported, advanced_revision);
+        fs::remove_dir_all(managed_root).expect("cleanup managed source");
+    }
 
     fn session(git_available: bool) -> WslSession {
         WslSession {
@@ -314,36 +335,29 @@ mod tests {
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
             git_available,
+            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
+            ),
+            runtime_generation: 0,
         }
     }
 
-    #[test]
-    fn host_staging_layout_maps_repo_into_drvfs() {
-        let layout =
-            HostStagingDir::layout_for_host_root(r"C:\Users\alice\AppData\Local\Temp\sd-1")
-                .expect("map staging layout");
-
-        assert_eq!(
-            layout.linux_repo_path,
-            "/mnt/c/Users/alice/AppData/Local/Temp/sd-1/repo"
-        );
-    }
-
-    #[test]
-    fn host_staging_dir_removes_temp_tree_when_dropped() {
-        let temp = tempdir().expect("tempdir");
-        let root = temp.path().to_path_buf();
-        fs::write(root.join("marker"), "staged").expect("write marker");
-        let staging = HostStagingDir::from_temp_dir_for_test(temp, "/mnt/c/Temp/sd-1");
-
-        drop(staging);
-
-        assert!(!root.exists());
+    fn git_operation(git_available: bool) -> WslAcquisitionPlan {
+        build_wsl_native_source_plan(
+            &session(git_available),
+            WslAcquisitionSource::Git {
+                url: "https://github.com/example/repo".to_string(),
+                git_ref: None,
+            },
+            "/tmp/skill-deck-discovery-123/repo",
+        )
+        .expect("build Git source plan")
+        .operation
+        .expect("Git Source requires acquisition")
     }
 
     #[test]
     fn wsl_git_plan_keeps_source_and_ref_as_positional_arguments() {
-        let plan = build_wsl_acquisition_plan(
+        let plan = build_wsl_native_source_plan(
             &session(true),
             WslAcquisitionSource::Git {
                 url: "$(touch /tmp/not-shell-source)".to_string(),
@@ -353,16 +367,20 @@ mod tests {
         )
         .expect("build git plan");
 
-        assert_eq!(plan.positional_args[0], "$(touch /tmp/not-shell-source)");
-        assert_eq!(plan.positional_args[1], "/mnt/c/Temp/sd-1/repo");
-        assert_eq!(plan.positional_args[2], "feature; echo unsafe");
-        assert!(!plan.script.contains("$(touch /tmp/not-shell-source)"));
-        assert!(!plan.script.contains("feature; echo unsafe"));
+        let operation = plan.operation.expect("Git Source requires acquisition");
+        assert_eq!(
+            operation.positional_args[0],
+            "$(touch /tmp/not-shell-source)"
+        );
+        assert_eq!(operation.positional_args[1], "/mnt/c/Temp/sd-1/repo");
+        assert_eq!(operation.positional_args[2], "feature; echo unsafe");
+        assert!(!operation.script.contains("$(touch /tmp/not-shell-source)"));
+        assert!(!operation.script.contains("feature; echo unsafe"));
     }
 
     #[test]
     fn wsl_git_plan_rechecks_git_at_operation_time_instead_of_using_cached_flag() {
-        let plan = build_wsl_acquisition_plan(
+        let plan = build_wsl_native_source_plan(
             &session(false),
             WslAcquisitionSource::Git {
                 url: "https://github.com/example/repo".to_string(),
@@ -372,40 +390,92 @@ mod tests {
         )
         .expect("build plan despite stale cached capability");
 
-        assert!(plan.script.contains("command -v git"));
-        assert!(plan.script.contains("install Git"));
-        assert_eq!(plan.positional_args[3], "Ubuntu-24.04");
+        let operation = plan.operation.expect("Git Source requires acquisition");
+        assert!(operation.script.contains("command -v git"));
+        assert!(operation.script.contains("install Git"));
+        assert_eq!(operation.positional_args[3], "Ubuntu-24.04");
     }
 
     #[test]
-    fn wsl_local_plan_copies_native_source_into_host_staging() {
-        let plan = build_wsl_acquisition_plan(
+    fn wsl_local_source_is_read_directly_without_a_managed_copy() {
+        let plan = build_wsl_native_source_plan(
             &session(true),
             WslAcquisitionSource::Local {
                 native_path: "/home/alice/code/skills".to_string(),
             },
-            "/mnt/c/Temp/sd-1/repo",
+            "/tmp/skill-deck-discovery-123/repo",
         )
         .expect("build local plan");
 
-        assert_eq!(
-            plan.positional_args,
-            ["/home/alice/code/skills", "/mnt/c/Temp/sd-1/repo"]
-        );
-        assert!(plan.script.contains("cp"));
-        assert!(plan.script.contains("cp -RL"));
+        assert_eq!(plan.native_root, "/home/alice/code/skills");
+        assert!(plan.operation.is_none());
+        assert!(plan.cleanup_root.is_none());
+    }
+
+    #[test]
+    fn wsl_local_source_requires_an_absolute_posix_path() {
+        let error = build_wsl_native_source_plan(
+            &session(true),
+            WslAcquisitionSource::Local {
+                native_path: "relative/skills".to_string(),
+            },
+            "/tmp/skill-deck-discovery-123/repo",
+        )
+        .expect_err("relative WSL Source must be rejected");
+
+        assert!(matches!(error, crate::error::AppError::UnsafePath { .. }));
+    }
+
+    #[test]
+    fn git_acquisition_rejects_an_unmanaged_destination_before_deleting_it() {
+        let temp = tempfile::tempdir().expect("temp");
+        let destination = temp.path().join("existing/repo");
+        fs::create_dir_all(&destination).expect("destination");
+        fs::write(destination.join("keep"), b"keep").expect("marker");
+
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::WSL_SOURCE_ACQUISITION_SCRIPT)
+            .arg("--")
+            .arg("git")
+            .arg("/missing/source")
+            .arg(&destination)
+            .arg("")
+            .arg("Ubuntu")
+            .output()
+            .expect("acquisition script");
+
+        assert!(!output.status.success());
+        assert!(destination.join("keep").is_file());
+    }
+
+    #[test]
+    fn failed_git_acquisition_removes_its_managed_temporary_root() {
+        let managed_root = std::path::PathBuf::from(format!(
+            "/tmp/skill-deck-discovery-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let destination = managed_root.join("repo");
+
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::WSL_SOURCE_ACQUISITION_SCRIPT)
+            .arg("--")
+            .arg("git")
+            .arg("/missing/source")
+            .arg(&destination)
+            .arg("")
+            .arg("Ubuntu")
+            .output()
+            .expect("acquisition script");
+
+        assert!(!output.status.success());
+        assert!(!managed_root.exists());
     }
 
     #[tokio::test]
     async fn cancelled_acquisition_does_not_start_wsl_command() {
-        let plan = build_wsl_acquisition_plan(
-            &session(true),
-            WslAcquisitionSource::Local {
-                native_path: "/home/alice/code/skills".to_string(),
-            },
-            "/mnt/c/Temp/sd-1/repo",
-        )
-        .expect("build plan");
+        let plan = git_operation(true);
         let cancellation = CancellationSignal::default();
         cancellation.cancel();
         let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -415,9 +485,9 @@ mod tests {
             session(true),
             plan,
             cancellation,
-            move |_, _, _, _, _| async move {
+            move |_, _, _, _, _, _| async move {
                 ran_by_command.store(true, std::sync::atomic::Ordering::Release);
-                Ok(())
+                Ok(Vec::new())
             },
         )
         .await
@@ -429,21 +499,14 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_stops_waiting_for_running_wsl_command() {
-        let plan = build_wsl_acquisition_plan(
-            &session(true),
-            WslAcquisitionSource::Local {
-                native_path: "/home/alice/code/skills".to_string(),
-            },
-            "/mnt/c/Temp/sd-1/repo",
-        )
-        .expect("build plan");
+        let plan = git_operation(true);
         let cancellation = CancellationSignal::default();
         let cancellation_request = cancellation.clone();
         let run = run_wsl_acquisition_plan_with(
             session(true),
             plan,
             cancellation,
-            |_, _, _, _, cancellation| async move {
+            |_, _, _, _, _, cancellation| async move {
                 while !cancellation.is_cancelled() {
                     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                 }
@@ -465,14 +528,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_waits_for_runner_cleanup_before_returning() {
-        let plan = build_wsl_acquisition_plan(
-            &session(true),
-            WslAcquisitionSource::Local {
-                native_path: "/home/alice/code/skills".to_string(),
-            },
-            "/mnt/c/Temp/sd-1/repo",
-        )
-        .expect("build plan");
+        let plan = git_operation(true);
         let cancellation = CancellationSignal::default();
         let cancellation_request = cancellation.clone();
         let cleanup_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -481,7 +537,7 @@ mod tests {
             session(true),
             plan,
             cancellation,
-            move |_, _, _, _, cancellation| async move {
+            move |_, _, _, _, _, cancellation| async move {
                 while !cancellation.is_cancelled() {
                     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                 }
@@ -499,87 +555,5 @@ mod tests {
 
         assert_eq!(result, Err(crate::error::AppError::MutationCancelled));
         assert!(cleanup_finished.load(std::sync::atomic::Ordering::Acquire));
-    }
-
-    #[tokio::test]
-    async fn staged_source_keeps_host_repo_alive_until_result_is_dropped() {
-        let temp = tempdir().expect("tempdir");
-        let root = temp.path().to_path_buf();
-        let staging = HostStagingDir::from_temp_dir_for_test(temp, "/mnt/c/Temp/sd-1");
-        let host_repo = staging.host_repo_path().to_path_buf();
-        let repo_for_command = host_repo.clone();
-
-        let staged = stage_wsl_source_with_staging(
-            session(true),
-            WslAcquisitionSource::Local {
-                native_path: "/home/alice/code/skills".to_string(),
-            },
-            CancellationSignal::default(),
-            staging,
-            move |_, _, _, _, _| async move {
-                fs::create_dir_all(&repo_for_command).expect("create staged repo");
-                Ok(())
-            },
-        )
-        .await
-        .expect("stage source");
-
-        assert_eq!(staged.host_repo_path(), host_repo.as_path());
-        assert!(host_repo.is_dir());
-        drop(staged);
-        assert!(!root.exists());
-    }
-
-    #[tokio::test]
-    async fn staging_fails_when_wsl_command_does_not_materialize_repo() {
-        let temp = tempdir().expect("tempdir");
-        let staging = HostStagingDir::from_temp_dir_for_test(temp, "/mnt/c/Temp/sd-1");
-
-        let error = stage_wsl_source_with_staging(
-            session(true),
-            WslAcquisitionSource::Local {
-                native_path: "/home/alice/code/skills".to_string(),
-            },
-            CancellationSignal::default(),
-            staging,
-            |_, _, _, _, _| async move { Ok(()) },
-        )
-        .await
-        .expect_err("missing staged repo must fail");
-
-        assert!(error.to_string().contains("did not create"));
-    }
-
-    #[tokio::test]
-    async fn staged_source_maps_discovered_host_path_back_into_wsl_staging() {
-        let temp = tempdir().expect("tempdir");
-        let staging = HostStagingDir::from_temp_dir_for_test(temp, "/mnt/c/Temp/sd-1");
-        let host_repo = staging.host_repo_path().to_path_buf();
-        let repo_for_command = host_repo.clone();
-        let staged = stage_wsl_source_with_staging(
-            session(true),
-            WslAcquisitionSource::Local {
-                native_path: "/home/alice/code/skills".to_string(),
-            },
-            CancellationSignal::default(),
-            staging,
-            move |_, _, _, _, _| async move {
-                fs::create_dir_all(repo_for_command.join("plugins/toolkit"))
-                    .expect("create staged skill");
-                Ok(())
-            },
-        )
-        .await
-        .expect("stage source");
-
-        assert_eq!(
-            staged
-                .linux_path_for_host_path(&host_repo.join("plugins/toolkit"))
-                .expect("map staged path"),
-            "/mnt/c/Temp/sd-1/repo/plugins/toolkit"
-        );
-        assert!(staged
-            .linux_path_for_host_path(&host_repo.join("../outside"))
-            .is_err());
     }
 }

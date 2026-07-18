@@ -1,18 +1,24 @@
 use std::path::PathBuf;
 
-use tokio::time::Duration;
-
-use crate::core::projects::{ProjectsFile, ProjectsStore};
+use crate::core::projects::ProjectsStore;
 use crate::core::{get_config_path, skill_lock};
-use crate::environment::service::ResolvedContext;
 use crate::environment::types::{
-    ContextRef, ContextScope, EnvironmentRef, ProjectBinding, ResourceLocator,
+    ContextRef, ContextScope, EnvironmentKey, EnvironmentRef, ProjectBinding, ResourceLocator,
 };
+use crate::environment::wsl::operations::projects;
 use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::run_wsl_script;
 use crate::error::AppError;
 
 pub struct ContextResolver;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedContext {
+    pub context: ContextRef,
+    pub project: Option<ProjectBinding>,
+    pub home: ResourceLocator,
+    pub skill_root: ResourceLocator,
+    pub lock: ResourceLocator,
+}
 
 impl ResolvedContext {
     pub fn context_root(&self) -> &str {
@@ -41,14 +47,14 @@ impl ContextResolver {
         session: &WslSession,
     ) -> Result<ResolvedContext, AppError> {
         let projects = if matches!(context.scope, ContextScope::Project { .. }) {
-            read_wsl_projects(session).await?
+            projects::read_projects(session).await?
         } else {
             Vec::new()
         };
         Self::resolve_wsl_from_projects(context, session, projects)
     }
 
-    fn resolve_host_from(
+    pub(crate) fn resolve_host_from(
         context: ContextRef,
         home: PathBuf,
         global_lock: PathBuf,
@@ -86,7 +92,7 @@ impl ContextResolver {
         })
     }
 
-    fn resolve_wsl_from_projects(
+    pub(crate) fn resolve_wsl_from_projects(
         context: ContextRef,
         session: &WslSession,
         projects: Vec<ProjectBinding>,
@@ -94,7 +100,7 @@ impl ContextResolver {
         let EnvironmentRef::Wsl { distro_name } = &context.environment else {
             return Err(environment_mismatch(&context.environment));
         };
-        if !distro_name.eq_ignore_ascii_case(&session.distro_name) {
+        if EnvironmentKey::wsl(distro_name) != EnvironmentKey::wsl(&session.distro_name) {
             return Err(environment_mismatch(&context.environment));
         }
 
@@ -163,20 +169,6 @@ fn environment_mismatch(environment: &EnvironmentRef) -> AppError {
     }
 }
 
-async fn read_wsl_projects(session: &WslSession) -> Result<Vec<ProjectBinding>, AppError> {
-    const SCRIPT: &str = r#"path=$1; if [ -f "$path" ]; then cat -- "$path"; else printf '{"schemaVersion":1,"projects":[]}'; fi"#;
-    let path = join_wsl_path(&session.home, ".skill-deck/projects.json");
-    let output = run_wsl_script(
-        session,
-        SCRIPT,
-        &[path],
-        Vec::new(),
-        Duration::from_secs(10),
-    )
-    .await?;
-    Ok(serde_json::from_slice::<ProjectsFile>(&output)?.projects)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -207,6 +199,9 @@ mod tests {
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
             git_available: true,
+            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
+            ),
+            runtime_generation: 0,
         }
     }
 

@@ -1,14 +1,9 @@
-use std::fs;
-use std::io::Write;
-use std::path::Path;
-
-use tempfile::NamedTempFile;
-use tokio::time::Duration;
-
-use crate::environment::types::{EnvironmentRef, ResourceLocator};
+use crate::environment::native::atomic_file::NativeAtomicDocumentIo;
+use crate::environment::types::ResourceLocator;
+use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
 use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::run_wsl_script;
 use crate::error::AppError;
+use crate::storage::atomic_document::AtomicDocumentIo;
 
 pub enum EnvironmentLockIo {
     Host,
@@ -21,53 +16,22 @@ impl EnvironmentLockIo {
         locator: &ResourceLocator,
     ) -> Result<Option<Vec<u8>>, AppError> {
         match self {
-            Self::Host => {
-                let path = Path::new(&locator.native_path);
-                if !path.exists() {
-                    return Ok(None);
-                }
-                Ok(Some(fs::read(path)?))
-            }
+            Self::Host => NativeAtomicDocumentIo.read_optional(locator).await,
             Self::Wsl(session) => {
-                ensure_wsl_locator(locator, &session.distro_name)?;
-                const SCRIPT: &str =
-                    r#"if [ -f "$1" ]; then printf '1'; cat -- "$1"; else printf '0'; fi"#;
-                let output = run_wsl_script(
-                    session,
-                    SCRIPT,
-                    std::slice::from_ref(&locator.native_path),
-                    Vec::new(),
-                    Duration::from_secs(10),
-                )
-                .await?;
-                match output.split_first() {
-                    Some((b'0', [])) => Ok(None),
-                    Some((b'1', rest)) => Ok(Some(rest.to_vec())),
-                    _ => Err(AppError::Custom {
-                        message: "invalid optional lock response".to_string(),
-                    }),
-                }
+                WslAtomicDocumentIo::new(session.clone())
+                    .read_optional(locator)
+                    .await
             }
         }
     }
 
     #[cfg(any(target_os = "windows", test))]
     pub async fn read(&self, locator: &ResourceLocator) -> Result<Vec<u8>, AppError> {
-        match self {
-            Self::Host => Ok(fs::read(&locator.native_path)?),
-            Self::Wsl(session) => {
-                ensure_wsl_locator(locator, &session.distro_name)?;
-                const SCRIPT: &str = r#"cat -- "$1""#;
-                run_wsl_script(
-                    session,
-                    SCRIPT,
-                    std::slice::from_ref(&locator.native_path),
-                    Vec::new(),
-                    Duration::from_secs(10),
-                )
-                .await
-            }
-        }
+        self.read_optional(locator)
+            .await?
+            .ok_or_else(|| AppError::PathNotFound {
+                path: locator.native_path.clone(),
+            })
     }
 
     pub async fn write_atomic(
@@ -76,42 +40,13 @@ impl EnvironmentLockIo {
         bytes: Vec<u8>,
     ) -> Result<(), AppError> {
         match self {
-            Self::Host => write_host_atomic(Path::new(&locator.native_path), &bytes),
+            Self::Host => NativeAtomicDocumentIo.write_atomic(locator, bytes).await,
             Self::Wsl(session) => {
-                ensure_wsl_locator(locator, &session.distro_name)?;
-                const SCRIPT: &str = r#"path=$1; dir=${path%/*}; mkdir -p -- "$dir"; tmp=$(mktemp "$dir/.lock.XXXXXX"); trap 'rm -f -- "$tmp"' EXIT HUP INT TERM; cat > "$tmp"; sync "$tmp" 2>/dev/null || true; mv -f -- "$tmp" "$path"; trap - EXIT HUP INT TERM"#;
-                run_wsl_script(
-                    session,
-                    SCRIPT,
-                    std::slice::from_ref(&locator.native_path),
-                    bytes,
-                    Duration::from_secs(10),
-                )
-                .await?;
-                Ok(())
+                WslAtomicDocumentIo::new(session.clone())
+                    .write_atomic(locator, bytes)
+                    .await
             }
         }
-    }
-}
-
-pub(crate) fn write_host_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let mut temp = NamedTempFile::new_in(parent)?;
-    temp.write_all(bytes)?;
-    temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|error| error.error)?;
-    Ok(())
-}
-
-fn ensure_wsl_locator(locator: &ResourceLocator, distro_name: &str) -> Result<(), AppError> {
-    match &locator.environment {
-        EnvironmentRef::Wsl {
-            distro_name: locator_distro,
-        } if locator_distro == distro_name => Ok(()),
-        _ => Err(AppError::Path {
-            message: "lock locator does not belong to the WSL session".to_string(),
-        }),
     }
 }
 
@@ -169,6 +104,30 @@ mod tests {
         assert_eq!(
             io.read_optional(&locator).await.expect("empty lock"),
             Some(Vec::new())
+        );
+    }
+
+    #[tokio::test]
+    async fn host_lock_io_keeps_exactly_one_previous_atomic_version() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("state/lock.json");
+        let locator = ResourceLocator {
+            environment: EnvironmentRef::Host,
+            native_path: path.to_string_lossy().into_owned(),
+        };
+        let io = EnvironmentLockIo::Host;
+
+        io.write_atomic(&locator, b"first".to_vec()).await.unwrap();
+        io.write_atomic(&locator, b"second".to_vec()).await.unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert_eq!(
+            std::fs::read(path.with_file_name("lock.json.bak")).unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            2
         );
     }
 }

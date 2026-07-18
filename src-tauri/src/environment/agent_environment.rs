@@ -2,84 +2,26 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tokio::time::Duration;
 
-use crate::core::agent_availability::AgentAvailabilityKind;
 use crate::core::agent_definition::{
     AgentDefinition, AgentId, DetectionSpec, LegacyPath, LegacyPathScope, PathSpec, ScopeDefinition,
 };
 use crate::core::agent_registry::AgentRegistrySnapshot;
-use crate::core::agents::{AgentScopeTarget, AgentType};
-use crate::core::paths::PATHS;
-use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
+use crate::environment::types::{same_environment_identity, EnvironmentRef, EnvironmentStatus};
+use crate::environment::wsl::operations::path_metadata::{
+    self, PathMetadataContent, PathMetadataKind, PathMetadataQuery,
+};
 use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{decode_nul_records, run_wsl_script};
 use crate::error::AppError;
 
-const WSL_PATH_METADATA_SCRIPT: &str = r#"
-missing_kind() {
-  probe=${1%/*}
-  [ -n "$probe" ] || probe=/
-  while [ "$probe" != / ] && [ ! -e "$probe" ] && [ ! -L "$probe" ]; do
-    next=${probe%/*}
-    [ -n "$next" ] || next=/
-    [ "$next" != "$probe" ] || break
-    probe=$next
-  done
-  if [ -d "$probe" ] && [ ! -x "$probe" ]; then
-    printf inaccessible
-  else
-    printf missing
-  fi
-}
-
-printf '1\0'
-while [ "$#" -ge 2 ]; do
-  path=$1
-  inspect_eve=$2
-  shift 2
-  if [ -L "$path" ]; then
-    if [ ! -e "$path" ]; then
-      kind=broken-link
-    elif [ -d "$path" ]; then
-      kind=symlink-directory
-    else
-      kind=symlink-other
-    fi
-  elif [ -d "$path" ]; then
-    kind=directory
-  elif [ -e "$path" ]; then
-    kind=other
-  else
-    kind=$(missing_kind "$path")
-  fi
-  printf 'path\0%s\0%s\0' "$path" "$kind"
-  if [ "$inspect_eve" = 1 ] && [ -f "$path" ]; then
-    if payload=$(dd if="$path" bs=1048576 count=1 2>/dev/null); then
-      if [ -n "$payload" ]; then
-        printf 'eve\0%s\0' "$payload"
-      else
-        printf 'eve-empty\0-\0'
-      fi
-    else
-      printf 'eve-unreadable\0-\0'
-    fi
-  else
-    printf 'none\0-\0'
-  fi
-done
-"#;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentEnvironmentContext {
-    pub home: String,
-    pub config_home: String,
-    pub env: BTreeMap<String, String>,
-}
+#[cfg(test)]
+use crate::environment::wsl::operations::path_metadata::PATH_METADATA_SCRIPT as WSL_PATH_METADATA_SCRIPT;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentContext {
@@ -99,6 +41,14 @@ pub enum DetectionState {
     Detected,
     NotDetected,
     Indeterminate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum DetectionReason {
+    ProjectContextRequired,
+    EnvironmentUnavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -158,6 +108,7 @@ pub struct ResolvedPathPresence {
 pub struct ResolvedAgent {
     pub definition: AgentDefinition,
     pub detection: DetectionState,
+    pub detection_reason: Option<DetectionReason>,
     pub global: ResolvedAgentScope,
     pub project: ResolvedAgentScope,
 }
@@ -210,6 +161,7 @@ struct PathQuery {
     inspect_eve_package: bool,
 }
 
+#[cfg(test)]
 type MetadataQuery =
     Arc<dyn Fn(&[PathQuery]) -> Result<BTreeMap<String, PathMetadata>, AppError> + Send + Sync>;
 
@@ -217,6 +169,7 @@ enum MetadataBackend {
     Host,
     Wsl(WslSession),
     Unavailable,
+    #[cfg(test)]
     Custom(MetadataQuery),
 }
 
@@ -228,95 +181,27 @@ struct RuntimeCacheKey {
 }
 
 pub struct AgentEnvironmentResolver {
-    context: AgentEnvironmentContext,
     environment_context: EnvironmentContext,
     metadata_backend: MetadataBackend,
     cache: Mutex<BTreeMap<RuntimeCacheKey, AgentRuntimeSnapshot>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentEnvironmentTarget {
-    pub agent: AgentType,
-    pub display_name: String,
-    pub shared_path: String,
-    pub private_path: Option<String>,
-    pub availability: AgentAvailabilityKind,
-    pub default_available: bool,
-    pub detection_paths: Vec<String>,
-}
-
-impl AgentEnvironmentTarget {
-    pub fn scope_target(&self, is_global: bool) -> AgentScopeTarget {
-        let supported = self.availability != AgentAvailabilityKind::Unsupported;
-        let configured_path = self
-            .private_path
-            .clone()
-            .unwrap_or_else(|| self.shared_path.clone());
-        let read_paths = match self.availability {
-            AgentAvailabilityKind::SharedOnly => vec![self.shared_path.clone()],
-            AgentAvailabilityKind::SharedCompatible => {
-                let mut paths = vec![self.shared_path.clone()];
-                if let Some(private_path) = &self.private_path {
-                    paths.push(private_path.clone());
-                }
-                paths
-            }
-            AgentAvailabilityKind::PrivateRequired | AgentAvailabilityKind::Unknown => {
-                self.private_path.clone().into_iter().collect()
-            }
-            AgentAvailabilityKind::Unsupported => Vec::new(),
-        };
-
-        AgentScopeTarget {
-            supported,
-            automatic: self.default_available,
-            path: if !supported {
-                String::new()
-            } else if is_global {
-                configured_path.clone()
-            } else {
-                self.agent.config().skills_dir.to_string()
-            },
-            availability: self.availability,
-            default_available: self.default_available,
-            shared_path: self.shared_path.clone(),
-            install_path: if self.default_available {
-                self.shared_path.clone()
-            } else {
-                configured_path
-            },
-            read_paths,
-            private_path: self.private_path.clone(),
-        }
-    }
-}
-
 impl AgentEnvironmentResolver {
-    pub fn new(context: AgentEnvironmentContext) -> Self {
-        Self::from_environment(EnvironmentContext {
-            environment: EnvironmentRef::Host,
-            home: context.home,
-            config_home: context.config_home,
-            environment_variables: context.env,
-            availability: EnvironmentStatus::Available,
-            revision: "compatibility-host".to_string(),
-            wsl_session: None,
-        })
-    }
-
     pub fn from_environment(context: EnvironmentContext) -> Self {
-        let compatibility_context = AgentEnvironmentContext {
-            home: context.home.clone(),
-            config_home: context.config_home.clone(),
-            env: context.environment_variables.clone(),
-        };
         let metadata_backend = metadata_backend(&context);
         Self {
-            context: compatibility_context,
             environment_context: context,
             metadata_backend,
             cache: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    #[cfg(test)]
+    pub fn invalidate_cache(&self) {
+        self.cache
+            .lock()
+            .expect("agent runtime cache lock poisoned")
+            .clear();
     }
 
     #[cfg(test)]
@@ -334,11 +219,6 @@ impl AgentEnvironmentResolver {
 
     #[cfg(test)]
     fn replace_environment_context(&mut self, context: EnvironmentContext) {
-        self.context = AgentEnvironmentContext {
-            home: context.home.clone(),
-            config_home: context.config_home.clone(),
-            env: context.environment_variables.clone(),
-        };
         if !matches!(self.metadata_backend, MetadataBackend::Custom(_)) {
             self.metadata_backend = metadata_backend(&context);
         }
@@ -390,7 +270,7 @@ impl AgentEnvironmentResolver {
             .active_definitions
             .iter()
             .map(|(id, definition)| {
-                let detection = self.resolve_detection(
+                let (detection, detection_reason) = self.resolve_detection(
                     definition,
                     project_path.as_deref(),
                     &metadata,
@@ -419,6 +299,7 @@ impl AgentEnvironmentResolver {
                     ResolvedAgent {
                         definition: definition.clone(),
                         detection,
+                        detection_reason,
                         global,
                         project,
                     },
@@ -438,13 +319,6 @@ impl AgentEnvironmentResolver {
             .expect("agent runtime cache lock poisoned")
             .insert(cache_key, resolved.clone());
         Ok(resolved)
-    }
-
-    pub fn invalidate_cache(&self) {
-        self.cache
-            .lock()
-            .expect("agent runtime cache lock poisoned")
-            .clear();
     }
 
     fn collect_queries(
@@ -597,6 +471,7 @@ impl AgentEnvironmentResolver {
         let metadata = match &self.metadata_backend {
             MetadataBackend::Host => query_host_metadata(queries),
             MetadataBackend::Wsl(session) => query_wsl_metadata(session, queries).await,
+            #[cfg(test)]
             MetadataBackend::Custom(query) => query(queries),
             MetadataBackend::Unavailable => Ok(BTreeMap::new()),
         }?;
@@ -612,42 +487,89 @@ impl AgentEnvironmentResolver {
         project_path: Option<&str>,
         metadata: &BTreeMap<String, PathMetadata>,
         environment_available: bool,
-    ) -> DetectionState {
+    ) -> (DetectionState, Option<DetectionReason>) {
+        let project_context_required = match &definition.detection {
+            DetectionSpec::Eve => project_path.is_none(),
+            DetectionSpec::AnyPathExists { paths } => {
+                project_path.is_none()
+                    && !paths.is_empty()
+                    && paths.iter().all(|path| {
+                        matches!(
+                            self.resolve_detection_path(path, project_path, metadata),
+                            PathResolution::ProjectNotSelected
+                        )
+                    })
+            }
+        };
+        if project_context_required {
+            return (
+                DetectionState::Indeterminate,
+                Some(DetectionReason::ProjectContextRequired),
+            );
+        }
         if !environment_available {
-            return DetectionState::Indeterminate;
+            return (
+                DetectionState::Indeterminate,
+                Some(DetectionReason::EnvironmentUnavailable),
+            );
         }
         match &definition.detection {
             DetectionSpec::AnyPathExists { paths } => {
                 let mut indeterminate = false;
+                let mut environment_unavailable = false;
+                let mut project_context_required = false;
                 for path in paths {
-                    let PathResolution::Resolved(path) =
-                        self.resolve_path(path, project_path, metadata)
-                    else {
-                        indeterminate = true;
-                        continue;
+                    let path = match self.resolve_detection_path(path, project_path, metadata) {
+                        PathResolution::Resolved(path) => path,
+                        PathResolution::ProjectNotSelected => {
+                            project_context_required = true;
+                            continue;
+                        }
+                        PathResolution::Indeterminate => {
+                            indeterminate = true;
+                            environment_unavailable = true;
+                            continue;
+                        }
+                        PathResolution::Unsafe => {
+                            indeterminate = true;
+                            continue;
+                        }
                     };
                     let Some(entry) = metadata.get(&path_key(&path, &self.environment_context))
                     else {
                         indeterminate = true;
+                        environment_unavailable = true;
                         continue;
                     };
                     if entry.entry_kind == PathEntryKind::Inaccessible {
                         indeterminate = true;
+                        environment_unavailable = true;
                         continue;
                     }
                     if entry.entry_kind.exists() {
-                        return DetectionState::Detected;
+                        return (DetectionState::Detected, None);
                     }
                 }
                 if indeterminate {
-                    DetectionState::Indeterminate
+                    (
+                        DetectionState::Indeterminate,
+                        environment_unavailable.then_some(DetectionReason::EnvironmentUnavailable),
+                    )
+                } else if project_context_required {
+                    (
+                        DetectionState::Indeterminate,
+                        Some(DetectionReason::ProjectContextRequired),
+                    )
                 } else {
-                    DetectionState::NotDetected
+                    (DetectionState::NotDetected, None)
                 }
             }
             DetectionSpec::Eve => {
                 let Some(project_path) = project_path else {
-                    return DetectionState::Indeterminate;
+                    return (
+                        DetectionState::Indeterminate,
+                        Some(DetectionReason::ProjectContextRequired),
+                    );
                 };
                 let agent_path = join_resolved(project_path, "agent", &self.environment_context);
                 let package_path =
@@ -659,32 +581,96 @@ impl AgentEnvironmentResolver {
                 let (Some(agent_metadata), Some(package_metadata)) =
                     (agent_metadata, package_metadata)
                 else {
-                    return DetectionState::Indeterminate;
+                    return (
+                        DetectionState::Indeterminate,
+                        Some(DetectionReason::EnvironmentUnavailable),
+                    );
                 };
                 if agent_metadata.entry_kind == PathEntryKind::Inaccessible
                     || package_metadata.entry_kind == PathEntryKind::Inaccessible
                 {
-                    return DetectionState::Indeterminate;
+                    return (
+                        DetectionState::Indeterminate,
+                        Some(DetectionReason::EnvironmentUnavailable),
+                    );
                 }
                 if !agent_metadata.entry_kind.directory_exists() {
-                    return DetectionState::NotDetected;
+                    return (DetectionState::NotDetected, None);
                 }
                 match package_metadata.eve_package {
-                    Some(true) => DetectionState::Detected,
-                    Some(false) => DetectionState::NotDetected,
+                    Some(true) => (DetectionState::Detected, None),
+                    Some(false) => (DetectionState::NotDetected, None),
                     None if matches!(
                         package_metadata.entry_kind,
                         PathEntryKind::Other | PathEntryKind::SymlinkOther
                     ) =>
                     {
-                        DetectionState::Indeterminate
+                        (
+                            DetectionState::Indeterminate,
+                            Some(DetectionReason::EnvironmentUnavailable),
+                        )
                     }
-                    None => DetectionState::NotDetected,
+                    None => (DetectionState::NotDetected, None),
                 }
             }
         }
     }
 
+    fn resolve_detection_path(
+        &self,
+        spec: &PathSpec,
+        project_path: Option<&str>,
+        metadata: &BTreeMap<String, PathMetadata>,
+    ) -> PathResolution {
+        match spec {
+            PathSpec::FirstExisting {
+                candidates,
+                fallback,
+            } => {
+                for candidate in candidates {
+                    let resolved = self.resolve_detection_path(candidate, project_path, metadata);
+                    let Some(path) = resolved.path() else {
+                        if matches!(resolved, PathResolution::ProjectNotSelected) {
+                            continue;
+                        }
+                        return resolved;
+                    };
+                    match metadata
+                        .get(&path_key(path, &self.environment_context))
+                        .map(|entry| entry.entry_kind)
+                    {
+                        Some(kind) if kind.directory_exists() => return resolved,
+                        Some(PathEntryKind::Inaccessible) | None => {
+                            return PathResolution::Indeterminate;
+                        }
+                        Some(_) => {}
+                    }
+                }
+                self.resolve_detection_path(fallback, project_path, metadata)
+            }
+            PathSpec::EnvironmentVariable {
+                name,
+                relative_path,
+                fallback,
+            } => self
+                .environment_context
+                .environment_variables
+                .get(name)
+                .filter(|value| !value.trim().is_empty())
+                .map(|base| {
+                    let path = join_resolved(base, relative_path, &self.environment_context);
+                    if absolute_path_is_compatible(&path, &self.environment_context) {
+                        PathResolution::Resolved(path)
+                    } else {
+                        PathResolution::Unsafe
+                    }
+                })
+                .unwrap_or_else(|| self.resolve_detection_path(fallback, project_path, metadata)),
+            _ => self.resolve_simple_path(spec, project_path),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn resolve_scope(
         &self,
         scope: &ScopeDefinition,
@@ -863,149 +849,6 @@ impl AgentEnvironmentResolver {
             PathSpec::FirstExisting { .. } => unreachable!("handled by resolve_path"),
         }
     }
-
-    pub fn project_skills_dir(&self, agent: AgentType, project_path: &str) -> String {
-        join_posix(project_path, agent.config().skills_dir)
-    }
-
-    pub fn global_skills_dir(&self, agent: AgentType) -> Option<String> {
-        let override_home = match agent {
-            AgentType::Codex => self.env_home("CODEX_HOME", ".codex"),
-            AgentType::ClaudeCode => self.env_home("CLAUDE_CONFIG_DIR", ".claude"),
-            AgentType::MistralVibe => self.env_home("VIBE_HOME", ".vibe"),
-            AgentType::HermesAgent => self.env_home("HERMES_HOME", ".hermes"),
-            AgentType::AutohandCode => self.env_home("AUTOHAND_HOME", ".autohand"),
-            AgentType::Openclaw => Some(join_posix(&self.context.home, ".openclaw")),
-            _ => None,
-        };
-        if let Some(home) = override_home {
-            return Some(join_posix(&home, "skills"));
-        }
-
-        let configured = agent.config().global_skills_dir?;
-        if let Ok(relative) = configured.strip_prefix(&PATHS.config_home) {
-            return Some(join_posix(
-                &self.context.config_home,
-                &path_to_posix(relative),
-            ));
-        }
-        if let Ok(relative) = configured.strip_prefix(&PATHS.home) {
-            return Some(join_posix(&self.context.home, &path_to_posix(relative)));
-        }
-        None
-    }
-
-    pub fn target(
-        &self,
-        agent: AgentType,
-        is_global: bool,
-        project_path: &str,
-    ) -> AgentEnvironmentTarget {
-        let shared_path = if is_global {
-            join_posix(&self.context.home, ".agents/skills")
-        } else {
-            join_posix(project_path, ".agents/skills")
-        };
-        let configured_private = if is_global {
-            self.global_skills_dir(agent)
-        } else if agent.config().skills_dir.trim().is_empty() {
-            None
-        } else {
-            Some(self.project_skills_dir(agent, project_path))
-        };
-
-        let (supported, default_available, availability) = if is_global {
-            match configured_private.as_deref() {
-                None => (false, false, AgentAvailabilityKind::Unsupported),
-                Some(_) if matches!(global_official_support(agent), OfficialSharedSupport::No) => {
-                    (true, false, AgentAvailabilityKind::PrivateRequired)
-                }
-                Some(private) if same_posix_path(private, &shared_path) => {
-                    (true, true, AgentAvailabilityKind::SharedOnly)
-                }
-                Some(_) if matches!(global_official_support(agent), OfficialSharedSupport::Yes) => {
-                    (true, true, AgentAvailabilityKind::SharedCompatible)
-                }
-                Some(_) => (true, false, AgentAvailabilityKind::Unknown),
-            }
-        } else {
-            match configured_private.as_deref() {
-                None => (false, false, AgentAvailabilityKind::Unsupported),
-                Some(private) if same_posix_path(private, &shared_path) => {
-                    (true, true, AgentAvailabilityKind::SharedOnly)
-                }
-                Some(_) => (true, false, AgentAvailabilityKind::PrivateRequired),
-            }
-        };
-        let private_path = configured_private.filter(|path| !same_posix_path(path, &shared_path));
-
-        AgentEnvironmentTarget {
-            agent,
-            display_name: agent.config().display_name.to_string(),
-            shared_path,
-            private_path: supported.then_some(private_path).flatten(),
-            availability,
-            default_available,
-            detection_paths: self.detection_paths(agent, project_path),
-        }
-    }
-
-    fn env_home(&self, key: &str, fallback: &str) -> Option<String> {
-        Some(
-            self.context
-                .env
-                .get(key)
-                .filter(|value| !value.trim().is_empty())
-                .cloned()
-                .unwrap_or_else(|| join_posix(&self.context.home, fallback)),
-        )
-    }
-
-    fn detection_paths(&self, agent: AgentType, project_path: &str) -> Vec<String> {
-        let home = &self.context.home;
-        let config = &self.context.config_home;
-        let paths = match agent {
-            AgentType::Amp => vec![join_posix(config, "amp")],
-            AgentType::Antigravity => vec![join_posix(home, ".gemini/antigravity")],
-            AgentType::AntigravityCli => vec![join_posix(home, ".gemini/antigravity-cli")],
-            AgentType::Cline => vec![join_posix(home, ".cline")],
-            AgentType::Codex => vec![
-                self.env_home("CODEX_HOME", ".codex").expect("codex home"),
-                "/etc/codex".to_string(),
-            ],
-            AgentType::Cursor => vec![join_posix(home, ".cursor")],
-            AgentType::Deepagents => vec![join_posix(home, ".deepagents")],
-            AgentType::Dexto => vec![join_posix(home, ".dexto")],
-            AgentType::Eve => vec![
-                join_posix(project_path, "agent"),
-                join_posix(project_path, "package.json"),
-            ],
-            AgentType::Firebender => vec![join_posix(home, ".firebender")],
-            AgentType::GeminiCli => vec![join_posix(home, ".gemini")],
-            AgentType::GithubCopilot => vec![join_posix(home, ".copilot")],
-            AgentType::KimiCodeCli => {
-                vec![join_posix(home, ".kimi-code"), join_posix(home, ".kimi")]
-            }
-            AgentType::Loaf => vec![join_posix(home, ".loaf")],
-            AgentType::Opencode => vec![join_posix(config, "opencode")],
-            AgentType::Promptscript => vec![
-                join_posix(project_path, ".promptscript"),
-                join_posix(project_path, "promptscript.yaml"),
-            ],
-            AgentType::Replit => vec![join_posix(project_path, ".replit")],
-            AgentType::Warp => vec![join_posix(home, ".warp")],
-            AgentType::Zed => vec![join_posix(config, "zed")],
-            _ => self
-                .global_skills_dir(agent)
-                .and_then(|path| parent_posix(&path))
-                .into_iter()
-                .collect(),
-        };
-        paths
-            .into_iter()
-            .filter(|path| !path.trim().is_empty())
-            .collect()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1034,7 +877,16 @@ fn metadata_backend(context: &EnvironmentContext) -> MetadataBackend {
         EnvironmentRef::Wsl { distro_name } => context
             .wsl_session
             .as_ref()
-            .filter(|session| session.distro_name == *distro_name)
+            .filter(|session| {
+                same_environment_identity(
+                    &EnvironmentRef::Wsl {
+                        distro_name: session.distro_name.clone(),
+                    },
+                    &EnvironmentRef::Wsl {
+                        distro_name: distro_name.clone(),
+                    },
+                )
+            })
             .cloned()
             .map(MetadataBackend::Wsl)
             .unwrap_or(MetadataBackend::Unavailable),
@@ -1101,70 +953,58 @@ async fn query_wsl_metadata(
     session: &WslSession,
     queries: &[PathQuery],
 ) -> Result<BTreeMap<String, PathMetadata>, AppError> {
-    let mut args = Vec::with_capacity(queries.len() * 2);
-    for query in queries {
-        args.push(query.path.clone());
-        args.push(if query.inspect_eve_package { "1" } else { "0" }.to_string());
-    }
-    let output = run_wsl_script(
+    let facts = path_metadata::inspect(
         session,
-        WSL_PATH_METADATA_SCRIPT,
-        &args,
-        Vec::new(),
-        Duration::from_secs(20),
+        &queries
+            .iter()
+            .map(|query| PathMetadataQuery {
+                path: query.path.clone(),
+                inspect_content: query.inspect_eve_package,
+            })
+            .collect::<Vec<_>>(),
+        None,
     )
     .await?;
-    parse_wsl_path_metadata(&output)
+    metadata_from_typed_facts(facts)
 }
 
+#[cfg(test)]
 fn parse_wsl_path_metadata(bytes: &[u8]) -> Result<BTreeMap<String, PathMetadata>, AppError> {
-    let records = decode_nul_records(bytes);
-    if records.first().map(String::as_str) != Some("1") {
-        return Err(AppError::Custom {
-            message: "invalid WSL path metadata response".to_string(),
-        });
-    }
+    metadata_from_typed_facts(path_metadata::parse_path_metadata(bytes)?)
+}
+
+fn metadata_from_typed_facts(
+    facts: Vec<path_metadata::PathMetadataFact>,
+) -> Result<BTreeMap<String, PathMetadata>, AppError> {
     let mut metadata = BTreeMap::new();
-    let mut index = 1;
-    while index < records.len() {
-        if records.get(index).map(String::as_str) != Some("path") || index + 4 >= records.len() {
-            return Err(AppError::Custom {
-                message: "invalid WSL path metadata record".to_string(),
-            });
-        }
-        let path = records[index + 1].clone();
-        let entry_kind = match records[index + 2].as_str() {
-            "missing" => PathEntryKind::Missing,
-            "directory" => PathEntryKind::Directory,
-            "symlink-directory" => PathEntryKind::SymlinkDirectory,
-            "symlink-other" => PathEntryKind::SymlinkOther,
-            "other" => PathEntryKind::Other,
-            "broken-link" => PathEntryKind::BrokenLink,
-            "inaccessible" => PathEntryKind::Inaccessible,
-            _ => {
-                return Err(AppError::Custom {
-                    message: "invalid WSL path metadata kind".to_string(),
-                })
-            }
+    for fact in facts {
+        let entry_kind = match fact.kind {
+            PathMetadataKind::Missing => PathEntryKind::Missing,
+            PathMetadataKind::Directory => PathEntryKind::Directory,
+            PathMetadataKind::SymlinkDirectory => PathEntryKind::SymlinkDirectory,
+            PathMetadataKind::SymlinkOther => PathEntryKind::SymlinkOther,
+            PathMetadataKind::Other => PathEntryKind::Other,
+            PathMetadataKind::BrokenLink => PathEntryKind::BrokenLink,
+            PathMetadataKind::Inaccessible => PathEntryKind::Inaccessible,
         };
-        let eve_package = match records[index + 3].as_str() {
-            "none" | "eve-unreadable" => None,
-            "eve-empty" => Some(false),
-            "eve" => Some(is_eve_package(&records[index + 4])),
-            _ => {
-                return Err(AppError::Custom {
-                    message: "invalid WSL path metadata payload".to_string(),
-                })
+        let eve_package = match fact.content {
+            PathMetadataContent::NotRequested | PathMetadataContent::Unreadable => None,
+            PathMetadataContent::Empty => Some(false),
+            PathMetadataContent::Bytes(bytes) => {
+                let content =
+                    std::str::from_utf8(&bytes).map_err(|_| AppError::ConfigurationCorrupted {
+                        message: "WSL path metadata content is not UTF-8".to_string(),
+                    })?;
+                Some(is_eve_package(content))
             }
         };
         metadata.insert(
-            path,
+            fact.path,
             PathMetadata {
                 entry_kind,
                 eve_package,
             },
         );
-        index += 5;
     }
     Ok(metadata)
 }
@@ -1271,30 +1111,6 @@ fn is_windows_drive_root(path: &str) -> bool {
     bytes.len() == 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OfficialSharedSupport {
-    Yes,
-    No,
-    Unknown,
-}
-
-fn global_official_support(agent: AgentType) -> OfficialSharedSupport {
-    match agent {
-        AgentType::Codex
-        | AgentType::GithubCopilot
-        | AgentType::GeminiCli
-        | AgentType::Opencode
-        | AgentType::Warp
-        | AgentType::Zed
-        | AgentType::Firebender
-        | AgentType::KimiCodeCli => OfficialSharedSupport::Yes,
-        AgentType::Amp | AgentType::Antigravity | AgentType::Cline | AgentType::Deepagents => {
-            OfficialSharedSupport::No
-        }
-        _ => OfficialSharedSupport::Unknown,
-    }
-}
-
 fn join_posix(base: &str, child: &str) -> String {
     format!(
         "{}/{}",
@@ -1303,127 +1119,26 @@ fn join_posix(base: &str, child: &str) -> String {
     )
 }
 
-fn path_to_posix(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-fn same_posix_path(left: &str, right: &str) -> bool {
-    left.trim_end_matches('/') == right.trim_end_matches('/')
-}
-
-fn parent_posix(path: &str) -> Option<String> {
-    path.trim_end_matches('/')
-        .rsplit_once('/')
-        .map(|(parent, _)| parent.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
     use std::sync::{Arc, Mutex};
 
+    use tempfile::tempdir;
+
     use super::{
-        parse_wsl_path_metadata, AgentEnvironmentContext, AgentEnvironmentResolver,
-        DirectoryPresenceState, EnvironmentContext, PathEntryKind, PathMetadata,
-        WSL_PATH_METADATA_SCRIPT,
+        parse_wsl_path_metadata, AgentEnvironmentResolver, DirectoryPresenceState,
+        EnvironmentContext, PathEntryKind, PathMetadata, WSL_PATH_METADATA_SCRIPT,
     };
-    use crate::core::agent_availability::AgentAvailabilityKind;
     use crate::core::agent_definition::{
-        AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, LegacyMigrationTarget,
-        LegacyPath, LegacyPathBehavior, LegacyPathScope, PathSpec, ScopeDefinition,
+        AgentAdapter, AgentDefinition, AgentId, AgentSource, CustomAgentDefinition, CustomPathBase,
+        CustomPathSpec, CustomScopeDefinition, DetectionSpec, LegacyMigrationTarget, LegacyPath,
+        LegacyPathBehavior, LegacyPathScope, PathSpec, ScopeDefinition, ScopeLocation,
     };
     use crate::core::agent_registry::AgentRegistrySnapshot;
-    use crate::core::agents::AgentType;
+    use crate::core::custom_agent_repository::CustomAgentRepository;
     use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
-
-    fn linux_context() -> AgentEnvironmentContext {
-        AgentEnvironmentContext {
-            home: "/home/alice".to_string(),
-            config_home: "/home/alice/.config".to_string(),
-            env: BTreeMap::new(),
-        }
-    }
-
-    #[test]
-    fn maps_home_and_config_based_global_paths_into_linux_environment() {
-        let resolver = AgentEnvironmentResolver::new(linux_context());
-
-        assert_eq!(
-            resolver.global_skills_dir(AgentType::AiderDesk).as_deref(),
-            Some("/home/alice/.aider-desk/skills")
-        );
-        assert_eq!(
-            resolver.global_skills_dir(AgentType::Amp).as_deref(),
-            Some("/home/alice/.config/agents/skills")
-        );
-    }
-
-    #[test]
-    fn honors_environment_specific_codex_and_claude_homes() {
-        let mut context = linux_context();
-        context
-            .env
-            .insert("CODEX_HOME".to_string(), "/opt/codex-profile".to_string());
-        context.env.insert(
-            "CLAUDE_CONFIG_DIR".to_string(),
-            "/opt/claude-profile".to_string(),
-        );
-        let resolver = AgentEnvironmentResolver::new(context);
-
-        assert_eq!(
-            resolver.global_skills_dir(AgentType::Codex).as_deref(),
-            Some("/opt/codex-profile/skills")
-        );
-        assert_eq!(
-            resolver.global_skills_dir(AgentType::ClaudeCode).as_deref(),
-            Some("/opt/claude-profile/skills")
-        );
-    }
-
-    #[test]
-    fn resolves_project_path_without_using_host_home() {
-        let resolver = AgentEnvironmentResolver::new(linux_context());
-
-        assert_eq!(
-            resolver.project_skills_dir(AgentType::Codex, "/work/app"),
-            "/work/app/.agents/skills"
-        );
-    }
-
-    #[test]
-    fn resolves_environment_specific_agent_targets_without_host_detection() {
-        let resolver = AgentEnvironmentResolver::new(linux_context());
-
-        let codex = resolver.target(AgentType::Codex, false, "/work/app");
-        assert_eq!(codex.shared_path, "/work/app/.agents/skills");
-        assert_eq!(codex.private_path, None);
-        assert_eq!(codex.availability, AgentAvailabilityKind::SharedOnly);
-        assert!(codex.default_available);
-        assert_eq!(codex.detection_paths[0], "/home/alice/.codex");
-        assert!(codex.detection_paths.contains(&"/etc/codex".to_string()));
-
-        let claude = resolver.target(AgentType::ClaudeCode, false, "/work/app");
-        assert_eq!(
-            claude.private_path.as_deref(),
-            Some("/work/app/.claude/skills")
-        );
-        assert_eq!(claude.availability, AgentAvailabilityKind::PrivateRequired);
-        assert!(!claude.default_available);
-
-        let amp = resolver.target(AgentType::Amp, true, "/work/app");
-        assert_eq!(
-            amp.private_path.as_deref(),
-            Some("/home/alice/.config/agents/skills")
-        );
-        assert_eq!(amp.detection_paths, vec!["/home/alice/.config/amp"]);
-
-        let target = codex.scope_target(false);
-        assert!(target.supported);
-        assert!(target.automatic);
-        assert_eq!(target.path, ".agents/skills");
-        assert_eq!(target.install_path, "/work/app/.agents/skills");
-        assert_eq!(target.read_paths, vec!["/work/app/.agents/skills"]);
-    }
 
     fn scope(enabled: bool, reads_shared: bool, private_path: Option<PathSpec>) -> ScopeDefinition {
         ScopeDefinition {
@@ -1517,7 +1232,7 @@ mod tests {
     async fn resolve_detection_with_metadata(
         detection_paths: Vec<PathSpec>,
         entry_kinds: impl IntoIterator<Item = (&'static str, PathEntryKind)>,
-    ) -> super::DetectionState {
+    ) -> (super::DetectionState, Option<super::DetectionReason>) {
         let snapshot = registry(
             "registry-1",
             vec![definition(
@@ -1556,12 +1271,12 @@ mod tests {
             },
         );
 
-        resolver
-            .resolve_registry(&snapshot, None)
-            .await
-            .unwrap()
-            .agents[&AgentId::parse("detection-agent").unwrap()]
-            .detection
+        let runtime = resolver.resolve_registry(&snapshot, None).await.unwrap();
+        let agent = runtime
+            .agents
+            .get(&AgentId::parse("detection-agent").unwrap())
+            .unwrap();
+        (agent.detection, agent.detection_reason)
     }
 
     #[tokio::test]
@@ -1708,19 +1423,318 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn project_only_detection_requires_project_context() {
+        let registry = registry(
+            "registry-1",
+            vec![definition(
+                "project-agent",
+                scope(false, false, None),
+                scope(false, false, None),
+                vec![PathSpec::project(".my-agent")],
+            )],
+        );
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Available,
+                "environment-1",
+            ),
+            [],
+        );
+
+        let runtime = resolver.resolve_registry(&registry, None).await.unwrap();
+        let agent = runtime
+            .agents
+            .get(&AgentId::parse("project-agent").unwrap())
+            .unwrap();
+
+        assert_eq!(agent.detection, super::DetectionState::Indeterminate);
+        assert_eq!(
+            agent.detection_reason,
+            Some(super::DetectionReason::ProjectContextRequired)
+        );
+    }
+
+    #[tokio::test]
+    async fn project_only_detection_requires_project_context_when_environment_is_unavailable() {
+        let registry = registry(
+            "registry-1",
+            vec![definition(
+                "project-agent",
+                scope(false, false, None),
+                scope(false, false, None),
+                vec![PathSpec::project(".my-agent")],
+            )],
+        );
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Unavailable,
+                "environment-1",
+            ),
+            [],
+        );
+
+        let runtime = resolver.resolve_registry(&registry, None).await.unwrap();
+        let agent = runtime
+            .agents
+            .get(&AgentId::parse("project-agent").unwrap())
+            .unwrap();
+
+        assert_eq!(agent.detection, super::DetectionState::Indeterminate);
+        assert_eq!(
+            agent.detection_reason,
+            Some(super::DetectionReason::ProjectContextRequired)
+        );
+    }
+
+    #[tokio::test]
+    async fn persisted_project_detection_is_resolved_from_the_current_context() {
+        let temporary = tempdir().expect("temporary repository directory");
+        let repository = CustomAgentRepository::new(temporary.path().join("custom-agents.json"));
+        let definition = CustomAgentDefinition {
+            id: AgentId::parse("persisted-project-agent").unwrap(),
+            display_name: "Persisted Project Agent".to_string(),
+            global: CustomScopeDefinition {
+                enabled: true,
+                location: ScopeLocation::Shared,
+                private_path: None,
+            },
+            project: CustomScopeDefinition {
+                enabled: true,
+                location: ScopeLocation::Shared,
+                private_path: None,
+            },
+            detection_paths: vec![CustomPathSpec::based(
+                CustomPathBase::Project,
+                ".persisted-agent",
+            )],
+        };
+        repository.upsert(definition).expect("persist definition");
+
+        let persisted: serde_json::Value = serde_json::from_slice(
+            &fs::read(repository.path()).expect("read persisted definition"),
+        )
+        .expect("parse persisted definition");
+        let record = persisted["agents"][0]
+            .as_object()
+            .expect("persisted declaration");
+        assert!(record.contains_key("detectionPaths"));
+        assert!(!record.contains_key("detection"));
+        assert!(!record.contains_key("detectionReason"));
+        assert!(!record.contains_key("resolvedPath"));
+        assert!(!persisted.to_string().contains("/work/persisted"));
+
+        let loaded = repository.load().expect("load persisted definition");
+        let runtime_definition = loaded
+            .valid_records()
+            .next()
+            .expect("valid persisted definition")
+            .0
+            .normalize()
+            .expect("normalize persisted definition");
+        let snapshot = registry("registry-1", vec![runtime_definition]);
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Available,
+                "environment-1",
+            ),
+            ["/work/persisted/.persisted-agent"],
+        );
+
+        let without_project = resolver
+            .resolve_registry(&snapshot, None)
+            .await
+            .expect("resolve without project");
+        let without_project_agent = without_project
+            .agents
+            .get(&AgentId::parse("persisted-project-agent").unwrap())
+            .unwrap();
+        assert_eq!(
+            without_project_agent.detection,
+            super::DetectionState::Indeterminate
+        );
+        assert_eq!(
+            without_project_agent.detection_reason,
+            Some(super::DetectionReason::ProjectContextRequired)
+        );
+        assert_eq!(
+            without_project_agent.global.shared_path.as_deref(),
+            Some("/home/alice/.agents/skills")
+        );
+        assert!(without_project_agent.project.shared_path.is_none());
+
+        let with_project = resolver
+            .resolve_registry(&snapshot, Some("/work/persisted"))
+            .await
+            .expect("resolve with project");
+        let with_project_agent = with_project
+            .agents
+            .get(&AgentId::parse("persisted-project-agent").unwrap())
+            .unwrap();
+        assert_eq!(
+            with_project_agent.detection,
+            super::DetectionState::Detected
+        );
+        assert_eq!(with_project_agent.detection_reason, None);
+        assert_eq!(
+            with_project_agent.project.shared_path.as_deref(),
+            Some("/work/persisted/.agents/skills")
+        );
+    }
+
+    #[tokio::test]
+    async fn project_only_detection_is_detected_when_project_candidate_exists() {
+        let registry = registry(
+            "registry-1",
+            vec![definition(
+                "project-agent",
+                scope(false, false, None),
+                scope(false, false, None),
+                vec![PathSpec::project(".my-agent")],
+            )],
+        );
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Available,
+                "environment-1",
+            ),
+            ["/work/app/.my-agent"],
+        );
+
+        let runtime = resolver
+            .resolve_registry(&registry, Some("/work/app"))
+            .await
+            .unwrap();
+        let agent = runtime
+            .agents
+            .get(&AgentId::parse("project-agent").unwrap())
+            .unwrap();
+
+        assert_eq!(agent.detection, super::DetectionState::Detected);
+        assert_eq!(agent.detection_reason, None);
+    }
+
+    #[tokio::test]
+    async fn mixed_project_and_home_detection_remains_indeterminate_without_project_context() {
+        let registry = registry(
+            "registry-1",
+            vec![definition(
+                "mixed-agent",
+                scope(false, false, None),
+                scope(false, false, None),
+                vec![
+                    PathSpec::project(".my-agent"),
+                    PathSpec::home(".mixed-agent"),
+                ],
+            )],
+        );
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Available,
+                "environment-1",
+            ),
+            [],
+        );
+
+        let runtime = resolver.resolve_registry(&registry, None).await.unwrap();
+        let agent = runtime
+            .agents
+            .get(&AgentId::parse("mixed-agent").unwrap())
+            .unwrap();
+
+        assert_eq!(agent.detection, super::DetectionState::Indeterminate);
+        assert_eq!(
+            agent.detection_reason,
+            Some(super::DetectionReason::ProjectContextRequired)
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_project_and_home_detection_is_detected_when_home_exists_without_project_context()
+    {
+        let registry = registry(
+            "registry-1",
+            vec![definition(
+                "mixed-agent",
+                scope(false, false, None),
+                scope(false, false, None),
+                vec![
+                    PathSpec::project(".my-agent"),
+                    PathSpec::home(".mixed-agent"),
+                ],
+            )],
+        );
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Available,
+                "environment-1",
+            ),
+            ["/home/alice/.mixed-agent"],
+        );
+
+        let runtime = resolver.resolve_registry(&registry, None).await.unwrap();
+        let agent = runtime
+            .agents
+            .get(&AgentId::parse("mixed-agent").unwrap())
+            .unwrap();
+
+        assert_eq!(agent.detection, super::DetectionState::Detected);
+        assert_eq!(agent.detection_reason, None);
+    }
+
+    #[tokio::test]
+    async fn first_existing_detection_skips_project_candidates_without_project_context() {
+        let registry = registry(
+            "registry-1",
+            vec![definition(
+                "first-existing-agent",
+                scope(false, false, None),
+                scope(false, false, None),
+                vec![PathSpec::FirstExisting {
+                    candidates: vec![PathSpec::project(".my-agent")],
+                    fallback: Box::new(PathSpec::home(".fallback-agent")),
+                }],
+            )],
+        );
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Available,
+                "environment-1",
+            ),
+            [],
+        );
+
+        let runtime = resolver.resolve_registry(&registry, None).await.unwrap();
+        let agent = runtime
+            .agents
+            .get(&AgentId::parse("first-existing-agent").unwrap())
+            .unwrap();
+
+        assert_eq!(agent.detection, super::DetectionState::NotDetected);
+        assert_eq!(agent.detection_reason, None);
+    }
+
+    #[tokio::test]
     async fn any_path_exists_is_indeterminate_for_inaccessible_and_missing_paths() {
-        let detection = resolve_detection_with_metadata(
+        let (detection, reason) = resolve_detection_with_metadata(
             vec![PathSpec::home(".inaccessible"), PathSpec::home(".missing")],
             [("/home/alice/.inaccessible", PathEntryKind::Inaccessible)],
         )
         .await;
 
         assert_eq!(detection, super::DetectionState::Indeterminate);
+        assert_eq!(reason, Some(super::DetectionReason::EnvironmentUnavailable));
     }
 
     #[tokio::test]
     async fn any_path_exists_is_indeterminate_for_fail_closed_first_existing_and_missing_path() {
-        let detection = resolve_detection_with_metadata(
+        let (detection, reason) = resolve_detection_with_metadata(
             vec![
                 PathSpec::FirstExisting {
                     candidates: vec![PathSpec::home(".inaccessible-candidate")],
@@ -1739,11 +1753,12 @@ mod tests {
         .await;
 
         assert_eq!(detection, super::DetectionState::Indeterminate);
+        assert_eq!(reason, Some(super::DetectionReason::EnvironmentUnavailable));
     }
 
     #[tokio::test]
     async fn any_path_exists_is_not_detected_when_every_path_is_missing() {
-        let detection = resolve_detection_with_metadata(
+        let (detection, reason) = resolve_detection_with_metadata(
             vec![
                 PathSpec::home(".missing-one"),
                 PathSpec::home(".missing-two"),
@@ -1753,11 +1768,12 @@ mod tests {
         .await;
 
         assert_eq!(detection, super::DetectionState::NotDetected);
+        assert_eq!(reason, None);
     }
 
     #[tokio::test]
     async fn any_path_exists_is_detected_for_inaccessible_and_present_paths() {
-        let detection = resolve_detection_with_metadata(
+        let (detection, reason) = resolve_detection_with_metadata(
             vec![PathSpec::home(".inaccessible"), PathSpec::home(".present")],
             [
                 ("/home/alice/.inaccessible", PathEntryKind::Inaccessible),
@@ -1767,6 +1783,7 @@ mod tests {
         .await;
 
         assert_eq!(detection, super::DetectionState::Detected);
+        assert_eq!(reason, None);
     }
 
     #[tokio::test]
@@ -2316,8 +2333,108 @@ mod tests {
         assert_eq!(resolved.availability, EnvironmentStatus::Unavailable);
         assert_eq!(agent.detection, super::DetectionState::Indeterminate);
         assert_eq!(
+            agent.detection_reason,
+            Some(super::DetectionReason::EnvironmentUnavailable)
+        );
+        assert_eq!(
             agent.global.shared_presence,
             Some(DirectoryPresenceState::EnvironmentUnavailable)
+        );
+    }
+
+    #[tokio::test]
+    async fn eve_detection_requires_project_context() {
+        let mut eve = definition(
+            "eve",
+            scope(false, false, None),
+            scope(true, false, Some(PathSpec::project("agent/skills"))),
+            vec![PathSpec::home("unused")],
+        );
+        eve.source = AgentSource::Builtin;
+        eve.detection = DetectionSpec::Eve;
+        eve.adapter = AgentAdapter::Eve;
+        let snapshot = registry("registry-1", vec![eve]);
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Available,
+                "environment-1",
+            ),
+            [],
+        );
+
+        let resolved = resolver.resolve_registry(&snapshot, None).await.unwrap();
+        let agent = &resolved.agents[&AgentId::parse("eve").unwrap()];
+
+        assert_eq!(agent.detection, super::DetectionState::Indeterminate);
+        assert_eq!(
+            agent.detection_reason,
+            Some(super::DetectionReason::ProjectContextRequired)
+        );
+    }
+
+    #[tokio::test]
+    async fn eve_detection_requires_project_context_when_environment_is_unavailable() {
+        let mut eve = definition(
+            "eve",
+            scope(false, false, None),
+            scope(true, false, Some(PathSpec::project("agent/skills"))),
+            vec![PathSpec::home("unused")],
+        );
+        eve.source = AgentSource::Builtin;
+        eve.detection = DetectionSpec::Eve;
+        eve.adapter = AgentAdapter::Eve;
+        let snapshot = registry("registry-1", vec![eve]);
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Unavailable,
+                "environment-1",
+            ),
+            [],
+        );
+
+        let resolved = resolver.resolve_registry(&snapshot, None).await.unwrap();
+        let agent = &resolved.agents[&AgentId::parse("eve").unwrap()];
+
+        assert_eq!(agent.detection, super::DetectionState::Indeterminate);
+        assert_eq!(
+            agent.detection_reason,
+            Some(super::DetectionReason::ProjectContextRequired)
+        );
+    }
+
+    #[tokio::test]
+    async fn eve_detection_with_project_context_reports_environment_unavailable() {
+        let mut eve = definition(
+            "eve",
+            scope(false, false, None),
+            scope(true, false, Some(PathSpec::project("agent/skills"))),
+            vec![PathSpec::home("unused")],
+        );
+        eve.source = AgentSource::Builtin;
+        eve.detection = DetectionSpec::Eve;
+        eve.adapter = AgentAdapter::Eve;
+        let snapshot = registry("registry-1", vec![eve]);
+        let (resolver, _) = resolver_with_present_paths(
+            runtime_context(
+                EnvironmentRef::Host,
+                EnvironmentStatus::Unavailable,
+                "environment-1",
+            ),
+            [],
+        );
+
+        let resolved = resolver
+            .resolve_registry(&snapshot, Some("/work/app"))
+            .await
+            .unwrap();
+        let agent = &resolved.agents[&AgentId::parse("eve").unwrap()];
+
+        assert_eq!(agent.detection, super::DetectionState::Indeterminate);
+        assert_eq!(
+            agent.detection_reason,
+            Some(super::DetectionReason::EnvironmentUnavailable)
         );
     }
 
@@ -2566,6 +2683,7 @@ mod tests {
                 "-c",
                 WSL_PATH_METADATA_SCRIPT,
                 "--",
+                "inspect",
                 package_path.as_str(),
                 "1",
                 other_agent_path.as_str(),
@@ -2614,6 +2732,7 @@ mod tests {
                 "-c",
                 WSL_PATH_METADATA_SCRIPT,
                 "--",
+                "inspect",
                 missing_path.as_str(),
                 "0",
             ])

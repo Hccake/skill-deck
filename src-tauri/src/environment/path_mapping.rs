@@ -1,8 +1,6 @@
-use tokio::time::Duration;
-
 use crate::environment::types::EnvironmentRef;
+use crate::environment::wsl::operations::path;
 use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::run_wsl_script;
 use crate::error::AppError;
 
 pub(crate) fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
@@ -114,35 +112,12 @@ pub fn map_wsl_input_without_wslpath(
     Ok(None)
 }
 
-pub fn parse_wslpath_output(bytes: &[u8]) -> Result<String, AppError> {
-    let mut fields = bytes.split(|byte| *byte == 0);
-    let version = fields.next().unwrap_or_default();
-    let mapped = fields.next().unwrap_or_default();
-    if version != b"1" || mapped.is_empty() || fields.any(|field| !field.is_empty()) {
-        return Err(AppError::Custom {
-            message: "invalid wslpath response".to_string(),
-        });
-    }
-    String::from_utf8(mapped.to_vec()).map_err(|error| AppError::Custom {
-        message: format!("invalid UTF-8 in wslpath response: {error}"),
-    })
-}
-
 pub async fn map_windows_path_with_wslpath(
     session: &WslSession,
     path: &str,
 ) -> Result<String, AppError> {
-    const SCRIPT: &str = r#"mapped=$(wslpath -u -- "$1") || exit $?; printf '1\0%s\0' "$mapped""#;
-    match run_wsl_script(
-        session,
-        SCRIPT,
-        &[path.to_string()],
-        Vec::new(),
-        Duration::from_secs(10),
-    )
-    .await
-    {
-        Ok(output) => parse_wslpath_output(&output),
+    match path::map_host_bridge_path(session, path, None).await {
+        Ok(mapped) => Ok(mapped),
         Err(AppError::WslCommandFailed { .. }) => Err(AppError::StorageMappingUnsupported {
             path: path.to_string(),
             environment: EnvironmentRef::Wsl {
@@ -190,7 +165,7 @@ pub fn host_path_to_linux_path(path: &str) -> Option<String> {
 mod tests {
     use super::{
         host_path_to_linux_path, linux_path_to_host_path, map_wsl_input_without_wslpath,
-        parse_wslpath_output, wsl_unc_to_linux_path,
+        wsl_unc_to_linux_path,
     };
     use crate::environment::types::EnvironmentRef;
     use crate::error::AppError;
@@ -274,15 +249,5 @@ mod tests {
                 ..
             }) if distro_name == "Ubuntu"
         ));
-    }
-
-    #[test]
-    fn parses_only_versioned_wslpath_output() {
-        assert_eq!(
-            parse_wslpath_output(b"1\0/custom/c/Code/app\0").expect("wslpath output"),
-            "/custom/c/Code/app"
-        );
-        assert!(parse_wslpath_output(b"2\0/mnt/c/Code/app\0").is_err());
-        assert!(parse_wslpath_output(b"1\0").is_err());
     }
 }

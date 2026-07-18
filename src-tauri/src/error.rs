@@ -1,9 +1,42 @@
 // src-tauri/src/error.rs
-use serde::Serialize;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use specta::Type;
 use thiserror::Error;
 
 use crate::environment::types::EnvironmentRef;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(transparent)]
+pub struct RecoveryResourceId(String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryResourceIdError;
+
+impl RecoveryResourceId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, RecoveryResourceIdError> {
+        let value = value.into();
+        let valid = !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+        valid.then_some(Self(value)).ok_or(RecoveryResourceIdError)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RecoveryResourceIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("invalid recovery resource ID")
+    }
+}
+
+impl std::error::Error for RecoveryResourceIdError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -85,14 +118,15 @@ pub enum AppError {
 
     /// GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
     /// reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
+    #[expect(
+        dead_code,
+        reason = "retained for backward-compatible IPC error decoding"
+    )]
     #[error("GitHub API error ({reason}): {message}")]
     GitHubApiError { reason: String, message: String },
 
     #[error("Path not found: {path}")]
     PathNotFound { path: String },
-
-    #[error("Install failed: {message}")]
-    InstallFailed { message: String },
 
     #[error("Installation requires explicit risk confirmation: {code}")]
     InstallRiskConfirmationRequired { code: String },
@@ -149,6 +183,97 @@ pub enum AppError {
 
     #[error("Invalid agent: {agent}")]
     InvalidAgent { agent: String },
+
+    #[error("Configuration is read-only because it uses an unsupported schema")]
+    ConfigurationReadOnly,
+
+    #[error("Validation failed: {message}")]
+    Validation {
+        field: Option<String>,
+        message: String,
+    },
+
+    #[error("Environment changed ({expected_revision} -> {actual_revision})")]
+    #[allow(dead_code)]
+    EnvironmentChanged {
+        expected_revision: String,
+        actual_revision: String,
+    },
+
+    #[error("Context changed ({expected_revision} -> {actual_revision})")]
+    #[allow(dead_code)]
+    ContextChanged {
+        expected_revision: String,
+        actual_revision: String,
+    },
+
+    #[error("Storage is unsupported: {path}")]
+    StorageUnsupported { path: String },
+
+    #[error("Required capability is unavailable: {capability}")]
+    CapabilityUnavailable {
+        capability: String,
+        path: Option<String>,
+    },
+
+    #[error("Unsafe path {path}: {reason}")]
+    UnsafePath { path: String, reason: String },
+
+    #[error("Source link escapes or cannot be resolved safely: {path}")]
+    UnsafeSourceLink { path: String },
+
+    #[error("Source and target resolve to the same physical project")]
+    SelfCopy,
+
+    #[error("Payload session expired: {session_id}")]
+    PayloadSessionExpired { session_id: String },
+
+    #[error("Payload storage requires cleanup before new acquisition")]
+    PayloadStorageRequiresCleanup { environment: EnvironmentRef },
+
+    #[error("Context preview is stale")]
+    StaleContext,
+
+    #[error("Agent Registry preview is stale")]
+    StaleRegistry,
+
+    #[error("Environment preview is stale")]
+    StaleEnvironment,
+
+    #[error("Payload preview is stale")]
+    StalePayload,
+
+    #[error("Target preview is stale")]
+    StaleTarget,
+
+    #[error("Skill lock changed externally: {target}")]
+    #[allow(dead_code)]
+    ExternalLockChanged { target: LockConflictTarget },
+
+    #[error("Execution failed: {message}")]
+    ExecutionFailed { message: String },
+
+    #[error("Restore failed: {message}")]
+    RestoreFailed { message: String },
+
+    #[error("Recovery is required: {message}")]
+    RecoveryRequired {
+        recovery_resource_id: RecoveryResourceId,
+        message: String,
+    },
+
+    #[error("Configuration is corrupted: {message}")]
+    ConfigurationCorrupted { message: String },
+
+    #[error(
+        "Agent runtime changed before mutation (registry {expected_registry_revision} -> {actual_registry_revision}, environment {expected_environment_revision} -> {actual_environment_revision})"
+    )]
+    StaleAgentRuntime {
+        expected_registry_revision: String,
+        actual_registry_revision: String,
+        expected_environment_revision: String,
+        actual_environment_revision: String,
+    },
 
     #[error("{message}")]
     Custom { message: String },

@@ -7,21 +7,29 @@
 //! - BTreeMap 按 key 排序，最小化 git diff
 //! - GUI 可用 remote_hash/source_url/plugin_name 扩展项目级检测和展示
 
+#[cfg(test)]
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
+#[cfg(test)]
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::fs;
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 /// Local lock 文件版本号
 /// 对应 CLI: CURRENT_VERSION = 1 (local-lock.ts:6)
+#[cfg(test)]
 const LOCAL_LOCK_VERSION: u32 = 1;
 
 /// Local lock 文件名
+#[cfg(test)]
 const LOCAL_LOCK_FILENAME: &str = "skills-lock.json";
 
 /// 旧版项目级 lock 路径（向后兼容读取）
+#[cfg(test)]
 const LEGACY_PROJECT_LOCK_PATH: &str = ".agents/.skill-lock.json";
 
 /// Local Skill Lock 条目
@@ -67,11 +75,13 @@ pub struct LocalSkillLockEntry {
 /// 对应 CLI: LocalSkillLockFile (local-lock.ts:14-17)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 pub struct LocalSkillLockFile {
     pub version: u32,
     pub skills: BTreeMap<String, LocalSkillLockEntry>,
 }
 
+#[cfg(test)]
 impl LocalSkillLockFile {
     pub fn empty() -> Self {
         Self {
@@ -83,11 +93,13 @@ impl LocalSkillLockFile {
 
 /// 获取项目级 lock 文件路径
 /// 优先使用新格式 skills-lock.json
+#[cfg(test)]
 fn get_local_lock_path(project_path: &str) -> PathBuf {
     PathBuf::from(project_path).join(LOCAL_LOCK_FILENAME)
 }
 
 /// 获取旧版项目级 lock 文件路径（向后兼容）
+#[cfg(test)]
 fn get_legacy_lock_path(project_path: &str) -> PathBuf {
     PathBuf::from(project_path).join(LEGACY_PROJECT_LOCK_PATH)
 }
@@ -96,6 +108,7 @@ fn get_legacy_lock_path(project_path: &str) -> PathBuf {
 /// 对应 CLI: readLocalLock (local-lock.ts:19-38)
 ///
 /// 优先读取 skills-lock.json，不存在则回退读取 .agents/.skill-lock.json
+#[cfg(test)]
 pub fn read_local_lock(project_path: &str) -> Result<LocalSkillLockFile, AppError> {
     let new_path = get_local_lock_path(project_path);
 
@@ -119,6 +132,7 @@ pub fn read_local_lock(project_path: &str) -> Result<LocalSkillLockFile, AppErro
 
 /// 读取旧版 lock 文件并转换为新格式
 /// 旧版使用 SkillLockFile 格式（GitHub tree SHA），需要转换
+#[cfg(test)]
 fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppError> {
     use crate::core::skill_lock::parse_skill_lock_file;
 
@@ -164,6 +178,7 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
 /// 1. 递归收集所有文件（跳过 .git, node_modules）
 /// 2. 按相对路径排序
 /// 3. 依次 hash(相对路径 + 文件内容)
+#[cfg(test)]
 pub fn compute_skill_folder_hash(skill_dir: &Path) -> Result<String, AppError> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     collect_files(skill_dir, skill_dir, &mut files)?;
@@ -182,6 +197,7 @@ pub fn compute_skill_folder_hash(skill_dir: &Path) -> Result<String, AppError> {
 
 /// 递归收集目录下所有文件
 /// 对应 CLI: collectFiles (local-lock.ts:115-137)
+#[cfg(test)]
 fn collect_files(
     base_dir: &Path,
     current_dir: &Path,

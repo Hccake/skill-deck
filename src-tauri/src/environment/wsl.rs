@@ -12,8 +12,13 @@ use tokio::sync::Mutex as AsyncMutex;
 #[cfg(target_os = "windows")]
 use tokio::time::{timeout, Duration};
 
-use crate::environment::types::{EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus};
+use crate::environment::types::{
+    EnvironmentKey, EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus,
+};
+use crate::environment::wsl_protocol::{WslExecutionFeature, WslExecutionProfile};
 use crate::error::AppError;
+
+pub mod operations;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +32,12 @@ pub struct WslSession {
     pub config_home: String,
     pub environment: BTreeMap<String, String>,
     pub git_available: bool,
+    #[serde(skip)]
+    #[specta(skip)]
+    pub execution_profile: WslExecutionProfile,
+    #[serde(skip)]
+    #[specta(skip)]
+    pub runtime_generation: u64,
 }
 
 #[derive(Clone)]
@@ -38,38 +49,58 @@ struct CachedWslSession {
 #[derive(Default)]
 struct EnvironmentRegistryState {
     next_generation: u64,
-    sessions: HashMap<String, CachedWslSession>,
+    sessions: HashMap<EnvironmentKey, CachedWslSession>,
+    runtime: HashMap<EnvironmentKey, EnvironmentRuntimeStatus>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentRuntimeStatus {
+    pub revision: u64,
+    pub status: EnvironmentStatus,
+    pub error: Option<AppError>,
+}
+
+#[derive(Clone, Default)]
 pub struct EnvironmentRegistry {
-    state: Mutex<EnvironmentRegistryState>,
-    reconnect_locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
-    listener: Mutex<Option<EnvironmentRuntimeListener>>,
+    state: Arc<Mutex<EnvironmentRegistryState>>,
+    reconnect_locks: Arc<Mutex<HashMap<EnvironmentKey, Arc<AsyncMutex<()>>>>>,
+    listener: Arc<Mutex<Option<EnvironmentRuntimeListener>>>,
 }
 
 type EnvironmentRuntimeListener = Arc<dyn Fn(EnvironmentRuntimeEvent) + Send + Sync>;
 
 impl EnvironmentRegistry {
-    pub fn insert(&self, session: WslSession) {
+    pub fn insert(&self, mut session: WslSession) {
+        let distro_name = session.distro_name.clone();
+        let key = EnvironmentKey::wsl(&distro_name);
         let environment = EnvironmentRef::Wsl {
-            distro_name: session.distro_name.clone(),
+            distro_name: distro_name.clone(),
         };
         let mut state = self
             .state
             .lock()
             .expect("environment registry lock poisoned");
-        state.next_generation = state.next_generation.wrapping_add(1);
+        state.next_generation = state.next_generation.saturating_add(1);
         let generation = state.next_generation;
+        session.runtime_generation = generation;
         state.sessions.insert(
-            session.distro_name.clone(),
+            key.clone(),
             CachedWslSession {
                 generation,
                 session,
             },
         );
+        state.runtime.insert(
+            key,
+            EnvironmentRuntimeStatus {
+                revision: generation,
+                status: EnvironmentStatus::Available,
+                error: None,
+            },
+        );
         drop(state);
         self.publish(EnvironmentRuntimeEvent {
+            revision: generation,
             environment,
             status: EnvironmentStatus::Available,
             error: None,
@@ -86,7 +117,16 @@ impl EnvironmentRegistry {
             .lock()
             .expect("environment registry lock poisoned")
             .sessions
-            .get(distro_name)
+            .get(&EnvironmentKey::wsl(distro_name))
+            .cloned()
+    }
+
+    pub fn runtime_status(&self, distro_name: &str) -> Option<EnvironmentRuntimeStatus> {
+        self.state
+            .lock()
+            .expect("environment registry lock poisoned")
+            .runtime
+            .get(&EnvironmentKey::wsl(distro_name))
             .cloned()
     }
 
@@ -97,25 +137,27 @@ impl EnvironmentRegistry {
             .expect("environment reconnect lock map poisoned");
         Arc::clone(
             locks
-                .entry(distro_name.to_string())
+                .entry(EnvironmentKey::wsl(distro_name))
                 .or_insert_with(|| Arc::new(AsyncMutex::new(()))),
         )
     }
 
-    fn invalidate_generation(&self, distro_name: &str, generation: u64) -> bool {
+    fn invalidate_generation(&self, distro_name: &str, generation: u64) -> Option<u64> {
         let mut state = self
             .state
             .lock()
             .expect("environment registry lock poisoned");
+        let key = EnvironmentKey::wsl(distro_name);
         if state
             .sessions
-            .get(distro_name)
+            .get(&key)
             .is_some_and(|cached| cached.generation == generation)
         {
-            state.sessions.remove(distro_name);
-            true
+            state.sessions.remove(&key);
+            state.next_generation = state.next_generation.saturating_add(1);
+            Some(state.next_generation)
         } else {
-            false
+            None
         }
     }
 
@@ -138,8 +180,22 @@ impl EnvironmentRegistry {
     }
 
     fn publish_unavailable_if_current(&self, distro_name: &str, generation: u64, error: AppError) {
-        if self.invalidate_generation(distro_name, generation) {
+        if let Some(revision) = self.invalidate_generation(distro_name, generation) {
+            let mut state = self
+                .state
+                .lock()
+                .expect("environment registry lock poisoned");
+            state.runtime.insert(
+                EnvironmentKey::wsl(distro_name),
+                EnvironmentRuntimeStatus {
+                    revision,
+                    status: EnvironmentStatus::Unavailable,
+                    error: Some(error.clone()),
+                },
+            );
+            drop(state);
             self.publish(EnvironmentRuntimeEvent {
+                revision,
                 environment: EnvironmentRef::Wsl {
                     distro_name: distro_name.to_string(),
                 },
@@ -280,7 +336,7 @@ impl EnvironmentRegistry {
 }
 
 pub fn parse_wsl_list_output(bytes: &[u8]) -> Vec<String> {
-    let decoded = if bytes.len() >= 2 && bytes.len() % 2 == 0 {
+    let decoded = if bytes.len() >= 2 && bytes.len().is_multiple_of(2) {
         let utf16 = bytes
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
@@ -350,11 +406,33 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
     if fields.last().is_some_and(String::is_empty) {
         fields.pop();
     }
-    if fields.len() != 12 || fields[0] != "1" {
-        return Err(AppError::Custom {
-            message: "invalid WSL session response".to_string(),
-        });
-    }
+    let execution_profile = match (fields.first().map(String::as_str), fields.len()) {
+        (Some("1"), 12) => WslExecutionProfile::all_supported(),
+        (Some("2"), 17) => {
+            let supported = [
+                (12, WslExecutionFeature::NulSafeXargs),
+                (13, WslExecutionFeature::NulSafeSort),
+                (14, WslExecutionFeature::Sha256Sum),
+                (15, WslExecutionFeature::CanonicalReadlink),
+                (16, WslExecutionFeature::StableStat),
+            ]
+            .into_iter()
+            .filter_map(|(index, feature)| match fields[index].as_str() {
+                "1" => Some(Ok(feature)),
+                "0" => None,
+                _ => Some(Err(AppError::Custom {
+                    message: "invalid WSL execution feature flag".to_string(),
+                })),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+            WslExecutionProfile::from_supported(supported)
+        }
+        _ => {
+            return Err(AppError::Custom {
+                message: "invalid WSL session response".to_string(),
+            })
+        }
+    };
     let environment = [
         ("CODEX_HOME", 6usize),
         ("CLAUDE_CONFIG_DIR", 7),
@@ -377,6 +455,8 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
         config_home: fields[5].clone(),
         environment,
         git_available: fields[11] == "1",
+        execution_profile,
+        runtime_generation: 0,
     })
 }
 
@@ -403,7 +483,7 @@ pub async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
 
 #[cfg(target_os = "windows")]
 pub async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, AppError> {
-    const SCRIPT: &str = r#"printf '1\0'; id -un | tr -d '\n'; printf '\0'; id -u | tr -d '\n'; printf '\0'; printf '%s\0' "$HOME" "${XDG_STATE_HOME:-}" "${XDG_CONFIG_HOME:-$HOME/.config}" "${CODEX_HOME:-}" "${CLAUDE_CONFIG_DIR:-}" "${VIBE_HOME:-}" "${HERMES_HOME:-}" "${AUTOHAND_HOME:-}"; if command -v git >/dev/null 2>&1; then printf '1\0'; else printf '0\0'; fi"#;
+    const SCRIPT: &str = include_str!("wsl/scripts/session.sh");
     let mut command = Command::new("wsl.exe");
     command.args([
         "--distribution",
@@ -412,6 +492,8 @@ pub async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, Ap
         "/bin/sh",
         "-c",
         SCRIPT,
+        "--",
+        "session",
     ]);
     let environment = EnvironmentRef::Wsl {
         distro_name: distro_name.to_string(),
@@ -454,6 +536,7 @@ pub async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, A
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -462,6 +545,7 @@ mod tests {
         EnvironmentRegistry, WslDiscoveryCommandOutcome, WslSession,
     };
     use crate::environment::types::{EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus};
+    use crate::environment::wsl_protocol::{WslExecutionFeature, WslExecutionProfile};
     use crate::error::{AppError, LockConflictTarget};
 
     fn sample_session(distro_name: &str, user: &str) -> WslSession {
@@ -474,7 +558,76 @@ mod tests {
             config_home: format!("/home/{user}/.config"),
             environment: std::collections::BTreeMap::new(),
             git_available: true,
+            execution_profile: WslExecutionProfile::all_supported(),
+            runtime_generation: 0,
         }
+    }
+
+    #[test]
+    fn cloned_registry_handles_share_cached_sessions() {
+        let registry = EnvironmentRegistry::default();
+        let cloned = registry.clone();
+
+        cloned.insert(sample_session("Ubuntu", "alice"));
+
+        assert_eq!(
+            registry.get("Ubuntu").expect("shared session").user,
+            "alice"
+        );
+    }
+
+    #[test]
+    fn registry_uses_one_cached_session_for_case_insensitive_distro_aliases() {
+        let registry = EnvironmentRegistry::default();
+        registry.insert(sample_session("Ubuntu", "alice"));
+
+        assert_eq!(
+            registry
+                .get("UBUNTU")
+                .expect("case-insensitive cached session")
+                .user,
+            "alice"
+        );
+    }
+
+    #[test]
+    fn registry_uses_one_reconnect_lock_for_case_insensitive_distro_aliases() {
+        let registry = EnvironmentRegistry::default();
+
+        assert!(Arc::ptr_eq(
+            &registry.reconnect_lock("Ubuntu"),
+            &registry.reconnect_lock("ubuntu")
+        ));
+    }
+
+    #[test]
+    fn reinserting_identical_session_advances_runtime_generation() {
+        let registry = EnvironmentRegistry::default();
+        registry.insert(sample_session("Ubuntu", "alice"));
+        let first = registry.get("Ubuntu").expect("first session");
+
+        registry.insert(sample_session("Ubuntu", "alice"));
+        let second = registry.get("Ubuntu").expect("second session");
+
+        assert!(second.runtime_generation > first.runtime_generation);
+    }
+
+    #[test]
+    fn environment_runtime_event_and_snapshot_share_monotonic_revision() {
+        let registry = EnvironmentRegistry::default();
+        let events = record_runtime_events(&registry);
+
+        registry.insert(sample_session("Ubuntu", "alice"));
+        registry.insert(sample_session("Ubuntu", "bob"));
+
+        let events = events.lock().expect("runtime event recorder lock poisoned");
+        assert_eq!(events.len(), 2);
+        assert!(events[1].revision > events[0].revision);
+        let runtime = registry
+            .runtime_status("ubuntu")
+            .expect("runtime status is case insensitive");
+        assert_eq!(runtime.revision, events[1].revision);
+        assert_eq!(runtime.status, EnvironmentStatus::Available);
     }
 
     fn unavailable(distro_name: &str) -> AppError {
@@ -564,6 +717,7 @@ mod tests {
         assert_eq!(
             *events.lock().expect("runtime event recorder lock poisoned"),
             vec![EnvironmentRuntimeEvent {
+                revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
@@ -670,6 +824,7 @@ mod tests {
         assert_eq!(connects.load(Ordering::SeqCst), 1);
         assert_eq!(operations.load(Ordering::SeqCst), 2);
         let events = events.lock().expect("runtime event recorder lock poisoned");
+        assert!(events[1].revision > events[0].revision);
         assert_eq!(
             events
                 .iter()
@@ -680,6 +835,7 @@ mod tests {
         assert_eq!(
             events.last(),
             Some(&EnvironmentRuntimeEvent {
+                revision: 3,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
@@ -716,6 +872,7 @@ mod tests {
         assert_eq!(
             *events.lock().expect("runtime event recorder lock poisoned"),
             vec![EnvironmentRuntimeEvent {
+                revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
@@ -747,6 +904,7 @@ mod tests {
         assert_eq!(
             *events.lock().expect("runtime event recorder lock poisoned"),
             vec![EnvironmentRuntimeEvent {
+                revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
@@ -783,6 +941,7 @@ mod tests {
         assert_eq!(
             events.as_slice(),
             &[EnvironmentRuntimeEvent {
+                revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
@@ -914,6 +1073,8 @@ mod tests {
             config_home: "/home/alice/.config".to_string(),
             environment: std::collections::BTreeMap::new(),
             git_available: true,
+            execution_profile: WslExecutionProfile::all_supported(),
+            runtime_generation: 0,
         });
 
         assert_eq!(registry.get("Ubuntu").expect("session").user, "alice");
@@ -936,6 +1097,71 @@ mod tests {
         assert_eq!(session.environment["CODEX_HOME"], "/opt/codex");
         assert_eq!(session.environment["CLAUDE_CONFIG_DIR"], "/opt/claude");
         assert!(session.git_available);
+    }
+
+    #[test]
+    fn parses_session_output_with_a_partial_execution_profile() {
+        let output = [
+            "2",
+            "alice",
+            "1000",
+            "/home/alice",
+            "",
+            "/home/alice/.config",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "1",
+            "1",
+            "0",
+            "1",
+            "0",
+            "1",
+            "",
+        ]
+        .join("\0");
+
+        let session = parse_wsl_session_output("Ubuntu", output.as_bytes()).expect("parse session");
+
+        assert!(session
+            .execution_profile
+            .supports(WslExecutionFeature::NulSafeXargs));
+        assert!(!session
+            .execution_profile
+            .supports(WslExecutionFeature::NulSafeSort));
+        assert!(session
+            .execution_profile
+            .supports(WslExecutionFeature::StableStat));
+    }
+
+    #[test]
+    fn bundled_session_script_reports_a_versioned_execution_profile() {
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(include_str!("wsl/scripts/session.sh"))
+            .arg("--")
+            .arg("session")
+            .output()
+            .expect("session script");
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.starts_with(b"2\0"));
+        parse_wsl_session_output("Ubuntu", &output.stdout).expect("parse bundled session output");
+    }
+
+    #[test]
+    fn session_script_cleans_the_probe_root_only_after_owning_its_creation() {
+        let script = include_str!("wsl/scripts/session.sh");
+
+        assert!(script.contains("probe_root_created=0"));
+        assert!(script.contains("probe_root_created=1"));
+        assert!(script.contains("if [ \"$probe_root_created\" = 1 ]; then"));
     }
 
     #[test]

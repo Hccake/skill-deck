@@ -70,6 +70,7 @@ impl PathContext {
 /// 对应 CLI: getCanonicalSkillsDir (installer.ts:74-77)
 /// Global: ~/.agents/skills/
 /// Project: ./.agents/skills/
+#[cfg(test)]
 pub fn canonical_skills_dir(global: bool, cwd: &str) -> PathBuf {
     let base = if global {
         PATHS.home.clone()

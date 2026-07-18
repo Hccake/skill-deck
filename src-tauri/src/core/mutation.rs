@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use specta::Type;
+use tokio::sync::Notify;
 
-use crate::environment::types::ContextRef;
+use crate::environment::types::{same_environment_identity, ContextRef, EnvironmentRef};
 use crate::error::AppError;
 
 pub const MUTATION_STATE_CHANGED_EVENT: &str = "mutation-state-changed";
@@ -22,7 +23,7 @@ pub enum MutationKind {
     #[allow(dead_code)]
     Repair,
     SaveAgentDefaults,
-    BatchUpdate,
+    ManageAgentDefinitions,
     ProjectMigration,
     AddProject,
     RemoveProject,
@@ -35,7 +36,7 @@ pub enum MutationKind {
 pub enum MutationPhase {
     Preparing,
     Acquiring,
-    Materializing,
+    Validating,
     Committing,
     #[allow(dead_code)]
     Finishing,
@@ -70,16 +71,63 @@ pub struct MutationSnapshot {
     pub active: Option<ActiveMutation>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum LifecycleLeaseKind {
+    ApplicationUpdate,
+    RuntimeMaintenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ActiveLifecycleLease {
+    pub id: String,
+    pub kind: LifecycleLeaseKind,
+    pub cancelable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct BackendActivitySnapshot {
+    pub revision: u32,
+    pub mutation: Option<ActiveMutation>,
+    pub lifecycle: Option<ActiveLifecycleLease>,
+}
+
+#[derive(Default)]
+struct CancellationState {
+    cancelled: AtomicBool,
+    notification: Notify,
+}
+
 #[derive(Clone, Default)]
-pub struct CancellationSignal(Arc<AtomicBool>);
+pub struct CancellationSignal(Arc<CancellationState>);
 
 impl CancellationSignal {
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        if !self.0.cancelled.swap(true, Ordering::AcqRel) {
+            self.0.notification.notify_waiters();
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    pub async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        let notified = self.0.notification.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.is_cancelled() {
+            return;
+        }
+        notified.await;
     }
 }
 
@@ -88,10 +136,15 @@ struct MutationState {
     cancellation: CancellationSignal,
 }
 
+struct LifecycleState {
+    active: ActiveLifecycleLease,
+}
+
 #[derive(Default)]
 struct ControllerState {
     revision: u32,
     mutation: Option<MutationState>,
+    lifecycle: Option<LifecycleState>,
     termination_requested: bool,
 }
 
@@ -99,7 +152,7 @@ struct ControllerState {
 pub enum TerminationAdmission {
     Acquired,
     AlreadyRequested,
-    Blocked(MutationSnapshot),
+    Blocked(BackendActivitySnapshot),
 }
 
 #[derive(Default)]
@@ -123,7 +176,7 @@ impl SingleMutationController {
         if state.termination_requested {
             return Err(AppError::ApplicationTerminating);
         }
-        if state.mutation.is_some() {
+        if state.mutation.is_some() || state.lifecycle.is_some() {
             return Err(AppError::MutationBusy);
         }
         let cancellation = CancellationSignal::default();
@@ -148,6 +201,34 @@ impl SingleMutationController {
         })
     }
 
+    pub fn begin_lifecycle(
+        &self,
+        kind: LifecycleLeaseKind,
+    ) -> Result<LifecycleLeaseGuard<'_>, AppError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("mutation controller lock poisoned");
+        if state.termination_requested {
+            return Err(AppError::ApplicationTerminating);
+        }
+        if state.mutation.is_some() || state.lifecycle.is_some() {
+            return Err(AppError::MutationBusy);
+        }
+        state.revision = next_revision(state.revision);
+        state.lifecycle = Some(LifecycleState {
+            active: ActiveLifecycleLease {
+                id: uuid::Uuid::new_v4().to_string(),
+                kind,
+                cancelable: false,
+            },
+        });
+        let snapshot = snapshot_from_state(&state);
+        drop(state);
+        self.publish(snapshot);
+        Ok(LifecycleLeaseGuard { controller: self })
+    }
+
     #[cfg(test)]
     pub fn active(&self) -> Option<ActiveMutation> {
         self.state
@@ -164,6 +245,25 @@ impl SingleMutationController {
             .lock()
             .expect("mutation controller lock poisoned");
         snapshot_from_state(&state)
+    }
+
+    pub fn active_for_environment(&self, environment: &EnvironmentRef) -> bool {
+        self.state
+            .lock()
+            .expect("mutation controller lock poisoned")
+            .mutation
+            .as_ref()
+            .is_some_and(|mutation| {
+                same_environment_identity(&mutation.active.context.environment, environment)
+            })
+    }
+
+    pub fn activity_snapshot(&self) -> BackendActivitySnapshot {
+        let state = self
+            .state
+            .lock()
+            .expect("mutation controller lock poisoned");
+        activity_snapshot_from_state(&state)
     }
 
     pub fn set_listener(&self, listener: impl Fn(MutationSnapshot) + Send + Sync + 'static) {
@@ -196,20 +296,23 @@ impl SingleMutationController {
         if state.termination_requested {
             return TerminationAdmission::AlreadyRequested;
         }
-        if state.mutation.is_some() {
-            return TerminationAdmission::Blocked(snapshot_from_state(&state));
+        if state.mutation.is_some() || state.lifecycle.is_some() {
+            return TerminationAdmission::Blocked(activity_snapshot_from_state(&state));
         }
         state.termination_requested = true;
         TerminationAdmission::Acquired
     }
 
-    pub fn with_idle<T>(&self, action: impl FnOnce() -> T) -> Result<T, Box<MutationSnapshot>> {
+    pub fn with_idle<T>(
+        &self,
+        action: impl FnOnce() -> T,
+    ) -> Result<T, Box<BackendActivitySnapshot>> {
         let state = self
             .state
             .lock()
             .expect("mutation controller lock poisoned");
-        if state.mutation.is_some() {
-            return Err(Box::new(snapshot_from_state(&state)));
+        if state.mutation.is_some() || state.lifecycle.is_some() {
+            return Err(Box::new(activity_snapshot_from_state(&state)));
         }
         Ok(action())
     }
@@ -233,6 +336,20 @@ fn snapshot_from_state(state: &ControllerState) -> MutationSnapshot {
             .mutation
             .as_ref()
             .map(|mutation| mutation.active.clone()),
+    }
+}
+
+fn activity_snapshot_from_state(state: &ControllerState) -> BackendActivitySnapshot {
+    BackendActivitySnapshot {
+        revision: state.revision,
+        mutation: state
+            .mutation
+            .as_ref()
+            .map(|mutation| mutation.active.clone()),
+        lifecycle: state
+            .lifecycle
+            .as_ref()
+            .map(|lifecycle| lifecycle.active.clone()),
     }
 }
 
@@ -294,13 +411,33 @@ impl Drop for MutationGuard<'_> {
     }
 }
 
+pub struct LifecycleLeaseGuard<'a> {
+    controller: &'a SingleMutationController,
+}
+
+impl Drop for LifecycleLeaseGuard<'_> {
+    fn drop(&mut self) {
+        let mut state = self
+            .controller
+            .state
+            .lock()
+            .expect("mutation controller lock poisoned");
+        if state.lifecycle.take().is_some() {
+            state.revision = next_revision(state.revision);
+            let snapshot = snapshot_from_state(&state);
+            drop(state);
+            self.controller.publish(snapshot);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        MutationKind, MutationPhase, MutationProgress, SingleMutationController,
-        TerminationAdmission,
+        LifecycleLeaseKind, MutationKind, MutationPhase, MutationProgress,
+        SingleMutationController, TerminationAdmission,
     };
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
     use crate::error::AppError;
@@ -310,6 +447,51 @@ mod tests {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         }
+    }
+
+    #[test]
+    fn updater_lease_and_skill_mutation_are_mutually_exclusive() {
+        let controller = SingleMutationController::default();
+        let lease = controller
+            .begin_lifecycle(LifecycleLeaseKind::ApplicationUpdate)
+            .expect("begin lifecycle");
+        assert_eq!(controller.activity_snapshot().revision, 1);
+        assert!(matches!(
+            controller.begin(MutationKind::Install, host_global()),
+            Err(AppError::MutationBusy)
+        ));
+        assert!(matches!(
+            controller.request_termination(),
+            TerminationAdmission::Blocked(snapshot)
+                if snapshot.lifecycle.is_some() && snapshot.mutation.is_none()
+        ));
+        drop(lease);
+        assert_eq!(controller.activity_snapshot().revision, 2);
+
+        let mutation = controller
+            .begin(MutationKind::Install, host_global())
+            .expect("begin mutation");
+        assert!(matches!(
+            controller.begin_lifecycle(LifecycleLeaseKind::ApplicationUpdate),
+            Err(AppError::MutationBusy)
+        ));
+        drop(mutation);
+    }
+
+    #[test]
+    fn runtime_maintenance_lease_blocks_mutation_start() {
+        let controller = SingleMutationController::default();
+        let lease = controller
+            .begin_lifecycle(LifecycleLeaseKind::RuntimeMaintenance)
+            .expect("begin maintenance");
+        assert!(matches!(
+            controller.begin(MutationKind::Install, host_global()),
+            Err(AppError::MutationBusy)
+        ));
+        drop(lease);
+        controller
+            .begin(MutationKind::Install, host_global())
+            .expect("mutation after maintenance");
     }
 
     #[test]
@@ -333,7 +515,7 @@ mod tests {
         assert_eq!(active.progress, None);
 
         guard.transition(
-            MutationPhase::Materializing,
+            MutationPhase::Acquiring,
             Some(MutationProgress {
                 subject: Some("demo".to_string()),
                 current: Some(1),
@@ -419,6 +601,9 @@ mod tests {
             );
         }
         assert!(controller.active().is_none());
+        controller
+            .begin(MutationKind::Update, host_global())
+            .expect("begin update after prior guard release");
     }
 
     #[test]
@@ -511,7 +696,7 @@ mod tests {
             panic!("active mutation must block application termination");
         };
         assert_eq!(
-            snapshot.active.as_ref().map(|active| active.kind),
+            snapshot.mutation.as_ref().map(|active| active.kind),
             Some(MutationKind::Install)
         );
 
