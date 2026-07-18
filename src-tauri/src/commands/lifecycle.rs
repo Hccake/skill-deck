@@ -3,8 +3,9 @@ use specta::Type;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_specta::Event;
 
-use crate::core::mutation::{MutationSnapshot, SingleMutationController, TerminationAdmission};
+use crate::core::mutation::{BackendActivitySnapshot, TerminationAdmission};
 use crate::error::AppError;
+use crate::runtime::RuntimeServiceGraph;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const INSTALL_WIZARD_LABEL: &str = "install-wizard";
@@ -24,7 +25,7 @@ pub enum LifecycleAction {
 pub enum LifecycleActionOutcome {
     Performed,
     Delegated,
-    Blocked { snapshot: MutationSnapshot },
+    Blocked { snapshot: BackendActivitySnapshot },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type, tauri_specta::Event)]
@@ -63,11 +64,11 @@ fn resolve_blocked_route(
 pub fn execute_lifecycle_action(
     app: AppHandle,
     window: WebviewWindow,
-    controller: State<'_, SingleMutationController>,
+    runtime: State<'_, RuntimeServiceGraph>,
     action: LifecycleAction,
 ) -> Result<LifecycleActionOutcome, AppError> {
     if action == LifecycleAction::CloseCurrentWindow {
-        return match controller.with_idle(|| window.destroy()) {
+        return match runtime.mutation().with_idle(|| window.destroy()) {
             Ok(Ok(())) => Ok(LifecycleActionOutcome::Performed),
             Ok(Err(error)) => Err(AppError::Io {
                 message: error.to_string(),
@@ -78,7 +79,7 @@ pub fn execute_lifecycle_action(
         };
     }
 
-    match controller.request_termination() {
+    match runtime.mutation().request_termination() {
         TerminationAdmission::Blocked(snapshot) => {
             let wizard = app.get_webview_window(INSTALL_WIZARD_LABEL);
             if resolve_blocked_route(action, window.label(), wizard.is_some())

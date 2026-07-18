@@ -76,7 +76,7 @@ pub async fn open_install_wizard(
         })?;
 
     let _wizard_window = WebviewWindowBuilder::new(&app, "install-wizard", url)
-        .title("Install Skills")
+        .title("Skill Deck")
         .inner_size(INSTALL_WIZARD_WIDTH, INSTALL_WIZARD_HEIGHT)
         .min_inner_size(INSTALL_WIZARD_MIN_WIDTH, INSTALL_WIZARD_MIN_HEIGHT)
         .resizable(true)

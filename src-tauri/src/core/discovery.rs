@@ -7,11 +7,14 @@
 //!
 //! 与 CLI skills.ts 行为一致
 
-use crate::core::skill::{parse_skill_md, sanitize_name};
-use crate::core::skill_paths::{find_skill_md_case_insensitive, relative_skill_path};
+use crate::core::plugin_manifest::{
+    get_relative_plugin_groupings, get_relative_plugin_search_dirs,
+};
+use crate::core::skill::{parse_skill_md_content, sanitize_name};
+use crate::core::skill_paths::find_skill_md_case_insensitive;
 use crate::error::AppError;
 use crate::models::AvailableSkill;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -62,16 +65,33 @@ pub struct DiscoveredSkill {
     pub name: String,
     pub install_dir_name: String,
     pub description: String,
-    pub path: PathBuf,
     pub relative_path: String,
     /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
     pub plugin_name: Option<String>,
 }
 
+/// Environment collector 读取的 discovery 文档。
+///
+/// 路径始终相对于 search root；selector 不访问 filesystem。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveryDocument {
+    pub relative_path: String,
+    pub content: Vec<u8>,
+}
+
+/// Host 与 WSL 共用的 Environment-neutral discovery 输入。
+#[derive(Debug, Clone)]
+pub struct DiscoveryInventory {
+    pub search_prefix: PathBuf,
+    pub skill_documents: Vec<DiscoveryDocument>,
+    pub marketplace_document: Option<String>,
+    pub plugin_document: Option<String>,
+    pub local_lock_document: Option<String>,
+}
+
 struct PrioritySearchDir {
     path: PathBuf,
     bounded_depth_two: bool,
-    filter_locked_agent_project_skills: bool,
 }
 
 impl From<DiscoveredSkill> for AvailableSkill {
@@ -140,96 +160,129 @@ pub fn discover_skills(
     subpath: Option<&str>,
     options: DiscoverOptions,
 ) -> Result<Vec<DiscoveredSkill>, AppError> {
-    let search_path = match subpath {
-        Some(sub) => base_path.join(sub),
-        None => base_path.to_path_buf(),
-    };
+    let inventory = collect_discovery_inventory(base_path, subpath)?;
+    select_discovered_skills(&inventory, options)
+}
 
-    // 校验 subpath 不逃逸 base_path（防止路径遍历）
-    if let Some(sub) = subpath {
-        if !is_subpath_safe(base_path, sub) {
+/// 从 Native filesystem 一次性采集 selector 所需事实。
+pub fn collect_discovery_inventory(
+    base_path: &Path,
+    subpath: Option<&str>,
+) -> Result<DiscoveryInventory, AppError> {
+    if let Some(subpath) = subpath {
+        if !is_subpath_safe(base_path, subpath) {
             return Err(AppError::InvalidSource {
                 value: format!(
-                    "Invalid subpath: \"{}\" resolves outside the repository directory",
-                    sub
+                    "Invalid subpath: \"{subpath}\" resolves outside the repository directory"
                 ),
             });
         }
     }
 
+    let search_prefix = subpath.map(PathBuf::from).unwrap_or_default();
+    let search_path = base_path.join(&search_prefix);
     if !search_path.exists() {
         return Err(AppError::PathNotFound {
             path: search_path.display().to_string(),
         });
     }
 
-    // 获取 plugin 分组映射
-    let plugin_groupings = crate::core::plugin_manifest::get_plugin_groupings(&search_path);
+    let marketplace_document =
+        std::fs::read_to_string(search_path.join(".claude-plugin/marketplace.json")).ok();
+    let plugin_document =
+        std::fs::read_to_string(search_path.join(".claude-plugin/plugin.json")).ok();
+    let local_lock_document = std::fs::read_to_string(base_path.join("skills-lock.json")).ok();
+    let mut documents = BTreeMap::new();
 
-    let mut skills = Vec::new();
-    let mut seen_names: HashSet<String> = HashSet::new();
-    let locked_project_skill_names = get_locked_project_skill_names(base_path);
+    let walker = WalkDir::new(&search_path)
+        .max_depth(MAX_DEPTH + 1)
+        .follow_links(false)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            !entry.file_type().is_dir()
+                || entry
+                    .file_name()
+                    .to_str()
+                    .is_none_or(|name| !SKIP_DIRS.contains(&name))
+        });
+    for entry in walker.filter_map(Result::ok) {
+        let path = entry.path();
+        let is_readable_file =
+            entry.file_type().is_file() || (entry.file_type().is_symlink() && path.is_file());
+        if !is_readable_file
+            || !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+        {
+            continue;
+        }
+        insert_native_document(&search_path, path, &mut documents);
+    }
 
-    // 1. 检查 searchPath 本身是否是 skill
-    if let Some(skill_md) = find_skill_md_case_insensitive(&search_path) {
-        push_skill_if_new(
-            &skill_md,
-            base_path,
-            &options,
-            Some(&locked_project_skill_names),
-            &mut skills,
-            &mut seen_names,
-        )?;
-
-        // 如果不是 fullDepth 模式，直接返回
-        if !options.full_depth {
-            return Ok(skills);
+    // Plugin manifest 可声明超过 recursive fallback 深度的路径；这些目录按
+    // CLI 的 priority-dir 规则额外采集一层。
+    for relative_dir in
+        get_relative_plugin_search_dirs(marketplace_document.as_deref(), plugin_document.as_deref())
+    {
+        let directory = search_path.join(relative_dir);
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        let mut child_dirs = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                std::fs::symlink_metadata(path)
+                    .map(|metadata| metadata.file_type().is_dir())
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+        child_dirs.sort();
+        for child in child_dirs {
+            if let Some(skill_md) = find_skill_md_case_insensitive(&child) {
+                insert_native_document(&search_path, &skill_md, &mut documents);
+            }
         }
     }
 
-    // 2. 搜索优先目录
-    let priority_dirs = get_priority_search_dir_specs(&search_path);
-    for priority_dir in priority_dirs {
-        if priority_dir.path.exists() {
-            discover_in_dir(
-                &priority_dir.path,
-                base_path,
-                &options,
-                priority_dir.bounded_depth_two,
-                if priority_dir.filter_locked_agent_project_skills
-                    || is_in_cli_agent_project_skill_dir(base_path, &priority_dir.path)
-                {
-                    Some(&locked_project_skill_names)
-                } else {
-                    None
-                },
-                &mut skills,
-                &mut seen_names,
-            )?;
-        }
-    }
+    Ok(DiscoveryInventory {
+        search_prefix,
+        skill_documents: documents.into_values().collect(),
+        marketplace_document,
+        plugin_document,
+        local_lock_document,
+    })
+}
 
-    // 3. 启用 fullDepth 时进行递归搜索
-    if options.full_depth {
-        discover_recursive(
-            &search_path,
-            base_path,
-            &options,
-            &locked_project_skill_names,
-            &mut skills,
-            &mut seen_names,
-        )?;
-    }
+fn insert_native_document(
+    search_path: &Path,
+    path: &Path,
+    documents: &mut BTreeMap<String, DiscoveryDocument>,
+) {
+    let Ok(relative) = path.strip_prefix(search_path) else {
+        return;
+    };
+    let Ok(content) = std::fs::read(path) else {
+        return;
+    };
+    let relative_path = relative.to_string_lossy().replace('\\', "/");
+    documents.insert(
+        relative_path.clone(),
+        DiscoveryDocument {
+            relative_path,
+            content,
+        },
+    );
+}
 
-    // 为 skills 填充 plugin_name
-    for skill in &mut skills {
-        let normalized = crate::core::plugin_manifest::normalize_path(&skill.path);
-        if let Some(name) = plugin_groupings.get(&normalized) {
-            skill.plugin_name = Some(name.clone());
-        }
-    }
-
-    Ok(skills)
+/// 在不访问 filesystem 的情况下应用 skills CLI discovery 规则。
+pub fn select_discovered_skills(
+    inventory: &DiscoveryInventory,
+    options: DiscoverOptions,
+) -> Result<Vec<DiscoveredSkill>, AppError> {
+    DiscoverySelector::new(inventory, options).select()
 }
 
 /// 获取优先搜索目录列表（与 CLI 一致）
@@ -246,27 +299,22 @@ fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
         PrioritySearchDir {
             path: search_path.to_path_buf(),
             bounded_depth_two: false,
-            filter_locked_agent_project_skills: false,
         },
         PrioritySearchDir {
             path: search_path.join("skills"),
             bounded_depth_two: true,
-            filter_locked_agent_project_skills: false,
         },
         PrioritySearchDir {
             path: search_path.join("skills/.curated"),
             bounded_depth_two: true,
-            filter_locked_agent_project_skills: false,
         },
         PrioritySearchDir {
             path: search_path.join("skills/.experimental"),
             bounded_depth_two: true,
-            filter_locked_agent_project_skills: false,
         },
         PrioritySearchDir {
             path: search_path.join("skills/.system"),
             bounded_depth_two: true,
-            filter_locked_agent_project_skills: false,
         },
     ];
 
@@ -276,159 +324,187 @@ fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
             .map(|dir| PrioritySearchDir {
                 path: search_path.join(dir),
                 bounded_depth_two: true,
-                filter_locked_agent_project_skills: true,
             }),
     );
 
     dirs
 }
 
-/// 在目录中发现 skills（搜索直接子目录）
-fn discover_in_dir(
-    dir: &Path,
-    root: &Path,
-    options: &DiscoverOptions,
-    bounded_depth_two: bool,
-    locked_project_skill_names: Option<&HashSet<String>>,
-    skills: &mut Vec<DiscoveredSkill>,
-    seen_names: &mut HashSet<String>,
-) -> Result<(), AppError> {
-    for path in read_child_dirs(dir) {
-        if let Some(skill_md) = find_skill_md_case_insensitive(&path) {
-            push_skill_if_new(
-                &skill_md,
-                root,
-                options,
-                locked_project_skill_names,
-                skills,
-                seen_names,
-            )?;
-            continue;
-        }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateResult {
+    Missing,
+    Present,
+    Added,
+}
 
-        if bounded_depth_two {
-            for nested_path in read_child_dirs(&path) {
-                if let Some(skill_md) = find_skill_md_case_insensitive(&nested_path) {
-                    push_skill_if_new(
-                        &skill_md,
-                        root,
-                        options,
-                        locked_project_skill_names,
-                        skills,
-                        seen_names,
-                    )?;
-                }
+struct DiscoverySelector<'a> {
+    inventory: &'a DiscoveryInventory,
+    options: DiscoverOptions,
+    documents: BTreeMap<PathBuf, &'a DiscoveryDocument>,
+    plugin_groupings: std::collections::HashMap<PathBuf, String>,
+    plugin_search_dirs: Vec<PathBuf>,
+    locked_names: HashSet<String>,
+    seen_names: HashSet<String>,
+    skills: Vec<DiscoveredSkill>,
+}
+
+impl<'a> DiscoverySelector<'a> {
+    fn new(inventory: &'a DiscoveryInventory, options: DiscoverOptions) -> Self {
+        let mut documents = BTreeMap::new();
+        for document in &inventory.skill_documents {
+            let relative = PathBuf::from(&document.relative_path);
+            let Some(file_name) = relative.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !file_name.eq_ignore_ascii_case("SKILL.md") || !is_safe_relative_path(&relative) {
+                continue;
             }
+            let directory = relative.parent().unwrap_or_else(|| Path::new(""));
+            let replace = documents
+                .get(directory)
+                .is_some_and(|existing: &&DiscoveryDocument| {
+                    existing.relative_path.rsplit('/').next() != Some("SKILL.md")
+                        && file_name == "SKILL.md"
+                });
+            if replace || !documents.contains_key(directory) {
+                documents.insert(directory.to_path_buf(), document);
+            }
+        }
+        let plugin_groupings = get_relative_plugin_groupings(
+            inventory.marketplace_document.as_deref(),
+            inventory.plugin_document.as_deref(),
+        );
+        let plugin_search_dirs = get_relative_plugin_search_dirs(
+            inventory.marketplace_document.as_deref(),
+            inventory.plugin_document.as_deref(),
+        );
+        let locked_names = locked_project_skill_names(inventory.local_lock_document.as_deref());
+        Self {
+            inventory,
+            options,
+            documents,
+            plugin_groupings,
+            plugin_search_dirs,
+            locked_names,
+            seen_names: HashSet::new(),
+            skills: Vec::new(),
         }
     }
 
-    Ok(())
-}
+    fn select(mut self) -> Result<Vec<DiscoveredSkill>, AppError> {
+        if self.try_add(Path::new("")) == CandidateResult::Added && !self.options.full_depth {
+            return Ok(self.skills);
+        }
 
-fn read_child_dirs(dir: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = match std::fs::read_dir(dir) {
-        Ok(entries) => entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_dir()
-                    && path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map_or(true, |name| !SKIP_DIRS.contains(&name))
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+        let mut priority_dirs = get_priority_search_dir_specs(Path::new(""));
+        priority_dirs.extend(self.plugin_search_dirs.iter().cloned().map(|path| {
+            PrioritySearchDir {
+                path,
+                bounded_depth_two: false,
+            }
+        }));
+        for priority in priority_dirs {
+            for child in self.immediate_child_dirs(&priority.path) {
+                if self.try_add(&child) != CandidateResult::Missing {
+                    continue;
+                }
+                if !priority.bounded_depth_two || is_skipped_directory(&child) {
+                    continue;
+                }
+                for grandchild in self.immediate_child_dirs(&child) {
+                    self.try_add(&grandchild);
+                }
+            }
+        }
 
-    dirs.sort();
-    dirs
-}
+        if self.skills.is_empty() || self.options.full_depth {
+            let fallback = self
+                .documents
+                .keys()
+                .filter(|directory| {
+                    directory.components().count() <= MAX_DEPTH
+                        && !directory
+                            .components()
+                            .filter_map(|component| component.as_os_str().to_str())
+                            .any(|name| SKIP_DIRS.contains(&name))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            for directory in fallback {
+                self.try_add(&directory);
+            }
+        }
 
-fn push_skill_if_new(
-    skill_md: &Path,
-    root: &Path,
-    options: &DiscoverOptions,
-    locked_project_skill_names: Option<&HashSet<String>>,
-    skills: &mut Vec<DiscoveredSkill>,
-    seen_names: &mut HashSet<String>,
-) -> Result<(), AppError> {
-    if let Some(skill) = try_parse_skill(skill_md, root, options)? {
-        if is_in_cli_agent_project_skill_dir(root, &skill.path)
-            && locked_project_skill_names
-                .is_some_and(|locked| is_locked_project_skill(&skill, locked))
+        Ok(self.skills)
+    }
+
+    fn immediate_child_dirs(&self, parent: &Path) -> Vec<PathBuf> {
+        let mut children = BTreeSet::new();
+        for directory in self.documents.keys() {
+            let Ok(relative) = directory.strip_prefix(parent) else {
+                continue;
+            };
+            let mut components = relative.components();
+            let Some(first) = components.next() else {
+                continue;
+            };
+            children.insert(parent.join(first.as_os_str()));
+        }
+        children.into_iter().collect()
+    }
+
+    fn try_add(&mut self, directory: &Path) -> CandidateResult {
+        let Some(document) = self.documents.get(directory).copied() else {
+            return CandidateResult::Missing;
+        };
+        let Ok(content) = std::str::from_utf8(&document.content) else {
+            return CandidateResult::Present;
+        };
+        let Ok(parsed) = parse_skill_md_content(content) else {
+            return CandidateResult::Present;
+        };
+        let internal = parsed
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.internal);
+        if internal && !self.options.include_internal && !should_install_internal_skills() {
+            return CandidateResult::Present;
+        }
+
+        let relative_directory = self.inventory.search_prefix.join(directory);
+        if is_in_cli_agent_project_skill_dir(&relative_directory)
+            && is_locked_project_skill(&parsed.name, &relative_directory, &self.locked_names)
         {
-            return Ok(());
+            return CandidateResult::Present;
+        }
+        if !self.seen_names.insert(parsed.name.clone()) {
+            return CandidateResult::Present;
         }
 
-        if !seen_names.contains(&skill.name) {
-            seen_names.insert(skill.name.clone());
-            skills.push(skill);
-        }
-    }
-
-    Ok(())
-}
-
-/// 递归发现 skills
-fn discover_recursive(
-    dir: &Path,
-    root: &Path,
-    options: &DiscoverOptions,
-    locked_project_skill_names: &HashSet<String>,
-    skills: &mut Vec<DiscoveredSkill>,
-    seen_names: &mut HashSet<String>,
-) -> Result<(), AppError> {
-    let walker = WalkDir::new(dir)
-        .max_depth(MAX_DEPTH)
-        .follow_links(true)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_str().unwrap_or("");
-            // 跳过排除目录
-            if e.file_type().is_dir() && SKIP_DIRS.contains(&name) {
-                return false;
-            }
-            true
+        let relative_path = self
+            .inventory
+            .search_prefix
+            .join(&document.relative_path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        self.skills.push(DiscoveredSkill {
+            install_dir_name: sanitize_name(&parsed.name),
+            name: parsed.name,
+            description: parsed.description,
+            relative_path,
+            plugin_name: self.plugin_groupings.get(directory).cloned(),
         });
-
-    for entry in walker.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(file_name) = path.file_name() {
-                if file_name
-                    .to_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
-                {
-                    if let Some(skill) = try_parse_skill(path, root, options)? {
-                        if is_in_cli_agent_project_skill_dir(root, &skill.path)
-                            && is_locked_project_skill(&skill, locked_project_skill_names)
-                        {
-                            continue;
-                        }
-
-                        if !seen_names.contains(&skill.name) {
-                            seen_names.insert(skill.name.clone());
-                            skills.push(skill);
-                        }
-                    }
-                }
-            }
-        }
+        CandidateResult::Added
     }
-
-    Ok(())
 }
 
-fn get_locked_project_skill_names(base_path: &Path) -> HashSet<String> {
-    let lock_path = base_path.join("skills-lock.json");
-    let Ok(content) = std::fs::read_to_string(lock_path) else {
+fn locked_project_skill_names(document: Option<&str>) -> HashSet<String> {
+    let Some(document) = document else {
         return HashSet::new();
     };
-    let Ok(lock) = serde_json::from_str::<serde_json::Value>(&content) else {
+    let Ok(lock) = serde_json::from_str::<serde_json::Value>(document) else {
         return HashSet::new();
     };
-
     lock.get("skills")
         .and_then(|skills| skills.as_object())
         .into_iter()
@@ -445,24 +521,39 @@ fn normalize_skill_name_for_lock_match(name: &str) -> String {
         .join("-")
 }
 
-fn is_locked_project_skill(skill: &DiscoveredSkill, locked_names: &HashSet<String>) -> bool {
-    locked_names.contains(&normalize_skill_name_for_lock_match(&skill.name))
-        || skill
-            .path
+fn is_locked_project_skill(
+    skill_name: &str,
+    relative_directory: &Path,
+    locked_names: &HashSet<String>,
+) -> bool {
+    locked_names.contains(&normalize_skill_name_for_lock_match(skill_name))
+        || relative_directory
             .file_name()
             .and_then(|name| name.to_str())
             .map(|name| locked_names.contains(&normalize_skill_name_for_lock_match(name)))
             .unwrap_or(false)
 }
 
-fn is_in_cli_agent_project_skill_dir(root: &Path, skill_dir: &Path) -> bool {
-    let Ok(relative_path) = skill_dir.strip_prefix(root) else {
-        return false;
-    };
-
+fn is_in_cli_agent_project_skill_dir(relative_path: &Path) -> bool {
     CLI_AGENT_PROJECT_SKILL_DIRS
         .iter()
         .any(|agent_dir| relative_path.starts_with(agent_dir))
+}
+
+fn is_skipped_directory(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| SKIP_DIRS.contains(&name))
+}
+
+fn is_safe_relative_path(path: &Path) -> bool {
+    !path.is_absolute()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
 }
 
 /// 检查是否应该安装 internal skills（与 CLI 一致）
@@ -470,46 +561,6 @@ fn should_install_internal_skills() -> bool {
     std::env::var("INSTALL_INTERNAL_SKILLS")
         .map(|v| v == "1" || v.to_lowercase() == "true")
         .unwrap_or(false)
-}
-
-/// 尝试解析 SKILL.md 文件
-fn try_parse_skill(
-    skill_md: &Path,
-    root: &Path,
-    options: &DiscoverOptions,
-) -> Result<Option<DiscoveredSkill>, AppError> {
-    // 使用 skill.rs 中的 parse_skill_md 函数
-    let parsed = match parse_skill_md(skill_md) {
-        Ok(p) => p,
-        Err(_) => return Ok(None), // 解析失败，跳过
-    };
-
-    // 检查是否是 internal skill
-    let is_internal = parsed
-        .metadata
-        .as_ref()
-        .map(|m| m.internal)
-        .unwrap_or(false);
-
-    // 如果是 internal 且未启用 include_internal 且环境变量未设置，跳过
-    if is_internal && !options.include_internal && !should_install_internal_skills() {
-        return Ok(None);
-    }
-
-    // 计算相对路径
-    let skill_dir = skill_md.parent().unwrap_or(skill_md);
-    let relative_skill_path = relative_skill_path(root, skill_md);
-
-    let install_dir_name = sanitize_name(&parsed.name);
-
-    Ok(Some(DiscoveredSkill {
-        name: parsed.name,
-        install_dir_name,
-        description: parsed.description,
-        path: skill_dir.to_path_buf(),
-        relative_path: relative_skill_path,
-        plugin_name: None,
-    }))
 }
 
 #[cfg(test)]
@@ -623,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_skills_does_not_scan_examples_depth_two_by_default() {
+    fn test_discover_skills_falls_back_to_examples_when_priority_is_empty() {
         let temp = tempdir().unwrap();
         let skill_dir = temp.path().join("examples/product/demo");
         fs::create_dir_all(&skill_dir).unwrap();
@@ -632,6 +683,105 @@ mod tests {
             "---\nname: example-demo\ndescription: Demo\n---\n",
         )
         .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "example-demo");
+    }
+
+    #[test]
+    fn invalid_root_skill_continues_with_recursive_fallback() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join("SKILL.md"), "not frontmatter").unwrap();
+        let nested = temp.path().join("examples/catalog/demo");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: fallback-demo\ndescription: Fallback demo\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fallback-demo"]
+        );
+    }
+
+    #[test]
+    fn internal_root_skill_continues_with_recursive_fallback() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("SKILL.md"),
+            "---\nname: internal-root\ndescription: Internal\nmetadata:\n  internal: true\n---\n",
+        )
+        .unwrap();
+        let nested = temp.path().join("examples/demo");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: public-demo\ndescription: Public\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["public-demo"]
+        );
+    }
+
+    #[test]
+    fn recursive_fallback_uses_cli_directory_depth_boundary() {
+        let temp = tempdir().unwrap();
+        let depth_five = temp.path().join("one/two/three/four/five");
+        let depth_six = depth_five.join("six");
+        fs::create_dir_all(&depth_six).unwrap();
+        fs::write(
+            depth_five.join("SKILL.md"),
+            "---\nname: depth-five\ndescription: Included\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            depth_six.join("SKILL.md"),
+            "---\nname: depth-six\ndescription: Excluded\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["depth-five"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_fallback_does_not_follow_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::create_dir_all(outside.path().join("demo")).unwrap();
+        fs::write(
+            outside.path().join("demo/SKILL.md"),
+            "---\nname: linked-demo\ndescription: Linked\n---\n",
+        )
+        .unwrap();
+        symlink(outside.path(), temp.path().join("linked-catalog")).unwrap();
 
         let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
 

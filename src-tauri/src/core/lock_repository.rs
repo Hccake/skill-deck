@@ -26,8 +26,8 @@ pub struct LockRepository {
 }
 
 enum PendingEntry {
+    #[cfg_attr(not(test), allow(dead_code))]
     Replace(Value),
-    Remove,
 }
 
 pub struct LockTransaction<'a> {
@@ -70,6 +70,39 @@ impl LockRepository {
         targets: LockMutationTargets,
     ) -> Result<LockTransaction<'_>, AppError> {
         let document = self.read_document(&target).await?;
+        Ok(self.transaction_from_document(target, targets, document))
+    }
+
+    pub async fn begin_if_present(
+        &self,
+        target: LockTarget,
+        targets: LockMutationTargets,
+    ) -> Result<Option<LockTransaction<'_>>, AppError> {
+        let document = if let Some(bytes) = self.io.read_optional(&target.primary).await? {
+            LosslessLockDocument::parse(&bytes)?
+        } else if let Some(legacy) = target.legacy.as_ref() {
+            let Some(bytes) = self.io.read_optional(legacy).await? else {
+                return Ok(None);
+            };
+            let document = LosslessLockDocument::parse(&bytes)?;
+            match target.schema {
+                LockSchema::Global => document,
+                LockSchema::Project => convert_legacy_project_document(document)?,
+            }
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.transaction_from_document(target, targets, document),
+        ))
+    }
+
+    fn transaction_from_document(
+        &self,
+        target: LockTarget,
+        targets: LockMutationTargets,
+        document: LosslessLockDocument,
+    ) -> LockTransaction<'_> {
         let entry_snapshots = targets
             .entries
             .into_iter()
@@ -84,35 +117,36 @@ impl LockRepository {
                 root_snapshots.insert(field.to_string(), document.root_snapshot(field));
             }
         }
-        Ok(LockTransaction {
+        LockTransaction {
             repository: self,
             target,
             entry_snapshots,
             root_snapshots,
             pending_entries: BTreeMap::new(),
             pending_roots: BTreeMap::new(),
-        })
+        }
     }
 }
 
 impl LockTransaction<'_> {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn initial_entry(&self, skill_name: &str) -> Option<&Value> {
         self.entry_snapshots
             .get(skill_name)
             .and_then(LockEntrySnapshot::value)
     }
 
+    pub fn initial_root(&self, field: &str) -> Option<&Value> {
+        self.root_snapshots
+            .get(field)
+            .and_then(LockRootSnapshot::value)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn replace_entry(&mut self, skill_name: &str, replacement: Value) -> Result<(), AppError> {
         self.require_entry_snapshot(skill_name)?;
         self.pending_entries
             .insert(skill_name.to_string(), PendingEntry::Replace(replacement));
-        Ok(())
-    }
-
-    pub fn remove_entry(&mut self, skill_name: &str) -> Result<(), AppError> {
-        self.require_entry_snapshot(skill_name)?;
-        self.pending_entries
-            .insert(skill_name.to_string(), PendingEntry::Remove);
         Ok(())
     }
 
@@ -148,7 +182,6 @@ impl LockTransaction<'_> {
                 PendingEntry::Replace(replacement) => {
                     latest.replace_entry(target.schema, &skill_name, snapshot, replacement)?
                 }
-                PendingEntry::Remove => latest.remove_entry(&skill_name, snapshot)?,
             }
         }
         for (field, replacement) in pending_roots {
@@ -166,6 +199,7 @@ impl LockTransaction<'_> {
             .await
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn require_entry_snapshot(&self, skill_name: &str) -> Result<&LockEntrySnapshot, AppError> {
         self.entry_snapshots
             .get(skill_name)
@@ -216,6 +250,13 @@ mod tests {
         LockMutationTargets {
             entries: names.iter().map(|name| (*name).to_string()).collect(),
             default_target_agents: false,
+        }
+    }
+
+    fn default_targets() -> LockMutationTargets {
+        LockMutationTargets {
+            entries: Vec::new(),
+            default_target_agents: true,
         }
     }
 
@@ -281,6 +322,72 @@ mod tests {
         );
         assert!(!primary.exists());
         assert_eq!(fs::read(&legacy).expect("read legacy"), legacy_bytes);
+    }
+
+    #[tokio::test]
+    async fn default_root_transaction_uses_its_snapshot_and_rejects_external_change() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("skills-lock.json");
+        write(
+            &path,
+            br#"{"version":3,"skills":{},"defaultTargetAgents":{"global":["deleted"],"project":[]},"lastSelectedAgents":["deleted"]}"#,
+        );
+        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let mut transaction = repository
+            .begin(project_target(&path, None), default_targets())
+            .await
+            .expect("begin default transaction");
+
+        assert_eq!(
+            transaction.initial_root("defaultTargetAgents"),
+            Some(&json!({ "global": ["deleted"], "project": [] }))
+        );
+        write(
+            &path,
+            br#"{"version":3,"skills":{},"defaultTargetAgents":{"global":["external"],"project":[]},"lastSelectedAgents":["external"]}"#,
+        );
+        transaction
+            .set_default_target_agents(json!({ "global": [], "project": [] }), json!([]))
+            .expect("stage default cleanup");
+
+        let error = transaction.commit().await.expect_err("root conflict");
+        assert_eq!(
+            error,
+            AppError::LockConflict {
+                target: LockConflictTarget::RootField {
+                    field: "defaultTargetAgents".to_string(),
+                },
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn begin_if_present_captures_default_roots_without_creating_a_missing_lock() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("skills-lock.json");
+        let repository = LockRepository::new(EnvironmentLockIo::Host);
+
+        assert!(repository
+            .begin_if_present(project_target(&path, None), default_targets())
+            .await
+            .expect("inspect missing lock")
+            .is_none());
+        assert!(!path.exists());
+
+        write(
+            &path,
+            br#"{"version":3,"skills":{},"defaultTargetAgents":{"global":["deleted"],"project":[]},"lastSelectedAgents":["deleted"]}"#,
+        );
+        let transaction = repository
+            .begin_if_present(project_target(&path, None), default_targets())
+            .await
+            .expect("begin existing lock")
+            .expect("existing lock transaction");
+
+        assert_eq!(
+            transaction.initial_root("defaultTargetAgents"),
+            Some(&json!({ "global": ["deleted"], "project": [] }))
+        );
     }
 
     #[tokio::test]
@@ -450,6 +557,51 @@ mod tests {
                 target: LockConflictTarget::RootField { field }
             }) if field == "defaultTargetAgents"
         ));
+    }
+
+    #[tokio::test]
+    async fn second_agent_default_root_conflict_does_not_partially_update_the_first_root() {
+        let temp = tempdir().expect("tempdir");
+        let primary = temp.path().join("skill-lock.json");
+        write(
+            &primary,
+            br#"{"version":3,"defaultTargetAgents":{"global":["codex"],"project":[]},"lastSelectedAgents":["codex"],"skills":{}}"#,
+        );
+        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let mut transaction = repository
+            .begin(
+                LockTarget {
+                    primary: locator(&primary),
+                    legacy: None,
+                    schema: LockSchema::Global,
+                },
+                LockMutationTargets {
+                    entries: Vec::new(),
+                    default_target_agents: true,
+                },
+            )
+            .await
+            .expect("begin transaction");
+        write(
+            &primary,
+            br#"{"version":3,"defaultTargetAgents":{"global":["codex"],"project":[]},"lastSelectedAgents":["external"],"skills":{}}"#,
+        );
+        transaction
+            .set_default_target_agents(
+                json!({"global":["claude-code"],"project":[]}),
+                json!(["claude-code"]),
+            )
+            .expect("queue defaults");
+
+        assert!(matches!(
+            transaction.commit().await,
+            Err(AppError::LockConflict {
+                target: LockConflictTarget::RootField { field }
+            }) if field == "lastSelectedAgents"
+        ));
+        let unchanged = read_json(&primary);
+        assert_eq!(unchanged["defaultTargetAgents"]["global"], json!(["codex"]));
+        assert_eq!(unchanged["lastSelectedAgents"], json!(["external"]));
     }
 
     #[tokio::test]
