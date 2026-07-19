@@ -1,13 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockCheck = vi.fn();
-const mockPlatform = vi.fn();
-
-vi.mock('@tauri-apps/plugin-updater', () => ({
-  check: (...args: unknown[]) => mockCheck(...args),
+const mocks = vi.hoisted(() => ({
+  check: vi.fn(),
+  install: vi.fn(),
 }));
-vi.mock('@tauri-apps/plugin-os', () => ({
-  platform: () => mockPlatform(),
+
+vi.mock('@/hooks/useTauriApi', () => ({
+  checkApplicationUpdate: () => mocks.check(),
+  downloadAndInstallApplicationUpdate: (version: string, progress: (event: unknown) => void) =>
+    mocks.install(version, progress),
 }));
 
 import { useUpdaterStore } from '../updater';
@@ -17,153 +18,97 @@ describe('useUpdaterStore', () => {
     vi.clearAllMocks();
     localStorage.clear();
     useUpdaterStore.setState({
-      status: 'idle',
-      newVersion: null,
-      releaseNotes: null,
-      downloadProgress: 0,
-      error: null,
-      currentPlatform: null,
-      lastCheckTime: null,
+      status: 'idle', newVersion: null, releaseNotes: null, downloadProgress: 0,
+      downloadedBytes: 0, totalBytes: null, error: null, lastCheckTime: null,
+      dialogVisible: false, failedOperation: null,
     });
   });
 
-  describe('concurrency guard', () => {
-    it('checkForUpdate is no-op when status is checking', async () => {
-      useUpdaterStore.setState({ status: 'checking' });
-      await useUpdaterStore.getState().checkForUpdate();
-      expect(mockCheck).not.toHaveBeenCalled();
-    });
-
-    it('checkForUpdate is no-op when status is available', async () => {
-      useUpdaterStore.setState({ status: 'available' });
-      await useUpdaterStore.getState().checkForUpdate();
-      expect(mockCheck).not.toHaveBeenCalled();
-    });
-
-    it('checkForUpdate is no-op when status is downloading', async () => {
-      useUpdaterStore.setState({ status: 'downloading' });
-      await useUpdaterStore.getState().checkForUpdate();
-      expect(mockCheck).not.toHaveBeenCalled();
-    });
-
-    it('checkForUpdate is no-op when status is ready', async () => {
-      useUpdaterStore.setState({ status: 'ready' });
-      await useUpdaterStore.getState().checkForUpdate();
-      expect(mockCheck).not.toHaveBeenCalled();
-    });
-
-    it('checkForUpdate runs when status is error', async () => {
-      mockCheck.mockResolvedValue(null);
-      mockPlatform.mockReturnValue('windows');
-      useUpdaterStore.setState({ status: 'error' });
-      await useUpdaterStore.getState().checkForUpdate();
-      expect(mockCheck).toHaveBeenCalled();
-    });
-
-    it('downloadAndInstall is no-op when status is not available', async () => {
-      useUpdaterStore.setState({ status: 'idle' });
-      await useUpdaterStore.getState().downloadAndInstall();
-      expect(useUpdaterStore.getState().status).toBe('idle');
+  it('checks through the Backend and opens the dialog when an update exists', async () => {
+    mocks.check.mockResolvedValue({ version: '2.0.0', body: 'notes' });
+    await useUpdaterStore.getState().checkForUpdate();
+    expect(useUpdaterStore.getState()).toMatchObject({
+      status: 'available', newVersion: '2.0.0', releaseNotes: 'notes', dialogVisible: true,
     });
   });
 
-  describe('checkForUpdate', () => {
-    it('sets idle when no update available', async () => {
-      mockCheck.mockResolvedValue(null);
-      mockPlatform.mockReturnValue('windows');
-      await useUpdaterStore.getState().checkForUpdate();
-      expect(useUpdaterStore.getState().status).toBe('idle');
-      expect(useUpdaterStore.getState().lastCheckTime).not.toBeNull();
+  it('derives progress from the Backend channel and keeps the installed result ready', async () => {
+    useUpdaterStore.setState({ status: 'available', newVersion: '2.0.0', dialogVisible: true });
+    mocks.install.mockImplementation(async (_version, progress) => {
+      progress({ event: 'started', data: { content_length: 100 } });
+      progress({ event: 'progress', data: { chunk_length: 40 } });
+      progress({ event: 'progress', data: { chunk_length: 60 } });
+      progress({ event: 'finished' });
+      return { version: '2.0.0', installed: true };
     });
 
-    it('sets available with version and releaseNotes when update found', async () => {
-      mockCheck.mockResolvedValue({
-        version: '1.2.0',
-        body: '## Changelog\n- Fix bug',
-        downloadAndInstall: vi.fn(),
-      });
-      mockPlatform.mockReturnValue('windows');
-      await useUpdaterStore.getState().checkForUpdate();
-      const state = useUpdaterStore.getState();
-      expect(state.status).toBe('available');
-      expect(state.newVersion).toBe('1.2.0');
-      expect(state.releaseNotes).toBe('## Changelog\n- Fix bug');
-    });
-
-    it('does NOT auto-download on any platform', async () => {
-      const mockDownload = vi.fn();
-      mockCheck.mockResolvedValue({
-        version: '1.2.0',
-        body: '',
-        downloadAndInstall: mockDownload,
-      });
-      mockPlatform.mockReturnValue('windows');
-      await useUpdaterStore.getState().checkForUpdate();
-      expect(mockDownload).not.toHaveBeenCalled();
-      expect(useUpdaterStore.getState().status).toBe('available');
-    });
-
-    it('sets error on check failure and records lastCheckTime', async () => {
-      mockCheck.mockRejectedValue(new Error('Network error'));
-      await useUpdaterStore.getState().checkForUpdate();
-      const state = useUpdaterStore.getState();
-      expect(state.status).toBe('error');
-      expect(state.error).toBe('Network error');
-      expect(state.lastCheckTime).not.toBeNull();
-    });
+    await useUpdaterStore.getState().downloadAndInstall();
+    expect(mocks.install).toHaveBeenCalledWith('2.0.0', expect.any(Function));
+    expect(useUpdaterStore.getState()).toMatchObject({ status: 'ready', downloadProgress: 100 });
   });
 
-  describe('shouldAutoCheck', () => {
-    it('returns true when no last check', () => {
-      expect(useUpdaterStore.getState().shouldAutoCheck()).toBe(true);
+  it('hides but does not cancel an active Backend update', () => {
+    useUpdaterStore.setState({ status: 'downloading', newVersion: '2.0.0', dialogVisible: true });
+    useUpdaterStore.getState().dismiss();
+    expect(useUpdaterStore.getState()).toMatchObject({
+      status: 'downloading', newVersion: '2.0.0', dialogVisible: false,
     });
-
-    it('returns false within 24h of successful check', () => {
-      const now = Date.now();
-      localStorage.setItem('updater_last_check', now.toString());
-      useUpdaterStore.setState({ lastCheckTime: now });
-      expect(useUpdaterStore.getState().shouldAutoCheck()).toBe(false);
-    });
-
-    it('returns true after 24h of successful check', () => {
-      const oldTime = Date.now() - 25 * 60 * 60 * 1000;
-      localStorage.setItem('updater_last_check', oldTime.toString());
-      useUpdaterStore.setState({ lastCheckTime: oldTime });
-      expect(useUpdaterStore.getState().shouldAutoCheck()).toBe(true);
-    });
-
-    it('returns true after 4h of failed check', () => {
-      const oldTime = Date.now() - 5 * 60 * 60 * 1000;
-      localStorage.setItem('updater_last_check', oldTime.toString());
-      localStorage.setItem('updater_last_check_error', 'true');
-      useUpdaterStore.setState({ lastCheckTime: oldTime });
-      expect(useUpdaterStore.getState().shouldAutoCheck()).toBe(true);
-    });
-
-    it('returns false within 4h of failed check', () => {
-      const oldTime = Date.now() - 2 * 60 * 60 * 1000;
-      localStorage.setItem('updater_last_check', oldTime.toString());
-      localStorage.setItem('updater_last_check_error', 'true');
-      useUpdaterStore.setState({ lastCheckTime: oldTime });
-      expect(useUpdaterStore.getState().shouldAutoCheck()).toBe(false);
-    });
+    useUpdaterStore.getState().showDialog();
+    expect(useUpdaterStore.getState().dialogVisible).toBe(true);
   });
 
-  describe('dismiss', () => {
-    it('resets state to idle', () => {
-      useUpdaterStore.setState({
-        status: 'available',
-        newVersion: '1.2.0',
-        releaseNotes: 'notes',
-        downloadProgress: 50,
-      });
-      useUpdaterStore.getState().dismiss();
-      const state = useUpdaterStore.getState();
-      expect(state.status).toBe('idle');
-      expect(state.newVersion).toBeNull();
-      expect(state.releaseNotes).toBeNull();
-      expect(state.downloadProgress).toBe(0);
+  it('keeps a failed install visible after dismiss and retries the same version', async () => {
+    useUpdaterStore.setState({ status: 'available', newVersion: '2.0.0', dialogVisible: true });
+    mocks.install.mockRejectedValueOnce({
+      kind: 'executionFailed',
+      data: { message: 'private backend diagnostic' },
     });
+
+    await useUpdaterStore.getState().downloadAndInstall();
+    expect(useUpdaterStore.getState()).toMatchObject({
+      status: 'error',
+      newVersion: '2.0.0',
+      dialogVisible: true,
+    });
+
+    useUpdaterStore.getState().dismiss();
+    expect(useUpdaterStore.getState()).toMatchObject({
+      status: 'error',
+      newVersion: '2.0.0',
+      dialogVisible: false,
+    });
+
+    mocks.install.mockResolvedValueOnce({ version: '2.0.0', installed: true });
+    useUpdaterStore.getState().showDialog();
+    await useUpdaterStore.getState().retry();
+    expect(mocks.install).toHaveBeenCalledTimes(2);
+    expect(useUpdaterStore.getState()).toMatchObject({ status: 'ready', dialogVisible: true });
   });
 
+  it('keeps the existing auto-check retry intervals', () => {
+    expect(useUpdaterStore.getState().shouldAutoCheck()).toBe(true);
+    const now = Date.now();
+    useUpdaterStore.setState({ lastCheckTime: now });
+    expect(useUpdaterStore.getState().shouldAutoCheck()).toBe(false);
+  });
+
+  it('retries a failed check even when an older install version is still retained', async () => {
+    useUpdaterStore.setState({
+      status: 'error',
+      newVersion: '2.0.0',
+      failedOperation: 'check',
+      dialogVisible: true,
+    });
+    mocks.check.mockResolvedValue({ version: '2.1.0', body: 'new notes' });
+
+    await useUpdaterStore.getState().retry();
+
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(useUpdaterStore.getState()).toMatchObject({
+      status: 'available',
+      newVersion: '2.1.0',
+      failedOperation: null,
+    });
+  });
 });

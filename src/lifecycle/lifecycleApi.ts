@@ -10,7 +10,10 @@ export async function executeLifecycleAction(
 
   const outcome = result.data;
   if (outcome.status === 'blocked') {
-    useMutationStore.getState().acceptSnapshot(outcome.snapshot);
+    useMutationStore.getState().acceptSnapshot({
+      revision: outcome.snapshot.revision,
+      active: outcome.snapshot.mutation,
+    });
   }
   return outcome;
 }

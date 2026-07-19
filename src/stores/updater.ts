@@ -1,40 +1,38 @@
 import { create } from 'zustand';
-import { check, type Update } from '@tauri-apps/plugin-updater';
-import { platform } from '@tauri-apps/plugin-os';
+import {
+  checkApplicationUpdate,
+  downloadAndInstallApplicationUpdate,
+} from '@/hooks/useTauriApi';
+import { toAppError } from '@/utils/to-app-error';
+import type { AppError, ApplicationUpdateProgress } from '@/bindings';
 
 const LAST_CHECK_KEY = 'updater_last_check';
 const LAST_CHECK_ERROR_KEY = 'updater_last_check_error';
-const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const ERROR_RETRY_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const ERROR_RETRY_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-type UpdateStatus =
-  | 'idle'
-  | 'checking'
-  | 'available'
-  | 'downloading'
-  | 'ready'
-  | 'error';
+type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+type FailedOperation = 'check' | 'install';
 
 interface UpdaterState {
   status: UpdateStatus;
   newVersion: string | null;
   releaseNotes: string | null;
   downloadProgress: number;
-  error: string | null;
-  currentPlatform: string | null;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  error: AppError | null;
   lastCheckTime: number | null;
-
+  dialogVisible: boolean;
+  failedOperation: FailedOperation | null;
   checkForUpdate: () => Promise<void>;
   downloadAndInstall: () => Promise<void>;
+  retry: () => Promise<void>;
   dismiss: () => void;
+  showDialog: () => void;
   shouldAutoCheck: () => boolean;
 }
 
-// 模块级变量 — 不放进 store 避免序列化问题
-let pendingUpdate: Update | null = null;
-let abortFlag = false;
-
-// js-cache-storage: 启动时从 localStorage 恢复到内存，避免重复 I/O
 function readLastCheckTime(): number | null {
   try {
     const stored = localStorage.getItem(LAST_CHECK_KEY);
@@ -49,17 +47,19 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
   newVersion: null,
   releaseNotes: null,
   downloadProgress: 0,
+  downloadedBytes: 0,
+  totalBytes: null,
   error: null,
-  currentPlatform: null,
   lastCheckTime: readLastCheckTime(),
+  dialogVisible: false,
+  failedOperation: null,
 
   shouldAutoCheck: () => {
-    // js-cache-storage: 优先用内存中的 lastCheckTime，减少 localStorage 读取
     const { lastCheckTime } = get();
     if (!lastCheckTime) return true;
     try {
-      const wasError = localStorage.getItem(LAST_CHECK_ERROR_KEY) === 'true';
-      const interval = wasError ? ERROR_RETRY_INTERVAL_MS : CHECK_INTERVAL_MS;
+      const interval = localStorage.getItem(LAST_CHECK_ERROR_KEY) === 'true'
+        ? ERROR_RETRY_INTERVAL_MS : CHECK_INTERVAL_MS;
       return Date.now() - lastCheckTime > interval;
     } catch {
       return true;
@@ -67,99 +67,92 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
   },
 
   checkForUpdate: async () => {
-    const { status } = get();
-    // 并发保护：仅 idle/error 可触发
-    if (status !== 'idle' && status !== 'error') return;
-
-    set({ status: 'checking', error: null });
+    if (!['idle', 'error'].includes(get().status)) {
+      if (['available', 'downloading', 'ready'].includes(get().status)) set({ dialogVisible: true });
+      return;
+    }
+    set({ status: 'checking', error: null, failedOperation: null });
     try {
-      const update = await check();
+      const update = await checkApplicationUpdate();
       const now = Date.now();
-      localStorage.setItem(LAST_CHECK_KEY, now.toString());
+      localStorage.setItem(LAST_CHECK_KEY, String(now));
       localStorage.removeItem(LAST_CHECK_ERROR_KEY);
-
       if (!update) {
-        set({ status: 'idle', newVersion: null, releaseNotes: null, lastCheckTime: now });
+        set({
+          status: 'idle', newVersion: null, releaseNotes: null, lastCheckTime: now,
+          dialogVisible: false, failedOperation: null,
+        });
         return;
       }
-
-      pendingUpdate = update;
-      const currentPlatform = platform();
       set({
-        status: 'available',
-        newVersion: update.version,
-        releaseNotes: update.body ?? null,
-        currentPlatform,
-        lastCheckTime: now,
+        status: 'available', newVersion: update.version, releaseNotes: update.body,
+        lastCheckTime: now, dialogVisible: true, failedOperation: null,
       });
-      // 不再自动下载 — 等待用户在 Dialog 中确认
-    } catch (e) {
+    } catch (error) {
       const now = Date.now();
-      localStorage.setItem(LAST_CHECK_KEY, now.toString());
+      localStorage.setItem(LAST_CHECK_KEY, String(now));
       localStorage.setItem(LAST_CHECK_ERROR_KEY, 'true');
-      console.error('Update check failed:', e);
       set({
         status: 'error',
         lastCheckTime: now,
-        error: e instanceof Error ? e.message : String(e),
+        error: toAppError(error),
+        dialogVisible: get().dialogVisible,
+        failedOperation: 'check',
       });
     }
   },
 
   downloadAndInstall: async () => {
-    // Guard：仅 available 状态可触发
-    if (get().status !== 'available') return;
-    if (!pendingUpdate) return;
-
-    abortFlag = false;
-    set({ status: 'downloading', downloadProgress: 0 });
+    const version = get().newVersion;
+    if (get().status !== 'available' || !version) return;
+    set({
+      status: 'downloading', downloadProgress: 0, downloadedBytes: 0, totalBytes: null,
+      error: null, failedOperation: null,
+    });
+    const onProgress = (event: ApplicationUpdateProgress) => {
+      if (event.event === 'started') {
+        set({ totalBytes: event.data.content_length });
+      } else if (event.event === 'progress') {
+        set((state) => {
+          const downloadedBytes = state.downloadedBytes + event.data.chunk_length;
+          return {
+            downloadedBytes,
+            downloadProgress: state.totalBytes && state.totalBytes > 0
+              ? Math.min(100, Math.round(downloadedBytes / state.totalBytes * 100)) : state.downloadProgress,
+          };
+        });
+      }
+    };
     try {
-      let totalBytes = 0;
-      let downloadedBytes = 0;
-
-      await pendingUpdate.downloadAndInstall((event) => {
-        if (abortFlag) return;
-        switch (event.event) {
-          case 'Started':
-            totalBytes = event.data.contentLength ?? 0;
-            break;
-          case 'Progress':
-            downloadedBytes += event.data.chunkLength;
-            if (totalBytes > 0) {
-              set({
-                downloadProgress: Math.round(
-                  (downloadedBytes / totalBytes) * 100
-                ),
-              });
-            }
-            break;
-          case 'Finished':
-            break;
-        }
-      });
-
-      // 下载完成后检查是否已被 dismiss
-      if (abortFlag) return;
-      set({ status: 'ready', downloadProgress: 100 });
-    } catch (e) {
-      if (abortFlag) return;
-      console.error('Download failed:', e);
+      const result = await downloadAndInstallApplicationUpdate(version, onProgress);
       set({
-        status: 'error',
-        error: e instanceof Error ? e.message : String(e),
+        status: result.installed ? 'ready' : 'error',
+        downloadProgress: result.installed ? 100 : get().downloadProgress,
+        error: result.installed ? null : {
+          kind: 'custom',
+          data: { message: 'application update did not install' },
+        },
+        failedOperation: result.installed ? null : 'install',
+      });
+    } catch (error) {
+      set({
+        status: 'error', error: toAppError(error), dialogVisible: true,
+        failedOperation: 'install',
       });
     }
   },
 
-  dismiss: () => {
-    abortFlag = true;
-    pendingUpdate = null;
-    set({
-      status: 'idle',
-      newVersion: null,
-      releaseNotes: null,
-      downloadProgress: 0,
-      error: null,
-    });
+  retry: async () => {
+    const { status, newVersion, failedOperation } = get();
+    if (status !== 'error') return;
+    if (failedOperation === 'install' && newVersion) {
+      set({ status: 'available', error: null, dialogVisible: true });
+      await get().downloadAndInstall();
+      return;
+    }
+    await get().checkForUpdate();
   },
+
+  dismiss: () => set({ dialogVisible: false }),
+  showDialog: () => set({ dialogVisible: true }),
 }));

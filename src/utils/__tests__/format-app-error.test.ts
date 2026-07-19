@@ -61,6 +61,23 @@ describe('formatAppError', () => {
       },
       'addSkill.error.storageMappingUnsupported{"path":"\\\\\\\\server\\\\share"}',
     ],
+    [{ kind: 'configurationReadOnly' }, 'addSkill.error.configurationReadOnly'],
+    [
+      { kind: 'payloadStorageRequiresCleanup', data: { environment: { kind: 'host' } } },
+      'addSkill.error.payloadStorageRequiresCleanup',
+    ],
+    [
+      { kind: 'validation', data: { field: 'request', message: 'invalid selection' } },
+      'invalid selection',
+    ],
+    [{ kind: 'staleContext' }, 'addSkill.error.staleState'],
+    [
+      {
+        kind: 'recoveryRequired',
+        data: { recovery_resource_id: 'recovery-1', message: 'manual recovery required' },
+      },
+      'manual recovery required',
+    ],
   ])('formats $kind without falling back to the unknown error', (error, expected) => {
     expect(formatAppError(error, t as never)).toBe(expected);
   });

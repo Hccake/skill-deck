@@ -14,15 +14,18 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
+  acquireSelectedPayloads,
   fetchAvailable,
   installSkills,
+  previewInstall,
 } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
+import { formatAppError } from '@/utils/format-app-error';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
-import type { InstallParams, InstallResults } from '@/bindings';
+import type { AppError, FetchResult, InstallResponse } from '@/bindings';
 
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
 type RepairPhase = 'idle' | 'validating' | 'installing';
@@ -30,28 +33,14 @@ type ValidationOwner = 'manual' | 'repair' | null;
 interface ValidationResult {
   ok: boolean;
   requiresRiskConfirmation: boolean;
+  fetchResult: FetchResult | null;
 }
 
 function didRepairInstallSucceed(
-  results: InstallResults,
-  skillName: string,
-  agents: string[]
+  results: InstallResponse,
 ): boolean {
-  const targetAgents = new Set(agents);
-  const failed = results.failed.filter((result) => result.skillName === skillName);
-  if (failed.length > 0) return false;
-  if (targetAgents.size === 0) {
-    return results.successful.some((result) => result.skillName === skillName && !result.skipped);
-  }
-
-  const successfulAgents = new Set(
-    results.successful
-      .filter((result) =>
-        result.skillName === skillName && targetAgents.has(result.agent) && !result.skipped
-      )
-      .map((result) => result.agent)
-  );
-  return Array.from(targetAgents).every((agent) => successfulAgents.has(agent));
+  return results.units.length > 0
+    && results.units.every((unit) => unit.status === 'succeeded');
 }
 
 function uniqueAgentIds(agents: string[] | undefined): string[] {
@@ -102,7 +91,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     if (!source.trim()) {
       setValidateState('error');
       setValidationOwner(null);
-      return { ok: false, requiresRiskConfirmation: false };
+      return { ok: false, requiresRiskConfirmation: false, fetchResult: null };
     }
 
     setValidationOwner(owner);
@@ -114,12 +103,16 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       setRequiresRiskConfirmation(nextRequiresRiskConfirmation);
       setValidateState(hasSkill ? 'valid' : 'missing');
       setValidationOwner(null);
-      return { ok: hasSkill, requiresRiskConfirmation: nextRequiresRiskConfirmation };
+      return {
+        ok: hasSkill,
+        requiresRiskConfirmation: nextRequiresRiskConfirmation,
+        fetchResult: result,
+      };
     } catch (error) {
       console.error('[RepairSourceDialog] Failed to validate source:', error);
       setValidateState('error');
       setValidationOwner(null);
-      return { ok: false, requiresRiskConfirmation: false };
+      return { ok: false, requiresRiskConfirmation: false, fetchResult: null };
     }
   }, [source, target]);
 
@@ -134,28 +127,37 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     let installCompleted = false;
     try {
       const validation = await validateSource('repair');
-      if (!validation.ok) return;
+      if (!validation.ok || !validation.fetchResult) return;
       if (validation.requiresRiskConfirmation && !riskAcknowledged) return;
 
       setRepairPhase('installing');
       const targetAgents = uniqueAgentIds(target.privateAdaptedAgents ?? target.agents);
       const targetPrivateCopyAgents = uniqueAgentIds(target.privateCopyAgents);
-      const expectedAgents = uniqueAgentIds([...targetAgents, ...targetPrivateCopyAgents]);
-      const params: InstallParams = {
+      const privateCopies = new Set(targetPrivateCopyAgents);
+      const agentIntents = uniqueAgentIds([...targetAgents, ...targetPrivateCopyAgents]).map((agentId) => ({
+        agentId,
+        privateEntry: privateCopies.has(agentId) ? 'optionalSelected' as const : 'required' as const,
+        adapterTargets: [],
+      }));
+      const skill = validation.fetchResult.skills.find((item) => item.name === target.skillName)!;
+      const payloads = await acquireSelectedPayloads({
+        discoverySession: validation.fetchResult.discoverySession,
+        skillPaths: [skill.relativePath],
+      });
+      const request = {
+        context: target.context,
         source: source.trim(),
+        discoverySession: validation.fetchResult.discoverySession,
+        payloads,
         skills: [target.skillName],
-        agents: targetAgents,
-        privateCopyAgents: targetPrivateCopyAgents,
-        scope: target.scope,
-        projectPath: target.projectPath ?? null,
-        mode: 'copy',
-        retry: true,
-        preserveExistingModes: true,
+        agentIntents,
+        requestedMode: 'copy' as const,
         acknowledgeRisk: validation.requiresRiskConfirmation ? riskAcknowledged : true,
       };
-      const results = await installSkills(target.context, params);
+      const preview = await previewInstall(request);
+      const results = await installSkills(request, preview.token);
       installCompleted = true;
-      if (!didRepairInstallSucceed(results, target.skillName, expectedAgents)) {
+      if (!didRepairInstallSucceed(results)) {
         toast.error(appendCrossStorageFailureGuidance(
           t('skills.repairSourceDialog.repairFailed'),
           target.context,
@@ -169,7 +171,9 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       closeRepairSource();
     } catch (error) {
       console.error('[RepairSourceDialog] Failed to repair source:', error);
-      const message = error instanceof Error ? error.message : String(error);
+      const message = error && typeof error === 'object' && 'kind' in error
+        ? formatAppError(error as AppError, t)
+        : t('addSkill.error.unknown');
       toast.error(installCompleted
         ? message
         : appendCrossStorageFailureGuidance(message, target.context, 'repair', t));

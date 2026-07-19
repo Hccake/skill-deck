@@ -1,7 +1,7 @@
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMutationStore } from '@/stores/mutation';
-import type { MutationSnapshot } from '@/bindings';
+import type { BackendActivitySnapshot } from '@/bindings';
 import { executeLifecycleAction } from '../lifecycleApi';
 
 const mocks = vi.hoisted(() => ({
@@ -19,16 +19,17 @@ vi.mock('@/bindings', async (importOriginal) => {
   };
 });
 
-const blockedSnapshot: MutationSnapshot = {
+const blockedSnapshot: BackendActivitySnapshot = {
   revision: 2,
-  active: {
+  lifecycle: null,
+  mutation: {
     id: 'mutation-1',
     kind: 'install',
     context: {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     },
-    phase: 'materializing',
+    phase: 'acquiring',
     progress: null,
     cancelable: true,
   },

@@ -19,7 +19,7 @@ const mutation: ActiveMutation = {
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'project', project_id: 'project-1' },
   },
-  phase: 'materializing',
+  phase: 'acquiring',
   progress: { subject: 'toolkit', current: 1, total: 2 },
   cancelable: true,
 };

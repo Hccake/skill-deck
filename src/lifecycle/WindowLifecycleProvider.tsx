@@ -16,6 +16,7 @@ import { formatMutationStatus } from '@/lib/mutationStatus';
 import { useMutationStore } from '@/stores/mutation';
 import { executeLifecycleAction } from './lifecycleApi';
 import { WindowLifecycleContext } from './useWindowLifecycle';
+import { useOptionalUnsavedChanges } from './unsaved-changes-context';
 
 function defaultCloseAction(windowLabel: string): LifecycleAction {
   return windowLabel === 'main' ? 'quitApplication' : 'closeCurrentWindow';
@@ -23,6 +24,7 @@ function defaultCloseAction(windowLabel: string): LifecycleAction {
 
 export function WindowLifecycleProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
+  const unsavedChanges = useOptionalUnsavedChanges();
   const appWindow = useMemo(() => getCurrentWebviewWindow(), []);
   const activeMutation = useMutationStore((state) => state.activeMutation);
   const cancelling = useMutationStore((state) => state.cancelling);
@@ -34,7 +36,7 @@ export function WindowLifecycleProvider({ children }: { children: ReactNode }) {
   const pendingActionRef = useRef<LifecycleAction | null>(null);
   const actionRunningRef = useRef(false);
 
-  const requestAction = useCallback(async (action: LifecycleAction) => {
+  const performAction = useCallback(async (action: LifecycleAction) => {
     if (actionRunningRef.current) return;
 
     actionRunningRef.current = true;
@@ -56,6 +58,14 @@ export function WindowLifecycleProvider({ children }: { children: ReactNode }) {
       actionRunningRef.current = false;
     }
   }, [t]);
+
+  const requestAction = useCallback(async (action: LifecycleAction) => {
+    if (unsavedChanges) {
+      await unsavedChanges.guard(() => performAction(action));
+      return;
+    }
+    await performAction(action);
+  }, [performAction, unsavedChanges]);
 
   useEffect(() => {
     const pendingAction = pendingActionRef.current;

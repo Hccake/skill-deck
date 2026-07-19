@@ -29,7 +29,7 @@ const mutation: ActiveMutation = {
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     scope: { scope: 'global' },
   },
-  phase: 'materializing',
+  phase: 'acquiring',
   progress: null,
   cancelable: true,
 };

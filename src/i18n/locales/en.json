@@ -6,12 +6,49 @@
     "loading": "Loading...",
     "copy": "Copy",
     "close": "Close",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "save": "Save",
+    "delete": "Delete",
+    "retry": "Retry"
   },
   "nav": {
     "skills": "Skills",
     "discover": "Discover",
     "settings": "Settings"
+  },
+  "recovery": {
+    "title": "Recovery required",
+    "center": {
+      "count": "{{count}} recovery item(s) need attention",
+      "maintenanceCount": "{{count}} environment(s) need a local data check",
+      "loadError": "Recovery items could not be loaded",
+      "show": "Show recovery items",
+      "hide": "Hide recovery items"
+    },
+    "loading": "Checking recovery state...",
+    "open": "Open recovery data",
+    "refresh": "Refresh",
+    "cleanup": "Remove recovery data",
+    "refreshError": "Recovery state could not be refreshed. The recovery data has been preserved.",
+    "openError": "The recovery directory could not be opened. Try again later.",
+    "retryMaintenance": "Check again",
+    "maintenance": {
+      "title": "{{environment}} local data check",
+      "pending": "Temporary files and recovery data are being checked. Skill changes are paused until this completes.",
+      "failed": "The local data check did not complete. Skill changes are paused in this environment.",
+      "ready": "The local data check is complete."
+    },
+    "cleanupTitle": "Remove recovery data?",
+    "cleanupDescription": "Only recovery data is removed. This is available after Skill Deck verifies that the target is consistent.",
+    "confirmCleanup": "Remove recovery data",
+    "state": {
+      "needsAttention": "Review the recovery data and target files before continuing.",
+      "consistentCanCleanup": "The target is consistent. Recovery data can now be removed.",
+      "environmentUnavailable": "The Environment is unavailable. Recovery data has been preserved.",
+      "invalid": "The recovery record is invalid. You can open its directory, but it will not be removed automatically.",
+      "missing": "Recovery data is no longer present."
+    }
   },
   "context": {
     "title": "Available Scope",
@@ -23,7 +60,7 @@
     "sectionGlobal": "Global",
     "sectionProjects": "Projects",
     "noProjects": "No projects",
-    "environmentLabel": "Development environment",
+    "environmentLabel": "Environment",
     "environmentConnecting": "Connecting",
     "environmentUnavailable": "Unavailable",
     "environmentRetry": "Retry",
@@ -166,7 +203,7 @@
     "manageAgents": {
       "title": "Manage Agents",
       "description": "Review which Agents can use \"{{name}}\" and add setup for Agents that need it.",
-      "modeTitle": "Setup method for new Agents",
+      "modeTitle": "Skill install method",
       "symlinkHint": "Link to the shared Skill directory so future updates use one source",
       "copyHint": "Copy files into the agent directory for environments without link support",
       "save": "Save Changes",
@@ -176,8 +213,12 @@
     "copyToProject": {
       "title": "Copy to Project",
       "description": "Copy \"{{name}}\" to other projects",
+      "targetEnvironment": "Target environment",
       "noProjects": "No other projects available",
       "installed": "Installed",
+      "unknown": "Unknown",
+      "projectsLoadError": "Could not load projects in the selected environment.",
+      "presenceUnknown": "Could not verify whether this Skill is already installed. Existing files may be overwritten.",
       "copy": "Copy to {{count}} project(s)",
       "overwriteWarning": "{{count}} selected project(s) already have this skill — they will be overwritten",
       "metadataWarning": "This Skill is missing the source details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically.",
@@ -194,6 +235,7 @@
     "updateWarning": "\"{{name}}\" updated with {{count}} warning(s): {{detail}}",
     "updateFailedUnknown": "Unknown error",
     "updateError": "Failed to update \"{{name}}\": {{error}}",
+    "updatePreviewError": "Could not prepare the update plan: {{error}}",
     "checking": "Checking...",
     "updateAll": "Update All",
     "updateAllProgress": "Updating {{completed}}/{{total}}",
@@ -202,19 +244,50 @@
     "queued": "Queued",
     "cancel": "Cancel",
     "updatePhaseCloning": "Fetching latest version...",
+    "updatePhaseAcquiring": "Fetching the update...",
+    "updatePhaseValidating": "Validating the update...",
+    "updatePhaseUpdating": "Applying the update...",
     "updatePhaseInstalling": "Installing to agents...",
     "updatePhaseWritingLock": "Saving configuration...",
     "updateDone": "Updated",
     "updateFailed": "Failed",
     "checkUpdates": "Check Updates",
     "checkUpdatesError": "Failed to check updates: {{error}}",
+    "updateEvidence": {
+      "title": "Update check details",
+      "freshness": {
+        "fresh": "Current evidence",
+        "cached": "Using recent evidence",
+        "stale": "Last successful evidence is stale",
+        "coolingDown": "The source provider is cooling down",
+        "backingOff": "The source check is waiting to retry",
+        "unavailable": "No usable update evidence is available"
+      },
+      "lastChecked": "Last checked {{time}}",
+      "lastAttempt": "Last attempt {{time}}",
+      "retryAt": "Retry available after {{time}}",
+      "providerCooldownUntil": "Provider cooldown until {{time}}",
+      "failure": {
+        "rateLimited": "Request limit reached",
+        "authenticationRequired": "Authentication is required",
+        "refNotFound": "The saved ref was not found",
+        "repositoryNotFound": "The repository was not found",
+        "notFoundOrUnauthorized": "The repository was not found or access was denied",
+        "network": "The network request failed",
+        "incompleteEvidence": "The source returned incomplete evidence",
+        "sourceUnavailable": "The source is unavailable"
+      }
+    },
     "upToDate": "Everything is up to date",
     "needsAttentionCount": "{{count}} need attention",
     "uncheckableUpdateCount": "{{count}} cannot check updates yet",
     "maintenanceNotice": "{{count}} Skill(s) cannot check for updates right now. Open the matching Skill for details.",
     "viewMaintenanceItems": "View items",
     "updateStatus": {
+      "updateAvailable": "New version available",
+      "upToDate": "Up to date",
       "cannotCheck": "Cannot check for updates",
+      "deletedUpstream": "Deleted upstream",
       "deleted-upstream": "Deleted upstream"
     },
     "reinstallConfirm": {
@@ -231,9 +304,15 @@
       "reinstallRequired": "Reinstall required",
       "autoCheckUnavailable": "Auto-check unavailable",
       "checkFailed": "Check failed",
+      "deletedUpstream": "Deleted upstream",
       "deleted-upstream": "Deleted upstream"
     },
     "updateHint": {
+      "missingRemoteHash": "Local version information is incomplete. Reinstall to restore version checks.",
+      "missingSource": "Install source information is missing. Repair the source to restore version checks.",
+      "unsupportedSource": "This install source does not support automatic update checks. Check the original source manually.",
+      "upstreamUnavailable": "The install source cannot be reached right now. Check again later.",
+      "deletedUpstream": "The source is reachable, but this Skill path no longer exists upstream. Remove the local copy, repair the source, or keep it installed.",
       "missing-skill-path": "Install source information is missing. Repair the source to restore version checks.",
       "missing-remote-hash": "Local version information is incomplete. Reinstall to restore version checks.",
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
@@ -246,6 +325,11 @@
       "http-error": "Version check failed. Check again later."
     },
     "updateReason": {
+      "missingRemoteHash": "Local version information is incomplete. Reinstall to restore version checks.",
+      "missingSource": "Install source information is missing. Repair the source to restore version checks.",
+      "unsupportedSource": "This install source does not support automatic update checks. Check the original source manually.",
+      "upstreamUnavailable": "The install source cannot be reached right now. Check again later.",
+      "deletedUpstream": "The source is reachable, but this Skill path no longer exists upstream. Remove the local copy, repair the source, or keep it installed.",
       "missing-skill-path": "Install source information is missing. Repair the source to restore version checks.",
       "missing-remote-hash": "Local version information is incomplete. Reinstall to restore version checks.",
       "unsupported-source-type": "This install source does not support automatic update checks. Check the original source manually.",
@@ -268,18 +352,32 @@
       "groupNotice": "This will fetch the latest content from {{count}} install source(s) and reinstall.",
       "skillCount": "{{count}} Skill(s)",
       "confirm": "Start update",
+      "loadingPreview": "Preparing update preview...",
+      "previewError": "Unable to prepare the update preview.",
       "deletedUpstreamTitle": "Deleted upstream",
       "deletedUpstreamDescription": "These skills still exist locally, but their locked upstream path no longer exists.",
       "deletedUpstreamActionRepair": "Repair source",
       "deletedUpstreamActionRemove": "Remove local copy",
       "deletedUpstreamActionKeep": "Keep installed",
       "targetAgents": "Target agents",
+      "privateCopiesTitle": "Optional private-copy updates",
+      "privateCopiesDescription": "Select only the separate Agent copies that should be overwritten. Linked entries follow the canonical Skill automatically.",
+      "cleanCopyCount": "{{count}} separate copies will update automatically.",
+      "cleanCopyCountForSkill": "{{skillName}}: {{count}} copies will update automatically.",
+      "progress": "{{current}} of {{total}} Skills processed.",
+      "overwritePrivateEntry": "Overwrite this private copy",
       "retryFailed": "Retry failed",
       "resultTitle": "Update results",
       "resultSuccess": "Success: {{count}}",
       "resultPartial": "Partial: {{count}}",
       "resultFailed": "Failed: {{count}}",
-      "resultSkipped": "Skipped: {{count}}"
+      "resultSkipped": "Skipped: {{count}}",
+      "resultOutcome": {
+        "succeeded": "Completed",
+        "partial": "Partially completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      }
     },
     "discover": {
       "searchPlaceholder": "Search skills...",
@@ -334,6 +432,7 @@
     "nav": {
       "sectionLabel": "Settings section",
       "general": "Appearance",
+      "agents": "Agents",
       "installPreferences": "Default Install Settings",
       "git": "Git",
       "projects": "Projects",
@@ -355,6 +454,8 @@
     "installPreferences": {
       "title": "Default Setup",
       "description": "Set which Agents are enabled by default when installing Skills. Agents that are ready to use do not need to be selected.",
+      "loadError": "Unable to load Agent defaults.",
+      "staleSave": "The save could not be confirmed. Refresh before making more changes.",
       "globalTitle": "Global",
       "projectTitle": "Project",
       "automaticSection": "Ready to use",
@@ -364,12 +465,270 @@
       "migratedDefaultTargets": "Default separate setup was removed where it is no longer needed. These Agents can still use Skills.",
       "selectAll": "Select All",
       "selectedCount": "{{count}} selected",
-      "automaticDetectionSummary": "{{detected}} installed, {{undetected}} not detected",
-      "otherAgentsToggle": "Show {{count}} agents that are not detected",
-      "otherAutomaticAgentsToggle": "Show {{count}} ready-to-use Agents that are not detected",
+      "automaticDetectionSummary": "{{detected}} detected, {{undetected}} not detected, {{indeterminate}} unable to determine",
+      "otherAgentsToggle": "Show {{count}} other Agents",
+      "otherAutomaticAgentsToggle": "Show {{count}} other ready-to-use Agents",
       "noAutomaticAgents": "No related agents were detected.",
       "noAdditionalAgents": "No Agents need separate setup.",
       "noVisibleAdditionalAgents": "There are no installed or selected Agents that need separate setup."
+    },
+    "agents": {
+      "title": "Agents",
+      "description": "Review the Skill directories and installation detection rules for built-in Agents, and manage Custom Agents.",
+      "add": "Add Custom Agent",
+      "backToList": "Back to Agent list",
+      "edit": "Edit Agent",
+      "editNamed": "Edit {{name}}",
+      "duplicate": "Duplicate",
+      "delete": "Delete",
+      "moreActions": "More actions",
+      "moreActionsNamed": "More actions for {{name}}",
+      "copyPath": "Copy path",
+      "pathRule": "Path rule",
+      "listLabel": "Agent list",
+      "registryToolbar": "Agent registry controls",
+      "inspectorLabel": "Agent details",
+      "pathUnavailable": "Unavailable in this Environment",
+      "pathLoading": "Resolving…",
+      "pathFallback": "fallback",
+      "dialog": {
+        "title": {
+          "create": "Add Custom Agent",
+          "edit": "Edit Custom Agent",
+          "duplicate": "Duplicate Custom Agent",
+          "configure": "Configure Custom Agent"
+        },
+        "action": {
+          "create": "Add Agent",
+          "edit": "Save",
+          "duplicate": "Add Copy",
+          "configure": "Save and Return to Install",
+          "completeConfiguration": "Retry Return to Install"
+        },
+        "description": {
+          "default": "Configure Global and Project Skill read directories and the paths used to detect whether the Agent is installed.",
+          "configure": "Configure this Agent's Skill read directories and detection paths, then return to the install flow."
+        },
+        "cancel": {
+          "configure": "Cancel Configuration and Return"
+        }
+      },
+      "tabs": {
+        "builtin": "Built-in",
+        "custom": "Custom"
+      },
+      "search": {
+        "builtin": "Search built-in Agents…",
+        "custom": "Search custom Agents…",
+        "clear": "Clear search"
+      },
+      "empty": {
+        "builtinTitle": "No built-in Agents",
+        "builtinDescription": "This version has no built-in Agent definitions to show.",
+        "customTitle": "No Custom Agents yet",
+        "customDescription": "Add a Custom Agent that is not included in the built-in list.",
+        "searchTitle": "No results for “{{query}}”",
+        "searchDescription": "Try searching by Agent name, ID, or path.",
+        "clearSearch": "Clear search",
+        "inspector": "Select an Agent to review its read directories and detection configuration."
+      },
+      "customTitle": "Custom Agents",
+      "builtinTitle": "Built-in Agents",
+      "customEmpty": "No custom Agents match the current search.",
+      "needsAttentionTitle": "Needs attention",
+      "conflictsTitle": "Definition conflicts",
+      "invalidTitle": "Invalid custom definitions",
+      "saved": "Agent saved",
+      "loadError": "Unable to load Agent definitions.",
+      "refreshing": "Refreshing Agent definitions…",
+      "refreshError": "Unable to refresh Agent definitions. Previously loaded data remains visible.",
+      "runtimeError": "Unable to resolve Agent paths and detection for the current Environment. Definitions remain available.",
+      "saveError": "Failed to save Agent",
+      "duplicateError": "Failed to duplicate Agent definition",
+      "deletePreviewError": "Could not inspect the effects of deleting this Agent definition",
+      "invalidDeleteError": "Failed to delete the invalid Agent record",
+      "reviewInvalid": "Review invalid Agent record",
+      "invalidDetailTitle": "Review invalid Agent record",
+      "invalidDetailDescription": "This raw record cannot be used as an Agent definition. Review it before deleting it.",
+      "confirmInvalidDelete": "Delete invalid record",
+      "configurationCompletionError": "Unable to finish the Agent configuration request. Try again.",
+      "configurationPending": {
+        "title": "Agent saved",
+        "description": "The definition was written, but Skill Deck could not return to the install wizard. Retry this step without saving the definition again."
+      },
+      "deleted": "Agent definition deleted",
+      "deleteError": "Failed to delete Agent definition",
+      "deleteTitle": "Delete {{name}}?",
+      "deleteDescription": "This removes the custom Agent definition from Skill Deck.",
+      "deleteFilesSafe": "Installed Skill files and Agent directories will not be deleted.",
+      "deleteManagementWarning": "Skills currently associated with this Agent may no longer be detected or managed until the definition is added again.",
+      "deleteDefaultReferenced": "Current default target",
+      "deleteObservedSkillCount": "{{count}}{{suffix}} Skill(s) detected",
+      "deletePathUnavailable": "This path cannot be resolved in the current environment",
+      "deletePathKind": {
+        "shared": "Shared directory",
+        "private": "Agent directory"
+      },
+      "deleteConfirmId": "Enter the Agent ID to confirm",
+      "deleteConfirmHint": "Enter {{id}}. This removes only the definition and default references, not files.",
+      "confirmDelete": "Delete definition",
+      "scope": {
+        "both": "Global and Project",
+        "global": "Global",
+        "project": "Project",
+        "none": "No supported scope"
+      },
+      "fields": {
+        "id": "Agent ID",
+        "displayName": "Display name",
+        "directoryLocation": "Directory location",
+        "pathKind": "Path type",
+        "pathBase": "Path base",
+        "relativePath": "Relative path",
+        "absolutePath": "Absolute path"
+      },
+      "basicInfo": {
+        "title": "Basic information"
+      },
+      "skillReading": {
+        "title": "Skill read directories",
+        "readMethod": "Read location"
+      },
+      "installDetection": {
+        "title": "Agent installation detection",
+        "hint": "Skill Deck considers this Agent installed when any configured path exists."
+      },
+      "pathKinds": {
+        "based": "Based path",
+        "absolute": "Absolute path"
+      },
+      "absolutePathHint": "Absolute paths are resolved as written in each Environment. Verify that Host and WSL paths both match your intent.",
+      "locations": {
+        "shared": "Shared directory only",
+        "private": "Agent directory only",
+        "both": "Both directories"
+      },
+      "detectionReasons": {
+        "projectContextRequired": "Detection must be evaluated in a specific Project",
+        "environmentUnavailable": "The current Environment is unavailable"
+      },
+      "readMode": {
+        "shared": "Reads only the shared directory",
+        "private": "Reads only the Agent directory",
+        "both": "Reads both the shared and Agent directories",
+        "globalUnsupported": "Does not read Global Skills",
+        "projectUnsupported": "Does not read Project Skills"
+      },
+      "directoryKind": {
+        "shared": "Shared directory",
+        "private": "Agent directory"
+      },
+      "sharedDirectories": {
+        "title": "Shared Skill directories",
+        "cardLabel": "Shared directory",
+        "sharedAriaLabel": "{{scope}}: reads the shared Skill directory",
+        "privateAriaLabel": "{{scope}}: reads this Agent's Skill directory",
+        "bothAriaLabel": "{{scope}}: reads the shared Skill directory and this Agent's Skill directory"
+      },
+      "pathBases": {
+        "home": "Home",
+        "homeCompact": "Home (~)",
+        "configHome": "Config home",
+        "project": "Project"
+      },
+      "pathLocations": {
+        "home": "Home directory",
+        "configHome": "Configuration directory",
+        "project": "Project directory",
+        "absolute": "Absolute path"
+      },
+      "global": {
+        "title": "Global",
+        "readTitle": "Global",
+        "description": "Choose which Skill locations this Agent reads in Global scope.",
+        "enabled": "Enable Global",
+        "location": "Global read location",
+        "directoryLocation": "Global directory location",
+        "pathKind": "Global path type"
+      },
+      "project": {
+        "title": "Project",
+        "readTitle": "Project",
+        "description": "Choose which Skill locations this Agent reads in Project scope.",
+        "enabled": "Enable Project",
+        "location": "Project read location",
+        "relativePath": "Project-relative path",
+        "pathPrefix": "In project /",
+        "relativeHint": "The path is relative to the current project root."
+      },
+      "detection": {
+        "title": "Agent detection",
+        "cardLabel": "Detection",
+        "cardTooltip": "Agent installation detection paths",
+        "directoryLocation": "Detection directory location",
+        "kind": "Detection path type",
+        "based": "Based path",
+        "absolute": "Absolute path",
+        "path": "Detection path",
+        "add": "Add detection path",
+        "remove": "Remove detection path",
+        "morePaths": "{{count}} more detection paths",
+        "absolutePlaceholder": "Absolute path checked in the current environment",
+        "hint": "The Agent is detected when any configured path exists. Absolute paths are resolved inside the selected environment.",
+        "anyPathExists": "The Agent is detected when any configured path exists.",
+        "eve": "Detection uses the Eve package and Agent configuration in the current Project."
+      },
+      "preview": {
+        "title": "Current Environment preview",
+        "validating": "Resolving paths and detection status…",
+        "currentEnvironment": "These paths are display-only and never authorize file operations.",
+        "detectionLabel": "Detection",
+        "detection": {
+          "detected": "Detected",
+          "notDetected": "Not detected",
+          "indeterminate": "Unable to determine",
+          "loading": "Loading…",
+          "unavailable": "Detection unavailable"
+        },
+        "noReadPath": "This scope does not currently read Skills"
+      },
+      "validation": {
+        "required": "This field is required",
+        "invalidAgentId": "Use lowercase letters, numbers, and hyphens with no empty segments",
+        "duplicateAgentId": "This Agent ID already exists",
+        "invalidRelativePath": "Enter a relative path without . or .. segments",
+        "invalidAbsolutePath": "Enter a complete normalized absolute path",
+        "projectBaseNotAllowed": "Global paths cannot use the project directory",
+        "absolutePathNotAllowed": "Project paths cannot be absolute",
+        "forbidden": "The selected read location does not use an Agent directory path",
+        "invalidDefinition": "The definition format is invalid",
+        "invalidScope": "The scope configuration is invalid"
+      },
+      "storageIssues": {
+        "customAgentStorageUnavailable": "Custom Agent configuration is read-only. Built-in Agents remain available; repair the configuration file before changing definitions."
+      },
+      "stale": {
+        "title": "The Agent list changed elsewhere",
+        "description": "Reload the latest definitions and review this draft. Skill Deck will not overwrite external changes automatically.",
+        "reload": "Reload and review",
+        "deletedTitle": "This Agent definition was deleted",
+        "deletedDescription": "The definition being edited was not found after reloading. This draft will not overwrite the external deletion; close the dialog and add it again if needed."
+      },
+      "warnings": {
+        "defaultCleanupFailed": "The Agent was deleted, but old default references could not be cleaned up. They will be removed the next time defaults are saved."
+      },
+      "dirtyRequest": {
+        "title": "Discard the unsaved Agent?",
+        "description": "The install wizard requested another Agent. Continue discards this draft; staying keeps it and cancels the incoming request.",
+        "stay": "Stay here",
+        "continue": "Continue and discard"
+      },
+      "dirtyNavigation": {
+        "title": "Discard unsaved changes?",
+        "description": "Returning to the Agent list will discard this draft.",
+        "stay": "Keep editing",
+        "discard": "Discard and return"
+      }
     },
     "git": {
       "title": "Git",
@@ -427,6 +786,8 @@
       "upToDate": "You're up to date",
       "checkError": "Failed to check for updates",
       "downloading": "Downloading v{{version}}...",
+      "hide": "Hide",
+      "viewProgress": "View download progress",
       "restartNow": "Restart Now",
       "later": "Later",
       "dismiss": "Dismiss",
@@ -451,7 +812,12 @@
       "newVersionTitle": "New version v{{version}} available",
       "updatingTitle": "Updating to v{{version}}",
       "noReleaseNotes": "View details on GitHub",
-      "retry": "Retry"
+      "retry": "Retry",
+      "hide": "Hide",
+      "errorTitle": "Update could not be completed",
+      "errorDescription": "Your current version is unchanged. You can hide this dialog and retry later.",
+      "installError": "The update could not be downloaded or installed.",
+      "downloadProgressLabel": "Application update download progress"
     }
   },
   "theme": {
@@ -494,6 +860,8 @@
     "phase": {
       "preparing": "Preparing",
       "acquiring": "Fetching source",
+      "validating": "Validating update",
+      "updating": "Applying update",
       "materializing": "Writing files",
       "committing": "Saving metadata",
       "finishing": "Finishing"
@@ -518,6 +886,61 @@
       "cancelling": "Cancelling operation...",
       "checkFailed": "Could not confirm the current operation status. Try again shortly.",
       "cancelFailed": "Could not cancel the operation. Try again shortly."
+    },
+    "result": {
+      "location": "{{environment}} / {{scope}}",
+      "scope": {
+        "project": "Project"
+      },
+      "status": {
+        "succeeded": "Succeeded",
+        "acquired": "Fetched",
+        "failed": "Failed",
+        "skipped": "Skipped",
+        "cancelled": "Cancelled",
+        "notRun": "Not run",
+        "recoveryRequired": "Recovery required"
+      },
+      "modes": {
+        "symlink": "Symbolic link",
+        "copy": "Copy"
+      },
+      "errors": {
+        "unknown": "The operation failed for an unknown reason.",
+        "validation": "The request is no longer valid. Review it and try again.",
+        "environmentUnavailable": "The selected environment is unavailable.",
+        "environmentChanged": "The environment changed. Review the refreshed plan.",
+        "contextChanged": "The selected context changed. Review the refreshed plan.",
+        "storageUnsupported": "This storage location is not supported for the operation.",
+        "capabilityUnavailable": "The selected environment cannot perform this operation.",
+        "unsafePath": "The target path is outside the allowed Skill locations.",
+        "unsafeSourceLink": "The source contains a link that cannot be copied safely.",
+        "selfCopy": "The source and destination resolve to the same physical location.",
+        "payloadSessionExpired": "The source snapshot expired. Create a fresh preview.",
+        "staleContext": "The context changed after preview. Review the refreshed plan.",
+        "staleRegistry": "The Agent registry changed after preview. Review the refreshed plan.",
+        "staleEnvironment": "The environment changed after preview. Review the refreshed plan.",
+        "stalePayload": "The Skill content changed after preview. Review the refreshed plan.",
+        "staleTarget": "A destination changed after preview. Review the refreshed plan.",
+        "externalLockChanged": "The Skill lock was changed by another process.",
+        "mutationCancelled": "The operation was cancelled.",
+        "executionFailed": "The operation could not be completed.",
+        "restoreFailed": "Automatic restore did not complete.",
+        "recoveryRequired": "Review the recovery data before continuing.",
+        "configurationReadOnly": "The configuration is newer than this app and is read-only.",
+        "configurationCorrupted": "The configuration could not be read safely."
+      },
+      "fallbacks": {
+        "symlinkUnavailable": "Copied because a symbolic link was unavailable.",
+        "crossStorageCopyRequired": "Copied because the destination uses different storage.",
+        "targetCapabilityFallback": "Used a compatible installation mode for this target."
+      },
+      "warnings": {
+        "defaultTargetCleanupFailed": "The Skill changed, but an obsolete default target reference could not be cleaned up.",
+        "backupCleanupFailed": "The operation succeeded, but temporary recovery data could not be removed.",
+        "remoteHashRefreshFailed": "The Skill changed, but update-check metadata could not be refreshed.",
+        "cleanupMarkerRetained": "The operation succeeded, but a cleanup marker was retained for safety."
+      }
     }
   },
   "crossStorage": {
@@ -603,18 +1026,28 @@
       "privateCopyHint": "These Agents can already use the shared Skill directory. Select an Agent only when you also want to keep a link or copy in its own Skill directory; copied files may not update with the shared Skill.",
       "privateCopySelected": "{{count}} selected",
       "targetTitle": "Target agents",
+      "loadError": "Could not load Agents for the selected Environment.",
       "concreteTargetsTitle": "Project-local targets",
       "concreteTargetsHint": "Choose the project-local targets to install to, such as Eve root or subagents.",
-      "expandOtherAgents": "Show {{count}} Agents that are not detected",
+      "expandOtherAgents": "Show {{count}} other Agents",
       "collapseOtherAgents": "Collapse agents",
       "noneSelected": "None selected",
-      "moreUndetected": "+ {{count}} not detected",
-      "undetectedListPrefix": "These Agents read the shared Skill directory, but were not detected",
-      "viewUndetectedInfo": "View {{count}} ready-to-use Agents that were not detected",
+      "moreUndetected": "+ {{count}} other",
+      "undetectedListPrefix": "These Agents read the shared Skill directory, but their current detection state is not confirmed",
+      "viewUndetectedInfo": "View {{count}} other ready-to-use Agents",
       "detected": "Detected",
       "notDetected": "Not detected",
+      "indeterminate": "Unable to determine",
       "noAutomaticAgents": "No related agents were detected.",
-      "noDefaultAvailableAgents": "No ready-to-use Agents were detected."
+      "noDefaultAvailableAgents": "No ready-to-use Agents were detected.",
+      "unknownTitle": "Unknown Agents",
+      "unknownHint": "These Agent IDs came from the install request but are not defined in Skill Deck yet.",
+      "configureUnknown": "Configure Agent",
+      "configurationResult": {
+        "saved": "The Agent was added and selected.",
+        "cancelled": "Agent configuration was cancelled.",
+        "failed": "Agent configuration could not be completed."
+      }
     },
     "scope": {
       "title": "Usage Scope",
@@ -708,7 +1141,15 @@
       "copied": "copied",
       "skipped": "Not written: {{agents}}",
       "symlinkFailed": "Symlinks failed for: {{agents}}",
-      "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support."
+      "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support.",
+      "recoveryRequired": "Recovery required",
+      "status": {
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "skipped": "Skipped",
+        "cancelled": "Cancelled",
+        "notRun": "Not run"
+      }
     },
     "error": {
       "title": "Installation Failed",
@@ -737,6 +1178,13 @@
       "wslCommandFailed": "The WSL command failed (exit code: {{exitCode}})",
       "environmentUnavailable": "The selected environment is unavailable",
       "storageMappingUnsupported": "The path cannot be accessed from the selected environment: {{path}}",
+      "configurationReadOnly": "Agent configuration is read-only because it uses an unsupported version.",
+      "payloadStorageRequiresCleanup": "Temporary Skill storage requires cleanup before another operation can start.",
+      "runtimeMaintenance": "Runtime maintenance is not ready, so Skill operations are temporarily paused. Try again shortly.",
+      "staleState": "The installation facts changed. Refresh the preview and confirm again.",
+      "storageUnsupported": "The selected storage location is not supported.",
+      "selfCopy": "The source and destination resolve to the same physical location.",
+      "externalLockChanged": "The Skill lock changed outside Skill Deck. Refresh and try again.",
       "lockConflict": "{{skill}} changed in the Skill lock. Refresh and try again.",
       "agentDefaultsConflict": "Agent defaults changed in the Skill lock. Refresh and try again.",
       "riskConfirmationRequired": "This source requires risk confirmation before installation",
@@ -759,6 +1207,7 @@
         "reselectAgents": "Go back and reselect agents",
         "reviewRiskAndConfirm": "Go back to the confirmation step, review the risk warning, and confirm manually",
         "chooseAccessiblePath": "Choose a path that is accessible from the selected environment",
+        "chooseWritableConfiguration": "Choose an environment with writable Agent configuration",
         "retryOrContact": "Check the error details and retry, or check logs if the issue persists"
       },
       "actions": {

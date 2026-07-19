@@ -32,8 +32,6 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.error.invalidAgent', { agent: error.data.agent });
     case 'pathNotFound':
       return t('addSkill.error.pathNotFound', { path: error.data.path });
-    case 'installFailed':
-      return error.data.message;
     case 'installRiskConfirmationRequired':
       return t('addSkill.error.riskConfirmationRequired');
     case 'mutationBusy':
@@ -62,6 +60,42 @@ export function formatAppError(error: AppError, t: TFunction): string {
         path: error.data.path,
       });
     case 'projectMigrationFailed':
+      return error.data.message;
+    case 'configurationReadOnly':
+      return t('addSkill.error.configurationReadOnly');
+    case 'payloadStorageRequiresCleanup':
+      return t('addSkill.error.payloadStorageRequiresCleanup');
+    case 'validation':
+      return error.data.message;
+    case 'environmentChanged':
+    case 'contextChanged':
+    case 'payloadSessionExpired':
+    case 'staleContext':
+    case 'staleRegistry':
+    case 'staleEnvironment':
+    case 'stalePayload':
+    case 'staleTarget':
+    case 'staleAgentRuntime':
+      return t('addSkill.error.staleState');
+    case 'storageUnsupported':
+    case 'unsafePath':
+    case 'unsafeSourceLink':
+      return t('addSkill.error.storageUnsupported');
+    case 'capabilityUnavailable':
+      if (error.kind === 'capabilityUnavailable'
+        && (error.data.capability === 'runtimeMaintenancePending'
+          || error.data.capability === 'runtimeMaintenanceFailed')) {
+        return t('addSkill.error.runtimeMaintenance');
+      }
+      return t('addSkill.error.storageUnsupported');
+    case 'selfCopy':
+      return t('addSkill.error.selfCopy');
+    case 'externalLockChanged':
+      return t('addSkill.error.externalLockChanged');
+    case 'executionFailed':
+    case 'restoreFailed':
+    case 'recoveryRequired':
+    case 'configurationCorrupted':
       return error.data.message;
     case 'lockConflict': {
       const { target } = error.data;

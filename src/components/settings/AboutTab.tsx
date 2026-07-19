@@ -12,7 +12,15 @@ import logoUrl from '@/assets/logo.png';
 
 export function AboutTab() {
   const { t } = useTranslation();
-  const { status: updateStatus, newVersion, downloadProgress, lastCheckTime, checkForUpdate } = useUpdaterStore();
+  const {
+    status: updateStatus,
+    newVersion,
+    downloadProgress,
+    failedOperation,
+    lastCheckTime,
+    checkForUpdate,
+    showDialog,
+  } = useUpdaterStore();
   const { requestAction } = useWindowLifecycle();
 
   const [version, setVersion] = useState('');
@@ -98,15 +106,20 @@ export function AboutTab() {
       {/* Primary Action (Update) & Copyright */}
       <div className="flex flex-col items-center space-y-4 w-full">
         <div className="flex flex-col items-center justify-center min-h-[60px]">
-          {updateStatus === 'checking' || updateStatus === 'downloading' ? (
+          {updateStatus === 'checking' ? (
             <div className="flex flex-col items-center space-y-2">
               <Button disabled className="h-9 px-5 rounded-lg shadow-xs gap-2 w-48 transition-all font-semibold">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                {updateStatus === 'checking' ? t('settings.update.checking') : `${t('settings.update.downloading', '正在下载')} ${downloadProgress}%`}
+                {t('settings.update.checking')}
               </Button>
-              {updateStatus === 'downloading' && (
-                <Progress value={downloadProgress} className="h-1.5 w-48 opacity-80" />
-              )}
+            </div>
+          ) : updateStatus === 'downloading' ? (
+            <div className="flex flex-col items-center space-y-2">
+              <Button onClick={showDialog} className="h-9 px-5 rounded-lg shadow-xs gap-2 w-48 transition-all font-semibold">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                {t('settings.update.viewProgress')}
+              </Button>
+              <Progress value={downloadProgress} className="h-1.5 w-48 opacity-80" />
             </div>
           ) : updateStatus === 'ready' ? (
             <div className="flex flex-col items-center space-y-2">
@@ -116,6 +129,26 @@ export function AboutTab() {
               </Button>
               <span className="text-[11px] text-emerald-600 font-medium tracking-tight">
                 {t('settings.update.readyToRestart', { version: newVersion })}
+              </span>
+            </div>
+          ) : updateStatus === 'available'
+            || (updateStatus === 'error' && failedOperation === 'install') ? (
+            <div className="flex flex-col items-center space-y-2">
+              <Button
+                onClick={showDialog}
+                className="h-9 px-5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs gap-2 w-48 transition-all font-semibold active:scale-[0.98]"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                {t('settings.update.viewUpdate')}
+              </Button>
+              <span className="text-[11px] font-medium">
+                {updateStatus === 'available' ? (
+                  <span className="text-primary">
+                    {t('settings.update.updateAvailable', { version: newVersion })}
+                  </span>
+                ) : (
+                  <span className="text-destructive">{t('settings.update.installError')}</span>
+                )}
               </span>
             </div>
           ) : (
@@ -128,9 +161,7 @@ export function AboutTab() {
                 {t('settings.update.checkForUpdates', '检测更新')}
               </Button>
               <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
-                {updateStatus === 'available' ? (
-                  <span className="text-primary">{t('settings.update.updateAvailable', { version: newVersion })}</span>
-                ) : updateStatus === 'error' ? (
+                {updateStatus === 'error' ? (
                   <span className="text-destructive">{t('settings.update.checkError')}</span>
                 ) : lastCheckTime ? (
                   <>
