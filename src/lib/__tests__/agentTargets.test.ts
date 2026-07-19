@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentInfo } from '@/bindings';
-import { makeAgentScopeTarget } from '@/test-utils';
+import type { ResolvedAgent, ResolvedAgentScope } from '@/bindings';
+import { makeResolvedAgent } from '@/test-utils';
 import {
+  canCreatePrivateCopy,
   filterAdditionalAgentIds,
   formatAgentTargetPath,
+  getAgentDisplayPath,
+  getAgentInstallPath,
   getSharedSkillDirectory,
   groupAgentsByScopedTarget,
   migrateDefaultTargetAgents,
@@ -11,36 +14,36 @@ import {
 
 function makeAgent(
   id: string,
-  globalAutomatic: boolean,
-  projectAutomatic: boolean,
-  detected = true,
+  globalReadsShared: boolean,
+  projectReadsShared: boolean,
+  detection: ResolvedAgent['detection'] = 'detected',
   targetOverrides: {
-    global?: Partial<AgentInfo['targets']['global']>;
-    project?: Partial<AgentInfo['targets']['project']>;
+    global?: Partial<ResolvedAgentScope>;
+    project?: Partial<ResolvedAgentScope>;
   } = {},
-): AgentInfo {
-  return {
-    id: id as AgentInfo['id'],
-    name: id,
-    skillsDir: projectAutomatic ? '.agents/skills' : `.${id}/skills`,
-    globalSkillsDir: globalAutomatic ? '~/.agents/skills' : `~/.${id}/skills`,
-    detected,
-    targets: {
-      global: {
-        ...makeAgentScopeTarget({
-          automatic: globalAutomatic,
-          path: globalAutomatic ? '~/.agents/skills' : `~/.${id}/skills`,
-          ...targetOverrides.global,
-        }),
-      },
-      project: makeAgentScopeTarget({
-        automatic: projectAutomatic,
-        path: projectAutomatic ? '.agents/skills' : `.${id}/skills`,
-        sharedPath: './.agents/skills',
-        ...targetOverrides.project,
-      }),
+): ResolvedAgent {
+  return makeResolvedAgent({
+    id,
+    detection,
+    global: {
+      readsShared: globalReadsShared,
+      sharedPath: '/home/alice/.agents/skills',
+      privatePath: globalReadsShared ? null : `/home/alice/.${id}/skills`,
+      readPaths: globalReadsShared
+        ? ['/home/alice/.agents/skills']
+        : [`/home/alice/.${id}/skills`],
+      ...targetOverrides.global,
     },
-  };
+    project: {
+      readsShared: projectReadsShared,
+      sharedPath: '/work/app/.agents/skills',
+      privatePath: projectReadsShared ? null : `/work/app/.${id}/skills`,
+      readPaths: projectReadsShared
+        ? ['/work/app/.agents/skills']
+        : [`/work/app/.${id}/skills`],
+      ...targetOverrides.project,
+    },
+  });
 }
 
 describe('agent target helpers', () => {
@@ -49,7 +52,7 @@ describe('agent target helpers', () => {
     expect(getSharedSkillDirectory('project')).toBe('./.agents/skills');
   });
 
-  it('filters automatic agents from additional defaults per scope', () => {
+  it('filters shared-reading agents from additional defaults per scope', () => {
     const agents = [
       makeAgent('antigravity', false, true),
       makeAgent('warp', true, true),
@@ -76,85 +79,108 @@ describe('agent target helpers', () => {
       });
   });
 
-  it('drops unsupported and unknown agent ids', () => {
-    const unsupported = makeAgent('unsupported', false, false);
-    unsupported.targets.global.supported = false;
+  it('drops disabled and unknown agent ids', () => {
+    const disabled = makeAgent('disabled', false, false, 'detected', {
+      global: { enabled: false },
+    });
 
-    expect(filterAdditionalAgentIds(['unsupported', 'missing'], [unsupported], 'global'))
+    expect(filterAdditionalAgentIds(['disabled', 'missing'], [disabled], 'global'))
       .toEqual([]);
   });
 
-  it('groups scoped targets by automatic, visible selectable, and hidden selectable state', () => {
-    const automaticDetected = makeAgent('automatic-detected', true, true);
-    const automaticUndetected = makeAgent('automatic-undetected', true, true, false);
-    const selectableDetected = makeAgent('selectable-detected', false, false);
-    const selectableSelected = makeAgent('selectable-selected', false, false, false);
-    const selectableHidden = makeAgent('selectable-hidden', false, false, false);
-    const unsupported = makeAgent('unsupported', false, false);
-    unsupported.targets.global.supported = false;
+  it('groups scoped targets by detection, saved selection, and private requirement', () => {
+    const sharedDetected = makeAgent('shared-detected', true, true);
+    const sharedUndetected = makeAgent('shared-undetected', true, true, 'notDetected');
+    const privateDetected = makeAgent('private-detected', false, false);
+    const privateSelected = makeAgent('private-selected', false, false, 'indeterminate');
+    const privateHidden = makeAgent('private-hidden', false, false, 'notDetected');
+    const disabled = makeAgent('disabled', false, false, 'detected', {
+      global: { enabled: false },
+    });
 
     const groups = groupAgentsByScopedTarget(
       [
-        automaticDetected,
-        automaticUndetected,
-        selectableDetected,
-        selectableSelected,
-        selectableHidden,
-        unsupported,
+        sharedDetected,
+        sharedUndetected,
+        privateDetected,
+        privateSelected,
+        privateHidden,
+        disabled,
       ],
       'global',
-      new Set(['selectable-selected'])
+      new Set(['private-selected']),
     );
 
-    expect(groups.detectedAutomatic.map((agent) => agent.id)).toEqual(['automatic-detected']);
-    expect(groups.undetectedAutomatic.map((agent) => agent.id)).toEqual(['automatic-undetected']);
-    expect(groups.detectedSelectableAgents.map((agent) => agent.id)).toEqual(['selectable-detected']);
-    expect(groups.visibleSelectableAgents.map((agent) => agent.id)).toEqual([
-      'selectable-detected',
-      'selectable-selected',
-    ]);
-    expect(groups.hiddenSelectableAgents.map((agent) => agent.id)).toEqual(['selectable-hidden']);
+    expect(groups.detectedAutomatic.map((agent) => agent.definition.id))
+      .toEqual(['shared-detected']);
+    expect(groups.undetectedAutomatic.map((agent) => agent.definition.id))
+      .toEqual(['shared-undetected']);
+    expect(groups.detectedSelectableAgents.map((agent) => agent.definition.id))
+      .toEqual(['private-detected']);
+    expect(groups.visibleSelectableAgents.map((agent) => agent.definition.id))
+      .toEqual(['private-detected', 'private-selected']);
+    expect(groups.hiddenSelectableAgents.map((agent) => agent.definition.id))
+      .toEqual(['private-hidden']);
     expect(groups.selectableCount).toBe(3);
   });
 
-  it('groups default-available agents separately from private-required agents', () => {
-    const defaultAgent = makeAgent('codex', true, true, true, {
+  it('keeps undetected user-defined agents in the primary workflow groups', () => {
+    const sharedCustom = makeResolvedAgent({
+      id: 'shared-custom',
+      source: 'custom',
+      detection: 'notDetected',
       global: {
-        availability: 'shared-compatible',
-        defaultAvailable: true,
+        readsShared: true,
+        sharedPath: '/home/alice/.agents/skills',
+        privatePath: '/home/alice/.shared-custom/skills',
       },
     });
-    const privateAgent = makeAgent('cursor', false, true, true, {
+    const privateCustom = makeResolvedAgent({
+      id: 'private-custom',
+      source: 'custom',
+      detection: 'indeterminate',
       global: {
-        availability: 'private-required',
-        defaultAvailable: false,
+        readsShared: false,
+        sharedPath: '/home/alice/.agents/skills',
+        privatePath: '/home/alice/.private-custom/skills',
       },
     });
 
-    const groups = groupAgentsByScopedTarget([defaultAgent, privateAgent], 'global');
+    const groups = groupAgentsByScopedTarget(
+      [sharedCustom, privateCustom],
+      'global',
+    );
 
-    expect(groups.detectedDefaultAvailable.map((agent) => agent.id)).toEqual(['codex']);
-    expect(groups.detectedPrivateRequired.map((agent) => agent.id)).toEqual(['cursor']);
+    expect(groups.visibleDefaultAvailableAgents.map((agent) => agent.definition.id))
+      .toEqual(['shared-custom']);
+    expect(groups.hiddenDefaultAvailableAgents).toEqual([]);
+    expect(groups.visiblePrivateRequiredAgents.map((agent) => agent.definition.id))
+      .toEqual(['private-custom']);
+    expect(groups.hiddenPrivateRequiredAgents).toEqual([]);
+    expect(groups.notDetectedDefaultAvailable).toEqual([sharedCustom]);
+    expect(groups.indeterminateDefaultAvailable).toEqual([]);
   });
 
-  it('filters default-available agents from default target preferences', () => {
-    const agents = [
-      makeAgent('firebender', true, true, true, {
-        global: {
-          availability: 'shared-compatible',
-          defaultAvailable: true,
-        },
-      }),
-      makeAgent('cursor', false, true, true, {
-        global: {
-          availability: 'private-required',
-          defaultAvailable: false,
-        },
-      }),
-    ];
+  it('derives display and install paths for Shared, Private, and Both', () => {
+    const shared = makeAgent('shared', true, true);
+    const privateAgent = makeAgent('private', false, false);
+    const both = makeAgent('both', true, true, 'detected', {
+      global: {
+        privatePath: '/home/alice/.both/skills',
+        readPaths: [
+          '/home/alice/.agents/skills',
+          '/home/alice/.both/skills',
+        ],
+      },
+    });
 
-    expect(filterAdditionalAgentIds(['firebender', 'cursor'], agents, 'global'))
-      .toEqual(['cursor']);
+    expect(getAgentDisplayPath(shared, 'global')).toBe('/home/alice/.agents/skills');
+    expect(getAgentInstallPath(shared, 'global')).toBe('/home/alice/.agents/skills');
+    expect(getAgentDisplayPath(privateAgent, 'global')).toBe('/home/alice/.private/skills');
+    expect(getAgentInstallPath(privateAgent, 'global')).toBe('/home/alice/.private/skills');
+    expect(getAgentDisplayPath(both, 'global')).toBe('/home/alice/.both/skills');
+    expect(getAgentInstallPath(both, 'global')).toBe('/home/alice/.agents/skills');
+    expect(canCreatePrivateCopy(both, 'global')).toBe(true);
   });
 
   it('normalizes local target paths for display on Windows', () => {

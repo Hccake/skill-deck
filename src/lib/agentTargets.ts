@@ -1,4 +1,10 @@
-import type { AgentInfo, DefaultTargetAgents } from '@/bindings';
+import type {
+  AgentId,
+  DefaultTargetAgents,
+  ResolvedAgent,
+  ResolvedAgentScope,
+} from '@/bindings';
+import { agentId, isAgentDetected } from './agents';
 
 export type InstallScope = 'global' | 'project';
 
@@ -16,68 +22,124 @@ export function getSharedSkillDirectory(scope: InstallScope) {
   return SHARED_SKILL_DIRECTORIES[scope];
 }
 
-export function getAgentTarget(agent: AgentInfo, scope: InstallScope) {
-  return agent.targets[scope];
+export function getAgentTarget(
+  agent: ResolvedAgent,
+  scope: InstallScope,
+): ResolvedAgentScope {
+  return agent[scope];
 }
 
-export function isDefaultAvailableAgent(agent: AgentInfo, scope: InstallScope): boolean {
+export function getAgentDisplayPath(
+  agent: ResolvedAgent,
+  scope: InstallScope,
+): string | null {
   const target = getAgentTarget(agent, scope);
-  return target.supported && target.defaultAvailable;
+  return target.privatePath ?? target.sharedPath;
 }
 
-export function isPrivateRequiredAgent(agent: AgentInfo, scope: InstallScope): boolean {
+export function getAgentInstallPath(
+  agent: ResolvedAgent,
+  scope: InstallScope,
+): string | null {
   const target = getAgentTarget(agent, scope);
-  return target.supported && !target.defaultAvailable;
+  return target.readsShared ? target.sharedPath : target.privatePath;
 }
 
-export function canCreatePrivateCopy(agent: AgentInfo, scope: InstallScope): boolean {
+export function isDefaultAvailableAgent(
+  agent: ResolvedAgent,
+  scope: InstallScope,
+): boolean {
   const target = getAgentTarget(agent, scope);
-  return target.supported
-    && target.defaultAvailable
-    && target.privatePath !== null
-    && target.availability === 'shared-compatible';
+  return target.enabled && target.readsShared;
+}
+
+export function isPrivateRequiredAgent(
+  agent: ResolvedAgent,
+  scope: InstallScope,
+): boolean {
+  const target = getAgentTarget(agent, scope);
+  return target.enabled && !target.readsShared && target.privatePath !== null;
+}
+
+export function canCreatePrivateCopy(
+  agent: ResolvedAgent,
+  scope: InstallScope,
+): boolean {
+  const target = getAgentTarget(agent, scope);
+  return target.enabled && target.readsShared && target.privatePath !== null;
 }
 
 export const isAutomaticAgent = isDefaultAvailableAgent;
 export const isAdditionalAgent = isPrivateRequiredAgent;
 
 export interface ScopedAgentGroups {
-  detectedDefaultAvailable: AgentInfo[];
-  undetectedDefaultAvailable: AgentInfo[];
-  detectedPrivateRequired: AgentInfo[];
-  visiblePrivateRequiredAgents: AgentInfo[];
-  hiddenPrivateRequiredAgents: AgentInfo[];
-  privateCopyEligibleAgents: AgentInfo[];
-  detectedAutomatic: AgentInfo[];
-  undetectedAutomatic: AgentInfo[];
-  detectedSelectableAgents: AgentInfo[];
-  visibleSelectableAgents: AgentInfo[];
-  hiddenSelectableAgents: AgentInfo[];
+  detectedDefaultAvailable: ResolvedAgent[];
+  undetectedDefaultAvailable: ResolvedAgent[];
+  notDetectedDefaultAvailable: ResolvedAgent[];
+  indeterminateDefaultAvailable: ResolvedAgent[];
+  visibleDefaultAvailableAgents: ResolvedAgent[];
+  hiddenDefaultAvailableAgents: ResolvedAgent[];
+  detectedPrivateRequired: ResolvedAgent[];
+  visiblePrivateRequiredAgents: ResolvedAgent[];
+  hiddenPrivateRequiredAgents: ResolvedAgent[];
+  privateCopyEligibleAgents: ResolvedAgent[];
+  detectedAutomatic: ResolvedAgent[];
+  undetectedAutomatic: ResolvedAgent[];
+  detectedSelectableAgents: ResolvedAgent[];
+  visibleSelectableAgents: ResolvedAgent[];
+  hiddenSelectableAgents: ResolvedAgent[];
   selectableCount: number;
 }
 
+export function shouldDisplayAgentInitially(
+  agent: ResolvedAgent,
+  explicitlySelected = false,
+): boolean {
+  return isAgentDetected(agent)
+    || agent.definition.source === 'custom'
+    || explicitlySelected;
+}
+
 export function groupAgentsByScopedTarget(
-  agents: AgentInfo[],
+  agents: ResolvedAgent[],
   scope: InstallScope,
-  selectedAgentIds: ReadonlySet<string> = new Set(),
+  selectedAgentIds: ReadonlySet<AgentId> = new Set(),
 ): ScopedAgentGroups {
-  const detectedDefaultAvailable: AgentInfo[] = [];
-  const undetectedDefaultAvailable: AgentInfo[] = [];
-  const detectedPrivateRequired: AgentInfo[] = [];
-  const visiblePrivateRequiredAgents: AgentInfo[] = [];
-  const hiddenPrivateRequiredAgents: AgentInfo[] = [];
-  const privateCopyEligibleAgents: AgentInfo[] = [];
+  const detectedDefaultAvailable: ResolvedAgent[] = [];
+  const undetectedDefaultAvailable: ResolvedAgent[] = [];
+  const notDetectedDefaultAvailable: ResolvedAgent[] = [];
+  const indeterminateDefaultAvailable: ResolvedAgent[] = [];
+  const visibleDefaultAvailableAgents: ResolvedAgent[] = [];
+  const hiddenDefaultAvailableAgents: ResolvedAgent[] = [];
+  const detectedPrivateRequired: ResolvedAgent[] = [];
+  const visiblePrivateRequiredAgents: ResolvedAgent[] = [];
+  const hiddenPrivateRequiredAgents: ResolvedAgent[] = [];
+  const privateCopyEligibleAgents: ResolvedAgent[] = [];
   let selectableCount = 0;
 
   for (const agent of agents) {
     const target = getAgentTarget(agent, scope);
-    if (!target.supported) continue;
+    if (!target.enabled) continue;
 
-    if (target.defaultAvailable) {
-      if (agent.detected) {
-        detectedDefaultAvailable.push(agent);
+    if (target.readsShared) {
+      switch (agent.detection) {
+        case 'detected':
+          detectedDefaultAvailable.push(agent);
+          break;
+        case 'notDetected':
+          notDetectedDefaultAvailable.push(agent);
+          undetectedDefaultAvailable.push(agent);
+          break;
+        case 'indeterminate':
+          indeterminateDefaultAvailable.push(agent);
+          undetectedDefaultAvailable.push(agent);
+          break;
+      }
+
+      if (shouldDisplayAgentInitially(agent, selectedAgentIds.has(agentId(agent)))) {
+        visibleDefaultAvailableAgents.push(agent);
       } else {
-        undetectedDefaultAvailable.push(agent);
+        hiddenDefaultAvailableAgents.push(agent);
       }
 
       if (canCreatePrivateCopy(agent, scope)) {
@@ -88,11 +150,11 @@ export function groupAgentsByScopedTarget(
 
     selectableCount += 1;
 
-    if (agent.detected) {
+    if (isAgentDetected(agent)) {
       detectedPrivateRequired.push(agent);
     }
 
-    if (agent.detected || selectedAgentIds.has(agent.id)) {
+    if (shouldDisplayAgentInitially(agent, selectedAgentIds.has(agentId(agent)))) {
       visiblePrivateRequiredAgents.push(agent);
     } else {
       hiddenPrivateRequiredAgents.push(agent);
@@ -102,6 +164,10 @@ export function groupAgentsByScopedTarget(
   return {
     detectedDefaultAvailable,
     undetectedDefaultAvailable,
+    notDetectedDefaultAvailable,
+    indeterminateDefaultAvailable,
+    visibleDefaultAvailableAgents,
+    hiddenDefaultAvailableAgents,
     detectedPrivateRequired,
     visiblePrivateRequiredAgents,
     hiddenPrivateRequiredAgents,
@@ -116,14 +182,14 @@ export function groupAgentsByScopedTarget(
 }
 
 export function filterAdditionalAgentIds(
-  ids: string[],
-  agents: AgentInfo[],
+  ids: AgentId[],
+  agents: ResolvedAgent[],
   scope: InstallScope,
-): string[] {
-  const agentById = new Map<string, AgentInfo>(
-    agents.map((agent) => [agent.id, agent])
+): AgentId[] {
+  const agentById = new Map<AgentId, ResolvedAgent>(
+    agents.map((agent) => [agentId(agent), agent])
   );
-  const result: string[] = [];
+  const result: AgentId[] = [];
 
   for (const id of ids) {
     const agent = agentById.get(id);
@@ -137,8 +203,8 @@ export function filterAdditionalAgentIds(
 }
 
 export function migrateDefaultTargetAgents(
-  lastSelectedAgents: string[],
-  agents: AgentInfo[],
+  lastSelectedAgents: AgentId[],
+  agents: ResolvedAgent[],
 ): DefaultTargetAgents {
   return {
     global: filterAdditionalAgentIds(lastSelectedAgents, agents, 'global'),

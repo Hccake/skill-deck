@@ -1,19 +1,21 @@
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Settings2, SlidersHorizontal, GitBranch, FolderOpen, Info } from 'lucide-react';
+import { Settings2, SlidersHorizontal, GitBranch, FolderOpen, Info, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { useProjectStore } from '@/stores/projects';
 import { environmentKey } from '@/lib/context';
 import { useSettingsStore, type AgentDefaultsSnapshot } from '@/stores/settings';
-import { AboutTab } from '@/components/settings/AboutTab';
-import { GeneralTab } from '@/components/settings/GeneralTab';
-import { GitSettingsPage } from '@/components/settings/GitSettingsPage';
-import { InstallPreferencesPage } from '@/components/settings/InstallPreferencesPage';
-import { ProjectsTab } from '@/components/settings/ProjectsTab';
+import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
 
-type SettingsSectionId = 'general' | 'install-preferences' | 'git' | 'projects' | 'about';
+const AboutTab = lazy(() => import('@/components/settings/AboutTab').then((module) => ({ default: module.AboutTab })));
+const GeneralTab = lazy(() => import('@/components/settings/GeneralTab').then((module) => ({ default: module.GeneralTab })));
+const GitSettingsPage = lazy(() => import('@/components/settings/GitSettingsPage').then((module) => ({ default: module.GitSettingsPage })));
+const InstallPreferencesPage = lazy(() => import('@/components/settings/InstallPreferencesPage').then((module) => ({ default: module.InstallPreferencesPage })));
+const ProjectsTab = lazy(() => import('@/components/settings/ProjectsTab').then((module) => ({ default: module.ProjectsTab })));
+const AgentSettingsPage = lazy(() => import('@/components/settings/AgentSettingsPage').then((module) => ({ default: module.AgentSettingsPage })));
+
+type SettingsSectionId = 'general' | 'agents' | 'install-preferences' | 'git' | 'projects' | 'about';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId;
@@ -24,6 +26,11 @@ const SETTINGS_SECTIONS: Array<{
     id: 'general',
     icon: Settings2,
     titleKey: 'settings.nav.general',
+  },
+  {
+    id: 'agents',
+    icon: Bot,
+    titleKey: 'settings.nav.agents',
   },
   {
     id: 'install-preferences',
@@ -43,10 +50,12 @@ const SETTINGS_SECTIONS: Array<{
 ];
 
 const DEFAULT_SECTION: SettingsSectionId = 'general';
-const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'install-preferences', 'git', 'projects', 'about'];
+const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'agents', 'install-preferences', 'git', 'projects', 'about'];
 
 const EMPTY_AGENT_DEFAULTS_SNAPSHOT: AgentDefaultsSnapshot = {
   agents: [],
+  selectionGroups: { global: [], project: [] },
+  registryRevision: '',
   defaults: { global: [], project: [] },
   loadState: 'idle',
   loadRequestId: 0,
@@ -61,11 +70,14 @@ function isSettingsSection(value: string | null): value is SettingsSectionId {
 
 export function SettingsPage() {
   const { t } = useTranslation();
+  const unsavedChanges = useOptionalUnsavedChanges();
   const [searchParams, setSearchParams] = useSearchParams();
+  const sectionParam = searchParams.get('section');
+  const activeSection: SettingsSectionId = isSettingsSection(sectionParam)
+    ? sectionParam
+    : DEFAULT_SECTION;
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const selectedEnvironmentKey = environmentKey(selectedContext.environment);
-  const projectLoadState = useProjectStore((state) => state.loadStateByEnvironment[selectedEnvironmentKey]);
-  const refreshProjects = useProjectStore((state) => state.refresh);
   const agentDefaultsSnapshot = useSettingsStore(
     (state) => state.agentDefaultsByEnvironment[selectedEnvironmentKey],
   );
@@ -73,12 +85,7 @@ export function SettingsPage() {
   const lastAgentDefaultsEnvironment = useRef<string | null>(null);
 
   useEffect(() => {
-    if (projectLoadState !== 'ready' && projectLoadState !== 'loading') {
-      void refreshProjects(selectedContext.environment);
-    }
-  }, [projectLoadState, refreshProjects, selectedContext.environment]);
-
-  useEffect(() => {
+    if (activeSection !== 'install-preferences') return;
     if (lastAgentDefaultsEnvironment.current === selectedEnvironmentKey) return;
     lastAgentDefaultsEnvironment.current = selectedEnvironmentKey;
     if (!agentDefaultsSnapshot
@@ -88,15 +95,11 @@ export function SettingsPage() {
     }
   }, [
     agentDefaultsSnapshot,
+    activeSection,
     loadAgentDefaults,
     selectedContext.environment,
     selectedEnvironmentKey,
   ]);
-
-  const sectionParam = searchParams.get('section');
-  const activeSection: SettingsSectionId = isSettingsSection(sectionParam)
-    ? sectionParam
-    : DEFAULT_SECTION;
 
   const setSection = (sectionId: SettingsSectionId) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -105,11 +108,41 @@ export function SettingsPage() {
     } else {
       nextParams.set('section', sectionId);
     }
-    setSearchParams(nextParams, { replace: false });
+    const navigate = () => setSearchParams(nextParams, { replace: false });
+    if (unsavedChanges) void unsavedChanges.guard(navigate);
+    else navigate();
   };
 
   const renderSection = () => {
     switch (activeSection) {
+      case 'agents':
+        return (
+          <AgentSettingsPage
+            context={selectedContext}
+            view={searchParams.get('view')}
+            agentId={searchParams.get('id')}
+            configurationAgentId={searchParams.get('configureAgent')}
+            onNavigate={(view, agentId) => {
+              const nextParams = new URLSearchParams(searchParams);
+              if (view === 'list') {
+                nextParams.delete('view');
+                nextParams.delete('id');
+                nextParams.delete('configureAgent');
+              } else {
+                nextParams.set('view', view);
+                if (agentId) nextParams.set('id', agentId);
+                else nextParams.delete('id');
+              }
+              setSearchParams(nextParams, { replace: false });
+            }}
+            onConfigurationRequestFinished={() => {
+              const nextParams = new URLSearchParams(searchParams);
+              nextParams.delete('configureAgent');
+              nextParams.delete('view');
+              setSearchParams(nextParams, { replace: true });
+            }}
+          />
+        );
       case 'install-preferences':
         return (
           <InstallPreferencesPage
@@ -206,7 +239,13 @@ export function SettingsPage() {
 
           <div className="min-h-0 flex-1">
             <div key={activeSection} className="animate-in fade-in duration-300 slide-in-from-bottom-1.5 h-full">
-              {renderSection()}
+              <Suspense fallback={(
+                <div role="status" className="py-10 text-center text-sm text-muted-foreground">
+                  {t('common.loading')}
+                </div>
+              )}>
+                {renderSection()}
+              </Suspense>
             </div>
           </div>
         </div>

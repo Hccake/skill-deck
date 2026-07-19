@@ -1,12 +1,12 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSelector } from '../AgentSelector';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import type { AgentInfo } from '@/bindings';
-import { makeAgentScopeTarget } from '@/test-utils';
+import type { ResolvedAgent, ResolvedAgentScope } from '@/bindings';
+import { makeResolvedScopeFixture, makeResolvedAgent } from '@/test-utils';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -24,6 +24,7 @@ vi.mock('react-i18next', () => ({
       if (key === 'addSkill.agents.privateRequiredHint') {
         return 'These Agents need to be connected to the Skill separately. When selected, install will create a link or copy for them.';
       }
+      if (key === 'addSkill.agents.configureUnknown') return 'Configure Agent';
       if (key === 'addSkill.agents.privateCopyTitle') {
         return 'Keep separately';
       }
@@ -35,69 +36,74 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-function makeAgent(agent: Omit<AgentInfo, 'targets'> & {
+function makeAgent(agent: {
+  id: string;
+  name: string;
+  skillsDir: string;
+  globalSkillsDir: string;
+  detected: boolean;
   globalAutomatic?: boolean;
   projectAutomatic?: boolean;
-}): AgentInfo {
+}): ResolvedAgent {
+  return makeResolvedAgent({
+    id: agent.id,
+    displayName: agent.name,
+    detection: agent.detected ? 'detected' : 'notDetected',
+    global: makeResolvedScopeFixture({
+      automatic: agent.globalAutomatic ?? false,
+      path: agent.globalSkillsDir,
+    }),
+    project: makeResolvedScopeFixture({
+      automatic: agent.projectAutomatic ?? false,
+      path: agent.skillsDir,
+      sharedPath: './.agents/skills',
+    }),
+  });
+}
+
+function withScopes(
+  agent: ResolvedAgent,
+  scopes: { global: ResolvedAgentScope; project: ResolvedAgentScope },
+  detection = agent.detection,
+): ResolvedAgent {
   return {
     ...agent,
-    targets: {
-      global: makeAgentScopeTarget({
-        automatic: agent.globalAutomatic ?? false,
-        path: agent.globalSkillsDir,
-      }),
-      project: makeAgentScopeTarget({
-        automatic: agent.projectAutomatic ?? false,
-        path: agent.skillsDir,
-        sharedPath: './.agents/skills',
-      }),
+    detection,
+    global: scopes.global,
+    project: scopes.project,
+    definition: {
+      ...agent.definition,
+      global: {
+        ...agent.definition.global,
+        enabled: scopes.global.enabled,
+        readsShared: scopes.global.readsShared,
+      },
+      project: {
+        ...agent.definition.project,
+        enabled: scopes.project.enabled,
+        readsShared: scopes.project.readsShared,
+      },
     },
   };
 }
 
-const agents: AgentInfo[] = [
-  {
-    ...makeAgent({
+const agents: ResolvedAgent[] = [
+  makeAgent({
     id: 'codex',
     name: 'Codex',
     skillsDir: '.agents/skills',
     globalSkillsDir: '~/.codex/skills',
     detected: true,
     projectAutomatic: true,
-    }),
-    targets: {
-      global: makeAgentScopeTarget({
-        automatic: false,
-        path: '~/.codex/skills',
-      }),
-      project: makeAgentScopeTarget({
-        automatic: true,
-        path: '.agents/skills',
-        sharedPath: './.agents/skills',
-      }),
-    },
-  },
-  {
-    ...makeAgent({
+  }),
+  makeAgent({
     id: 'cursor',
     name: 'Cursor',
     skillsDir: '.agents/skills',
     globalSkillsDir: '~/.cursor/skills',
     detected: true,
     projectAutomatic: true,
-    }),
-    targets: {
-      global: makeAgentScopeTarget({
-        automatic: false,
-        path: '~/.cursor/skills',
-      }),
-      project: makeAgentScopeTarget({
-        automatic: true,
-        path: '.agents/skills',
-        sharedPath: './.agents/skills',
-      }),
-    },
-  },
+  }),
   makeAgent({
     id: 'claude-code',
     name: 'Claude Code',
@@ -139,6 +145,71 @@ describe('AgentSelector', () => {
     expect(screen.getByText('Show 1 more agents')).toBeDefined();
   });
 
+  it('shows an undetected user-defined Agent without requiring secondary expansion', () => {
+    const customAgent = makeResolvedAgent({
+      id: 'my-custom-agent',
+      displayName: 'My Custom Agent',
+      source: 'custom',
+      detection: 'notDetected',
+      global: {
+        readsShared: true,
+        sharedPath: '~/.agents/skills',
+        privatePath: '~/.my-custom-agent/skills',
+        readPaths: ['~/.agents/skills', '~/.my-custom-agent/skills'],
+      },
+      project: {
+        readsShared: true,
+        sharedPath: './.agents/skills',
+        privatePath: './.my-custom-agent/skills',
+        readPaths: ['./.agents/skills', './.my-custom-agent/skills'],
+      },
+    });
+
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        privateCopyAgents={[]}
+        allAgents={[customAgent]}
+        onSelectionChange={vi.fn()}
+        onPrivateCopyChange={vi.fn()}
+        scope="global"
+        privateCopyAgentsExpanded
+      />
+    );
+
+    expect(screen.getAllByText('My Custom Agent')).toHaveLength(2);
+    expect(screen.getByRole('checkbox', { name: /My Custom Agent/ })).toBeDefined();
+    expect(screen.getByText('~/.my-custom-agent/skills')).toBeDefined();
+  });
+
+  it('keeps an indeterminate private-only Custom Agent selectable without calling it not detected', () => {
+    const customAgent = makeResolvedAgent({
+      id: 'private-custom-agent',
+      displayName: 'Private Custom Agent',
+      source: 'custom',
+      detection: 'indeterminate',
+      global: {
+        readsShared: false,
+        sharedPath: '~/.agents/skills',
+        privatePath: '~/.private-custom-agent/skills',
+        readPaths: ['~/.private-custom-agent/skills'],
+      },
+    });
+
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        allAgents={[customAgent]}
+        onSelectionChange={vi.fn()}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByRole('checkbox', { name: /Private Custom Agent/ })).toBeDefined();
+    expect(screen.getByText('addSkill.agents.indeterminate')).toBeDefined();
+    expect(screen.queryByText('addSkill.agents.notDetected')).toBeNull();
+  });
+
   it('shows optional agent-directory entries for eligible ready-to-use agents', () => {
     const onPrivateCopyChange = vi.fn();
     renderAgentSelector(
@@ -146,22 +217,20 @@ describe('AgentSelector', () => {
         selectedAgents={[]}
         privateCopyAgents={[]}
         allAgents={[
-          {
-            ...agents[0],
-            targets: {
-              global: makeAgentScopeTarget({
+          withScopes(agents[0], {
+              global: makeResolvedScopeFixture({
                 automatic: true,
                 path: '~/.agents/skills',
                 availability: 'shared-compatible',
                 privatePath: '~/.codex/skills',
               }),
-              project: makeAgentScopeTarget({
+              project: makeResolvedScopeFixture({
                 automatic: true,
                 path: '.agents/skills',
                 sharedPath: './.agents/skills',
               }),
             },
-          },
+          ),
         ]}
         onSelectionChange={vi.fn()}
         onPrivateCopyChange={onPrivateCopyChange}
@@ -181,22 +250,20 @@ describe('AgentSelector', () => {
         selectedAgents={[]}
         privateCopyAgents={[]}
         allAgents={[
-          {
-            ...agents[0],
-            targets: {
-              global: makeAgentScopeTarget({
+          withScopes(agents[0], {
+              global: makeResolvedScopeFixture({
                 automatic: true,
                 path: '~/.agents/skills',
                 availability: 'shared-compatible',
                 privatePath: '~/.codex/skills',
               }),
-              project: makeAgentScopeTarget({
+              project: makeResolvedScopeFixture({
                 automatic: true,
                 path: '.agents/skills',
                 sharedPath: './.agents/skills',
               }),
             },
-          },
+          ),
         ]}
         onSelectionChange={vi.fn()}
         onPrivateCopyChange={vi.fn()}
@@ -210,39 +277,34 @@ describe('AgentSelector', () => {
 
   it('groups undetected optional agent-directory entries behind the same collapsed affordance', async () => {
     const { userEvent } = await import('@testing-library/user-event');
-    const detectedAgent: AgentInfo = {
-      ...agents[0],
-      targets: {
-        global: makeAgentScopeTarget({
+    const detectedAgent = withScopes(agents[0], {
+        global: makeResolvedScopeFixture({
           automatic: true,
           path: '~/.agents/skills',
           availability: 'shared-compatible',
           privatePath: '~/.codex/skills',
         }),
-        project: makeAgentScopeTarget({
+        project: makeResolvedScopeFixture({
           automatic: true,
           path: '.agents/skills',
           sharedPath: './.agents/skills',
         }),
       },
-    };
-    const undetectedAgent: AgentInfo = {
-      ...agents[1],
-      detected: false,
-      targets: {
-        global: makeAgentScopeTarget({
+    );
+    const undetectedAgent = withScopes(agents[1], {
+        global: makeResolvedScopeFixture({
           automatic: true,
           path: '~/.agents/skills',
           availability: 'shared-compatible',
           privatePath: '~/.cursor/skills',
         }),
-        project: makeAgentScopeTarget({
+        project: makeResolvedScopeFixture({
           automatic: true,
           path: '.agents/skills',
           sharedPath: './.agents/skills',
         }),
       },
-    };
+    'notDetected');
 
     renderAgentSelector(
       <AgentSelector
@@ -266,23 +328,20 @@ describe('AgentSelector', () => {
   });
 
   it('keeps selected undetected agent-directory entries visible for cleanup', () => {
-    const undetectedAgent: AgentInfo = {
-      ...agents[1],
-      detected: false,
-      targets: {
-        global: makeAgentScopeTarget({
+    const undetectedAgent = withScopes(agents[1], {
+        global: makeResolvedScopeFixture({
           automatic: true,
           path: '~/.agents/skills',
           availability: 'shared-compatible',
           privatePath: '~/.cursor/skills',
         }),
-        project: makeAgentScopeTarget({
+        project: makeResolvedScopeFixture({
           automatic: true,
           path: '.agents/skills',
           sharedPath: './.agents/skills',
         }),
       },
-    };
+    'notDetected');
 
     renderAgentSelector(
       <AgentSelector
@@ -305,14 +364,12 @@ describe('AgentSelector', () => {
         selectedAgents={[]}
         privateCopyAgents={[]}
         allAgents={[
-          {
-            ...agents[0],
-            targets: {
-              global: makeAgentScopeTarget({
+          withScopes(agents[0], {
+              global: makeResolvedScopeFixture({
                 automatic: false,
                 path: '~/.codex/skills',
               }),
-              project: makeAgentScopeTarget({
+              project: makeResolvedScopeFixture({
                 automatic: true,
                 path: '.agents/skills',
                 sharedPath: './.agents/skills',
@@ -320,7 +377,7 @@ describe('AgentSelector', () => {
                 privatePath: '/tmp/project/.codex/skills',
               }),
             },
-          },
+          ),
         ]}
         onSelectionChange={vi.fn()}
         onPrivateCopyChange={vi.fn()}
@@ -339,14 +396,12 @@ describe('AgentSelector', () => {
         selectedAgents={[]}
         privateCopyAgents={[]}
         allAgents={[
-          {
-            ...agents[0],
-            targets: {
-              global: makeAgentScopeTarget({
+          withScopes(agents[0], {
+              global: makeResolvedScopeFixture({
                 automatic: false,
                 path: '~/.codex/skills',
               }),
-              project: makeAgentScopeTarget({
+              project: makeResolvedScopeFixture({
                 automatic: true,
                 path: '.agents/skills',
                 sharedPath: './.agents/skills',
@@ -354,7 +409,7 @@ describe('AgentSelector', () => {
                 privatePath: '.codex/skills',
               }),
             },
-          },
+          ),
         ]}
         onSelectionChange={vi.fn()}
         onPrivateCopyChange={vi.fn()}
@@ -426,5 +481,60 @@ describe('AgentSelector', () => {
     expect(path.className).toContain('truncate');
     expect(path.parentElement?.className).toContain('min-w-0');
     expect(path.parentElement?.className).toContain('flex-1');
+  });
+
+  it('keeps unknown pasted Agent IDs visible with a configure action', () => {
+    const onConfigureAgent = vi.fn();
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        allAgents={[]}
+        unknownAgentIds={['private-agent']}
+        onSelectionChange={vi.fn()}
+        onConfigureAgent={onConfigureAgent}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByText('private-agent')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Agent' }));
+    expect(onConfigureAgent).toHaveBeenCalledWith('private-agent');
+  });
+
+  it('uses native checkbox semantics for selectable Agent rows', () => {
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        allAgents={agents}
+        onSelectionChange={vi.fn()}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByRole('checkbox', { name: /Claude Code/ })).toBeDefined();
+    expect(screen.queryByRole('button', { name: /Claude Code/ })).toBeNull();
+  });
+
+  it('renders one checkbox for Agents in the same Backend selection group', () => {
+    const onSelectionChange = vi.fn();
+    renderAgentSelector(
+      <AgentSelector
+        selectedAgents={['claude-code']}
+        allAgents={[agents[2], agents[3]]}
+        selectionGroups={[
+          { groupId: 'opaque-group', agentIds: ['claude-code', 'windsurf'] },
+        ]}
+        onSelectionChange={onSelectionChange}
+        scope="global"
+      />
+    );
+
+    const checkbox = screen.getByRole('checkbox', { name: /Claude Code.*Windsurf/i });
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+    expect(checkbox.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(checkbox);
+
+    expect(onSelectionChange).toHaveBeenCalledWith([]);
   });
 });

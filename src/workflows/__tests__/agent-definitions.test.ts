@@ -1,0 +1,133 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  AgentRuntimeSnapshot,
+  AgentSettingsSnapshot,
+  ContextRef,
+  CustomAgentDefinition,
+  EnvironmentRef,
+} from '@/bindings';
+import { contextKey } from '@/lib/context';
+
+const api = vi.hoisted(() => ({
+  getAgentSettingsSnapshot: vi.fn(),
+  listAgents: vi.fn(),
+  validateCustomAgentDraft: vi.fn(),
+  saveCustomAgent: vi.fn(),
+  duplicateCustomAgentDraft: vi.fn(),
+  previewCustomAgentDelete: vi.fn(),
+  deleteCustomAgent: vi.fn(),
+  deleteInvalidCustomAgent: vi.fn(),
+  getDefaultTargetAgents: vi.fn(),
+  saveDefaultTargetAgents: vi.fn(),
+  listSkills: vi.fn(),
+  checkUpdates: vi.fn(),
+  previewUpdate: vi.fn(),
+  updateSkill: vi.fn(),
+  updateSkillsBatch: vi.fn(),
+  checkSkillAudit: vi.fn(),
+}));
+
+vi.mock('@/hooks/useTauriApi', () => api);
+
+import { agentDefinitionWorkflow } from '../agent-definitions';
+import { useAgentRegistryStore } from '@/stores/agent-registry';
+import { useSettingsStore } from '@/stores/settings';
+import { useSkillsDataStore } from '@/stores/skills-data';
+
+const host: EnvironmentRef = { kind: 'host' };
+const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
+const hostGlobal: ContextRef = { environment: host, scope: { scope: 'global' } };
+const ubuntuGlobal: ContextRef = { environment: ubuntu, scope: { scope: 'global' } };
+
+function settings(environment: EnvironmentRef, revision: string): AgentSettingsSnapshot {
+  return {
+    registryRevision: revision,
+    activeBuiltin: [],
+    activeCustom: [],
+    disabledConflicts: [],
+    invalidCustomRecords: [],
+    currentEnvironment: environment,
+    customStorageIssue: null,
+  };
+}
+
+function runtime(context: ContextRef, revision: string): AgentRuntimeSnapshot {
+  return {
+    registryRevision: revision,
+    environmentRevision: `environment-${revision}`,
+    environment: context.environment,
+    availability: 'available',
+    projectPath: null,
+    agents: {},
+  };
+}
+
+function draft(): CustomAgentDefinition {
+  return {
+    id: 'custom-agent',
+    displayName: 'Custom Agent',
+    global: { enabled: true, location: 'private', privatePath: null },
+    project: { enabled: false, location: 'private', privatePath: null },
+    detectionPaths: [],
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+describe('Agent definition workflow ownership', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAgentRegistryStore.setState({
+      settingsByEnvironment: {
+        host: { data: settings(host, 'registry-1'), state: 'ready', requestId: 1, error: null },
+        'wsl:ubuntu': { data: settings(ubuntu, 'registry-1'), state: 'ready', requestId: 1, error: null },
+      },
+      runtimeByContext: {
+        [contextKey(hostGlobal)]: { data: runtime(hostGlobal, 'registry-1'), state: 'ready', requestId: 1, error: null },
+        [contextKey(ubuntuGlobal)]: { data: runtime(ubuntuGlobal, 'registry-1'), state: 'ready', requestId: 1, error: null },
+      },
+    });
+    useSettingsStore.setState({
+      agentDefaultsByEnvironment: {
+        host: {} as never,
+      'wsl:ubuntu': {} as never,
+      },
+    });
+    useSkillsDataStore.setState({
+      snapshots: {
+        [contextKey(hostGlobal)]: {} as never,
+        [contextKey(ubuntuGlobal)]: {} as never,
+      },
+    });
+  });
+
+  it('invalidates every Agent projection, rejects old in-flight responses, then accepts the returned Settings snapshot', async () => {
+    const oldRuntime = deferred<AgentRuntimeSnapshot>();
+    api.listAgents.mockReturnValue(oldRuntime.promise);
+    api.saveCustomAgent.mockResolvedValue(settings(ubuntu, 'registry-2'));
+
+    const staleLoad = useAgentRegistryStore.getState().loadRuntime(hostGlobal);
+    const result = await agentDefinitionWorkflow.save(hostGlobal, draft(), 'registry-1');
+    oldRuntime.resolve(runtime(hostGlobal, 'registry-1'));
+    await staleLoad;
+
+    expect(result.registryRevision).toBe('registry-2');
+    expect(useAgentRegistryStore.getState().runtimeByContext).toEqual({});
+    expect(useAgentRegistryStore.getState()).not.toHaveProperty('validationByContext');
+    expect(useAgentRegistryStore.getState()).not.toHaveProperty('deleteImpactByKey');
+    expect(useAgentRegistryStore.getState().settingsByEnvironment).toEqual({
+      'wsl:ubuntu': expect.objectContaining({
+        state: 'ready',
+        data: expect.objectContaining({ registryRevision: 'registry-2' }),
+      }),
+    });
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment).toEqual({});
+    expect(useSkillsDataStore.getState().snapshots).toEqual({});
+  });
+});

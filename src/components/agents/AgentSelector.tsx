@@ -1,46 +1,67 @@
 import { useMemo, useCallback, useEffect, useRef, memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import {
   formatAgentTargetPath,
   groupAgentsByScopedTarget,
+  getAgentDisplayPath,
   getAgentTarget,
   getSharedSkillDirectory,
+  shouldDisplayAgentInitially,
 } from '@/lib/agentTargets';
-import { AgentIcon } from '@/components/ui/agent-icon';
+import { AgentIcon } from '@/components/agents/AgentIcon';
 import { cn } from '@/lib/utils';
-import type { AgentInfo } from '@/bindings';
+import { agentDisplayName, agentId, isAgentDetected } from '@/lib/agents';
+import {
+  buildAgentSelectionRows,
+  isSelectionRowSelected,
+  toggleSelectionRow,
+  type AgentSelectionRow,
+} from '@/lib/agentSelection';
+import type { AgentId, AgentSelectionGroup, DetectionState, ResolvedAgent } from '@/bindings';
 
 interface AgentSelectorProps {
   /** 选中的 agent IDs */
-  selectedAgents: string[];
+  selectedAgents: AgentId[];
   /** 额外保留到 Agent 目录中的可直接使用 Agent IDs */
-  privateCopyAgents?: string[];
+  privateCopyAgents?: AgentId[];
   /** 所有 agents */
-  allAgents: AgentInfo[];
+  allAgents: ResolvedAgent[];
+  /** 当前 scope 下由 Backend 解析的独立目录分组 */
+  selectionGroups?: AgentSelectionGroup[];
   /** 选择变化回调 */
-  onSelectionChange: (agents: string[]) => void;
+  onSelectionChange: (agents: AgentId[]) => void;
   /** 额外保留选择变化回调 */
-  onPrivateCopyChange?: (agents: string[]) => void;
+  onPrivateCopyChange?: (agents: AgentId[]) => void;
   /** 安装范围（用于动态显示自动应用路径） */
   scope?: 'global' | 'project';
   privateCopyAgentsExpanded?: boolean;
   onPrivateCopyExpandedChange?: (expanded: boolean) => void;
+  unknownAgentIds?: AgentId[];
+  configuringAgentId?: AgentId | null;
+  onConfigureAgent?: (agentId: AgentId) => void;
+  showPaths?: boolean;
 }
 
 export function AgentSelector({
   selectedAgents,
   privateCopyAgents = [],
   allAgents,
+  selectionGroups = [],
   onSelectionChange,
   onPrivateCopyChange,
   scope = 'global',
   privateCopyAgentsExpanded = false,
   onPrivateCopyExpandedChange,
+  unknownAgentIds = [],
+  configuringAgentId = null,
+  onConfigureAgent,
+  showPaths = true,
 }: AgentSelectorProps) {
   const { t } = useTranslation();
   const selectedAgentsRef = useRef(selectedAgents);
@@ -58,64 +79,91 @@ export function AgentSelector({
   const selectedAgentIds = useMemo(() => new Set(selectedAgents), [selectedAgents]);
   const keptAgentDirectoryAgentIds = useMemo(() => new Set(privateCopyAgents), [privateCopyAgents]);
   const {
-    detectedDefaultAvailable,
-    undetectedDefaultAvailable,
-    visiblePrivateRequiredAgents: detectedAgents,
-    hiddenPrivateRequiredAgents: otherAgents,
+    visibleDefaultAvailableAgents,
+    hiddenDefaultAvailableAgents,
+    visiblePrivateRequiredAgents,
+    hiddenPrivateRequiredAgents,
     privateCopyEligibleAgents,
   } = useMemo(
     () => groupAgentsByScopedTarget(allAgents, scope, selectedAgentIds),
     [allAgents, scope, selectedAgentIds]
   );
+  const requiredRows = useMemo(
+    () => buildAgentSelectionRows(
+      allAgents,
+      selectionGroups,
+      [...visiblePrivateRequiredAgents, ...hiddenPrivateRequiredAgents],
+    ),
+    [allAgents, hiddenPrivateRequiredAgents, selectionGroups, visiblePrivateRequiredAgents],
+  );
+  const requiredGroupIds = useMemo(
+    () => new Set(requiredRows.map((row) => row.groupId)),
+    [requiredRows],
+  );
+  const privateCopyRows = useMemo(
+    () => buildAgentSelectionRows(allAgents, selectionGroups, privateCopyEligibleAgents)
+      .filter((row) => !requiredGroupIds.has(row.groupId)),
+    [allAgents, privateCopyEligibleAgents, requiredGroupIds, selectionGroups],
+  );
+  const { visibleRows: visibleRequiredRows, hiddenRows: hiddenRequiredRows } = useMemo(
+    () => splitSelectionRows(requiredRows, selectedAgentIds),
+    [requiredRows, selectedAgentIds],
+  );
   const {
-    visibleKeptAgentDirectoryAgents,
-    hiddenKeptAgentDirectoryAgents,
-  } = useMemo(() => {
-    const visible: AgentInfo[] = [];
-    const hidden: AgentInfo[] = [];
+    visibleRows: visibleKeptAgentDirectoryRows,
+    hiddenRows: hiddenKeptAgentDirectoryRows,
+  } = useMemo(
+    () => splitSelectionRows(privateCopyRows, keptAgentDirectoryAgentIds),
+    [keptAgentDirectoryAgentIds, privateCopyRows],
+  );
 
-    for (const agent of privateCopyEligibleAgents) {
-      if (agent.detected || keptAgentDirectoryAgentIds.has(agent.id)) {
-        visible.push(agent);
-      } else {
-        hidden.push(agent);
-      }
-    }
-
-    return {
-      visibleKeptAgentDirectoryAgents: visible,
-      hiddenKeptAgentDirectoryAgents: hidden,
-    };
-  }, [privateCopyEligibleAgents, keptAgentDirectoryAgentIds]);
-
-  const toggleAgent = useCallback((agentId: string) => {
+  const toggleAgent = useCallback((toggledIds: AgentId[]) => {
     const currentSelection = selectedAgentsRef.current;
-    const isSelected = currentSelection.includes(agentId);
-    const newSelection = isSelected
-      ? currentSelection.filter((id) => id !== agentId)
-      : [...currentSelection, agentId];
+    const newSelection = toggleSelectionRow(currentSelection, toggledIds);
     selectedAgentsRef.current = newSelection;
     onSelectionChange(newSelection);
   }, [onSelectionChange]);
 
-  const togglePrivateCopyAgent = useCallback((agentId: string) => {
+  const togglePrivateCopyAgent = useCallback((toggledIds: AgentId[]) => {
     if (!onPrivateCopyChange) return;
 
     const currentSelection = keptAgentDirectoryAgentsRef.current;
-    const isSelected = currentSelection.includes(agentId);
-    const newSelection = isSelected
-      ? currentSelection.filter((id) => id !== agentId)
-      : [...currentSelection, agentId];
+    const newSelection = toggleSelectionRow(currentSelection, toggledIds);
     keptAgentDirectoryAgentsRef.current = newSelection;
     onPrivateCopyChange(newSelection);
   }, [onPrivateCopyChange]);
 
-  const hasSelectableAgents = detectedAgents.length > 0 || otherAgents.length > 0;
-  const hasDefaultAvailableAgents = detectedDefaultAvailable.length > 0 || undetectedDefaultAvailable.length > 0;
-  const hasPrivateCopyOptions = privateCopyEligibleAgents.length > 0 && Boolean(onPrivateCopyChange);
+  const hasSelectableAgents = requiredRows.length > 0;
+  const hasDefaultAvailableAgents = visibleDefaultAvailableAgents.length > 0
+    || hiddenDefaultAvailableAgents.length > 0;
+  const hasPrivateCopyOptions = privateCopyRows.length > 0 && Boolean(onPrivateCopyChange);
 
   return (
     <div className="min-w-0 max-w-full space-y-5">
+      {unknownAgentIds.length > 0 ? (
+        <div className="space-y-2">
+          <div className="space-y-0.5">
+            <p className="text-sm font-semibold">{t('addSkill.agents.unknownTitle')}</p>
+            <p className="text-xs text-muted-foreground">{t('addSkill.agents.unknownHint')}</p>
+          </div>
+          {unknownAgentIds.map((unknownId) => (
+            <div key={unknownId} className="flex min-w-0 items-center gap-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+              <AgentIcon agentId={unknownId} className="h-8 w-8" />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{unknownId}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!onConfigureAgent || configuringAgentId === unknownId}
+                onClick={() => onConfigureAgent?.(unknownId)}
+              >
+                {configuringAgentId === unknownId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {t('addSkill.agents.configureUnknown')}
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {hasDefaultAvailableAgents && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -128,20 +176,26 @@ export function AgentSelector({
           </div>
 
           <div className="space-y-3">
-            {detectedDefaultAvailable.length > 0 ? (
+            {visibleDefaultAvailableAgents.length > 0 ? (
               <div className="flex flex-wrap items-center gap-2">
-                {detectedDefaultAvailable.map((agent) => (
-                  <div key={agent.id} className="flex items-center gap-1.5 rounded border border-border/40 bg-muted/10 px-2 py-1">
-                    <AgentIcon agentId={agent.id} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-foreground/80" />
-                    <span className="text-xs font-medium text-foreground">{agent.name}</span>
+                {visibleDefaultAvailableAgents.map((agent) => (
+                  <div
+                    key={agentId(agent)}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded border border-border/40 bg-muted/10 px-2 py-1',
+                      !isAgentDetected(agent) && 'opacity-70',
+                    )}
+                  >
+                    <AgentIcon agentId={agentId(agent)} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-foreground/80" />
+                    <span className="text-xs font-medium text-foreground">{agentDisplayName(agent)}</span>
                   </div>
                 ))}
-                {undetectedDefaultAvailable.length > 0 && (
+                {hiddenDefaultAvailableAgents.length > 0 && (
                   <Tooltip delayDuration={200}>
                     <TooltipTrigger asChild>
                       <div className="cursor-help flex items-center justify-center rounded border border-dashed border-border/60 px-2 py-1 transition-colors hover:border-border hover:bg-muted/30">
                         <span className="text-[10px] text-muted-foreground">
-                          {t('addSkill.agents.moreUndetected', { count: undetectedDefaultAvailable.length })}
+                          {t('addSkill.agents.moreUndetected', { count: hiddenDefaultAvailableAgents.length })}
                         </span>
                       </div>
                     </TooltipTrigger>
@@ -150,9 +204,9 @@ export function AgentSelector({
                         {t('addSkill.agents.undetectedListPrefix')}
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {undetectedDefaultAvailable.map(a => (
-                          <span key={a.id} className="inline-flex items-center rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                            {a.name}
+                        {hiddenDefaultAvailableAgents.map(a => (
+                          <span key={agentId(a)} className="inline-flex items-center rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {agentDisplayName(a)}
                           </span>
                         ))}
                       </div>
@@ -163,11 +217,11 @@ export function AgentSelector({
             ) : (
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                 <span>{t('addSkill.agents.noDefaultAvailableAgents')}</span>
-                {undetectedDefaultAvailable.length > 0 && (
+                {hiddenDefaultAvailableAgents.length > 0 && (
                   <Tooltip delayDuration={200}>
                     <TooltipTrigger asChild>
                       <span className="cursor-help underline underline-offset-2 decoration-muted-foreground/40 hover:decoration-muted-foreground hover:text-foreground transition-colors">
-                        {t('addSkill.agents.viewUndetectedInfo', { count: undetectedDefaultAvailable.length })}
+                        {t('addSkill.agents.viewUndetectedInfo', { count: hiddenDefaultAvailableAgents.length })}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent side="top" showArrow={false} className="max-w-[280px] bg-popover text-popover-foreground border shadow-md p-2.5 space-y-1.5">
@@ -175,9 +229,9 @@ export function AgentSelector({
                         {t('addSkill.agents.undetectedListPrefix')}
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {undetectedDefaultAvailable.map(a => (
-                          <span key={a.id} className="inline-flex items-center rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                            {a.name}
+                        {hiddenDefaultAvailableAgents.map(a => (
+                          <span key={agentId(a)} className="inline-flex items-center rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {agentDisplayName(a)}
                           </span>
                         ))}
                       </div>
@@ -204,19 +258,20 @@ export function AgentSelector({
           </div>
 
           <div className="flex flex-col space-y-1">
-            {detectedAgents.map((agent) => (
+            {visibleRequiredRows.map((row) => (
               <AgentRow
-                key={agent.id}
-                agent={agent}
-                selected={selectedAgentIds.has(agent.id)}
+                key={row.groupId}
+                row={row}
+                selected={isSelectionRowSelected(row, selectedAgentIds)}
                 onToggle={toggleAgent}
                 showDetectedBadge
                 scope={scope}
+                showPath={showPaths}
               />
             ))}
           </div>
 
-          {otherAgents.length > 0 && (
+          {hiddenRequiredRows.length > 0 && (
             <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
               <CollapsibleTrigger asChild>
                 <div className="relative py-2 flex items-center justify-center">
@@ -235,19 +290,20 @@ export function AgentSelector({
                     )}
                     {isExpanded
                       ? t('addSkill.agents.collapseOtherAgents')
-                      : t('addSkill.agents.expandOtherAgents', { count: otherAgents.length })}
+                      : t('addSkill.agents.expandOtherAgents', { count: hiddenRequiredRows.length })}
                   </Button>
                 </div>
               </CollapsibleTrigger>
               <CollapsibleContent className="flex flex-col space-y-1 mt-1">
-                {otherAgents.map((agent) => (
+                {hiddenRequiredRows.map((row) => (
                   <AgentRow
-                    key={agent.id}
-                    agent={agent}
-                    selected={selectedAgentIds.has(agent.id)}
+                    key={row.groupId}
+                    row={row}
+                    selected={isSelectionRowSelected(row, selectedAgentIds)}
                     onToggle={toggleAgent}
                     showDetectedBadge
                     scope={scope}
+                    showPath={showPaths}
                     muted
                   />
                 ))}
@@ -286,17 +342,20 @@ export function AgentSelector({
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-1">
               <div className="flex flex-col space-y-1">
-                {visibleKeptAgentDirectoryAgents.map((agent) => (
+                {visibleKeptAgentDirectoryRows.map((row) => (
                   <AgentRow
-                    key={agent.id}
-                    agent={agent}
-                    selected={keptAgentDirectoryAgentIds.has(agent.id)}
+                    key={row.groupId}
+                    row={row}
+                    selected={isSelectionRowSelected(row, keptAgentDirectoryAgentIds)}
                     onToggle={togglePrivateCopyAgent}
                     scope={scope}
-                    pathOverride={getAgentTarget(agent, scope).privatePath ?? undefined}
+                    pathOverride={row.agents.length === 1
+                      ? getAgentTarget(row.agents[0], scope).privatePath ?? undefined
+                      : undefined}
+                    showPath={showPaths}
                   />
                 ))}
-                {hiddenKeptAgentDirectoryAgents.length > 0 && (
+                {hiddenKeptAgentDirectoryRows.length > 0 && (
                   <Collapsible open={keptAgentDirectoryUndetectedExpanded} onOpenChange={setKeptAgentDirectoryUndetectedExpanded}>
                     <CollapsibleTrigger asChild>
                       <div className="relative py-2 flex items-center justify-center">
@@ -315,19 +374,22 @@ export function AgentSelector({
                           )}
                           {keptAgentDirectoryUndetectedExpanded
                             ? t('addSkill.agents.collapseOtherAgents')
-                            : t('addSkill.agents.expandOtherAgents', { count: hiddenKeptAgentDirectoryAgents.length })}
+                            : t('addSkill.agents.expandOtherAgents', { count: hiddenKeptAgentDirectoryRows.length })}
                         </Button>
                       </div>
                     </CollapsibleTrigger>
                     <CollapsibleContent className="flex flex-col space-y-1 mt-1">
-                      {hiddenKeptAgentDirectoryAgents.map((agent) => (
+                      {hiddenKeptAgentDirectoryRows.map((row) => (
                         <AgentRow
-                          key={agent.id}
-                          agent={agent}
-                          selected={keptAgentDirectoryAgentIds.has(agent.id)}
+                          key={row.groupId}
+                          row={row}
+                          selected={isSelectionRowSelected(row, keptAgentDirectoryAgentIds)}
                           onToggle={togglePrivateCopyAgent}
                           scope={scope}
-                          pathOverride={getAgentTarget(agent, scope).privatePath ?? undefined}
+                          pathOverride={row.agents.length === 1
+                            ? getAgentTarget(row.agents[0], scope).privatePath ?? undefined
+                            : undefined}
+                          showPath={showPaths}
                           muted
                         />
                       ))}
@@ -344,56 +406,64 @@ export function AgentSelector({
 }
 
 const AgentRow = memo(function AgentRow({
-  agent,
+  row,
   selected,
   onToggle,
   showDetectedBadge = false,
   scope,
   muted = false,
   pathOverride,
+  showPath = true,
 }: {
-  agent: AgentInfo;
+  row: AgentSelectionRow;
   selected: boolean;
-  onToggle: (agentId: string) => void;
+  onToggle: (agentIds: AgentId[]) => void;
   showDetectedBadge?: boolean;
   scope?: 'global' | 'project';
   muted?: boolean;
   pathOverride?: string;
+  showPath?: boolean;
 }) {
   const { t } = useTranslation();
+  const singleAgent = row.agents.length === 1 ? row.agents[0] : null;
+  const displayName = row.agents.map(agentDisplayName).join(' / ');
 
-  const target = scope ? getAgentTarget(agent, scope) : null;
-  const path = pathOverride ?? target?.path;
+  const path = showPath && singleAgent
+    ? pathOverride ?? (scope ? getAgentDisplayPath(singleAgent, scope) : null)
+    : null;
   const isAbsolutePath = path ? /^[A-Za-z]:[\\/]|^\/|^\\\\/.test(path) : false;
   const pathLabel = path
     ? formatAgentTargetPath(scope === 'project' && !path.startsWith('./') && !isAbsolutePath ? `./${path}` : path)
     : undefined;
+  const checkboxId = `agent-selector-${scope ?? 'unknown'}-${row.groupId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={() => onToggle(agent.id)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onToggle(agent.id);
-        }
-      }}
+    <Label
+      htmlFor={checkboxId}
       className={cn(
-        'group flex items-center justify-between gap-3 rounded-md px-3 py-2 outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring/35',
+        'group flex cursor-pointer items-center justify-between gap-3 rounded-md px-3 py-2 transition-all duration-200',
         selected ? 'bg-accent/40' : 'bg-transparent hover:bg-muted/30',
         muted && !selected ? 'opacity-60 grayscale-[0.5] hover:opacity-90' : 'opacity-100 grayscale-0'
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <Checkbox
+          id={checkboxId}
           checked={selected}
-          className="pointer-events-none shrink-0"
+          onCheckedChange={() => onToggle(row.selectableAgentIds)}
+          className="shrink-0"
         />
-        <AgentIcon agentId={agent.id} className={cn("h-5 w-5 rounded-[4px] shrink-0", muted && !selected ? "opacity-70" : "")} />
+        <span className="flex shrink-0 items-center -space-x-1">
+          {row.agents.slice(0, 3).map((agent) => (
+            <AgentIcon
+              key={agentId(agent)}
+              agentId={agentId(agent)}
+              className={cn("h-5 w-5 rounded-[4px] ring-1 ring-background", muted && !selected ? "opacity-70" : "")}
+            />
+          ))}
+        </span>
         <span className={cn('truncate text-[13px] leading-none', selected ? 'font-medium text-foreground' : (muted ? 'text-muted-foreground' : 'font-medium text-foreground/90'))}>
-          {agent.name}
+          {displayName}
         </span>
       </div>
 
@@ -404,25 +474,49 @@ const AgentRow = memo(function AgentRow({
           </code>
         )}
 
-        {showDetectedBadge && (
+        {showDetectedBadge && singleAgent && (
           <span
             className={cn(
               'inline-flex shrink-0 items-center gap-1.5 rounded text-[11px] font-medium',
-              agent.detected ? 'text-muted-foreground/80' : 'text-muted-foreground/50'
+              detectionTextClass(singleAgent.detection),
             )}
           >
             <span
               className={cn(
                 'h-1.5 w-1.5 rounded-full',
-                agent.detected ? 'bg-emerald-500/70' : 'bg-muted-foreground/30'
+                detectionDotClass(singleAgent.detection),
               )}
             />
-            {agent.detected
-              ? t('addSkill.agents.detected')
-              : t('addSkill.agents.notDetected')}
+            {t(`addSkill.agents.${singleAgent.detection}`)}
           </span>
         )}
       </div>
-    </div>
+    </Label>
   );
 });
+
+function splitSelectionRows(
+  rows: AgentSelectionRow[],
+  selectedAgentIds: ReadonlySet<AgentId>,
+): { visibleRows: AgentSelectionRow[]; hiddenRows: AgentSelectionRow[] } {
+  const visibleRows: AgentSelectionRow[] = [];
+  const hiddenRows: AgentSelectionRow[] = [];
+  for (const row of rows) {
+    const visible = isSelectionRowSelected(row, selectedAgentIds)
+      || row.agents.some((agent) => shouldDisplayAgentInitially(agent, false));
+    (visible ? visibleRows : hiddenRows).push(row);
+  }
+  return { visibleRows, hiddenRows };
+}
+
+function detectionTextClass(detection: DetectionState): string {
+  if (detection === 'detected') return 'text-muted-foreground/80';
+  if (detection === 'indeterminate') return 'text-amber-700/80 dark:text-amber-300/80';
+  return 'text-muted-foreground/50';
+}
+
+function detectionDotClass(detection: DetectionState): string {
+  if (detection === 'detected') return 'bg-emerald-500/70';
+  if (detection === 'indeterminate') return 'bg-amber-500/70';
+  return 'bg-muted-foreground/30';
+}
