@@ -1,25 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ActiveMutation,
-  AgentInfo,
   ContextRef,
   DefaultTargetAgents,
   EnvironmentRef,
+  ResolvedAgent,
 } from '@/bindings';
-import { makeAgentScopeTarget } from '@/test-utils';
+import { makeAgentRuntimeSnapshot, makeResolvedAgent } from '@/test-utils';
 
 const mockGetDefaultTargetAgents = vi.fn();
 const mockSaveDefaultTargetAgents = vi.fn();
 const mockListAgents = vi.fn();
+const mockListAgentSelectionGroups = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   getDefaultTargetAgents: (...args: unknown[]) => mockGetDefaultTargetAgents(...args),
   saveDefaultTargetAgents: (...args: unknown[]) => mockSaveDefaultTargetAgents(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
+  listAgentSelectionGroups: (...args: unknown[]) => mockListAgentSelectionGroups(...args),
+  getAgentSettingsSnapshot: vi.fn(),
+  validateCustomAgentDraft: vi.fn(),
+  saveCustomAgent: vi.fn(),
+  duplicateCustomAgentDraft: vi.fn(),
+  previewCustomAgentDelete: vi.fn(),
+  deleteCustomAgent: vi.fn(),
+  deleteInvalidCustomAgent: vi.fn(),
 }));
 
 import { useSettingsStore } from '../settings';
+import { useAgentRegistryStore } from '../agent-registry';
 import { useMutationStore } from '../mutation';
+import { contextKey } from '@/lib/context';
 
 const host: EnvironmentRef = { kind: 'host' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
@@ -34,30 +45,27 @@ const activeMutation: ActiveMutation = {
   cancelable: false,
 };
 
-const agents: AgentInfo[] = [
-  {
+const agents: ResolvedAgent[] = [
+  makeResolvedAgent({
     id: 'antigravity',
-    name: 'Antigravity',
-    skillsDir: '.agents/skills',
-    globalSkillsDir: '~/.gemini/antigravity/skills',
-    detected: true,
-    targets: {
-      global: makeAgentScopeTarget({ automatic: false, path: '~/.gemini/antigravity/skills' }),
-      project: makeAgentScopeTarget({ automatic: true, path: '.agents/skills' }),
+    displayName: 'Antigravity',
+    global: {
+      readsShared: false,
+      privatePath: '~/.gemini/antigravity/skills',
     },
-  },
-  {
+    project: { readsShared: true, sharedPath: './.agents/skills' },
+  }),
+  makeResolvedAgent({
     id: 'claude-code',
-    name: 'Claude Code',
-    skillsDir: '.claude/skills',
-    globalSkillsDir: '~/.claude/skills',
-    detected: true,
-    targets: {
-      global: makeAgentScopeTarget({ automatic: false, path: '~/.claude/skills' }),
-      project: makeAgentScopeTarget({ automatic: false, path: '.claude/skills' }),
+    displayName: 'Claude Code',
+    global: { readsShared: false, privatePath: '~/.claude/skills' },
+    project: {
+      readsShared: false,
+      privatePath: '.claude/skills',
     },
-  },
+  }),
 ];
+const agentRuntimeSnapshot = makeAgentRuntimeSnapshot(agents);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -72,6 +80,8 @@ function deferred<T>() {
 function readySnapshot(defaults: DefaultTargetAgents) {
   return {
     agents,
+    selectionGroups: { global: [], project: [] },
+    registryRevision: agentRuntimeSnapshot.registryRevision,
     defaults,
     loadState: 'ready' as const,
     loadRequestId: 1,
@@ -84,10 +94,12 @@ function readySnapshot(defaults: DefaultTargetAgents) {
 describe('useSettingsStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListAgents.mockResolvedValue(agents);
+    mockListAgents.mockResolvedValue(agentRuntimeSnapshot);
+    mockListAgentSelectionGroups.mockResolvedValue({ global: [], project: [] });
     mockGetDefaultTargetAgents.mockResolvedValue(null);
     mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
     useSettingsStore.setState({ agentDefaultsByEnvironment: {} });
+    useAgentRegistryStore.setState({ settingsByEnvironment: {}, runtimeByContext: {} });
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
@@ -116,6 +128,15 @@ describe('useSettingsStore', () => {
     expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
   });
 
+  it('uses the registry-owned runtime snapshot when loading defaults', async () => {
+    await useSettingsStore.getState().loadAgentDefaults(host);
+
+    expect(useAgentRegistryStore.getState().runtimeByContext[contextKey({
+      environment: host,
+      scope: { scope: 'global' },
+    })]?.data).toEqual(agentRuntimeSnapshot);
+  });
+
   it('falls back to compatible CLI defaults when scoped defaults are absent', async () => {
     await useSettingsStore.getState().loadAgentDefaults(host);
 
@@ -140,7 +161,7 @@ describe('useSettingsStore', () => {
 
     expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.defaults)
       .toEqual({ global: [], project: ['claude-code'] });
-    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].defaults)
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:ubuntu'].defaults)
       .toEqual({ global: ['claude-code'], project: [] });
   });
 
@@ -158,7 +179,7 @@ describe('useSettingsStore', () => {
     first.resolve({ global: [], project: ['claude-code'] });
     await firstLoad;
 
-    const snapshot = useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'];
+    const snapshot = useSettingsStore.getState().agentDefaultsByEnvironment['wsl:ubuntu'];
     expect(snapshot.defaults).toEqual({ global: ['claude-code'], project: [] });
     expect(snapshot.loadRequestId).toBe(2);
   });
@@ -167,7 +188,7 @@ describe('useSettingsStore', () => {
     mockListAgents.mockImplementation((context: ContextRef) =>
       context.environment.kind === 'host'
         ? Promise.reject(new Error('host unavailable'))
-        : Promise.resolve(agents));
+        : Promise.resolve(agentRuntimeSnapshot));
 
     await Promise.all([
       useSettingsStore.getState().loadAgentDefaults(host),
@@ -176,8 +197,20 @@ describe('useSettingsStore', () => {
 
     expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.loadState).toBe('error');
     expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.error?.kind).toBe('custom');
-    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].loadState)
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:ubuntu'].loadState)
       .toBe('ready');
+  });
+
+  it('preserves the structured runtime error from the registry snapshot', async () => {
+    const error = {
+      kind: 'environmentUnavailable',
+      data: { environment: host, message: 'Host inspection is unavailable' },
+    } as const;
+    mockListAgents.mockRejectedValue(error);
+
+    await useSettingsStore.getState().loadAgentDefaults(host);
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.error).toEqual(error);
   });
 
   it('sets saving immediately and keeps the captured environment while another loads', async () => {
@@ -185,7 +218,7 @@ describe('useSettingsStore', () => {
     mockSaveDefaultTargetAgents.mockReturnValue(save.promise);
     useSettingsStore.setState({
       agentDefaultsByEnvironment: {
-        'wsl:Ubuntu': readySnapshot({ global: [], project: [] }),
+        'wsl:ubuntu': readySnapshot({ global: [], project: [] }),
       },
     });
     const defaults = { global: ['claude-code'], project: [] };
@@ -193,10 +226,11 @@ describe('useSettingsStore', () => {
     const pendingSave = useSettingsStore.getState().saveAgentDefaults(ubuntu, defaults);
     void useSettingsStore.getState().loadAgentDefaults(debian);
 
-    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].saving).toBe(true);
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:ubuntu'].saving).toBe(true);
     expect(mockSaveDefaultTargetAgents).toHaveBeenCalledWith(
       { environment: ubuntu, scope: { scope: 'global' } },
       defaults,
+      'registry-1',
     );
     save.resolve();
     await pendingSave;
@@ -208,7 +242,7 @@ describe('useSettingsStore', () => {
     const debianDefaults = { global: ['claude-code'], project: [] };
     useSettingsStore.setState({
       agentDefaultsByEnvironment: {
-        'wsl:Ubuntu': readySnapshot(ubuntuDefaults),
+        'wsl:ubuntu': readySnapshot(ubuntuDefaults),
         'wsl:Debian': readySnapshot(debianDefaults),
       },
     });
@@ -218,7 +252,7 @@ describe('useSettingsStore', () => {
       { global: ['claude-code'], project: [] },
     );
 
-    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'].defaults)
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:ubuntu'].defaults)
       .toEqual(ubuntuDefaults);
     expect(useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Debian'].defaults)
       .toEqual(debianDefaults);
@@ -232,7 +266,7 @@ describe('useSettingsStore', () => {
       .mockReturnValueOnce(second.promise);
     useSettingsStore.setState({
       agentDefaultsByEnvironment: {
-        'wsl:Ubuntu': readySnapshot({ global: [], project: [] }),
+        'wsl:ubuntu': readySnapshot({ global: [], project: [] }),
       },
     });
     const oldSave = useSettingsStore.getState().saveAgentDefaults(
@@ -247,10 +281,26 @@ describe('useSettingsStore', () => {
     first.reject(new Error('stale failure'));
     await oldSave;
 
-    const snapshot = useSettingsStore.getState().agentDefaultsByEnvironment['wsl:Ubuntu'];
+    const snapshot = useSettingsStore.getState().agentDefaultsByEnvironment['wsl:ubuntu'];
     expect(snapshot.defaults).toEqual(newest);
     expect(snapshot.saving).toBe(false);
     expect(snapshot.saveRequestId).toBe(2);
+  });
+
+  it('marks a failed optimistic default save as stale until it is refreshed', async () => {
+    mockSaveDefaultTargetAgents.mockRejectedValue(new Error('save failed'));
+    useSettingsStore.setState({
+      agentDefaultsByEnvironment: {
+        host: readySnapshot({ global: [], project: [] }),
+      },
+    });
+
+    await useSettingsStore.getState().saveAgentDefaults(
+      host,
+      { global: ['claude-code'], project: [] },
+    );
+
+    expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.loadState).toBe('stale');
   });
 
   it('does not optimistically update or call the API while a mutation is active', async () => {

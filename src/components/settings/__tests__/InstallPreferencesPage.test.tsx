@@ -3,14 +3,15 @@
 import '@/test-utils';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentInfo, EnvironmentRef } from '@/bindings';
+import type { EnvironmentRef, ResolvedAgent } from '@/bindings';
 import type { AgentDefaultsSnapshot } from '@/stores/settings';
 import { InstallPreferencesPage } from '../InstallPreferencesPage';
 import enLocale from '@/i18n/locales/en.json';
-import { makeAgentScopeTarget } from '@/test-utils';
+import { makeResolvedAgent } from '@/test-utils';
 import { useMutationStore } from '@/stores/mutation';
 
 const mockSaveAgentDefaults = vi.fn();
+const mockLoadAgentDefaults = vi.fn();
 
 function lookupLocaleKey(key: string): string | undefined {
   const segments = key.split('.');
@@ -39,57 +40,54 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/stores/settings', () => ({
   useSettingsStore: (selector: (state: unknown) => unknown) => selector({
     saveAgentDefaults: mockSaveAgentDefaults,
+    loadAgentDefaults: mockLoadAgentDefaults,
   }),
 }));
 
 const environment: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
-const agents: AgentInfo[] = [
-  {
+const agents: ResolvedAgent[] = [
+  makeResolvedAgent({
     id: 'amp',
-    name: 'Amp',
-    skillsDir: '.agents/skills',
-    globalSkillsDir: '~/.agents/skills',
-    detected: true,
-    targets: {
-      global: makeAgentScopeTarget({ automatic: true, path: '~/.agents/skills' }),
-      project: makeAgentScopeTarget({
-        automatic: true,
-        path: './.agents/skills',
+    displayName: 'Amp',
+    global: { readsShared: true, sharedPath: '~/.agents/skills' },
+    project: {
+        readsShared: true,
         sharedPath: './.agents/skills',
-      }),
     },
-  },
-  {
+  }),
+  makeResolvedAgent({
     id: 'claude-code',
-    name: 'Claude Code',
-    skillsDir: '.claude/skills',
-    globalSkillsDir: '~/.claude/skills',
-    detected: true,
-    targets: {
-      global: makeAgentScopeTarget({ automatic: false, path: '~/.claude/skills' }),
-      project: makeAgentScopeTarget({
-        automatic: false,
-        path: './.claude/skills',
+    displayName: 'Claude Code',
+    global: { readsShared: false, privatePath: '~/.claude/skills' },
+    project: {
+        readsShared: false,
         sharedPath: './.agents/skills',
-      }),
+        privatePath: './.claude/skills',
     },
-  },
-  {
+  }),
+  makeResolvedAgent({
     id: 'windsurf',
-    name: 'Windsurf',
-    skillsDir: '.windsurf/skills',
-    globalSkillsDir: '~/.codeium/windsurf/skills',
-    detected: false,
-    targets: {
-      global: makeAgentScopeTarget({ automatic: false, path: '~/.codeium/windsurf/skills' }),
-      project: makeAgentScopeTarget({ automatic: false, path: './.windsurf/skills' }),
+    displayName: 'Windsurf',
+    detection: 'notDetected',
+    global: {
+      readsShared: false,
+      privatePath: '~/.codeium/windsurf/skills',
     },
-  },
+    project: {
+      readsShared: false,
+      privatePath: './.windsurf/skills',
+    },
+  }),
 ];
 
 function snapshot(overrides: Partial<AgentDefaultsSnapshot> = {}): AgentDefaultsSnapshot {
   return {
     agents,
+    selectionGroups: {
+      global: [],
+      project: [],
+    },
+    registryRevision: 'registry-1',
     defaults: { global: [], project: [] },
     loadState: 'ready',
     loadRequestId: 1,
@@ -110,6 +108,7 @@ describe('InstallPreferencesPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSaveAgentDefaults.mockResolvedValue(undefined);
+    mockLoadAgentDefaults.mockResolvedValue(undefined);
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
@@ -139,9 +138,9 @@ describe('InstallPreferencesPage', () => {
     });
 
     renderPage();
-    const row = screen.getByText('Claude Code').closest('[role="button"]');
-    expect(row?.getAttribute('aria-disabled')).toBe('true');
-    fireEvent.click(row!);
+    const row = screen.getByRole('checkbox', { name: /Claude Code/ });
+    expect((row as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(row);
     expect(mockSaveAgentDefaults).not.toHaveBeenCalled();
   });
 
@@ -157,8 +156,7 @@ describe('InstallPreferencesPage', () => {
     renderPage(snapshot({ loadState: 'loading' }));
 
     expect(screen.getAllByText('Claude Code').length).toBeGreaterThan(0);
-    expect(screen.getByText('Claude Code').closest('[role="button"]')
-      ?.getAttribute('aria-disabled')).toBe('true');
+    expect((screen.getByRole('checkbox', { name: /Claude Code/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('shows directly usable agents without nested selection', () => {
@@ -167,6 +165,66 @@ describe('InstallPreferencesPage', () => {
     expect(screen.getAllByText('Amp').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Ready to use').length).toBeGreaterThan(0);
     expect(screen.getByText('Needs separate setup')).toBeDefined();
+  });
+
+  it('shows an undetected user-defined Agent without opening the secondary list', () => {
+    const customAgent = makeResolvedAgent({
+      id: 'my-custom-agent',
+      displayName: 'My Custom Agent',
+      source: 'custom',
+      detection: 'notDetected',
+      global: {
+        readsShared: true,
+        sharedPath: '~/.agents/skills',
+        privatePath: '~/.my-custom-agent/skills',
+      },
+      project: {
+        readsShared: true,
+        sharedPath: './.agents/skills',
+        privatePath: './.my-custom-agent/skills',
+      },
+    });
+
+    renderPage(snapshot({ agents: [customAgent] }));
+
+    expect(screen.getByText('My Custom Agent')).toBeDefined();
+  });
+
+  it('keeps an indeterminate private-only Custom Agent selectable and reports its exact state', () => {
+    const customAgent = makeResolvedAgent({
+      id: 'private-custom-agent',
+      displayName: 'Private Custom Agent',
+      source: 'custom',
+      detection: 'indeterminate',
+      global: {
+        readsShared: false,
+        sharedPath: '~/.agents/skills',
+        privatePath: '~/.private-custom-agent/skills',
+      },
+    });
+
+    renderPage(snapshot({ agents: [customAgent] }));
+
+    expect(screen.getByRole('checkbox', { name: /Private Custom Agent/ })).toBeDefined();
+    expect(screen.getByText('Unable to determine')).toBeDefined();
+    expect(screen.queryByText('Not detected')).toBeNull();
+  });
+
+  it('counts indeterminate shared readers separately from not-detected Agents', () => {
+    const customAgent = makeResolvedAgent({
+      id: 'shared-custom-agent',
+      displayName: 'Shared Custom Agent',
+      source: 'custom',
+      detection: 'indeterminate',
+      global: {
+        readsShared: true,
+        sharedPath: '~/.agents/skills',
+      },
+    });
+
+    renderPage(snapshot({ agents: [customAgent] }));
+
+    expect(screen.getByText('0 detected, 0 not detected, 1 unable to determine')).toBeDefined();
   });
 
   it('selects only detected additional agents when selecting all', () => {
@@ -184,5 +242,52 @@ describe('InstallPreferencesPage', () => {
     expect(enLocale.settings.installPreferences.globalTitle).toBe('Global');
     expect(enLocale.settings.installPreferences.projectTitle).toBe('Project');
     expect(enLocale.settings.installPreferences.description).not.toContain('workspaces');
+  });
+
+  it('saves all required Agent IDs represented by one Backend selection group', () => {
+    renderPage(snapshot({
+      agents: [agents[1], agents[2]],
+      defaults: { global: ['claude-code'], project: [] },
+      selectionGroups: {
+        global: [{
+          groupId: 'opaque-group',
+          agentIds: ['claude-code', 'windsurf'],
+        }],
+        project: [],
+      },
+    }));
+
+    const checkbox = screen.getByRole('checkbox', { name: /Claude Code.*Windsurf/i });
+    expect(checkbox.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(checkbox);
+
+    expect(mockSaveAgentDefaults).toHaveBeenCalledWith(environment, {
+      global: [],
+      project: [],
+    });
+  });
+
+  it('shows an explicit Retry action for load errors instead of a permanent Skeleton', () => {
+    renderPage(snapshot({
+      agents: [],
+      loadState: 'error',
+      error: { kind: 'custom', data: { message: 'load failed' } },
+    }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(mockLoadAgentDefaults).toHaveBeenCalledWith(environment);
+  });
+
+  it('keeps a stale save rollback visible until the user refreshes it', () => {
+    renderPage(snapshot({
+      loadState: 'stale',
+      error: { kind: 'staleRegistry', data: {} } as never,
+    }));
+
+    expect(screen.getByRole('alert')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mockLoadAgentDefaults).toHaveBeenCalledWith(environment);
   });
 });

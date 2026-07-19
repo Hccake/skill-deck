@@ -22,6 +22,17 @@ const mocks = vi.hoisted(() => ({
   },
   projectState: {
     projectsByEnvironment: {} as Record<string, ProjectInfo[]>,
+    refresh: vi.fn().mockResolvedValue(undefined),
+  },
+  environmentState: {
+    environments: [
+      { environment: { kind: 'host' as const }, displayName: 'Host', status: 'available' as const },
+      { environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' }, displayName: 'Ubuntu', status: 'available' as const },
+    ],
+    connect: vi.fn().mockResolvedValue(undefined),
+  },
+  tauriApi: {
+    listSkills: vi.fn(),
   },
   skillsDataState: {
     snapshots: {} as Record<string, {
@@ -33,9 +44,7 @@ const mocks = vi.hoisted(() => ({
       requestId: number;
     }>,
     checkingUpdateScopes: new Set<string>(),
-    updatingSkills: new Map<string, 'updating' | 'done' | 'failed'>(),
     forceCheckUpdates: vi.fn(),
-    updateSkill: vi.fn(),
   },
   skillDetailState: {
     selectedSkillRef: null as null | { name: string; scope: 'global' | 'project'; projectPath?: string | null },
@@ -64,6 +73,10 @@ const mocks = vi.hoisted(() => ({
     getLayout: vi.fn(() => ({})),
   },
   skillsPanelLifecycle: [] as string[],
+  updateWorkflowState: {
+    phase: 'closed', context: null as ContextRef | null, skillNames: [] as string[],
+    open: vi.fn().mockResolvedValue(true), close: vi.fn(),
+  },
 }));
 
 const hostGlobal: ContextRef = {
@@ -105,6 +118,15 @@ vi.mock('@/stores/projects', () => ({
     selector(mocks.projectState),
 }));
 
+vi.mock('@/stores/environment', () => ({
+  useEnvironmentStore: (selector: (state: typeof mocks.environmentState) => unknown) =>
+    selector(mocks.environmentState),
+}));
+
+vi.mock('@/hooks/useTauriApi', () => ({
+  listSkills: mocks.tauriApi.listSkills,
+}));
+
 vi.mock('@/stores/skills-data', () => ({
   useSkillsDataStore: (selector: (state: typeof mocks.skillsDataState) => unknown) => selector(mocks.skillsDataState),
 }));
@@ -115,6 +137,10 @@ vi.mock('@/stores/skill-detail', () => ({
 
 vi.mock('@/stores/skill-dialog', () => ({
   useSkillDialogStore: (selector: (state: typeof mocks.skillDialogState) => unknown) => selector(mocks.skillDialogState),
+}));
+
+vi.mock('@/workflows/skill-update', () => ({
+  useSkillUpdateWorkflow: (selector: (state: typeof mocks.updateWorkflowState) => unknown) => selector(mocks.updateWorkflowState),
 }));
 
 vi.mock('@/components/skills', () => ({
@@ -133,21 +159,34 @@ vi.mock('@/components/skills', () => ({
     updateStatus,
     isCheckingUpdates,
     onCheckUpdates,
+    onUpdate,
   }: {
     skill: InstalledSkill;
     updateStatus?: string;
     isCheckingUpdates?: boolean;
     onCheckUpdates?: () => void;
+    onUpdate?: (name: string, scope: 'global' | 'project') => void;
   }) => (
-    <button
-      type="button"
-      data-skill-name={skill.name}
-      data-update-status={updateStatus ?? 'idle'}
-      data-checking-updates={isCheckingUpdates ? 'true' : 'false'}
-      onClick={onCheckUpdates}
-    >
-      skill-detail-panel
-    </button>
+    <div>
+      <button
+        type="button"
+        data-skill-name={skill.name}
+        data-update-status={updateStatus ?? 'idle'}
+        data-checking-updates={isCheckingUpdates ? 'true' : 'false'}
+        onClick={onCheckUpdates}
+      >
+        skill-detail-panel
+      </button>
+      <button type="button" onClick={() => onUpdate?.(skill.name, skill.scope)}>
+        detail-update
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock('@/components/skills/UpdatePlanDialog', () => ({
+  UpdatePlanDialog: ({ open }: { open: boolean }) => (
+    <div data-testid="page-update-dialog" data-open={open ? 'true' : 'false'} />
   ),
 }));
 
@@ -181,11 +220,21 @@ describe('SkillsPage', () => {
   beforeEach(() => {
     mocks.workspaceContextState.selectedContext = hostGlobal;
     mocks.projectState.projectsByEnvironment = {};
+    mocks.projectState.refresh.mockReset();
+    mocks.projectState.refresh.mockResolvedValue(undefined);
+    mocks.environmentState.connect.mockReset();
+    mocks.environmentState.connect.mockResolvedValue(undefined);
+    mocks.tauriApi.listSkills.mockReset();
+    mocks.tauriApi.listSkills.mockResolvedValue({ skills: [] });
     mocks.skillsDataState.snapshots = { 'host/global': snapshot() };
     mocks.skillsDataState.checkingUpdateScopes = new Set();
-    mocks.skillsDataState.updatingSkills = new Map();
     mocks.skillsDataState.forceCheckUpdates.mockReset();
-    mocks.skillsDataState.updateSkill.mockReset();
+    mocks.updateWorkflowState.phase = 'closed';
+    mocks.updateWorkflowState.context = null;
+    mocks.updateWorkflowState.skillNames = [];
+    mocks.updateWorkflowState.open.mockReset();
+    mocks.updateWorkflowState.open.mockResolvedValue(true);
+    mocks.updateWorkflowState.close.mockReset();
     mocks.skillDetailState.selectedSkillRef = null;
     mocks.skillDetailState.skillContent = null;
     mocks.skillDetailState.loadingContent = false;
@@ -295,7 +344,9 @@ describe('SkillsPage', () => {
       scope: 'global',
     };
     mocks.skillsDataState.snapshots['host/global'] = snapshot([makeSkill('toolkit')]);
-    mocks.skillsDataState.updatingSkills = new Map([['global:toolkit', 'updating']]);
+    mocks.updateWorkflowState.phase = 'updating';
+    mocks.updateWorkflowState.context = hostGlobal;
+    mocks.updateWorkflowState.skillNames = ['toolkit'];
 
     const { getByText } = render(<SkillsPage />);
 
@@ -317,7 +368,32 @@ describe('SkillsPage', () => {
 
     fireEvent.click(detailButton);
 
-    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(hostGlobal);
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(hostGlobal, {
+      kind: 'skills', skills: [{ context: hostGlobal, skillName: 'toolkit' }],
+    });
+  });
+
+  it('routes detail updates through the shared preview dialog owner', () => {
+    mocks.skillDetailState.selectedSkillRef = {
+      name: 'toolkit',
+      scope: 'global',
+    };
+    mocks.skillsDataState.snapshots['host/global'] = snapshot([
+      makeSkill('toolkit', { hasUpdate: true }),
+    ]);
+    mocks.updateWorkflowState.phase = 'ready';
+    mocks.updateWorkflowState.context = hostGlobal;
+    mocks.updateWorkflowState.skillNames = ['toolkit'];
+
+    const { getByText, getByTestId } = render(<SkillsPage />);
+    fireEvent.click(getByText('detail-update'));
+
+    expect(mocks.updateWorkflowState.open).toHaveBeenCalledWith(
+      hostGlobal,
+      ['toolkit'],
+      false,
+    );
+    expect(getByTestId('page-update-dialog').getAttribute('data-open')).toBe('true');
   });
 
   it('uses the explicit environment key for detail update progress', () => {
@@ -331,22 +407,22 @@ describe('SkillsPage', () => {
       scope: 'global',
     };
     mocks.skillsDataState.snapshots = {
-      'wsl:Ubuntu/global': snapshot([makeSkill('toolkit')]),
+      'wsl:ubuntu/global': snapshot([makeSkill('toolkit')]),
     };
-    mocks.skillsDataState.checkingUpdateScopes = new Set(['wsl:Ubuntu/global']);
+    mocks.skillsDataState.checkingUpdateScopes = new Set(['wsl:ubuntu/global']);
 
     const { getByText } = render(<SkillsPage />);
 
     expect(getByText('skill-detail-panel').getAttribute('data-checking-updates')).toBe('true');
   });
 
-  it('shows copy targets from the selected WSL environment', () => {
+  it('shows copy targets from the selected WSL environment', async () => {
     mocks.workspaceContextState.selectedContext = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'project', project_id: 'current' },
     };
     mocks.projectState.projectsByEnvironment = {
-      'wsl:Ubuntu': [
+      'wsl:ubuntu': [
         {
           binding: {
             id: 'current',
@@ -376,15 +452,67 @@ describe('SkillsPage', () => {
       ],
     };
     mocks.skillsDataState.snapshots = {
-      'wsl:Ubuntu/global': snapshot(),
-      'wsl:Ubuntu/project:current': snapshot(),
+      'wsl:ubuntu/global': snapshot(),
+      'wsl:ubuntu/project:current': snapshot(),
     };
     mocks.skillDialogState.copySkill = makeSkill('toolkit', { scope: 'project' });
 
     const { getByText, queryByText } = render(<SkillsPage />);
 
-    expect(getByText('/home/me/target')).toBeDefined();
+    await waitFor(() => expect(getByText('/home/me/target')).toBeDefined());
     expect(queryByText('/home/me/current')).toBeNull();
+  });
+
+  it('keeps failed copy target inspection unknown instead of treating it as absent', async () => {
+    mocks.workspaceContextState.selectedContext = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'project', project_id: 'current' },
+    };
+    mocks.projectState.projectsByEnvironment = {
+      'wsl:ubuntu': [
+        {
+          binding: {
+            id: 'current',
+            nativePath: '/home/me/current',
+            displayName: null,
+            order: null,
+            suppressCrossStorageWarning: false,
+          },
+          storage: {
+            access: 'native',
+            owner: { kind: 'wsl', distro_name: 'Ubuntu' },
+          },
+        },
+        {
+          binding: {
+            id: 'target',
+            nativePath: '/home/me/target',
+            displayName: null,
+            order: null,
+            suppressCrossStorageWarning: false,
+          },
+          storage: {
+            access: 'native',
+            owner: { kind: 'wsl', distro_name: 'Ubuntu' },
+          },
+        },
+      ],
+    };
+    mocks.skillsDataState.snapshots = {
+      'wsl:ubuntu/global': snapshot(),
+      'wsl:ubuntu/project:current': snapshot(),
+    };
+    mocks.skillDialogState.copySkill = makeSkill('toolkit', { scope: 'project' });
+    mocks.tauriApi.listSkills.mockRejectedValue(new Error('inspection failed'));
+
+    const { findByRole, getByText } = render(<SkillsPage />);
+
+    expect(await findByRole('status', {
+      name: 'skills.copyToProject.presenceUnknown',
+    })).toBeDefined();
+    expect(getByText('/home/me/target').closest('label')?.textContent).toContain(
+      'skills.copyToProject.unknown',
+    );
   });
 
   it('derives the selected skill from the shared skills store', () => {

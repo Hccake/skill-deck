@@ -10,7 +10,7 @@ import { ContextSidebar } from '../ContextSidebar';
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
-  openInExplorer: vi.fn(),
+  openConfigResource: vi.fn(),
   switchEnvironment: vi.fn(),
   selectGlobal: vi.fn(),
   selectProject: vi.fn(),
@@ -41,7 +41,7 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open }));
-vi.mock('@/hooks/useTauriApi', () => ({ openInExplorer: mocks.openInExplorer }));
+vi.mock('@/hooks/useTauriApi', () => ({ openConfigResource: mocks.openConfigResource }));
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: EnvironmentRef) => (
     environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
@@ -86,6 +86,8 @@ const ubuntu: EnvironmentInfo = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   displayName: 'Ubuntu',
   status: 'available',
+  revision: 1,
+  error: null,
 };
 const project = (id: string): ProjectInfo => ({
   binding: {
@@ -101,11 +103,14 @@ const project = (id: string): ProjectInfo => ({
 describe('ContextSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
     mocks.switchEnvironment.mockResolvedValue(undefined);
     mocks.environments = [{
       environment: { kind: 'host' },
       displayName: 'Windows',
       status: 'available',
+      revision: 1,
+      error: null,
     }];
     mocks.workspace.selectedContext = {
       environment: { kind: 'host' },
@@ -139,13 +144,12 @@ describe('ContextSidebar', () => {
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
   });
 
-  it('switches environments through the workspace transaction', () => {
+  it('switches environments through the workspace transaction', async () => {
     mocks.environments = [mocks.environments[0], ubuntu];
     render(<ContextSidebar />);
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'context.environmentLabel' }), {
-      target: { value: 'wsl:Ubuntu' },
-    });
+    fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Ubuntu' }));
 
     expect(mocks.switchEnvironment).toHaveBeenCalledWith(ubuntu.environment);
   });
@@ -202,6 +206,19 @@ describe('ContextSidebar', () => {
     expect(screen.getByText('C:\\Code\\a').getAttribute('title')).toBe('C:\\Code\\a');
   });
 
+  it('opens a project through its backend-owned context resource', () => {
+    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    const { container } = render(<ContextSidebar />);
+
+    const row = container.querySelector('[data-project-id="a"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'context.openInExplorer' }));
+
+    expect(mocks.openConfigResource).toHaveBeenCalledWith({
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'a' },
+    }, 'contextRoot');
+  });
+
   it('restores focus to the next project, then Global when no project remains', async () => {
     mocks.projects.projectsByEnvironment = { host: [project('a'), project('b'), project('c')] };
     const firstView = render(<ContextSidebar />);
@@ -234,8 +251,8 @@ describe('ContextSidebar', () => {
       environment: ubuntu.environment,
       scope: { scope: 'global' },
     };
-    mocks.projects.projectsByEnvironment = { 'wsl:Ubuntu': [] };
-    mocks.projects.loadStateByEnvironment = { 'wsl:Ubuntu': 'ready' };
+    mocks.projects.projectsByEnvironment = { 'wsl:ubuntu': [] };
+    mocks.projects.loadStateByEnvironment = { 'wsl:ubuntu': 'ready' };
     mocks.open.mockResolvedValue(rawPath);
     mocks.add.mockResolvedValue({ created: true });
     render(<ContextSidebar />);

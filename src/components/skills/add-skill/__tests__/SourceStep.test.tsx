@@ -30,6 +30,12 @@ const hostGlobal = {
   environment: { kind: 'host' },
   scope: { scope: 'global' },
 } as const;
+const discoverySession = {
+  sessionId: 'discovery-1',
+  environment: hostGlobal.environment,
+  sourceFingerprint: 'source-1',
+  expiresAtEpochMs: 1000,
+} as const;
 
 const skillSnapshots: Record<string, { skills: Array<{ name: string; source: string }> }> = {};
 
@@ -118,6 +124,7 @@ function Harness({ onNext }: { onNext: () => void }) {
         onNext={onNext}
       />
       <div data-testid="risk-policy">{state.riskPolicy?.kind ?? 'none'}</div>
+      <div data-testid="discovery-session">{state.discoverySession?.sessionId ?? 'none'}</div>
     </>
   );
 }
@@ -132,6 +139,7 @@ describe('SourceStep', () => {
     const onNext = vi.fn();
 
     fetchAvailableMock.mockResolvedValue({
+      discoverySession,
       sourceType: 'github',
       sourceUrl: 'https://github.com/openclaw/community-skills',
       gitRef: null,
@@ -152,6 +160,7 @@ describe('SourceStep', () => {
     await waitFor(() => {
       expect(onNext).toHaveBeenCalled();
       expect(screen.getByTestId('risk-policy').textContent).toBe('require-confirmation');
+      expect(screen.getByTestId('discovery-session').textContent).toBe('discovery-1');
     });
     expect(fetchAvailableMock).toHaveBeenCalledWith(hostGlobal, 'openclaw/community-skills');
   });
@@ -161,6 +170,7 @@ describe('SourceStep', () => {
     const onNext = vi.fn();
 
     fetchAvailableMock.mockResolvedValue({
+      discoverySession,
       sourceType: 'github',
       sourceUrl: 'https://github.com/openclaw/community-skills',
       gitRef: null,
@@ -190,6 +200,7 @@ describe('SourceStep', () => {
       scope: { scope: 'global' },
     } as const;
     fetchAvailableMock.mockResolvedValue({
+      discoverySession: { ...discoverySession, environment: context.environment },
       sourceType: 'github',
       sourceUrl: 'https://github.com/owner/repo',
       gitRef: null,

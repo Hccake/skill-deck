@@ -17,8 +17,14 @@ import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { agentDisplayName, agentId } from '@/lib/agents';
 import { formatAppError } from '@/utils/format-app-error';
-import type { AgentType, InstalledSkill } from '@/bindings';
+import { openSkillRemoval } from '@/workflows/skill-remove';
+import { openManageAgentChanges } from '@/workflows/skill-manage-agents';
+import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
+import { getSkillIdentityKey } from '@/lib/skills/identity';
+import type { SkillUpdateDisplayStatus } from '@/stores/skills-utils';
+import type { InstalledSkill } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
@@ -38,7 +44,7 @@ function filterSkills<T extends InstalledSkill>(skills: T[], searchQuery: string
     if (query && !s.name.toLowerCase().includes(query) && !s.description.toLowerCase().includes(query)) {
       return false;
     }
-    if (agentFilter !== 'all' && !s.agents.includes(agentFilter as AgentType)) {
+    if (agentFilter !== 'all' && !s.agents.includes(agentFilter)) {
       return false;
     }
     return true;
@@ -88,21 +94,20 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   ));
   const syncUpdates = useSkillsDataStore((s) => s.syncUpdates);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
-  const updatingSkills = useSkillsDataStore((s) => s.updatingSkills);
-  const updateAllInSection = useSkillsDataStore((s) => s.updateAllInSection);
+  const updatePhase = useSkillUpdateWorkflow((s) => s.phase);
+  const updateContext = useSkillUpdateWorkflow((s) => s.context);
+  const updateSkillNames = useSkillUpdateWorkflow((s) => s.skillNames);
+  const openUpdate = useSkillUpdateWorkflow((s) => s.open);
   const refreshWorkspace = useSkillsDataStore((s) => s.refreshWorkspace);
   const syncSkills = useSkillsDataStore((s) => s.syncSkills);
-  const storeUpdateSkill = useSkillsDataStore((s) => s.updateSkill);
   const auditCache = useSkillsDataStore((s) => s.auditCache);
   const fetchAuditForSkills = useSkillsDataStore((s) => s.fetchAuditForSkills);
   const selectSkill = useSkillDetailStore((s) => s.selectSkill);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
-  const openDelete = useSkillDialogStore((s) => s.openDelete);
   const openAdd = useSkillDialogStore((s) => s.openAdd);
   const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
-  const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
 
   // ② UI 状态 — 仅 2 个 useState
   const [searchQuery, setSearchQuery] = useState('');
@@ -111,13 +116,18 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
   const deferredQuery = useDeferredValue(searchQuery);
 
-  // ③ 数据初始化 — mount / selectedContext 变化时重新获取，然后自动检测更新
+  // A single timer owns automatic checks. Focus reuses this path instead of adding listeners per section.
   useEffect(() => {
     let ignore = false;
-    refreshWorkspace(selectedContext).then(() => {
-      if (!ignore) void syncUpdates(selectedContext);
-    });
-    return () => { ignore = true; };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { if (!ignore) void syncUpdates(selectedContext); }, 500);
+    };
+    schedule();
+    void refreshWorkspace(selectedContext);
+    window.addEventListener('focus', schedule);
+    return () => { ignore = true; if (timer) clearTimeout(timer); window.removeEventListener('focus', schedule); };
   }, [selectedContext, selectedContextKey, refreshWorkspace, syncUpdates]);
 
   // ③a 仅在 context 真正切换时关闭详情面板
@@ -155,14 +165,35 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
       for (const id of s.agents) agentIds.add(id);
     }
     return allAgents
-      .filter((a) => agentIds.has(a.id))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .filter((agent) => agentIds.has(agentId(agent)))
+      .sort((left, right) => agentDisplayName(left).localeCompare(agentDisplayName(right)));
   }, [allAgents, globalSkills, projectSkills, isProjectSelected]);
 
   const agentDisplayNames = useMemo(
-    () => new Map(allAgents.map((a) => [a.id, a.name])),
+    () => new Map(allAgents.map((agent) => [agentId(agent), agentDisplayName(agent)])),
     [allAgents]
   );
+
+  const updatingSkills = useMemo<Map<string, SkillUpdateDisplayStatus>>(() => {
+    const activeUpdatePhase = updatePhase === 'acquiring'
+      || updatePhase === 'validating'
+      || updatePhase === 'updating'
+      ? updatePhase
+      : null;
+    if (!activeUpdatePhase || !updateContext) return new Map();
+    const updateContextKey = contextKey(updateContext);
+    const result = new Map<string, SkillUpdateDisplayStatus>();
+    for (const skill of [...globalSkills, ...projectSkills]) {
+      const skillContextKey = skill.scope === 'project' ? selectedContextKey : globalContextKey;
+      if (skillContextKey !== updateContextKey || !updateSkillNames.includes(skill.name)) continue;
+      result.set(getSkillIdentityKey({
+        name: skill.name,
+        scope: skill.scope,
+        projectPath: skill.scope === 'project' ? projectPath : undefined,
+      }), activeUpdatePhase);
+    }
+    return result;
+  }, [globalContextKey, globalSkills, projectPath, projectSkills, selectedContextKey, updateContext, updatePhase, updateSkillNames]);
 
   // 使用 deferredQuery 而非 searchQuery，列表过滤作为低优先级更新
   const filteredGlobalSkills = useMemo(
@@ -187,20 +218,20 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }, [globalSkills, projectSkills]);
 
   const handleDeleteGlobal = useCallback((skill: InstalledSkill) => {
-    openDelete(skill, selectedGlobalContext);
-  }, [openDelete, selectedGlobalContext]);
+    void openSkillRemoval(skill, selectedGlobalContext);
+  }, [selectedGlobalContext]);
 
   const handleDeleteProject = useCallback((skill: InstalledSkill) => {
-    openDelete(skill, selectedContext, projectPath);
-  }, [openDelete, projectPath, selectedContext]);
+    void openSkillRemoval(skill, selectedContext, projectPath);
+  }, [projectPath, selectedContext]);
 
   const handleManageAgentsGlobal = useCallback((skill: InstalledSkill) => {
-    openManageAgents(skill, selectedGlobalContext);
-  }, [openManageAgents, selectedGlobalContext]);
+    void openManageAgentChanges(skill, selectedGlobalContext);
+  }, [selectedGlobalContext]);
 
   const handleManageAgentsProject = useCallback((skill: InstalledSkill) => {
-    openManageAgents(skill, selectedContext, projectPath);
-  }, [openManageAgents, projectPath, selectedContext]);
+    void openManageAgentChanges(skill, selectedContext, projectPath);
+  }, [projectPath, selectedContext]);
 
   const handleAddGlobal = useCallback(() => {
     openAdd(selectedGlobalContext);
@@ -223,29 +254,25 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }, [openCopyToProject, selectedContext]);
 
   const handleCheckProjectUpdates = useCallback(() => {
-    return forceCheckUpdates(selectedContext);
+    return forceCheckUpdates(selectedContext, { kind: 'all' });
   }, [forceCheckUpdates, selectedContext]);
 
   const handleCheckGlobalUpdates = useCallback(() => {
-    return forceCheckUpdates(selectedGlobalContext);
+    return forceCheckUpdates(selectedGlobalContext, { kind: 'all' });
   }, [forceCheckUpdates, selectedGlobalContext]);
 
   const handleSync = useCallback(() => syncSkills(selectedContext), [selectedContext, syncSkills]);
-  const handleUpdateGlobal = useCallback(
-    (skillName: string) => storeUpdateSkill(selectedGlobalContext, skillName),
-    [selectedGlobalContext, storeUpdateSkill],
+  const handlePrepareGlobalUpdate = useCallback(
+    (skillNames: string[], batch: boolean) => openUpdate(
+      selectedGlobalContext,
+      skillNames,
+      batch,
+    ),
+    [openUpdate, selectedGlobalContext],
   );
-  const handleUpdateProject = useCallback(
-    (skillName: string) => storeUpdateSkill(selectedContext, skillName),
-    [selectedContext, storeUpdateSkill],
-  );
-  const handleUpdateAllGlobal = useCallback(
-    () => updateAllInSection(selectedGlobalContext),
-    [selectedGlobalContext, updateAllInSection],
-  );
-  const handleUpdateAllProject = useCallback(
-    () => updateAllInSection(selectedContext),
-    [selectedContext, updateAllInSection],
+  const handlePrepareProjectUpdate = useCallback(
+    (skillNames: string[], batch: boolean) => openUpdate(selectedContext, skillNames, batch),
+    [openUpdate, selectedContext],
   );
 
   // 缓存 emptyState JSX (rerender-memo-with-default-value)
@@ -358,11 +385,11 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               projectPath={projectPath}
               updatingSkills={updatingSkills}
               isCheckingUpdates={isCheckingProject}
+              updateCheck={projectSnapshot.updateCheck}
               agentDisplayNames={agentDisplayNames}
               auditCache={auditCache}
               onSkillClick={selectSkill}
-              onUpdate={handleUpdateProject}
-              onUpdateAll={handleUpdateAllProject}
+              onPrepareUpdate={handlePrepareProjectUpdate}
               onDelete={handleDeleteProject}
               onCopyToProject={handleCopyToProject}
               onManageAgents={handleManageAgentsProject}
@@ -381,11 +408,11 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             conflictSkillNames={conflictSkillNames}
             updatingSkills={updatingSkills}
             isCheckingUpdates={isCheckingGlobal}
+            updateCheck={globalSnapshot.updateCheck}
             agentDisplayNames={agentDisplayNames}
             auditCache={auditCache}
             onSkillClick={selectSkill}
-            onUpdate={handleUpdateGlobal}
-            onUpdateAll={handleUpdateAllGlobal}
+            onPrepareUpdate={handlePrepareGlobalUpdate}
             onDelete={handleDeleteGlobal}
             onManageAgents={handleManageAgentsGlobal}
             onRepairSource={handleRepairGlobal}

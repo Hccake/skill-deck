@@ -1,11 +1,13 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe, Folder, Check } from 'lucide-react';
+import { Globe, Folder } from 'lucide-react';
 import { useProjectStore } from '@/stores/projects';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
 import { environmentKey } from '@/lib/context';
 import type { ContextRef, SkillScope } from '@/bindings';
 import type { WizardState } from './types';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 
 const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 
@@ -60,20 +62,24 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
     }));
   }, [environment, environmentProjects]);
 
+  const options = [globalOption, ...projectOptions];
+  const selectedValue = state.scope === 'global'
+    ? 'global'
+    : `project:${state.context.scope.scope === 'project' ? state.context.scope.project_id : ''}`;
+
   const renderRow = (option: ScopeOption, isSelected: boolean) => {
     const Icon = option.icon;
+    const value = option.context.scope.scope === 'global'
+      ? 'global'
+      : `project:${option.context.scope.project_id}`;
+    const id = `scope-${value.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     return (
-      <button
-        key={option.projectPath || 'global'}
-        type="button"
+      <Label
+        key={value}
+        htmlFor={id}
         className={`w-full flex items-center gap-4 px-4 py-3 transition-colors cursor-pointer text-left relative ${
           isSelected ? 'bg-primary/5' : 'hover:bg-muted/50'
         }`}
-        onClick={() => updateState({
-          scope: option.scope,
-          projectPath: option.projectPath,
-          context: option.context,
-        })}
       >
         {/* 左侧图标 */}
         <div className={`p-2 rounded-md ${isSelected ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
@@ -88,28 +94,42 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
           <div className="text-xs text-muted-foreground truncate mt-0.5">{option.hint}</div>
         </div>
 
-        {/* 右侧 Checkmark */}
-        {isSelected && (
-          <div className="shrink-0 pl-4 animate-in fade-in zoom-in-50 duration-200">
-            <Check className="h-5 w-5 text-primary" />
-          </div>
-        )}
-      </button>
+        <RadioGroupItem id={id} value={value} className="ml-4" />
+      </Label>
     );
+  };
+
+  const handleValueChange = (value: string) => {
+    const option = options.find((candidate) => (
+      candidate.context.scope.scope === 'global'
+        ? value === 'global'
+        : value === `project:${candidate.context.scope.project_id}`
+    ));
+    if (!option) return;
+    updateState({
+      scope: option.scope,
+      projectPath: option.projectPath,
+      context: option.context,
+    });
   };
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <label className="text-base font-semibold">
+        <h2 id="scope-step-title" className="text-base font-semibold">
           {t('addSkill.scopeSelect.title')}
-        </label>
+        </h2>
         <p className="text-sm text-muted-foreground">
           {t('addSkill.scopeSelect.hint')}
         </p>
       </div>
 
-      <div className="space-y-6">
+      <RadioGroup
+        value={selectedValue}
+        onValueChange={handleValueChange}
+        aria-labelledby="scope-step-title"
+        className="space-y-6"
+      >
         {/* 全局安装：独立的组 */}
         <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
           {renderRow(globalOption, state.scope === 'global')}
@@ -128,7 +148,7 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
             </div>
           </div>
         )}
-      </div>
+      </RadioGroup>
     </div>
   );
 }

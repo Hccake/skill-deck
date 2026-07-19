@@ -2,32 +2,43 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { AgentIcon } from '@/components/ui/agent-icon';
+import { AgentIcon } from '@/components/agents/AgentIcon';
 import { cn } from '@/lib/utils';
 import {
   formatAgentTargetPath,
-  getAgentTarget,
+  getAgentDisplayPath,
   getSharedSkillDirectory,
   groupAgentsByScopedTarget,
   type InstallScope,
 } from '@/lib/agentTargets';
 import { useSettingsStore } from '@/stores/settings';
 import { useMutationStore } from '@/stores/mutation';
-import type { AgentInfo } from '@/hooks/useTauriApi';
-import type { EnvironmentRef } from '@/bindings';
+import { agentDisplayName, agentId, isAgentDetected } from '@/lib/agents';
+import {
+  buildAgentSelectionRows,
+  isSelectionRowSelected,
+  toggleSelectionRow,
+  type AgentSelectionRow,
+} from '@/lib/agentSelection';
+import type { AgentId, AgentSelectionGroup, DetectionState, EnvironmentRef, ResolvedAgent } from '@/bindings';
 import type { AgentDefaultsSnapshot } from '@/stores/settings';
 
 interface ScopeAgentGroups {
-  detectedDefaultAvailable: AgentInfo[];
-  undetectedDefaultAvailable: AgentInfo[];
-  detectedPrivateRequired: AgentInfo[];
-  visiblePrivateRequiredAgents: AgentInfo[];
-  hiddenPrivateRequiredAgents: AgentInfo[];
+  detectedDefaultAvailable: ResolvedAgent[];
+  undetectedDefaultAvailable: ResolvedAgent[];
+  notDetectedDefaultAvailable: ResolvedAgent[];
+  indeterminateDefaultAvailable: ResolvedAgent[];
+  visibleDefaultAvailableAgents: ResolvedAgent[];
+  hiddenDefaultAvailableAgents: ResolvedAgent[];
+  detectedPrivateRequired: ResolvedAgent[];
+  visiblePrivateRequiredAgents: ResolvedAgent[];
+  hiddenPrivateRequiredAgents: ResolvedAgent[];
   selectableCount: number;
-  isAllSelected: boolean;
 }
 
 export function InstallPreferencesPage({
@@ -40,8 +51,12 @@ export function InstallPreferencesPage({
   const { t } = useTranslation();
   const mutationActive = useMutationStore((state) => state.activeMutation !== null);
   const saveAgentDefaults = useSettingsStore((state) => state.saveAgentDefaults);
+  const loadAgentDefaults = useSettingsStore((state) => state.loadAgentDefaults);
   const writeBlocked = mutationActive || snapshot.loadState !== 'ready' || snapshot.saving;
-  const loaded = snapshot.agents.length > 0 || snapshot.loadState === 'ready';
+  const loaded = snapshot.agents.length > 0
+    || snapshot.loadState === 'ready'
+    || snapshot.loadState === 'error'
+    || snapshot.loadState === 'stale';
 
   const saveScope = (scope: InstallScope, agents: string[]) => {
     void saveAgentDefaults(environment, {
@@ -63,6 +78,22 @@ export function InstallPreferencesPage({
         </p>
       </header>
 
+      {snapshot.error ? (
+        <div
+          role="alert"
+          className="flex max-w-3xl items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-3"
+        >
+          <p className="text-sm text-destructive">
+            {t(snapshot.loadState === 'stale'
+              ? 'settings.installPreferences.staleSave'
+              : 'settings.installPreferences.loadError')}
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={() => void loadAgentDefaults(environment)}>
+            {t('common.retry')}
+          </Button>
+        </div>
+      ) : null}
+
       <Tabs defaultValue="global" className="max-w-3xl">
         <TabsList className="grid w-full max-w-xs grid-cols-2">
           <TabsTrigger value="global">{t('settings.installPreferences.globalTitle')}</TabsTrigger>
@@ -73,17 +104,13 @@ export function InstallPreferencesPage({
             <ScopePreferencePanel
               scope={scope}
               agents={snapshot.agents}
+              selectionGroups={snapshot.selectionGroups[scope]}
               selectedAgents={snapshot.defaults[scope]}
               loaded={loaded}
               writeBlocked={writeBlocked}
-              onToggle={(agentId) => {
+              onToggle={(agentIds) => {
                 const selected = snapshot.defaults[scope];
-                saveScope(
-                  scope,
-                  selected.includes(agentId)
-                    ? selected.filter((id) => id !== agentId)
-                    : [...selected, agentId],
-                );
+                saveScope(scope, toggleSelectionRow(selected, agentIds));
               }}
               onSelectAll={(agents) => saveScope(scope, agents)}
             />
@@ -97,6 +124,7 @@ export function InstallPreferencesPage({
 function ScopePreferencePanel({
   scope,
   agents,
+  selectionGroups,
   selectedAgents,
   loaded,
   writeBlocked,
@@ -104,11 +132,12 @@ function ScopePreferencePanel({
   onSelectAll,
 }: {
   scope: InstallScope;
-  agents: AgentInfo[];
+  agents: ResolvedAgent[];
+  selectionGroups: AgentSelectionGroup[];
   selectedAgents: string[];
   loaded: boolean;
   writeBlocked: boolean;
-  onToggle: (agentId: string) => void;
+  onToggle: (agentIds: AgentId[]) => void;
   onSelectAll: (agents: string[]) => void;
 }) {
   const { t } = useTranslation();
@@ -116,12 +145,36 @@ function ScopePreferencePanel({
   const agentGroups = useMemo<ScopeAgentGroups>(() => {
     const groups = groupAgentsByScopedTarget(agents, scope, selectedAgentIds);
 
-    return {
-      ...groups,
-      isAllSelected: groups.detectedPrivateRequired.length > 0
-        && groups.detectedPrivateRequired.every((agent) => selectedAgentIds.has(agent.id)),
-    };
+    return groups;
   }, [agents, scope, selectedAgentIds]);
+  const selectionRows = useMemo(
+    () => buildAgentSelectionRows(
+      agents,
+      selectionGroups,
+      [
+        ...agentGroups.visiblePrivateRequiredAgents,
+        ...agentGroups.hiddenPrivateRequiredAgents,
+      ],
+    ),
+    [agentGroups.hiddenPrivateRequiredAgents, agentGroups.visiblePrivateRequiredAgents, agents, selectionGroups],
+  );
+  const visibleSelectionRows = useMemo(
+    () => selectionRows.filter((row) => isSelectionRowSelected(row, selectedAgentIds)
+      || row.agents.some((agent) => agent.definition.source === 'custom' || isAgentDetected(agent))),
+    [selectedAgentIds, selectionRows],
+  );
+  const visibleGroupIds = useMemo(
+    () => new Set(visibleSelectionRows.map((row) => row.groupId)),
+    [visibleSelectionRows],
+  );
+  const hiddenSelectionRows = useMemo(
+    () => selectionRows.filter((row) => !visibleGroupIds.has(row.groupId)),
+    [selectionRows, visibleGroupIds],
+  );
+  const detectedSelectionRows = useMemo(
+    () => selectionRows.filter((row) => row.agents.some(isAgentDetected)),
+    [selectionRows],
+  );
 
   if (!loaded) {
     return <LoadingRows />;
@@ -129,13 +182,14 @@ function ScopePreferencePanel({
 
   const {
     detectedDefaultAvailable,
-    undetectedDefaultAvailable,
-    detectedPrivateRequired,
-    visiblePrivateRequiredAgents,
-    hiddenPrivateRequiredAgents,
+    notDetectedDefaultAvailable,
+    indeterminateDefaultAvailable,
+    visibleDefaultAvailableAgents,
+    hiddenDefaultAvailableAgents,
     selectableCount,
-    isAllSelected,
   } = agentGroups;
+  const isAllSelected = detectedSelectionRows.length > 0
+    && detectedSelectionRows.every((row) => isSelectionRowSelected(row, selectedAgentIds));
 
   return (
     <div className="space-y-3">
@@ -155,7 +209,8 @@ function ScopePreferencePanel({
             <span className="shrink-0 text-xs text-muted-foreground">
               {t('settings.installPreferences.automaticDetectionSummary', {
                 detected: detectedDefaultAvailable.length,
-                undetected: undetectedDefaultAvailable.length,
+                undetected: notDetectedDefaultAvailable.length,
+                indeterminate: indeterminateDefaultAvailable.length,
               })}
             </span>
           </div>
@@ -163,30 +218,36 @@ function ScopePreferencePanel({
 
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            {detectedDefaultAvailable.map((agent) => (
-              <div key={agent.id} className="flex items-center gap-1.5 rounded border border-border/40 bg-muted/10 px-2 py-1">
-                <AgentIcon agentId={agent.id} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-foreground/80" />
-                <span className="text-xs font-medium text-foreground">{agent.name}</span>
+            {visibleDefaultAvailableAgents.map((agent) => (
+              <div
+                key={agentId(agent)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded border border-border/40 bg-muted/10 px-2 py-1',
+                  !isAgentDetected(agent) && 'opacity-70',
+                )}
+              >
+                <AgentIcon agentId={agentId(agent)} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-foreground/80" />
+                <span className="text-xs font-medium text-foreground">{agentDisplayName(agent)}</span>
               </div>
             ))}
-            {detectedDefaultAvailable.length === 0 && (
+            {visibleDefaultAvailableAgents.length === 0 && (
               <span className="text-xs text-muted-foreground">
                 {t('settings.installPreferences.noAutomaticAgents')}
               </span>
             )}
           </div>
 
-          {undetectedDefaultAvailable.length > 0 && (
+          {hiddenDefaultAvailableAgents.length > 0 && (
             <Collapsible>
               <CollapsibleTrigger className="group flex items-center text-xs text-muted-foreground transition-colors hover:text-foreground">
-                {t('settings.installPreferences.otherAutomaticAgentsToggle', { count: undetectedDefaultAvailable.length })}
+                {t('settings.installPreferences.otherAutomaticAgentsToggle', { count: hiddenDefaultAvailableAgents.length })}
                 <ChevronDown className="ml-1 h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2 flex flex-wrap gap-2">
-                {undetectedDefaultAvailable.map((agent) => (
-                  <div key={agent.id} className="flex items-center gap-1.5 rounded border border-border/40 bg-muted/5 px-2 py-1 opacity-70">
-                    <AgentIcon agentId={agent.id} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-muted-foreground/80" />
-                    <span className="text-xs font-medium text-muted-foreground">{agent.name}</span>
+                {hiddenDefaultAvailableAgents.map((agent) => (
+                  <div key={agentId(agent)} className="flex items-center gap-1.5 rounded border border-border/40 bg-muted/5 px-2 py-1 opacity-70">
+                    <AgentIcon agentId={agentId(agent)} className="h-4 w-4 bg-transparent border-0" iconClassName="h-3.5 w-3.5 text-muted-foreground/80" />
+                    <span className="text-xs font-medium text-muted-foreground">{agentDisplayName(agent)}</span>
                   </div>
                 ))}
               </CollapsibleContent>
@@ -213,7 +274,11 @@ function ScopePreferencePanel({
               <label className="flex cursor-pointer items-center gap-1.5 text-xs text-foreground group">
                 <Checkbox
                   checked={isAllSelected}
-                  onCheckedChange={() => onSelectAll(isAllSelected ? [] : detectedPrivateRequired.map((a) => a.id))}
+                  onCheckedChange={() => onSelectAll(
+                    isAllSelected
+                      ? []
+                      : [...new Set(detectedSelectionRows.flatMap((row) => row.selectableAgentIds))],
+                  )}
                   className="h-3.5 w-3.5"
                   disabled={writeBlocked}
                 />
@@ -225,14 +290,14 @@ function ScopePreferencePanel({
 
         {selectableCount > 0 ? (
           <div className="space-y-2">
-            {visiblePrivateRequiredAgents.length > 0 ? (
+            {visibleSelectionRows.length > 0 ? (
               <div className="flex flex-col gap-1.5">
-                {visiblePrivateRequiredAgents.map((agent) => (
+                {visibleSelectionRows.map((row) => (
                   <SelectableAgentRow
-                    key={agent.id}
-                    agent={agent}
+                    key={row.groupId}
+                    row={row}
                     scope={scope}
-                    selected={selectedAgentIds.has(agent.id)}
+                    selected={isSelectionRowSelected(row, selectedAgentIds)}
                     onToggle={onToggle}
                     disabled={writeBlocked}
                   />
@@ -244,19 +309,19 @@ function ScopePreferencePanel({
               </p>
             )}
 
-            {hiddenPrivateRequiredAgents.length > 0 && (
+            {hiddenSelectionRows.length > 0 && (
               <Collapsible>
                 <CollapsibleTrigger className="group flex w-full items-center justify-center gap-1.5 rounded-md border border-transparent py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40">
-                  {t('settings.installPreferences.otherAgentsToggle', { count: hiddenPrivateRequiredAgents.length })}
+                  {t('settings.installPreferences.otherAgentsToggle', { count: hiddenSelectionRows.length })}
                   <ChevronDown className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-1.5 flex flex-col gap-1.5">
-                  {hiddenPrivateRequiredAgents.map((agent) => (
+                  {hiddenSelectionRows.map((row) => (
                     <SelectableAgentRow
-                      key={agent.id}
-                      agent={agent}
+                      key={row.groupId}
+                      row={row}
                       scope={scope}
-                      selected={selectedAgentIds.has(agent.id)}
+                      selected={isSelectionRowSelected(row, selectedAgentIds)}
                       onToggle={onToggle}
                       disabled={writeBlocked}
                       muted
@@ -277,34 +342,27 @@ function ScopePreferencePanel({
 }
 
 function SelectableAgentRow({
-  agent,
+  row,
   scope,
   selected,
   onToggle,
   disabled = false,
   muted = false,
 }: {
-  agent: AgentInfo;
+  row: AgentSelectionRow;
   scope: InstallScope;
   selected: boolean;
-  onToggle: (agentId: string) => void;
+  onToggle: (agentIds: AgentId[]) => void;
   disabled?: boolean;
   muted?: boolean;
 }) {
-  const target = getAgentTarget(agent, scope);
+  const singleAgent = row.agents.length === 1 ? row.agents[0] : null;
+  const checkboxId = `install-preference-${scope}-${row.groupId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+  const displayPath = singleAgent ? getAgentDisplayPath(singleAgent, scope) : null;
 
   return (
-    <div
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      aria-disabled={disabled}
-      onClick={() => { if (!disabled) onToggle(agent.id); }}
-      onKeyDown={(event) => {
-        if (!disabled && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          onToggle(agent.id);
-        }
-      }}
+    <Label
+      htmlFor={checkboxId}
       className={cn(
         'group grid w-full cursor-pointer grid-cols-[auto_auto_auto_1fr_auto] items-center gap-3 rounded-md px-3 py-2.5 text-left outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring/35 hover:bg-muted/30',
         selected ? 'bg-primary/5' : 'bg-transparent',
@@ -312,40 +370,61 @@ function SelectableAgentRow({
         disabled && 'cursor-not-allowed opacity-50'
       )}
     >
-      <Checkbox checked={selected} className="pointer-events-none" disabled={disabled} />
-      <AgentIcon agentId={agent.id} className="h-7 w-7 rounded-[5px]" />
+      <Checkbox
+        id={checkboxId}
+        checked={selected}
+        onCheckedChange={() => onToggle(row.selectableAgentIds)}
+        disabled={disabled}
+      />
+      <span className="flex shrink-0 items-center -space-x-1">
+        {row.agents.slice(0, 3).map((agent) => (
+          <AgentIcon key={agentId(agent)} agentId={agentId(agent)} className="h-7 w-7 rounded-[5px] ring-1 ring-background" />
+        ))}
+      </span>
       <span className={cn('text-[13px] font-medium leading-tight', selected ? 'text-foreground' : 'text-foreground/90')}>
-        {agent.name}
+        {row.agents.map(agentDisplayName).join(' / ')}
       </span>
       <div className="min-w-0 flex justify-end pr-2">
         <code className="truncate font-mono text-[11px] leading-tight text-muted-foreground/50">
-          {formatAgentTargetPath(target.path)}
+          {displayPath ? formatAgentTargetPath(displayPath) : ''}
         </code>
       </div>
-      <AgentDetectionStatus detected={agent.detected} />
-    </div>
+      {singleAgent ? <AgentDetectionStatus detection={singleAgent.detection} /> : <span />}
+    </Label>
   );
 }
 
-function AgentDetectionStatus({ detected }: { detected: boolean }) {
+function AgentDetectionStatus({ detection }: { detection: DetectionState }) {
   const { t } = useTranslation();
 
   return (
     <span
       className={cn(
         'inline-flex shrink-0 items-center gap-1.5 rounded text-[11px]',
-        detected ? 'text-muted-foreground' : 'text-muted-foreground/50'
+        detectionTextClass(detection),
       )}
     >
       <span
         className={cn(
           'h-1.5 w-1.5 rounded-full',
-          detected ? 'bg-emerald-500/80' : 'bg-muted-foreground/30'
+          detectionDotClass(detection),
         )}
       />
-      {t(detected ? 'settings.detected' : 'settings.notDetected')}
+      {t(`settings.agents.preview.detection.${detection}`)}
     </span>
   );
+}
+
+function detectionTextClass(detection: DetectionState): string {
+  if (detection === 'detected') return 'text-muted-foreground';
+  if (detection === 'indeterminate') return 'text-amber-700/80 dark:text-amber-300/80';
+  return 'text-muted-foreground/50';
+}
+
+function detectionDotClass(detection: DetectionState): string {
+  if (detection === 'detected') return 'bg-emerald-500/80';
+  if (detection === 'indeterminate') return 'bg-amber-500/70';
+  return 'bg-muted-foreground/30';
 }
 
 function LoadingRows() {

@@ -2,11 +2,17 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
-import type { AgentInfo } from '@/bindings';
-import { makeAgentScopeTarget } from '@/test-utils';
-import { shouldShowInstallModeSelection, type WizardState } from '../types';
+import type {
+  AgentId,
+  AgentRuntimeSnapshot,
+  AgentSelectionGroup,
+  ResolvedAgent,
+  ResolvedAgentScope,
+} from '@/bindings';
+import { makeAgentRuntimeSnapshot, makeResolvedScopeFixture, makeResolvedAgent } from '@/test-utils';
+import { canProceedForStep, shouldShowInstallModeSelection, type WizardState } from '../types';
 import { OptionsStep } from '../OptionsStep';
 
 vi.mock('react-i18next', () => ({
@@ -16,77 +22,113 @@ vi.mock('react-i18next', () => ({
 }));
 
 const listAgentsMock = vi.fn();
+const listAgentSelectionGroupsMock = vi.fn();
 const listEveInstallTargetsMock = vi.fn();
 const getDefaultTargetAgentsMock = vi.fn();
+const configureAgentMock = vi.fn();
+let configuredAgentSaved: ((snapshot: AgentRuntimeSnapshot, agentId: AgentId) => void) | undefined;
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listAgents: (...args: unknown[]) => listAgentsMock(...args),
+  listAgentSelectionGroups: (...args: unknown[]) => listAgentSelectionGroupsMock(...args),
   listEveInstallTargets: (...args: unknown[]) => listEveInstallTargetsMock(...args),
   getDefaultTargetAgents: (...args: unknown[]) => getDefaultTargetAgentsMock(...args),
 }));
 
-vi.mock('../AgentSelector', () => ({
+vi.mock('@/hooks/useAgentConfigurationFlow', () => ({
+  useAgentConfigurationFlow: ({
+    onSaved,
+  }: {
+    onSaved: (snapshot: AgentRuntimeSnapshot, agentId: AgentId) => void;
+  }) => {
+    configuredAgentSaved = onSaved;
+    return { configuringAgentId: null, configure: configureAgentMock };
+  },
+}));
+
+vi.mock('@/components/agents/AgentSelector', () => ({
   AgentSelector: ({
     selectedAgents,
     scope,
     allAgents,
+    selectionGroups,
+    unknownAgentIds = [],
+    onConfigureAgent,
   }: {
     selectedAgents: string[];
     scope: string;
-    allAgents: AgentInfo[];
+    allAgents: ResolvedAgent[];
+    selectionGroups: AgentSelectionGroup[];
+    unknownAgentIds?: string[];
+    onConfigureAgent?: (agentId: string) => void;
   }) => (
     <div>
       agent-selector:{scope}:{selectedAgents.join(',')}
-      <span>all-agents:{allAgents.map((agent) => agent.id).join(',')}</span>
+      <span>all-agents:{allAgents.map((agent) => agent.definition.id).join(',')}</span>
+      <span>selection-groups:{selectionGroups.map((group) => group.groupId).join(',')}</span>
+      <span>unknown-agents:{unknownAgentIds.join(',')}</span>
+      {unknownAgentIds.map((id) => <button key={id} onClick={() => onConfigureAgent?.(id)}>configure:{id}</button>)}
     </div>
   ),
 }));
 
-function makeAgent(agent: Omit<AgentInfo, 'targets'> & {
+type AgentFixture = {
+  id: string;
+  name: string;
+  skillsDir: string;
+  globalSkillsDir: string;
+  detected: boolean;
   globalAutomatic?: boolean;
   projectAutomatic?: boolean;
-}): AgentInfo {
-  return {
-    ...agent,
-    targets: {
-      global: makeAgentScopeTarget({
-        automatic: agent.globalAutomatic ?? false,
-        path: agent.globalSkillsDir,
-      }),
-      project: makeAgentScopeTarget({
-        automatic: agent.projectAutomatic ?? false,
-        path: agent.skillsDir,
-        sharedPath: './.agents/skills',
-      }),
-    },
-  };
+};
+
+function makeAgent(agent: AgentFixture): ResolvedAgent {
+  return makeResolvedAgent({
+    id: agent.id,
+    displayName: agent.name,
+    detection: agent.detected ? 'detected' : 'notDetected',
+    global: makeResolvedScopeFixture({
+      automatic: agent.globalAutomatic ?? false,
+      path: agent.globalSkillsDir,
+    }),
+    project: makeResolvedScopeFixture({
+      automatic: agent.projectAutomatic ?? false,
+      path: agent.skillsDir,
+      sharedPath: './.agents/skills',
+    }),
+  });
 }
 
-function makeAutomaticGlobalAgent(agent: Omit<AgentInfo, 'targets'>): AgentInfo {
+function makeAutomaticGlobalAgent(agent: AgentFixture): ResolvedAgent {
+  const resolved = makeAgent(agent);
   return {
-    ...agent,
-    targets: {
-      global: makeAgentScopeTarget({
+    ...resolved,
+    global: makeResolvedScopeFixture({
         automatic: true,
         path: '~/.agents/skills',
-      }),
-      project: makeAgentScopeTarget({
+    }),
+    project: makeResolvedScopeFixture({
         automatic: agent.skillsDir === '.agents/skills',
         path: agent.skillsDir,
         sharedPath: './.agents/skills',
-      }),
-    },
+    }),
   };
 }
 
 function makeScopeAwareAgent(
-  agent: Omit<AgentInfo, 'targets'>,
-  targets: AgentInfo['targets'],
-): AgentInfo {
+  agent: AgentFixture,
+  targets: { global: ResolvedAgentScope; project: ResolvedAgentScope },
+): ResolvedAgent {
+  const resolved = makeAgent(agent);
   return {
-    ...agent,
-    targets,
+    ...resolved,
+    global: targets.global,
+    project: targets.project,
   };
+}
+
+function runtimeSnapshot(agents: ResolvedAgent[]): AgentRuntimeSnapshot {
+  return makeAgentRuntimeSnapshot(agents);
 }
 
 function createState(): WizardState {
@@ -155,7 +197,28 @@ function ProjectHarness() {
   );
 }
 
+function UnknownAgentHarness() {
+  const [state, setState] = useState<WizardState>(() => ({
+    ...createState(),
+    preSelectedAgents: ['private-agent'],
+  }));
+  return <OptionsStep state={state} updateState={(updates) => setState((current) => ({ ...current, ...updates }))} />;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
 describe('OptionsStep', () => {
+  it('blocks confirmation while a preselected Agent ID is still unknown', () => {
+    expect(canProceedForStep({
+      ...createState(),
+      preSelectedAgents: ['private-agent'],
+      step: 'options',
+    })).toBe(false);
+  });
   it('uses install paths, not private read paths, when deciding whether mode selection is needed', () => {
     const sharedCompatibleAgent = makeScopeAwareAgent({
       id: 'firebender',
@@ -164,15 +227,14 @@ describe('OptionsStep', () => {
       globalSkillsDir: '~/.firebender/skills',
       detected: true,
     }, {
-      global: makeAgentScopeTarget({
+      global: makeResolvedScopeFixture({
         automatic: true,
         path: '~/.firebender/skills',
         availability: 'shared-compatible',
         sharedPath: '~/.agents/skills',
-        installPath: '~/.agents/skills',
         privatePath: '~/.firebender/skills',
       }),
-      project: makeAgentScopeTarget({
+      project: makeResolvedScopeFixture({
         automatic: true,
         path: '.agents/skills',
         sharedPath: './.agents/skills',
@@ -188,13 +250,87 @@ describe('OptionsStep', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    configuredAgentSaved = undefined;
     getDefaultTargetAgentsMock.mockResolvedValue(null);
-    listAgentsMock.mockResolvedValue([]);
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([]));
+    listAgentSelectionGroupsMock.mockResolvedValue({ global: [], project: [] });
     listEveInstallTargetsMock.mockResolvedValue([]);
   });
 
+  it('shows a recoverable error when Agent initialization fails', async () => {
+    listAgentsMock.mockRejectedValueOnce(new Error('WSL unavailable'));
+    render(<Harness />);
+
+    expect(await screen.findByRole('alert')).toBeDefined();
+    listAgentsMock.mockResolvedValueOnce(runtimeSnapshot([]));
+    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }));
+
+    await waitFor(() => expect(listAgentsMock).toHaveBeenCalledTimes(2));
+  });
+
+  it('refreshes selection groups after an Agent configuration is saved', async () => {
+    const configuredAgent = makeAgent({
+      id: 'private-agent',
+      name: 'Private Agent',
+      skillsDir: '.private/skills',
+      globalSkillsDir: '~/.private/skills',
+      detected: true,
+    });
+    listAgentSelectionGroupsMock
+      .mockResolvedValueOnce({ global: [], project: [] })
+      .mockResolvedValueOnce({
+        global: [{ groupId: 'shared-private-target', agentIds: ['private-agent'] }],
+        project: [],
+      });
+
+    render(<Harness />);
+    await screen.findByText('selection-groups:');
+
+    act(() => configuredAgentSaved?.(runtimeSnapshot([configuredAgent]), 'private-agent'));
+
+    await screen.findByText('selection-groups:shared-private-target');
+    expect(listAgentSelectionGroupsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores an older Agent response after the Environment changes', async () => {
+    const hostRequest = deferred<AgentRuntimeSnapshot>();
+    const wslRequest = deferred<AgentRuntimeSnapshot>();
+    listAgentsMock
+      .mockReturnValueOnce(hostRequest.promise)
+      .mockReturnValueOnce(wslRequest.promise);
+    const updateState = vi.fn();
+    const hostState = createState();
+    const { rerender } = render(<OptionsStep state={hostState} updateState={updateState} />);
+    const wslState: WizardState = {
+      ...hostState,
+      context: {
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+        scope: { scope: 'global' },
+      },
+    };
+    rerender(<OptionsStep state={wslState} updateState={updateState} />);
+
+    await act(async () => {
+      wslRequest.resolve(runtimeSnapshot([makeAgent({
+        id: 'wsl-agent', name: 'WSL Agent', skillsDir: '.wsl/skills',
+        globalSkillsDir: '~/.wsl/skills', detected: true,
+      })]));
+    });
+    await waitFor(() => expect(updateState).toHaveBeenCalled());
+    await act(async () => {
+      hostRequest.resolve(runtimeSnapshot([makeAgent({
+        id: 'host-agent', name: 'Host Agent', skillsDir: '.host/skills',
+        globalSkillsDir: '~/.host/skills', detected: true,
+      })]));
+    });
+
+    expect(updateState.mock.calls.flatMap(([update]) => (
+      update.allAgents?.map((agent: ResolvedAgent) => agent.definition.id) ?? []
+    ))).not.toContain('host-agent');
+  });
+
   it('loads project-aware agents using the selected project path', async () => {
-    listAgentsMock.mockResolvedValue([
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([
       makeAgent({
         id: 'eve',
         name: 'Eve',
@@ -202,7 +338,7 @@ describe('OptionsStep', () => {
         globalSkillsDir: '',
         detected: true,
       }),
-    ]);
+    ]));
 
     render(<ProjectHarness />);
 
@@ -230,7 +366,7 @@ describe('OptionsStep', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'project', project_id: 'eve-app' },
     } as const;
-    listAgentsMock.mockResolvedValue([]);
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([]));
 
     render(
       <OptionsStep
@@ -247,7 +383,7 @@ describe('OptionsStep', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     } as const;
-    listAgentsMock.mockResolvedValue([]);
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([]));
     getDefaultTargetAgentsMock.mockResolvedValue({ global: [], project: [] });
 
     render(
@@ -262,7 +398,7 @@ describe('OptionsStep', () => {
   });
 
   it('hides mode radios when only the shared directory is relevant', async () => {
-    listAgentsMock.mockResolvedValue([
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([
       makeAutomaticGlobalAgent({
         id: 'amp',
         name: 'Amp',
@@ -277,7 +413,7 @@ describe('OptionsStep', () => {
         globalSkillsDir: '~/.agents/skills',
         detected: true,
       }),
-    ]);
+    ]));
     render(<Harness />);
 
     await waitFor(() => {
@@ -290,7 +426,7 @@ describe('OptionsStep', () => {
   });
 
   it('passes scope to the agent selector and uses persisted defaults for that scope', async () => {
-    listAgentsMock.mockResolvedValue([
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([
       makeScopeAwareAgent({
         id: 'antigravity',
         name: 'Antigravity',
@@ -298,11 +434,11 @@ describe('OptionsStep', () => {
         globalSkillsDir: '~/.gemini/antigravity/skills',
         detected: true,
       }, {
-        global: makeAgentScopeTarget({
+        global: makeResolvedScopeFixture({
           automatic: false,
           path: '~/.gemini/antigravity/skills',
         }),
-        project: makeAgentScopeTarget({
+        project: makeResolvedScopeFixture({
           automatic: true,
           path: '.agents/skills',
           sharedPath: './.agents/skills',
@@ -315,7 +451,7 @@ describe('OptionsStep', () => {
         globalSkillsDir: '~/.claude/skills',
         detected: true,
       }),
-    ]);
+    ]));
     getDefaultTargetAgentsMock.mockResolvedValue({
       global: ['antigravity', 'claude-code'],
       project: ['antigravity', 'claude-code'],
@@ -329,8 +465,8 @@ describe('OptionsStep', () => {
   });
 
   it('starts persisted default loading without waiting for agents to finish loading', async () => {
-    let resolveAgents!: (value: AgentInfo[]) => void;
-    listAgentsMock.mockReturnValue(new Promise<AgentInfo[]>((resolve) => {
+    let resolveAgents!: (value: AgentRuntimeSnapshot) => void;
+    listAgentsMock.mockReturnValue(new Promise<AgentRuntimeSnapshot>((resolve) => {
       resolveAgents = resolve;
     }));
     getDefaultTargetAgentsMock.mockResolvedValue({
@@ -345,7 +481,7 @@ describe('OptionsStep', () => {
       expect(getDefaultTargetAgentsMock).toHaveBeenCalledTimes(1);
     });
 
-    resolveAgents([
+    resolveAgents(runtimeSnapshot([
       makeAgent({
         id: 'claude-code',
         name: 'Claude Code',
@@ -353,7 +489,7 @@ describe('OptionsStep', () => {
         globalSkillsDir: '~/.claude/skills',
         detected: true,
       }),
-    ]);
+    ]));
 
     await waitFor(() => {
       expect(screen.getByText('agent-selector:global:claude-code')).toBeDefined();
@@ -361,7 +497,7 @@ describe('OptionsStep', () => {
   });
 
   it('shows install mode choices with a distinct recommended badge', async () => {
-    listAgentsMock.mockResolvedValue([
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([
       makeAutomaticGlobalAgent({
         id: 'warp',
         name: 'Warp',
@@ -376,7 +512,7 @@ describe('OptionsStep', () => {
         globalSkillsDir: '~/.claude/skills',
         detected: true,
       }),
-    ]);
+    ]));
 
     render(<Harness />);
 
@@ -388,5 +524,15 @@ describe('OptionsStep', () => {
     expect(screen.getByText('addSkill.mode.symlink')).toBeDefined();
     expect(screen.getByText('addSkill.mode.copy')).toBeDefined();
     expect(screen.getByText('addSkill.mode.recommended')).toBeDefined();
+  });
+
+  it('preserves unknown preselected Agent IDs and delegates configuration', async () => {
+    listAgentsMock.mockResolvedValue(runtimeSnapshot([]));
+    getDefaultTargetAgentsMock.mockResolvedValue(null);
+    render(<UnknownAgentHarness />);
+
+    await waitFor(() => expect(screen.getByText('unknown-agents:private-agent')).toBeDefined());
+    fireEvent.click(screen.getByText('configure:private-agent'));
+    expect(configureAgentMock).toHaveBeenCalledWith('private-agent');
   });
 });

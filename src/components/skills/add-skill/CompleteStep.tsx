@@ -1,308 +1,136 @@
-// src/components/skills/add-skill/CompleteStep.tsx
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { AlertTriangle, CheckCircle2, CircleSlash2, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { getCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
-import type { InstallResult, InstallTargetSpec } from '@/bindings';
+import type { MutationUnitResult } from '@/bindings';
 import type { WizardState } from './types';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
+import { useEnvironmentStore } from '@/stores/environment';
+import { useProjectStore } from '@/stores/projects';
+import { presentMutationUnit } from '@/workflows/mutation-presentation';
+import {
+  formatFallbackReason,
+  formatMutationError,
+  formatMutationWarning,
+  isRetryableMutationUnit,
+} from '@/lib/mutation-results';
 
 interface CompleteStepProps {
   state: WizardState;
   onDone: () => void;
   onRetry?: () => void;
-  onRetrySkill?: (
-    skillName: string,
-    failedAgents: string[],
-    failedAgentTargets: InstallTargetSpec[],
-  ) => void;
 }
 
-interface SkillGroup {
-  skillName: string;
-  successful: InstallResult[];
-  skipped: InstallResult[];
-  failed: InstallResult[];
-}
+const EMPTY_MUTATION_UNITS: MutationUnitResult[] = [];
 
-function resultCategory(result: InstallResult) {
-  if (result.category) return result.category;
-  if (result.skipped) return 'skipped';
-  if (!result.success) return 'failed';
-  return 'private-adapted';
-}
-
-export function CompleteStep({ state, onDone, onRetry, onRetrySkill }: CompleteStepProps) {
-  const { t } = useTranslation();
-  const results = state.installResults;
-  const [expandedSkills, setExpandedSkills] = useState<Record<string, boolean>>({});
-
-  // useMemo 必须在 early return 之前调用（rules-of-hooks）
-  const { groups, successfulSkillCount, failedSkillCount } = useMemo(() => {
-    if (!results) {
-      return {
-        groups: [] as SkillGroup[],
-        successfulSkillCount: 0,
-        failedSkillCount: 0,
-      };
-    }
-
-    const successMap = new Map<string, InstallResult[]>();
-    const skippedMap = new Map<string, InstallResult[]>();
-    const failedMap = new Map<string, InstallResult[]>();
-
-    for (const r of results.successful) {
-      const targetMap = resultCategory(r) === 'skipped' ? skippedMap : successMap;
-      const existing = targetMap.get(r.skillName) ?? [];
-      existing.push(r);
-      targetMap.set(r.skillName, existing);
-    }
-
-    for (const r of results.failed) {
-      const existing = failedMap.get(r.skillName) ?? [];
-      existing.push(r);
-      failedMap.set(r.skillName, existing);
-    }
-
-    const allSkillNames = Array.from(
-      new Set([...successMap.keys(), ...skippedMap.keys(), ...failedMap.keys()])
-    ).sort((a, b) => a.localeCompare(b));
-    const grouped = allSkillNames.map((skillName) => ({
-      skillName,
-      successful: successMap.get(skillName) ?? [],
-      skipped: skippedMap.get(skillName) ?? [],
-      failed: failedMap.get(skillName) ?? [],
-    }));
-
-    return {
-      groups: grouped,
-      successfulSkillCount: grouped.filter((g) => g.failed.length === 0).length,
-      failedSkillCount: grouped.filter((g) => g.failed.length > 0).length,
-    };
-  }, [results]);
-
-  if (!results) {
-    return null;
+function statusIcon(unit: MutationUnitResult) {
+  switch (unit.status) {
+    case 'succeeded':
+      return <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />;
+    case 'failed':
+    case 'recoveryRequired':
+      return <XCircle className="h-4 w-4 shrink-0 text-destructive" />;
+    case 'cancelled':
+    case 'skipped':
+    case 'notRun':
+      return <CircleSlash2 className="h-4 w-4 shrink-0 text-muted-foreground" />;
   }
+}
 
-  const hasFailures = failedSkillCount > 0;
+export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
+  const { t } = useTranslation();
+  const units = state.installResults?.units ?? EMPTY_MUTATION_UNITS;
+  const environments = useEnvironmentStore((store) => store.environments);
+  const projectsByEnvironment = useProjectStore((store) => store.projectsByEnvironment);
+  const presentations = useMemo(
+    () => new Map(units.map((unit) => [
+      unit.unitId,
+      presentMutationUnit(unit, t, { environments, projectsByEnvironment }),
+    ])),
+    [environments, projectsByEnvironment, t, units],
+  );
+  const hasFailures = units.some((unit) => unit.status !== 'succeeded');
+  const hasRetryable = units.some(isRetryableMutationUnit);
   const failureGuidance = hasFailures
     ? getCrossStorageFailureGuidance(state.context, 'install', t)
     : null;
-  const hasSymlinkFallback = results.symlinkFallbackAgents.length > 0;
-  const defaultAvailableAgents = results.defaultAvailableAgents;
-  const keptAgentDirectoryAgentIds = new Set(results.privateCopyAgents ?? []);
-  const defaultAvailableAgentCount = defaultAvailableAgents
-    ? defaultAvailableAgents.filter((agent) => !keptAgentDirectoryAgentIds.has(agent)).length
-    : null;
-
-  const toggleSkill = (skillName: string) => {
-    setExpandedSkills((prev) => ({
-      ...prev,
-      [skillName]: !prev[skillName],
-    }));
-  };
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
+    <div className="space-y-4" role="status" aria-live="polite">
       <div className="flex items-center gap-3">
         {hasFailures ? (
-          <XCircle className="h-6 w-6 text-destructive" />
+          <AlertTriangle className="h-6 w-6 text-warning" />
         ) : (
           <CheckCircle2 className="h-6 w-6 text-green-600" />
         )}
         <h3 className="text-lg font-heading font-bold">
           {hasFailures
             ? t('addSkill.complete.partial')
-            : t('addSkill.complete.success', { count: successfulSkillCount })}
+            : t('addSkill.complete.success', { count: units.length })}
         </h3>
       </div>
 
-      {/* Counts */}
-      {hasFailures && (
-        <div className="flex gap-4 text-sm">
-          <span className="text-green-600">
-            {t('addSkill.complete.successCount', { count: successfulSkillCount })}
-          </span>
-          <span className="text-destructive">
-            {t('addSkill.complete.failedCount', { count: failedSkillCount })}
-          </span>
-        </div>
-      )}
-
       {failureGuidance ? (
-        <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-foreground">
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm">
           {failureGuidance}
         </div>
       ) : null}
 
-      {/* Results list */}
-      <div className="border rounded-md p-3 space-y-2">
-        {groups.map((group) => {
-          const hasSkillFailures = group.failed.length > 0;
-          const expanded = expandedSkills[group.skillName] === true;
-          const defaultAvailable = group.successful.filter((r) => resultCategory(r) === 'default-available');
-          const privateAdapted = group.successful.filter((r) => resultCategory(r) === 'private-adapted');
-          const privateCopies = group.successful.filter((r) => resultCategory(r) === 'private-copy');
-          const defaultAvailableCount = defaultAvailable.length > 0
-            ? defaultAvailableAgentCount ?? defaultAvailable.length
-            : 0;
-          const successCount = defaultAvailableCount + privateAdapted.length + privateCopies.length;
-          const totalCount = successCount + group.skipped.length + group.failed.length;
-
+      <div className="space-y-2">
+        {units.map((unit) => {
+          const presentation = presentations.get(unit.unitId)!;
           return (
-            <div
-              key={group.skillName}
-              className={`rounded-md border p-2 ${
-                hasSkillFailures ? 'border-destructive/30 bg-destructive/5' : 'border-border bg-muted/30'
-              }`}
-            >
+            <div key={unit.unitId} className="rounded-md border border-border/60 bg-card p-3">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    {hasSkillFailures ? (
-                      <XCircle className="h-4 w-4 text-destructive shrink-0" />
-                    ) : (
-                      <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                    )}
-                    <span className="text-sm font-medium break-all">{group.skillName}</span>
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {t('addSkill.complete.agentCoverage', {
-                      success: successCount,
-                      total: totalCount,
-                    })}
-                  </div>
-                  {group.skipped.length > 0 && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {t('addSkill.complete.skipped', {
-                        agents: group.skipped.map((item) => item.agent).join(', '),
+                <div className="flex min-w-0 items-start gap-2">
+                  {statusIcon(unit)}
+                  <div className="min-w-0 space-y-1">
+                    <p className="truncate text-sm font-medium">{presentation.skillName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t('mutation.result.location', {
+                        environment: presentation.environmentLabel,
+                        scope: presentation.scopeLabel,
                       })}
-                    </div>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {defaultAvailableCount > 0 && (
-                      <ResultCategoryBadge
-                        label={t('addSkill.complete.defaultAvailable')}
-                        count={defaultAvailableCount}
-                      />
-                    )}
-                    {privateAdapted.length > 0 && (
-                      <ResultCategoryBadge
-                        label={t('addSkill.complete.privateAdapted')}
-                        count={privateAdapted.length}
-                      />
-                    )}
-                    {privateCopies.length > 0 && (
-                      <ResultCategoryBadge
-                        label={t('addSkill.complete.privateCopies')}
-                        count={privateCopies.length}
-                      />
-                    )}
-                    {group.skipped.length > 0 && (
-                      <ResultCategoryBadge
-                        label={t('addSkill.complete.skippedCategory')}
-                        count={group.skipped.length}
-                      />
-                    )}
-                    {group.failed.length > 0 && (
-                      <ResultCategoryBadge
-                        label={t('addSkill.complete.failedCategory')}
-                        count={group.failed.length}
-                      />
-                    )}
+                    </p>
+                    {unit.fallbackReason ? (
+                      <p className="text-xs text-muted-foreground">
+                        {formatFallbackReason(unit.fallbackReason, t)}
+                      </p>
+                    ) : null}
+                    {unit.error ? (
+                      <p className="text-xs text-destructive" role="alert">
+                        {formatMutationError(unit.error, t)}
+                      </p>
+                    ) : null}
+                    {unit.warnings.map((warning, index) => (
+                      <p key={`${unit.unitId}:${warning.code}:${index}`} className="text-xs text-warning">
+                        {formatMutationWarning(warning, t)}
+                      </p>
+                    ))}
                   </div>
                 </div>
-
-                {hasSkillFailures && (
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7"
-                      onClick={() => toggleSkill(group.skillName)}
-                    >
-                      {expanded
-                        ? t('addSkill.complete.hideFailures')
-                        : t('addSkill.complete.showFailures', { count: group.failed.length })}
-                    </Button>
-                    {onRetrySkill && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7"
-                        onClick={() => {
-                          const failedAgentTargets = group.failed
-                            .filter((item) => item.agent === 'eve' && item.targetId)
-                            .map((item) => ({
-                              agent: 'eve' as const,
-                              subagent: item.subagent ?? null,
-                            }));
-                          const failedAgents = group.failed
-                            .filter((item) => !(item.agent === 'eve' && item.targetId))
-                            .map((item) => item.agent);
-                          onRetrySkill(group.skillName, failedAgents, failedAgentTargets);
-                        }}
-                      >
-                        {t('addSkill.actions.retrySkill')}
-                      </Button>
-                    )}
-                  </div>
-                )}
+                <Badge variant={unit.status === 'succeeded' ? 'secondary' : 'outline'}>
+                  {unit.status === 'recoveryRequired'
+                    ? t('addSkill.complete.recoveryRequired')
+                    : t(`addSkill.complete.status.${unit.status}`)}
+                </Badge>
               </div>
-
-              {hasSkillFailures && expanded && (
-                <div className="mt-2 space-y-1 rounded-md bg-background/70 p-2">
-                  {group.failed.map((item) => (
-                    <div key={`${group.skillName}-${item.agent}`} className="text-xs">
-                      <div className="font-medium text-destructive">{item.agent}</div>
-                      <div className="text-destructive/90 break-words">
-                        {item.error ?? t('addSkill.error.unknown')}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {unit.recovery ? <RecoveryActions recovery={unit.recovery} /> : null}
             </div>
           );
         })}
       </div>
 
-      {/* Symlink fallback warning */}
-      {hasSymlinkFallback && (
-        <div className="flex items-start gap-2 p-3 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-sm rounded-md">
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <div>
-            <div>
-              {t('addSkill.complete.symlinkFailed', {
-                agents: results.symlinkFallbackAgents.join(', '),
-              })}
-            </div>
-            <div className="text-xs opacity-80">
-              {t('addSkill.complete.symlinkFailedHint')}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Actions */}
       <div className="flex justify-end gap-2 pt-2">
-        {hasFailures && onRetry && (
+        {hasRetryable && onRetry ? (
           <Button variant="outline" onClick={onRetry}>
             {t('addSkill.actions.retry')}
           </Button>
-        )}
+        ) : null}
         <Button onClick={onDone}>{t('addSkill.actions.done')}</Button>
       </div>
     </div>
-  );
-}
-
-function ResultCategoryBadge({ label, count }: { label: string; count: number }) {
-  return (
-    <span className="inline-flex items-center rounded border border-border/60 bg-background/70 px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
-      {label} · {count}
-    </span>
   );
 }

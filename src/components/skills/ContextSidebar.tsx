@@ -20,7 +20,7 @@ import {
   type ProjectRemovalRequest,
 } from '@/stores/project-removal';
 import { environmentKey, sameEnvironment } from '@/lib/context';
-import { openInExplorer } from '@/hooks/useTauriApi';
+import { openConfigResource } from '@/hooks/useTauriApi';
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
 import { cn } from '@/lib/utils';
 import { useMutationStore } from '@/stores/mutation';
@@ -29,12 +29,6 @@ function getProjectName(project: ProjectInfo): string {
   if (project.binding.displayName) return project.binding.displayName;
   const parts = project.binding.nativePath.replace(/\\/g, '/').split('/');
   return parts.at(-1) || project.binding.nativePath;
-}
-
-function explorerPath(environment: EnvironmentRef, nativePath: string): string {
-  if (environment.kind === 'host') return nativePath;
-  const relativePath = nativePath.replace(/^\/+/, '').replace(/\//g, '\\');
-  return `\\\\wsl.localhost\\${environment.distro_name}\\${relativePath}`;
 }
 
 interface GlobalContextItemProps {
@@ -100,7 +94,10 @@ function ProjectContextItem({
   const openProject = async (event?: React.MouseEvent) => {
     event?.stopPropagation();
     try {
-      await openInExplorer(explorerPath(environment, project.binding.nativePath));
+      await openConfigResource({
+        environment,
+        scope: { scope: 'project', project_id: project.binding.id },
+      }, 'contextRoot');
     } catch (error) {
       console.error('Failed to open in explorer:', error);
     }

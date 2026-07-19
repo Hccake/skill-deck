@@ -120,6 +120,10 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         selectedSkills: preselected,
         skillFilter: result.skillFilter,
         gitRef: result.gitRef ?? null,
+        discoverySession: result.discoverySession,
+        acquiredPayloads: undefined,
+        installRequest: undefined,
+        installPreview: undefined,
         riskPolicy: result.riskPolicy ?? null,
         riskAcknowledged: false,
         preSelectedSkills: parsed.skills,
@@ -134,6 +138,10 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         fetchError: toAppError(error),
         riskPolicy: null,
         riskAcknowledged: false,
+        discoverySession: undefined,
+        acquiredPayloads: undefined,
+        installRequest: undefined,
+        installPreview: undefined,
       });
     }
   }, [updateState, onNext, state.context, t]);

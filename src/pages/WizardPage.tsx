@@ -27,7 +27,7 @@ import type {
   WizardStep,
   WizardState,
 } from '@/components/skills/add-skill/types';
-import type { ContextRef, InstallTargetSpec } from '@/bindings';
+import type { ContextRef } from '@/bindings';
 
 function createInitialState(params: {
   entryPoint: EntryPoint;
@@ -55,6 +55,7 @@ function createInitialState(params: {
     fetchStatus: 'idle',
     fetchError: null,
     gitRef: null,
+    discoverySession: undefined,
     riskPolicy: null,
     riskAcknowledged: false,
     availableSkills: [],
@@ -72,6 +73,9 @@ function createInitialState(params: {
     otherAgentsSearchQuery: '',
     overwrites: {},
     confirmReady: false,
+    acquiredPayloads: undefined,
+    installRequest: undefined,
+    installPreview: undefined,
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
@@ -166,22 +170,6 @@ export function WizardPage() {
     setInstallKey((k) => k + 1);
   }, [updateState]);
 
-  const handleRetryFailedSkill = useCallback((
-    skillName: string,
-    failedAgents: string[],
-    failedAgentTargets: InstallTargetSpec[] = [],
-  ) => {
-    updateState({
-      installResults: null,
-      installError: undefined,
-      retrySkillName: skillName,
-      retryAgents: failedAgents,
-      retryAgentTargets: failedAgentTargets,
-      step: 'installing',
-    });
-    setInstallKey((k) => k + 1);
-  }, [updateState]);
-
   // 完成安装 — 通知主窗口刷新 skills 列表，然后关闭窗口
   const handleDone = useCallback(async () => {
     try { await emit('wizard-result', { action: 'refresh' }); } catch { /* ignore */ }
@@ -259,8 +247,15 @@ export function WizardPage() {
           <CompleteStep
             state={state}
             onDone={handleDone}
-            onRetry={() => goToStep('confirm')}
-            onRetrySkill={handleRetryFailedSkill}
+            onRetry={() => {
+              updateState({
+                installResults: null,
+                installRequest: undefined,
+                installPreview: undefined,
+                confirmReady: false,
+              });
+              goToStep('confirm');
+            }}
           />
         );
       case 'error':
@@ -278,8 +273,15 @@ export function WizardPage() {
           <CompleteStep
             state={state}
             onDone={handleDone}
-            onRetry={() => goToStep('confirm')}
-            onRetrySkill={handleRetryFailedSkill}
+            onRetry={() => {
+              updateState({
+                installResults: null,
+                installRequest: undefined,
+                installPreview: undefined,
+                confirmReady: false,
+              });
+              goToStep('confirm');
+            }}
           />
         );
       default:

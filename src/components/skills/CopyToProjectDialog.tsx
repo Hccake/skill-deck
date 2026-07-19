@@ -14,27 +14,44 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import type { InstalledSkill } from '@/bindings';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { environmentKey, sameEnvironment } from '@/lib/context';
+import type { ContextRef, EnvironmentInfo, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+
+export interface CopyTargetSelection {
+  environment: EnvironmentRef;
+  projectIds: string[];
+}
 
 interface CopyToProjectDialogProps {
   skill: InstalledSkill | null;
-  /** 当前项目路径（排除在目标列表中） */
-  currentProjectPath: string;
-  /** 所有已注册项目列表 */
-  projects: string[];
+  sourceContext: ContextRef;
+  environments: EnvironmentInfo[];
+  projectsByEnvironment: Record<string, ProjectInfo[]>;
+  onLoadProjects: (environment: EnvironmentRef) => Promise<void>;
   /** 检查 skill 在目标项目中是否已存在 */
-  checkExistence?: (skillName: string, projectPaths: string[]) => Promise<Array<{ projectPath: string; hasSkill: boolean }>>;
+  checkExistence?: (
+    skillName: string,
+    environment: EnvironmentRef,
+    projectIds: string[],
+  ) => Promise<Array<{ projectId: string; hasSkill: boolean }>>;
   onClose: () => void;
-  onCopy: (targetPaths: string[]) => Promise<void>;
+  onCopy: (selection: CopyTargetSelection) => Promise<void>;
 }
 
-const SOURCE_INFO_LIMIT_REASONS = new Set(['missing-skill-path', 'missing-remote-hash']);
+const SOURCE_INFO_LIMIT_REASONS = new Set(['missing-skill-path', 'missingRemoteHash']);
+type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
+type PresenceState = 'idle' | 'loading' | 'ready' | 'error';
+type ProjectPresence = 'installed' | 'absent' | 'unknown';
 
 export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   skill,
-  currentProjectPath,
-  projects,
+  sourceContext,
+  environments,
+  projectsByEnvironment,
+  onLoadProjects,
   checkExistence,
   onClose,
   onCopy,
@@ -42,44 +59,98 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [copying, setCopying] = useState(false);
+  const [projectLoadState, setProjectLoadState] = useState<ProjectLoadState>('idle');
+  const [projectLoadAttempt, setProjectLoadAttempt] = useState(0);
+  const [presenceState, setPresenceState] = useState<PresenceState>('idle');
+  const [targetEnvironmentKey, setTargetEnvironmentKey] = useState(
+    environmentKey(sourceContext.environment),
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  /** 已安装此 skill 的项目路径集合 */
-  const [existingSet, setExistingSet] = useState<Set<string>>(new Set());
+  const [presenceByProject, setPresenceByProject] = useState<Map<string, ProjectPresence>>(
+    () => new Map(),
+  );
 
   // render-time reset
   const [prevSkill, setPrevSkill] = useState(skill);
   if (skill !== prevSkill) {
     setPrevSkill(skill);
     setSelected(new Set());
-    setExistingSet(new Set());
+    setPresenceByProject(new Map());
+    setPresenceState('idle');
+    setProjectLoadState('idle');
+    setTargetEnvironmentKey(environmentKey(sourceContext.environment));
   }
 
-  // 过滤掉当前项目
+  const targetEnvironment = environments.find(
+    (entry) => environmentKey(entry.environment) === targetEnvironmentKey,
+  )?.environment ?? sourceContext.environment;
+
   const availableProjects = useMemo(
-    () => (projects ?? []).filter((p) => p !== currentProjectPath),
-    [projects, currentProjectPath],
+    () => (projectsByEnvironment[targetEnvironmentKey] ?? []).filter((project) => !(
+      sameEnvironment(targetEnvironment, sourceContext.environment)
+      && sourceContext.scope.scope === 'project'
+      && project.binding.id === sourceContext.scope.project_id
+    )),
+    [projectsByEnvironment, sourceContext, targetEnvironment, targetEnvironmentKey],
   );
 
-  // skill 打开时检查已存在状态
   useEffect(() => {
-    if (!skill || !checkExistence || availableProjects.length === 0) return;
+    if (!skill) return;
     let cancelled = false;
-    checkExistence(skill.name, availableProjects).then((statuses) => {
-      if (cancelled) return;
-      const existing = new Set(statuses.filter((s) => s.hasSkill).map((s) => s.projectPath));
-      setExistingSet(existing);
-    }).catch(() => { /* 静默失败，不影响正常使用 */ });
+    setProjectLoadState('loading');
+    setPresenceState('idle');
+    setPresenceByProject(new Map());
+    void onLoadProjects(targetEnvironment)
+      .then(() => {
+        if (!cancelled) setProjectLoadState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setProjectLoadState('error');
+      });
     return () => { cancelled = true; };
-  }, [skill, checkExistence, availableProjects]);
+  }, [onLoadProjects, projectLoadAttempt, skill, targetEnvironment]);
+
+  useEffect(() => {
+    if (!skill || projectLoadState !== 'ready') return;
+    if (!checkExistence || availableProjects.length === 0) {
+      setPresenceState('idle');
+      setPresenceByProject(new Map());
+      return;
+    }
+    let cancelled = false;
+    setPresenceState('loading');
+    setPresenceByProject(new Map(
+      availableProjects.map((project) => [project.binding.id, 'unknown' as const]),
+    ));
+    void checkExistence(
+      skill.name,
+      targetEnvironment,
+      availableProjects.map((project) => project.binding.id),
+    ).then((statuses) => {
+      if (cancelled) return;
+      const statusById = new Map(statuses.map((status) => [status.projectId, status.hasSkill]));
+      setPresenceByProject(new Map(availableProjects.map((project) => {
+        const installed = statusById.get(project.binding.id);
+        return [
+          project.binding.id,
+          installed === undefined ? 'unknown' : installed ? 'installed' : 'absent',
+        ];
+      })));
+      setPresenceState('ready');
+    }).catch(() => {
+      if (!cancelled) setPresenceState('error');
+    });
+    return () => { cancelled = true; };
+  }, [availableProjects, checkExistence, projectLoadState, skill, targetEnvironment]);
 
   // 选中的项目中有多少个已存在此 skill
   const selectedExistingCount = useMemo(() => {
     let count = 0;
     for (const path of selected) {
-      if (existingSet.has(path)) count++;
+      if (presenceByProject.get(path) === 'installed') count++;
     }
     return count;
-  }, [selected, existingSet]);
+  }, [presenceByProject, selected]);
 
   const showSourceInfoNote = useMemo(() => {
     if (!skill) return false;
@@ -87,13 +158,13 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
     return SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? '');
   }, [skill]);
 
-  const toggleProject = useCallback((path: string) => {
+  const toggleProject = useCallback((projectId: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
+      if (next.has(projectId)) {
+        next.delete(projectId);
       } else {
-        next.add(path);
+        next.add(projectId);
       }
       return next;
     });
@@ -102,11 +173,11 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   const handleCopy = useCallback(async () => {
     setCopying(true);
     try {
-      await onCopy(Array.from(selected));
+      await onCopy({ environment: targetEnvironment, projectIds: Array.from(selected) });
     } finally {
       setCopying(false);
     }
-  }, [onCopy, selected]);
+  }, [onCopy, selected, targetEnvironment]);
 
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !copying && onClose()}>
@@ -127,26 +198,101 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
           </div>
         ) : null}
 
+        <div className="mt-4 space-y-1.5">
+          <Label>{t('skills.copyToProject.targetEnvironment')}</Label>
+          <Select
+            value={targetEnvironmentKey}
+            onValueChange={(value) => {
+              setTargetEnvironmentKey(value);
+              setSelected(new Set());
+              setProjectLoadState('loading');
+              setPresenceState('idle');
+              setPresenceByProject(new Map());
+            }}
+          >
+            <SelectTrigger aria-label={t('skills.copyToProject.targetEnvironment')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {environments.map((environment) => (
+                <SelectItem
+                  key={environmentKey(environment.environment)}
+                  value={environmentKey(environment.environment)}
+                >
+                  {environment.displayName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <div className={showSourceInfoNote ? 'mt-2 space-y-1.5 max-h-[50vh] overflow-y-auto' : 'mt-4 space-y-1.5 max-h-[50vh] overflow-y-auto'}>
-          {availableProjects.length > 0 ? (
+          {projectLoadState === 'loading' || projectLoadState === 'idle' ? (
+            <p role="status" aria-live="polite" className="py-4 text-center text-sm text-muted-foreground">
+              {t('common.loading')}
+            </p>
+          ) : projectLoadState === 'error' ? (
+            <Alert>
+              <AlertDescription>
+                <p>{t('skills.copyToProject.projectsLoadError')}</p>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={() => setProjectLoadAttempt((attempt) => attempt + 1)}
+                >
+                  {t('common.retry')}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : availableProjects.length > 0 ? (
             <>
-              {availableProjects.map((path) => {
-                const hasSkill = existingSet.has(path);
+              {presenceState === 'error' ? (
+                <div
+                  role="status"
+                  aria-label={t('skills.copyToProject.presenceUnknown')}
+                  className="mb-2"
+                >
+                  <Alert>
+                    <AlertDescription>
+                      {t('skills.copyToProject.presenceUnknown')}
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              ) : null}
+              {availableProjects.map((project) => {
+                const projectId = project.binding.id;
+                const presence = presenceByProject.get(projectId);
                 return (
-                  <div
-                    key={path}
+                  <label
+                    key={projectId}
                     className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
-                    onClick={() => toggleProject(path)}
                   >
-                    <Checkbox checked={selected.has(path)} />
+                    <Checkbox
+                      checked={selected.has(projectId)}
+                      onCheckedChange={() => toggleProject(projectId)}
+                    />
                     <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <Label className="text-sm cursor-pointer truncate flex-1">{path}</Label>
-                    {hasSkill ? (
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">
+                        {project.binding.displayName || project.binding.nativePath}
+                      </span>
+                      {project.binding.displayName ? (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {project.binding.nativePath}
+                        </span>
+                      ) : null}
+                    </span>
+                    {presence === 'installed' ? (
                       <Badge variant="outline" className="text-xs text-warning shrink-0">
                         {t('skills.copyToProject.installed')}
                       </Badge>
+                    ) : presenceState === 'error' && presence === 'unknown' ? (
+                      <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">
+                        {t('skills.copyToProject.unknown')}
+                      </Badge>
                     ) : null}
-                  </div>
+                  </label>
                 );
               })}
               {selectedExistingCount > 0 ? (
@@ -171,7 +317,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
           </Button>
           <Button
             onClick={handleCopy}
-            disabled={writeBlocked || copying || selected.size === 0}
+            disabled={writeBlocked || copying || projectLoadState !== 'ready' || selected.size === 0}
           >
             {copying ? (
               <>

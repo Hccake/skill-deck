@@ -1,17 +1,23 @@
 // src/components/skills/add-skill/types.ts
 
 import type {
-  AgentInfo,
+  AgentId,
   AppError,
+  AcquiredPayloadHandle,
   AvailableSkill,
+  DiscoverySessionHandle,
   InstallMode,
-  InstallResults,
+  InstallPreview,
+  InstallRequest,
+  InstallResponse,
   InstallTargetInfo,
-  InstallTargetSpec,
   ContextRef,
+  ResolvedAgent,
 } from '@/bindings';
+import type { AdapterTargetSelection } from '@/lib/install-workflow';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
-import { getAgentTarget, isAutomaticAgent, isAdditionalAgent, type InstallScope } from '@/lib/agentTargets';
+import { agentId } from '@/lib/agents';
+import { getAgentInstallPath, isAutomaticAgent, isAdditionalAgent, type InstallScope } from '@/lib/agentTargets';
 
 /** 安装错误详情（UI 视图模型，由 parseInstallError 从 AppError 转换而来） */
 export interface InstallError {
@@ -55,11 +61,12 @@ export function shouldShowInstallModeSelection(
   const scope = state.scope ?? 'global';
 
   for (const agent of state.allAgents) {
-    const target = getAgentTarget(agent, scope);
+    const installPath = getAgentInstallPath(agent, scope);
+    if (!installPath) continue;
     if (isAutomaticAgent(agent, scope)) {
-      effectiveDirs.add(target.installPath);
-    } else if (isAdditionalAgent(agent, scope) && selectedSet.has(agent.id)) {
-      effectiveDirs.add(target.installPath);
+      effectiveDirs.add(installPath);
+    } else if (isAdditionalAgent(agent, scope) && selectedSet.has(agentId(agent))) {
+      effectiveDirs.add(installPath);
     }
   }
 
@@ -86,6 +93,7 @@ export interface WizardState {
   fetchStatus: 'idle' | 'loading' | 'error' | 'success';
   fetchError: AppError | null;
   gitRef: string | null;
+  discoverySession?: DiscoverySessionHandle;
   riskPolicy: InstallRiskPolicy | null;
   riskAcknowledged: boolean;
 
@@ -96,11 +104,11 @@ export interface WizardState {
   skillSearchQuery: string;
 
   // Options
-  selectedAgents: string[];
-  privateCopyAgents: string[];
-  allAgents: AgentInfo[];
+  selectedAgents: AgentId[];
+  privateCopyAgents: AgentId[];
+  allAgents: ResolvedAgent[];
   availableAgentTargets?: InstallTargetInfo[];
-  selectedAgentTargets?: InstallTargetSpec[];
+  selectedAgentTargets?: AdapterTargetSelection[];
   mode: InstallMode;
   otherAgentsExpanded: boolean;
   privateCopyAgentsExpanded: boolean;
@@ -109,17 +117,20 @@ export interface WizardState {
   // Confirm
   overwrites: Record<string, string[]>;
   confirmReady: boolean;
+  acquiredPayloads?: AcquiredPayloadHandle[];
+  installRequest?: InstallRequest;
+  installPreview?: InstallPreview;
 
   // CLI 预填值
   preSelectedSkills: string[];
-  preSelectedAgents: string[];
+  preSelectedAgents: AgentId[];
 
   // Installing
-  installResults: InstallResults | null;
+  installResults: InstallResponse | null;
   installError?: InstallError;
   retrySkillName?: string;
-  retryAgents?: string[];
-  retryAgentTargets?: InstallTargetSpec[];
+  retryAgents?: AgentId[];
+  retryAgentTargets?: AdapterTargetSelection[];
 }
 
 export function canProceedForStep(state: WizardState): boolean {
@@ -131,7 +142,8 @@ export function canProceedForStep(state: WizardState): boolean {
     case 'skills':
       return state.selectedSkills.length > 0;
     case 'options':
-      return true;
+      return state.preSelectedAgents.every((preselectedId) =>
+        state.allAgents.some((agent) => agentId(agent) === preselectedId));
     case 'confirm':
       return state.confirmReady
         && (state.riskPolicy?.kind !== 'require-confirmation' || state.riskAcknowledged);

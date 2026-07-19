@@ -22,11 +22,18 @@ import {
   isDefaultAvailableAgent,
   isPrivateRequiredAgent,
 } from '@/lib/agentTargets';
-import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
+import { agentDisplayName, agentId } from '@/lib/agents';
+import {
+  acquireSelectedPayloads,
+  checkSkillAudit,
+  previewInstall,
+} from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
-import type { InstallTargetInfo, InstallTargetSpec } from '@/bindings';
+import type { InstallTargetInfo } from '@/bindings';
+import type { AdapterTargetSelection } from '@/lib/install-workflow';
 import { RiskBadge } from '../RiskBadge';
 import { getEffectiveInstallMode, type WizardState } from './types';
+import { buildAgentWriteIntents } from '@/lib/install-workflow';
 
 function formatPath(path: string) {
   return path
@@ -34,15 +41,12 @@ function formatPath(path: string) {
     .replace(/[\\/]+$/, '');
 }
 
-function targetKey(target: Pick<InstallTargetInfo, 'agent' | 'subagent'> | InstallTargetSpec) {
-  return `${target.agent}:${target.subagent ?? 'root'}`;
+function targetKey(target: InstallTargetInfo | AdapterTargetSelection) {
+  return target.targetId;
 }
 
-function targetLabel(target: InstallTargetSpec) {
-  if (target.agent === 'eve') {
-    return target.subagent ? `Eve (${target.subagent})` : 'Eve (root)';
-  }
-  return `${target.agent}:${target.subagent ?? 'root'}`;
+function targetLabel(target: AdapterTargetSelection) {
+  return target.targetId;
 }
 
 interface ConfirmStepProps {
@@ -74,42 +78,67 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
 
     updateStateRef.current({ confirmReady: false });
 
-    const concreteTargetAgentIds = new Set<string>((state.selectedAgentTargets ?? []).map((target) => target.agent));
-    const overwriteAgentIds = Array.from(new Set([
-      ...state.selectedAgents.filter((agent) => !concreteTargetAgentIds.has(agent)),
-      ...state.allAgents
-        .filter((agent) => isDefaultAvailableAgent(agent, scope) && !concreteTargetAgentIds.has(agent.id))
-        .map((agent) => agent.id),
-    ]));
-    const selectedAgentTargets = state.selectedAgentTargets ?? [];
+    if (!state.discoverySession) {
+      updateStateRef.current({ confirmReady: false });
+      return;
+    }
 
-    const overwritePromise: Promise<Record<string, string[]>> =
-      overwriteAgentIds.length > 0 || selectedAgentTargets.length > 0
-      ? checkOverwrites(
-          state.context,
-          state.selectedSkills,
-          overwriteAgentIds,
-          state.privateCopyAgents,
-          selectedAgentTargets,
-        )
-      : Promise.resolve({});
+    const skillPaths = state.selectedSkills.flatMap((name) => {
+      const skill = state.availableSkills.find((candidate) => candidate.name === name);
+      return skill ? [skill.relativePath] : [];
+    });
+    const requestPromise = acquireSelectedPayloads({
+      discoverySession: state.discoverySession,
+      skillPaths,
+    }).then((payloads) => {
+      const request = {
+        context: state.context,
+        source: state.source,
+        discoverySession: state.discoverySession!,
+        payloads,
+        skills: state.selectedSkills,
+        agentIntents: buildAgentWriteIntents({
+          agents: state.allAgents,
+          scope,
+          selectedAgents: state.selectedAgents,
+          privateCopyAgents: state.privateCopyAgents,
+          adapterTargets: state.selectedAgentTargets ?? [],
+        }),
+        requestedMode: getEffectiveInstallMode({
+          allAgents: state.allAgents,
+          selectedAgents: state.selectedAgents,
+          mode: state.mode,
+          scope: state.scope,
+        }),
+        acknowledgeRisk: state.riskAcknowledged,
+      };
+      return previewInstall(request).then((preview) => ({ payloads, request, preview }));
+    });
 
     const auditPromise = state.source
       ? checkSkillAudit(state.source, state.selectedSkills).catch(() => null)
       : Promise.resolve(null);
 
-    Promise.all([overwritePromise, auditPromise]).then(([overwriteResult, auditResult]) => {
+    Promise.all([requestPromise, auditPromise]).then(([install, auditResult]) => {
       if (cancelled || requestId !== confirmRequestIdRef.current) return;
 
       const overwrites: Record<string, string[]> = {};
-      for (const [key, value] of Object.entries(overwriteResult)) {
-        if (value) overwrites[key] = value;
+      for (const skill of install.preview.skills) {
+        if (skill.overwriteTargets.length > 0) {
+          overwrites[skill.skillName] = skill.overwriteTargets;
+        }
       }
 
       setAuditData((current) =>
         auditResult ?? (Object.keys(current).length > 0 ? {} : current)
       );
-      updateStateRef.current({ overwrites, confirmReady: true });
+      updateStateRef.current({
+        acquiredPayloads: install.payloads,
+        installRequest: install.request,
+        installPreview: install.preview,
+        overwrites,
+        confirmReady: true,
+      });
     }).catch((error) => {
       if (cancelled || requestId !== confirmRequestIdRef.current) return;
 
@@ -121,7 +150,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     return () => {
       cancelled = true;
     };
-  }, [state.selectedSkills, state.selectedAgents, state.selectedAgentTargets, state.privateCopyAgents, state.allAgents, state.source, state.context, scope, projectPath]);
+  }, [state.selectedSkills, state.selectedAgents, state.selectedAgentTargets, state.privateCopyAgents, state.allAgents, state.availableSkills, state.discoverySession, state.source, state.context, state.mode, state.scope, state.riskAcknowledged, scope, projectPath]);
 
   // 覆盖统计
   const availableSkillMap = useMemo(
@@ -141,14 +170,14 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
   const selectedPrivateRequiredAgents = useMemo(() => {
     const selectedSet = new Set(state.selectedAgents);
     return state.allAgents.filter((agent) =>
-      selectedSet.has(agent.id) && isPrivateRequiredAgent(agent, scope)
+      selectedSet.has(agentId(agent)) && isPrivateRequiredAgent(agent, scope)
     );
   }, [state.selectedAgents, state.allAgents, scope]);
 
   const selectedPrivateCopyAgents = useMemo(() => {
     const selectedSet = new Set(state.privateCopyAgents);
     return state.allAgents.filter((agent) =>
-      selectedSet.has(agent.id) && canCreatePrivateCopy(agent, scope)
+      selectedSet.has(agentId(agent)) && canCreatePrivateCopy(agent, scope)
     );
   }, [state.privateCopyAgents, state.allAgents, scope]);
   const selectedConcreteTargets = useMemo(() => {
@@ -161,9 +190,9 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
       if (info) return info;
       return {
         targetId: targetKey(target),
-        agent: target.agent,
+        agent: target.agentId,
         displayName: targetLabel(target),
-        subagent: target.subagent ?? null,
+        subagent: null,
         path: '',
       } satisfies InstallTargetInfo;
     });
@@ -324,7 +353,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
             title={t('addSkill.confirm.defaultLocation')}
             hint={t('addSkill.confirm.defaultLocationHint')}
             path={formatPath(sharedDir)}
-            agents={defaultAvailableAgents.map((agent) => agent.name)}
+              agents={defaultAvailableAgents.map(agentDisplayName)}
           />
 
           {selectedPrivateRequiredAgents.length > 0 && (
@@ -334,8 +363,10 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
               hint={effectiveMode === 'symlink'
                 ? t('addSkill.confirm.symlinkHint')
                 : t('addSkill.confirm.copyHint')}
-              agents={selectedPrivateRequiredAgents.map((agent) => agent.name)}
-              paths={selectedPrivateRequiredAgents.map((agent) => formatPath(getAgentTarget(agent, scope).path))}
+              agents={selectedPrivateRequiredAgents.map(agentDisplayName)}
+              paths={selectedPrivateRequiredAgents.map((agent) => formatPath(
+                getAgentTarget(agent, scope).privatePath ?? '',
+              ))}
             />
           )}
 
@@ -344,9 +375,9 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
               icon={Copy}
               title={t('addSkill.confirm.privateCopies')}
               hint={t('addSkill.confirm.privateCopiesHint')}
-              agents={selectedPrivateCopyAgents.map((agent) => agent.name)}
+              agents={selectedPrivateCopyAgents.map(agentDisplayName)}
               paths={selectedPrivateCopyAgents.map((agent) =>
-                formatPath(getAgentTarget(agent, scope).privatePath ?? getAgentTarget(agent, scope).path)
+                formatPath(getAgentTarget(agent, scope).privatePath ?? '')
               )}
             />
           )}

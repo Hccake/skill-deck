@@ -6,21 +6,32 @@ import remarkGfm from 'remark-gfm';
 import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench, AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { PopConfirm } from '@/components/ui/pop-confirm';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTime } from '@/lib/utils';
 import type { InstalledSkill, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
-import { resolveSkillMaintenanceAction, resolveUpdateReasonI18nKey } from '@/stores/skills-utils';
-import { useMutationStore } from '@/stores/mutation';
 import {
-  phaseToI18nKey,
-  type SkillUpdatePhase,
-  useSkillUpdateProgressListener,
-} from './update-progress';
-
-type SkillUpdateStatus = 'updating' | 'done' | 'failed';
+  resolveSkillMaintenanceAction,
+  isSkillUpdateActive,
+  resolveSkillUpdatePhaseI18nKey,
+  type SkillUpdateDisplayStatus,
+  type SkillUpdateActivePhase,
+  resolveUpdateReasonI18nKey,
+  resolveUpdateStatusI18nKey,
+} from '@/stores/skills-utils';
+import { useMutationStore } from '@/stores/mutation';
 
 interface SkillDetailPanelProps {
   skill: InstalledSkill & {
@@ -30,7 +41,7 @@ interface SkillDetailPanelProps {
   content: string | null;
   loading: boolean;
   agentDisplayNames: Map<string, string>;
-  updateStatus?: SkillUpdateStatus;
+  updateStatus?: SkillUpdateDisplayStatus;
   isCheckingUpdates?: boolean;
   projectPath?: string;
   onClose: () => void;
@@ -50,7 +61,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   agentDisplayNames,
   updateStatus,
   isCheckingUpdates = false,
-  projectPath,
   onClose,
   onCheckUpdates,
   onUpdate,
@@ -142,11 +152,12 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
     }, 800);
   }, [isCheckingUpdates, onCheckUpdates]);
 
-  const isUpdateInProgress = updateStatus === 'updating';
+  const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
+  const isUpdateInProgress = activeUpdatePhase !== null;
   const showCheckDone = checkDone && !isCheckingUpdates && !skill.hasUpdate;
-  const isDeletedUpstream = skill.updateStatus === 'deleted-upstream' || skill.updateReason === 'deleted-upstream';
+  const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream';
   const showCannotCheckStatus = isDeletedUpstream
-    || skill.updateStatus === 'cannot-check'
+    || skill.updateStatus === 'cannotCheck'
     || skill.canCheckForUpdates === false;
   const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false && !isDeletedUpstream;
   const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
@@ -170,8 +181,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                   {skill.name}
                 </h2>
                 <div className="flex shrink-0 flex-wrap justify-end gap-1 pt-1">
-                  {updateStatus === 'updating' ? (
-                    <UpdatingStatusBadge skill={skill} projectPath={projectPath} />
+                  {activeUpdatePhase ? (
+                    <UpdatingStatusBadge phase={activeUpdatePhase} />
                   ) : null}
                   {updateStatus === 'done' ? (
                     <Badge variant="outline" className="h-8 px-2 text-xs text-success">
@@ -196,24 +207,32 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       </Button>
                   ) : null}
                   {canShowDirectReinstallAction ? (
-                    <PopConfirm
-                      title={t('skills.reinstallConfirm.title')}
-                      description={t('skills.reinstallConfirm.description')}
-                      confirmLabel={t('skills.reinstallConfirm.confirm')}
-                      cancelLabel={t('common.cancel')}
-                      onConfirm={handleUpdate}
-                    >
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
-                        title={t('skills.actions.reinstall')}
-                        disabled={writeBlocked}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <Wrench className="h-4 w-4" />
-                      </Button>
-                    </PopConfirm>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-warning hover:text-warning hover:bg-warning/10 cursor-pointer"
+                          title={t('skills.actions.reinstall')}
+                          disabled={writeBlocked}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <Wrench className="h-4 w-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>{t('skills.reinstallConfirm.title')}</AlertDialogTitle>
+                          <AlertDialogDescription>{t('skills.reinstallConfirm.description')}</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                          <AlertDialogAction onClick={handleUpdate}>
+                            {t('skills.reinstallConfirm.confirm')}
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   ) : null}
                   {canShowRepairAction ? (
                     <Button
@@ -316,7 +335,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
             {showCannotCheckStatus ? (
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="text-xs text-muted-foreground">
-                  {t(isDeletedUpstream ? 'skills.updateStatus.deleted-upstream' : 'skills.updateStatus.cannotCheck')}
+                  {t(resolveUpdateStatusI18nKey(isDeletedUpstream ? 'deletedUpstream' : 'cannotCheck'))}
                 </Badge>
                 {(() => {
                   const reasonKey = resolveUpdateReasonI18nKey(skill.updateReason);
@@ -452,29 +471,16 @@ const MarkdownContent = memo(function MarkdownContent({ content }: { content: st
 });
 
 const UpdatingStatusBadge = memo(function UpdatingStatusBadge({
-  skill,
-  projectPath,
+  phase,
 }: {
-  skill: InstalledSkill;
-  projectPath?: string;
+  phase: SkillUpdateActivePhase;
 }) {
   const { t } = useTranslation();
-  const [updatePhase, setUpdatePhase] = useState<SkillUpdatePhase | null>(null);
-  const skillName = skill.name;
-  const skillScope = skill.scope;
-
-  useSkillUpdateProgressListener({
-    skillName,
-    scope: skillScope,
-    projectPath,
-    enabled: true,
-    onPhase: setUpdatePhase,
-  });
 
   return (
     <Badge variant="outline" className="h-8 px-2 text-xs text-warning animate-pulse">
       <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-      {t(phaseToI18nKey(updatePhase))}
+      {t(resolveSkillUpdatePhaseI18nKey(phase))}
     </Badge>
   );
 });

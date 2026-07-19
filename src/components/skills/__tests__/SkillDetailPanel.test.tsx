@@ -2,7 +2,7 @@
 
 import '@/test-utils';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SkillDetailPanel } from '../SkillDetailPanel';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { InstalledSkill } from '@/bindings';
@@ -88,7 +88,11 @@ describe('SkillDetailPanel', () => {
   });
 
 
-  it('shows update progress instead of the update button while a skill is updating', () => {
+  it.each([
+    ['acquiring', 'skills.updatePhaseAcquiring'],
+    ['validating', 'skills.updatePhaseValidating'],
+    ['updating', 'skills.updatePhaseUpdating'],
+  ] as const)('shows the %s phase instead of the update button', (updateStatus, label) => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -101,13 +105,13 @@ describe('SkillDetailPanel', () => {
         onDelete={vi.fn()}
         onRetry={vi.fn()}
         onManageAgents={vi.fn()}
-        updateStatus="updating"
+        updateStatus={updateStatus}
       />
       </TooltipProvider>
     );
 
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
-    expect(screen.getByText('skills.updatePhaseCloning')).toBeTruthy();
+    expect(screen.getByText(label)).toBeTruthy();
   });
 
   it('renders a check-updates action and triggers it', () => {
@@ -135,7 +139,7 @@ describe('SkillDetailPanel', () => {
     expect(onCheckUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it('shows cannot-check status and reason without exposing update action when no update is available', () => {
+  it('shows cannotCheck status and reason without exposing update action when no update is available', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -145,8 +149,8 @@ describe('SkillDetailPanel', () => {
               canRunUpdate: true,
               updateReason: 'missing-skill-path',
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -179,8 +183,8 @@ describe('SkillDetailPanel', () => {
               sourceUrl: 'https://github.com/owner/repo',
               updateReason: 'missing-skill-path',
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -213,10 +217,10 @@ describe('SkillDetailPanel', () => {
               canCheckForUpdates: false,
               source: 'owner/repo',
               sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missing-remote-hash',
+              updateReason: 'missingRemoteHash',
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -255,10 +259,10 @@ describe('SkillDetailPanel', () => {
               canCheckForUpdates: true,
               source: 'owner/repo',
               sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'deleted-upstream',
+              updateReason: 'deletedUpstream',
             }),
-            updateStatus: 'deleted-upstream',
-          } as InstalledSkill & { updateStatus?: 'deleted-upstream' }}
+            updateStatus: 'deletedUpstream',
+          } as InstalledSkill & { updateStatus?: 'deletedUpstream' }}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -272,8 +276,8 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatus.deleted-upstream')).toBeTruthy();
-    expect(screen.getByText('skills.updateReason.deleted-upstream')).toBeTruthy();
+    expect(screen.getByText('skills.updateStatus.deletedUpstream')).toBeTruthy();
+    expect(screen.getByText('skills.updateReason.deletedUpstream')).toBeTruthy();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
 
     fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));
@@ -346,8 +350,8 @@ describe('SkillDetailPanel', () => {
               canRunUpdate: true,
               updateReason: reason,
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
@@ -489,7 +493,7 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByText('Claude Code')).toBeNull();
   });
 
-  it('ignores update-progress events from a different skill identity', () => {
+  it('shows a stable workflow updating indicator', () => {
     render(
       <TooltipProvider>
         <SkillDetailPanel
@@ -507,19 +511,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    act(() => {
-      eventMocks.callback?.({
-        payload: {
-          skillName: 'brainstorming',
-          scope: 'project',
-          projectPath: 'D:\\Code\\other-project',
-          phase: 'writing_lock',
-        },
-      });
-    });
-
-    expect(screen.queryByText('skills.updatePhaseWritingLock')).toBeNull();
-    expect(screen.getByText('skills.updatePhaseCloning')).toBeTruthy();
+    expect(screen.getByText('skills.updatePhaseUpdating')).toBeTruthy();
   });
 
   it('resets the transient check-complete state when switching to a different skill', async () => {
@@ -589,17 +581,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    act(() => {
-      eventMocks.callback?.({
-        payload: {
-          skillName: 'brainstorming',
-          scope: 'global',
-          phase: 'writing_lock',
-        },
-      });
-    });
-
-    expect(screen.getByText('skills.updatePhaseWritingLock')).toBeTruthy();
+    expect(screen.getByText('skills.updatePhaseUpdating')).toBeTruthy();
 
     rerender(
       <TooltipProvider>
@@ -619,8 +601,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByText('skills.updatePhaseWritingLock')).toBeNull();
-    expect(screen.getByText('skills.updatePhaseCloning')).toBeTruthy();
+    expect(screen.getByText('skills.updatePhaseUpdating')).toBeTruthy();
   });
 
   it('shows available agent names without technical availability category counts', () => {

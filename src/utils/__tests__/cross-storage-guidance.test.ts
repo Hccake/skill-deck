@@ -18,11 +18,13 @@ describe('cross-storage failure guidance', () => {
   beforeEach(() => {
     useEnvironmentStore.setState({
       environments: [
-        { environment: { kind: 'host' }, displayName: 'Windows', status: 'available' },
+        { environment: { kind: 'host' }, displayName: 'Windows', status: 'available', revision: 1, error: null },
         {
           environment: { kind: 'wsl', distro_name: 'Ubuntu' },
           displayName: 'Ubuntu 24.04',
           status: 'available',
+          revision: 1,
+          error: null,
         },
       ],
     });
@@ -41,7 +43,7 @@ describe('cross-storage failure guidance', () => {
             owner: { kind: 'wsl', distro_name: 'Ubuntu' },
           },
         }],
-        'wsl:Ubuntu': [{
+        'wsl:ubuntu': [{
           binding: {
             id: 'windows-project',
             nativePath: '/mnt/c/Code/app',
@@ -81,7 +83,7 @@ describe('cross-storage failure guidance', () => {
 
     useProjectStore.setState({
       projectsByEnvironment: {
-        'wsl:Ubuntu': [{
+        'wsl:ubuntu': [{
           binding: {
             id: 'native-project',
             nativePath: '/home/alice/app',

@@ -4,14 +4,24 @@ import { useGroupRef } from 'react-resizable-panels';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import { useProjectStore } from '@/stores/projects';
+import { useEnvironmentStore } from '@/stores/environment';
 import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { findSkillByIdentity, getSkillIdentityKey } from '@/lib/skills/identity';
+import { agentDisplayName, agentId } from '@/lib/agents';
 import { ContextSidebar, SkillsPanel, SkillDetailPanel } from '@/components/skills';
 import { ManageAgentsDialog } from '@/components/skills/ManageAgentsDialog';
 import { CopyToProjectDialog } from '@/components/skills/CopyToProjectDialog';
+import { UpdatePlanDialog } from '@/components/skills/UpdatePlanDialog';
+import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { listSkills } from '@/hooks/useTauriApi';
+import {
+  executeManageAgentChanges,
+  openManageAgentChanges,
+} from '@/workflows/skill-manage-agents';
+import { openSkillRemoval } from '@/workflows/skill-remove';
+import { executeSkillCopy } from '@/workflows/skill-copy';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import type { ContextRef, InstalledSkill, SkillScope } from '@/bindings';
 
@@ -45,6 +55,10 @@ export function SkillsPage() {
   const projects = useProjectStore((state) => (
     state.projectsByEnvironment[environmentKey(selectedContext.environment)] ?? EMPTY_PROJECTS
   ));
+  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
+  const refreshProjects = useProjectStore((state) => state.refresh);
+  const environments = useEnvironmentStore((state) => state.environments);
+  const connectEnvironment = useEnvironmentStore((state) => state.connect);
   const selectedScope = selectedContext.scope;
   const selectedProject = selectedScope.scope === 'project'
     ? projects.find((project) => project.binding.id === selectedScope.project_id)
@@ -65,50 +79,58 @@ export function SkillsPage() {
   const reloadContent = useSkillDetailStore((s) => s.reloadContent);
   const checkingUpdateScopes = useSkillsDataStore((s) => s.checkingUpdateScopes);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
-  const storeUpdateSkill = useSkillsDataStore((s) => s.updateSkill);
-  const updatingSkills = useSkillsDataStore((s) => s.updatingSkills);
-  const openDelete = useSkillDialogStore((s) => s.openDelete);
+  const updatePhase = useSkillUpdateWorkflow((s) => s.phase);
+  const updateContext = useSkillUpdateWorkflow((s) => s.context);
+  const updateSkillNames = useSkillUpdateWorkflow((s) => s.skillNames);
+  const openUpdate = useSkillUpdateWorkflow((s) => s.open);
+  const closeUpdate = useSkillUpdateWorkflow((s) => s.close);
   const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const allAgents = selectedContext.scope.scope === 'project'
     ? projectSnapshot.agents
     : globalSnapshot.agents;
-  const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
   const closeManageAgents = useSkillDialogStore((s) => s.closeManageAgents);
-  const saveAgentChanges = useSkillDialogStore((s) => s.saveAgentChanges);
   const manageAgentsSkill = useSkillDialogStore((s) => s.manageAgentsSkill);
   const manageAgentsScope = useSkillDialogStore((s) => s.manageAgentsScope);
   const manageAgentDetails = useSkillDialogStore((s) => s.manageAgentDetails);
   const loadingManageAgentDetails = useSkillDialogStore((s) => s.loadingManageAgentDetails);
   const copySkill = useSkillDialogStore((s) => s.copySkill);
+  const copyContext = useSkillDialogStore((s) => s.copyContext);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
   const closeCopyToProject = useSkillDialogStore((s) => s.closeCopyToProject);
-  const executeCopy = useSkillDialogStore((s) => s.executeCopy);
-  const copyTargetProjects = projects.map((project) => project.binding.nativePath);
+  const loadCopyTargetProjects = useCallback(async (environment: ContextRef['environment']) => {
+    const environmentInfo = environments.find(
+      (entry) => environmentKey(entry.environment) === environmentKey(environment),
+    );
+    if (environment.kind === 'wsl' && environmentInfo?.status !== 'available') {
+      await connectEnvironment(environment);
+    }
+    await refreshProjects(environment);
+  }, [connectEnvironment, environments, refreshProjects]);
   const checkCopyTargetExistence = useCallback(async (
     skillName: string,
-    projectPaths: string[],
+    environment: ContextRef['environment'],
+    projectIds: string[],
   ) => {
-    const projectsByPath = new Map(
-      projects.map((project) => [project.binding.nativePath, project]),
+    const targetProjects = projectsByEnvironment[environmentKey(environment)] ?? [];
+    const projectsById = new Map(
+      targetProjects.map((project) => [project.binding.id, project]),
     );
-    return Promise.all(projectPaths.map(async (projectPath) => {
-      const project = projectsByPath.get(projectPath);
-      if (!project) return { projectPath, hasSkill: false };
+    return Promise.all(projectIds.map(async (projectId) => {
+      const project = projectsById.get(projectId);
+      if (!project) {
+        throw new Error(`Copy target project is no longer available: ${projectId}`);
+      }
       const context: ContextRef = {
-        environment: selectedContext.environment,
+        environment,
         scope: { scope: 'project', project_id: project.binding.id },
       };
-      try {
-        const result = await listSkills(context);
-        return {
-          projectPath,
-          hasSkill: result.skills.some((skill) => skill.name === skillName),
-        };
-      } catch {
-        return { projectPath, hasSkill: false };
-      }
+      const result = await listSkills(context);
+      return {
+        projectId,
+        hasSkill: result.skills.some((skill) => skill.name === skillName),
+      };
     }));
-  }, [projects, selectedContext.environment]);
+  }, [projectsByEnvironment]);
   const layoutRef = useGroupRef();
   const previousContextRef = useRef(selectedContextKey);
 
@@ -119,11 +141,17 @@ export function SkillsPage() {
   const previousSplitViewRef = useRef(Boolean(selectedSkill));
 
   const agentDisplayNames = useMemo(
-    () => new Map(allAgents.map((a) => [a.id, a.name])),
+    () => new Map(allAgents.map((agent) => [agentId(agent), agentDisplayName(agent)])),
     [allAgents]
   );
   const selectedSkillUpdateStatus = selectedSkillRef
-    ? updatingSkills.get(getSkillIdentityKey(selectedSkillRef))
+    && updatePhase === 'updating'
+    && updateContext
+    && contextKey(updateContext) === (
+      selectedSkillRef.scope === 'project' ? selectedContextKey : globalContextKey
+    )
+    && updateSkillNames.includes(selectedSkillRef.name)
+    ? 'updating'
     : undefined;
   const selectedSkillCheckScope = selectedSkill?.scope === 'project'
     ? selectedContextKey
@@ -142,26 +170,33 @@ export function SkillsPage() {
 
   const handleDetailDelete = useCallback((skill: InstalledSkill) => {
     if (skill.scope === 'project') {
-      openDelete(skill, selectedContext, selectedProjectPath);
+      void openSkillRemoval(skill, selectedContext, selectedProjectPath);
     } else {
-      openDelete(skill, selectedGlobalContext);
+      void openSkillRemoval(skill, selectedGlobalContext);
     }
-  }, [openDelete, selectedContext, selectedGlobalContext, selectedProjectPath]);
+  }, [selectedContext, selectedGlobalContext, selectedProjectPath]);
 
-  const handleDetailUpdate = useCallback((name: string, scope: SkillScope) => {
+  const handleDetailUpdate = useCallback(async (name: string, scope: SkillScope) => {
     const context = scope === 'project' ? selectedContext : selectedGlobalContext;
-    return storeUpdateSkill(context, name);
-  }, [selectedContext, selectedGlobalContext, storeUpdateSkill]);
+    await openUpdate(context, [name], false);
+  }, [openUpdate, selectedContext, selectedGlobalContext]);
 
   const handleManageAgents = useCallback((skill: InstalledSkill) => {
     const context = skill.scope === 'project' ? selectedContext : selectedGlobalContext;
-    openManageAgents(skill, context, selectedProjectPath);
-  }, [openManageAgents, selectedContext, selectedGlobalContext, selectedProjectPath]);
+    void openManageAgentChanges(skill, context, selectedProjectPath);
+  }, [selectedContext, selectedGlobalContext, selectedProjectPath]);
 
   const handleDetailCheckUpdates = useCallback(() => {
     if (!selectedSkill) return Promise.resolve(false);
     return forceCheckUpdates(
       selectedSkill.scope === 'project' ? selectedContext : selectedGlobalContext,
+      {
+        kind: 'skills',
+        skills: [{
+          context: selectedSkill.scope === 'project' ? selectedContext : selectedGlobalContext,
+          skillName: selectedSkill.name,
+        }],
+      },
     );
   }, [forceCheckUpdates, selectedContext, selectedGlobalContext, selectedSkill]);
 
@@ -278,17 +313,28 @@ export function SkillsPage() {
       agentDetails={manageAgentDetails}
       loadingAgentDetails={loadingManageAgentDetails}
       onClose={closeManageAgents}
-      onSave={saveAgentChanges}
+      onSave={executeManageAgentChanges}
     />
 
     {/* Copy to Project Dialog */}
     <CopyToProjectDialog
       skill={copySkill}
-      currentProjectPath={selectedProjectPath ?? ''}
-      projects={copyTargetProjects}
+      sourceContext={copyContext ?? selectedContext}
+      environments={environments}
+      projectsByEnvironment={projectsByEnvironment}
+      onLoadProjects={loadCopyTargetProjects}
       checkExistence={checkCopyTargetExistence}
       onClose={closeCopyToProject}
-      onCopy={executeCopy}
+      onCopy={executeSkillCopy}
+    />
+    <UpdatePlanDialog
+      open={updatePhase !== 'closed'}
+      context={updateContext}
+      skillNames={updateSkillNames}
+      agentDisplayNames={agentDisplayNames}
+      onOpenChange={(open) => {
+        if (!open) closeUpdate();
+      }}
     />
     </>
   );

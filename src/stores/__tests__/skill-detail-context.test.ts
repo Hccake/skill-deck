@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextRef, InstalledSkill } from '@/bindings';
-import { contextKey } from '@/lib/context';
+import { contextKey, globalContext } from '@/lib/context';
 import { useProjectStore } from '../projects';
 import { useSkillsDataStore } from '../skills-data';
 import { useWorkspaceContextStore } from '../workspace-context';
@@ -33,13 +33,20 @@ const toolkit: InstalledSkill = {
   hasUpdate: false,
 };
 
+const globalToolkit: InstalledSkill = {
+  ...toolkit,
+  path: '/global-skills/toolkit',
+  canonicalPath: '/global-canonical/toolkit',
+  scope: 'global',
+};
+
 describe('Skill detail workspace context', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useWorkspaceContextStore.setState({ selectedContext: projectContext });
     useProjectStore.setState({
       projectsByEnvironment: {
-        'wsl:Ubuntu': [{
+        'wsl:ubuntu': [{
           binding: {
             id: 'project-a',
             nativePath: '/home/me/project-a',
@@ -53,6 +60,14 @@ describe('Skill detail workspace context', () => {
     });
     useSkillsDataStore.setState({
       snapshots: {
+        [contextKey(globalContext(projectContext.environment))]: {
+          skills: [globalToolkit],
+          agents: [],
+          pathExists: true,
+          loading: false,
+          error: null,
+          requestId: 1,
+        },
         [contextKey(projectContext)]: {
           skills: [toolkit],
           agents: [],
@@ -82,9 +97,37 @@ describe('Skill detail workspace context', () => {
       projectPath: '/home/me/project-a',
     });
     expect(mocks.readSkillContent).toHaveBeenLastCalledWith(
-      projectContext,
-      '/canonical/toolkit',
+      { context: projectContext, skillName: 'toolkit' },
     );
+  });
+
+  it('reads a global Skill from the Environment global Context while a project is selected', async () => {
+    await useSkillDetailStore.getState().selectSkill(globalToolkit);
+
+    const expectedContext = globalContext(projectContext.environment);
+    expect(useSkillDetailStore.getState().selectedContext).toEqual(expectedContext);
+    expect(mocks.readSkillContent).toHaveBeenCalledWith({
+      context: expectedContext,
+      skillName: 'toolkit',
+    });
+  });
+
+  it('reloads a global Skill from its captured global Context after the workspace changes', async () => {
+    await useSkillDetailStore.getState().selectSkill(globalToolkit);
+    mocks.readSkillContent.mockClear();
+    useWorkspaceContextStore.setState({
+      selectedContext: {
+        environment: { kind: 'host' },
+        scope: { scope: 'global' },
+      },
+    });
+
+    await useSkillDetailStore.getState().reloadContent();
+
+    expect(mocks.readSkillContent).toHaveBeenCalledWith({
+      context: globalContext(projectContext.environment),
+      skillName: 'toolkit',
+    });
   });
 
   it('reloads from the selection context after the workspace changes', async () => {
@@ -100,8 +143,7 @@ describe('Skill detail workspace context', () => {
     await useSkillDetailStore.getState().reloadContent();
 
     expect(mocks.readSkillContent).toHaveBeenCalledWith(
-      projectContext,
-      '/canonical/toolkit',
+      { context: projectContext, skillName: 'toolkit' },
     );
   });
 });

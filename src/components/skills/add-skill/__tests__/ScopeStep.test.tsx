@@ -75,6 +75,12 @@ describe('ScopeStep', () => {
   it('uses the normalized shared directory path in the global option', () => {
     render(<ScopeStep state={createState()} updateState={vi.fn()} />);
 
+    expect(screen.getByRole('radiogroup', {
+      name: 'addSkill.scopeSelect.title',
+    })).toBeDefined();
+    expect(screen.getByRole('radio', {
+      name: /addSkill.scopeSelect.global/,
+    }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByText('Global hint: ~/.agents/skills')).toBeDefined();
     expect(screen.queryByText('Global hint: ~/.agents/skills/')).toBeNull();
   });
@@ -86,7 +92,7 @@ describe('ScopeStep', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
-    mocks.projectState.projectsByEnvironment = { 'wsl:Ubuntu': [{
+    mocks.projectState.projectsByEnvironment = { 'wsl:ubuntu': [{
       binding: {
         id: 'project-1',
         nativePath: '/home/me/app',
@@ -103,7 +109,7 @@ describe('ScopeStep', () => {
 
     render(<ScopeStep state={state} updateState={updateState} />);
 
-    fireEvent.click(screen.getByText('/home/me/app').closest('button')!);
+    fireEvent.click(screen.getByRole('radio', { name: /\/home\/me\/app/ }));
 
     expect(updateState).toHaveBeenCalledWith({
       scope: 'project',

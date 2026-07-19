@@ -19,13 +19,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 vi.mock('@/hooks/useTauriApi', () => ({
   installSkills: vi.fn().mockResolvedValue({
-    successful: [],
-    failed: [],
-    symlinkFallbackAgents: [],
-    defaultAvailableAgents: [],
-    privateAdaptedAgents: [],
-    privateCopyAgents: [],
-    targetDetails: [],
+    units: [],
   }),
 }));
 
@@ -57,8 +51,8 @@ function makeState(): WizardState {
     skillSearchQuery: '',
     selectedAgents: ['eve'],
     selectedAgentTargets: [
-      { agent: 'eve', subagent: null },
-      { agent: 'eve', subagent: 'research' },
+      { agentId: 'eve', targetId: 'eve:root' },
+      { agentId: 'eve', targetId: 'eve:research' },
     ],
     privateCopyAgents: [],
     allAgents: [],
@@ -71,6 +65,37 @@ function makeState(): WizardState {
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
+    installRequest: {
+      context: {
+        environment: { kind: 'host' },
+        scope: { scope: 'project', project_id: 'eve-app' },
+      },
+      source: 'owner/repo',
+      discoverySession: {
+        sessionId: 'discovery-1',
+        environment: { kind: 'host' },
+        sourceFingerprint: 'source-1',
+        expiresAtEpochMs: 1000,
+      },
+      payloads: [],
+      skills: ['demo'],
+      agentIntents: [{
+        agentId: 'eve',
+        privateEntry: 'none',
+        adapterTargets: ['eve:root', 'eve:research'],
+      }],
+      requestedMode: 'copy',
+      acknowledgeRisk: false,
+    },
+    installPreview: {
+      token: {
+        generation: 'preview-1',
+        registryRevision: 'registry-1',
+        environmentRevision: 'environment-1',
+        contextRevision: 'context-1',
+      },
+      skills: [],
+    },
     retrySkillName: undefined,
     retryAgents: undefined,
     retryAgentTargets: undefined,
@@ -82,7 +107,7 @@ describe('InstallingStep', () => {
     installSkillsMock.mockClear();
   });
 
-  it('passes concrete Eve targets to installSkills', async () => {
+  it('executes the exact request and token accepted on the confirmation step', async () => {
     render(
       <InstallingStep
         state={makeState()}
@@ -93,24 +118,20 @@ describe('InstallingStep', () => {
     );
 
     await waitFor(() => {
-      expect(installSkillsMock).toHaveBeenCalledWith(makeState().context, expect.objectContaining({
-        agents: [],
-        agentTargets: [
-          { agent: 'eve', subagent: null },
-          { agent: 'eve', subagent: 'research' },
-        ],
-      }));
+      expect(installSkillsMock).toHaveBeenCalledWith(
+        makeState().installRequest,
+        makeState().installPreview?.token,
+      );
     });
   });
 
-  it('preserves concrete Eve targets when retrying one failed skill', async () => {
+  it('does not rebuild the accepted request from mutable wizard selections', async () => {
     render(
       <InstallingStep
         state={{
           ...makeState(),
-          retrySkillName: 'demo',
-          retryAgents: [],
-          retryAgentTargets: [{ agent: 'eve', subagent: 'research' }],
+          selectedSkills: ['changed-after-preview'],
+          selectedAgentTargets: [],
         }}
         updateState={() => undefined}
         scope="project"
@@ -119,12 +140,10 @@ describe('InstallingStep', () => {
     );
 
     await waitFor(() => {
-      expect(installSkillsMock).toHaveBeenCalledWith(makeState().context, expect.objectContaining({
-        skills: ['demo'],
-        agents: [],
-        agentTargets: [{ agent: 'eve', subagent: 'research' }],
-        retry: true,
-      }));
+      expect(installSkillsMock).toHaveBeenCalledWith(
+        makeState().installRequest,
+        makeState().installPreview?.token,
+      );
     });
   });
 
@@ -136,7 +155,11 @@ describe('InstallingStep', () => {
 
     render(
       <InstallingStep
-        state={{ ...makeState(), context }}
+        state={{
+          ...makeState(),
+          context,
+          installRequest: { ...makeState().installRequest!, context },
+        }}
         updateState={() => undefined}
         scope="project"
         projectPath="/projects/eve-app"
@@ -144,9 +167,10 @@ describe('InstallingStep', () => {
     );
 
     await waitFor(() => {
-      expect(installSkillsMock).toHaveBeenCalledWith(context, expect.objectContaining({
-        skills: ['demo'],
-      }));
+      expect(installSkillsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ context, skills: ['demo'] }),
+        makeState().installPreview?.token,
+      );
     });
   });
 

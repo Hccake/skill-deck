@@ -18,27 +18,35 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { PopConfirm } from '@/components/ui/pop-confirm';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { AgentType, InstalledSkill, RiskLevel, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
+import type { AgentId, InstalledSkill, RiskLevel, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
 import {
   resolveUpdateHintI18nKey,
   resolveUpdateStatusLabelI18nKey,
+  isSkillUpdateActive,
+  resolveSkillUpdatePhaseI18nKey,
   resolveSkillMaintenanceAction,
+  type SkillUpdateDisplayStatus,
 } from '@/stores/skills-utils';
-import {
-  phaseToI18nKey,
-  phaseToPercent,
-  useSkillUpdateProgressListener,
-} from './update-progress';
 import { RiskBadge } from './RiskBadge';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
-const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
+const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
 
 interface SkillCardProps {
   skill: InstalledSkill & {
@@ -49,12 +57,12 @@ interface SkillCardProps {
   displayScope: SkillScope;
   /** 是否存在冲突（同时在 project 和 global 安装） */
   hasConflict?: boolean;
-  /** 更新状态（来自 updatingSkills Map） */
-  updateStatus?: 'updating' | 'done' | 'failed';
+  /** 更新状态（由 workflow operation 投影） */
+  updateStatus?: SkillUpdateDisplayStatus;
   /** 当前 project scope 的项目路径 */
   projectPath?: string;
   /** Agent display name 映射（agentId → displayName） */
-  agentDisplayNames?: Map<AgentType, string>;
+  agentDisplayNames?: Map<AgentId, string>;
   /** 安全审计风险等级 */
   riskLevel?: RiskLevel;
   /** 其他写操作进行中，禁止发起新的 Skill 写入 */
@@ -73,7 +81,6 @@ export const SkillCard = memo(function SkillCard({
   displayScope,
   hasConflict = false,
   updateStatus,
-  projectPath,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
   riskLevel,
   writeBlocked = false,
@@ -85,8 +92,6 @@ export const SkillCard = memo(function SkillCard({
   onRepairSource,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
-  const skillName = skill.name;
-  const skillScope = skill.scope;
   const summaryAgents = [
     ...(skill.defaultAvailableAgents ?? []),
     ...(skill.privateAdaptedAgents ?? []),
@@ -101,25 +106,8 @@ export const SkillCard = memo(function SkillCard({
   const duplicateCopyCount = skill.duplicateCopyCount ?? 0;
 
   const progressBarRef = useRef<HTMLDivElement>(null);
-  const phaseBadgeRef = useRef<HTMLSpanElement>(null);
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
 
-  const handleUpdatePhase = useCallback((phase: 'cloning' | 'installing' | 'writing_lock') => {
-    if (progressBarRef.current) {
-      progressBarRef.current.style.width = phaseToPercent(phase);
-    }
-    if (phaseBadgeRef.current) {
-      phaseBadgeRef.current.textContent = t(phaseToI18nKey(phase));
-    }
-  }, [t]);
-
-  useSkillUpdateProgressListener({
-    skillName,
-    scope: skillScope,
-    projectPath,
-    enabled: updateStatus === 'updating',
-    onPhase: handleUpdatePhase,
-  });
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     pointerDownRef.current = { x: event.clientX, y: event.clientY };
@@ -145,7 +133,7 @@ export const SkillCard = memo(function SkillCard({
     displayScope === 'project'
       ? t('skills.conflict.alsoInGlobal')
       : t('skills.conflict.alsoInProject');
-  const isDeletedUpstream = skill.updateStatus === 'deleted-upstream' || skill.updateReason === 'deleted-upstream';
+  const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream';
   const canShowUpdateAction = skill.hasUpdate === true && skill.canRunUpdate !== false && !isDeletedUpstream;
   const maintenanceAction = updateStatus ? 'none' : resolveSkillMaintenanceAction(skill);
   const canShowDirectReinstallAction = maintenanceAction === 'direct-reinstall' && Boolean(onUpdate);
@@ -157,9 +145,10 @@ export const SkillCard = memo(function SkillCard({
     || canShowDirectReinstallAction
     || canShowRepairAction;
   const updateStatusLabelKey = resolveUpdateStatusLabelI18nKey(skill);
+  const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
   const updateHintKey = !skill.hasUpdate ? resolveUpdateHintI18nKey(skill.updateReason) : null;
   const isAttentionHint = skill.updateReason === 'missing-skill-path'
-    || skill.updateReason === 'missing-remote-hash'
+    || skill.updateReason === 'missingRemoteHash'
     || isDeletedUpstream;
   const updateStatusLabelClassName =
     updateStatusLabelKey === 'skills.updateStatusLabel.available'
@@ -236,9 +225,9 @@ export const SkillCard = memo(function SkillCard({
 
           {/* Action buttons — React2: 三元条件渲染 (rendering-conditional-render) */}
           <div className="flex shrink-0 items-center gap-1">
-            {updateStatus === 'updating' ? (
+            {activeUpdatePhase ? (
               <Badge variant="outline" className="text-xs text-primary animate-pulse">
-                <span ref={phaseBadgeRef}>{t('skills.updatePhaseCloning')}</span>
+                <span>{t(resolveSkillUpdatePhaseI18nKey(activeUpdatePhase))}</span>
               </Badge>
             ) : null}
             {updateStatus === 'done' ? (
@@ -268,27 +257,33 @@ export const SkillCard = memo(function SkillCard({
               </Button>
             ) : null}
             {canShowDirectReinstallAction ? (
-              <PopConfirm
-                title={t('skills.reinstallConfirm.title')}
-                description={t('skills.reinstallConfirm.description')}
-                confirmLabel={t('skills.reinstallConfirm.confirm')}
-                cancelLabel={t('common.cancel')}
-                onConfirm={() => onUpdate?.(skill.name)}
-              >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
-                  aria-label={t('skills.actions.reinstall')}
-                  title={t('skills.actions.reinstall')}
-                  disabled={writeBlocked}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                  }}
-                >
-                  <Wrench className="h-3.5 w-3.5" />
-                </Button>
-              </PopConfirm>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
+                    aria-label={t('skills.actions.reinstall')}
+                    title={t('skills.actions.reinstall')}
+                    disabled={writeBlocked}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <Wrench className="h-3.5 w-3.5" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent onClick={(event) => event.stopPropagation()}>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t('skills.reinstallConfirm.title')}</AlertDialogTitle>
+                    <AlertDialogDescription>{t('skills.reinstallConfirm.description')}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => onUpdate?.(skill.name)}>
+                      {t('skills.reinstallConfirm.confirm')}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             ) : null}
             {canShowRepairAction ? (
               <Button
@@ -439,7 +434,7 @@ export const SkillCard = memo(function SkillCard({
         </div>
       </CardContent>
       {/* Bug2 修复：底部极细进度条，无文字标签 */}
-      {updateStatus === 'updating' ? (
+      {activeUpdatePhase ? (
         <div className="absolute bottom-0 left-0 right-0">
           <div className="h-0.5 bg-primary/15 overflow-hidden ">
             <div ref={progressBarRef} className="h-full bg-primary transition-all duration-500" style={{ width: '10%' }} />

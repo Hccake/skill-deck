@@ -78,7 +78,7 @@ describe('useProjectStore', () => {
     first.resolve([project('old', '/work/old')]);
     await firstRefresh;
 
-    expect(useProjectStore.getState().projectsByEnvironment['wsl:Ubuntu'])
+    expect(useProjectStore.getState().projectsByEnvironment['wsl:ubuntu'])
       .toEqual([project('new', '/work/new')]);
   });
 
@@ -88,7 +88,7 @@ describe('useProjectStore', () => {
       storage: { access: 'crossStorage' as const, owner: { kind: 'host' as const } },
     };
     useProjectStore.setState({
-      projectsByEnvironment: { 'wsl:Ubuntu': [project('app', '/old')] },
+      projectsByEnvironment: { 'wsl:ubuntu': [project('app', '/old')] },
     });
     mocks.addEnvironmentProject.mockResolvedValue({
       project: authoritative,
@@ -99,7 +99,7 @@ describe('useProjectStore', () => {
 
     expect(mocks.addEnvironmentProject).toHaveBeenCalledWith(ubuntu, 'D:\\Code\\app');
     expect(result.created).toBe(false);
-    expect(useProjectStore.getState().projectsByEnvironment['wsl:Ubuntu'])
+    expect(useProjectStore.getState().projectsByEnvironment['wsl:ubuntu'])
       .toEqual([authoritative]);
   });
 
@@ -117,7 +117,7 @@ describe('useProjectStore', () => {
     refreshResult.resolve([project('old', '/work/old')]);
     await refresh;
 
-    expect(useProjectStore.getState().projectsByEnvironment['wsl:Ubuntu'])
+    expect(useProjectStore.getState().projectsByEnvironment['wsl:ubuntu'])
       .toEqual([authoritative]);
   });
 
@@ -132,11 +132,11 @@ describe('useProjectStore', () => {
     mocks.removeEnvironmentProject.mockResolvedValue([]);
     mocks.setEnvironmentProjectCrossStorageWarning.mockResolvedValue(suppressed);
     useProjectStore.setState({
-      projectsByEnvironment: { 'wsl:Ubuntu': [project('app', '/work/app')] },
+      projectsByEnvironment: { 'wsl:ubuntu': [project('app', '/work/app')] },
     });
 
     await useProjectStore.getState().setCrossStorageWarning(ubuntu, 'app', true);
-    expect(useProjectStore.getState().projectsByEnvironment['wsl:Ubuntu']).toEqual([suppressed]);
+    expect(useProjectStore.getState().projectsByEnvironment['wsl:ubuntu']).toEqual([suppressed]);
     await useProjectStore.getState().remove(ubuntu, 'app');
 
     expect(mocks.setEnvironmentProjectCrossStorageWarning).toHaveBeenCalledWith(
@@ -145,7 +145,7 @@ describe('useProjectStore', () => {
       true,
     );
     expect(mocks.removeEnvironmentProject).toHaveBeenCalledWith(ubuntu, 'app');
-    expect(useProjectStore.getState().projectsByEnvironment['wsl:Ubuntu']).toEqual([]);
+    expect(useProjectStore.getState().projectsByEnvironment['wsl:ubuntu']).toEqual([]);
   });
 
   it('blocks project writes while another mutation is active', async () => {

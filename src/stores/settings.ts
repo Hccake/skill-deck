@@ -3,13 +3,15 @@ import { persist } from 'zustand/middleware';
 import i18n from '@/i18n';
 import {
   getDefaultTargetAgents,
-  listAgents,
+  listAgentSelectionGroups,
   saveDefaultTargetAgents,
 } from '@/hooks/useTauriApi';
+import { useAgentRegistryStore } from './agent-registry';
 import { isMutationWriteBlocked } from './mutation';
-import type { AgentInfo, DefaultTargetAgents } from '@/hooks/useTauriApi';
-import type { AppError, EnvironmentRef } from '@/bindings';
-import { environmentKey, globalContext } from '@/lib/context';
+import type { DefaultTargetAgents } from '@/hooks/useTauriApi';
+import type { AgentSelectionGroups, AppError, EnvironmentRef, ResolvedAgent } from '@/bindings';
+import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { agentId, agentsForScope } from '@/lib/agents';
 import {
   EMPTY_DEFAULT_TARGET_AGENTS,
   filterAdditionalAgentIds,
@@ -23,9 +25,11 @@ export type Locale = 'en' | 'zh-CN';
 const DEFAULT_AGENTS: string[] = ['claude-code', 'opencode', 'codex'];
 
 export interface AgentDefaultsSnapshot {
-  agents: AgentInfo[];
+  agents: ResolvedAgent[];
+  selectionGroups: AgentSelectionGroups;
+  registryRevision: string;
   defaults: DefaultTargetAgents;
-  loadState: 'idle' | 'loading' | 'ready' | 'error';
+  loadState: 'idle' | 'loading' | 'ready' | 'error' | 'stale';
   loadRequestId: number;
   saveRequestId: number;
   saving: boolean;
@@ -41,6 +45,7 @@ interface SettingsState {
   toggleTheme: () => void;
 
   agentDefaultsByEnvironment: Record<string, AgentDefaultsSnapshot>;
+  invalidateAgentDefaults: () => void;
   loadAgentDefaults: (environment: EnvironmentRef) => Promise<void>;
   saveAgentDefaults: (
     environment: EnvironmentRef,
@@ -59,6 +64,8 @@ const applyTheme = (theme: Theme) => {
 function emptyAgentDefaultsSnapshot(): AgentDefaultsSnapshot {
   return {
     agents: [],
+    selectionGroups: { global: [], project: [] },
+    registryRevision: '',
     defaults: {
       global: [...EMPTY_DEFAULT_TARGET_AGENTS.global],
       project: [...EMPTY_DEFAULT_TARGET_AGENTS.project],
@@ -108,6 +115,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       agentDefaultsByEnvironment: {},
 
+      invalidateAgentDefaults: () => set({ agentDefaultsByEnvironment: {} }),
+
       loadAgentDefaults: async (environment) => {
         const key = environmentKey(environment);
         const context = globalContext(environment);
@@ -129,12 +138,28 @@ export const useSettingsStore = create<SettingsState>()(
           };
         });
         try {
-          const agentsPromise = listAgents(context);
+          const runtimePromise = useAgentRegistryStore.getState().loadRuntime(context);
+          const selectionGroupsPromise = listAgentSelectionGroups(context);
           const targetDefaultsPromise = getDefaultTargetAgents(context).catch(() => null);
-          const [agents, targetDefaults] = await Promise.all([
-            agentsPromise,
+          const [, selectionGroups, targetDefaults] = await Promise.all([
+            runtimePromise,
+            selectionGroupsPromise,
             targetDefaultsPromise,
           ]);
+          const runtimeState = useAgentRegistryStore.getState()
+            .runtimeByContext[contextKey(context)];
+          const runtimeSnapshot = runtimeState?.data;
+          if (!runtimeSnapshot) {
+            if (runtimeState?.error) throw runtimeState.error;
+            throw new Error('Agent runtime snapshot is unavailable');
+          }
+          const globalAgents = agentsForScope(runtimeSnapshot, 'global');
+          const globalAgentIds = new Set(globalAgents.map(agentId));
+          const agents = [
+            ...globalAgents,
+            ...agentsForScope(runtimeSnapshot, 'project')
+              .filter((agent) => !globalAgentIds.has(agentId(agent))),
+          ];
           const migratedDefaults = migrateDefaultTargetAgents(DEFAULT_AGENTS, agents);
           const defaults = targetDefaults
             ? {
@@ -151,6 +176,8 @@ export const useSettingsStore = create<SettingsState>()(
                 [key]: {
                   ...current,
                   agents,
+                  selectionGroups,
+                  registryRevision: runtimeSnapshot.registryRevision,
                   defaults,
                   loadState: 'ready',
                   error: null,
@@ -201,7 +228,11 @@ export const useSettingsStore = create<SettingsState>()(
           },
         }));
         try {
-          await saveDefaultTargetAgents(context, nextDefaults);
+          await saveDefaultTargetAgents(
+            context,
+            nextDefaults,
+            current.registryRevision,
+          );
         } catch (error) {
           set((state) => {
             const latest = state.agentDefaultsByEnvironment[key];
@@ -212,6 +243,7 @@ export const useSettingsStore = create<SettingsState>()(
                 [key]: {
                   ...latest,
                   defaults: previousDefaults,
+                  loadState: 'stale',
                   error: toAppError(error),
                 },
               },

@@ -96,10 +96,46 @@ describe('parseInstallError', () => {
       'addSkill.error.storageMappingUnsupported{"path":"\\\\\\\\server\\\\share"}',
       undefined,
     ],
+    [
+      { kind: 'configurationReadOnly' },
+      'addSkill.error.configurationReadOnly',
+      undefined,
+    ],
+    [
+      { kind: 'payloadStorageRequiresCleanup', data: { environment: { kind: 'host' } } },
+      'addSkill.error.payloadStorageRequiresCleanup',
+      undefined,
+    ],
+    [
+      { kind: 'validation', data: { field: 'request', message: 'invalid selection' } },
+      'invalid selection',
+      undefined,
+    ],
+    [
+      { kind: 'stalePayload' },
+      'addSkill.error.staleState',
+      undefined,
+    ],
+    [
+      {
+        kind: 'recoveryRequired',
+        data: { recovery_resource_id: 'recovery-1', message: 'manual recovery required' },
+      },
+      'manual recovery required',
+      undefined,
+    ],
   ])('preserves actionable details for $kind', (error, message, details) => {
     const result = parseInstallError(error, t as never);
 
     expect(result.message).toBe(message);
     expect(result.details).toBe(details);
+  });
+
+  it('guides users to an environment with writable agent configuration', () => {
+    const result = parseInstallError({ kind: 'configurationReadOnly' }, t as never);
+
+    expect(result.suggestions).toEqual([
+      'addSkill.error.suggestion.chooseWritableConfiguration',
+    ]);
   });
 });

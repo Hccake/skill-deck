@@ -2,134 +2,112 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextRef, InstalledSkill } from '@/bindings';
 import { useMutationStore } from '../mutation';
 import { useProjectStore } from '../projects';
-import { useWorkspaceContextStore } from '../workspace-context';
 import { useSkillDialogStore } from '../skill-dialog';
 
 const mocks = vi.hoisted(() => ({
-  openInstallWizard: vi.fn(),
-  getSkillAgentDetails: vi.fn(),
+  previewRemove: vi.fn(),
   removeSkill: vi.fn(),
-  manageSkillAgents: vi.fn(),
-  cleanupDuplicateAgentCopies: vi.fn(),
+  previewCopySkillToProjects: vi.fn(),
   copySkillToProjects: vi.fn(),
+  openInstallWizard: vi.fn(),
+  cleanupDuplicateAgentCopies: vi.fn(),
+  previewManageSkillAgents: vi.fn(),
+  manageSkillAgents: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  openInstallWizard: (...args: unknown[]) => mocks.openInstallWizard(...args),
-  getSkillAgentDetails: (...args: unknown[]) => mocks.getSkillAgentDetails(...args),
+  previewRemove: (...args: unknown[]) => mocks.previewRemove(...args),
   removeSkill: (...args: unknown[]) => mocks.removeSkill(...args),
-  manageSkillAgents: (...args: unknown[]) => mocks.manageSkillAgents(...args),
-  cleanupDuplicateAgentCopies: (...args: unknown[]) => mocks.cleanupDuplicateAgentCopies(...args),
+  previewCopySkillToProjects: (...args: unknown[]) => mocks.previewCopySkillToProjects(...args),
   copySkillToProjects: (...args: unknown[]) => mocks.copySkillToProjects(...args),
+  openInstallWizard: (...args: unknown[]) => mocks.openInstallWizard(...args),
+  cleanupDuplicateAgentCopies: (...args: unknown[]) => mocks.cleanupDuplicateAgentCopies(...args),
+  previewManageSkillAgents: (...args: unknown[]) => mocks.previewManageSkillAgents(...args),
+  manageSkillAgents: (...args: unknown[]) => mocks.manageSkillAgents(...args),
+}));
+
+vi.mock('../skills-data', () => ({
+  useSkillsDataStore: { getState: () => ({ syncSkills: vi.fn(async () => undefined) }) },
 }));
 
 vi.mock('../skill-detail', () => ({
-  useSkillDetailStore: {
-    getState: () => ({ selectedSkillRef: null, deselectSkill: vi.fn() }),
-  },
+  useSkillDetailStore: { getState: () => ({ selectedSkillRef: null, deselectSkill: vi.fn() }) },
 }));
-
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
-const ubuntuProject: ContextRef = {
+const context: ContextRef = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   scope: { scope: 'project', project_id: 'source' },
 };
-const debianGlobal: ContextRef = {
-  environment: { kind: 'wsl', distro_name: 'Debian' },
-  scope: { scope: 'global' },
+const skill = {
+  name: 'toolkit',
+  description: '',
+  path: '/skills/toolkit',
+  canonicalPath: '/canonical/toolkit',
+  scope: 'project',
+  agents: ['codex'],
+  hasUpdate: false,
+} as InstalledSkill;
+const token = {
+  generation: 'preview-1',
+  registryRevision: 'registry-1',
+  environmentRevision: 'environment-1',
+  contextRevision: 'context-1',
 };
-
-function skill(): InstalledSkill {
-  return {
-    name: 'toolkit',
-    description: '',
-    path: '/skills/toolkit',
-    canonicalPath: '/canonical/toolkit',
-    scope: 'project',
-    agents: [],
-    hasUpdate: false,
-  };
-}
 
 describe('Skill dialog context capture', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
-    useWorkspaceContextStore.setState({ selectedContext: ubuntuProject });
     useProjectStore.setState({
       projectsByEnvironment: {
-        'wsl:Ubuntu': [
-          {
-            binding: {
-              id: 'source',
-              nativePath: '/home/me/source',
-              displayName: null,
-              order: null,
-              suppressCrossStorageWarning: false,
-            },
-            storage: { access: 'native', owner: ubuntuProject.environment },
-          },
-          {
-            binding: {
-              id: 'target',
-              nativePath: '/home/me/target',
-              displayName: null,
-              order: null,
-              suppressCrossStorageWarning: false,
-            },
-            storage: { access: 'native', owner: ubuntuProject.environment },
-          },
+        'wsl:ubuntu': [
+          { binding: { id: 'source', nativePath: '/source', displayName: null, order: null }, storage: { access: 'native', owner: context.environment } },
+          { binding: { id: 'target', nativePath: '/target', displayName: null, order: null }, storage: { access: 'native', owner: context.environment } },
         ],
       },
     });
-    useSkillDialogStore.setState({
-      deleteTarget: null,
-      manageAgentsSkill: null,
-      manageAgentsContext: undefined,
-      copySkill: null,
-      copyContext: undefined,
+    mocks.previewRemove.mockResolvedValue({
+      token,
+      context,
+      skillName: 'toolkit',
+      canonical: 'directory',
+      physicalEntries: [],
     });
-    mocks.getSkillAgentDetails.mockResolvedValue({});
-    mocks.removeSkill.mockResolvedValue(undefined);
-    mocks.copySkillToProjects.mockResolvedValue({ results: [] });
-    mocks.openInstallWizard.mockResolvedValue(undefined);
+    mocks.removeSkill.mockResolvedValue({ units: [{ status: 'succeeded' }] });
+    mocks.previewCopySkillToProjects.mockResolvedValue({
+      token,
+      payload: {},
+      source: context,
+      targetEnvironment: context.environment,
+      targets: [],
+    });
+    mocks.copySkillToProjects.mockResolvedValue({ units: [{ status: 'succeeded' }] });
+    mocks.cleanupDuplicateAgentCopies.mockResolvedValue([{ agent: 'cursor', success: true, skipped: false, path: null, error: null }]);
+    mocks.manageSkillAgents.mockResolvedValue({ units: [{ status: 'succeeded', error: null }] });
   });
 
-  it('uses the context captured when delete opens even after workspace context changes', async () => {
-    useSkillDialogStore.getState().openDelete(skill(), ubuntuProject, '/home/me/source');
-    useWorkspaceContextStore.setState({ selectedContext: debianGlobal });
+  it('captures removal dialog state without owning preview orchestration', () => {
+    useSkillDialogStore.getState().openDelete(skill, context, '/source');
 
-    await useSkillDialogStore.getState().deleteSkill({ fullRemoval: true });
-
-    expect(mocks.getSkillAgentDetails).toHaveBeenCalledWith(ubuntuProject, 'toolkit');
-    expect(mocks.removeSkill).toHaveBeenCalledWith(ubuntuProject, {
-      name: 'toolkit',
-      fullRemoval: true,
-      agents: undefined,
-      agentTargets: undefined,
-    });
+    expect(useSkillDialogStore.getState().deleteTarget?.context).toEqual(context);
+    expect(useSkillDialogStore.getState().deletePreview).toBeNull();
+    expect(mocks.previewRemove).not.toHaveBeenCalled();
   });
 
-  it('opens the wizard and copies with the explicitly captured source context', async () => {
-    useSkillDialogStore.getState().openAdd(ubuntuProject, '/home/me/source');
-    useSkillDialogStore.getState().openCopyToProject(skill(), ubuntuProject);
-    useWorkspaceContextStore.setState({ selectedContext: debianGlobal });
+  it('captures the source context when opening copy to project', () => {
+    useSkillDialogStore.getState().openCopyToProject(skill, context);
 
-    await useSkillDialogStore.getState().executeCopy(['/home/me/target']);
+    expect(useSkillDialogStore.getState().copyContext).toEqual(context);
+  });
 
-    expect(mocks.openInstallWizard).toHaveBeenCalledWith(expect.objectContaining({
-      context: ubuntuProject,
-      projectPath: '/home/me/source',
-    }));
-    expect(mocks.copySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({
-      source: ubuntuProject,
-      targets: [{
-        environment: ubuntuProject.environment,
-        scope: { scope: 'project', project_id: 'target' },
-      }],
-    }));
+  it('captures Agent-management dialog state without owning preview orchestration', () => {
+    useSkillDialogStore.getState().openManageAgents(skill, context, '/source');
+
+    expect(useSkillDialogStore.getState().manageAgentsContext).toEqual(context);
+    expect(useSkillDialogStore.getState().manageAgentDetails).toBeNull();
+    expect(mocks.previewManageSkillAgents).not.toHaveBeenCalled();
   });
 });

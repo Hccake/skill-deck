@@ -134,7 +134,7 @@ describe('DiscoverPage', () => {
       scope: { scope: 'global' },
     };
     mocks.projectState.projectsByEnvironment = {
-      'wsl:Ubuntu': [{
+      'wsl:ubuntu': [{
         binding: {
           id: 'project-1',
           nativePath: '/home/me/app',
@@ -148,7 +148,7 @@ describe('DiscoverPage', () => {
         },
       }],
     };
-    mocks.projectState.loadStateByEnvironment = { 'wsl:Ubuntu': 'ready' };
+    mocks.projectState.loadStateByEnvironment = { 'wsl:ubuntu': 'ready' };
 
     render(<DiscoverPage />);
 

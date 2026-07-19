@@ -127,15 +127,6 @@ export function parseInstallError(
         ],
       };
 
-    case 'installFailed':
-      return {
-        message: t('addSkill.error.installFailed'),
-        details: error.data.message,
-        suggestions: [
-          t('addSkill.error.suggestion.retryOrContact'),
-        ],
-      };
-
     case 'installRiskConfirmationRequired':
       return {
         message: t('addSkill.error.riskConfirmationRequired'),
@@ -211,6 +202,77 @@ export function parseInstallError(
       };
 
     case 'projectMigrationFailed':
+      return {
+        message: error.data.message,
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'configurationReadOnly':
+      return {
+        message: t('addSkill.error.configurationReadOnly'),
+        suggestions: [t('addSkill.error.suggestion.chooseWritableConfiguration')],
+      };
+
+    case 'payloadStorageRequiresCleanup':
+      return {
+        message: t('addSkill.error.payloadStorageRequiresCleanup'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'validation':
+      return {
+        message: error.data.message,
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'environmentChanged':
+    case 'contextChanged':
+    case 'payloadSessionExpired':
+    case 'staleContext':
+    case 'staleRegistry':
+    case 'staleEnvironment':
+    case 'stalePayload':
+    case 'staleTarget':
+    case 'staleAgentRuntime':
+      return {
+        message: t('addSkill.error.staleState'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'storageUnsupported':
+    case 'unsafePath':
+    case 'unsafeSourceLink':
+      return {
+        message: t('addSkill.error.storageUnsupported'),
+        suggestions: [t('addSkill.error.suggestion.chooseAccessiblePath')],
+      };
+    case 'capabilityUnavailable':
+      if (error.kind === 'capabilityUnavailable'
+        && (error.data.capability === 'runtimeMaintenancePending'
+          || error.data.capability === 'runtimeMaintenanceFailed')) {
+        return {
+          message: t('addSkill.error.runtimeMaintenance'),
+          suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+        };
+      }
+      return {
+        message: t('addSkill.error.storageUnsupported'),
+        suggestions: [t('addSkill.error.suggestion.chooseAccessiblePath')],
+      };
+
+    case 'selfCopy':
+      return { message: t('addSkill.error.selfCopy') };
+
+    case 'externalLockChanged':
+      return {
+        message: t('addSkill.error.externalLockChanged'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
+    case 'executionFailed':
+    case 'restoreFailed':
+    case 'recoveryRequired':
+    case 'configurationCorrupted':
       return {
         message: error.data.message,
         suggestions: [t('addSkill.error.suggestion.retryOrContact')],

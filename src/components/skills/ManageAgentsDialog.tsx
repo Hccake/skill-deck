@@ -1,5 +1,5 @@
 // src/components/skills/ManageAgentsDialog.tsx
-import { useState, useCallback, useMemo, useEffect, memo } from 'react';
+import { useState, useCallback, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import {
@@ -13,24 +13,34 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { isAutomaticAgent } from '@/lib/agentTargets';
-import { AgentSelector } from './add-skill/AgentSelector';
-import type { InstalledSkill, SkillScope, AgentInfo, InstallMode, SkillAgentDetails } from '@/bindings';
+import { agentId } from '@/lib/agents';
+import { canCreatePrivateCopy, isPrivateRequiredAgent } from '@/lib/agentTargets';
+import { AgentSelector } from '@/components/agents/AgentSelector';
+import type {
+  AgentId,
+  AgentSelectionGroup,
+  InstalledSkill,
+  SkillScope,
+  ResolvedAgent,
+  InstallMode,
+  ManageAgentsPreview,
+  ObservedEntryId,
+  ObservedPhysicalEntry,
+} from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
 
 interface ManageAgentsDialogProps {
   skill: InstalledSkill | null;
   scope: SkillScope;
-  allAgents: AgentInfo[];
-  agentDetails?: SkillAgentDetails | null;
+  allAgents: ResolvedAgent[];
+  agentDetails?: ManageAgentsPreview | null;
   loadingAgentDetails?: boolean;
   onClose: () => void;
   onSave: (
-    addAgents: string[],
-    removeAgents: string[],
+    addAgents: AgentId[],
+    removeEntryIds: ObservedEntryId[],
     mode: InstallMode,
-    privateCopyAgents?: string[],
-    removePrivateCopyAgents?: string[],
+    addOptionalAgents: AgentId[],
   ) => Promise<void>;
 }
 
@@ -44,20 +54,36 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   onSave,
 }: ManageAgentsDialogProps) {
   const initialSelected = useMemo(() => {
-    if (!skill) return [] as string[];
+    if (!skill) return [] as AgentId[];
     const installScope = scope === 'project' ? 'project' : 'global';
-    const automaticIds = new Set(
-      allAgents.filter((agent) => isAutomaticAgent(agent, installScope)).map((agent) => agent.id)
-    );
-    return skill.agents.filter((id) => !automaticIds.has(id));
-  }, [skill, allAgents, scope]);
-
+    const agentById = new Map(allAgents.map((agent) => [agentId(agent), agent]));
+    const observedIds = agentDetails?.observedEntries.flatMap((entry) =>
+      entry.owners.map((owner) => owner.agentId)) ?? [];
+    const sourceIds = observedIds.length > 0
+      ? observedIds
+      : (skill.privateAdaptedAgents ?? skill.agents);
+    return [...new Set(sourceIds)].filter((id) => {
+      const agent = agentById.get(id);
+      return !agent || isPrivateRequiredAgent(agent, installScope);
+    });
+  }, [agentDetails?.observedEntries, allAgents, scope, skill]);
+  const initialOptional = useMemo(() => {
+    const installScope = scope === 'project' ? 'project' : 'global';
+    const agentById = new Map(allAgents.map((agent) => [agentId(agent), agent]));
+    return [...new Set(agentDetails?.observedEntries.flatMap((entry) =>
+      entry.owners.map((owner) => owner.agentId)) ?? [])]
+      .filter((id) => {
+        const agent = agentById.get(id);
+        return agent ? canCreatePrivateCopy(agent, installScope) : false;
+      });
+  }, [agentDetails?.observedEntries, allAgents, scope]);
   const resetKey = useMemo(() => {
     const skillKey = skill
       ? `${skill.scope}:${skill.canonicalPath}:${skill.name}`
       : 'none';
-    return `${skillKey}:${initialSelected.join('\u001f')}`;
-  }, [skill, initialSelected]);
+    const entriesKey = agentDetails?.observedEntries.map((entry) => entry.entryId).join('\u001f') ?? '';
+    return `${skillKey}:${initialSelected.join('\u001f')}:${initialOptional.join('\u001f')}:${entriesKey}`;
+  }, [agentDetails?.observedEntries, initialOptional, initialSelected, skill]);
 
   return (
     <ManageAgentsDialogBody
@@ -68,6 +94,7 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
       agentDetails={agentDetails}
       loadingAgentDetails={loadingAgentDetails}
       initialSelected={initialSelected}
+      initialOptional={initialOptional}
       onClose={onClose}
       onSave={onSave}
     />
@@ -75,7 +102,8 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
 });
 
 interface ManageAgentsDialogBodyProps extends ManageAgentsDialogProps {
-  initialSelected: string[];
+  initialSelected: AgentId[];
+  initialOptional: AgentId[];
 }
 
 function ManageAgentsDialogBody({
@@ -85,6 +113,7 @@ function ManageAgentsDialogBody({
   agentDetails,
   loadingAgentDetails = false,
   initialSelected,
+  initialOptional,
   onClose,
   onSave,
 }: ManageAgentsDialogBodyProps) {
@@ -92,58 +121,95 @@ function ManageAgentsDialogBody({
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<InstallMode>('symlink');
-
-  const [selectedAgents, setSelectedAgents] = useState<string[]>(initialSelected);
-  const [privateCopyAgents, setPrivateCopyAgents] = useState<string[]>([]);
-  const [privateCopyAgentsExpanded, setPrivateCopyAgentsExpanded] = useState(false);
-  const duplicateAgents = useMemo(
-    () => agentDetails?.duplicateCopyAgents ?? [],
-    [agentDetails?.duplicateCopyAgents]
+  const selectableAgents = useMemo(
+    () => agentDetails?.availableAgents ?? allAgents,
+    [agentDetails?.availableAgents, allAgents],
   );
-  const duplicateAgentIds = useMemo(
-    () => new Set<string>(duplicateAgents.map((agent) => agent.agent)),
-    [duplicateAgents]
+  const installScope = scope === 'project' ? 'project' : 'global';
+  const selectionGroups = useMemo(
+    () => mergeObservedSelectionGroups(
+      agentDetails?.selectionGroups?.[installScope] ?? [],
+      agentDetails?.observedEntries ?? [],
+    ),
+    [agentDetails?.observedEntries, agentDetails?.selectionGroups, installScope],
   );
-  useEffect(() => {
-    setPrivateCopyAgents((current) => {
-      const next = [...current];
-      for (const agentId of duplicateAgentIds) {
-        if (!next.includes(agentId)) next.push(agentId);
-      }
-      return next;
+  const mixedSelectionGroups = useMemo(() => {
+    const requiredIds = new Set(selectableAgents
+      .filter((agent) => isPrivateRequiredAgent(agent, installScope))
+      .map(agentId));
+    const optionalIds = new Set(selectableAgents
+      .filter((agent) => canCreatePrivateCopy(agent, installScope))
+      .map(agentId));
+    return selectionGroups.flatMap((group) => {
+      const required = group.agentIds.filter((id) => requiredIds.has(id));
+      const optional = group.agentIds.filter((id) => optionalIds.has(id));
+      return required.length > 0 && optional.length > 0 ? [{ required, optional }] : [];
     });
-  }, [duplicateAgentIds]);
-  const handlePrivateCopyChange = useCallback((agents: string[]) => {
-    setPrivateCopyAgents(agents);
-  }, []);
-
-  // 计算 diff
-  const { addAgents, removeAgents, addPrivateCopyAgents, removePrivateCopyAgents, hasChanges } = useMemo(() => {
-    const initialSet = new Set(initialSelected);
+  }, [installScope, selectableAgents, selectionGroups]);
+  const normalizedInitialSelection = useMemo(() => {
+    const required = new Set(initialSelected);
+    const optional = new Set(initialOptional);
+    for (const group of mixedSelectionGroups) {
+      if (!group.required.some((id) => required.has(id))
+        && !group.optional.some((id) => optional.has(id))) continue;
+      group.required.forEach((id) => required.add(id));
+      group.optional.forEach((id) => optional.add(id));
+    }
+    return { required: [...required], optional: [...optional] };
+  }, [initialOptional, initialSelected, mixedSelectionGroups]);
+  const [selectedAgents, setSelectedAgents] = useState<AgentId[]>(normalizedInitialSelection.required);
+  const [optionalAgents, setOptionalAgents] = useState<AgentId[]>(normalizedInitialSelection.optional);
+  const [optionalExpanded, setOptionalExpanded] = useState(normalizedInitialSelection.optional.length > 0);
+  const { addAgents, addOptionalAgents, removeEntryIds, hasChanges } = useMemo(() => {
+    const initialSet = new Set(normalizedInitialSelection.required);
+    const initialOptionalSet = new Set(normalizedInitialSelection.optional);
     const currentSet = new Set(selectedAgents);
+    const currentOptionalSet = new Set(optionalAgents);
     const add = selectedAgents.filter((id) => !initialSet.has(id));
-    const remove = initialSelected.filter((id) => !currentSet.has(id));
-    const newPrivateCopyAgents = privateCopyAgents.filter((id) => !duplicateAgentIds.has(id));
-    const removePrivateCopyAgents = [...duplicateAgentIds].filter((id) => !privateCopyAgents.includes(id));
+    const addOptional = optionalAgents.filter((id) => !initialOptionalSet.has(id));
+    const selectedIds = new Set([...currentSet, ...currentOptionalSet]);
+    const availableIds = new Set(selectableAgents.map(agentId));
+    const removeEntries = (agentDetails?.observedEntries ?? [])
+      .filter((entry) => entry.owners.length > 0 && entry.owners.every((owner) =>
+        availableIds.has(owner.agentId) && !selectedIds.has(owner.agentId)))
+      .map((entry) => entry.entryId);
     return {
       addAgents: add,
-      removeAgents: remove,
-      addPrivateCopyAgents: newPrivateCopyAgents,
-      removePrivateCopyAgents,
-      hasChanges: add.length > 0 || remove.length > 0 || newPrivateCopyAgents.length > 0 || removePrivateCopyAgents.length > 0,
+      addOptionalAgents: addOptional,
+      removeEntryIds: removeEntries,
+      hasChanges: add.length > 0 || addOptional.length > 0 || removeEntries.length > 0,
     };
-  }, [selectedAgents, initialSelected, privateCopyAgents, duplicateAgentIds]);
+  }, [agentDetails?.observedEntries, normalizedInitialSelection, optionalAgents, selectableAgents, selectedAgents]);
+
+  const handleRequiredSelectionChange = useCallback((nextRequired: AgentId[]) => {
+    const previousRequiredIds = new Set(selectedAgents);
+    const nextRequiredIds = new Set(nextRequired);
+    setSelectedAgents(nextRequired);
+    setOptionalAgents((currentOptional) => {
+      const nextOptional = new Set(currentOptional);
+      for (const group of mixedSelectionGroups) {
+        const wasSelected = group.required.some((id) => previousRequiredIds.has(id));
+        const isSelected = group.required.some((id) => nextRequiredIds.has(id));
+        if (wasSelected === isSelected) continue;
+        group.optional.forEach((id) => {
+          if (isSelected) nextOptional.add(id);
+          else nextOptional.delete(id);
+        });
+      }
+      return [...nextOptional];
+    });
+  }, [mixedSelectionGroups, selectedAgents]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      await onSave(addAgents, removeAgents, mode, addPrivateCopyAgents, removePrivateCopyAgents);
+      await onSave(addAgents, removeEntryIds, mode, addOptionalAgents);
     } finally {
       setSaving(false);
     }
-  }, [onSave, addAgents, removeAgents, mode, addPrivateCopyAgents, removePrivateCopyAgents]);
+  }, [addAgents, addOptionalAgents, mode, onSave, removeEntryIds]);
 
-  const showMode = addAgents.length > 0;
+  const showMode = addAgents.length > 0 || addOptionalAgents.length > 0;
   const modeDisabled = saving;
 
   return (
@@ -159,18 +225,20 @@ function ManageAgentsDialogBody({
         <div data-testid="manage-agents-dialog-body" className="mt-4 min-w-0 max-w-full max-h-[60vh] overflow-y-auto overflow-x-hidden">
           <AgentSelector
             selectedAgents={selectedAgents}
-            privateCopyAgents={privateCopyAgents}
-            allAgents={allAgents}
-            onSelectionChange={setSelectedAgents}
-            onPrivateCopyChange={handlePrivateCopyChange}
+            privateCopyAgents={optionalAgents}
+            allAgents={selectableAgents}
+            selectionGroups={selectionGroups}
+            onSelectionChange={handleRequiredSelectionChange}
+            onPrivateCopyChange={setOptionalAgents}
             scope={scope === 'project' ? 'project' : 'global'}
-            privateCopyAgentsExpanded={privateCopyAgentsExpanded}
-            onPrivateCopyExpandedChange={setPrivateCopyAgentsExpanded}
+            privateCopyAgentsExpanded={optionalExpanded}
+            onPrivateCopyExpandedChange={setOptionalExpanded}
+            showPaths={false}
           />
         </div>
 
         {loadingAgentDetails ? (
-          <div className="mt-4 rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+          <div role="status" aria-live="polite" className="mt-4 rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
             {t('common.loading')}
           </div>
         ) : null}
@@ -259,4 +327,47 @@ function ManageAgentsDialogBody({
       </DialogContent>
     </Dialog>
   );
+}
+
+function mergeObservedSelectionGroups(
+  backendGroups: AgentSelectionGroup[],
+  observedEntries: ObservedPhysicalEntry[],
+): AgentSelectionGroup[] {
+  const parent = new Map<AgentId, AgentId>();
+
+  const find = (id: AgentId): AgentId => {
+    const current = parent.get(id);
+    if (!current) {
+      parent.set(id, id);
+      return id;
+    }
+    if (current === id) return id;
+    const root = find(current);
+    parent.set(id, root);
+    return root;
+  };
+  const union = (ids: AgentId[]) => {
+    if (ids.length === 0) return;
+    const root = find(ids[0]);
+    for (const id of ids.slice(1)) parent.set(find(id), root);
+  };
+
+  for (const group of backendGroups) union(group.agentIds);
+  for (const entry of observedEntries) union(entry.owners.map((owner) => owner.agentId));
+
+  const idsByRoot = new Map<AgentId, AgentId[]>();
+  for (const id of parent.keys()) {
+    const root = find(id);
+    const ids = idsByRoot.get(root) ?? [];
+    ids.push(id);
+    idsByRoot.set(root, ids);
+  }
+
+  return [...idsByRoot.values()].map((ids) => {
+    const agentIds = [...new Set(ids)].sort();
+    return {
+      groupId: `manage:${agentIds.join(':')}`,
+      agentIds,
+    };
+  });
 }

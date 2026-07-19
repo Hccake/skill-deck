@@ -2,7 +2,7 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { SkillsPanel } from '../SkillsPanel';
 import type { AppError, ContextRef, InstalledSkill, ProjectInfo } from '@/bindings';
 
@@ -65,13 +65,10 @@ const mocks = vi.hoisted(() => ({
     snapshots: {} as Record<string, ReturnType<typeof snapshot>>,
     isSyncing: false,
     checkingUpdateScopes: new Set<string>(),
-    updatingSkills: new Map<string, 'updating' | 'done' | 'failed'>(),
     refreshWorkspace: vi.fn().mockResolvedValue(undefined),
     syncUpdates: vi.fn().mockResolvedValue(undefined),
     forceCheckUpdates: vi.fn().mockResolvedValue(true),
-    updateAllInSection: vi.fn().mockResolvedValue(undefined),
     syncSkills: vi.fn().mockResolvedValue(undefined),
-    updateSkill: vi.fn().mockResolvedValue(undefined),
     auditCache: {},
     fetchAuditForSkills: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   },
@@ -88,6 +85,7 @@ const mocks = vi.hoisted(() => ({
     openAdd: vi.fn(),
     openRepairSource: vi.fn(),
   },
+  updateWorkflowState: { phase: 'closed', context: null as ContextRef | null, skillNames: [] as string[], open: vi.fn().mockResolvedValue(true) },
 }));
 
 vi.mock('react-i18next', () => ({
@@ -121,6 +119,10 @@ vi.mock('@/stores/skill-dialog', () => ({
     selector ? selector(mocks.skillDialogState) : mocks.skillDialogState,
 }));
 
+vi.mock('@/workflows/skill-update', () => ({
+  useSkillUpdateWorkflow: (selector: (state: typeof mocks.updateWorkflowState) => unknown) => selector(mocks.updateWorkflowState),
+}));
+
 vi.mock('../SkillsToolbar', () => ({
   SkillsToolbar: () => <div>skills-toolbar</div>,
 }));
@@ -136,30 +138,34 @@ vi.mock('../CrossStorageWarningBanner', () => ({
 vi.mock('../SkillsSection', () => ({
   SkillsSection: ({
     skills,
+    updatingSkills,
     onRepairSource,
     onCheckUpdates,
-    onUpdate,
-    onUpdateAll,
+    onPrepareUpdate,
     scope,
   }: {
     skills: Array<{ name: string; scope: 'global' | 'project' }>;
+    updatingSkills: Map<string, string>;
     onRepairSource?: (skill: { name: string; scope: 'global' | 'project' }) => void;
     onCheckUpdates?: () => Promise<boolean>;
-    onUpdate: (name: string, scope: 'global' | 'project') => Promise<void>;
-    onUpdateAll: (scope: 'global' | 'project') => Promise<void>;
+    onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
     scope: 'global' | 'project';
   }) => (
     <div>
       skills-section
       {skills.map((skill) => (
-        <button
-          key={`${skill.scope}:${skill.name}`}
-          type="button"
-          data-testid={`repair:${skill.scope}:${skill.name}`}
-          onClick={() => onRepairSource?.(skill)}
-        >
-          repair
-        </button>
+        <div key={`${skill.scope}:${skill.name}`}>
+          <span data-testid={`phase:${skill.scope}:${skill.name}`}>
+            {updatingSkills.get(`${skill.scope}:${skill.name}`) ?? 'idle'}
+          </span>
+          <button
+            type="button"
+            data-testid={`repair:${skill.scope}:${skill.name}`}
+            onClick={() => onRepairSource?.(skill)}
+          >
+            repair
+          </button>
+        </div>
       ))}
       <button type="button" data-testid={`check:${scope}`} onClick={() => void onCheckUpdates?.()}>
         check
@@ -167,11 +173,15 @@ vi.mock('../SkillsSection', () => ({
       <button
         type="button"
         data-testid={`update:${scope}`}
-        onClick={() => void onUpdate(skills[0]?.name ?? 'missing', scope)}
+        onClick={() => void onPrepareUpdate([skills[0]?.name ?? 'missing'], false)}
       >
         update
       </button>
-      <button type="button" data-testid={`update-all:${scope}`} onClick={() => void onUpdateAll(scope)}>
+      <button
+        type="button"
+        data-testid={`update-all:${scope}`}
+        onClick={() => void onPrepareUpdate(skills.map((skill) => skill.name), true)}
+      >
         update all
       </button>
     </div>
@@ -196,13 +206,14 @@ describe('SkillsPanel', () => {
     };
     mocks.skillsDataState.isSyncing = false;
     mocks.skillsDataState.checkingUpdateScopes = new Set();
-    mocks.skillsDataState.updatingSkills = new Map();
     mocks.skillsDataState.refreshWorkspace.mockClear();
     mocks.skillsDataState.syncUpdates.mockClear();
     mocks.skillsDataState.forceCheckUpdates.mockClear();
-    mocks.skillsDataState.updateAllInSection.mockClear();
+    mocks.updateWorkflowState.open.mockClear();
+    mocks.updateWorkflowState.phase = 'closed';
+    mocks.updateWorkflowState.context = null;
+    mocks.updateWorkflowState.skillNames = [];
     mocks.skillsDataState.syncSkills.mockClear();
-    mocks.skillsDataState.updateSkill.mockClear();
     mocks.skillsDataState.auditCache = {};
     mocks.skillsDataState.fetchAuditForSkills.mockClear();
     mocks.skillDetailState.selectSkill.mockClear();
@@ -257,10 +268,26 @@ describe('SkillsPanel', () => {
     expect(screen.getByTestId('repair:global:cached')).toBeDefined();
   });
 
+  it.each(['acquiring', 'validating', 'updating'] as const)(
+    'projects the %s update phase into the matching list row',
+    (phase) => {
+      mocks.skillsDataState.snapshots = {
+        'host/global': snapshot([makeSkill('toolkit')]),
+      };
+      mocks.updateWorkflowState.phase = phase;
+      mocks.updateWorkflowState.context = hostGlobal;
+      mocks.updateWorkflowState.skillNames = ['toolkit'];
+
+      render(<SkillsPanel compact={false} />);
+
+      expect(screen.getByTestId('phase:global:toolkit').textContent).toBe(phase);
+    },
+  );
+
   it('formats a structured load error and retries the committed context', async () => {
     mocks.workspaceContextState.selectedContext = ubuntuGlobal;
     mocks.skillsDataState.snapshots = {
-      'wsl:Ubuntu/global': snapshot([], false, {
+      'wsl:ubuntu/global': snapshot([], false, {
         kind: 'custom',
         data: { message: 'invalid WSL inspect record' },
       }),
@@ -291,7 +318,7 @@ describe('SkillsPanel', () => {
     mocks.workspaceContextState.selectedContext = ubuntuGlobal;
     mocks.skillsDataState.snapshots = {
       ...mocks.skillsDataState.snapshots,
-      'wsl:Ubuntu/global': snapshot(),
+      'wsl:ubuntu/global': snapshot(),
     };
 
     rerender(<SkillsPanel compact />);
@@ -306,7 +333,7 @@ describe('SkillsPanel', () => {
   it('passes the exact section context to check and update actions', () => {
     mocks.workspaceContextState.selectedContext = ubuntuProject;
     mocks.projectState.projectsByEnvironment = {
-      'wsl:Ubuntu': [{
+      'wsl:ubuntu': [{
         binding: {
           id: 'project-a',
           nativePath: '/home/me/project-a',
@@ -318,8 +345,8 @@ describe('SkillsPanel', () => {
       }],
     };
     mocks.skillsDataState.snapshots = {
-      'wsl:Ubuntu/global': snapshot([makeSkill('global-skill')]),
-      'wsl:Ubuntu/project:project-a': snapshot([makeSkill('project-skill', 'project')]),
+      'wsl:ubuntu/global': snapshot([makeSkill('global-skill')]),
+      'wsl:ubuntu/project:project-a': snapshot([makeSkill('project-skill', 'project')]),
     };
 
     render(<SkillsPanel compact={false} />);
@@ -328,8 +355,88 @@ describe('SkillsPanel', () => {
     document.querySelector<HTMLButtonElement>('[data-testid="update:project"]')?.click();
     document.querySelector<HTMLButtonElement>('[data-testid="update-all:project"]')?.click();
 
-    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(ubuntuProject);
-    expect(mocks.skillsDataState.updateSkill).toHaveBeenCalledWith(ubuntuProject, 'project-skill');
-    expect(mocks.skillsDataState.updateAllInSection).toHaveBeenCalledWith(ubuntuProject);
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(ubuntuProject, { kind: 'all' });
+    expect(mocks.updateWorkflowState.open).toHaveBeenNthCalledWith(
+      1,
+      ubuntuProject,
+      ['project-skill'],
+      false,
+    );
+    expect(mocks.updateWorkflowState.open).toHaveBeenNthCalledWith(
+      2,
+      ubuntuProject,
+      ['project-skill'],
+      true,
+    );
+  });
+
+  it('debounces automatic checks and cancels unsent focus work on unmount', async () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<SkillsPanel compact={false} />);
+    await act(async () => { await Promise.resolve(); });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(499); });
+    expect(mocks.skillsDataState.syncUpdates).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
+
+    mocks.skillsDataState.syncUpdates.mockClear();
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('focus'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
+
+    mocks.skillsDataState.syncUpdates.mockClear();
+    window.dispatchEvent(new Event('focus'));
+    unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mocks.skillsDataState.syncUpdates).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('sends the automatic check at 500ms even while workspace refresh is unresolved', async () => {
+    vi.useFakeTimers();
+    mocks.skillsDataState.refreshWorkspace.mockImplementationOnce(() => new Promise<void>(() => undefined));
+    render(<SkillsPanel compact={false} />);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledWith(hostGlobal);
+    vi.useRealTimers();
+  });
+
+  it('cancels a pending automatic check when the selected context changes', async () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    await act(async () => { await Promise.resolve(); });
+
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    rerender(<SkillsPanel compact={false} />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
+    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledWith(ubuntuGlobal);
+    vi.useRealTimers();
+  });
+
+  it('does not cancel a check that was already sent before a context switch', async () => {
+    vi.useFakeTimers();
+    let resolveSync: (() => void) | undefined;
+    mocks.skillsDataState.syncUpdates.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveSync = resolve;
+    }));
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledWith(hostGlobal);
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    rerender(<SkillsPanel compact={false} />);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
+    resolveSync?.();
+    vi.useRealTimers();
   });
 });

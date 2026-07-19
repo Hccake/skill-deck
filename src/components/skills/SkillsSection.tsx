@@ -4,16 +4,25 @@ import { useTranslation } from 'react-i18next';
 import { Plus, AlertTriangle, Check, ArrowUpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
-import { UpdatePlanDialog } from './UpdatePlanDialog';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
-import type { AgentType, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
-import { buildUpdatePlan, type SkillListItem, type UpdatePlan } from '@/stores/skills-utils';
+import type { AgentId, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
+import {
+  buildUpdatePlan,
+  resolveEvidenceFailureReasonI18nKey,
+  resolveEvidenceFreshnessI18nKey,
+  isSkillUpdateActive,
+  resolveSkillMaintenanceAction,
+  type SkillUpdateDisplayStatus,
+  type SkillListItem,
+  type UpdateCheckDisplaySnapshot,
+  type UpdatePlan,
+} from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
-const EMPTY_DISPLAY_NAMES = new Map<AgentType, string>();
+const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
 const EMPTY_AUDIT_CACHE: Record<string, SkillAuditData> = {};
 
 interface SkillsSectionProps {
@@ -26,16 +35,17 @@ interface SkillsSectionProps {
   /** 项目路径（仅 project scope，用于提示信息） */
   projectPath?: string;
   /** 各 skill 的更新状态 */
-  updatingSkills: Map<string, 'updating' | 'done' | 'failed'>;
+  updatingSkills: Map<string, SkillUpdateDisplayStatus>;
   /** 是否正在检查更新 */
   isCheckingUpdates?: boolean;
+  /** Backend 返回的当前 Context 更新检测展示事实 */
+  updateCheck?: UpdateCheckDisplaySnapshot;
   /** Agent display name 映射（agentId → displayName） */
-  agentDisplayNames?: Map<AgentType, string>;
+  agentDisplayNames?: Map<AgentId, string>;
   /** 审计数据缓存（skillName → SkillAuditData） */
   auditCache?: Record<string, SkillAuditData>;
   onSkillClick: (skill: InstalledSkill) => void;
-  onUpdate: (skillName: string, scope: SkillScope) => Promise<void>;
-  onUpdateAll: (scope: SkillScope) => Promise<void>;
+  onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
   onDelete: (skill: InstalledSkill) => void;
   onCopyToProject?: (skill: InstalledSkill) => void;
   onManageAgents?: (skill: InstalledSkill) => void;
@@ -54,11 +64,11 @@ export const SkillsSection = memo(function SkillsSection({
   projectPath,
   updatingSkills,
   isCheckingUpdates = false,
+  updateCheck,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
   auditCache = EMPTY_AUDIT_CACHE,
   onSkillClick,
-  onUpdate,
-  onUpdateAll,
+  onPrepareUpdate,
   onDelete,
   onCopyToProject,
   onManageAgents,
@@ -67,10 +77,8 @@ export const SkillsSection = memo(function SkillsSection({
   onCheckUpdates,
   emptyState,
 }: SkillsSectionProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
-  const [updatePlanOpen, setUpdatePlanOpen] = useState(false);
-  const [updatePlan, setUpdatePlan] = useState<UpdatePlan | null>(null);
 
   // 单次遍历派生所有更新相关状态（js-combine-iterations）— 仅统计当前 section 的 skills
   let isAnyUpdating = false;
@@ -82,7 +90,7 @@ export const SkillsSection = memo(function SkillsSection({
     );
     if (updatingStatus) {
       totalUpdating++;
-      if (updatingStatus === 'updating') {
+      if (isSkillUpdateActive(updatingStatus)) {
         isAnyUpdating = true;
       } else {
         completedCount++;
@@ -96,6 +104,13 @@ export const SkillsSection = memo(function SkillsSection({
   const updatesCount = updatePlanPreview.updatableCount;
   const maintenanceCount = updatePlanPreview.repairableCount + updatePlanPreview.skippedCount;
   const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
+  const sourceDiagnostics = useMemo(
+    () => (updateCheck?.sources ?? []).filter((source) => (
+      (source.freshness !== 'fresh' && source.freshness !== 'cached')
+      || source.lastAttempt?.failure != null
+    )),
+    [updateCheck?.sources],
+  );
 
   // 检测 isCheckingUpdates true → false 转换，短暂显示完成态
   const [checkDone, setCheckDone] = useState(false);
@@ -127,15 +142,29 @@ export const SkillsSection = memo(function SkillsSection({
     showCheckDone();
   }, [isCheckingUpdates, onCheckUpdates, showCheckDone]);
 
-  const handleOpenUpdatePlan = useCallback(() => {
-    if (updatePlanPreview.updatableCount === 0) return;
-    setUpdatePlan(updatePlanPreview);
-    setUpdatePlanOpen(true);
-  }, [updatePlanPreview]);
+  const openPreparedUpdatePlan = useCallback(async (nextPlan: UpdatePlan, batch: boolean) => {
+    if (nextPlan.updatableCount === 0) return;
+    const skillNames = nextPlan.groups.flatMap((group) => group.skillNames);
+    await onPrepareUpdate(skillNames, batch);
+  }, [onPrepareUpdate]);
 
-  const handleConfirmUpdatePlan = useCallback(async () => {
-    await onUpdateAll(scope);
-  }, [onUpdateAll, scope]);
+  const handleOpenUpdatePlan = useCallback(() => {
+    void openPreparedUpdatePlan(updatePlanPreview, true);
+  }, [openPreparedUpdatePlan, updatePlanPreview]);
+
+  const handleUpdateSkill = useCallback(async (skillName: string) => {
+    const skill = skills.find((candidate) => candidate.name === skillName);
+    if (skill && resolveSkillMaintenanceAction(skill) === 'direct-reinstall') {
+      await onPrepareUpdate([skillName], false);
+      return;
+    }
+    const nextPlan = buildUpdatePlan(
+      skills.filter((skill) => skill.name === skillName),
+      scope,
+      scope === 'project' ? projectPath : undefined,
+    );
+    await openPreparedUpdatePlan(nextPlan, false);
+  }, [onPrepareUpdate, openPreparedUpdatePlan, projectPath, scope, skills]);
 
   return (
     <>
@@ -239,6 +268,61 @@ export const SkillsSection = memo(function SkillsSection({
         </div>
       </div>
 
+      {sourceDiagnostics.length > 0 ? (
+        <div
+          role="status"
+          aria-label={t('skills.updateEvidence.title')}
+          className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/20 border-l-2 border-l-amber-600 bg-amber-500/[0.04] px-3 py-2 text-xs text-muted-foreground dark:border-l-amber-400"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="min-w-0 space-y-1">
+            {sourceDiagnostics.map((source) => {
+              const attempt = source.lastAttempt;
+              const failure = attempt?.failure;
+              const retryAt = failure?.retryAtEpochMs;
+              return (
+                <p
+                  key={`${source.source}:${source.requestedRef ?? ''}`}
+                  className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-normal"
+                >
+                  <span className="max-w-full truncate font-medium text-foreground/80">
+                    {source.source}
+                  </span>
+                  <span>{t(resolveEvidenceFreshnessI18nKey(source.freshness))}</span>
+                  {source.checkedAtEpochMs != null ? (
+                    <span>
+                      {t('skills.updateEvidence.lastChecked', {
+                        time: new Date(source.checkedAtEpochMs).toLocaleString(i18n.language),
+                      })}
+                    </span>
+                  ) : null}
+                  {attempt ? (
+                    <span>
+                      {t('skills.updateEvidence.lastAttempt', {
+                        time: new Date(attempt.checkedAtEpochMs).toLocaleString(i18n.language),
+                      })}
+                    </span>
+                  ) : null}
+                  {failure ? (
+                    <span>{t(resolveEvidenceFailureReasonI18nKey(failure.reason))}</span>
+                  ) : null}
+                  {retryAt != null ? (
+                    <span>
+                      {t(
+                        failure?.providerCooldown
+                          ? 'skills.updateEvidence.providerCooldownUntil'
+                          : 'skills.updateEvidence.retryAt',
+                        { time: new Date(retryAt).toLocaleString(i18n.language) },
+                      )}
+                    </span>
+                  ) : null}
+                </p>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       {/* 路径不存在提示 */}
       {!pathExists && (
         <div className="flex items-center gap-2 py-2 px-3 mb-3 text-xs text-[#D97706] dark:text-[#FBBF24] rounded-md border border-amber-500/20 border-l-2 border-l-[#D97706] dark:border-l-[#F59E0B] bg-[#D97706]/[0.04] dark:bg-[#F59E0B]/[0.04]">
@@ -272,7 +356,7 @@ export const SkillsSection = memo(function SkillsSection({
                     riskLevel={auditCache[skill.name]?.risk}
                     writeBlocked={writeBlocked}
                     onClick={onSkillClick}
-                    onUpdate={(name) => onUpdate(name, scope)}
+                    onUpdate={handleUpdateSkill}
                     onDelete={onDelete}
                     onCopyToProject={onCopyToProject}
                     onManageAgents={onManageAgents}
@@ -285,14 +369,6 @@ export const SkillsSection = memo(function SkillsSection({
         </>
       )}
     </section>
-      <UpdatePlanDialog
-        open={updatePlanOpen}
-        plan={updatePlan}
-        agentDisplayNames={agentDisplayNames}
-        onOpenChange={setUpdatePlanOpen}
-        onConfirm={handleConfirmUpdatePlan}
-        onRetryFailed={handleConfirmUpdatePlan}
-      />
     </>
   );
 });

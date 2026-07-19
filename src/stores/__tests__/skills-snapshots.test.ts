@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextRef, InstalledSkill, ListSkillsResult } from '@/bindings';
 import { contextKey, globalContext } from '@/lib/context';
 import { useSkillsDataStore } from '../skills-data';
+import { makeAgentRuntimeSnapshot, makeResolvedAgent } from '@/test-utils';
 
 const mocks = vi.hoisted(() => ({
   listSkills: vi.fn(),
   listAgents: vi.fn(),
   checkUpdates: vi.fn(),
+  previewUpdate: vi.fn(),
   updateSkill: vi.fn(),
   updateSkillsBatch: vi.fn(),
 }));
@@ -15,6 +17,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mocks.listSkills(...args),
   listAgents: (...args: unknown[]) => mocks.listAgents(...args),
   checkUpdates: (...args: unknown[]) => mocks.checkUpdates(...args),
+  previewUpdate: (...args: unknown[]) => mocks.previewUpdate(...args),
   updateSkill: (...args: unknown[]) => mocks.updateSkill(...args),
   updateSkillsBatch: (...args: unknown[]) => mocks.updateSkillsBatch(...args),
   checkSkillAudit: vi.fn(),
@@ -32,7 +35,12 @@ const debianGlobal: ContextRef = {
   environment: { kind: 'wsl', distro_name: 'Debian' },
   scope: { scope: 'global' },
 };
-
+const previewToken = {
+  generation: 'preview-1',
+  registryRevision: 'registry-1',
+  environmentRevision: 'environment-1',
+  contextRevision: 'context-1',
+};
 function skill(name: string, scope: 'global' | 'project' = 'global'): InstalledSkill {
   return {
     name,
@@ -61,15 +69,47 @@ describe('context-keyed Skill snapshots', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useSkillsDataStore.setState({ snapshots: {} });
-    mocks.listAgents.mockResolvedValue([]);
+    mocks.listAgents.mockResolvedValue(makeAgentRuntimeSnapshot([]));
     mocks.listSkills.mockResolvedValue({ skills: [], pathExists: true });
-    mocks.checkUpdates.mockResolvedValue([]);
-    mocks.updateSkill.mockResolvedValue({
-      results: [{ name: 'toolkit', status: 'success', warnings: [], agentResults: [] }],
+    mocks.checkUpdates.mockResolvedValue({ sources: [], skills: [] });
+    mocks.previewUpdate.mockResolvedValue({
+      token: previewToken,
+      skills: [{
+        skillName: 'toolkit',
+        capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+        overwritePrivateEntries: [{ entryId: 'entry-1' }],
+        blockingReasons: [],
+        fallbackForecasts: [],
+      }],
     });
-    mocks.updateSkillsBatch.mockResolvedValue({
-      results: [{ name: 'toolkit', status: 'success', warnings: [], agentResults: [] }],
-    });
+    const unit = {
+      unitId: 'toolkit',
+      source: null,
+      target: ubuntuGlobal,
+      status: 'succeeded',
+      retryable: false,
+      lockCommitted: true,
+      actualMode: 'copy',
+      fallbackReason: null,
+      agentTargets: [],
+      warnings: [],
+      error: null,
+      recovery: null,
+    };
+    const response = {
+      sources: [{ id: 'source-1', source: 'owner/repo', status: 'acquired', error: null }],
+      skills: [{
+        skillIdentity: { context: ubuntuGlobal, skillName: 'toolkit' },
+        sourceResultId: 'source-1',
+        mutation: unit,
+        coverage: { kind: 'updated' },
+        warnings: [],
+        retryable: false,
+      }],
+      outcome: 'succeeded',
+    };
+    mocks.updateSkill.mockResolvedValue(response);
+    mocks.updateSkillsBatch.mockResolvedValue(response);
   });
 
   it('keeps concurrent environment results in independent snapshots', async () => {
@@ -146,6 +186,13 @@ describe('context-keyed Skill snapshots', () => {
   });
 
   it('loads project and same-environment Global snapshots in parallel', async () => {
+    mocks.listAgents.mockResolvedValue(makeAgentRuntimeSnapshot([
+      makeResolvedAgent({ id: 'both' }),
+      makeResolvedAgent({
+        id: 'global-only',
+        project: { enabled: false },
+      }),
+    ]));
     mocks.listSkills.mockImplementation(async (context: ContextRef) => (
       context.scope.scope === 'global' ? result('global') : result('project', 'project')
     ));
@@ -157,6 +204,8 @@ describe('context-keyed Skill snapshots', () => {
     expect(mocks.listAgents).toHaveBeenCalledWith(ubuntuProject);
     expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuProject)].skills[0].name)
       .toBe('project');
+    expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuProject)].agents
+      .map((agent) => agent.definition.id)).toEqual(['both']);
   });
 
   it('checks updates for the captured context and mutates only its snapshot', async () => {
@@ -177,67 +226,28 @@ describe('context-keyed Skill snapshots', () => {
         },
       },
     });
-    mocks.checkUpdates.mockResolvedValue([{
+    mocks.checkUpdates.mockResolvedValue({ sources: [], skills: [{
       name: 'toolkit',
       source: 'owner/repo',
       sourceUrl: 'https://github.com/owner/repo',
       gitRef: null,
       skillPath: null,
       hasUpdate: true,
-      status: 'update-available',
+      status: 'updateAvailable',
       reason: null,
-    }]);
+      freshness: 'fresh',
+      capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
+    }] });
 
-    await useSkillsDataStore.getState().forceCheckUpdates(ubuntuGlobal);
+    await useSkillsDataStore.getState().forceCheckUpdates(ubuntuGlobal, { kind: 'all' });
 
-    expect(mocks.checkUpdates).toHaveBeenCalledWith(ubuntuGlobal);
+    expect(mocks.checkUpdates).toHaveBeenCalledWith({
+      context: ubuntuGlobal,
+      mode: 'force',
+      selection: { kind: 'all' },
+    });
     expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuGlobal)].skills[0].hasUpdate)
       .toBe(true);
   });
 
-  it('updates one skill using only the captured context', async () => {
-    useSkillsDataStore.setState({
-      snapshots: {
-        [contextKey(ubuntuGlobal)]: {
-          skills: [skill('toolkit')],
-          agents: [],
-          pathExists: true,
-          loading: false,
-          error: null,
-          requestId: 1,
-        },
-      },
-    });
-
-    await useSkillsDataStore.getState().updateSkill(ubuntuGlobal, 'toolkit');
-
-    expect(mocks.updateSkill).toHaveBeenCalledWith(ubuntuGlobal, 'toolkit');
-  });
-
-  it('updates a section using only the captured context', async () => {
-    useSkillsDataStore.setState({
-      snapshots: {
-        [contextKey(ubuntuGlobal)]: {
-          skills: [skill('toolkit')],
-          agents: [],
-          pathExists: true,
-          loading: false,
-          error: null,
-          requestId: 1,
-        },
-      },
-    });
-    const current = useSkillsDataStore.getState().snapshots[contextKey(ubuntuGlobal)];
-    current.skills[0] = {
-      ...current.skills[0],
-      source: 'owner/repo',
-      sourceUrl: 'https://github.com/owner/repo',
-      hasUpdate: true,
-      canRunUpdate: true,
-    };
-
-    await useSkillsDataStore.getState().updateAllInSection(ubuntuGlobal);
-
-    expect(mocks.updateSkillsBatch).toHaveBeenCalledWith(ubuntuGlobal, ['toolkit']);
-  });
 });

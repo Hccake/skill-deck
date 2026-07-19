@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -71,33 +71,25 @@ describe('SkillCard', () => {
   });
 
 
-  it('ignores update-progress events from a different skill identity', () => {
+  it.each([
+    ['acquiring', 'skills.updatePhaseAcquiring'],
+    ['validating', 'skills.updatePhaseValidating'],
+    ['updating', 'skills.updatePhaseUpdating'],
+  ] as const)('shows the %s workflow phase accurately', (updateStatus, label) => {
     render(
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({ scope: 'global' })}
           displayScope="global"
-          updateStatus="updating"
+          updateStatus={updateStatus}
         />
       </TooltipProvider>
     );
 
-    act(() => {
-      eventMocks.callback?.({
-        payload: {
-          skillName: 'toolkit',
-          scope: 'project',
-          projectPath: 'D:\\Code\\other-project',
-          phase: 'writing_lock',
-        },
-      });
-    });
-
-    expect(screen.queryByText('skills.updatePhaseWritingLock')).toBeNull();
-    expect(screen.getByText('skills.updatePhaseCloning')).toBeTruthy();
+    expect(screen.getByText(label)).toBeTruthy();
   });
 
-  it('shows cannot-check status in the title row when no update is available', () => {
+  it('shows cannotCheck status in the title row when no update is available', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -107,8 +99,8 @@ describe('SkillCard', () => {
               canRunUpdate: true,
               updateReason: 'missing-skill-path',
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
         />
       </TooltipProvider>
@@ -412,14 +404,14 @@ describe('SkillCard', () => {
               hasUpdate: false,
               canRunUpdate: true,
               canCheckForUpdates: false,
-              updateReason: 'missing-remote-hash',
+              updateReason: 'missingRemoteHash',
               source: 'owner/repo',
               sourceUrl: 'https://github.com/owner/repo',
               updatedAt: '2026-05-18T15:42:00Z',
               agents: ['claude-code'],
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
           agentDisplayNames={new Map([['claude-code', 'Claude Code']])}
         />
@@ -427,7 +419,7 @@ describe('SkillCard', () => {
     );
 
     const source = screen.getByText('owner/repo');
-    const diagnostic = screen.getByText('skills.updateHint.missing-remote-hash');
+    const diagnostic = screen.getByText('skills.updateHint.missingRemoteHash');
 
     expect(source.closest('[data-testid="skill-card-metadata"]')?.className).not.toContain('mb-');
     expect(diagnostic.parentElement?.className).not.toContain('mb-');
@@ -453,7 +445,7 @@ describe('SkillCard', () => {
     const source = screen.getByText('owner/repo');
 
     expect(source.closest('[data-testid="skill-card-metadata"]')?.className).not.toContain('mb-');
-    expect(screen.queryByText('skills.updateHint.missing-remote-hash')).toBeNull();
+    expect(screen.queryByText('skills.updateHint.missingRemoteHash')).toBeNull();
   });
 
   it('does not use a left warning rail for ordinary available updates', () => {
@@ -551,11 +543,11 @@ describe('SkillCard', () => {
               hasUpdate: false,
               canRunUpdate: true,
               canCheckForUpdates: false,
-              updateReason: 'missing-remote-hash',
+              updateReason: 'missingRemoteHash',
               agents: ['claude-code', 'codex'],
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
           agentDisplayNames={new Map([
             ['claude-code', 'Claude Code'],
@@ -566,7 +558,7 @@ describe('SkillCard', () => {
     );
 
     const updateBadge = screen.getByText('skills.updateStatusLabel.reinstallRequired');
-    const diagnostic = screen.getByText('skills.updateHint.missing-remote-hash');
+    const diagnostic = screen.getByText('skills.updateHint.missingRemoteHash');
     const firstAgent = screen.getByText('Claude Code');
 
     expect(diagnostic).toBeTruthy();
@@ -610,8 +602,8 @@ describe('SkillCard', () => {
               updateReason: 'network-error',
               agents: ['claude-code'],
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
           agentDisplayNames={new Map([['claude-code', 'Claude Code']])}
         />
@@ -648,8 +640,8 @@ describe('SkillCard', () => {
               sourceUrl: 'https://github.com/owner/repo',
               updateReason: 'missing-skill-path',
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
           onRepairSource={onRepairSource}
         />
@@ -678,10 +670,10 @@ describe('SkillCard', () => {
               canCheckForUpdates: false,
               source: 'owner/repo',
               sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'missing-remote-hash',
+              updateReason: 'missingRemoteHash',
             }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' }}
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
           displayScope="global"
           onUpdate={onUpdate}
           onRepairSource={onRepairSource}
@@ -717,10 +709,10 @@ describe('SkillCard', () => {
               canCheckForUpdates: true,
               source: 'owner/repo',
               sourceUrl: 'https://github.com/owner/repo',
-              updateReason: 'deleted-upstream',
+              updateReason: 'deletedUpstream',
             }),
-            updateStatus: 'deleted-upstream',
-          } as InstalledSkill & { updateStatus?: 'deleted-upstream' }}
+            updateStatus: 'deletedUpstream',
+          } as InstalledSkill & { updateStatus?: 'deletedUpstream' }}
           displayScope="global"
           onUpdate={onUpdate}
           onRepairSource={onRepairSource}
@@ -728,8 +720,8 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('skills.updateStatusLabel.deleted-upstream')).toBeTruthy();
-    expect(screen.getByText('skills.updateHint.deleted-upstream')).toBeTruthy();
+    expect(screen.getByText('skills.updateStatusLabel.deletedUpstream')).toBeTruthy();
+    expect(screen.getByText('skills.updateHint.deletedUpstream')).toBeTruthy();
     expect(screen.queryByTitle('skills.actions.update')).toBeNull();
 
     fireEvent.click(screen.getByTitle('skills.updatePlan.deletedUpstreamActionRepair'));

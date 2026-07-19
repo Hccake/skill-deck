@@ -11,7 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { AgentInfo } from '@/bindings';
+import { agentDisplayName, agentId } from '@/lib/agents';
+import type { ResolvedAgent } from '@/bindings';
 
 interface SkillsToolbarProps {
   /** 紧凑模式 — 只显示搜索框 */
@@ -25,7 +26,7 @@ interface SkillsToolbarProps {
   /** agent 筛选变更回调 */
   onAgentChange: (agentId: string) => void;
   /** 可筛选的 agent 列表 */
-  filterableAgents: AgentInfo[];
+  filterableAgents: ResolvedAgent[];
   /** 同步按钮回调 */
   onSync: () => void | Promise<void>;
   /** 是否正在同步 */
@@ -95,9 +96,9 @@ export function SkillsToolbar({
           </SelectTrigger>
           <SelectContent position="popper">
             <SelectItem value="all">{t('skills.filter.allAgents')}</SelectItem>
-            {filterableAgents.map((agent) => (
-              <SelectItem key={agent.id} value={agent.id}>
-                {agent.name}
+          {filterableAgents.map((agent) => (
+            <SelectItem key={agentId(agent)} value={agentId(agent)}>
+              {agentDisplayName(agent)}
               </SelectItem>
             ))}
           </SelectContent>

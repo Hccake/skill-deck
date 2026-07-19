@@ -1,33 +1,39 @@
 // src/components/skills/add-skill/OptionsStep.tsx
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   listAgents,
+  listAgentSelectionGroups,
   listEveInstallTargets,
   getDefaultTargetAgents,
 } from '@/hooks/useTauriApi';
 import { canCreatePrivateCopy, filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
+import { agentId, agentsForScope, isAgentDetected } from '@/lib/agents';
 import { globalContext } from '@/lib/context';
-import { AgentSelector } from './AgentSelector';
+import { AgentSelector } from '@/components/agents/AgentSelector';
 import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
 import { Bot, Copy, Info, Link2, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { AgentInfo, InstallTargetInfo, InstallTargetSpec } from '@/bindings';
+import type { AgentId, AgentSelectionGroups, InstallTargetInfo, ResolvedAgent } from '@/bindings';
+import type { AdapterTargetSelection } from '@/lib/install-workflow';
+import { useAgentConfigurationFlow } from '@/hooks/useAgentConfigurationFlow';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 
 // CLI 默认选中的手动安装目标
 const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
 
-function targetKey(target: Pick<InstallTargetInfo, 'agent' | 'subagent'> | InstallTargetSpec) {
-  return `${target.agent}:${target.subagent ?? 'root'}`;
+function targetKey(target: InstallTargetInfo | AdapterTargetSelection) {
+  return target.targetId;
 }
 
-function targetSpec(target: Pick<InstallTargetInfo, 'agent' | 'subagent'>): InstallTargetSpec {
+function targetSelection(target: InstallTargetInfo): AdapterTargetSelection {
   return {
-    agent: target.agent,
-    subagent: target.subagent ?? null,
+    agentId: target.agent,
+    targetId: target.targetId,
   };
 }
 
@@ -39,6 +45,13 @@ interface OptionsStepProps {
 export function OptionsStep({ state, updateState }: OptionsStepProps) {
   const { t } = useTranslation();
   const scope = state.scope;
+  const [agentInitializationError, setAgentInitializationError] = useState(false);
+  const [agentInitializationAttempt, setAgentInitializationAttempt] = useState(0);
+  const [selectionGroups, setSelectionGroups] = useState<AgentSelectionGroups>({
+    global: [],
+    project: [],
+  });
+  const initializationGeneration = useRef(0);
 
   // 使用 ref 保存 updateState，避免将其作为 useEffect 依赖（advanced-event-handler-refs）
   const updateStateRef = useRef(updateState);
@@ -48,11 +61,51 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   const preSelectedAgentsRef = useRef(state.preSelectedAgents);
   useEffect(() => { preSelectedAgentsRef.current = state.preSelectedAgents; });
 
+  const handleConfiguredAgent = useCallback((runtimeSnapshot: Parameters<typeof agentsForScope>[0], configuredId: AgentId) => {
+    const allAgents = agentsForScope(runtimeSnapshot, scope);
+    if (!allAgents.some((agent) => agentId(agent) === configuredId)) return;
+    updateStateRef.current({
+      allAgents,
+      selectedAgents: state.selectedAgents.includes(configuredId)
+        ? state.selectedAgents
+        : [...state.selectedAgents, configuredId],
+    });
+
+    const generation = initializationGeneration.current;
+    void listAgentSelectionGroups(state.context)
+      .then((groups) => {
+        if (generation === initializationGeneration.current) {
+          setSelectionGroups(groups);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to refresh Agent selection groups:', error);
+      });
+  }, [scope, state.context, state.selectedAgents]);
+
+  const {
+    configuringAgentId,
+    configurationResult,
+    configure,
+  } = useAgentConfigurationFlow({
+    context: state.context,
+    onSaved: handleConfiguredAgent,
+  });
+
+  const unknownAgentIds = useMemo(() => {
+    const knownIds = new Set(state.allAgents.map((agent) => agentId(agent)));
+    return state.preSelectedAgents.filter((id, index, ids) =>
+      ids.indexOf(id) === index && !knownIds.has(id));
+  }, [state.allAgents, state.preSelectedAgents]);
+
   // 初始化 agents 数据 — async-parallel 规则
   useEffect(() => {
+    const generation = ++initializationGeneration.current;
     async function initAgents() {
+      setAgentInitializationError(false);
       const isProjectScope = scope === 'project';
       const agentsPromise = listAgents(state.context);
+      const selectionGroupsPromise = listAgentSelectionGroups(state.context);
       const eveTargetsPromise = isProjectScope
         ? listEveInstallTargets(state.context).catch(() => [])
         : Promise.resolve([] as InstallTargetInfo[]);
@@ -61,14 +114,18 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
         globalContext(state.context.environment),
       ).catch(() => null);
 
-      const [allAgents, eveTargets, lastSelected, targetDefaults] = await Promise.all([
+      const [runtimeSnapshot, groups, eveTargets, lastSelected, targetDefaults] = await Promise.all([
         agentsPromise,
+        selectionGroupsPromise,
         eveTargetsPromise,
         lastSelectedPromise,
         targetDefaultsPromise,
       ]);
+      if (generation !== initializationGeneration.current) return;
+      setSelectionGroups(groups);
+      const allAgents = agentsForScope(runtimeSnapshot, scope);
 
-      let selectedAgents: string[];
+      let selectedAgents: AgentId[];
 
       // 优先使用从 CLI 命令解析出的 preSelectedAgents
       if (preSelectedAgentsRef.current.length > 0) {
@@ -94,7 +151,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
           DEFAULT_NON_UNIVERSAL_AGENTS,
           allAgents,
         )[scope].filter((id) =>
-          allAgents.some((agent) => agent.id === id && agent.detected)
+          allAgents.some((agent) => agentId(agent) === id && isAgentDetected(agent))
         );
       }
 
@@ -103,14 +160,23 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
         selectedAgents,
         availableAgentTargets: eveTargets,
         selectedAgentTargets: selectedAgents.includes('eve')
-          ? eveTargets.map(targetSpec)
+          ? eveTargets.map(targetSelection)
           : [],
         privateCopyAgents: [],
       });
     }
 
-    initAgents();
-  }, [scope, state.projectPath, state.context]);
+    void initAgents().catch(() => {
+      if (generation === initializationGeneration.current) {
+        setAgentInitializationError(true);
+      }
+    });
+    return () => {
+      if (generation === initializationGeneration.current) {
+        initializationGeneration.current += 1;
+      }
+    };
+  }, [agentInitializationAttempt, scope, state.projectPath, state.context]);
 
   const handleSelectionChange = useCallback(
     (agents: string[]) => {
@@ -122,7 +188,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
       if (!isEveSelected) {
         next.selectedAgentTargets = [];
       } else if (!wasEveSelected && availableTargets.length > 0) {
-        next.selectedAgentTargets = availableTargets.map(targetSpec);
+        next.selectedAgentTargets = availableTargets.map(targetSelection);
       }
 
       updateState(next);
@@ -135,7 +201,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
       const current = state.selectedAgentTargets ?? [];
       const key = targetKey(target);
       const nextTargets = checked
-        ? [...current.filter((item) => targetKey(item) !== key), targetSpec(target)]
+        ? [...current.filter((item) => targetKey(item) !== key), targetSelection(target)]
         : current.filter((item) => targetKey(item) !== key);
       const nextAgents = nextTargets.length > 0 && !state.selectedAgents.includes(target.agent)
         ? [...state.selectedAgents, target.agent]
@@ -153,7 +219,9 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
 
   const handlePrivateCopyChange = useCallback(
     (agents: string[]) => {
-      const agentById = new Map<string, AgentInfo>(state.allAgents.map((agent) => [agent.id, agent]));
+      const agentById = new Map<AgentId, ResolvedAgent>(
+        state.allAgents.map((agent) => [agentId(agent), agent]),
+      );
       const filteredAgents = agents.filter((agentId, index) => {
         if (agents.indexOf(agentId) !== index) return false;
         const agent = agentById.get(agentId);
@@ -178,16 +246,41 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
       {/* Agents */}
       <div className="space-y-3">
         <Label className="text-base font-semibold">{t('addSkill.agents.targetTitle')}</Label>
+        {agentInitializationError ? (
+          <Alert>
+            <AlertDescription>
+              <p>{t('addSkill.agents.loadError')}</p>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto p-0"
+                onClick={() => setAgentInitializationAttempt((attempt) => attempt + 1)}
+              >
+                {t('common.retry')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <AgentSelector
           selectedAgents={state.selectedAgents}
           privateCopyAgents={state.privateCopyAgents}
           allAgents={state.allAgents}
+          selectionGroups={selectionGroups[scope]}
           onSelectionChange={handleSelectionChange}
           onPrivateCopyChange={handlePrivateCopyChange}
           scope={state.scope}
           privateCopyAgentsExpanded={state.privateCopyAgentsExpanded}
           onPrivateCopyExpandedChange={(expanded) => updateState({ privateCopyAgentsExpanded: expanded })}
+          unknownAgentIds={unknownAgentIds}
+          configuringAgentId={configuringAgentId}
+          onConfigureAgent={(id) => void configure(id)}
         />
+        {configurationResult ? (
+          <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
+            {t(`addSkill.agents.configurationResult.${configurationResult}`)}
+          </p>
+        ) : null}
       </div>
 
       {showConcreteTargets ? (

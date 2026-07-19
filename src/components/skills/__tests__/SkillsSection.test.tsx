@@ -10,6 +10,7 @@ import { useMutationStore } from '@/stores/mutation';
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string) => key,
+    i18n: { language: 'en' },
   }),
 }));
 
@@ -17,14 +18,19 @@ vi.mock('../SkillCard', () => ({
   SkillCard: ({
     skill,
     updateStatus,
+    onUpdate,
     onRepairSource,
   }: {
     skill: InstalledSkill;
-    updateStatus?: 'updating' | 'done' | 'failed';
+    updateStatus?: 'acquiring' | 'validating' | 'updating' | 'done' | 'failed';
+    onUpdate?: (skillName: string) => void;
     onRepairSource?: (skill: InstalledSkill) => void;
   }) => (
     <div data-testid={`skill-card:${skill.scope}:${skill.name}`}>
       <span data-testid={`status:${skill.scope}:${skill.name}`}>{updateStatus ?? 'idle'}</span>
+      <button type="button" data-testid={`update:${skill.scope}:${skill.name}`} onClick={() => onUpdate?.(skill.name)}>
+        update
+      </button>
       <button type="button" data-testid={`repair:${skill.scope}:${skill.name}`} onClick={() => onRepairSource?.(skill)}>
         repair
       </button>
@@ -71,8 +77,7 @@ describe('SkillsSection', () => {
         scope="global"
         updatingSkills={new Map()}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -92,8 +97,7 @@ describe('SkillsSection', () => {
         scope="global"
         updatingSkills={new Map([['global:toolkit', 'updating']])}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />
@@ -111,8 +115,7 @@ describe('SkillsSection', () => {
         updatingSkills={new Map()}
         isCheckingUpdates={false}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -127,8 +130,7 @@ describe('SkillsSection', () => {
         updatingSkills={new Map()}
         isCheckingUpdates
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -143,8 +145,7 @@ describe('SkillsSection', () => {
         updatingSkills={new Map()}
         isCheckingUpdates={false}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -165,8 +166,7 @@ describe('SkillsSection', () => {
         updatingSkills={new Map()}
         isCheckingUpdates={false}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -180,6 +180,62 @@ describe('SkillsSection', () => {
     });
   });
 
+  it('shows Backend source freshness, attempt, and retry diagnostics', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', { hasUpdate: false })]}
+        scope="global"
+        updatingSkills={new Map()}
+        updateCheck={{
+          skillFreshness: { toolkit: 'coolingDown' },
+          sources: [
+            {
+              source: 'github.com/owner/stale',
+              requestedRef: 'main',
+              resolvedRef: 'main',
+              refRevision: 'revision-1',
+              checkedAtEpochMs: 100,
+              expiresAtEpochMs: 200,
+              freshness: 'stale',
+              lastAttempt: null,
+            },
+            {
+              source: 'github.com/owner/cooling-down',
+              requestedRef: 'main',
+              resolvedRef: 'main',
+              refRevision: 'revision-2',
+              checkedAtEpochMs: 300,
+              expiresAtEpochMs: 400,
+              freshness: 'coolingDown',
+              lastAttempt: {
+                checkedAtEpochMs: 500,
+                failure: {
+                  reason: 'rateLimited',
+                  message: 'rate limited',
+                  retryAtEpochMs: 600,
+                  providerCooldown: true,
+                },
+              },
+            },
+          ],
+        }}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={vi.fn(async () => true)}
+      />
+    );
+
+    expect(screen.getByText('github.com/owner/stale')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.freshness.stale')).toBeTruthy();
+    expect(screen.getByText('github.com/owner/cooling-down')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.freshness.coolingDown')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.lastAttempt')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.providerCooldownUntil')).toBeTruthy();
+  });
+
   it('hides the check-updates action when no skills in the section can be checked', () => {
     render(
       <SkillsSection
@@ -187,15 +243,14 @@ describe('SkillsSection', () => {
         skills={[
           {
             ...makeSkill('global', { hasUpdate: false, canCheckForUpdates: false }),
-            updateStatus: 'cannot-check',
-          } as InstalledSkill & { updateStatus?: 'cannot-check' },
+            updateStatus: 'cannotCheck',
+          } as InstalledSkill & { updateStatus?: 'cannotCheck' },
         ]}
         scope="global"
         updatingSkills={new Map()}
         isCheckingUpdates={false}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -214,8 +269,7 @@ describe('SkillsSection', () => {
         updatingSkills={new Map()}
         isCheckingUpdates={false}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -236,8 +290,7 @@ describe('SkillsSection', () => {
         projectPath="D:\\Code\\project-a"
         updatingSkills={new Map()}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onRepairSource={onRepairSource}
         onAdd={vi.fn()}
@@ -249,8 +302,8 @@ describe('SkillsSection', () => {
     expect(onRepairSource).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project', name: 'toolkit' }));
   });
 
-  it('opens an update plan before running update all', async () => {
-    const onUpdateAll = vi.fn(async () => undefined);
+  it('delegates update-all preview to the page-level update workflow owner', async () => {
+    const onPrepareUpdate = vi.fn(async () => true);
 
     render(
       <SkillsSection
@@ -266,8 +319,7 @@ describe('SkillsSection', () => {
         scope="global"
         updatingSkills={new Map()}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={onUpdateAll}
+        onPrepareUpdate={onPrepareUpdate}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />
@@ -275,13 +327,38 @@ describe('SkillsSection', () => {
 
     fireEvent.click(screen.getByText('skills.updateAll'));
 
-    expect(screen.getByText('skills.updatePlan.readyTitle')).toBeTruthy();
-    expect(onUpdateAll).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onPrepareUpdate).toHaveBeenCalledWith(['toolkit'], true);
+    });
+    expect(screen.queryByText('skills.updatePlan.readyTitle')).toBeNull();
+  });
 
-    fireEvent.click(screen.getByText('skills.updatePlan.confirm'));
+  it('delegates a direct reinstall without a remote hash to the update workflow', async () => {
+    const onPrepareUpdate = vi.fn(async () => true);
+
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', {
+          hasUpdate: false,
+          canRunUpdate: true,
+          canCheckForUpdates: false,
+          updateStatus: 'cannotCheck',
+          updateReason: 'missingRemoteHash',
+        } as Partial<InstalledSkill>)]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={onPrepareUpdate}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('update:global:toolkit'));
 
     await waitFor(() => {
-      expect(onUpdateAll).toHaveBeenCalledWith('global');
+      expect(onPrepareUpdate).toHaveBeenCalledWith(['toolkit'], false);
     });
   });
 
@@ -300,8 +377,7 @@ describe('SkillsSection', () => {
         scope="global"
         updatingSkills={new Map()}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
         onCheckUpdates={vi.fn(async () => true)}
@@ -343,8 +419,7 @@ describe('SkillsSection', () => {
         scope="global"
         updatingSkills={new Map()}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />
@@ -366,7 +441,7 @@ describe('SkillsSection', () => {
             canRunUpdate: false,
             canCheckForUpdates: false,
             updateReason: 'missing-skill-path',
-            updateStatus: 'cannot-check',
+            updateStatus: 'cannotCheck',
             source: 'owner/repo',
             sourceUrl: 'https://github.com/owner/repo',
             gitRef: 'main',
@@ -376,8 +451,7 @@ describe('SkillsSection', () => {
         projectPath="D:\\Code\\project-a"
         updatingSkills={new Map()}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onRepairSource={vi.fn()}
         onAdd={vi.fn()}
@@ -406,15 +480,14 @@ describe('SkillsSection', () => {
             hasUpdate: false,
             canRunUpdate: false,
             canCheckForUpdates: false,
-            updateStatus: 'cannot-check',
+            updateStatus: 'cannotCheck',
             updateReason: 'missing-skill-path',
           } as Partial<InstalledSkill>),
         ]}
         scope="global"
         updatingSkills={new Map()}
         onSkillClick={vi.fn()}
-        onUpdate={vi.fn(async () => undefined)}
-        onUpdateAll={vi.fn(async () => undefined)}
+        onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
       />

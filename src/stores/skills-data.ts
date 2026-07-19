@@ -1,55 +1,126 @@
 // src/stores/skills-data.ts
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { isMutationWriteBlocked } from './mutation';
-import { useProjectStore } from './projects';
 import {
   sortSkills,
   mergeUpdateInfo,
   updateInfoCache,
-  UPDATE_CHECK_TTL,
   clearUpdateCacheForContextSkill,
-  buildUpdatePlan,
   type SkillListItem,
-  type UpdatePlan,
+  type UpdateCheckDisplaySnapshot,
   t,
 } from './skills-utils';
 import {
   listSkills,
   listAgents,
   checkUpdates,
-  updateSkill as apiUpdateSkill,
-  updateSkillsBatch as apiUpdateSkillsBatch,
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
-import { getSkillIdentity, getSkillIdentityKey, isSameSkillIdentity } from '@/lib/skills/identity';
-import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import { toAppError } from '@/utils/to-app-error';
-import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { contextKey, globalContext } from '@/lib/context';
+import { agentsForScope } from '@/lib/agents';
 import type {
-  AgentInfo,
   AppError,
   ContextRef,
-  InstalledSkill,
+  ResolvedAgent,
   SkillScope,
   SkillUpdateInfo,
   SkillAuditData,
-  UpdateSkillItemResult,
+  SourceUpdateCheckInfo,
+  UpdateCheckSelection,
+  UpdateCheckResponse,
+  UpdateResponse,
 } from '@/bindings';
 
 type UpdateCheckResult =
-  | { ok: true; updates: SkillUpdateInfo[] }
+  | { ok: true; response: UpdateCheckResponse }
   | { ok: false };
+
+type UpdateCheckPriority = 0 | 1;
+
+interface UpdateCheckRequestTicket {
+  key: string;
+  generation: number;
+  priority: UpdateCheckPriority;
+}
+
+const updateCheckRequestGenerations = new Map<string, number>();
+const pendingUpdateCheckRequests = new Map<string, Set<number>>();
+const admittedUpdateCheckRequests = new Map<string, UpdateCheckRequestTicket>();
+
+function beginUpdateCheckRequest(
+  key: string,
+  priority: UpdateCheckPriority,
+): UpdateCheckRequestTicket {
+  const generation = (updateCheckRequestGenerations.get(key) ?? 0) + 1;
+  updateCheckRequestGenerations.set(key, generation);
+  const ticket = { key, generation, priority };
+  const pending = pendingUpdateCheckRequests.get(key) ?? new Set<number>();
+  pending.add(generation);
+  pendingUpdateCheckRequests.set(key, pending);
+
+  const admitted = admittedUpdateCheckRequests.get(key);
+  if (!admitted || priority >= admitted.priority) {
+    admittedUpdateCheckRequests.set(key, ticket);
+  }
+  return ticket;
+}
+
+function isAdmittedUpdateCheckRequest(ticket: UpdateCheckRequestTicket): boolean {
+  return admittedUpdateCheckRequests.get(ticket.key)?.generation === ticket.generation;
+}
+
+function finishUpdateCheckRequest(ticket: UpdateCheckRequestTicket): boolean {
+  const pending = pendingUpdateCheckRequests.get(ticket.key);
+  pending?.delete(ticket.generation);
+  if (pending && pending.size > 0) return true;
+
+  pendingUpdateCheckRequests.delete(ticket.key);
+  admittedUpdateCheckRequests.delete(ticket.key);
+  return false;
+}
+
+function sourceUpdateIdentity(source: SourceUpdateCheckInfo): string {
+  return `${source.source}\u0000${source.requestedRef ?? ''}`;
+}
+
+function mergeSourceUpdateInfo(
+  previous: SourceUpdateCheckInfo[],
+  next: SourceUpdateCheckInfo[],
+): SourceUpdateCheckInfo[] {
+  const nextKeys = new Set(next.map(sourceUpdateIdentity));
+  return [
+    ...previous.filter((source) => !nextKeys.has(sourceUpdateIdentity(source))),
+    ...next,
+  ];
+}
+
+function toUpdateCheckDisplaySnapshot(
+  results: SkillUpdateInfo[],
+  sources: SourceUpdateCheckInfo[],
+): UpdateCheckDisplaySnapshot {
+  return {
+    sources,
+    skillFreshness: Object.fromEntries(
+      results.map((result) => [result.name, result.freshness]),
+    ),
+  };
+}
 
 function clearLocalUpdateFlags(
   skills: SkillListItem[],
   scope: SkillScope,
   skillNames: Set<string>,
-  options: { clearCannotCheck?: boolean } = {},
+  options: {
+    clearCannotCheck?: boolean;
+    clearCannotCheckNames?: ReadonlySet<string>;
+  } = {},
 ): SkillListItem[] {
   let changed = false;
   const nextSkills = skills.map((skill) => {
-    const shouldClear = skill.hasUpdate || options.clearCannotCheck;
+    const shouldClear = skill.hasUpdate
+      || options.clearCannotCheck
+      || options.clearCannotCheckNames?.has(skill.name);
     if (skill.scope !== scope || !skillNames.has(skill.name) || !shouldClear) {
       return skill;
     }
@@ -57,7 +128,7 @@ function clearLocalUpdateFlags(
     return {
       ...skill,
       hasUpdate: false,
-      updateStatus: 'up-to-date' as const,
+      updateStatus: 'upToDate' as const,
       updateReason: null,
     };
   });
@@ -71,51 +142,41 @@ async function checkUpdatesSafely(
   try {
     return {
       ok: true,
-      updates: await checkUpdates(context),
+      response: await checkUpdates({
+        context,
+        mode: 'automatic',
+        selection: { kind: 'all' },
+      }),
     };
   } catch {
     return { ok: false };
   }
 }
 
-function projectPathForContext(context: ContextRef): string | undefined {
-  const scope = context.scope;
-  if (scope.scope !== 'project') return undefined;
-  const projects = useProjectStore.getState().projectsByEnvironment[
-    environmentKey(context.environment)
-  ] ?? [];
-  return projects.find((project) => project.binding.id === scope.project_id)
-    ?.binding.nativePath;
-}
-
 interface SkillsDataState {
   snapshots: Record<string, ContextSkillSnapshot>;
   auditCache: Record<string, SkillAuditData>;
 
-  // Operation state
   isSyncing: boolean;
   checkingUpdateScopes: Set<string>;
-  updatingSkills: Map<string, 'updating' | 'done' | 'failed'>;
-  lastUpdatePlan: UpdatePlan | null;
-  lastUpdateResults: UpdateSkillItemResult[] | null;
-  lastFailedUpdateNames: string[];
 
   // Actions
   refreshContext: (context: ContextRef, includeAgents?: boolean) => Promise<void>;
   refreshWorkspace: (context: ContextRef) => Promise<void>;
   invalidateContexts: (contexts: ContextRef[]) => void;
+  invalidateAgentProjections: () => void;
   syncSkills: (context: ContextRef) => Promise<void>;
   syncUpdates: (context: ContextRef) => Promise<void>;
-  forceCheckUpdates: (context: ContextRef) => Promise<boolean>;
+  forceCheckUpdates: (context: ContextRef, selection: UpdateCheckSelection) => Promise<boolean>;
+  applyUpdateResult: (context: ContextRef, response: UpdateResponse) => Promise<void>;
   fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
-  updateSkill: (context: ContextRef, skillName: string) => Promise<void>;
   markSourceRepairSucceeded: (context: ContextRef, skillName: string) => void;
-  updateAllInSection: (context: ContextRef) => Promise<void>;
 }
 
 export interface ContextSkillSnapshot {
   skills: SkillListItem[];
-  agents: AgentInfo[];
+  updateCheck?: UpdateCheckDisplaySnapshot;
+  agents: ResolvedAgent[];
   pathExists: boolean;
   loading: boolean;
   error: AppError | null;
@@ -147,10 +208,6 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
   isSyncing: false,
   checkingUpdateScopes: new Set(),
-  updatingSkills: new Map(),
-  lastUpdatePlan: null,
-  lastUpdateResults: null,
-  lastFailedUpdateNames: [],
   refreshContext: async (context, includeAgents = true) => {
     const key = contextKey(context);
     const current = get().snapshots[key] ?? emptyContextSnapshot();
@@ -168,15 +225,23 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     }));
 
     try {
-      const [result, agents] = await Promise.all([
+      const [result, agentRuntime] = await Promise.all([
         listSkills(context),
         includeAgents
           ? listAgents(context)
-          : Promise.resolve(current.agents),
+          : Promise.resolve(null),
       ]);
+      const agents = agentRuntime
+        ? agentsForScope(agentRuntime, context.scope.scope)
+        : current.agents;
       const updateCache = updateInfoCache.get(key);
       const skills = sortSkills(
-        updateCache ? mergeUpdateInfo(result.skills, updateCache.results) : result.skills,
+        updateCache
+          ? mergeUpdateInfo(result.skills, updateCache.results, {
+              preserveUnmatched: updateCache.completeness === 'partial',
+              previousSkills: current.skills,
+            })
+          : result.skills,
       );
       set((state) => {
         if (state.snapshots[key]?.requestId !== requestId) return {};
@@ -185,6 +250,9 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             ...state.snapshots,
             [key]: {
               skills,
+              updateCheck: updateCache
+                ? toUpdateCheckDisplaySnapshot(updateCache.results, updateCache.sources)
+                : current.updateCheck,
               agents,
               pathExists: result.pathExists,
               loading: false,
@@ -234,6 +302,13 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
   },
 
+  invalidateAgentProjections: () => {
+    set((state) => {
+      for (const key of Object.keys(state.snapshots)) nextContextRequestGeneration(key);
+      return { snapshots: {} };
+    });
+  },
+
   syncSkills: async (context) => {
     set({ isSyncing: true });
     try {
@@ -244,63 +319,53 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   },
 
   syncUpdates: async (context) => {
-    const contexts = context.scope.scope === 'project'
-      ? [globalContext(context.environment), context]
-      : [context];
-    const now = Date.now();
-    const contextsToCheck = contexts.filter((candidate) => {
-      const cached = updateInfoCache.get(contextKey(candidate));
-      return !cached || now - cached.checkedAt >= UPDATE_CHECK_TTL;
-    });
-    const keysToCheck = contextsToCheck.map(contextKey);
+    const key = contextKey(context);
+    const ticket = beginUpdateCheckRequest(key, 0);
     set((state) => {
       const next = new Set(state.checkingUpdateScopes);
-      for (const key of keysToCheck) next.add(key);
+      next.add(key);
       return { checkingUpdateScopes: next };
     });
     try {
-      const checkedResults = await Promise.all(
-        contextsToCheck.map(async (candidate) => ({
-          context: candidate,
-          result: await checkUpdatesSafely(candidate),
-        })),
-      );
-      for (const { context: checkedContext, result } of checkedResults) {
-        if (result.ok) {
-          updateInfoCache.set(contextKey(checkedContext), {
-            results: result.updates,
-            checkedAt: now,
-          });
-        }
-      }
+      const result = await checkUpdatesSafely(context);
+      if (!result.ok || !isAdmittedUpdateCheckRequest(ticket)) return;
+      const cacheEntry = {
+        results: result.response.skills,
+        sources: result.response.sources,
+        checkedAt: Date.now(),
+        completeness: 'complete' as const,
+      };
+      updateInfoCache.set(key, cacheEntry);
 
       set((state) => {
-        const snapshots = { ...state.snapshots };
-        for (const candidate of contexts) {
-          const key = contextKey(candidate);
-          const cached = updateInfoCache.get(key);
-          if (!cached) continue;
-          const current = snapshots[key] ?? emptyContextSnapshot();
-          snapshots[key] = {
-            ...current,
-            skills: sortSkills(mergeUpdateInfo(current.skills, cached.results)),
-          };
-        }
-        return { snapshots };
+        const current = state.snapshots[key] ?? emptyContextSnapshot();
+        return {
+          snapshots: {
+            ...state.snapshots,
+            [key]: {
+              ...current,
+              skills: sortSkills(mergeUpdateInfo(current.skills, cacheEntry.results)),
+              updateCheck: toUpdateCheckDisplaySnapshot(cacheEntry.results, cacheEntry.sources),
+            },
+          },
+        };
       });
     } catch {
       // 静默失败 — 更新检测是非关键路径
     } finally {
+      const stillPending = finishUpdateCheckRequest(ticket);
       set((state) => {
+        if (stillPending) return {};
         const next = new Set(state.checkingUpdateScopes);
-        for (const key of keysToCheck) next.delete(key);
+        next.delete(key);
         return { checkingUpdateScopes: next };
       });
     }
   },
 
-  forceCheckUpdates: async (context) => {
+  forceCheckUpdates: async (context, selection) => {
     const cacheKey = contextKey(context);
+    const ticket = beginUpdateCheckRequest(cacheKey, 1);
 
     set((state) => {
       const next = new Set(state.checkingUpdateScopes);
@@ -309,9 +374,28 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
 
     try {
-      const updates = await checkUpdates(context);
+      const response = await checkUpdates({
+        context,
+        mode: 'force',
+        selection,
+      });
+      if (!isAdmittedUpdateCheckRequest(ticket)) return true;
+      const updates = response.skills;
       const now = Date.now();
-      updateInfoCache.set(cacheKey, { results: updates, checkedAt: now });
+      const previous = updateInfoCache.get(cacheKey);
+      const results = selection.kind === 'skills'
+        ? [
+            ...(previous?.results ?? []).filter((item) => (
+              !selection.skills.some((selected) => selected.skillName === item.name)
+            )),
+            ...updates,
+          ]
+        : updates;
+      const sources = selection.kind === 'skills'
+        ? mergeSourceUpdateInfo(previous?.sources ?? [], response.sources)
+        : response.sources;
+      const completeness = selection.kind === 'skills' ? 'partial' : 'complete';
+      updateInfoCache.set(cacheKey, { results, sources, checkedAt: now, completeness });
       set((state) => {
         const current = state.snapshots[cacheKey] ?? emptyContextSnapshot();
         return {
@@ -319,7 +403,10 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             ...state.snapshots,
             [cacheKey]: {
               ...current,
-              skills: sortSkills(mergeUpdateInfo(current.skills, updates)),
+              skills: sortSkills(mergeUpdateInfo(current.skills, results, {
+                preserveUnmatched: completeness === 'partial',
+              })),
+              updateCheck: toUpdateCheckDisplaySnapshot(results, sources),
             },
           },
         };
@@ -331,12 +418,57 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       }));
       return false;
     } finally {
+      const stillPending = finishUpdateCheckRequest(ticket);
       set((state) => {
+        if (stillPending) return {};
         const next = new Set(state.checkingUpdateScopes);
         next.delete(cacheKey);
         return { checkingUpdateScopes: next };
       });
     }
+  },
+
+  applyUpdateResult: async (context, response) => {
+    const snapshotKey = contextKey(context);
+    const scope = context.scope.scope;
+    const current = get().snapshots[snapshotKey] ?? emptyContextSnapshot();
+    const successfulSkillNames = new Set(
+      response.skills
+        .filter((item) => item.mutation?.status === 'succeeded')
+        .map((item) => item.skillIdentity.skillName),
+    );
+    const clearCannotCheckNames = new Set(
+      current.skills
+        .filter((skill) => successfulSkillNames.has(skill.name) && skill.updateReason === 'missingRemoteHash')
+        .map((skill) => skill.name),
+    );
+    for (const skill of current.skills) {
+      if (
+        successfulSkillNames.has(skill.name)
+        && (skill.canCheckForUpdates !== false || clearCannotCheckNames.has(skill.name))
+      ) {
+        clearUpdateCacheForContextSkill(skill.name, context, {
+          clearCannotCheck: clearCannotCheckNames.has(skill.name),
+        });
+      }
+    }
+    if (successfulSkillNames.size > 0) {
+      set((state) => {
+        const snapshot = state.snapshots[snapshotKey] ?? emptyContextSnapshot();
+        return {
+          snapshots: {
+            ...state.snapshots,
+            [snapshotKey]: {
+              ...snapshot,
+              skills: clearLocalUpdateFlags(snapshot.skills, scope, successfulSkillNames, {
+                clearCannotCheckNames,
+              }),
+            },
+          },
+        };
+      });
+    }
+    await get().refreshContext(context);
   },
 
   fetchAuditForSkills: async (skills) => {
@@ -367,145 +499,6 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     set({ auditCache: newCache });
   },
 
-  updateSkill: async (context, skillName) => {
-    if (isMutationWriteBlocked()) return;
-    const { updatingSkills } = get();
-    const scope = context.scope.scope;
-    const projectPath = projectPathForContext(context);
-    const snapshotKey = contextKey(context);
-    const skillIdentity = getSkillIdentity(
-      { name: skillName, scope } as Pick<InstalledSkill, 'name' | 'scope'>,
-      projectPath
-    );
-    const identityKey = getSkillIdentityKey(skillIdentity);
-    if (updatingSkills.has(identityKey)) return;
-
-    const skillsList = get().snapshots[snapshotKey]?.skills ?? [];
-    const target = skillsList.find((s) => s.name === skillName);
-    if (target?.updateStatus === 'deleted-upstream' || target?.updateReason === 'deleted-upstream') {
-      toast.info(t('skills.updatePlan.deletedUpstreamDescription'));
-      return;
-    }
-
-    set((state) => {
-      const next = new Map(state.updatingSkills);
-      next.set(identityKey, 'updating');
-      return { updatingSkills: next };
-    });
-
-    try {
-      const response = await apiUpdateSkill(context, skillName);
-      const item = response.results.find((r) => r.name === skillName) ?? response.results[0];
-      const agentResults = item?.agentResults ?? [];
-      const succeededAgents = agentResults.filter((r) => r.status === 'success').length;
-      const failedAgents = agentResults.filter((r) => r.status === 'failed');
-      const failedAgentNames = failedAgents.map((r) => r.agent).join(', ');
-
-      if (!item || item.status === 'success') {
-        toast.success(t('skills.updateSuccess', { name: skillName }));
-      } else if (item.status === 'partial') {
-        toast.warning(appendCrossStorageFailureGuidance(
-          t('skills.updatePartial', { name: skillName, success: succeededAgents, total: agentResults.length, failed: failedAgents.length, failedAgents: failedAgentNames }),
-          context,
-          'update',
-          t,
-        ));
-      } else if (item.status === 'skipped') {
-        toast.warning(t('skills.updateSkipped', { name: skillName }));
-      } else {
-        toast.error(appendCrossStorageFailureGuidance(
-          t('skills.updateError', {
-            name: skillName,
-            error: item.error ?? t('skills.updateFailedUnknown'),
-          }),
-          context,
-          'update',
-          t,
-        ));
-      }
-
-      if (item?.warnings?.length) {
-        toast.warning(t('skills.updateWarning', { name: skillName, count: item.warnings.length, detail: item.warnings[0] }));
-      }
-
-      // Partial / Failed 不清缓存:后端在这两个状态下不会更新 lock,
-      // 保留 hasUpdate 让用户能再次点击重试,避免失败信息被吞掉。
-      const shouldClearUpdateFlag = !item || item.status === 'success';
-      if (shouldClearUpdateFlag) {
-        const shouldClearCannotCheck = target?.updateReason === 'missing-remote-hash';
-        if (target?.canCheckForUpdates !== false || shouldClearCannotCheck) {
-          clearUpdateCacheForContextSkill(skillName, context, {
-            clearCannotCheck: shouldClearCannotCheck,
-          });
-        }
-        set((state) => {
-          const current = state.snapshots[snapshotKey] ?? emptyContextSnapshot();
-          return {
-            snapshots: {
-              ...state.snapshots,
-              [snapshotKey]: {
-                ...current,
-                skills: clearLocalUpdateFlags(
-                  current.skills,
-                  scope,
-                  new Set([skillName]),
-                  { clearCannotCheck: shouldClearCannotCheck },
-                ),
-              },
-            },
-          };
-        });
-      }
-
-      set((state) => {
-        const next = new Map(state.updatingSkills);
-        next.set(identityKey, 'done');
-        return { updatingSkills: next };
-      });
-      setTimeout(() => {
-        set((state) => {
-          const next = new Map(state.updatingSkills);
-          next.delete(identityKey);
-          return { updatingSkills: next };
-        });
-      }, 800);
-
-      const { useSkillDetailStore } = await import('./skill-detail');
-
-      // fire-and-forget: 不阻塞等待列表刷新 (async-defer-await)
-      get().syncSkills(context).finally(() => {
-        if (
-          shouldClearUpdateFlag &&
-          isSameSkillIdentity(useSkillDetailStore.getState().selectedSkillRef, skillIdentity)
-        ) {
-          void useSkillDetailStore.getState().reloadContent();
-        }
-      });
-    } catch (e) {
-      toast.error(appendCrossStorageFailureGuidance(
-        t('skills.updateError', {
-          name: skillName,
-          error: e instanceof Error ? e.message : String(e),
-        }),
-        context,
-        'update',
-        t,
-      ));
-      set((state) => {
-        const next = new Map(state.updatingSkills);
-        next.set(identityKey, 'failed');
-        return { updatingSkills: next };
-      });
-      setTimeout(() => {
-        set((state) => {
-          const next = new Map(state.updatingSkills);
-          next.delete(identityKey);
-          return { updatingSkills: next };
-        });
-      }, 2000);
-    }
-  },
-
   markSourceRepairSucceeded: (context, skillName) => {
     clearUpdateCacheForContextSkill(skillName, context, { clearCannotCheck: true });
     const key = contextKey(context);
@@ -527,126 +520,6 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         },
       };
     });
-  },
-
-  updateAllInSection: async (context) => {
-    if (isMutationWriteBlocked()) return;
-    const scope = context.scope.scope;
-    const snapshotKey = contextKey(context);
-    const skills = get().snapshots[snapshotKey]?.skills ?? [];
-    const projectPath = projectPathForContext(context);
-    const plan = buildUpdatePlan(skills, scope, projectPath);
-    const updatableNames = new Set(plan.groups.flatMap((group) => group.skillNames));
-    const updatable = skills.filter((s) => updatableNames.has(s.name));
-
-    set({ lastUpdatePlan: plan, lastUpdateResults: null, lastFailedUpdateNames: [] });
-    if (updatable.length === 0) return;
-
-    set((state) => {
-      const next = new Map(state.updatingSkills);
-      for (const s of updatable) {
-        next.set(getSkillIdentityKey({ name: s.name, scope: s.scope, projectPath }), 'updating');
-      }
-      return { updatingSkills: next };
-    });
-
-    let itemResults: UpdateSkillItemResult[];
-    try {
-      const response = await apiUpdateSkillsBatch(
-        context,
-        updatable.map((skill) => skill.name),
-      );
-      const responseByName = new Map(response.results.map((item) => [item.name, item]));
-      itemResults = updatable.map((skill) => {
-        const item = responseByName.get(skill.name) ?? {
-          name: skill.name,
-          status: 'failed' as const,
-          error: t('skills.updateFailedUnknown'),
-          warnings: [],
-          agentResults: [],
-        };
-        if (item.status !== 'failed' && item.status !== 'partial') return item;
-        return {
-          ...item,
-          error: appendCrossStorageFailureGuidance(
-            item.error ?? t('skills.updateFailedUnknown'),
-            context,
-            'update',
-            t,
-          ),
-        };
-      });
-    } catch {
-      itemResults = updatable.map((skill) => ({
-        name: skill.name,
-        status: 'failed',
-        error: appendCrossStorageFailureGuidance(
-          t('skills.updateFailedUnknown'),
-          context,
-          'update',
-          t,
-        ),
-        warnings: [],
-        agentResults: [],
-      }));
-    }
-
-    const resultByName = new Map(itemResults.map((item) => [item.name, item]));
-    const successfulSkillNames = new Set(
-      itemResults.filter((item) => item.status === 'success').map((item) => item.name),
-    );
-    for (const skill of updatable) {
-      if (successfulSkillNames.has(skill.name) && skill.canCheckForUpdates !== false) {
-        clearUpdateCacheForContextSkill(skill.name, context);
-      }
-    }
-    set((state) => {
-      const nextUpdating = new Map(state.updatingSkills);
-      for (const skill of updatable) {
-        const item = resultByName.get(skill.name);
-        nextUpdating.set(
-          getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath }),
-          item?.status === 'failed' ? 'failed' : 'done',
-        );
-      }
-      const current = state.snapshots[snapshotKey] ?? emptyContextSnapshot();
-      return {
-        updatingSkills: nextUpdating,
-        snapshots: successfulSkillNames.size === 0 ? state.snapshots : {
-          ...state.snapshots,
-          [snapshotKey]: {
-            ...current,
-            skills: clearLocalUpdateFlags(current.skills, scope, successfulSkillNames),
-          },
-        },
-      };
-    });
-
-    const failedItems = itemResults.filter((item) => item.status === 'failed');
-    const succeeded = itemResults.length - failedItems.length;
-    set({
-      lastUpdateResults: itemResults,
-      lastFailedUpdateNames: itemResults
-        .filter((item) => item.status === 'failed' || item.status === 'partial')
-        .map((item) => item.name),
-    });
-    const failedPart = failedItems.length > 0
-      ? t('skills.updateAllFailed', { failed: failedItems.length, failedNames: failedItems.map((item) => item.name).join(', ') })
-      : '';
-    toast.info(t('skills.updateAllSummary', { total: itemResults.length, succeeded, failedPart }));
-
-    setTimeout(() => {
-      set((state) => {
-        const next = new Map(state.updatingSkills);
-        for (const [name, status] of next) {
-          if (status === 'done' || status === 'failed') next.delete(name);
-        }
-        return { updatingSkills: next };
-      });
-    }, 1500);
-
-    // fire-and-forget (async-defer-await)
-    get().syncSkills(context);
   },
 
 }));

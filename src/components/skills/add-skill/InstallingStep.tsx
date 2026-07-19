@@ -7,7 +7,8 @@ import { installSkills } from '@/hooks/useTauriApi';
 import { parseInstallError } from '@/utils/parse-install-error';
 import { toAppError } from '@/utils/to-app-error';
 import { getCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
-import { getEffectiveInstallMode, type WizardState } from './types';
+import { hasFailedMutationUnits } from '@/lib/install-workflow';
+import type { WizardState } from './types';
 
 /** 克隆进度事件（与 SourceStep 共用后端事件） */
 interface CloneProgress {
@@ -34,7 +35,7 @@ interface InstallingStepProps {
   projectPath?: string;
 }
 
-export function InstallingStep({ state, updateState, scope, projectPath }: InstallingStepProps) {
+export function InstallingStep({ state, updateState }: InstallingStepProps) {
   const { t } = useTranslation();
 
   const [phase, setPhase] = useState<InstallPhase>('preparing');
@@ -52,37 +53,19 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
 
   // 捕获当前状态值用于安装
   const installParamsRef = useRef({
-    source: state.source,
+    request: state.installRequest,
+    preview: state.installPreview,
     selectedSkills: state.selectedSkills,
-    selectedAgents: state.selectedAgents,
-    selectedAgentTargets: state.selectedAgentTargets ?? [],
-    privateCopyAgents: state.privateCopyAgents,
-    retrySkillName: state.retrySkillName,
-    retryAgents: state.retryAgents ?? [],
-    retryAgentTargets: state.retryAgentTargets ?? [],
-    riskAcknowledged: state.riskAcknowledged,
-    mode: getEffectiveInstallMode(state),
     availableSkills: state.availableSkills,
     context: state.context,
-    scope,
-    projectPath,
   });
   useEffect(() => {
     installParamsRef.current = {
-      source: state.source,
+      request: state.installRequest,
+      preview: state.installPreview,
       selectedSkills: state.selectedSkills,
-      selectedAgents: state.selectedAgents,
-      selectedAgentTargets: state.selectedAgentTargets ?? [],
-      privateCopyAgents: state.privateCopyAgents,
-      retrySkillName: state.retrySkillName,
-      retryAgents: state.retryAgents ?? [],
-      retryAgentTargets: state.retryAgentTargets ?? [],
-      riskAcknowledged: state.riskAcknowledged,
-      mode: getEffectiveInstallMode(state),
       availableSkills: state.availableSkills,
       context: state.context,
-      scope,
-      projectPath,
     };
   });
 
@@ -113,53 +96,24 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
 
     async function doInstall() {
       const {
-        source,
+        request,
+        preview,
         selectedSkills,
-        selectedAgents,
-        selectedAgentTargets,
-        privateCopyAgents,
-        retrySkillName,
-        retryAgents,
-        retryAgentTargets,
-        riskAcknowledged,
-        mode,
         context,
-        scope: installScope,
-        projectPath: installProjectPath,
       } = installParamsRef.current;
 
-      const concreteTargetAgents = new Set<string>(selectedAgentTargets.map((target) => target.agent));
-      const selectedRegularAgents = selectedAgents.filter((agent) => !concreteTargetAgents.has(agent));
-      const isRetry = Boolean(retrySkillName && (retryAgents.length > 0 || retryAgentTargets.length > 0));
-      const targetSkills = isRetry && retrySkillName ? [retrySkillName] : selectedSkills;
-      const targetAgents = isRetry ? retryAgents : selectedRegularAgents;
-      const targetAgentTargets = isRetry ? retryAgentTargets : selectedAgentTargets;
-      const targetPrivateCopyAgents = isRetry
-        ? retryAgents.filter((agentId) => privateCopyAgents.includes(agentId))
-        : privateCopyAgents;
-
-      const params = {
-        source,
-        skills: targetSkills,
-        agents: targetAgents,
-        agentTargets: targetAgentTargets,
-        privateCopyAgents: targetPrivateCopyAgents,
-        scope: installScope,
-        projectPath: installScope === 'project' ? (installProjectPath ?? null) : null,
-        mode,
-        retry: isRetry,
-        acknowledgeRisk: riskAcknowledged,
-      };
-
       try {
-        const results = await installSkills(context, params);
+        if (!request || !preview) {
+          throw { kind: 'validation', data: { field: 'preview', message: 'Install preview is missing' } };
+        }
+        const results = await installSkills(request, preview.token);
 
         updateStateRef.current({
           installResults: results,
           retrySkillName: undefined,
           retryAgents: undefined,
           retryAgentTargets: undefined,
-          step: results.failed.length > 0 ? 'error' : 'complete',
+          step: hasFailedMutationUnits(results) ? 'error' : 'complete',
         });
       } catch (error) {
         console.error('Installation failed:', error);
@@ -175,12 +129,7 @@ export function InstallingStep({ state, updateState, scope, projectPath }: Insta
 
         updateStateRef.current({
           installResults: {
-            successful: [],
-            failed: [],
-            symlinkFallbackAgents: [],
-            defaultAvailableAgents: [],
-            privateAdaptedAgents: [],
-            privateCopyAgents: [],
+            units: [],
           },
           retrySkillName: undefined,
           retryAgents: undefined,

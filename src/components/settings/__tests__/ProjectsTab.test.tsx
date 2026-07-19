@@ -37,8 +37,8 @@ const mocks = vi.hoisted(() => ({
     contextRevision: 2,
   },
   projects: {
-    projectsByEnvironment: { 'wsl:Ubuntu': [] } as Record<string, ProjectInfo[]>,
-    loadStateByEnvironment: { 'wsl:Ubuntu': 'ready' as const },
+    projectsByEnvironment: { 'wsl:ubuntu': [] } as Record<string, ProjectInfo[]>,
+    loadStateByEnvironment: { 'wsl:ubuntu': 'ready' as const },
     errorsByEnvironment: {},
   },
 }));
@@ -83,8 +83,8 @@ describe('ProjectsTab', () => {
     mocks.switchEnvironment.mockResolvedValue(undefined);
     mocks.workspace.pendingEnvironment = null;
     mocks.workspace.contextRevision = 2;
-    mocks.projects.projectsByEnvironment = { 'wsl:Ubuntu': [project] };
-    mocks.projects.loadStateByEnvironment = { 'wsl:Ubuntu': 'ready' };
+    mocks.projects.projectsByEnvironment = { 'wsl:ubuntu': [project] };
+    mocks.projects.loadStateByEnvironment = { 'wsl:ubuntu': 'ready' };
     mocks.projects.errorsByEnvironment = {};
     useMutationStore.setState({
       revision: 0,

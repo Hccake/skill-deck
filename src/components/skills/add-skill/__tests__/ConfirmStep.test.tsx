@@ -4,8 +4,8 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { checkOverwrites, checkSkillAudit } from '@/hooks/useTauriApi';
-import { makeAgentScopeTarget } from '@/test-utils';
+import { acquireSelectedPayloads, checkSkillAudit, previewInstall } from '@/hooks/useTauriApi';
+import { makeResolvedScopeFixture, makeResolvedAgent } from '@/test-utils';
 import type { WizardState } from '../types';
 import { ConfirmStep } from '../ConfirmStep';
 
@@ -47,11 +47,13 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  checkOverwrites: vi.fn().mockResolvedValue({}),
+  acquireSelectedPayloads: vi.fn().mockResolvedValue([]),
+  previewInstall: vi.fn().mockResolvedValue({ token: {}, skills: [] }),
   checkSkillAudit: vi.fn().mockResolvedValue(null),
 }));
 
-const checkOverwritesMock = vi.mocked(checkOverwrites);
+const acquireSelectedPayloadsMock = vi.mocked(acquireSelectedPayloads);
+const previewInstallMock = vi.mocked(previewInstall);
 const checkSkillAuditMock = vi.mocked(checkSkillAudit);
 
 function deferred<T>() {
@@ -75,6 +77,12 @@ function createState(): WizardState {
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
+    discoverySession: {
+      sessionId: 'discovery-1',
+      environment: { kind: 'host' },
+      sourceFingerprint: 'source-1',
+      expiresAtEpochMs: 1000,
+    },
     availableSkills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null, installDirName: 'demo' }],
     selectedSkills: ['demo'],
     skillFilter: null,
@@ -123,8 +131,10 @@ function createTrustState(
 
 describe('ConfirmStep', () => {
   beforeEach(() => {
-    checkOverwritesMock.mockReset();
-    checkOverwritesMock.mockResolvedValue({});
+    acquireSelectedPayloadsMock.mockReset();
+    acquireSelectedPayloadsMock.mockResolvedValue([]);
+    previewInstallMock.mockReset();
+    previewInstallMock.mockResolvedValue({ token: {} as never, skills: [] });
     checkSkillAuditMock.mockReset();
     checkSkillAuditMock.mockResolvedValue(null);
   });
@@ -137,21 +147,16 @@ describe('ConfirmStep', () => {
         state={{
           ...createState(),
           selectedAgents: [],
-          allAgents: [{
+          allAgents: [makeResolvedAgent({
             id: 'warp',
-            name: 'Warp',
-            skillsDir: '.agents/skills',
-            globalSkillsDir: '~/.agents/skills',
-            detected: true,
-            targets: {
-              global: makeAgentScopeTarget({ automatic: true, path: '~/.agents/skills' }),
-              project: makeAgentScopeTarget({
+            displayName: 'Warp',
+            global: makeResolvedScopeFixture({ automatic: true, path: '~/.agents/skills' }),
+            project: makeResolvedScopeFixture({
                 automatic: true,
                 path: '.agents/skills',
                 sharedPath: './.agents/skills',
-              }),
-            },
-          }],
+            }),
+          })],
           confirmReady: false,
           riskPolicy: { kind: 'none', code: null },
         }}
@@ -161,15 +166,19 @@ describe('ConfirmStep', () => {
     );
 
     await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith({ overwrites: {}, confirmReady: true });
+      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+        overwrites: {},
+        confirmReady: true,
+      }));
     });
-    expect(checkOverwritesMock).toHaveBeenCalledWith(
-      createState().context,
-      ['demo'],
-      ['warp'],
-      [],
-      [],
-    );
+    expect(acquireSelectedPayloadsMock).toHaveBeenCalledWith({
+      discoverySession: createState().discoverySession,
+      skillPaths: ['skills/demo/SKILL.md'],
+    });
+    expect(previewInstallMock).toHaveBeenCalledWith(expect.objectContaining({
+      context: createState().context,
+      skills: ['demo'],
+    }));
     expect(checkSkillAuditMock).toHaveBeenCalledWith('openclaw/community-skills', ['demo']);
   });
 
@@ -188,21 +197,17 @@ describe('ConfirmStep', () => {
       />
     );
 
-    await waitFor(() => expect(checkOverwritesMock).toHaveBeenCalledWith(
-      context,
-      ['demo'],
-      ['codex'],
-      [],
-      [],
+    await waitFor(() => expect(previewInstallMock).toHaveBeenCalledWith(
+      expect.objectContaining({ context, skills: ['demo'] }),
     ));
   });
 
   it('ignores stale overwrite results from an older confirmation request', async () => {
-    const firstOverwrite = deferred<Record<string, string[]>>();
-    const secondOverwrite = deferred<Record<string, string[]>>();
+    const firstOverwrite = deferred<Awaited<ReturnType<typeof previewInstall>>>();
+    const secondOverwrite = deferred<Awaited<ReturnType<typeof previewInstall>>>();
     const updateState = vi.fn();
 
-    checkOverwritesMock
+    previewInstallMock
       .mockReturnValueOnce(firstOverwrite.promise)
       .mockReturnValueOnce(secondOverwrite.promise);
 
@@ -232,16 +237,22 @@ describe('ConfirmStep', () => {
       />
     );
 
-    secondOverwrite.resolve({ 'second-skill': ['Codex'] });
-
-    await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith({
-        overwrites: { 'second-skill': ['Codex'] },
-        confirmReady: true,
-      });
+    secondOverwrite.resolve({
+      token: {} as never,
+      skills: [{ skillName: 'second-skill', overwriteTargets: ['Codex'] } as never],
     });
 
-    firstOverwrite.resolve({ 'first-skill': ['Cursor'] });
+    await waitFor(() => {
+      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+        overwrites: { 'second-skill': ['Codex'] },
+        confirmReady: true,
+      }));
+    });
+
+    firstOverwrite.resolve({
+      token: {} as never,
+      skills: [{ skillName: 'first-skill', overwriteTargets: ['Cursor'] } as never],
+    });
 
     await waitFor(() => {
       expect(updateState).not.toHaveBeenCalledWith({
@@ -266,6 +277,16 @@ describe('ConfirmStep', () => {
           projectPath: '/projects/eve-app',
           selectedAgents: ['eve'],
           selectedAgentTargets: [
+            {
+              targetId: 'eve:root',
+              agentId: 'eve',
+            },
+            {
+              targetId: 'eve:research',
+              agentId: 'eve',
+            },
+          ],
+          availableAgentTargets: [
             {
               targetId: 'eve:root',
               agent: 'eve',
@@ -308,7 +329,7 @@ describe('ConfirmStep', () => {
           },
           projectPath: '/projects/eve-app',
           selectedAgents: ['eve'],
-          selectedAgentTargets: [{ agent: 'eve', subagent: 'research' }],
+          selectedAgentTargets: [{ agentId: 'eve', targetId: 'eve:research' }],
           availableAgentTargets: [{
             targetId: 'eve:research',
             agent: 'eve',
@@ -325,18 +346,21 @@ describe('ConfirmStep', () => {
     );
 
     await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith({ overwrites: {}, confirmReady: true });
+      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+        overwrites: {},
+        confirmReady: true,
+      }));
     });
-    expect(checkOverwritesMock).toHaveBeenCalledWith(
-      {
+    expect(previewInstallMock).toHaveBeenCalledWith(expect.objectContaining({
+      context: {
         environment: { kind: 'host' },
         scope: { scope: 'project', project_id: 'eve-app' },
       },
-      ['demo'],
-      [],
-      [],
-      [{ agent: 'eve', subagent: 'research' }],
-    );
+      agentIntents: expect.arrayContaining([expect.objectContaining({
+        agentId: 'eve',
+        adapterTargets: ['eve:research'],
+      })]),
+    }));
   });
 
   it('summarizes the install plan and uses target-exists status only for conflicted skills', () => {
@@ -446,59 +470,44 @@ describe('ConfirmStep', () => {
           selectedAgents: ['cursor'],
           privateCopyAgents: ['firebender'],
           allAgents: [
-            {
+            makeResolvedAgent({
               id: 'codex',
-              name: 'Codex',
-              skillsDir: '.agents/skills',
-              globalSkillsDir: '~/.agents/skills',
-              detected: true,
-              targets: {
-                global: makeAgentScopeTarget({
+              displayName: 'Codex',
+              global: makeResolvedScopeFixture({
                   automatic: true,
                   path: '~/.agents/skills',
                   availability: 'shared-only',
                   privatePath: null,
-                }),
-                project: makeAgentScopeTarget({
+              }),
+              project: makeResolvedScopeFixture({
                   automatic: true,
                   path: '.agents/skills',
                   sharedPath: './.agents/skills',
-                }),
-              },
-            },
-            {
+              }),
+            }),
+            makeResolvedAgent({
               id: 'cursor',
-              name: 'Cursor',
-              skillsDir: '.cursor/skills',
-              globalSkillsDir: '~/.cursor/skills',
-              detected: true,
-              targets: {
-                global: makeAgentScopeTarget({ automatic: false, path: '~/.cursor/skills' }),
-                project: makeAgentScopeTarget({ automatic: false, path: '.cursor/skills' }),
-              },
-            },
-            {
+              displayName: 'Cursor',
+              global: makeResolvedScopeFixture({ automatic: false, path: '~/.cursor/skills' }),
+              project: makeResolvedScopeFixture({ automatic: false, path: '.cursor/skills' }),
+            }),
+            makeResolvedAgent({
               id: 'firebender',
-              name: 'Firebender',
-              skillsDir: '.firebender/skills',
-              globalSkillsDir: '~/.agents/skills',
-              detected: true,
-              targets: {
-                global: makeAgentScopeTarget({
+              displayName: 'Firebender',
+              global: makeResolvedScopeFixture({
                   automatic: true,
                   path: '~/.agents/skills',
                   availability: 'shared-compatible',
                   privatePath: '~/.firebender/skills',
-                }),
-                project: makeAgentScopeTarget({
+              }),
+              project: makeResolvedScopeFixture({
                   automatic: true,
                   path: '.agents/skills',
                   sharedPath: './.agents/skills',
                   availability: 'shared-compatible',
                   privatePath: '.firebender/skills',
-                }),
-              },
-            },
+              }),
+            }),
           ],
         }}
         updateState={vi.fn()}

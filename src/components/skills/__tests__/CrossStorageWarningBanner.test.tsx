@@ -66,7 +66,7 @@ vi.mock('@/stores/environment', () => ({
 
 vi.mock('@/stores/projects', () => ({
   useProjectStore: (selector: (state: unknown) => unknown) => selector({
-    projectsByEnvironment: { 'wsl:Ubuntu': mocks.projects },
+    projectsByEnvironment: { 'wsl:ubuntu': mocks.projects },
     setCrossStorageWarning: mocks.setCrossStorageWarning,
   }),
 }));
