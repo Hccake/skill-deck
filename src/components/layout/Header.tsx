@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { Sun, Moon, Package, Settings, Check, Compass } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,6 +12,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { cn } from '@/lib/utils';
 import type { Locale } from '@/stores/settings';
 import logoUrl from '@/assets/logo.png';
+import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
 
 // Hoisted outside component to avoid recreation on each render
 const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -29,7 +30,17 @@ const LOCALE_OPTIONS: { value: Locale; code: string; label: string }[] = [
 
 export function Header() {
   const { t } = useTranslation();
-  const { theme, toggleTheme, locale, setLocale } = useSettingsStore();
+  const navigate = useNavigate();
+  const unsavedChanges = useOptionalUnsavedChanges();
+  const theme = useSettingsStore((state) => state.theme);
+  const toggleTheme = useSettingsStore((state) => state.toggleTheme);
+  const locale = useSettingsStore((state) => state.locale);
+  const setLocale = useSettingsStore((state) => state.setLocale);
+  const guardNavigation = (event: React.MouseEvent, target: string) => {
+    if (!unsavedChanges) return;
+    event.preventDefault();
+    void unsavedChanges.guard(() => navigate(target));
+  };
 
   return (
     <header className="flex h-14 items-center justify-between px-3 sm:px-6 border-b border-border bg-background/95 backdrop-blur flex-shrink-0 gap-2 sm:gap-4 overflow-hidden">
@@ -45,15 +56,15 @@ export function Header() {
 
       {/* Center: Segmented Navigation (Capsule Shape for Global Nav) */}
       <nav className="flex items-center space-x-0.5 sm:space-x-1 bg-muted/40 p-1 rounded-full border border-border/50 shrink-0">
-        <NavLink to="/" end className={getNavLinkClass}>
+        <NavLink to="/" end className={getNavLinkClass} onClick={(event) => guardNavigation(event, '/')}>
           <Package className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
           <span className="hidden min-[400px]:inline">{t('nav.skills')}</span>
         </NavLink>
-        <NavLink to="/discover" className={getNavLinkClass}>
+        <NavLink to="/discover" className={getNavLinkClass} onClick={(event) => guardNavigation(event, '/discover')}>
           <Compass className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
           <span className="hidden min-[400px]:inline">{t('nav.discover')}</span>
         </NavLink>
-        <NavLink to="/settings" className={getNavLinkClass}>
+        <NavLink to="/settings" className={getNavLinkClass} onClick={(event) => guardNavigation(event, '/settings')}>
           <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
           <span className="hidden min-[400px]:inline">{t('nav.settings')}</span>
         </NavLink>

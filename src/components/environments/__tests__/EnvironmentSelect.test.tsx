@@ -18,11 +18,15 @@ const host: EnvironmentInfo = {
   environment: { kind: 'host' },
   displayName: 'Windows',
   status: 'available',
+  revision: 1,
+  error: null,
 };
 const ubuntu: EnvironmentInfo = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu-24.04-Long-Environment-Name' },
   displayName: 'Ubuntu 24.04 Long Environment Name',
   status: 'available',
+  revision: 1,
+  error: null,
 };
 const discoveryError: AppError = {
   kind: 'environmentDiscoveryFailed',
@@ -80,6 +84,7 @@ describe('EnvironmentSelect', () => {
     });
 
     const select = screen.getByRole('combobox', { name: 'context.environmentLabel' });
+    expect(select.getAttribute('data-slot')).toBe('select-trigger');
     expect((select as HTMLSelectElement).disabled).toBe(true);
     expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite');
     expect(screen.getByRole('status').textContent).toContain(
@@ -92,7 +97,7 @@ describe('EnvironmentSelect', () => {
     renderSelect({
       environments: [host, { ...ubuntu, status: 'unavailable' }],
       connectionErrors: {
-        'wsl:Ubuntu-24.04-Long-Environment-Name': connectionError,
+        'wsl:ubuntu-24.04-long-environment-name': connectionError,
       },
       onRetryConnection,
     });
@@ -104,8 +109,21 @@ describe('EnvironmentSelect', () => {
       name: 'context.environmentRetryNamed:Ubuntu 24.04 Long Environment Name',
     }));
     expect(onRetryConnection).toHaveBeenCalledWith(ubuntu.environment);
+    fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
     expect(screen.getByRole('option', {
       name: /Ubuntu 24\.04 Long Environment Name/,
     }).getAttribute('title')).toBe('Ubuntu 24.04 Long Environment Name');
+  });
+
+  it('selects an environment through the shadcn Select contract', () => {
+    const onChange = vi.fn();
+    renderSelect({ environments: [host, ubuntu], onChange });
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
+    fireEvent.click(screen.getByRole('option', {
+      name: 'Ubuntu 24.04 Long Environment Name',
+    }));
+
+    expect(onChange).toHaveBeenCalledWith(ubuntu.environment);
   });
 });

@@ -1,5 +1,6 @@
 // src/hooks/__tests__/useTauriApi.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { CustomAgentDefinition, InstallRequest } from '@/bindings';
 
 const { mockCommands } = vi.hoisted(() => ({
   mockCommands: {
@@ -7,7 +8,9 @@ const { mockCommands } = vi.hoisted(() => ({
     listSkills: vi.fn(),
     listEveInstallTargets: vi.fn(),
     readSkillContent: vi.fn(),
+    previewInstall: vi.fn(),
     installSkills: vi.fn(),
+    previewUpdate: vi.fn(),
     updateSkill: vi.fn(),
     removeSkill: vi.fn(),
     getSkillAgentDetails: vi.fn(),
@@ -22,6 +25,18 @@ const { mockCommands } = vi.hoisted(() => ({
     setEnvironmentProjectCrossStorageWarning: vi.fn(),
     openInstallWizard: vi.fn(),
     getConfig: vi.fn(),
+    getAgentSettingsSnapshot: vi.fn(),
+    validateCustomAgentDraft: vi.fn(),
+    saveCustomAgent: vi.fn(),
+    duplicateCustomAgentDraft: vi.fn(),
+    previewCustomAgentDelete: vi.fn(),
+    deleteCustomAgent: vi.fn(),
+    deleteInvalidCustomAgent: vi.fn(),
+    requestAgentConfiguration: vi.fn(),
+    completeAgentConfiguration: vi.fn(),
+    getRecoveryResourceStatus: vi.fn(),
+    confirmRecoveryResourceResolved: vi.fn(),
+    openRecoveryResource: vi.fn(),
   },
 }));
 
@@ -31,14 +46,29 @@ vi.mock('@/bindings', () => ({
 
 import {
   installSkills,
+  previewInstall,
   listAgents,
   listEveInstallTargets,
   listSkills,
   mapEnvironmentPath,
   openInstallWizard,
   readSkillContent,
+  saveDefaultTargetAgents,
   setEnvironmentProjectCrossStorageWarning,
   updateSkill,
+  getAgentSettingsSnapshot,
+  validateCustomAgentDraft,
+  saveCustomAgent,
+  duplicateCustomAgentDraft,
+  previewCustomAgentDelete,
+  deleteCustomAgent,
+  deleteInvalidCustomAgent,
+  requestAgentConfiguration,
+  completeAgentConfiguration,
+  getRecoveryResourceStatus,
+  confirmRecoveryResourceResolved,
+  openRecoveryResource,
+  checkUpdates,
 } from '../useTauriApi';
 
 const context = {
@@ -46,16 +76,30 @@ const context = {
   scope: { scope: 'project', project_id: 'project-1' },
 } as const;
 
+const previewToken = {
+  generation: 'preview-1',
+  registryRevision: 'registry-1',
+  environmentRevision: 'environment-1',
+  contextRevision: 'context-1',
+};
+
 describe('useTauriApi unwrap logic', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('unwraps successful Result<T, E> to T', async () => {
-    const agents = [{ id: 'claude-code', name: 'Claude Code', detected: true }];
-    mockCommands.listAgents.mockResolvedValue({ status: 'ok', data: agents });
+    const snapshot = {
+      registryRevision: 'registry-1',
+      environmentRevision: 'environment-1',
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      availability: 'available',
+      projectPath: '/work/app',
+      agents: {},
+    };
+    mockCommands.listAgents.mockResolvedValue({ status: 'ok', data: snapshot });
     const result = await listAgents(context);
-    expect(result).toEqual(agents);
+    expect(result).toEqual(snapshot);
     expect(mockCommands.listAgents).toHaveBeenCalledWith(context);
   });
 
@@ -78,59 +122,84 @@ describe('useTauriApi unwrap logic', () => {
     mockCommands.readSkillContent.mockResolvedValue({ status: 'ok', data: '# Toolkit' });
     mockCommands.listEveInstallTargets.mockResolvedValue({ status: 'ok', data: [] });
 
-    await expect(readSkillContent(context, '/work/app/.agents/skills/toolkit'))
+    await expect(readSkillContent({ context, skillName: 'toolkit' }))
       .resolves.toBe('# Toolkit');
     await expect(listEveInstallTargets(context)).resolves.toEqual([]);
 
     expect(mockCommands.readSkillContent).toHaveBeenCalledWith(
-      context,
-      '/work/app/.agents/skills/toolkit',
+      { context, skillName: 'toolkit' },
     );
     expect(mockCommands.listEveInstallTargets).toHaveBeenCalledWith(context);
   });
 
-  it('unwraps updateSkill response with structured results', async () => {
-    const response = {
-      results: [
-        {
-          name: 'test-skill',
-          status: 'success',
-          warnings: [],
-          agentResults: [
-            { agent: 'cursor', status: 'success', durationMs: 5 },
-          ],
-        },
-      ],
-      summary: { total: 1, succeeded: 1, partial: 0, failed: 0, skipped: 0 },
-    };
-    mockCommands.updateSkill.mockResolvedValue({ status: 'ok', data: response });
-    const result = await updateSkill(context, 'test-skill');
-    expect(result).toEqual(response);
-    expect(result.results[0].agentResults).toHaveLength(1);
-    expect(mockCommands.updateSkill).toHaveBeenCalledWith(context, 'test-skill');
+  it('saves defaults against the runtime registry revision that was displayed', async () => {
+    const defaults = { global: ['my-agent'], project: [] };
+    mockCommands.saveDefaultTargetAgents.mockResolvedValue({
+      status: 'ok',
+      data: null,
+    });
+
+    await saveDefaultTargetAgents(context, defaults, 'registry-1');
+
+    expect(mockCommands.saveDefaultTargetAgents).toHaveBeenCalledWith(
+      context,
+      defaults,
+      'registry-1',
+    );
   });
 
-  it('routes explicit context operations through canonical commands', async () => {
-    const response = { successful: [], failed: [], symlinkFallbackAgents: [] };
-    mockCommands.installSkills.mockResolvedValue({ status: 'ok', data: response });
-    mockCommands.updateSkill.mockResolvedValue({ status: 'ok', data: { results: [], summary: {} } });
+  it('unwraps the grouped update result contract without exposing payload handles', async () => {
+    const response = { sources: [], skills: [], outcome: 'succeeded' };
+    const execution = {
+      request: { context, skillNames: ['test-skill'] },
+      overwritePrivateEntries: [],
+    };
+    mockCommands.updateSkill.mockResolvedValue({ status: 'ok', data: response });
+    const result = await updateSkill(execution, previewToken);
+    expect(result).toEqual(response);
+    expect(mockCommands.updateSkill).toHaveBeenCalledWith(execution, previewToken);
+  });
 
-    await installSkills(context, {
+  it('passes the backend-authoritative update check request unchanged', async () => {
+    const request = { context, mode: 'force', selection: { kind: 'all' } } as const;
+    const response = { sources: [], skills: [] };
+    mockCommands.checkUpdates.mockResolvedValue({ status: 'ok', data: response });
+
+    await expect(checkUpdates(request)).resolves.toEqual(response);
+
+    expect(mockCommands.checkUpdates).toHaveBeenCalledWith(request);
+  });
+
+  it('routes install preview and execute through the same canonical request', async () => {
+    const request: InstallRequest = {
+      context,
       source: 'owner/repo',
+      discoverySession: {
+        sessionId: 'discovery-1',
+        environment: context.environment,
+        sourceFingerprint: 'source-1',
+        expiresAtEpochMs: 1000,
+      },
+      payloads: [],
       skills: ['demo'],
-      agents: [],
-      privateCopyAgents: [],
-      scope: 'project',
-      projectPath: null,
-      mode: 'copy',
-      retry: false,
-    });
-    await updateSkill(context, 'demo');
+      agentIntents: [{
+        agentId: 'my-agent',
+        privateEntry: 'required',
+        adapterTargets: [],
+      }],
+      requestedMode: 'copy',
+      acknowledgeRisk: true,
+    };
+    const preview = { token: previewToken, skills: [] };
+    const response = { units: [] };
+    mockCommands.previewInstall.mockResolvedValue({ status: 'ok', data: preview });
+    mockCommands.installSkills.mockResolvedValue({ status: 'ok', data: response });
 
-    expect(mockCommands.installSkills).toHaveBeenCalledWith(context, expect.objectContaining({
-      skills: ['demo'],
-    }));
-    expect(mockCommands.updateSkill).toHaveBeenCalledWith(context, 'demo');
+    await expect(previewInstall(request)).resolves.toEqual(preview);
+    await expect(installSkills(request, previewToken)).resolves.toEqual(response);
+
+    expect(mockCommands.previewInstall).toHaveBeenCalledWith(request);
+    expect(mockCommands.installSkills).toHaveBeenCalledWith(request, previewToken);
   });
 
   it('maps host picker paths through the selected environment', async () => {
@@ -182,5 +251,109 @@ describe('useTauriApi unwrap logic', () => {
       null,
       null,
     );
+  });
+
+  it('returns the direct settings snapshot generated by the command', async () => {
+    const snapshot = {
+      registryRevision: 'registry-1',
+      activeBuiltin: [],
+      activeCustom: [],
+      disabledConflicts: [],
+      invalidCustomRecords: [],
+      currentEnvironment: context.environment,
+      customStorageIssue: null,
+    };
+    mockCommands.getAgentSettingsSnapshot.mockResolvedValue(snapshot);
+
+    await expect(getAgentSettingsSnapshot(context)).resolves.toEqual(snapshot);
+    expect(mockCommands.getAgentSettingsSnapshot).toHaveBeenCalledWith(context);
+  });
+
+  it('unwraps every generated custom-agent management Result', async () => {
+    const draft: CustomAgentDefinition = {
+      id: 'my-agent',
+      displayName: 'My Agent',
+      global: { enabled: true, location: 'private', privatePath: { kind: 'based', base: 'home', relativePath: '.my-agent/skills' } },
+      project: { enabled: false, location: 'private', privatePath: null },
+      detectionPaths: [],
+    };
+    const settings = {
+      registryRevision: 'registry-2',
+      activeBuiltin: [],
+      activeCustom: [],
+      disabledConflicts: [],
+      invalidCustomRecords: [],
+      currentEnvironment: context.environment,
+      customStorageIssue: null,
+    };
+    const impact = {
+      agentId: draft.id,
+      displayName: draft.displayName,
+      registryRevision: 'registry-1',
+      environmentRevision: 'environment-1',
+      scopes: [],
+      losesManagementCapability: false,
+      filesWillBeDeleted: false,
+    };
+    const deletion = { settings, warnings: [] };
+    mockCommands.validateCustomAgentDraft.mockResolvedValue({
+      status: 'ok',
+      data: { registryRevision: 'registry-1', environmentRevision: 'environment-1', environment: context.environment, resolved: {} },
+    });
+    mockCommands.saveCustomAgent.mockResolvedValue({ status: 'ok', data: settings });
+    mockCommands.duplicateCustomAgentDraft.mockResolvedValue({ status: 'ok', data: draft });
+    mockCommands.previewCustomAgentDelete.mockResolvedValue({ status: 'ok', data: impact });
+    mockCommands.deleteCustomAgent.mockResolvedValue({ status: 'ok', data: deletion });
+    mockCommands.deleteInvalidCustomAgent.mockResolvedValue({ status: 'ok', data: deletion });
+
+    await expect(validateCustomAgentDraft(context, draft)).resolves.toMatchObject({
+      registryRevision: 'registry-1',
+    });
+    await expect(saveCustomAgent(context, draft, 'registry-1')).resolves.toEqual(settings);
+    await expect(duplicateCustomAgentDraft('my-agent', 'my-agent-copy')).resolves.toEqual(draft);
+    await expect(previewCustomAgentDelete(context, 'my-agent', 'registry-1')).resolves.toEqual(impact);
+    await expect(deleteCustomAgent(context, 'my-agent', 'registry-1')).resolves.toEqual(deletion);
+    await expect(deleteInvalidCustomAgent(context, 0, 'registry-1')).resolves.toEqual(deletion);
+
+    expect(mockCommands.validateCustomAgentDraft).toHaveBeenCalledWith(context, draft);
+    expect(mockCommands.saveCustomAgent).toHaveBeenCalledWith(context, draft, 'registry-1');
+    expect(mockCommands.duplicateCustomAgentDraft).toHaveBeenCalledWith('my-agent', 'my-agent-copy');
+    expect(mockCommands.previewCustomAgentDelete).toHaveBeenCalledWith(context, 'my-agent', 'registry-1');
+    expect(mockCommands.deleteCustomAgent).toHaveBeenCalledWith(context, 'my-agent', 'registry-1');
+    expect(mockCommands.deleteInvalidCustomAgent).toHaveBeenCalledWith(context, 0, 'registry-1');
+  });
+
+  it('throws management command errors without changing their generated shape', async () => {
+    const error = { kind: 'staleRegistryRevision', expected: 'old', actual: 'new' };
+    mockCommands.deleteCustomAgent.mockResolvedValue({ status: 'error', error });
+
+    await expect(deleteCustomAgent(context, 'my-agent', 'old')).rejects.toEqual(error);
+  });
+
+  it('forwards the one-shot Agent configuration request and completion protocol', async () => {
+    mockCommands.requestAgentConfiguration.mockResolvedValue({ status: 'ok', data: null });
+    mockCommands.completeAgentConfiguration.mockResolvedValue({ status: 'ok', data: null });
+
+    await expect(requestAgentConfiguration('my-agent')).resolves.toBeUndefined();
+    await expect(completeAgentConfiguration('my-agent', 'saved')).resolves.toBeUndefined();
+
+    expect(mockCommands.requestAgentConfiguration).toHaveBeenCalledWith('my-agent');
+    expect(mockCommands.completeAgentConfiguration).toHaveBeenCalledWith('my-agent', 'saved');
+  });
+
+  it('uses opaque Recovery IDs and revisioned cleanup confirmation', async () => {
+    const status = {
+      resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
+      environment: context.environment, displayPaths: [],
+    };
+    mockCommands.getRecoveryResourceStatus.mockResolvedValue({ status: 'ok', data: status });
+    mockCommands.confirmRecoveryResourceResolved.mockResolvedValue({ status: 'ok', data: null });
+    mockCommands.openRecoveryResource.mockResolvedValue({ status: 'ok', data: null });
+
+    await expect(getRecoveryResourceStatus('recovery-1')).resolves.toEqual(status);
+    await expect(openRecoveryResource('recovery-1')).resolves.toBeUndefined();
+    await expect(confirmRecoveryResourceResolved('recovery-1', 'revision-1')).resolves.toBeUndefined();
+
+    expect(mockCommands.confirmRecoveryResourceResolved).toHaveBeenCalledWith('recovery-1', 'revision-1');
   });
 });

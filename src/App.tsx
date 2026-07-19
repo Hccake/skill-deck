@@ -1,60 +1,43 @@
-import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
-import { listen } from '@tauri-apps/api/event';
+import { lazy, Suspense, useEffect } from 'react';
+import {
+  createBrowserRouter,
+  Route,
+  RouterProvider,
+  Routes,
+} from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { Header } from '@/components/layout/Header';
-import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
-import { SkillsPage } from '@/pages/SkillsPage';
-import { DiscoverPage } from '@/pages/DiscoverPage';
-import { SettingsPage } from '@/pages/SettingsPage';
-import { WizardPage } from '@/pages/WizardPage';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { useSkillsDataStore } from '@/stores/skills-data';
-import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { useEnvironmentStore } from '@/stores/environment';
 import { useUpdaterStore } from '@/stores/updater';
 import { UpdateDialog } from '@/components/update-dialog';
-import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
 import { WindowLifecycleProvider } from '@/lifecycle/WindowLifecycleProvider';
+import { UnsavedChangesProvider } from '@/lifecycle/UnsavedChangesProvider';
 
-/** 主窗口布局 — 带 Header + Toaster */
-function MainLayout() {
-  useEnvironmentRuntimeMonitor();
+const MainLayout = lazy(() => import('@/layouts/MainLayout'));
+const SkillsPage = lazy(() => import('@/pages/SkillsPage').then((module) => ({ default: module.SkillsPage })));
+const DiscoverPage = lazy(() => import('@/pages/DiscoverPage').then((module) => ({ default: module.DiscoverPage })));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
+const WizardPage = lazy(() => import('@/pages/WizardPage').then((module) => ({ default: module.WizardPage })));
 
+// advanced-init-once: 防止 Strict Mode 双调用
+let didInit = false;
+
+function RouteFallback() {
+  const { t } = useTranslation();
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
-      <Header />
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Outlet />
-      </main>
-      <MutationStatusBar />
+    <div role="status" aria-live="polite" className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      {t('common.loading')}
     </div>
   );
 }
 
-// advanced-init-once: 防止 Strict Mode 双调用
-let didInit = false;
-let didDiscoverEnvironments = false;
-
-function App() {
+function ApplicationShell() {
   const { t } = useTranslation();
-  const refreshWorkspace = useSkillsDataStore((s) => s.refreshWorkspace);
-  const discoverEnvironments = useEnvironmentStore((s) => s.discover);
-  // rerender-defer-reads: 不订阅 error，减少不必要的 App 重渲染
-  const { status, checkForUpdate, shouldAutoCheck } = useUpdaterStore();
-
-  // 监听向导窗口完成事件
-  useEffect(() => {
-    const unlisten = listen('wizard-result', () => {
-      const committedContext = useWorkspaceContextStore.getState().selectedContext;
-      void refreshWorkspace(committedContext);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [refreshWorkspace]);
+  const status = useUpdaterStore((state) => state.status);
+  const dialogVisible = useUpdaterStore((state) => state.dialogVisible);
+  const checkForUpdate = useUpdaterStore((state) => state.checkForUpdate);
+  const shouldAutoCheck = useUpdaterStore((state) => state.shouldAutoCheck);
 
   // advanced-init-once: 启动时自动检查更新，guard 防止 Strict Mode 双调用
   useEffect(() => {
@@ -65,34 +48,41 @@ function App() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (window.location.pathname === '/wizard' || didDiscoverEnvironments) return;
-    didDiscoverEnvironments = true;
-    void discoverEnvironments().catch((error) => {
-      console.error('Failed to discover environments:', error);
-    });
-  }, [discoverEnvironments]);
-
   // 错误时弹 toast — rerender-defer-reads: 用 getState() 按需读取 error
   useEffect(() => {
     if (status === 'error') {
-      const error = useUpdaterStore.getState().error;
-      if (error) toast.error(t('settings.update.checkError'));
+      const updater = useUpdaterStore.getState();
+      if (updater.error) {
+        toast.error(t(
+          updater.failedOperation === 'install'
+            ? 'settings.update.installError'
+            : 'settings.update.checkError',
+        ));
+      }
     }
   }, [status, t]);
 
-  const showUpdateDialog = status === 'available' || status === 'downloading' || status === 'ready';
+  const showUpdateDialog = dialogVisible
+    && (status === 'available' || status === 'downloading' || status === 'ready' || status === 'error');
 
   return (
-    <WindowLifecycleProvider>
-      <BrowserRouter>
+    <UnsavedChangesProvider>
+      <WindowLifecycleProvider>
         <TooltipProvider>
           <Routes>
             {/* 向导窗口路由 — 独立布局，无 Header，必须在通配符之前 */}
-            <Route path="/wizard" element={<WizardPage />} />
+            <Route path="/wizard" element={(
+              <Suspense fallback={<RouteFallback />}>
+                <WizardPage />
+              </Suspense>
+            )} />
 
             {/* 主窗口路由 — Layout Route 包裹 */}
-            <Route element={<MainLayout />}>
+            <Route element={(
+              <Suspense fallback={<RouteFallback />}>
+                <MainLayout />
+              </Suspense>
+            )}>
               <Route path="/" element={<SkillsPage />} />
               <Route path="/discover" element={<DiscoverPage />} />
               <Route path="/settings" element={<SettingsPage />} />
@@ -101,9 +91,18 @@ function App() {
           <UpdateDialog open={showUpdateDialog} />
           <Toaster />
         </TooltipProvider>
-      </BrowserRouter>
-    </WindowLifecycleProvider>
+      </WindowLifecycleProvider>
+    </UnsavedChangesProvider>
   );
+}
+
+const appRouter = createBrowserRouter([{
+  path: '*',
+  element: <ApplicationShell />,
+}]);
+
+function App() {
+  return <RouterProvider router={appRouter} />;
 }
 
 export default App;

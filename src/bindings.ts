@@ -6,7 +6,23 @@
 
 
 export const commands = {
-async listAgents(context: ContextRef) : Promise<Result<AgentInfo[], AppError>> {
+async acquireSelectedPayloads(request: AcquireSelectedPayloadsRequest) : Promise<Result<AcquiredPayloadHandle[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("acquire_selected_payloads", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listAgentSelectionGroups(context: ContextRef) : Promise<Result<AgentSelectionGroups, AgentCommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_agent_selection_groups", { context }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listAgents(context: ContextRef) : Promise<Result<AgentRuntimeSnapshot, AgentCommandError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_agents", { context }) };
 } catch (e) {
@@ -14,9 +30,57 @@ async listAgents(context: ContextRef) : Promise<Result<AgentInfo[], AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 列出指定项目内 Eve 可安装的具体目标：root agent 与已存在 subagents。
- */
+async getAgentSettingsSnapshot(context: ContextRef) : Promise<AgentSettingsSnapshot> {
+    return await TAURI_INVOKE("get_agent_settings_snapshot", { context });
+},
+async validateCustomAgentDraft(context: ContextRef, draft: CustomAgentDefinition) : Promise<Result<CustomAgentDraftValidation, AgentCommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("validate_custom_agent_draft", { context, draft }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveCustomAgent(context: ContextRef, draft: CustomAgentDefinition, expectedRegistryRevision: string) : Promise<Result<AgentSettingsSnapshot, AgentCommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_custom_agent", { context, draft, expectedRegistryRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteCustomAgent(context: ContextRef, id: AgentId, expectedRegistryRevision: string) : Promise<Result<AgentDeleteResult, AgentCommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_custom_agent", { context, id, expectedRegistryRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteInvalidCustomAgent(context: ContextRef, index: number, expectedRegistryRevision: string) : Promise<Result<AgentDeleteResult, AgentCommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_invalid_custom_agent", { context, index, expectedRegistryRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewCustomAgentDelete(context: ContextRef, id: AgentId, expectedRegistryRevision: string) : Promise<Result<AgentDeleteImpact, AgentCommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_custom_agent_delete", { context, id, expectedRegistryRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async duplicateCustomAgentDraft(sourceId: AgentId, newId: AgentId) : Promise<Result<CustomAgentDefinition, AgentCommandError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("duplicate_custom_agent_draft", { sourceId, newId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listEveInstallTargets(context: ContextRef) : Promise<Result<InstallTargetInfo[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_eve_install_targets", { context }) };
@@ -33,21 +97,14 @@ async listSkills(context: ContextRef) : Promise<Result<ListSkillsResult, AppErro
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Read the markdown body of a skill's SKILL.md
- */
-async readSkillContent(context: ContextRef, canonicalPath: string) : Promise<Result<string, AppError>> {
+async readSkillContent(identity: SkillIdentity) : Promise<Result<string, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("read_skill_content", { context, canonicalPath }) };
+    return { status: "ok", data: await TAURI_INVOKE("read_skill_content", { identity }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 获取配置
- * 文件不存在或解析失败时返回默认配置
- */
 async getConfig() : Promise<Result<SkillDeckConfig, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_config") };
@@ -56,10 +113,6 @@ async getConfig() : Promise<Result<SkillDeckConfig, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 保存配置
- * 目录不存在时自动创建
- */
 async saveConfig(config: SkillDeckConfig) : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("save_config", { config }) };
@@ -76,20 +129,9 @@ async getDefaultTargetAgents(context: ContextRef) : Promise<Result<DefaultTarget
     else return { status: "error", error: e  as any };
 }
 },
-async saveDefaultTargetAgents(context: ContextRef, defaults: DefaultTargetAgents) : Promise<Result<null, AppError>> {
+async saveDefaultTargetAgents(context: ContextRef, defaults: DefaultTargetAgents, expectedRegistryRevision: string) : Promise<Result<null, AgentCommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_default_target_agents", { context, defaults }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * 在系统文件管理器中打开路径
- */
-async openInExplorer(path: string) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("open_in_explorer", { path }) };
+    return { status: "ok", data: await TAURI_INVOKE("save_default_target_agents", { context, defaults, expectedRegistryRevision }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -103,9 +145,17 @@ async fetchAvailable(context: ContextRef, source: string) : Promise<Result<Fetch
     else return { status: "error", error: e  as any };
 }
 },
-async installSkills(context: ContextRef, params: InstallParams) : Promise<Result<InstallResults, AppError>> {
+async previewInstall(request: InstallRequest) : Promise<Result<InstallPreview, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("install_skills", { context, params }) };
+    return { status: "ok", data: await TAURI_INVOKE("preview_install", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async installSkills(request: InstallRequest, expectedToken: PreviewToken) : Promise<Result<InstallResponse, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_skills", { request, expectedToken }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -119,62 +169,79 @@ async executeLifecycleAction(action: LifecycleAction) : Promise<Result<Lifecycle
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 检测哪些 skill × agent 组合会被覆盖
- *
- * # Arguments
- * * `skills` - 要安装的 skill 名称列表
- * * `agents` - 目标 agent 列表
- * * `scope` - 安装范围
- * * `project_path` - Project scope 时的项目路径
- *
- * # Returns
- * * `HashMap<String, Vec<String>>` - { skill_name: [agent_ids that will be overwritten] }
- */
-async checkOverwrites(context: ContextRef, skills: string[], agents: string[], privateCopyAgents: string[], agentTargets: InstallTargetSpec[]) : Promise<Result<Partial<{ [key in string]: string[] }>, AppError>> {
+async previewRemove(context: ContextRef, skillName: string) : Promise<Result<RemovePreview, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_overwrites", { context, skills, agents, privateCopyAgents, agentTargets }) };
+    return { status: "ok", data: await TAURI_INVOKE("preview_remove", { context, skillName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 删除指定 skill
- *
- * # Arguments
- * * `scope` - 删除范围（global/project）
- * * `name` - skill 名称
- * * `project_path` - Project scope 时的项目路径
- * * `agents` - 部分移除时指定的 agent 列表（None 或空 = 完全删除）
- * * `full_removal` - 是否完全删除（true = 删除一切，false = 仅删除指定 agents 的 symlink）
- * * `agent_targets` - 具体目标列表；目前用于 Eve root/subagent 删除
- */
-async removeSkill(context: ContextRef, name: string, agents: AgentType[] | null, fullRemoval: boolean | null, agentTargets: InstallTargetSpec[] | null) : Promise<Result<RemoveResult, AppError>> {
+async removeSkill(request: RemoveRequest) : Promise<Result<RemoveResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { context, name, agents, fullRemoval, agentTargets }) };
+    return { status: "ok", data: await TAURI_INVOKE("remove_skill", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async getSkillAgentDetails(context: ContextRef, name: string) : Promise<Result<SkillAgentDetails, AppError>> {
+async listRecoveryResources() : Promise<Result<RecoveryResourcesSnapshot, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_skill_agent_details", { context, name }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_recovery_resources") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async cleanupDuplicateAgentCopy(context: ContextRef, skillName: string, agent: AgentType) : Promise<Result<DuplicateCleanupResult, AppError>> {
+async getRecoveryResourceStatus(resourceId: RecoveryResourceId) : Promise<Result<RecoveryResourceStatus, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copy", { context, skillName, agent }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_recovery_resource_status", { resourceId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async cleanupDuplicateAgentCopies(context: ContextRef, skillName: string, agents: AgentType[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
+async confirmRecoveryResourceResolved(resourceId: RecoveryResourceId, expectedRevision: string) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_recovery_resource_resolved", { resourceId, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openRecoveryResource(resourceId: RecoveryResourceId) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_recovery_resource", { resourceId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async retryRuntimeMaintenance(environment: EnvironmentRef) : Promise<Result<RuntimeMaintenanceStatus, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("retry_runtime_maintenance", { environment }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openSkillResource(identity: SkillIdentity) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_skill_resource", { identity }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async openConfigResource(context: ContextRef, kind: ConfigResourceKind) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_config_resource", { context, kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cleanupDuplicateAgentCopies(context: ContextRef, skillName: string, agents: AgentId[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copies", { context, skillName, agents }) };
 } catch (e) {
@@ -182,46 +249,33 @@ async cleanupDuplicateAgentCopies(context: ContextRef, skillName: string, agents
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 检测指定 scope 的 skills 是否有更新
- *
- * 流程：
- * 1. 读取对应 scope 的 lock 文件
- * 2. 从 lock entry 派生更新能力；不可检查的 entry 直接返回 cannot-check
- * 3. 对可检查的来源按 source/ref 分组，目前 GitHub 走 Trees API
- * 4. 比对记录的版本 hash 与远端 hash
- */
-async checkUpdates(context: ContextRef) : Promise<Result<SkillUpdateInfo[], AppError>> {
+async checkUpdates(request: UpdateCheckRequest) : Promise<Result<UpdateCheckResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_updates", { context }) };
+    return { status: "ok", data: await TAURI_INVOKE("check_updates", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 更新指定 skill
- *
- * 本质是"重新安装"：从 lock 文件读取来源信息，构造安装 URL，复用安装逻辑。
- * 与 CLI update 命令行为一致。
- */
-async updateSkill(context: ContextRef, name: string) : Promise<Result<UpdateSkillResponse, AppError>> {
+async previewUpdate(request: UpdateRequest) : Promise<Result<UpdatePreview, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skill", { context, name }) };
+    return { status: "ok", data: await TAURI_INVOKE("preview_update", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 批量更新多个 skills（同源 clone 合并）
- *
- * 按 source 分组，每组只 clone 一次仓库，然后从同一 clone 中安装所有该组的 skills。
- * 对于 N 个同源 skills，从 clone N 次降为 clone 1 次。
- */
-async updateSkillsBatch(context: ContextRef, names: string[]) : Promise<Result<UpdateSkillResponse, AppError>> {
+async updateSkill(execution: UpdateExecutionRequest, expectedToken: PreviewToken) : Promise<Result<UpdateResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_skills_batch", { context, names }) };
+    return { status: "ok", data: await TAURI_INVOKE("update_skill", { execution, expectedToken }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateSkillsBatch(execution: UpdateExecutionRequest, expectedToken: PreviewToken) : Promise<Result<UpdateResponse, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_skills_batch", { execution, expectedToken }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -253,17 +307,33 @@ async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial
     else return { status: "error", error: e  as any };
 }
 },
-async manageSkillAgents(context: ContextRef, skillName: string, addAgents: AgentType[], removeAgents: AgentType[], privateCopyAgents: AgentType[], mode: InstallMode) : Promise<Result<ManageAgentsResult, AppError>> {
+async previewManageSkillAgents(request: ManageAgentsPreviewRequest) : Promise<Result<ManageAgentsPreview, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents", { context, skillName, addAgents, removeAgents, privateCopyAgents, mode }) };
+    return { status: "ok", data: await TAURI_INVOKE("preview_manage_skill_agents", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async copySkillToProjects(skillName: string, source: ContextRef, targets: ContextRef[], agents: string[], privateCopyAgents: string[]) : Promise<Result<CopySkillResult, AppError>> {
+async manageSkillAgents(request: ManageAgentsRequest) : Promise<Result<ManageAgentsResponse, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects", { skillName, source, targets, agents, privateCopyAgents }) };
+    return { status: "ok", data: await TAURI_INVOKE("manage_skill_agents", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewCopySkillToProjects(request: CopyRequest) : Promise<Result<CopyPreview, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preview_copy_skill_to_projects", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async copySkillToProjects(request: CopyExecutionRequest) : Promise<Result<CopyResponse, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("copy_skill_to_projects", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -336,9 +406,44 @@ async retryHostProjectMigration() : Promise<Result<ProjectInfo[], AppError>> {
 async getActiveMutation() : Promise<MutationSnapshot> {
     return await TAURI_INVOKE("get_active_mutation");
 },
+async getBackendActivity() : Promise<BackendActivitySnapshot> {
+    return await TAURI_INVOKE("get_backend_activity");
+},
 async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("request_cancel_active_mutation") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async requestAgentConfiguration(agentId: AgentId) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_agent_configuration", { agentId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async completeAgentConfiguration(agentId: AgentId, outcome: AgentConfigurationOutcome) : Promise<Result<null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_agent_configuration", { agentId, outcome }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async checkApplicationUpdate() : Promise<Result<ApplicationUpdateInfo | null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_application_update") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async downloadAndInstallApplicationUpdate(expectedVersion: string, progress: TAURI_CHANNEL<ApplicationUpdateProgress>) : Promise<Result<ApplicationUpdateResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_and_install_application_update", { expectedVersion, progress }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -350,11 +455,17 @@ async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
 
 
 export const events = __makeEvents__<{
+agentConfigurationCompletedEvent: AgentConfigurationCompletedEvent,
+agentConfigurationRequestedEvent: AgentConfigurationRequestedEvent,
 environmentRuntimeEvent: EnvironmentRuntimeEvent,
-lifecycleActionRequestedEvent: LifecycleActionRequestedEvent
+lifecycleActionRequestedEvent: LifecycleActionRequestedEvent,
+runtimeMaintenanceChanged: RuntimeMaintenanceChanged
 }>({
+agentConfigurationCompletedEvent: "agent-configuration-completed-event",
+agentConfigurationRequestedEvent: "agent-configuration-requested-event",
 environmentRuntimeEvent: "environment-runtime-event",
-lifecycleActionRequestedEvent: "lifecycle-action-requested-event"
+lifecycleActionRequestedEvent: "lifecycle-action-requested-event",
+runtimeMaintenanceChanged: "runtime-maintenance-changed"
 })
 
 /** user-defined constants **/
@@ -363,45 +474,46 @@ lifecycleActionRequestedEvent: "lifecycle-action-requested-event"
 
 /** user-defined types **/
 
+export type AcquireSelectedPayloadsRequest = { discoverySession: DiscoverySessionHandle; skillPaths: string[] }
+export type AcquiredPayloadHandle = { sessionId: string; skillPath: string; environment: EnvironmentRef; payloadId: string; manifestHash: string; sourceFingerprint: string; expiresAtEpochMs: number }
+export type ActiveCustomAgent = { definition: CustomAgentDefinition; raw: unknown }
+export type ActiveLifecycleLease = { id: string; kind: LifecycleLeaseKind; cancelable: boolean }
 export type ActiveMutation = { id: string; kind: MutationKind; context: ContextRef; phase: MutationPhase; progress: MutationProgress | null; cancelable: boolean }
+export type AdapterTargetId = string
 export type AddProjectResult = { project: ProjectInfo; created: boolean }
-export type AgentAvailabilityKind = "shared-only" | "shared-compatible" | "private-required" | "unknown" | "unsupported"
-/**
- * Agent 信息（返回给前端）
- * 对应 CLI: 综合 AgentConfig + detectInstalled 结果
- */
-export type AgentInfo = { id: AgentType; name: string; skillsDir: string; globalSkillsDir: string; detected: boolean;
-/**
- * 按安装范围计算后的目标能力
- */
-targets: AgentTargets }
-/**
- * Agent 对某个 skill 的 presence 摘要
- */
-export type AgentPresenceInfo = { agent: AgentType; displayName: string; presence: AgentSkillPresence; sharedPath: string; privatePath: string | null; canCleanupPrivateCopy: boolean }
-/**
- * Agent 在单个安装范围下的目标能力
- */
-export type AgentScopeTarget = { supported: boolean; automatic: boolean; path: string; availability: AgentAvailabilityKind; defaultAvailable: boolean; sharedPath: string; installPath: string; readPaths: string[]; privatePath: string | null }
-/**
- * Agent 对某个 skill 的安装/可用状态
- */
-export type AgentSkillPresence = "default-active" | "requires-private-install" | "duplicate-copy" | "private-only" | "not-installed"
-/**
- * Agent 在全局和项目两个安装范围下的目标能力
- */
-export type AgentTargets = { global: AgentScopeTarget; project: AgentScopeTarget }
-/**
- * Agent 类型枚举
- * 完整对应 CLI: types.ts AgentType
- */
-export type AgentType = "aider-desk" | "amp" | "antigravity" | "antigravity-cli" | "astrbot" | "augment" | "autohand-code" | "bob" | "claude-code" | "openclaw" | "cline" | "codearts-agent" | "codebuddy" | "codemaker" | "codestudio" | "codex" | "command-code" | "continue" | "crush" | "cursor" | "deepagents" | "devin" | "dexto" | "droid" | "eve" | "firebender" | "forgecode" | "gemini-cli" | "github-copilot" | "goose" | "hermes-agent" | "iflow-cli" | "junie" | "kilo" | "kimi-code-cli" | "kiro-cli" | "kode" | "inference-sh" | "jazz" | "lingma" | "loaf" | "mcpjam" | "mistral-vibe" | "moxby" | "mux" | "neovate" | "ona" | "opencode" | "openhands" | "pi" | "promptscript" | "qoder" | "qoder-cn" | "qwen-code" | "reasonix" | "replit" | "rovodev" | "roo" | "tabnine-cli" | "trae" | "trae-cn" | "warp" | "windsurf" | "zed" | "zencoder" | "zenflow" | "pochi" | "adal" | "cortex" | "terramind" | "tinycloud"
+export type AgentAdapter = "standard" | "eve"
+export type AgentCommandError = { kind: "application"; error: AppError } | { kind: "invalidDraft"; errors: AgentFieldError[] } | { kind: "staleRegistryRevision"; expected: string; actual: string }
+export type AgentConfigurationCompletedEvent = { agentId: AgentId; outcome: AgentConfigurationOutcome }
+export type AgentConfigurationOutcome = "saved" | "cancelled"
+export type AgentConfigurationRequestedEvent = { agentId: AgentId }
+export type AgentDefinition = { id: AgentId; displayName: string; source: AgentSource; aliases: AgentId[]; global: ScopeDefinition; project: ScopeDefinition; detection: DetectionSpec; legacyPaths: LegacyPath[]; adapter: AgentAdapter }
+export type AgentDeleteImpact = { agentId: AgentId; displayName: string; registryRevision: string; environmentRevision: string; scopes: AgentDeleteScopeImpact[]; losesManagementCapability: boolean; filesWillBeDeleted: boolean }
+export type AgentDeletePathImpact = { kind: AgentDeletePathKind; logicalPath: PathSpec; resolvedPath: string | null; presence: DirectoryPresenceState; observedSkillCount: number | null; observedSkillCountTruncated: boolean; unavailableReason: DetectionReason | null }
+export type AgentDeletePathKind = "shared" | "private"
+export type AgentDeleteResult = { settings: AgentSettingsSnapshot; warnings: AgentOperationWarning[] }
+export type AgentDeleteScopeImpact = { scope: Scope; paths: AgentDeletePathImpact[]; defaultReferenced: boolean }
+export type AgentFieldError = { field: string; code: string }
+export type AgentId = string
+export type AgentOperationWarning = { code: string }
+export type AgentRuntimeSnapshot = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; availability: EnvironmentStatus; projectPath: string | null; agents: Partial<{ [key in AgentId]: ResolvedAgent }> }
+export type AgentSelectionGroup = { groupId: string; agentIds: AgentId[] }
+export type AgentSelectionGroups = { global: AgentSelectionGroup[]; project: AgentSelectionGroup[] }
+export type AgentSettingsSnapshot = { registryRevision: string; activeBuiltin: AgentDefinition[]; activeCustom: ActiveCustomAgent[]; disabledConflicts: DisabledAgentConflict[]; invalidCustomRecords: InvalidCustomAgentRecord[]; currentEnvironment: EnvironmentRef; customStorageIssue: AgentStorageIssue | null }
+export type AgentSource = "builtin" | "custom"
+export type AgentStorageIssue = { code: string; message: string; readOnly: boolean }
+export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
+export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
+export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; privateEntry: PrivateEntryIntent; availability: DetectionState; blockingReason: OperationErrorCode | null }
+export type AgentWriteIntent = { agentId: AgentId; privateEntry: PrivateEntryIntent; adapterTargets: AdapterTargetId[] }
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
  */
-{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installFailed"; data: { message: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "applicationTerminating" } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "custom"; data: { message: string } }
+{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "applicationTerminating" } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "environmentChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "contextChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "externalLockChanged"; data: { target: LockConflictTarget } } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
+export type ApplicationUpdateInfo = { version: string; body: string | null }
+export type ApplicationUpdateProgress = { event: "started"; data: { content_length: number | null } } | { event: "progress"; data: { chunk_length: number } } | { event: "finished" }
+export type ApplicationUpdateResult = { version: string; installed: boolean }
 /**
  * 可用的 Skill 信息（fetch_available 返回）
  */
@@ -446,70 +558,53 @@ digestVerified?: boolean | null;
  * Compact trust reason for UI display.
  */
 trustReason?: string | null }
+export type BackendActivitySnapshot = { revision: number; mutation: ActiveMutation | null; lifecycle: ActiveLifecycleLease | null }
+export type CheckUpdateCapability = { canRunUpdate: boolean; canCheckForUpdates: boolean; reason: UpdateCapabilityReasonCode | null }
+export type ConfigResourceKind = "contextRoot" | "canonicalSkillsRoot"
 export type ContextRef = { environment: EnvironmentRef; scope: ContextScope }
 export type ContextScope = { scope: "global" } | { scope: "project"; project_id: string }
-/**
- * 单个目标项目的复制结果
- */
-export type CopyProjectResult = {
-/**
- * 目标项目路径
- */
-projectPath: string;
-/**
- * 是否成功
- */
-success: boolean;
-/**
- * 错误信息
- */
-error: string | null;
-/**
- * 默认可用的 agents
- */
-defaultAvailableAgents?: string[];
-/**
- * 需要单独适配且写入成功的 agents
- */
-privateAdaptedAgents?: string[];
-/**
- * 明确写入独立副本的 agents
- */
-privateCopyAgents?: string[];
-/**
- * 因目标项目缺少 agent 根目录而跳过的 agents
- */
-skippedAgents?: string[];
-/**
- * 复制后目标项目的更新信息保留状态
- */
-updateMetadataStatus: CopyUpdateMetadataStatus;
-/**
- * 更新信息降级原因
- */
-updateMetadataReason?: string | null }
-/**
- * 复制结果汇总
- */
-export type CopySkillResult = { results: CopyProjectResult[] }
-/**
- * 复制后目标项目的更新信息保留状态
- */
-export type CopyUpdateMetadataStatus = "preserved" | "incomplete" | "missing"
+export type ContextSnapshotRevision = string
+export type CopyExecutionRequest = { request: CopyRequest; token: PreviewToken; payload: AcquiredPayloadHandle }
+export type CopyPreview = { token: PreviewToken; payload: AcquiredPayloadHandle; source: ContextRef; targetEnvironment: EnvironmentRef; targets: CopyTargetPreview[] }
+export type CopyRequest = { skillName: string; source: ContextRef; targetEnvironment: EnvironmentRef; targetProjectIds: string[]; requestedMode: InstallMode; agentIntents: AgentWriteIntent[] }
+export type CopyResponse = { units: MutationUnitResult[] }
+export type CopyTargetPreview = { projectId: string; displayName: string; storageAccess: StorageAccess; physicalIdentity: PhysicalIdentityComparison; agentTargets: AgentTargetPreview[]; fallbackForecasts: AgentTargetFallbackPreview[]; blockingReasons: OperationErrorCode[] }
+export type CustomAgentDefinition = { id: AgentId; displayName: string; global: CustomScopeDefinition; project: CustomScopeDefinition; detectionPaths: CustomPathSpec[] }
+export type CustomAgentDraftValidation = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; resolved: ResolvedAgent }
+export type CustomPathBase = "home" | "configHome" | "project"
+export type CustomPathSpec = { kind: "based"; base: CustomPathBase; relativePath: string } | { kind: "absolute"; path: string }
+export type CustomScopeDefinition = { enabled: boolean; location: ScopeLocation; privatePath: CustomPathSpec | null }
 /**
  * GUI 使用的 scope-aware 默认安装目标
  */
 export type DefaultTargetAgents = { global: string[]; project: string[] }
-export type DuplicateCleanupResult = { agent: AgentType; success: boolean; skipped: boolean; path: string; error: string | null }
+export type DetectionReason = "projectContextRequired" | "environmentUnavailable"
+export type DetectionSpec = { kind: "anyPathExists"; paths: PathSpec[] } | { kind: "eve" }
+export type DetectionState = "detected" | "notDetected" | "indeterminate"
+export type DirectoryPresenceState = "present" | "missing" | "legacyPath" | "brokenLink" | "conflictingEntry" | "unsafePath" | "environmentUnavailable" | "projectNotSelected"
+export type DisabledAgentConflict = { definition: CustomAgentDefinition; builtin: AgentDefinition; raw: unknown }
+export type DiscoverySessionHandle = { sessionId: string; environment: EnvironmentRef; sourceFingerprint: string; expiresAtEpochMs: number }
+export type DuplicateCleanupResult = { agent: AgentId; success: boolean; skipped: boolean; path: ResourceLocator | null; error: OperationErrorCode | null }
 export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null }
-export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus }
+export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus; revision: number; error: AppError | null }
 export type EnvironmentRef = { kind: "host" } | { kind: "wsl"; distro_name: string }
-export type EnvironmentRuntimeEvent = { environment: EnvironmentRef; status: EnvironmentStatus; error: AppError | null }
+export type EnvironmentRuntimeEvent = { revision: number; environment: EnvironmentRef; status: EnvironmentStatus; error: AppError | null }
 export type EnvironmentStatus = "available" | "connecting" | "unavailable" | "error"
+export type ErrorReport = { code: OperationErrorCode; parameters: Partial<{ [key in string]: string }>; field: string | null; severity: ErrorSeverity; retryable: boolean; technicalDetails: string | null; environment: EnvironmentRef | null; context: ContextRef | null; unitId: string | null; recoveryResourceId: RecoveryResourceId | null; displayPaths: ResourceLocator[] }
+export type ErrorSeverity = "info" | "warning" | "error" | "critical"
+export type EvidenceAttempt = { checkedAtEpochMs: number; failure: EvidenceDetectionFailure | null }
+export type EvidenceDetectionFailure = { reason: EvidenceFailureReason; message: string; retryAtEpochMs: number | null; providerCooldown: boolean }
+export type EvidenceFailureReason = "rateLimited" | "authenticationRequired" | "refNotFound" | "repositoryNotFound" | "notFoundOrUnauthorized" | "network" | "incompleteEvidence" | "sourceUnavailable"
+export type EvidenceFreshness = "fresh" | "cached" | "stale" | "coolingDown" | "backingOff" | "unavailable"
+export type FallbackReasonCode = "symlinkUnavailable" | "crossStorageCopyRequired" | "targetCapabilityFallback"
 /**
  * fetch_available 返回结果
  */
 export type FetchResult = {
+/**
+ * Opaque source snapshot shared by discovery, preview and execute.
+ */
+discoverySession: DiscoverySessionHandle;
 /**
  * 来源类型
  */
@@ -535,165 +630,12 @@ riskPolicy: InstallRiskPolicy;
  */
 skills: AvailableSkill[] }
 /**
- * 需要独立安装记录的 Agent 详情
- */
-export type IndependentAgentInfo = {
-/**
- * Agent 类型
- */
-agent: AgentType;
-/**
- * Agent 显示名称
- */
-displayName: string;
-/**
- * 安装路径
- */
-path: string;
-/**
- * 是否是 symlink（false 表示 copy 模式安装）
- */
-isSymlink: boolean }
-/**
  * 安装模式
  */
 export type InstallMode = "symlink" | "copy"
-/**
- * 安装参数
- */
-export type InstallParams = {
-/**
- * 原始来源字符串
- */
-source: string;
-/**
- * 选中的 skill 名称列表
- */
-skills: string[];
-/**
- * 目标 agents
- */
-agents: string[];
-/**
- * 具体安装目标。Eve root/subagent 和未来非 AgentType 目标使用该字段。
- */
-agentTargets?: InstallTargetSpec[];
-/**
- * 明确要求写入独立副本的 agents
- */
-privateCopyAgents?: string[];
-/**
- * 安装范围
- */
-scope: Scope;
-/**
- * Project scope 时的项目路径
- */
-projectPath: string | null;
-/**
- * 安装模式
- */
-mode: InstallMode;
-/**
- * 是否为重试模式（仅重试指定 skills + agents）
- */
-retry?: boolean;
-/**
- * 是否按每个已安装 Agent 的现有 copy/symlink 模式重新安装
- */
-preserveExistingModes?: boolean;
-/**
- * 是否已确认风险来源（如 OpenClaw）
- */
-acknowledgeRisk?: boolean }
-/**
- * 单个 skill 的安装结果
- */
-export type InstallResult = {
-/**
- * Skill 名称
- */
-skillName: string;
-/**
- * Agent 名称
- */
-agent: string;
-/**
- * 具体目标 ID，例如 `eve:root` 或 `eve:research`
- */
-targetId?: string | null;
-/**
- * Eve subagent 名称；Eve root 和非 Eve Agent 为空
- */
-subagent?: string | null;
-/**
- * 是否成功
- */
-success: boolean;
-/**
- * 安装路径
- */
-path: string;
-/**
- * Canonical 路径（symlink 模式）
- */
-canonicalPath: string | null;
-/**
- * 实际使用的安装模式
- */
-mode: InstallMode;
-/**
- * symlink 是否失败并降级为 copy
- */
-symlinkFailed: boolean;
-/**
- * project scope 中因目标 agent 根目录不存在而跳过
- */
-skipped: boolean;
-/**
- * 错误信息
- */
-error: string | null;
-/**
- * 安装结果分类
- */
-category?: InstallResultCategory }
-/**
- * 安装结果分类
- */
-export type InstallResultCategory = "default-available" | "private-adapted" | "private-copy" | "skipped" | "failed"
-/**
- * 安装结果汇总
- */
-export type InstallResults = {
-/**
- * 成功的安装
- */
-successful: InstallResult[];
-/**
- * 失败的安装
- */
-failed: InstallResult[];
-/**
- * symlink 失败降级为 copy 的 agents
- */
-symlinkFallbackAgents: string[];
-/**
- * 默认可用的 agents
- */
-defaultAvailableAgents?: string[];
-/**
- * 需要独立适配的 agents
- */
-privateAdaptedAgents?: string[];
-/**
- * 明确写入独立副本的 agents
- */
-privateCopyAgents?: string[];
-/**
- * 具体目标详情，主要用于 Eve root/subagent 展示
- */
-targetDetails?: InstallTargetInfo[] }
+export type InstallPreview = { token: PreviewToken; skills: InstallSkillPreview[] }
+export type InstallRequest = { context: ContextRef; source: string; discoverySession: DiscoverySessionHandle; payloads: AcquiredPayloadHandle[]; skills: string[]; agentIntents: AgentWriteIntent[]; requestedMode: InstallMode; acknowledgeRisk: boolean }
+export type InstallResponse = { units: MutationUnitResult[] }
 /**
  * 风险策略种类
  */
@@ -702,23 +644,20 @@ export type InstallRiskKind = "none" | "require-confirmation"
  * 安装风险策略
  */
 export type InstallRiskPolicy = { kind: InstallRiskKind; code?: string | null }
+export type InstallSkillPreview = { skillName: string; payload: AcquiredPayloadHandle; overwriteTargets: string[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[] }
 /**
  * 具体安装目标展示信息，供前端确认页、完成页和目标选择使用。
  */
-export type InstallTargetInfo = { targetId: string; agent: AgentType; displayName: string; subagent?: string | null; path: string }
-/**
- * 具体安装目标请求。Eve root/subagent 使用该模型表达，不再只依赖 Agent 类型。
- */
-export type InstallTargetSpec = { agent: AgentType; subagent?: string | null }
+export type InstallTargetInfo = { targetId: string; agent: AgentId; displayName: string; subagent?: string | null; path: string }
 /**
  * 已安装的 Skill 信息
  * 对应 CLI: InstalledSkill (installer.ts:783-790)
  */
-export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentType[];
+export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentId[];
 /**
  * Skill card Agents that are both effective for this skill and detected locally.
  */
-cardAgents?: AgentType[] | null; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
+cardAgents?: AgentId[] | null; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
 /**
  * 是否可直接执行更新
  */
@@ -754,26 +693,32 @@ duplicateCopyCount?: number | null;
 /**
  * 默认可用 Agents
  */
-defaultAvailableAgents?: AgentType[] | null;
+defaultAvailableAgents?: AgentId[] | null;
 /**
  * 需要/已有单独适配的 Agents
  */
-privateAdaptedAgents?: AgentType[] | null;
+privateAdaptedAgents?: AgentId[] | null;
 /**
  * 当前存在额外 Agent 目录项的 Agents（可能是链接或副本）
  */
-duplicateCopyAgents?: AgentType[] | null;
+duplicateCopyAgents?: AgentId[] | null;
 /**
  * 当前只通过 Agent 目录项使用的 Agents
  */
-privateOnlyAgents?: AgentType[] | null;
+privateOnlyAgents?: AgentId[] | null;
 /**
  * 需要额外保留到 Agent 目录的默认可用 Agents
  */
-privateCopyAgents?: AgentType[] | null }
+privateCopyAgents?: AgentId[] | null }
+export type InvalidCustomAgentRecord = { index: number; raw: unknown; errors: AgentFieldError[] }
+export type LegacyMigrationTarget = "currentPrivate" | "sharedCanonical"
+export type LegacyPath = { scope: LegacyPathScope; path: PathSpec; behavior: LegacyPathBehavior; migrationTarget: LegacyMigrationTarget }
+export type LegacyPathBehavior = "detectOnly" | "offerMigration"
+export type LegacyPathScope = "global" | "project"
 export type LifecycleAction = "closeCurrentWindow" | "quitApplication" | "restartApplication"
-export type LifecycleActionOutcome = { status: "performed" } | { status: "delegated" } | { status: "blocked"; snapshot: MutationSnapshot }
+export type LifecycleActionOutcome = { status: "performed" } | { status: "delegated" } | { status: "blocked"; snapshot: BackendActivitySnapshot }
 export type LifecycleActionRequestedEvent = { action: LifecycleAction }
+export type LifecycleLeaseKind = "applicationUpdate" | "runtimeMaintenance"
 /**
  * list_skills 返回结果
  * 包含 skills 列表和路径存在性信息
@@ -784,118 +729,61 @@ export type ListSkillsResult = { skills: InstalledSkill[];
  */
 pathExists: boolean }
 export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
-/**
- * 单个 agent 添加操作结果
- */
-export type ManageAgentOperationResult = { agent: string; success: boolean; mode: InstallMode; path: string; error: string | null }
-/**
- * Agent 管理操作结果
- */
-export type ManageAgentsResult = {
-/**
- * 成功添加的 agent IDs
- */
-added: string[];
-/**
- * 每个新增 agent 的详细结果
- */
-addedResults: ManageAgentOperationResult[];
-/**
- * 成功移除的 agent IDs
- */
-removed: string[];
-/**
- * 错误信息列表
- */
-errors: string[] }
-export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "saveAgentDefaults" | "batchUpdate" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference"
-export type MutationPhase = "preparing" | "acquiring" | "materializing" | "committing" | "finishing"
+export type MaintenanceIssueCode = "payloadSweepFailed" | "recoveryReindexFailed"
+export type ManageAgentsPreview = { token: PreviewToken; context: ContextRef; skillName: string; availableAgents: ResolvedAgent[]; selectionGroups: AgentSelectionGroups; observedEntries: ObservedPhysicalEntry[]; canonicalPayload: AcquiredPayloadHandle | null; addTargets: ResourceLocator[] }
+export type ManageAgentsPreviewRequest = { context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode }
+export type ManageAgentsRequest = { token: PreviewToken; context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode; confirmEntityDirectories: boolean; canonicalPayload: AcquiredPayloadHandle | null }
+export type ManageAgentsResponse = { units: MutationUnitResult[] }
+export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "saveAgentDefaults" | "manageAgentDefinitions" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference"
+export type MutationPhase = "preparing" | "acquiring" | "validating" | "committing" | "finishing"
 export type MutationProgress = { subject: string | null; current: number | null; total: number | null }
 export type MutationSnapshot = { revision: number; active: ActiveMutation | null }
+export type MutationUnitResult = { unitId: string; skillName: string; source: ContextRef | null; target: ContextRef; status: MutationUnitStatus; retryable: boolean; lockCommitted: boolean; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; agentTargets: AgentTargetMutationResult[]; warnings: MutationWarning[]; error: ErrorReport | null; recovery: RecoveryAction | null }
+export type MutationUnitStatus = "succeeded" | "failed" | "skipped" | "cancelled" | "notRun" | "recoveryRequired"
+export type MutationWarning = { code: MutationWarningCode; parameters: Partial<{ [key in string]: string }>; technicalDetails: string | null }
+export type MutationWarningCode = "defaultTargetCleanupFailed" | "backupCleanupFailed" | "remoteHashRefreshFailed" | "cleanupMarkerRetained"
+export type ObservedEntryId = string
+export type ObservedEntryKind = "missing" | "directory" | "symlink" | "junction" | "brokenLink" | "other"
+export type ObservedEntryOwner = { agentId: AgentId; displayName: string; logicalTargetId: string }
+export type ObservedPhysicalEntry = { entryId: ObservedEntryId; displayPath: ResourceLocator; kind: ObservedEntryKind; physicalTargetKey: string; owners: ObservedEntryOwner[]; willBreakIfCanonicalRemoved: boolean }
+export type OperationErrorCode = "validation" | "environmentUnavailable" | "environmentChanged" | "contextChanged" | "storageUnsupported" | "capabilityUnavailable" | "unsafePath" | "unsafeSourceLink" | "selfCopy" | "payloadSessionExpired" | "staleContext" | "staleRegistry" | "staleEnvironment" | "stalePayload" | "staleTarget" | "externalLockChanged" | "mutationCancelled" | "executionFailed" | "restoreFailed" | "recoveryRequired" | "configurationReadOnly" | "configurationCorrupted"
+export type PathSpec = { kind: "home"; relativePath: string } | { kind: "configHome"; relativePath: string } | { kind: "project"; relativePath: string } | { kind: "environmentVariable"; name: string; relativePath: string; fallback: PathSpec } | { kind: "firstExisting"; candidates: PathSpec[]; fallback: PathSpec } |
+/**
+ * Absolute paths are reserved for built-in system detection candidates.
+ */
+{ kind: "absolute"; path: string }
+export type PhysicalIdentityComparison = "same" | "different" | "unknown"
+export type PreviewToken = { generation: string; registryRevision: string; environmentRevision: string; contextRevision: ContextSnapshotRevision }
+export type PrivateEntryIntent = "none" | "required" | "optionalSelected"
 export type ProjectBinding = { id: string; nativePath: string; displayName: string | null; order: number | null; suppressCrossStorageWarning?: boolean }
 export type ProjectInfo = { binding: ProjectBinding; storage: ProjectStorageInfo }
 export type ProjectStorageInfo = { access: StorageAccess; owner: EnvironmentRef | null }
-/**
- * 单个 skill 的删除结果
- * 对应 CLI: remove.ts 第 148-195 行的 results 数组元素
- */
-export type RemoveResult = {
-/**
- * Skill 名称
- */
-skillName: string;
-/**
- * 是否成功
- */
-success: boolean;
-/**
- * 删除的 agent 目录路径列表
- */
-removedPaths: string[];
-/**
- * 来源信息（从 lock file 读取，仅 Global）
- */
-source: string | null;
-/**
- * 来源类型
- */
-sourceType: string | null;
-/**
- * 错误信息
- */
-error: string | null }
+export type RecoveryAction = { resourceId: RecoveryResourceId; suggestedActionCode: SuggestedActionCode }
+export type RecoveryResourceId = string
+export type RecoveryResourceState = "needsAttention" | "consistentCanCleanup" | "environmentUnavailable" | "invalid" | "missing"
+export type RecoveryResourceStatus = { resourceId: RecoveryResourceId; state: RecoveryResourceState; revision: string; environment: EnvironmentRef | null; createdAtEpochMs: number; displayPaths: ResourceLocator[]; diagnostic: ErrorReport | null }
+export type RecoveryResourcesSnapshot = { maintenance: RuntimeMaintenanceStatus[]; resources: RecoveryResourceStatus[] }
+export type RemovePreview = { token: PreviewToken; context: ContextRef; skillName: string; canonical: ObservedEntryKind; physicalEntries: ObservedPhysicalEntry[] }
+export type RemoveRequest = { token: PreviewToken; context: ContextRef; skillName: string; selection: RemoveSelection }
+export type RemoveResponse = { units: MutationUnitResult[] }
+export type RemoveSelection = { removeCanonical: boolean; entryIds: ObservedEntryId[]; confirmEntityDirectories: boolean }
+export type ResolvedAgent = { definition: AgentDefinition; detection: DetectionState; detectionReason: DetectionReason | null; global: ResolvedAgentScope; project: ResolvedAgentScope }
+export type ResolvedAgentScope = { enabled: boolean; readsShared: boolean; sharedPath: string | null; privatePath: string | null; readPaths: string[]; sharedPresence: DirectoryPresenceState | null; privatePresence: DirectoryPresenceState | null; legacyPaths: ResolvedPathPresence[] }
+export type ResolvedPathPresence = { path: string | null; presence: DirectoryPresenceState }
+export type ResourceLocator = { environment: EnvironmentRef; nativePath: string }
 /**
  * 风险等级
  */
 export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical" | "unknown"
+export type RuntimeMaintenanceChanged = { status: RuntimeMaintenanceStatus }
+export type RuntimeMaintenanceState = "pending" | "ready" | "failed"
+export type RuntimeMaintenanceStatus = { environment: EnvironmentRef; state: RuntimeMaintenanceState; issues: MaintenanceIssueCode[] }
 /**
  * 安装范围
  */
 export type Scope = "global" | "project"
-/**
- * Skill 的 Agent 安装详情（用于智能删除对话框）
- */
-export type SkillAgentDetails = {
-/**
- * Skill 名称
- */
-skillName: string;
-/**
- * 安装范围
- */
-scope: Scope;
-/**
- * Canonical 目录路径
- */
-canonicalPath: string;
-/**
- * 自动读取 shared canonical 目录的 Agents（带显示名称）
- */
-automaticAgents: ([AgentType, string])[];
-/**
- * 有独立 symlink 或 copy 的 Agents
- */
-independentAgents: IndependentAgentInfo[];
-/**
- * 默认位置已生效的 Agents
- */
-defaultAvailableAgents?: AgentPresenceInfo[];
-/**
- * 需要单独适配但尚未安装私有目录的 Agents
- */
-privateRequiredAgents?: AgentPresenceInfo[];
-/**
- * 默认位置和私有目录都存在的重复副本 Agents
- */
-duplicateCopyAgents?: AgentPresenceInfo[];
-/**
- * 仅私有目录存在的 Agents
- */
-privateOnlyAgents?: AgentPresenceInfo[];
-/**
- * Eve root/subagent 具体目标。
- */
-eveTargets?: InstallTargetInfo[] }
+export type ScopeDefinition = { enabled: boolean; readsShared: boolean; privatePath: PathSpec | null }
+export type ScopeLocation = "shared" | "private" | "both"
 /**
  * Skill 审计数据
  */
@@ -913,46 +801,41 @@ projects?: string[];
  * Git 仓库拉取超时（秒）
  */
 gitCloneTimeoutSecs?: number; hiddenWslDistros?: string[]; lastSelectedEnvironment?: EnvironmentRef | null; lastConnectedWslUserByDistro?: Partial<{ [key in string]: string }> }
+export type SkillIdentity = { context: ContextRef; skillName: string }
 /**
  * Skill 范围
  */
 export type SkillScope = "global" | "project"
-/**
- * 更新检测结果
- */
-export type SkillUpdateCheckStatus = "update-available" | "up-to-date" | "cannot-check" | "deleted-upstream"
-export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; reason?: string | null; gitRef?: string | null; sourceUrl?: string | null; skillPath?: string | null }
+export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
+export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness }
+export type SourceUpdateCheckInfo = { source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"
-/**
- * agent 级更新结果
- */
-export type UpdateSkillAgentResult = { agent: string; targetId?: string | null; subagent?: string | null; status: UpdateSkillAgentStatus; mode?: InstallMode | null; error?: string | null; durationMs?: number | null }
-/**
- * 单个 agent 的更新状态
- */
-export type UpdateSkillAgentStatus = "success" | "failed" | "skipped"
-/**
- * skill 级更新结果
- */
-export type UpdateSkillItemResult = { name: string; status: UpdateSkillStatus; error?: string | null; reason?: string | null; source?: string | null; sourceUrl?: string | null; gitRef?: string | null; skillPath?: string | null; warnings?: string[]; durationMs?: number | null; agentResults?: UpdateSkillAgentResult[] }
-/**
- * 更新命令返回结果
- */
-export type UpdateSkillResponse = { results: UpdateSkillItemResult[]; summary: UpdateSkillSummary }
-/**
- * 单个 skill 的更新状态
- */
-export type UpdateSkillStatus = "success" | "partial" | "failed" | "skipped"
-/**
- * 更新汇总
- */
-export type UpdateSkillSummary = { total: number; succeeded: number; partial: number; failed: number; skipped: number }
+export type SuggestedActionCode = "reviewChanges" | "refresh" | "openRecoveryResource" | "saveDefaultsLater"
+export type UpdateCapabilityReasonCode = "missingRemoteHash" | "missingSource" | "unsupportedSource"
+export type UpdateCheckMode = "automatic" | "force"
+export type UpdateCheckReasonCode = "missingRemoteHash" | "missingSource" | "unsupportedSource" | "upstreamUnavailable" | "deletedUpstream"
+export type UpdateCheckRequest = { context: ContextRef; mode: UpdateCheckMode; selection: UpdateCheckSelection }
+export type UpdateCheckResponse = { sources: SourceUpdateCheckInfo[]; skills: SkillUpdateInfo[] }
+export type UpdateCheckSelection = { kind: "all" } | { kind: "skills"; skills: SkillIdentity[] }
+export type UpdateConflictCopyPreview = { entryId: ObservedEntryId; owners: ObservedEntryOwner[] }
+export type UpdateCoverage = { kind: "updated" } | { kind: "preservedConflicts" } | { kind: "notUpdated"; error: ErrorReport }
+export type UpdateExecutionRequest = { request: UpdateRequest; overwritePrivateEntries: ObservedEntryId[] }
+export type UpdateOutcome = "succeeded" | "partial" | "failed" | "cancelled"
+export type UpdatePreview = { token: PreviewToken; skills: UpdateSkillPreview[] }
+export type UpdateRequest = { context: ContextRef; skillNames: string[] }
+export type UpdateResponse = { sources: UpdateSourceResult[]; skills: UpdateSkillResult[]; outcome: UpdateOutcome }
+export type UpdateSkillPreview = { skillName: string; sourceDisplay: string; refDisplay: string; placementAgentIds: AgentId[]; capability: CheckUpdateCapability; cleanCopyCount: number; overwritePrivateEntries: UpdateConflictCopyPreview[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[] }
+export type UpdateSkillResult = { skillIdentity: SkillIdentity; sourceResultId: string; mutation: MutationUnitResult | null; coverage: UpdateCoverage; warnings: UpdateWarningCode[]; retryable: boolean }
+export type UpdateSourceResult = { id: string; source: string; status: UpdateSourceStatus; error: ErrorReport | null }
+export type UpdateSourceStatus = "acquired" | "failed"
+export type UpdateWarningCode = "preservedConflictingCopy"
 export type WslSession = { distroName: string; user: string; uid: number; home: string; xdgStateHome: string | null; configHome: string; environment: Partial<{ [key in string]: string }>; gitAvailable: boolean }
 
 /** tauri-specta globals **/
 
 import {
 	invoke as TAURI_INVOKE,
+	Channel as TAURI_CHANNEL,
 } from "@tauri-apps/api/core";
 import * as TAURI_API_EVENT from "@tauri-apps/api/event";
 import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
@@ -973,7 +856,7 @@ export type Result<T, E> =
 	| { status: "ok"; data: T }
 	| { status: "error"; error: E };
 
-export function __makeEvents__<T extends Record<string, any>>(
+function __makeEvents__<T extends Record<string, any>>(
 	mappings: Record<keyof T, string>,
 ) {
 	return new Proxy(

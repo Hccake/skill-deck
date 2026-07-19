@@ -3,6 +3,15 @@ import type { AppError, EnvironmentInfo, EnvironmentRef } from '@/bindings';
 import { environmentKey } from '@/stores/environment';
 import type { EnvironmentDiscoveryState } from '@/stores/environment';
 import { formatAppError } from '@/utils/format-app-error';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface EnvironmentSelectProps {
   environments: EnvironmentInfo[];
@@ -74,27 +83,33 @@ export function EnvironmentSelect({
   return (
     <div className="space-y-2">
       {showSelect ? (
-        <select
-          aria-label={t('context.environmentLabel')}
+        <Select
           value={environmentKey(value)}
-          onChange={(event) => handleChange(event.target.value)}
+          onValueChange={handleChange}
           disabled={disabled || pendingEnvironment !== null || selectedEntry?.status === 'connecting'}
-          aria-busy={pendingEnvironment !== null || selectedEntry?.status === 'connecting'}
-          className={className ?? 'h-9 w-full rounded-md border border-border/60 bg-background px-3 text-sm text-foreground'}
         >
-          {environments.map((entry) => {
-            const status = statusLabel(entry.status, t);
-            return (
-              <option
-                key={environmentKey(entry.environment)}
-                value={environmentKey(entry.environment)}
-                title={entry.displayName}
-              >
-                {status ? `${entry.displayName} · ${status}` : entry.displayName}
-              </option>
-            );
-          })}
-        </select>
+          <SelectTrigger
+            aria-label={t('context.environmentLabel')}
+            aria-busy={pendingEnvironment !== null || selectedEntry?.status === 'connecting'}
+            className={className ?? 'w-full'}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            {environments.map((entry) => {
+              const status = statusLabel(entry.status, t);
+              return (
+                <SelectItem
+                  key={environmentKey(entry.environment)}
+                  value={environmentKey(entry.environment)}
+                  title={entry.displayName}
+                >
+                  {status ? `${entry.displayName} · ${status}` : entry.displayName}
+                </SelectItem>
+              );
+            })}
+          </SelectContent>
+        </Select>
       ) : null}
 
       {pendingEntry ? (
@@ -102,37 +117,41 @@ export function EnvironmentSelect({
           {t('context.environmentConnectingTo', { environment: pendingEntry.displayName })}
         </div>
       ) : discoveryState === 'error' && discoveryError ? (
-        <div className="space-y-1 text-xs text-muted-foreground">
-          <div role="status" aria-live="polite" className="space-y-1">
-            <p>{t('context.environmentDiscoveryFailed')}</p>
-            <p className="text-[10px] opacity-80">{formatAppError(discoveryError, t)}</p>
-          </div>
+        <Alert role="status" aria-live="polite" className="py-2.5">
+          <AlertTitle>{t('context.environmentDiscoveryFailed')}</AlertTitle>
+          <AlertDescription>
+            <p className="text-xs">{formatAppError(discoveryError, t)}</p>
           {onRetryDiscovery ? (
-            <button
-              type="button"
-              className="text-primary hover:underline focus-visible:underline"
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-xs"
               onClick={() => void onRetryDiscovery()}
             >
               {t('context.environmentRetry')}
-            </button>
+            </Button>
           ) : null}
-        </div>
+          </AlertDescription>
+        </Alert>
       ) : failedEntry && connectionError ? (
-        <div className="space-y-1 text-xs text-muted-foreground">
-          <div role="status" aria-live="polite" className="space-y-1">
-            <p>{t('context.environmentConnectionFailed', { environment: failedEntry.displayName })}</p>
-            <p className="text-[10px] opacity-80">{formatAppError(connectionError, t)}</p>
-          </div>
+        <Alert role="status" aria-live="polite" className="py-2.5">
+          <AlertTitle>
+            {t('context.environmentConnectionFailed', { environment: failedEntry.displayName })}
+          </AlertTitle>
+          <AlertDescription>
+            <p className="text-xs">{formatAppError(connectionError, t)}</p>
           {onRetryConnection ? (
-            <button
-              type="button"
-              className="text-primary hover:underline focus-visible:underline"
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-xs"
               onClick={() => void onRetryConnection(failedEntry.environment)}
             >
               {t('context.environmentRetryNamed', { environment: failedEntry.displayName })}
-            </button>
+            </Button>
           ) : null}
-        </div>
+          </AlertDescription>
+        </Alert>
       ) : null}
     </div>
   );

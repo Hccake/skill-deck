@@ -16,16 +16,22 @@ const host: EnvironmentInfo = {
   environment: { kind: 'host' },
   displayName: 'Windows',
   status: 'available',
+  revision: 1,
+  error: null,
 };
 const ubuntu: EnvironmentInfo = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   displayName: 'Ubuntu',
   status: 'available',
+  revision: 1,
+  error: null,
 };
 const debian: EnvironmentInfo = {
   environment: { kind: 'wsl', distro_name: 'Debian' },
   displayName: 'Debian',
   status: 'available',
+  revision: 1,
+  error: null,
 };
 
 describe('useEnvironmentStore', () => {
@@ -33,6 +39,7 @@ describe('useEnvironmentStore', () => {
     vi.clearAllMocks();
     useEnvironmentStore.setState({
       environments: [],
+      runtimeByEnvironment: {},
       discoveryState: 'idle',
       discoveryError: null,
       errorsByEnvironment: {},
@@ -101,7 +108,7 @@ describe('useEnvironmentStore', () => {
     await expect(useEnvironmentStore.getState().connect(ubuntu.environment)).rejects.toEqual(error);
 
     expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({
-      'wsl:Ubuntu': error,
+      'wsl:ubuntu': error,
     });
     expect(useEnvironmentStore.getState().environments[0]).toEqual(host);
     expect(useEnvironmentStore.getState().environments[1].status).toBe('unavailable');
@@ -113,6 +120,7 @@ describe('useEnvironmentStore', () => {
       data: { environment: ubuntu.environment, message: 'distribution stopped' },
     };
     const event: EnvironmentRuntimeEvent = {
+      revision: 2,
       environment: ubuntu.environment,
       status: 'unavailable',
       error,
@@ -123,11 +131,11 @@ describe('useEnvironmentStore', () => {
 
     expect(useEnvironmentStore.getState().environments).toEqual([
       host,
-      { ...ubuntu, status: 'unavailable' },
+      { ...ubuntu, status: 'unavailable', revision: 2, error },
       debian,
     ]);
     expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({
-      'wsl:Ubuntu': error,
+      'wsl:ubuntu': error,
     });
   });
 
@@ -143,28 +151,34 @@ describe('useEnvironmentStore', () => {
     useEnvironmentStore.setState({
       environments: [host, { ...ubuntu, status: 'unavailable' }, debian],
       errorsByEnvironment: {
-        'wsl:Ubuntu': ubuntuError,
+        'wsl:ubuntu': ubuntuError,
         'wsl:Debian': debianError,
       },
     });
 
     useEnvironmentStore.getState().applyRuntimeEvent({
+      revision: 2,
       environment: ubuntu.environment,
       status: 'available',
       error: null,
     });
 
-    expect(useEnvironmentStore.getState().environments).toEqual([host, ubuntu, debian]);
+    expect(useEnvironmentStore.getState().environments).toEqual([
+      host,
+      { ...ubuntu, revision: 2 },
+      debian,
+    ]);
     expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({
-      'wsl:Ubuntu': null,
+        'wsl:ubuntu': null,
       'wsl:Debian': debianError,
     });
   });
 
-  it('ignores runtime events for distributions not returned by discovery', () => {
+  it('retains runtime events that arrive before a distribution appears in discovery', () => {
     useEnvironmentStore.setState({ environments: [host, ubuntu] });
 
     useEnvironmentStore.getState().applyRuntimeEvent({
+      revision: 2,
       environment: debian.environment,
       status: 'unavailable',
       error: {
@@ -174,6 +188,7 @@ describe('useEnvironmentStore', () => {
     });
 
     expect(useEnvironmentStore.getState().environments).toEqual([host, ubuntu]);
-    expect(useEnvironmentStore.getState().errorsByEnvironment).toEqual({});
+    expect(useEnvironmentStore.getState().errorsByEnvironment['wsl:debian']?.kind)
+      .toBe('environmentUnavailable');
   });
 });

@@ -3,7 +3,7 @@ import type { ContextRef, EnvironmentRef } from '@/bindings';
 export function environmentKey(environment: EnvironmentRef): string {
   return environment.kind === 'host'
     ? 'host'
-    : `wsl:${encodeURIComponent(environment.distro_name)}`;
+    : `wsl:${encodeURIComponent(environment.distro_name.toLocaleLowerCase('en-US'))}`;
 }
 
 export function contextKey(context: ContextRef): string {

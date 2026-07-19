@@ -56,7 +56,7 @@ vi.mock('@/hooks/useMutationMonitor', () => ({
 
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: { kind: string; distro_name?: string }) => (
-    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
+    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`
   ),
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector(mocks.environmentState),
 }));
@@ -80,9 +80,11 @@ describe('MutationStatusBar', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       displayName: 'Ubuntu 24.04',
       status: 'available',
+      revision: 1,
+      error: null,
     }];
     mocks.projectState.projectsByEnvironment = {
-      'wsl:Ubuntu': [{
+      'wsl:ubuntu': [{
         binding: {
           id: 'project-1',
           nativePath: '/home/user/cgp-be',

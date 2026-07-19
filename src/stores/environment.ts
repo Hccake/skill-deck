@@ -15,6 +15,7 @@ export type EnvironmentDiscoveryState = 'idle' | 'loading' | 'ready' | 'error';
 
 interface EnvironmentState {
   environments: EnvironmentInfo[];
+  runtimeByEnvironment: Record<string, EnvironmentInfo>;
   discoveryState: EnvironmentDiscoveryState;
   discoveryError: AppError | null;
   errorsByEnvironment: Record<string, AppError | null>;
@@ -34,22 +35,56 @@ function updateEnvironment(
   ));
 }
 
+function newerEnvironment(current: EnvironmentInfo | undefined, candidate: EnvironmentInfo) {
+  return !current || candidate.revision > current.revision ? candidate : current;
+}
+
+function runtimeInfo(event: EnvironmentRuntimeEvent, previous?: EnvironmentInfo): EnvironmentInfo {
+  return {
+    environment: event.environment,
+    displayName: previous?.displayName
+      ?? (event.environment.kind === 'host' ? 'Host' : event.environment.distro_name),
+    status: event.status,
+    revision: event.revision,
+    error: event.error,
+  };
+}
+
+let discoveryGeneration = 0;
+
 export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
   environments: [],
+  runtimeByEnvironment: {},
   discoveryState: 'idle',
   discoveryError: null,
   errorsByEnvironment: {},
 
   discover: async () => {
+    const requestId = ++discoveryGeneration;
     set({ discoveryState: 'loading', discoveryError: null });
     try {
       const snapshot = await listEnvironments();
-      set({
-        environments: snapshot.environments,
-        discoveryState: snapshot.error ? 'error' : 'ready',
-        discoveryError: snapshot.error,
+      if (requestId !== discoveryGeneration) return;
+      set((state) => {
+        const runtimeByEnvironment = { ...state.runtimeByEnvironment };
+        const environments = snapshot.environments.map((entry) => {
+          const key = environmentKey(entry.environment);
+          const merged = newerEnvironment(runtimeByEnvironment[key], entry);
+          runtimeByEnvironment[key] = merged;
+          return merged;
+        });
+        return {
+          environments,
+          runtimeByEnvironment,
+          errorsByEnvironment: Object.fromEntries(
+            environments.map((entry) => [environmentKey(entry.environment), entry.error]),
+          ),
+          discoveryState: snapshot.error ? 'error' : 'ready',
+          discoveryError: snapshot.error,
+        };
       });
     } catch (error) {
+      if (requestId !== discoveryGeneration) return;
       set({
         discoveryState: 'error',
         discoveryError: toAppError(error),
@@ -63,6 +98,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
     set((state) => ({
       environments: updateEnvironment(state.environments, environment, {
         status: environment.kind === 'host' ? 'available' : 'connecting',
+        error: null,
       }),
       errorsByEnvironment: {
         ...state.errorsByEnvironment,
@@ -76,6 +112,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
       set((state) => ({
         environments: updateEnvironment(state.environments, environment, {
           status: 'available',
+          error: null,
         }),
       }));
     } catch (error) {
@@ -83,6 +120,7 @@ export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
       set((state) => ({
         environments: updateEnvironment(state.environments, environment, {
           status: 'unavailable',
+          error: appError,
         }),
         errorsByEnvironment: {
           ...state.errorsByEnvironment,
@@ -96,18 +134,22 @@ export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
   applyRuntimeEvent: (event) => {
     const key = environmentKey(event.environment);
     set((state) => {
-      const discovered = state.environments.some(
-        (entry) => environmentKey(entry.environment) === key,
-      );
-      if (!discovered) return state;
+      const current = state.runtimeByEnvironment[key]
+        ?? state.environments.find((entry) => environmentKey(entry.environment) === key);
+      if (current && event.revision <= current.revision) return state;
+      const next = runtimeInfo(event, current);
+      const discovered = state.environments.some((entry) => (
+        environmentKey(entry.environment) === key
+      ));
 
       return {
-        environments: updateEnvironment(state.environments, event.environment, {
-          status: event.status,
-        }),
+        runtimeByEnvironment: { ...state.runtimeByEnvironment, [key]: next },
+        environments: discovered
+          ? updateEnvironment(state.environments, event.environment, next)
+          : state.environments,
         errorsByEnvironment: {
           ...state.errorsByEnvironment,
-          [key]: event.status === 'available' ? null : event.error,
+          [key]: event.error,
         },
       };
     });

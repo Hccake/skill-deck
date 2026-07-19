@@ -14,12 +14,12 @@ const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu 24.04/dev' };
 describe('context identity', () => {
   it('builds stable encoded environment and context keys', () => {
     expect(environmentKey(host)).toBe('host');
-    expect(environmentKey(ubuntu)).toBe('wsl:Ubuntu%2024.04%2Fdev');
+    expect(environmentKey(ubuntu)).toBe('wsl:ubuntu%2024.04%2Fdev');
     expect(contextKey(globalContext(host))).toBe('host/global');
     expect(contextKey({
       environment: ubuntu,
       scope: { scope: 'project', project_id: 'team/app:frontend' },
-    })).toBe('wsl:Ubuntu%2024.04%2Fdev/project:team%2Fapp%3Afrontend');
+    })).toBe('wsl:ubuntu%2024.04%2Fdev/project:team%2Fapp%3Afrontend');
   });
 
   it('constructs a global context without changing the environment identity', () => {
@@ -42,5 +42,13 @@ describe('context identity', () => {
       scope: { scope: 'project', project_id: 'project-a' },
     })).toBe(true);
     expect(sameContext(project, globalContext(ubuntu))).toBe(false);
+  });
+
+  it('normalizes WSL distro casing without changing the display name', () => {
+    const lowercase = { kind: 'wsl' as const, distro_name: 'ubuntu 24.04/dev' };
+
+    expect(environmentKey(ubuntu)).toBe('wsl:ubuntu%2024.04%2Fdev');
+    expect(sameEnvironment(ubuntu, lowercase)).toBe(true);
+    expect(globalContext(ubuntu).environment).toEqual(ubuntu);
   });
 });

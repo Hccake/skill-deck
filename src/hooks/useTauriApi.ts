@@ -1,31 +1,58 @@
 // src/hooks/useTauriApi.ts
 // 使用 tauri-specta 生成的类型安全绑定
 import { commands } from '@/bindings';
+import { Channel } from '@tauri-apps/api/core';
 import type {
-  AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult,
-  SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode,
-  InstallParams, InstallResults, SkillDeckConfig,
-  SkillAuditData, SkillAgentDetails, ManageAgentsResult, DuplicateCleanupResult,
-  CopySkillResult, CopyProjectResult,
+  AgentId, AgentRuntimeSnapshot, AgentSelectionGroups, ListSkillsResult, SkillScope,
+  SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
+  SkillAuditData, DuplicateCleanupResult,
   InstallRiskPolicy, InstallRiskKind,
   DefaultTargetAgents,
   InstallTargetInfo,
-  InstallTargetSpec,
+  AgentDeleteImpact,
+  AgentDeleteResult,
+  AgentOperationWarning,
+  AgentSettingsSnapshot,
+  CustomAgentDefinition,
+  CustomAgentDraftValidation,
   AddProjectResult, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo, EnvironmentRef,
-  MutationSnapshot,
+  BackendActivitySnapshot, MutationSnapshot,
   ProjectBinding, ProjectInfo, WslSession, ActiveMutation,
+  SkillIdentity,
+  InstallRequest, InstallPreview, InstallResponse, PreviewToken,
+  RemovePreview, RemoveRequest, RemoveResponse,
+  UpdateCheckRequest, UpdateCheckResponse,
+  UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
+  ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
+  CopyRequest, CopyPreview, CopyExecutionRequest, CopyResponse,
+  ConfigResourceKind,
+  AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
+  AgentConfigurationOutcome,
+  RecoveryResourceId, RecoveryResourceStatus, RecoveryResourcesSnapshot,
+  RuntimeMaintenanceStatus,
+  ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
 } from '@/bindings';
 
 export type {
-  AgentInfo, AgentType, ListSkillsResult, SkillScope, RemoveResult,
-  SkillUpdateInfo, UpdateSkillResponse, FetchResult, InstallMode,
-  InstallParams, InstallResults, SkillDeckConfig,
-  SkillAuditData, SkillAgentDetails, ManageAgentsResult, DuplicateCleanupResult,
-  CopySkillResult, CopyProjectResult,
+  AgentId, AgentRuntimeSnapshot, ListSkillsResult, SkillScope,
+  SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
+  SkillAuditData, DuplicateCleanupResult,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
-  InstallTargetInfo, InstallTargetSpec, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
-  EnvironmentRef, AddProjectResult, MutationSnapshot, ProjectBinding, ProjectInfo, WslSession,
-  ActiveMutation,
+  InstallTargetInfo, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
+  EnvironmentRef, AddProjectResult, BackendActivitySnapshot, MutationSnapshot, ProjectBinding, ProjectInfo, WslSession,
+  ActiveMutation, AgentDeleteImpact, AgentDeleteResult, AgentOperationWarning,
+  AgentSettingsSnapshot, CustomAgentDefinition, CustomAgentDraftValidation,
+  SkillIdentity, InstallRequest, InstallPreview, InstallResponse, PreviewToken,
+  RemovePreview, RemoveRequest, RemoveResponse,
+  UpdateCheckRequest, UpdateCheckResponse,
+  UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
+  ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
+  CopyRequest, CopyPreview, CopyExecutionRequest, CopyResponse,
+  ConfigResourceKind,
+  AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
+  AgentConfigurationOutcome,
+  RecoveryResourceId, RecoveryResourceStatus, RecoveryResourcesSnapshot, RuntimeMaintenanceStatus,
+  ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -38,8 +65,117 @@ function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; err
  * 列出所有 Agents（包括未安装的）
  * 返回完整信息供前端使用，前端无需额外计算
  */
-export async function listAgents(context: ContextRef): Promise<AgentInfo[]> {
+export async function listAgents(context: ContextRef): Promise<AgentRuntimeSnapshot> {
   return unwrap(await commands.listAgents(context));
+}
+
+export async function listAgentSelectionGroups(context: ContextRef): Promise<AgentSelectionGroups> {
+  return unwrap(await commands.listAgentSelectionGroups(context));
+}
+
+export async function getAgentSettingsSnapshot(
+  context: ContextRef,
+): Promise<AgentSettingsSnapshot> {
+  return commands.getAgentSettingsSnapshot(context);
+}
+
+export async function validateCustomAgentDraft(
+  context: ContextRef,
+  draft: CustomAgentDefinition,
+): Promise<CustomAgentDraftValidation> {
+  return unwrap(await commands.validateCustomAgentDraft(context, draft));
+}
+
+export async function saveCustomAgent(
+  context: ContextRef,
+  draft: CustomAgentDefinition,
+  expectedRegistryRevision: string,
+): Promise<AgentSettingsSnapshot> {
+  return unwrap(await commands.saveCustomAgent(context, draft, expectedRegistryRevision));
+}
+
+export async function duplicateCustomAgentDraft(
+  sourceId: AgentId,
+  newId: AgentId,
+): Promise<CustomAgentDefinition> {
+  return unwrap(await commands.duplicateCustomAgentDraft(sourceId, newId));
+}
+
+export async function previewCustomAgentDelete(
+  context: ContextRef,
+  id: AgentId,
+  expectedRegistryRevision: string,
+): Promise<AgentDeleteImpact> {
+  return unwrap(await commands.previewCustomAgentDelete(context, id, expectedRegistryRevision));
+}
+
+export async function deleteCustomAgent(
+  context: ContextRef,
+  id: AgentId,
+  expectedRegistryRevision: string,
+): Promise<AgentDeleteResult> {
+  return unwrap(await commands.deleteCustomAgent(context, id, expectedRegistryRevision));
+}
+
+export async function deleteInvalidCustomAgent(
+  context: ContextRef,
+  index: number,
+  expectedRegistryRevision: string,
+): Promise<AgentDeleteResult> {
+  return unwrap(await commands.deleteInvalidCustomAgent(context, index, expectedRegistryRevision));
+}
+
+export async function requestAgentConfiguration(
+  agentId: AgentId,
+): Promise<void> {
+  unwrap(await commands.requestAgentConfiguration(agentId));
+}
+
+export async function completeAgentConfiguration(
+  agentId: AgentId,
+  outcome: AgentConfigurationOutcome,
+): Promise<void> {
+  unwrap(await commands.completeAgentConfiguration(agentId, outcome));
+}
+
+export async function getRecoveryResourceStatus(
+  resourceId: RecoveryResourceId,
+): Promise<RecoveryResourceStatus> {
+  return unwrap(await commands.getRecoveryResourceStatus(resourceId));
+}
+
+export async function listRecoveryResources(): Promise<RecoveryResourcesSnapshot> {
+  return unwrap(await commands.listRecoveryResources());
+}
+
+export async function retryRuntimeMaintenance(
+  environment: EnvironmentRef,
+): Promise<RuntimeMaintenanceStatus> {
+  return unwrap(await commands.retryRuntimeMaintenance(environment));
+}
+
+export async function confirmRecoveryResourceResolved(
+  resourceId: RecoveryResourceId,
+  expectedRevision: string,
+): Promise<void> {
+  unwrap(await commands.confirmRecoveryResourceResolved(resourceId, expectedRevision));
+}
+
+export async function openRecoveryResource(resourceId: RecoveryResourceId): Promise<void> {
+  unwrap(await commands.openRecoveryResource(resourceId));
+}
+
+export async function checkApplicationUpdate(): Promise<ApplicationUpdateInfo | null> {
+  return unwrap(await commands.checkApplicationUpdate());
+}
+
+export async function downloadAndInstallApplicationUpdate(
+  expectedVersion: string,
+  onProgress: (event: ApplicationUpdateProgress) => void,
+): Promise<ApplicationUpdateResult> {
+  const progress = new Channel<ApplicationUpdateProgress>();
+  progress.onmessage = onProgress;
+  return unwrap(await commands.downloadAndInstallApplicationUpdate(expectedVersion, progress));
 }
 
 /**
@@ -61,10 +197,9 @@ export async function listSkills(context: ContextRef): Promise<ListSkillsResult>
  * Takes the skill's canonical directory path.
  */
 export async function readSkillContent(
-  context: ContextRef,
-  canonicalPath: string,
+  identity: SkillIdentity,
 ): Promise<string> {
-  return unwrap(await commands.readSkillContent(context, canonicalPath));
+  return unwrap(await commands.readSkillContent(identity));
 }
 
 // ============ 配置相关 API ============
@@ -100,8 +235,13 @@ export async function getDefaultTargetAgents(
 export async function saveDefaultTargetAgents(
   context: ContextRef,
   defaults: DefaultTargetAgents,
+  expectedRegistryRevision: string,
 ): Promise<void> {
-  unwrap(await commands.saveDefaultTargetAgents(context, defaults));
+  unwrap(await commands.saveDefaultTargetAgents(
+    context,
+    defaults,
+    expectedRegistryRevision,
+  ));
 }
 
 // ============ 安装相关 API ============
@@ -116,33 +256,24 @@ export async function fetchAvailable(
   return unwrap(await commands.fetchAvailable(context, source));
 }
 
+export async function acquireSelectedPayloads(
+  request: AcquireSelectedPayloadsRequest,
+): Promise<AcquiredPayloadHandle[]> {
+  return unwrap(await commands.acquireSelectedPayloads(request));
+}
+
+export async function previewInstall(request: InstallRequest): Promise<InstallPreview> {
+  return unwrap(await commands.previewInstall(request));
+}
+
 /**
  * 安装选中的 skills
  */
 export async function installSkills(
-  context: ContextRef,
-  params: InstallParams,
-): Promise<InstallResults> {
-  return unwrap(await commands.installSkills(context, params));
-}
-
-/**
- * 检测覆盖情况
- */
-export async function checkOverwrites(
-  context: ContextRef,
-  skills: string[],
-  agents: string[],
-  privateCopyAgents: string[] = [],
-  agentTargets: InstallTargetSpec[] = [],
-): Promise<Partial<Record<string, string[]>>> {
-  return unwrap(await commands.checkOverwrites(
-    context,
-    skills,
-    agents,
-    privateCopyAgents,
-    agentTargets,
-  ));
+  request: InstallRequest,
+  expectedToken: PreviewToken,
+): Promise<InstallResponse> {
+  return unwrap(await commands.installSkills(request, expectedToken));
 }
 
 // ============ 删除相关 API ============
@@ -152,39 +283,26 @@ export async function checkOverwrites(
  * @param params.fullRemoval - true=完全删除，false=部分移除（仅删除指定 agents 的 symlink）
  * @param params.agents - 部分移除时指定的 agent 列表
  */
-export async function removeSkill(
+export async function previewRemove(
   context: ContextRef,
-  params: {
-    name: string;
-    agents?: AgentType[];
-    fullRemoval?: boolean;
-    agentTargets?: InstallTargetSpec[];
-  },
-): Promise<RemoveResult> {
-  return unwrap(await commands.removeSkill(
-    context,
-    params.name,
-    params.agents ?? null,
-    params.fullRemoval ?? null,
-    params.agentTargets ?? null,
-  ));
+  skillName: string,
+): Promise<RemovePreview> {
+  return unwrap(await commands.previewRemove(context, skillName));
 }
 
-/**
- * 查询 skill 的 agent 安装详情（智能删除对话框用）
- */
-export async function getSkillAgentDetails(
-  context: ContextRef,
-  name: string,
-): Promise<SkillAgentDetails> {
-  return unwrap(await commands.getSkillAgentDetails(context, name));
+export async function removeSkill(request: RemoveRequest): Promise<RemoveResponse> {
+  return unwrap(await commands.removeSkill(request));
 }
 
-/**
- * 在系统文件管理器中打开路径
- */
-export async function openInExplorer(path: string): Promise<void> {
-  unwrap(await commands.openInExplorer(path));
+export async function openSkillResource(identity: SkillIdentity): Promise<void> {
+  unwrap(await commands.openSkillResource(identity));
+}
+
+export async function openConfigResource(
+  context: ContextRef,
+  kind: ConfigResourceKind,
+): Promise<void> {
+  unwrap(await commands.openConfigResource(context, kind));
 }
 
 // ============ Environment / mutation API ============
@@ -240,6 +358,10 @@ export async function retryHostProjectMigration(): Promise<ProjectInfo[]> {
   return unwrap(await commands.retryHostProjectMigration());
 }
 
+export async function getBackendActivity(): Promise<BackendActivitySnapshot> {
+  return await commands.getBackendActivity();
+}
+
 export async function getActiveMutation(): Promise<MutationSnapshot> {
   return await commands.getActiveMutation();
 }
@@ -253,28 +375,32 @@ export async function requestCancelActiveMutation(): Promise<boolean> {
 /**
  * 检测指定 scope 的 skills 是否有更新
  */
-export async function checkUpdates(context: ContextRef): Promise<SkillUpdateInfo[]> {
-  return unwrap(await commands.checkUpdates(context));
+export async function checkUpdates(request: UpdateCheckRequest): Promise<UpdateCheckResponse> {
+  return unwrap(await commands.checkUpdates(request));
+}
+
+export async function previewUpdate(request: UpdateRequest): Promise<UpdatePreview> {
+  return unwrap(await commands.previewUpdate(request));
 }
 
 /**
  * 更新指定 skill
  */
 export async function updateSkill(
-  context: ContextRef,
-  name: string,
-): Promise<UpdateSkillResponse> {
-  return unwrap(await commands.updateSkill(context, name));
+  execution: UpdateExecutionRequest,
+  expectedToken: PreviewToken,
+): Promise<UpdateResponse> {
+  return unwrap(await commands.updateSkill(execution, expectedToken));
 }
 
 /**
  * 批量更新多个 skills（同源 clone 合并）
  */
 export async function updateSkillsBatch(
-  context: ContextRef,
-  names: string[],
-): Promise<UpdateSkillResponse> {
-  return unwrap(await commands.updateSkillsBatch(context, names));
+  execution: UpdateExecutionRequest,
+  expectedToken: PreviewToken,
+): Promise<UpdateResponse> {
+  return unwrap(await commands.updateSkillsBatch(execution, expectedToken));
 }
 
 // ============ 安全审计 API ============
@@ -318,29 +444,21 @@ export async function openInstallWizard(params: {
 /**
  * 管理 skill 的 agent 支持（添加/移除）
  */
+export async function previewManageSkillAgents(
+  request: ManageAgentsPreviewRequest,
+): Promise<ManageAgentsPreview> {
+  return unwrap(await commands.previewManageSkillAgents(request));
+}
+
 export async function manageSkillAgents(
-  context: ContextRef,
-  params: {
-    skillName: string;
-    addAgents: AgentType[];
-    removeAgents: AgentType[];
-    privateCopyAgents?: AgentType[];
-    mode: InstallMode;
-  },
-): Promise<ManageAgentsResult> {
-  return unwrap(await commands.manageSkillAgents(
-    context,
-    params.skillName,
-    params.addAgents,
-    params.removeAgents,
-    params.privateCopyAgents ?? [],
-    params.mode,
-  ));
+  request: ManageAgentsRequest,
+): Promise<ManageAgentsResponse> {
+  return unwrap(await commands.manageSkillAgents(request));
 }
 
 export async function cleanupDuplicateAgentCopies(
   context: ContextRef,
-  params: { skillName: string; agents: AgentType[] },
+  params: { skillName: string; agents: AgentId[] },
 ): Promise<DuplicateCleanupResult[]> {
   return unwrap(await commands.cleanupDuplicateAgentCopies(
     context,
@@ -354,18 +472,10 @@ export async function cleanupDuplicateAgentCopies(
 /**
  * 复制项目级 skill 到其他项目
  */
-export async function copySkillToProjects(params: {
-  skillName: string;
-  source: ContextRef;
-  targets: ContextRef[];
-  agents: string[];
-  privateCopyAgents?: string[];
-}): Promise<CopySkillResult> {
-  return unwrap(await commands.copySkillToProjects(
-    params.skillName,
-    params.source,
-    params.targets,
-    params.agents,
-    params.privateCopyAgents ?? [],
-  ));
+export async function previewCopySkillToProjects(request: CopyRequest): Promise<CopyPreview> {
+  return unwrap(await commands.previewCopySkillToProjects(request));
+}
+
+export async function copySkillToProjects(request: CopyExecutionRequest): Promise<CopyResponse> {
+  return unwrap(await commands.copySkillToProjects(request));
 }
