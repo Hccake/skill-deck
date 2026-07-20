@@ -1,5 +1,5 @@
 // src/components/skills/add-skill/SourceStep.tsx
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { Info } from 'lucide-react';
@@ -28,6 +28,10 @@ interface CloneProgress {
   message: string | null;
 }
 
+interface CloneProgressEvent extends CloneProgress {
+  operation_id: string;
+}
+
 interface SourceStepProps {
   state: WizardState;
   updateState: (updates: Partial<WizardState>) => void;
@@ -38,6 +42,7 @@ interface SourceStepProps {
 export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStepProps) {
   const { t } = useTranslation();
   const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
+  const currentOperationIdRef = useRef<string | null>(null);
 
   // 已安装 skill key 集合（用于 SkillSearch 组件）
   const globalKey = contextKey(globalContext(state.context.environment));
@@ -57,11 +62,18 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
 
   // 监听克隆进度事件
   useEffect(() => {
-    const unlisten = listen<CloneProgress>('clone-progress', (event) => {
-      setCloneProgress(event.payload);
+    const unlisten = listen<CloneProgressEvent>('clone-progress', (event) => {
+      if (event.payload.operation_id !== currentOperationIdRef.current) return;
+      setCloneProgress({
+        phase: event.payload.phase,
+        elapsed_secs: event.payload.elapsed_secs,
+        timeout_secs: event.payload.timeout_secs,
+        message: event.payload.message,
+      });
     });
 
     return () => {
+      currentOperationIdRef.current = null;
       unlisten.then((fn) => fn());
     };
   }, []);
@@ -69,6 +81,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   // 核心 fetch 逻辑，接受 source 参数
   const handleFetchWithSource = useCallback(async (source: string) => {
     if (!source.trim()) {
+      currentOperationIdRef.current = null;
+      setCloneProgress(null);
       updateState({
         fetchStatus: 'error',
         fetchError: { kind: 'custom', data: { message: t('addSkill.source.error.empty') } },
@@ -78,6 +92,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
 
     updateState({ fetchStatus: 'loading', fetchError: null });
     setCloneProgress(null);
+    const operationId = crypto.randomUUID();
+    currentOperationIdRef.current = operationId;
 
     try {
       // 解析 CLI 命令（如 npx skills add repo --skill x -a y）
@@ -85,6 +101,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       const actualSource = parsed.isCommand ? parsed.source : source.trim();
 
       if (!actualSource) {
+        currentOperationIdRef.current = null;
         updateState({
           fetchStatus: 'error',
           fetchError: { kind: 'custom', data: { message: t('addSkill.source.error.empty') } },
@@ -92,7 +109,9 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         return;
       }
 
-      const result = await fetchAvailable(state.context, actualSource);
+      const result = await fetchAvailable(state.context, actualSource, operationId);
+
+      if (currentOperationIdRef.current !== operationId) return;
 
       if (result.skills.length === 0) {
         updateState({
@@ -121,9 +140,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         skillFilter: result.skillFilter,
         gitRef: result.gitRef ?? null,
         discoverySession: result.discoverySession,
-        acquiredPayloads: undefined,
-        installRequest: undefined,
-        installPreview: undefined,
+        preparation: { status: 'idle' },
         riskPolicy: result.riskPolicy ?? null,
         riskAcknowledged: false,
         preSelectedSkills: parsed.skills,
@@ -133,15 +150,14 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       // 自动进入下一步
       onNext();
     } catch (error) {
+      if (currentOperationIdRef.current !== operationId) return;
       updateState({
         fetchStatus: 'error',
         fetchError: toAppError(error),
         riskPolicy: null,
         riskAcknowledged: false,
         discoverySession: undefined,
-        acquiredPayloads: undefined,
-        installRequest: undefined,
-        installPreview: undefined,
+        preparation: { status: 'idle' },
       });
     }
   }, [updateState, onNext, state.context, t]);

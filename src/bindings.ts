@@ -137,9 +137,9 @@ async saveDefaultTargetAgents(context: ContextRef, defaults: DefaultTargetAgents
     else return { status: "error", error: e  as any };
 }
 },
-async fetchAvailable(context: ContextRef, source: string) : Promise<Result<FetchResult, AppError>> {
+async fetchAvailable(context: ContextRef, source: string, operationId: string) : Promise<Result<FetchResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fetch_available", { context, source }) };
+    return { status: "ok", data: await TAURI_INVOKE("fetch_available", { context, source, operationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

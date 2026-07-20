@@ -3,12 +3,9 @@
 import type {
   AgentId,
   AppError,
-  AcquiredPayloadHandle,
   AvailableSkill,
   DiscoverySessionHandle,
   InstallMode,
-  InstallPreview,
-  InstallRequest,
   InstallResponse,
   InstallTargetInfo,
   ContextRef,
@@ -16,6 +13,9 @@ import type {
 } from '@/bindings';
 import type { AdapterTargetSelection } from '@/lib/install-workflow';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
+import type {
+  InstallPreparationOutcome,
+} from '@/workflows/skill-install-preparation';
 import { agentId } from '@/lib/agents';
 import { getAgentInstallPath, isAutomaticAgent, isAdditionalAgent, type InstallScope } from '@/lib/agentTargets';
 
@@ -25,6 +25,10 @@ export interface InstallError {
   details?: string;
   suggestions?: string[];
 }
+
+export type InstallPreparationState =
+  | { status: 'idle' | 'preparing' }
+  | InstallPreparationOutcome;
 
 /** 安装入口类型 */
 export type EntryPoint = 'skills-panel' | 'discovery';
@@ -107,8 +111,8 @@ export interface WizardState {
   selectedAgents: AgentId[];
   privateCopyAgents: AgentId[];
   allAgents: ResolvedAgent[];
-  availableAgentTargets?: InstallTargetInfo[];
-  selectedAgentTargets?: AdapterTargetSelection[];
+  availableAgentTargets: InstallTargetInfo[];
+  selectedAgentTargets: AdapterTargetSelection[];
   mode: InstallMode;
   otherAgentsExpanded: boolean;
   privateCopyAgentsExpanded: boolean;
@@ -116,10 +120,7 @@ export interface WizardState {
 
   // Confirm
   overwrites: Record<string, string[]>;
-  confirmReady: boolean;
-  acquiredPayloads?: AcquiredPayloadHandle[];
-  installRequest?: InstallRequest;
-  installPreview?: InstallPreview;
+  preparation: InstallPreparationState;
 
   // CLI 预填值
   preSelectedSkills: string[];
@@ -145,7 +146,7 @@ export function canProceedForStep(state: WizardState): boolean {
       return state.preSelectedAgents.every((preselectedId) =>
         state.allAgents.some((agent) => agentId(agent) === preselectedId));
     case 'confirm':
-      return state.confirmReady
+      return state.preparation.status === 'ready'
         && (state.riskPolicy?.kind !== 'require-confirmation' || state.riskAcknowledged);
     default:
       return false;

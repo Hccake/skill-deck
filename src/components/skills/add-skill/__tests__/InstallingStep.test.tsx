@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installSkills } from '@/hooks/useTauriApi';
 import type { WizardState } from '../types';
 import { InstallingStep } from '../InstallingStep';
+import type { PreparedInstall } from '@/workflows/skill-install-preparation';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -29,7 +30,42 @@ vi.mock('@/utils/cross-storage-guidance', () => ({
 
 const installSkillsMock = vi.mocked(installSkills);
 
-function makeState(): WizardState {
+function makePreparedInstall(): PreparedInstall {
+  const request = {
+    context: {
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'eve-app' },
+    },
+    source: 'owner/repo',
+    discoverySession: {
+      sessionId: 'discovery-1',
+      environment: { kind: 'host' },
+      sourceFingerprint: 'source-1',
+      expiresAtEpochMs: 1000,
+    },
+    payloads: [],
+    skills: ['demo'],
+    agentIntents: [{
+      agentId: 'eve',
+      privateEntry: 'none',
+      adapterTargets: ['eve:root', 'eve:research'],
+    }],
+    requestedMode: 'copy',
+    acknowledgeRisk: false,
+  } as never;
+  const preview = {
+    token: {
+      generation: 'preview-1',
+      registryRevision: 'registry-1',
+      environmentRevision: 'environment-1',
+      contextRevision: 'context-1',
+    },
+    skills: [],
+  } as never;
+  return { request, preview };
+}
+
+function makeState(prepared = makePreparedInstall()): WizardState {
   return {
     step: 'installing',
     entryPoint: 'skills-panel',
@@ -61,41 +97,10 @@ function makeState(): WizardState {
     privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
-    confirmReady: true,
+    preparation: { status: 'ready', prepared },
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
-    installRequest: {
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'eve-app' },
-      },
-      source: 'owner/repo',
-      discoverySession: {
-        sessionId: 'discovery-1',
-        environment: { kind: 'host' },
-        sourceFingerprint: 'source-1',
-        expiresAtEpochMs: 1000,
-      },
-      payloads: [],
-      skills: ['demo'],
-      agentIntents: [{
-        agentId: 'eve',
-        privateEntry: 'none',
-        adapterTargets: ['eve:root', 'eve:research'],
-      }],
-      requestedMode: 'copy',
-      acknowledgeRisk: false,
-    },
-    installPreview: {
-      token: {
-        generation: 'preview-1',
-        registryRevision: 'registry-1',
-        environmentRevision: 'environment-1',
-        contextRevision: 'context-1',
-      },
-      skills: [],
-    },
     retrySkillName: undefined,
     retryAgents: undefined,
     retryAgentTargets: undefined,
@@ -108,9 +113,11 @@ describe('InstallingStep', () => {
   });
 
   it('executes the exact request and token accepted on the confirmation step', async () => {
+    const prepared = makePreparedInstall();
     render(
       <InstallingStep
-        state={makeState()}
+        state={makeState(prepared)}
+        prepared={prepared}
         updateState={() => undefined}
         scope="project"
         projectPath="/projects/eve-app"
@@ -119,20 +126,22 @@ describe('InstallingStep', () => {
 
     await waitFor(() => {
       expect(installSkillsMock).toHaveBeenCalledWith(
-        makeState().installRequest,
-        makeState().installPreview?.token,
+        prepared.request,
+        prepared.preview.token,
       );
     });
   });
 
   it('does not rebuild the accepted request from mutable wizard selections', async () => {
+    const prepared = makePreparedInstall();
     render(
       <InstallingStep
         state={{
-          ...makeState(),
+          ...makeState(prepared),
           selectedSkills: ['changed-after-preview'],
           selectedAgentTargets: [],
         }}
+        prepared={prepared}
         updateState={() => undefined}
         scope="project"
         projectPath="/projects/eve-app"
@@ -141,8 +150,8 @@ describe('InstallingStep', () => {
 
     await waitFor(() => {
       expect(installSkillsMock).toHaveBeenCalledWith(
-        makeState().installRequest,
-        makeState().installPreview?.token,
+        prepared.request,
+        prepared.preview.token,
       );
     });
   });
@@ -152,14 +161,19 @@ describe('InstallingStep', () => {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'project', project_id: 'project-1' },
     } as const;
+    const prepared = makePreparedInstall();
+    const contextualPrepared = {
+      ...prepared,
+      request: { ...prepared.request, context },
+    };
 
     render(
       <InstallingStep
         state={{
-          ...makeState(),
+          ...makeState(contextualPrepared),
           context,
-          installRequest: { ...makeState().installRequest!, context },
         }}
+        prepared={contextualPrepared}
         updateState={() => undefined}
         scope="project"
         projectPath="/projects/eve-app"
@@ -169,7 +183,7 @@ describe('InstallingStep', () => {
     await waitFor(() => {
       expect(installSkillsMock).toHaveBeenCalledWith(
         expect.objectContaining({ context, skills: ['demo'] }),
-        makeState().installPreview?.token,
+        prepared.preview.token,
       );
     });
   });
@@ -180,11 +194,13 @@ describe('InstallingStep', () => {
       scope: { scope: 'project', project_id: 'project-1' },
     } as const;
     const updateState = vi.fn();
+    const prepared = makePreparedInstall();
     installSkillsMock.mockRejectedValueOnce(new Error('permission denied'));
 
     render(
       <InstallingStep
-        state={{ ...makeState(), context }}
+        state={{ ...makeState(prepared), context }}
+        prepared={prepared}
         updateState={updateState}
         scope="project"
         projectPath="/mnt/c/Code/app"

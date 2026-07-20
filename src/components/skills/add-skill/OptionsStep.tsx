@@ -1,30 +1,23 @@
 // src/components/skills/add-skill/OptionsStep.tsx
-import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  listAgents,
-  listAgentSelectionGroups,
-  listEveInstallTargets,
-  getDefaultTargetAgents,
-} from '@/hooks/useTauriApi';
-import { canCreatePrivateCopy, filterAdditionalAgentIds, migrateDefaultTargetAgents } from '@/lib/agentTargets';
-import { agentId, agentsForScope, isAgentDetected } from '@/lib/agents';
-import { globalContext } from '@/lib/context';
+import { canCreatePrivateCopy } from '@/lib/agentTargets';
+import { agentId } from '@/lib/agents';
 import { AgentSelector } from '@/components/agents/AgentSelector';
 import { getEffectiveInstallMode, shouldShowInstallModeSelection, type WizardState } from './types';
 import { Bot, Copy, Info, Link2, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { AgentId, AgentSelectionGroups, InstallTargetInfo, ResolvedAgent } from '@/bindings';
+import type { AgentId, InstallTargetInfo, ResolvedAgent } from '@/bindings';
 import type { AdapterTargetSelection } from '@/lib/install-workflow';
 import { useAgentConfigurationFlow } from '@/hooks/useAgentConfigurationFlow';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import type { InstallTargetOptionsController } from '@/hooks/useInstallTargetOptions';
 
-// CLI 默认选中的手动安装目标
-const DEFAULT_NON_UNIVERSAL_AGENTS = ['claude-code', 'cursor'];
+const EMPTY_AGENTS: ResolvedAgent[] = [];
 
 function targetKey(target: InstallTargetInfo | AdapterTargetSelection) {
   return target.targetId;
@@ -40,48 +33,12 @@ function targetSelection(target: InstallTargetInfo): AdapterTargetSelection {
 interface OptionsStepProps {
   state: WizardState;
   updateState: (updates: Partial<WizardState>) => void;
+  targetOptions: InstallTargetOptionsController;
 }
 
-export function OptionsStep({ state, updateState }: OptionsStepProps) {
+export function OptionsStep({ state, updateState, targetOptions }: OptionsStepProps) {
   const { t } = useTranslation();
   const scope = state.scope;
-  const [agentInitializationError, setAgentInitializationError] = useState(false);
-  const [agentInitializationAttempt, setAgentInitializationAttempt] = useState(0);
-  const [selectionGroups, setSelectionGroups] = useState<AgentSelectionGroups>({
-    global: [],
-    project: [],
-  });
-  const initializationGeneration = useRef(0);
-
-  // 使用 ref 保存 updateState，避免将其作为 useEffect 依赖（advanced-event-handler-refs）
-  const updateStateRef = useRef(updateState);
-  useEffect(() => { updateStateRef.current = updateState; });
-
-  // 使用 ref 保存 preSelectedAgents，避免将其作为 useEffect 依赖
-  const preSelectedAgentsRef = useRef(state.preSelectedAgents);
-  useEffect(() => { preSelectedAgentsRef.current = state.preSelectedAgents; });
-
-  const handleConfiguredAgent = useCallback((runtimeSnapshot: Parameters<typeof agentsForScope>[0], configuredId: AgentId) => {
-    const allAgents = agentsForScope(runtimeSnapshot, scope);
-    if (!allAgents.some((agent) => agentId(agent) === configuredId)) return;
-    updateStateRef.current({
-      allAgents,
-      selectedAgents: state.selectedAgents.includes(configuredId)
-        ? state.selectedAgents
-        : [...state.selectedAgents, configuredId],
-    });
-
-    const generation = initializationGeneration.current;
-    void listAgentSelectionGroups(state.context)
-      .then((groups) => {
-        if (generation === initializationGeneration.current) {
-          setSelectionGroups(groups);
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to refresh Agent selection groups:', error);
-      });
-  }, [scope, state.context, state.selectedAgents]);
 
   const {
     configuringAgentId,
@@ -89,99 +46,23 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
     configure,
   } = useAgentConfigurationFlow({
     context: state.context,
-    onSaved: handleConfiguredAgent,
+    onSaved: targetOptions.acceptConfiguredAgent,
   });
 
+  const facts = targetOptions.status === 'ready' ? targetOptions.facts : null;
+  const allAgents = facts?.allAgents ?? EMPTY_AGENTS;
+
   const unknownAgentIds = useMemo(() => {
-    const knownIds = new Set(state.allAgents.map((agent) => agentId(agent)));
+    if (!facts) return [];
+    const knownIds = new Set(allAgents.map((agent) => agentId(agent)));
     return state.preSelectedAgents.filter((id, index, ids) =>
       ids.indexOf(id) === index && !knownIds.has(id));
-  }, [state.allAgents, state.preSelectedAgents]);
-
-  // 初始化 agents 数据 — async-parallel 规则
-  useEffect(() => {
-    const generation = ++initializationGeneration.current;
-    async function initAgents() {
-      setAgentInitializationError(false);
-      const isProjectScope = scope === 'project';
-      const agentsPromise = listAgents(state.context);
-      const selectionGroupsPromise = listAgentSelectionGroups(state.context);
-      const eveTargetsPromise = isProjectScope
-        ? listEveInstallTargets(state.context).catch(() => [])
-        : Promise.resolve([] as InstallTargetInfo[]);
-      const lastSelectedPromise = Promise.resolve([] as string[]);
-      const targetDefaultsPromise = getDefaultTargetAgents(
-        globalContext(state.context.environment),
-      ).catch(() => null);
-
-      const [runtimeSnapshot, groups, eveTargets, lastSelected, targetDefaults] = await Promise.all([
-        agentsPromise,
-        selectionGroupsPromise,
-        eveTargetsPromise,
-        lastSelectedPromise,
-        targetDefaultsPromise,
-      ]);
-      if (generation !== initializationGeneration.current) return;
-      setSelectionGroups(groups);
-      const allAgents = agentsForScope(runtimeSnapshot, scope);
-
-      let selectedAgents: AgentId[];
-
-      // 优先使用从 CLI 命令解析出的 preSelectedAgents
-      if (preSelectedAgentsRef.current.length > 0) {
-        const matched = filterAdditionalAgentIds(
-          preSelectedAgentsRef.current,
-          allAgents,
-          scope,
-        );
-        selectedAgents = matched.length > 0 ? matched : [];
-      } else if (targetDefaults) {
-        selectedAgents = filterAdditionalAgentIds(
-          targetDefaults[scope],
-          allAgents,
-          scope,
-        );
-      } else if (lastSelected.length > 0) {
-        selectedAgents = migrateDefaultTargetAgents(
-          lastSelected,
-          allAgents,
-        )[scope];
-      } else {
-        selectedAgents = migrateDefaultTargetAgents(
-          DEFAULT_NON_UNIVERSAL_AGENTS,
-          allAgents,
-        )[scope].filter((id) =>
-          allAgents.some((agent) => agentId(agent) === id && isAgentDetected(agent))
-        );
-      }
-
-      updateStateRef.current({
-        allAgents,
-        selectedAgents,
-        availableAgentTargets: eveTargets,
-        selectedAgentTargets: selectedAgents.includes('eve')
-          ? eveTargets.map(targetSelection)
-          : [],
-        privateCopyAgents: [],
-      });
-    }
-
-    void initAgents().catch(() => {
-      if (generation === initializationGeneration.current) {
-        setAgentInitializationError(true);
-      }
-    });
-    return () => {
-      if (generation === initializationGeneration.current) {
-        initializationGeneration.current += 1;
-      }
-    };
-  }, [agentInitializationAttempt, scope, state.projectPath, state.context]);
+  }, [allAgents, facts, state.preSelectedAgents]);
 
   const handleSelectionChange = useCallback(
     (agents: string[]) => {
       const next: Partial<WizardState> = { selectedAgents: agents };
-      const availableTargets = state.availableAgentTargets ?? [];
+      const availableTargets = facts?.availableAgentTargets ?? [];
       const wasEveSelected = state.selectedAgents.includes('eve');
       const isEveSelected = agents.includes('eve');
 
@@ -193,12 +74,12 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
 
       updateState(next);
     },
-    [state.availableAgentTargets, state.selectedAgents, updateState]
+    [facts, state.selectedAgents, updateState]
   );
 
   const handleAgentTargetChange = useCallback(
     (target: InstallTargetInfo, checked: boolean) => {
-      const current = state.selectedAgentTargets ?? [];
+      const current = state.selectedAgentTargets;
       const key = targetKey(target);
       const nextTargets = checked
         ? [...current.filter((item) => targetKey(item) !== key), targetSelection(target)]
@@ -220,7 +101,7 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
   const handlePrivateCopyChange = useCallback(
     (agents: string[]) => {
       const agentById = new Map<AgentId, ResolvedAgent>(
-        state.allAgents.map((agent) => [agentId(agent), agent]),
+        allAgents.map((agent) => [agentId(agent), agent]),
       );
       const filteredAgents = agents.filter((agentId, index) => {
         if (agents.indexOf(agentId) !== index) return false;
@@ -230,23 +111,23 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
 
       updateState({ privateCopyAgents: filteredAgents });
     },
-    [scope, state.allAgents, updateState]
+    [allAgents, scope, updateState]
   );
 
-  const shouldShowModeSelection = shouldShowInstallModeSelection(state);
-  const effectiveMode = getEffectiveInstallMode(state);
-  const availableAgentTargets = state.availableAgentTargets ?? [];
-  const selectedTargetKeys = new Set((state.selectedAgentTargets ?? []).map(targetKey));
+  const targetPresentationState = { ...state, allAgents };
+  const shouldShowModeSelection = shouldShowInstallModeSelection(targetPresentationState);
+  const effectiveMode = getEffectiveInstallMode(targetPresentationState);
+  const availableAgentTargets = facts?.availableAgentTargets ?? [];
+  const selectedTargetKeys = new Set(state.selectedAgentTargets.map(targetKey));
   const showConcreteTargets = scope === 'project'
     && state.selectedAgents.includes('eve')
     && availableAgentTargets.length > 0;
 
-  return (
-    <div className="space-y-6 py-4">
-      {/* Agents */}
-      <div className="space-y-3">
+  if (!facts) {
+    return (
+      <div className="space-y-3 py-4">
         <Label className="text-base font-semibold">{t('addSkill.agents.targetTitle')}</Label>
-        {agentInitializationError ? (
+        {targetOptions.status === 'error' ? (
           <Alert>
             <AlertDescription>
               <p>{t('addSkill.agents.loadError')}</p>
@@ -255,18 +136,36 @@ export function OptionsStep({ state, updateState }: OptionsStepProps) {
                 variant="link"
                 size="sm"
                 className="h-auto p-0"
-                onClick={() => setAgentInitializationAttempt((attempt) => attempt + 1)}
+                onClick={() => void targetOptions.retry()}
               >
                 {t('common.retry')}
               </Button>
             </AlertDescription>
           </Alert>
+        ) : (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t('common.loading')}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 py-4">
+      {/* Agents */}
+      <div className="space-y-3">
+        <Label className="text-base font-semibold">{t('addSkill.agents.targetTitle')}</Label>
+        {facts.defaultsUnavailable ? (
+          <Alert>
+            <AlertDescription>{t('addSkill.agents.defaultLoadWarning')}</AlertDescription>
+          </Alert>
         ) : null}
         <AgentSelector
           selectedAgents={state.selectedAgents}
           privateCopyAgents={state.privateCopyAgents}
-          allAgents={state.allAgents}
-          selectionGroups={selectionGroups[scope]}
+          allAgents={allAgents}
+          selectionGroups={facts.selectionGroups}
           onSelectionChange={handleSelectionChange}
           onPrivateCopyChange={handlePrivateCopyChange}
           scope={state.scope}

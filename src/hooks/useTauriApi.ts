@@ -252,8 +252,9 @@ export async function saveDefaultTargetAgents(
 export async function fetchAvailable(
   context: ContextRef,
   source: string,
+  operationId: string,
 ): Promise<FetchResult> {
-  return unwrap(await commands.fetchAvailable(context, source));
+  return unwrap(await commands.fetchAvailable(context, source, operationId));
 }
 
 export async function acquireSelectedPayloads(

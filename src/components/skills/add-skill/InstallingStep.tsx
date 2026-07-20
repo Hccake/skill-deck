@@ -9,14 +9,7 @@ import { toAppError } from '@/utils/to-app-error';
 import { getCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import { hasFailedMutationUnits } from '@/lib/install-workflow';
 import type { WizardState } from './types';
-
-/** 克隆进度事件（与 SourceStep 共用后端事件） */
-interface CloneProgress {
-  phase: 'connecting' | 'cloning' | 'done' | 'error';
-  elapsed_secs: number;
-  timeout_secs: number;
-  message: string | null;
-}
+import type { PreparedInstall } from '@/workflows/skill-install-preparation';
 
 /** 安装进度事件（后端 install_skills 中 emit） */
 interface InstallProgress {
@@ -26,20 +19,20 @@ interface InstallProgress {
   total: number;
 }
 
-type InstallPhase = 'preparing' | 'cloning' | 'installing' | 'writing_lock';
+type InstallPhase = 'preparing' | 'installing' | 'writing_lock';
 
 interface InstallingStepProps {
   state: WizardState;
+  prepared: PreparedInstall;
   updateState: (updates: Partial<WizardState>) => void;
   scope: 'global' | 'project';
   projectPath?: string;
 }
 
-export function InstallingStep({ state, updateState }: InstallingStepProps) {
+export function InstallingStep({ state, prepared, updateState }: InstallingStepProps) {
   const { t } = useTranslation();
 
   const [phase, setPhase] = useState<InstallPhase>('preparing');
-  const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
   const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null);
 
   // 使用 ref 防止重复执行 — advanced-init-once 规则
@@ -53,32 +46,19 @@ export function InstallingStep({ state, updateState }: InstallingStepProps) {
 
   // 捕获当前状态值用于安装
   const installParamsRef = useRef({
-    request: state.installRequest,
-    preview: state.installPreview,
+    prepared,
     selectedSkills: state.selectedSkills,
     availableSkills: state.availableSkills,
     context: state.context,
   });
   useEffect(() => {
     installParamsRef.current = {
-      request: state.installRequest,
-      preview: state.installPreview,
+      prepared,
       selectedSkills: state.selectedSkills,
       availableSkills: state.availableSkills,
       context: state.context,
     };
   });
-
-  // 监听克隆进度事件
-  useEffect(() => {
-    const unlisten = listen<CloneProgress>('clone-progress', (event) => {
-      setCloneProgress(event.payload);
-      if (event.payload.phase !== 'done' && event.payload.phase !== 'error') {
-        setPhase('cloning');
-      }
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
 
   // 监听安装进度事件
   useEffect(() => {
@@ -96,17 +76,13 @@ export function InstallingStep({ state, updateState }: InstallingStepProps) {
 
     async function doInstall() {
       const {
-        request,
-        preview,
+        prepared,
         selectedSkills,
         context,
       } = installParamsRef.current;
 
       try {
-        if (!request || !preview) {
-          throw { kind: 'validation', data: { field: 'preview', message: 'Install preview is missing' } };
-        }
-        const results = await installSkills(request, preview.token);
+        const results = await installSkills(prepared.request, prepared.preview.token);
 
         updateStateRef.current({
           installResults: results,
@@ -148,17 +124,6 @@ export function InstallingStep({ state, updateState }: InstallingStepProps) {
     switch (phase) {
       case 'preparing':
         return t('addSkill.installing.preparing');
-      case 'cloning':
-        if (cloneProgress?.phase === 'connecting') {
-          return t('addSkill.installing.connecting');
-        }
-        if (cloneProgress?.phase === 'cloning') {
-          return t('addSkill.installing.cloningWithTime', {
-            elapsed: cloneProgress.elapsed_secs,
-            timeout: cloneProgress.timeout_secs,
-          });
-        }
-        return t('addSkill.installing.cloning');
       case 'installing':
         if (installProgress) {
           return t('addSkill.installing.installingSkill', {
@@ -177,12 +142,6 @@ export function InstallingStep({ state, updateState }: InstallingStepProps) {
 
   // 智能进度条：clone 阶段用确定值，其他阶段用 indeterminate
   const getProgressValue = (): number | undefined => {
-    if (phase === 'cloning' && cloneProgress?.phase === 'cloning') {
-      return Math.min(
-        (cloneProgress.elapsed_secs / cloneProgress.timeout_secs) * 100,
-        99,
-      );
-    }
     if (phase === 'installing' && installProgress) {
       return Math.min(
         (installProgress.completed / installProgress.total) * 100,

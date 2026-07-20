@@ -1027,6 +1027,7 @@
       "privateCopySelected": "已选 {{count}} 个",
       "targetTitle": "目标 Agent",
       "loadError": "无法加载所选环境的 Agent。",
+      "defaultLoadWarning": "未能读取默认接入设置，已使用内置推荐项。你仍可调整本次安装目标。",
       "concreteTargetsTitle": "项目内目标",
       "concreteTargetsHint": "选择要安装到的项目内目标，例如 Eve root 或 subagent。",
       "expandOtherAgents": "显示其他 {{count}} 个 Agent",
@@ -1104,6 +1105,12 @@
         "archive": "archive",
         "digestVerified": "摘要已验证"
       },
+      "preparationFailed": "无法准备安装计划",
+      "preparationStage": {
+        "payload": "无法从来源固定所选 Skill 的内容。",
+        "preview": "无法根据当前目标生成安装预览。"
+      },
+      "retryPreparation": "重新准备",
       "conflictZone": "已有目标目录",
       "freshZone": "新增写入",
       "overwriteGroup": "目标目录已存在"
@@ -1143,6 +1150,7 @@
       "symlinkFailed": "符号链接失败: {{agents}}",
       "symlinkFailedHint": "已改为复制文件。在 Windows 上，启用开发者模式可支持符号链接。",
       "recoveryRequired": "需要恢复处理",
+      "errorDetails": "错误详情",
       "status": {
         "succeeded": "成功",
         "failed": "失败",

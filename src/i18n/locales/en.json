@@ -1027,6 +1027,7 @@
       "privateCopySelected": "{{count}} selected",
       "targetTitle": "Target agents",
       "loadError": "Could not load Agents for the selected Environment.",
+      "defaultLoadWarning": "Default setup could not be loaded, so built-in recommendations are being used. You can still adjust the targets for this install.",
       "concreteTargetsTitle": "Project-local targets",
       "concreteTargetsHint": "Choose the project-local targets to install to, such as Eve root or subagents.",
       "expandOtherAgents": "Show {{count}} other Agents",
@@ -1104,6 +1105,12 @@
         "archive": "archive",
         "digestVerified": "digest verified"
       },
+      "preparationFailed": "The install plan could not be prepared",
+      "preparationStage": {
+        "payload": "The selected Skill content could not be fixed from the source.",
+        "preview": "The current install targets could not be previewed."
+      },
+      "retryPreparation": "Retry preparation",
       "conflictZone": "Existing targets",
       "freshZone": "New writes",
       "overwriteGroup": "Target exists"
@@ -1143,6 +1150,7 @@
       "symlinkFailed": "Symlinks failed for: {{agents}}",
       "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support.",
       "recoveryRequired": "Recovery required",
+      "errorDetails": "Error details",
       "status": {
         "succeeded": "Succeeded",
         "failed": "Failed",

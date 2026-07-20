@@ -21,6 +21,7 @@ import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/ty
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { useMutationStore } from '@/stores/mutation';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
+import { useInstallTargetOptions } from '@/hooks/useInstallTargetOptions';
 import type {
   EntryPoint,
   CoreStep,
@@ -72,10 +73,7 @@ function createInitialState(params: {
     privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
-    confirmReady: false,
-    acquiredPayloads: undefined,
-    installRequest: undefined,
-    installPreview: undefined,
+    preparation: { status: 'idle' },
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
@@ -92,6 +90,10 @@ export function WizardPage() {
   const { requestAction } = useWindowLifecycle();
 
   useMutationMonitor();
+
+  useEffect(() => {
+    document.title = t('addSkill.title');
+  }, [t]);
 
   // 从 URL query 解析参数
   const wizardParams = useMemo(() => {
@@ -131,6 +133,20 @@ export function WizardPage() {
     []
   );
 
+  const targetOptions = useInstallTargetOptions({
+    active: state.step === 'options',
+    context: state.context,
+    scope: state.scope,
+    preselectedAgents: state.preSelectedAgents,
+    selection: {
+      selectedAgents: state.selectedAgents,
+      privateCopyAgents: state.privateCopyAgents,
+      selectedAgentTargets: state.selectedAgentTargets,
+      mode: state.mode,
+    },
+    updateState,
+  });
+
   // 步骤流程
   const steps = useMemo(() => getStepFlow(state.entryPoint), [state.entryPoint]);
 
@@ -157,7 +173,7 @@ export function WizardPage() {
     [requestAction],
   );
 
-  // 重试安装 — 清除错误状态，递增 key 强制 InstallingStep 重新挂载
+  // 执行失败后回到确认步骤，重新捕获当前 payload 和 runtime preview。
   const handleRetryInstall = useCallback(() => {
     updateState({
       installResults: null,
@@ -165,7 +181,8 @@ export function WizardPage() {
       retrySkillName: undefined,
       retryAgents: undefined,
       retryAgentTargets: undefined,
-      step: 'installing',
+      preparation: { status: 'idle' },
+      step: 'confirm',
     });
     setInstallKey((k) => k + 1);
   }, [updateState]);
@@ -177,7 +194,11 @@ export function WizardPage() {
   }, [closeWizard]);
 
   // 验证是否可以进入下一步
-  const canProceed = useMemo(() => canProceedForStep(state), [state]);
+  const canProceed = useMemo(
+    () => canProceedForStep(state)
+      && (state.step !== 'options' || targetOptions.status === 'ready'),
+    [state, targetOptions.status],
+  );
 
   // 是否为结果态
   const isResultState = state.step === 'installing' || state.step === 'complete' || state.step === 'error';
@@ -222,7 +243,13 @@ export function WizardPage() {
       case 'skills':
         return <SkillsStep state={state} updateState={updateState} />;
       case 'options':
-        return <OptionsStep state={state} updateState={updateState} />;
+        return (
+          <OptionsStep
+            state={state}
+            updateState={updateState}
+            targetOptions={targetOptions}
+          />
+        );
       case 'confirm':
         return (
           <ConfirmStep
@@ -233,10 +260,12 @@ export function WizardPage() {
           />
         );
       case 'installing':
+        if (state.preparation.status !== 'ready') return null;
         return (
           <InstallingStep
             key={installKey}
             state={state}
+            prepared={state.preparation.prepared}
             updateState={updateState}
             scope={state.scope}
             projectPath={state.projectPath}
@@ -250,9 +279,7 @@ export function WizardPage() {
             onRetry={() => {
               updateState({
                 installResults: null,
-                installRequest: undefined,
-                installPreview: undefined,
-                confirmReady: false,
+                preparation: { status: 'idle' },
               });
               goToStep('confirm');
             }}
@@ -276,9 +303,7 @@ export function WizardPage() {
             onRetry={() => {
               updateState({
                 installResults: null,
-                installRequest: undefined,
-                installPreview: undefined,
-                confirmReady: false,
+                preparation: { status: 'idle' },
               });
               goToStep('confirm');
             }}

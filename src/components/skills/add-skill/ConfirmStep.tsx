@@ -13,8 +13,10 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   canCreatePrivateCopy,
   getAgentTarget,
@@ -23,17 +25,15 @@ import {
   isPrivateRequiredAgent,
 } from '@/lib/agentTargets';
 import { agentDisplayName, agentId } from '@/lib/agents';
-import {
-  acquireSelectedPayloads,
-  checkSkillAudit,
-  previewInstall,
-} from '@/hooks/useTauriApi';
+import { checkSkillAudit } from '@/hooks/useTauriApi';
 import type { SkillAuditData } from '@/hooks/useTauriApi';
 import type { InstallTargetInfo } from '@/bindings';
 import type { AdapterTargetSelection } from '@/lib/install-workflow';
 import { RiskBadge } from '../RiskBadge';
 import { getEffectiveInstallMode, type WizardState } from './types';
 import { buildAgentWriteIntents } from '@/lib/install-workflow';
+import { prepareInstall } from '@/workflows/skill-install-preparation';
+import { formatAppError } from '@/utils/format-app-error';
 
 function formatPath(path: string) {
   return path
@@ -56,30 +56,35 @@ interface ConfirmStepProps {
   projectPath?: string;
 }
 
-export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmStepProps) {
+export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
   const { t } = useTranslation();
 
   const updateStateRef = useRef(updateState);
   useEffect(() => { updateStateRef.current = updateState; });
   const confirmRequestIdRef = useRef(0);
+  const preparationRunRef = useRef<{
+    key: string;
+    promise: ReturnType<typeof prepareInstall>;
+  } | null>(null);
+  const [preparationAttempt, setPreparationAttempt] = useState(0);
 
   // 审计数据（组件级 state，不影响 wizard 流程）
   const [auditData, setAuditData] = useState<Partial<Record<string, SkillAuditData>>>({});
 
-  // 并行检测覆盖 + 获取审计数据
+  // 安装准备只负责固定 payload 和 preview，审计由独立 Effect best-effort 加载。
   useEffect(() => {
     const requestId = ++confirmRequestIdRef.current;
     let cancelled = false;
 
     if (state.selectedSkills.length === 0) {
-      updateStateRef.current({ overwrites: {}, confirmReady: true });
+      updateStateRef.current({ overwrites: {}, preparation: { status: 'idle' } });
       return;
     }
 
-    updateStateRef.current({ confirmReady: false });
+    updateStateRef.current({ preparation: { status: 'preparing' } });
 
     if (!state.discoverySession) {
-      updateStateRef.current({ confirmReady: false });
+      updateStateRef.current({ preparation: { status: 'idle' } });
       return;
     }
 
@@ -87,70 +92,87 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
       const skill = state.availableSkills.find((candidate) => candidate.name === name);
       return skill ? [skill.relativePath] : [];
     });
-    const requestPromise = acquireSelectedPayloads({
+    const preparationInput = {
+      context: state.context,
+      source: state.source,
       discoverySession: state.discoverySession,
       skillPaths,
-    }).then((payloads) => {
-      const request = {
-        context: state.context,
-        source: state.source,
-        discoverySession: state.discoverySession!,
-        payloads,
-        skills: state.selectedSkills,
-        agentIntents: buildAgentWriteIntents({
-          agents: state.allAgents,
-          scope,
-          selectedAgents: state.selectedAgents,
-          privateCopyAgents: state.privateCopyAgents,
-          adapterTargets: state.selectedAgentTargets ?? [],
-        }),
-        requestedMode: getEffectiveInstallMode({
-          allAgents: state.allAgents,
-          selectedAgents: state.selectedAgents,
-          mode: state.mode,
-          scope: state.scope,
-        }),
-        acknowledgeRisk: state.riskAcknowledged,
-      };
-      return previewInstall(request).then((preview) => ({ payloads, request, preview }));
+      skills: state.selectedSkills,
+      agentIntents: buildAgentWriteIntents({
+        agents: state.allAgents,
+        scope,
+        selectedAgents: state.selectedAgents,
+        privateCopyAgents: state.privateCopyAgents,
+        adapterTargets: state.selectedAgentTargets,
+      }),
+      requestedMode: getEffectiveInstallMode({
+        allAgents: state.allAgents,
+        selectedAgents: state.selectedAgents,
+        mode: state.mode,
+        scope: state.scope,
+      }),
+      acknowledgeRisk: state.riskAcknowledged,
+    };
+    const preparationKey = JSON.stringify({
+      ...preparationInput,
+      preparationAttempt,
+      scope,
     });
+    const existingRun = preparationRunRef.current;
+    const preparation = existingRun?.key === preparationKey
+      ? existingRun.promise
+      : prepareInstall(preparationInput);
+    if (!existingRun || existingRun.key !== preparationKey) {
+      preparationRunRef.current = { key: preparationKey, promise: preparation };
+    }
 
-    const auditPromise = state.source
-      ? checkSkillAudit(state.source, state.selectedSkills).catch(() => null)
-      : Promise.resolve(null);
-
-    Promise.all([requestPromise, auditPromise]).then(([install, auditResult]) => {
+    void preparation.then((outcome) => {
       if (cancelled || requestId !== confirmRequestIdRef.current) return;
 
+      if (outcome.status === 'failed') {
+        updateStateRef.current({
+          preparation: outcome,
+          overwrites: {},
+        });
+        return;
+      }
+
       const overwrites: Record<string, string[]> = {};
-      for (const skill of install.preview.skills) {
+      for (const skill of outcome.prepared.preview.skills) {
         if (skill.overwriteTargets.length > 0) {
           overwrites[skill.skillName] = skill.overwriteTargets;
         }
       }
 
-      setAuditData((current) =>
-        auditResult ?? (Object.keys(current).length > 0 ? {} : current)
-      );
       updateStateRef.current({
-        acquiredPayloads: install.payloads,
-        installRequest: install.request,
-        installPreview: install.preview,
+        preparation: outcome,
         overwrites,
-        confirmReady: true,
       });
-    }).catch((error) => {
-      if (cancelled || requestId !== confirmRequestIdRef.current) return;
-
-      console.error('Failed to check overwrites/audit:', error);
-      setAuditData((current) => Object.keys(current).length > 0 ? {} : current);
-      updateStateRef.current({ overwrites: {}, confirmReady: true });
     });
 
     return () => {
       cancelled = true;
     };
-  }, [state.selectedSkills, state.selectedAgents, state.selectedAgentTargets, state.privateCopyAgents, state.allAgents, state.availableSkills, state.discoverySession, state.source, state.context, state.mode, state.scope, state.riskAcknowledged, scope, projectPath]);
+  }, [state.selectedSkills, state.selectedAgents, state.selectedAgentTargets, state.privateCopyAgents, state.allAgents, state.availableSkills, state.discoverySession, state.source, state.context, state.mode, state.scope, state.riskAcknowledged, scope, preparationAttempt]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!state.source || state.selectedSkills.length === 0) {
+      return;
+    }
+
+    void checkSkillAudit(state.source, state.selectedSkills)
+      .then((result) => {
+        if (!cancelled) setAuditData(result ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setAuditData({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.source, state.selectedSkills]);
 
   // 覆盖统计
   const availableSkillMap = useMemo(
@@ -182,10 +204,10 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
   }, [state.privateCopyAgents, state.allAgents, scope]);
   const selectedConcreteTargets = useMemo(() => {
     const availableByKey = new Map(
-      (state.availableAgentTargets ?? []).map((target) => [targetKey(target), target])
+      state.availableAgentTargets.map((target) => [targetKey(target), target])
     );
 
-    return (state.selectedAgentTargets ?? []).map((target) => {
+    return state.selectedAgentTargets.map((target) => {
       const info = availableByKey.get(targetKey(target));
       if (info) return info;
       return {
@@ -198,6 +220,8 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
     });
   }, [state.availableAgentTargets, state.selectedAgentTargets]);
   const effectiveMode = getEffectiveInstallMode(state);
+  const isPreparing = state.preparation.status === 'idle'
+    || state.preparation.status === 'preparing';
 
   const sharedDir = getSharedSkillDirectory(scope);
 
@@ -278,6 +302,26 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
 
   return (
     <div className="space-y-4">
+      {state.preparation.status === 'failed' ? (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>{t('addSkill.confirm.preparationFailed')}</AlertTitle>
+          <AlertDescription>
+            <p>{t(`addSkill.confirm.preparationStage.${state.preparation.stage}`)}</p>
+            <p>{formatAppError(state.preparation.error, t)}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() => setPreparationAttempt((attempt) => attempt + 1)}
+            >
+              {t('addSkill.confirm.retryPreparation')}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {state.riskPolicy?.kind === 'require-confirmation' && (
         <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-3 space-y-2">
           <div className="flex items-start gap-2">
@@ -307,7 +351,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
           <span className="text-sm font-semibold text-foreground" data-skill-list-heading>
             {t('addSkill.confirm.itemsTitle')}
           </span>
-          {state.confirmReady && (
+          {state.preparation.status === 'ready' && (
             <p className="text-xs leading-5 text-muted-foreground">
               {overwriteCount > 0
                 ? t('addSkill.confirm.summary', {
@@ -320,7 +364,7 @@ export function ConfirmStep({ state, updateState, scope, projectPath }: ConfirmS
             </p>
           )}
         </div>
-        {!state.confirmReady ? (
+        {isPreparing ? (
           <div className="border rounded-md divide-y divide-border/50 bg-card">
             {state.selectedSkills.map((_, idx) => (
               <div key={idx} className="flex items-center justify-between gap-2 px-3 py-3">

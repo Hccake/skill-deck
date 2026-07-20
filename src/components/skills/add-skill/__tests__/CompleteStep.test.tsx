@@ -71,12 +71,14 @@ function state(response: InstallResponse): WizardState {
     selectedAgents: [],
     privateCopyAgents: [],
     allAgents: [],
+    availableAgentTargets: [],
+    selectedAgentTargets: [],
     mode: 'symlink',
     otherAgentsExpanded: false,
     privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
-    confirmReady: true,
+    preparation: { status: 'idle' },
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: response,
@@ -129,7 +131,7 @@ describe('CompleteStep', () => {
     expect(screen.getByText('recovery-actions:recovery-1')).toBeDefined();
   });
 
-  it('does not expose technical diagnostics or offer ordinary retry for recovery-required units', () => {
+  it('keeps technical diagnostics behind disclosure and omits ordinary recovery retry', () => {
     render(
       <CompleteStep
         state={state({ units: [unit('recoveryRequired', {
@@ -143,6 +145,8 @@ describe('CompleteStep', () => {
 
     expect(screen.queryByText('permission denied')).toBeNull();
     expect(screen.getByText('mutation.result.errors.executionFailed')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'addSkill.complete.errorDetails' }));
+    expect(screen.getByText('demo: permission denied')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'addSkill.actions.retry' })).toBeNull();
   });
 });

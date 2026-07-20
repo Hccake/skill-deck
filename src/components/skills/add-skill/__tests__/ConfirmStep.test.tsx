@@ -4,6 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { acquireSelectedPayloads, checkSkillAudit, previewInstall } from '@/hooks/useTauriApi';
 import { makeResolvedScopeFixture, makeResolvedAgent } from '@/test-utils';
 import type { WizardState } from '../types';
@@ -66,6 +67,11 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const readyPreparation: WizardState['preparation'] = {
+  status: 'ready',
+  prepared: { request: {} as never, preview: {} as never },
+};
+
 function createState(): WizardState {
   return {
     step: 'confirm',
@@ -90,12 +96,14 @@ function createState(): WizardState {
     selectedAgents: ['codex'],
     privateCopyAgents: [],
     allAgents: [],
+    availableAgentTargets: [],
+    selectedAgentTargets: [],
     mode: 'symlink',
     otherAgentsExpanded: false,
     privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
-    confirmReady: true,
+    preparation: readyPreparation,
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
@@ -136,7 +144,7 @@ describe('ConfirmStep', () => {
     previewInstallMock.mockReset();
     previewInstallMock.mockResolvedValue({ token: {} as never, skills: [] });
     checkSkillAuditMock.mockReset();
-    checkSkillAuditMock.mockResolvedValue(null);
+    checkSkillAuditMock.mockReturnValue(new Promise(() => {}));
   });
 
   it('checks overwrites for automatic agents when only the shared directory will be used', async () => {
@@ -157,7 +165,7 @@ describe('ConfirmStep', () => {
                 sharedPath: './.agents/skills',
             }),
           })],
-          confirmReady: false,
+          preparation: { status: 'preparing' },
           riskPolicy: { kind: 'none', code: null },
         }}
         updateState={updateState}
@@ -168,7 +176,7 @@ describe('ConfirmStep', () => {
     await waitFor(() => {
       expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
         overwrites: {},
-        confirmReady: true,
+        preparation: expect.objectContaining({ status: 'ready' }),
       }));
     });
     expect(acquireSelectedPayloadsMock).toHaveBeenCalledWith({
@@ -191,7 +199,7 @@ describe('ConfirmStep', () => {
 
     render(
       <ConfirmStep
-        state={{ ...createState(), context, confirmReady: false }}
+        state={{ ...createState(), context, preparation: { status: 'preparing' } }}
         updateState={updateState}
         scope="global"
       />
@@ -216,7 +224,7 @@ describe('ConfirmStep', () => {
         state={{
           ...createState(),
           selectedSkills: ['first-skill'],
-          confirmReady: false,
+          preparation: { status: 'preparing' },
           riskPolicy: { kind: 'none', code: null },
         }}
         updateState={updateState}
@@ -229,7 +237,7 @@ describe('ConfirmStep', () => {
         state={{
           ...createState(),
           selectedSkills: ['second-skill'],
-          confirmReady: false,
+          preparation: { status: 'preparing' },
           riskPolicy: { kind: 'none', code: null },
         }}
         updateState={updateState}
@@ -245,7 +253,7 @@ describe('ConfirmStep', () => {
     await waitFor(() => {
       expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
         overwrites: { 'second-skill': ['Codex'] },
-        confirmReady: true,
+        preparation: expect.objectContaining({ status: 'ready' }),
       }));
     });
 
@@ -255,10 +263,79 @@ describe('ConfirmStep', () => {
     });
 
     await waitFor(() => {
-      expect(updateState).not.toHaveBeenCalledWith({
+      expect(updateState).not.toHaveBeenCalledWith(expect.objectContaining({
         overwrites: { 'first-skill': ['Cursor'] },
-        confirmReady: true,
-      });
+      }));
+    });
+  });
+
+  it('publishes preparation as ready before a slow best-effort audit completes', async () => {
+    const audit = deferred<Awaited<ReturnType<typeof checkSkillAudit>>>();
+    checkSkillAuditMock.mockReturnValueOnce(audit.promise);
+    const updateState = vi.fn();
+
+    render(
+      <ConfirmStep
+        state={{ ...createState(), riskPolicy: { kind: 'none', code: null } }}
+        updateState={updateState}
+        scope="global"
+      />
+    );
+
+    await waitFor(() => {
+      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+        preparation: expect.objectContaining({ status: 'ready' }),
+      }));
+    });
+
+  });
+
+  it('keeps the install action blocked when payload preparation fails', async () => {
+    const error = { kind: 'stalePayload', data: {} } as never;
+    acquireSelectedPayloadsMock.mockRejectedValueOnce(error);
+    const updateState = vi.fn();
+
+    render(
+      <ConfirmStep
+        state={{ ...createState(), riskPolicy: { kind: 'none', code: null } }}
+        updateState={updateState}
+        scope="global"
+      />
+    );
+
+    await waitFor(() => {
+      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+        preparation: { status: 'failed', stage: 'payload', error },
+      }));
+    });
+  });
+
+  it('reuses one preparation request when StrictMode replays the effect', async () => {
+    const firstAcquisition = deferred<Awaited<ReturnType<typeof acquireSelectedPayloads>>>();
+    const mutationBusy = { kind: 'mutationBusy', data: {} } as never;
+    acquireSelectedPayloadsMock
+      .mockImplementationOnce(() => firstAcquisition.promise)
+      .mockRejectedValueOnce(mutationBusy);
+    const updateState = vi.fn();
+
+    render(
+      <StrictMode>
+        <ConfirmStep
+          state={{ ...createState(), riskPolicy: { kind: 'none', code: null } }}
+          updateState={updateState}
+          scope="global"
+        />
+      </StrictMode>
+    );
+
+    await waitFor(() => expect(acquireSelectedPayloadsMock).toHaveBeenCalledOnce());
+
+    firstAcquisition.resolve([]);
+
+    await waitFor(() => {
+      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+        preparation: expect.objectContaining({ status: 'ready' }),
+      }));
     });
   });
 
@@ -348,7 +425,7 @@ describe('ConfirmStep', () => {
     await waitFor(() => {
       expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
         overwrites: {},
-        confirmReady: true,
+        preparation: expect.objectContaining({ status: 'ready' }),
       }));
     });
     expect(previewInstallMock).toHaveBeenCalledWith(expect.objectContaining({

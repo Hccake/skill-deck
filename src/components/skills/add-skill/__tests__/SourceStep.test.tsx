@@ -2,7 +2,7 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import type { WizardState } from '../types';
@@ -17,14 +17,16 @@ vi.mock('react-i18next', () => ({
 }));
 
 const fetchAvailableMock = vi.fn();
+const eventMocks = vi.hoisted(() => ({
+  listen: vi.fn(),
+  listeners: [] as Array<(event: { payload: unknown }) => void>,
+}));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   fetchAvailable: (...args: unknown[]) => fetchAvailableMock(...args),
 }));
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
-}));
+vi.mock('@tauri-apps/api/event', () => eventMocks);
 
 const hostGlobal = {
   environment: { kind: 'host' },
@@ -79,6 +81,16 @@ vi.mock('../../skill-search/SkillSearch', () => ({
   SkillSearch: SearchResultStub,
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function createState(): WizardState {
   return {
     step: 'source',
@@ -97,12 +109,14 @@ function createState(): WizardState {
     selectedAgents: [],
     privateCopyAgents: [],
     allAgents: [],
+    availableAgentTargets: [],
+    selectedAgentTargets: [],
     mode: 'symlink',
     otherAgentsExpanded: false,
     privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
-    confirmReady: false,
+    preparation: { status: 'idle' },
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
@@ -114,14 +128,23 @@ function createState(): WizardState {
   };
 }
 
-function Harness({ onNext }: { onNext: () => void }) {
-  const [state, setState] = useState<WizardState>(createState());
+function Harness({
+  onNext,
+  initialState = createState(),
+  autoFetch = false,
+}: {
+  onNext: () => void;
+  initialState?: WizardState;
+  autoFetch?: boolean;
+}) {
+  const [state, setState] = useState<WizardState>(initialState);
   return (
     <>
       <SourceStep
         state={state}
         updateState={(updates) => setState((current) => ({ ...current, ...updates }))}
         onNext={onNext}
+        autoFetch={autoFetch}
       />
       <div data-testid="risk-policy">{state.riskPolicy?.kind ?? 'none'}</div>
       <div data-testid="discovery-session">{state.discoverySession?.sessionId ?? 'none'}</div>
@@ -132,6 +155,12 @@ function Harness({ onNext }: { onNext: () => void }) {
 describe('SourceStep', () => {
   beforeEach(() => {
     fetchAvailableMock.mockReset();
+    eventMocks.listen.mockReset();
+    eventMocks.listeners.length = 0;
+    eventMocks.listen.mockImplementation((_eventName, callback) => {
+      eventMocks.listeners.push(callback);
+      return Promise.resolve(() => {});
+    });
     for (const key of Object.keys(skillSnapshots)) delete skillSnapshots[key];
   });
 
@@ -162,7 +191,11 @@ describe('SourceStep', () => {
       expect(screen.getByTestId('risk-policy').textContent).toBe('require-confirmation');
       expect(screen.getByTestId('discovery-session').textContent).toBe('discovery-1');
     });
-    expect(fetchAvailableMock).toHaveBeenCalledWith(hostGlobal, 'openclaw/community-skills');
+    expect(fetchAvailableMock).toHaveBeenCalledWith(
+      hostGlobal,
+      'openclaw/community-skills',
+      expect.any(String),
+    );
   });
 
   it('fetches a selected search result without waiting for a timer tick', async () => {
@@ -187,6 +220,7 @@ describe('SourceStep', () => {
     expect(fetchAvailableMock).toHaveBeenCalledWith(
       hostGlobal,
       'openclaw/community-skills@demo',
+      expect.any(String),
     );
 
     await waitFor(() => {
@@ -218,7 +252,104 @@ describe('SourceStep', () => {
       />
     );
 
-    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(context, 'owner/repo'));
+    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(
+      context,
+      'owner/repo',
+      expect.any(String),
+    ));
+  });
+
+  it('ignores progress events from a previous source fetch operation', async () => {
+    const fetchResult = deferred<Awaited<ReturnType<typeof fetchAvailableMock>>>();
+    fetchAvailableMock.mockReturnValue(fetchResult.promise);
+
+    render(
+      <Harness
+        onNext={() => undefined}
+        initialState={{ ...createState(), source: 'owner/repo' }}
+        autoFetch
+      />
+    );
+
+    await waitFor(() => {
+      expect(eventMocks.listeners).toHaveLength(1);
+      expect(fetchAvailableMock).toHaveBeenCalled();
+    });
+    const operationId = fetchAvailableMock.mock.calls[0][2] as string;
+    const emitProgress = eventMocks.listeners[0];
+
+    await act(async () => {
+      emitProgress({
+        payload: {
+          operation_id: 'previous-operation',
+          phase: 'cloning',
+          elapsed_secs: 42,
+          timeout_secs: 120,
+          message: null,
+        },
+      });
+    });
+    expect(screen.getByText('addSkill.source.status.cloning')).toBeTruthy();
+    expect(screen.queryByText('addSkill.source.status.cloningWithTime')).toBeNull();
+
+    await act(async () => {
+      emitProgress({
+        payload: {
+          operation_id: operationId,
+          phase: 'cloning',
+          elapsed_secs: 2,
+          timeout_secs: 120,
+          message: null,
+        },
+      });
+    });
+    expect(screen.getByText('addSkill.source.status.cloningWithTime')).toBeTruthy();
+
+    await act(async () => {
+      fetchResult.resolve({
+        discoverySession,
+        sourceType: 'github',
+        sourceUrl: 'https://github.com/owner/repo',
+        gitRef: null,
+        skillFilter: null,
+        riskPolicy: { kind: 'none', code: null },
+        skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' }],
+      });
+    });
+  });
+
+  it('does not write a late fetch result after SourceStep unmounts', async () => {
+    const fetchResult = deferred<Awaited<ReturnType<typeof fetchAvailableMock>>>();
+    fetchAvailableMock.mockReturnValue(fetchResult.promise);
+    const updateState = vi.fn();
+    const onNext = vi.fn();
+    const { unmount } = render(
+      <SourceStep
+        state={{ ...createState(), source: 'owner/repo' }}
+        updateState={updateState}
+        onNext={onNext}
+        autoFetch
+      />
+    );
+
+    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalled());
+    updateState.mockClear();
+    unmount();
+
+    fetchResult.resolve({
+      discoverySession,
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      gitRef: null,
+      skillFilter: null,
+      riskPolicy: { kind: 'none', code: null },
+      skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' }],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(updateState).not.toHaveBeenCalled();
+    expect(onNext).not.toHaveBeenCalled();
   });
 
   it('marks installed skills from the wizard context snapshot only', async () => {

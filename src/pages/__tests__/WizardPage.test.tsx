@@ -26,6 +26,22 @@ vi.mock('@/hooks/useMutationMonitor', () => ({
   useMutationMonitor: vi.fn(),
 }));
 
+vi.mock('@/hooks/useInstallTargetOptions', () => ({
+  useInstallTargetOptions: () => ({
+    status: 'ready',
+    inputKey: 'host/global',
+    facts: {
+      allAgents: [],
+      selectionGroups: [],
+      availableAgentTargets: [],
+      defaultAgents: [],
+      defaultsUnavailable: false,
+    },
+    retry: vi.fn(),
+    acceptConfiguredAgent: vi.fn(),
+  }),
+}));
+
 vi.mock('@/lifecycle/useWindowLifecycle', () => ({
   useWindowLifecycle: () => ({ requestAction: mocks.requestAction }),
 }));
@@ -65,7 +81,10 @@ vi.mock('@/components/skills/add-skill/SourceStep', () => ({
         }],
         selectedSkills: ['demo'],
         selectedAgents: ['codex'],
-        confirmReady: true,
+        preparation: {
+          status: 'ready',
+          prepared: { request: {} as never, preview: {} as never },
+        },
       })}
     >
       prepare-source
@@ -121,7 +140,10 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     otherAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
-    confirmReady: true,
+    preparation: {
+      status: 'ready',
+      prepared: { request: {} as never, preview: {} as never },
+    },
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
@@ -133,6 +155,8 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     ...overrides,
     privateCopyAgents: overrides.privateCopyAgents ?? [],
     privateCopyAgentsExpanded: overrides.privateCopyAgentsExpanded ?? false,
+    availableAgentTargets: overrides.availableAgentTargets ?? [],
+    selectedAgentTargets: overrides.selectedAgentTargets ?? [],
   };
 }
 

@@ -14,10 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
-  acquireSelectedPayloads,
   fetchAvailable,
   installSkills,
-  previewInstall,
 } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
@@ -26,6 +24,7 @@ import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidanc
 import { formatAppError } from '@/utils/format-app-error';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
 import type { AppError, FetchResult, InstallResponse } from '@/bindings';
+import { prepareInstall } from '@/workflows/skill-install-preparation';
 
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
 type RepairPhase = 'idle' | 'validating' | 'installing';
@@ -97,7 +96,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     setValidationOwner(owner);
     setValidateState('checking');
     try {
-      const result = await fetchAvailable(target.context, source.trim());
+      const result = await fetchAvailable(target.context, source.trim(), crypto.randomUUID());
       const hasSkill = result.skills.some((skill) => skill.name === target.skillName);
       const nextRequiresRiskConfirmation = result.riskPolicy.kind === 'require-confirmation';
       setRequiresRiskConfirmation(nextRequiresRiskConfirmation);
@@ -140,22 +139,21 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         adapterTargets: [],
       }));
       const skill = validation.fetchResult.skills.find((item) => item.name === target.skillName)!;
-      const payloads = await acquireSelectedPayloads({
-        discoverySession: validation.fetchResult.discoverySession,
-        skillPaths: [skill.relativePath],
-      });
-      const request = {
+      const preparation = await prepareInstall({
         context: target.context,
         source: source.trim(),
         discoverySession: validation.fetchResult.discoverySession,
-        payloads,
+        skillPaths: [skill.relativePath],
         skills: [target.skillName],
         agentIntents,
         requestedMode: 'copy' as const,
         acknowledgeRisk: validation.requiresRiskConfirmation ? riskAcknowledged : true,
-      };
-      const preview = await previewInstall(request);
-      const results = await installSkills(request, preview.token);
+      });
+      if (preparation.status === 'failed') throw preparation.error;
+      const results = await installSkills(
+        preparation.prepared.request,
+        preparation.prepared.preview.token,
+      );
       installCompleted = true;
       if (!didRepairInstallSucceed(results)) {
         toast.error(appendCrossStorageFailureGuidance(

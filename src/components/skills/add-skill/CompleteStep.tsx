@@ -1,8 +1,13 @@
 import { useMemo } from 'react';
-import { AlertTriangle, CheckCircle2, CircleSlash2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronRight, CircleSlash2, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { getCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import type { MutationUnitResult } from '@/bindings';
 import type { WizardState } from './types';
@@ -11,6 +16,7 @@ import { useEnvironmentStore } from '@/stores/environment';
 import { useProjectStore } from '@/stores/projects';
 import { presentMutationUnit } from '@/workflows/mutation-presentation';
 import {
+  collectMutationDiagnostics,
   formatFallbackReason,
   formatMutationError,
   formatMutationWarning,
@@ -37,6 +43,43 @@ function statusIcon(unit: MutationUnitResult) {
     case 'notRun':
       return <CircleSlash2 className="h-4 w-4 shrink-0 text-muted-foreground" />;
   }
+}
+
+function MutationDiagnosticDetails({
+  unit,
+  label,
+}: {
+  unit: MutationUnitResult;
+  label: string;
+}) {
+  if (unit.status === 'succeeded') return null;
+  const diagnostics = collectMutationDiagnostics([unit]);
+  if (diagnostics.length === 0) return null;
+
+  return (
+    <Collapsible className="pt-0.5">
+      <CollapsibleTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="group -ml-2 h-6 px-2 text-xs font-normal text-muted-foreground"
+        >
+          <ChevronRight className="transition-transform group-data-[state=open]:rotate-90" />
+          {label}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 space-y-1 bg-muted/25 px-2 py-1.5 font-mono text-[11px] leading-4 text-muted-foreground">
+          {diagnostics.map((diagnostic, index) => (
+            <p key={`${unit.unitId}:diagnostic:${index}`} className="break-all whitespace-pre-wrap">
+              {diagnostic}
+            </p>
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
@@ -109,6 +152,10 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
                         {formatMutationWarning(warning, t)}
                       </p>
                     ))}
+                    <MutationDiagnosticDetails
+                      unit={unit}
+                      label={t('addSkill.complete.errorDetails')}
+                    />
                   </div>
                 </div>
                 <Badge variant={unit.status === 'succeeded' ? 'secondary' : 'outline'}>
