@@ -53,7 +53,7 @@ interface SettingsState {
   ) => Promise<void>;
 }
 
-const applyTheme = (theme: Theme) => {
+export const applyPersistedAppearance = (theme: Theme) => {
   if (typeof window === 'undefined') return;
 
   const root = document.documentElement;
@@ -98,7 +98,7 @@ export const useSettingsStore = create<SettingsState>()(
       locale: 'en',
 
       setTheme: (theme) => {
-        applyTheme(theme);
+        applyPersistedAppearance(theme);
         set({ theme });
       },
 
@@ -272,7 +272,7 @@ export const useSettingsStore = create<SettingsState>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          applyTheme(state.theme);
+          applyPersistedAppearance(state.theme);
           i18n.changeLanguage(state.locale);
         }
       },
