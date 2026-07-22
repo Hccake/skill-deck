@@ -2,125 +2,274 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v0.1.0)'
+        description: Tag to release, for example v1.6.2
         required: true
         type: string
 
+permissions:
+  contents: read
+
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  publish-tauri:
-    permissions:
-      contents: write
+  validate:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      commit_sha: ${{ steps.release.outputs.commit_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate tag, version, commit, and changelog
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          git fetch --force --tags
+          COMMIT_SHA="$(git rev-list -n 1 "$TAG")"
+          VERSION="$(git show "${COMMIT_SHA}:package.json" | node -e '
+            let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => {
+              process.stdout.write(JSON.parse(input).version);
+            });
+          ')"
+          EXPECTED_TAG="v${VERSION}"
+          test "$TAG" = "$EXPECTED_TAG" || { echo "::error::Expected ${EXPECTED_TAG}, got ${TAG}"; exit 1; }
+          test -n "$COMMIT_SHA" || { echo "::error::Tag has no commit"; exit 1; }
+          git show "${COMMIT_SHA}:CHANGELOG.md" | grep -Fq "## [${VERSION}]" \
+            || { echo "::error::Missing CHANGELOG entry for ${VERSION}"; exit 1; }
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "commit_sha=$COMMIT_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+  build-artifacts:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
-            asset_platform: 'macos'
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin'
-            asset_platform: 'macos'
-          - platform: 'ubuntu-22.04'
-            args: ''
-            asset_platform: 'linux'
-          - platform: 'windows-latest'
-            args: ''
-            asset_platform: 'windows'
-
-    runs-on: ${{ matrix.platform }}
+          - runner: macos-latest
+            args: --target aarch64-apple-darwin
+            platform_key: darwin-aarch64
+            os_name: darwin
+            architecture: aarch64
+            extension: tar.gz
+          - runner: macos-latest
+            args: --target x86_64-apple-darwin
+            platform_key: darwin-x86_64
+            os_name: darwin
+            architecture: x86_64
+            extension: tar.gz
+          - runner: ubuntu-22.04
+            args: ""
+            platform_key: linux-x86_64
+            os_name: linux
+            architecture: x86_64
+            extension: AppImage.tar.gz
+          - runner: windows-latest
+            args: ""
+            platform_key: windows-x86_64
+            os_name: windows
+            architecture: x86_64
+            extension: nsis.zip
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup node
-        uses: actions/setup-node@v4
+          ref: ${{ needs.validate.outputs.commit_sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
-          cache: 'pnpm'
-
-      - name: Validate release tag
-        id: release
-        shell: bash
-        run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION="$(node -p "require('./package.json').version")"
-          EXPECTED_TAG="v${VERSION}"
-
-          if [ "$TAG" != "$EXPECTED_TAG" ]; then
-            echo "::error::Release tag ${TAG} does not match package version ${VERSION}. Expected ${EXPECTED_TAG}."
-            exit 1
-          fi
-
-          {
-            echo "tag=$TAG"
-            echo "version=$VERSION"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Extract release notes from CHANGELOG.md
-        id: changelog
-        shell: bash
-        run: |
-          VERSION="${{ steps.release.outputs.version }}"
-          NOTES=$(awk -v ver="$VERSION" '
-            /^## \[/ { if (found) exit; if (index($0, "[" ver "]")) { found=1; next } }
-            found && /^\[.+\]:/ { exit }
-            found { print }
-          ' CHANGELOG.md)
-
-          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
-            echo "::error::CHANGELOG.md does not contain release notes for version ${VERSION}."
-            exit 1
-          fi
-
-          {
-            echo "notes<<CHANGELOG_EOF"
-            echo "$NOTES"
-            echo "CHANGELOG_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+          node-version: 22
+          cache: pnpm
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+          targets: ${{ matrix.runner == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - uses: tauri-apps/tauri-action@v1
+          workspaces: "./src-tauri -> target"
+      - run: pnpm install --frozen-lockfile
+      - name: Verify frontend contract and product build
+        run: |
+          pnpm bindings:check
+          pnpm lint
+          pnpm test
+          pnpm build
+      - name: Run Backend tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build signed updater artifact
+        uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ steps.release.outputs.tag }}
-          releaseName: Skill Deck ${{ steps.release.outputs.tag }}
-          releaseBody: ${{ steps.changelog.outputs.notes }}
-          releaseDraft: true
-          prerelease: false
-          uploadUpdaterJson: true
-          releaseAssetNamePattern: skill-deck_[version]_${{ matrix.asset_platform }}_[arch][setup][ext]
           args: ${{ matrix.args }}
+      - name: Package smoke and private metadata
+        shell: bash
+        env:
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          OS_NAME: ${{ matrix.os_name }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+          EXTENSION: ${{ matrix.extension }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          COMMIT_SHA: ${{ needs.validate.outputs.commit_sha }}
+          ASSET_NAME: skill-deck_${{ needs.validate.outputs.version }}_${{ matrix.os_name }}_${{ matrix.architecture }}.${{ matrix.extension }}
+        run: |
+          set -euo pipefail
+          mapfile -t SOURCES < <(find src-tauri/target -type f -name "*.${EXTENSION}" ! -name '*.sig' -print | sort)
+          test "${#SOURCES[@]}" -eq 1 || { echo "::error::Expected one updater package, found ${#SOURCES[@]}"; exit 1; }
+          SOURCE="${SOURCES[0]}"
+          test -s "$SOURCE" || { echo "::error::Updater package smoke failed"; exit 1; }
+          test -s "${SOURCE}.sig" || { echo "::error::Missing updater signature"; exit 1; }
+          mkdir -p release-artifact
+          ASSET_NAME="skill-deck_${VERSION}_${OS_NAME}_${ARCHITECTURE}.${EXTENSION}"
+          cp "$SOURCE" "release-artifact/${ASSET_NAME}"
+          cp "${SOURCE}.sig" "release-artifact/${ASSET_NAME}.sig"
+          node -e '
+            const fs=require("fs"); const e=process.env; const asset=e.ASSET_NAME;
+            const signature=fs.readFileSync(`release-artifact/${asset}.sig`, "utf8").trim();
+            if (!signature) throw new Error("Empty updater signature");
+            fs.writeFileSync("release-artifact/metadata.json", JSON.stringify({
+              platform:e.PLATFORM_KEY, architecture:e.ARCHITECTURE, version:e.VERSION,
+              tag:e.TAG, commitSha:e.COMMIT_SHA, assetName:asset,
+              signatureName:`${asset}.sig`, signature
+            }, null, 2));
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ matrix.platform_key }}
+          path: release-artifact
+          if-no-files-found: error
+
+  aggregate:
+    needs: [validate, build-artifacts]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.commit_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: updater-*
+          path: release-artifacts
+      - name: Validate complete matrix and create latest.json
+        run: |
+          node scripts/aggregate-updater-manifest.mjs \
+            --input release-artifacts \
+            --tag "${{ needs.validate.outputs.tag }}" \
+            --commit "${{ needs.validate.outputs.commit_sha }}" \
+            --repository "${{ github.repository }}" \
+            --output latest.json
+      - name: Inspect Release state before mutation
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if STATE="$(gh release view "$TAG" --json isDraft,assets 2>/dev/null)"; then
+            IS_DRAFT="$(node -e 'console.log(JSON.parse(process.argv[1]).isDraft)' "$STATE")"
+            test "$IS_DRAFT" = true || { echo "::error::Refusing to modify a published Release"; exit 1; }
+            node - <<'NODE' "$STATE"
+            const { execFileSync } = require('child_process');
+            const release = JSON.parse(process.argv[2]);
+            const expected = new Set(execFileSync(
+              'find',
+              ['release-artifacts', '-type', 'f', '!', '-name', 'metadata.json'],
+              { encoding: 'utf8' },
+            ).trim().split('\n').filter(Boolean).map(file => file.split('/').pop()));
+            for (const asset of release.assets) {
+              if (asset.name === 'metadata.json' || asset.name.endsWith('/metadata.json')) {
+                throw new Error('Metadata fragments must never be published');
+              }
+              if (asset.name.startsWith('skill-deck_') && !expected.has(asset.name)) {
+                throw new Error(`Unexpected managed updater asset: ${asset.name}`);
+              }
+            }
+            NODE
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create draft Release when absent
+        if: steps.state.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release create "$TAG" --verify-tag --draft --title "Skill Deck ${TAG}" --generate-notes
+      - name: Upload validated installers and signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(find release-artifacts -type f ! -name metadata.json | sort)
+          test "${#FILES[@]}" -eq 8 || { echo "::error::Expected 8 installer/signature files"; exit 1; }
+          gh release upload "$TAG" "${FILES[@]}" --clobber
+      - name: Verify remote assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json assets > remote-assets.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const { execFileSync } = require('child_process');
+          const local = execFileSync('find', ['release-artifacts', '-type', 'f', '!', '-name', 'metadata.json'], { encoding: 'utf8' })
+            .trim().split('\n').filter(Boolean).map(file => ({ name: file.split('/').pop(), size: fs.statSync(file).size }));
+          const remoteAssets = JSON.parse(fs.readFileSync('remote-assets.json')).assets;
+          const remote = new Map(remoteAssets.map(asset => [asset.name, asset.size]));
+          for (const asset of local) if (remote.get(asset.name) !== asset.size) throw new Error(`Remote asset mismatch: ${asset.name}`);
+          const expected = new Set(local.map(asset => asset.name));
+          for (const asset of remoteAssets) {
+            if (asset.name === 'metadata.json' || asset.name.endsWith('/metadata.json')) throw new Error('Metadata fragments must never be published');
+            if (asset.name.startsWith('skill-deck_') && !expected.has(asset.name)) {
+              throw new Error(`Unexpected managed updater asset: ${asset.name}`);
+            }
+          }
+          NODE
+      - name: Upload latest.json last
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release upload "$TAG" latest.json --clobber
+      - name: Verify uploaded latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir verified-manifest
+          gh release download "$TAG" --pattern "latest.json" --dir verified-manifest
+          cmp --silent latest.json verified-manifest/latest.json \
+            || { echo "::error::Remote latest.json does not match the validated manifest"; exit 1; }

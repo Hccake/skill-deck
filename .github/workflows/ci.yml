@@ -6,47 +6,75 @@ on:
   pull_request:
     branches: [main, master]
 
-jobs:
-  check:
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  msrv:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install system dependencies
+      - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: 'pnpm'
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:scripts
+      - run: pnpm bindings:check
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
 
-      - name: Install frontend dependencies
-        run: pnpm install
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Test
-        run: pnpm test
-
-      - name: Build
-        run: pnpm build
-
-      - name: Cargo check
-        working-directory: src-tauri
-        run: cargo check
+  rust:
+    name: rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: ShellCheck bundled WSL operation assets
+        if: runner.os == 'Linux'
+        run: >-
+          docker run --rm
+          --volume "$PWD:/work"
+          --workdir /work
+          --entrypoint shellcheck
+          koalaman/shellcheck:v0.10.0
+          -s sh src-tauri/src/environment/wsl/scripts/*.sh
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
