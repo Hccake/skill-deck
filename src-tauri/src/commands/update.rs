@@ -2,10 +2,10 @@ use tauri::State;
 
 use crate::application::mutation::plan::PreviewToken;
 use crate::application::update::{
-    UpdateCheckRequest, UpdateCheckResponse, UpdateExecutionRequest, UpdateExecutionStage,
-    UpdatePreview, UpdateRequest, UpdateResponse,
+    UpdateCheckRequest, UpdateCheckResponse, UpdateExecutionProgress, UpdateExecutionRequest,
+    UpdateExecutionStage, UpdatePreview, UpdateRequest, UpdateResponse,
 };
-use crate::core::mutation::{MutationKind, MutationPhase};
+use crate::core::mutation::{MutationKind, MutationPhase, MutationProgress};
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -64,13 +64,23 @@ async fn execute_update(
     guard.transition(MutationPhase::Acquiring, None, true);
     let result = runtime
         .update()
-        .execute_with_stage_observer(&execution, expected_token, guard.cancellation(), |stage| {
+        .execute_with_stage_observer(&execution, expected_token, guard.cancellation(), |event| {
+            let UpdateExecutionProgress {
+                stage,
+                subject,
+                current,
+                total,
+            } = event;
             guard.transition(
                 match stage {
                     UpdateExecutionStage::Validating => MutationPhase::Validating,
                     UpdateExecutionStage::Updating => MutationPhase::Committing,
                 },
-                None,
+                Some(MutationProgress {
+                    subject,
+                    current,
+                    total,
+                }),
                 matches!(stage, UpdateExecutionStage::Validating),
             );
         })

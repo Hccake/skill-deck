@@ -71,10 +71,10 @@ export function SkillsPage() {
   const checkingUpdateScopes = useSkillsDataStore((s) => s.checkingUpdateScopes);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const updatingContext = useSkillUpdateWorkflow((s) => (
-    s.phase === 'updating' ? s.context : null
+    s.phase === 'executing' ? s.context : null
   ));
   const updatingSkillNames = useSkillUpdateWorkflow((s) => (
-    s.phase === 'updating' ? s.skillNames : EMPTY_SKILL_NAMES
+    s.phase === 'executing' ? s.skillNames : EMPTY_SKILL_NAMES
   ));
   const openUpdate = useSkillUpdateWorkflow((s) => s.open);
   const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);

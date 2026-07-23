@@ -8,6 +8,7 @@ use specta::Type;
 
 use crate::application::agent_intent::AgentTargetFallbackPreview;
 use crate::application::install::InstallPlanExecutor;
+use crate::application::mutation::coordinator::MutationUnitObserver;
 use crate::application::mutation::plan::{MutationPlan, PreviewToken};
 use crate::application::mutation::result::{
     ErrorReport, MutationUnitResult, MutationUnitStatus, OperationErrorCode,
@@ -24,7 +25,6 @@ use crate::application::source_evidence::{
 };
 use crate::application::source_snapshot_reuse::PayloadAcquisitionKey;
 use crate::application::update_planner::{LocalUpdateInspection, LockedUpdateSkill};
-use crate::core::agent_definition::AgentId;
 use crate::core::mutation::CancellationSignal;
 use crate::core::source_identity::{AcquisitionDescriptor, NormalizedRef, SourceIdentity};
 use crate::environment::runtime::ObservedEntryId;
@@ -210,7 +210,7 @@ pub struct UpdateSkillPreview {
     pub skill_name: String,
     pub source_display: String,
     pub ref_display: String,
-    pub placement_agent_ids: Vec<AgentId>,
+    pub adapter_targets: Vec<ObservedEntryOwner>,
     pub capability: CheckUpdateCapability,
     pub clean_copy_count: usize,
     pub overwrite_private_entries: Vec<UpdateConflictCopyPreview>,
@@ -354,6 +354,14 @@ pub enum UpdateExecutionStage {
     Updating,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateExecutionProgress {
+    pub stage: UpdateExecutionStage,
+    pub subject: Option<String>,
+    pub current: Option<u32>,
+    pub total: Option<u32>,
+}
+
 impl<P, A, E> UpdateService<P, A, E>
 where
     P: UpdatePlanner,
@@ -391,10 +399,10 @@ where
         execution: &UpdateExecutionRequest,
         expected_token: PreviewToken,
         cancellation: CancellationSignal,
-        mut observe_stage: F,
+        observe_stage: F,
     ) -> Result<UpdateResponse, AppError>
     where
-        F: FnMut(UpdateExecutionStage),
+        F: Fn(UpdateExecutionProgress) + Send + Sync,
     {
         validate_update_request(&execution.request)?;
         validate_conflict_decisions(execution)?;
@@ -404,8 +412,22 @@ where
             &execution.request.context,
             initial.source_candidates.clone(),
         )?;
-        let acquisitions = self.acquirer.acquire(&groups, cancellation.clone()).await?;
-        observe_stage(UpdateExecutionStage::Validating);
+        let acquisitions = match self.acquirer.acquire(&groups, cancellation.clone()).await {
+            Ok(acquisitions) => acquisitions,
+            Err(AppError::MutationCancelled) => {
+                return Ok(cancelled_before_mutation(
+                    &execution.request.context,
+                    &groups,
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        observe_stage(UpdateExecutionProgress {
+            stage: UpdateExecutionStage::Validating,
+            subject: None,
+            current: None,
+            total: None,
+        });
         let latest = self.planner.inspect(&execution.request).await?;
         validate_preview_authority(&initial.token, &latest.token)?;
 
@@ -548,8 +570,25 @@ where
                 .build(&successful_execution, handles, payloads)
                 .await?;
             validate_preview_authority(&latest.token, &actual_token)?;
-            observe_stage(UpdateExecutionStage::Updating);
-            let mutations = self.executor.execute(plan, cancellation).await;
+            let total = u32::try_from(plan.units.len()).unwrap_or(u32::MAX);
+            observe_stage(UpdateExecutionProgress {
+                stage: UpdateExecutionStage::Updating,
+                subject: None,
+                current: Some(0),
+                total: Some(total),
+            });
+            let unit_observer: MutationUnitObserver<'_> = Arc::new(|progress| {
+                observe_stage(UpdateExecutionProgress {
+                    stage: UpdateExecutionStage::Updating,
+                    subject: Some(progress.skill_name),
+                    current: Some(progress.current),
+                    total: Some(progress.total),
+                });
+            });
+            let mutations = self
+                .executor
+                .execute_with_observer(plan, cancellation, unit_observer)
+                .await;
             let mut mutation_by_skill = mutations
                 .into_iter()
                 .map(|result| (result.skill_name.clone(), result))
@@ -613,6 +652,40 @@ fn not_updated_skill(
         },
         warnings: Vec::new(),
         retryable: report.retryable,
+    }
+}
+
+fn cancelled_before_mutation(
+    context: &ContextRef,
+    groups: &[UpdateAcquisitionGroup],
+) -> UpdateResponse {
+    let report = ErrorReport::from_app_error(AppError::MutationCancelled, Some(context.clone()));
+    let sources = groups
+        .iter()
+        .map(|group| UpdateSourceResult {
+            id: group.source_result_id.clone(),
+            source: group.source.clone(),
+            status: UpdateSourceStatus::Failed,
+            error: Some(report.clone()),
+        })
+        .collect();
+    let skills = groups
+        .iter()
+        .flat_map(|group| {
+            group.skills.iter().map(|skill| {
+                not_updated_skill(
+                    context,
+                    skill.name.clone(),
+                    group.source_result_id.clone(),
+                    report.clone(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    UpdateResponse {
+        sources,
+        outcome: update_outcome(&skills),
+        skills,
     }
 }
 
@@ -705,7 +778,7 @@ fn preview_from_inspection(inspection: LocalUpdateInspection) -> Result<UpdatePr
                 capability,
                 source_display,
                 ref_display,
-                placement_agent_ids: skill.placement_agent_ids,
+                adapter_targets: skill.adapter_targets,
                 skill_name: skill.skill_name,
                 clean_copy_count: skill.clean_copies.len(),
                 overwrite_private_entries: skill
@@ -971,8 +1044,12 @@ mod tests {
         inspection.source_candidates[0].source_url =
             Some("https://secret-token@github.com/owner/repo.git".to_string());
         inspection.source_candidates[0].ref_name = Some("release".to_string());
-        inspection.skills[0].placement_agent_ids =
-            vec![crate::core::agent_definition::AgentId::parse("codex").unwrap()];
+        inspection.skills[0].adapter_targets =
+            vec![crate::application::remove::ObservedEntryOwner {
+                agent_id: crate::core::agent_definition::AgentId::parse("eve").unwrap(),
+                display_name: "Eve".to_string(),
+                logical_target_id: "eve:root".to_string(),
+            }];
         inspection.skills[0].conflicts = vec![crate::application::remove::ObservedPhysicalEntry {
             entry_id: crate::environment::runtime::ObservedEntryId::parse("entry-v1-private")
                 .unwrap(),
@@ -998,7 +1075,10 @@ mod tests {
             serde_json::json!("github.com/owner/repo")
         );
         assert_eq!(skill["refDisplay"], serde_json::json!("release"));
-        assert_eq!(skill["placementAgentIds"], serde_json::json!(["codex"]));
+        assert!(skill.get("placementAgentIds").is_none());
+        assert_eq!(skill["adapterTargets"].as_array().unwrap().len(), 1);
+        assert_eq!(skill["adapterTargets"][0]["displayName"], "Eve");
+        assert_eq!(skill["adapterTargets"][0]["logicalTargetId"], "eve:root");
         let serialized = preview.to_string();
         assert!(!serialized.contains("secret-token"));
         assert!(!serialized.contains("sourceUrl"));
@@ -1086,7 +1166,7 @@ mod tests {
                         crate::application::update_planner::LocalUpdateSkillInspection {
                             skill_name: "demo".to_string(),
                             observed_digest: "demo-observed".to_string(),
-                            placement_agent_ids: Vec::new(),
+                            adapter_targets: Vec::new(),
                             clean_copies: Vec::new(),
                             conflicts: Vec::new(),
                             blocking_reasons: Vec::new(),
@@ -1155,6 +1235,18 @@ mod tests {
                     }),
                 }])
             })
+        }
+    }
+
+    struct CancellingAcquirer;
+
+    impl UpdatePayloadAcquirer for CancellingAcquirer {
+        fn acquire<'a>(
+            &'a self,
+            _groups: &'a [UpdateAcquisitionGroup],
+            _cancellation: CancellationSignal,
+        ) -> UpdateFuture<'a, Result<Vec<UpdateSourceAcquisition>, AppError>> {
+            Box::pin(async { Err(AppError::MutationCancelled) })
         }
     }
 
@@ -1286,7 +1378,7 @@ mod tests {
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "alpha".to_string(),
                     observed_digest: "alpha-observed".to_string(),
-                    placement_agent_ids: Vec::new(),
+                    adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
@@ -1294,7 +1386,7 @@ mod tests {
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "beta".to_string(),
                     observed_digest: "beta-observed".to_string(),
-                    placement_agent_ids: Vec::new(),
+                    adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
@@ -1387,7 +1479,8 @@ mod tests {
             },
         );
 
-        let mut stages = Vec::new();
+        let stages = Arc::new(Mutex::new(Vec::new()));
+        let observed_stages = Arc::clone(&stages);
         let response = service
             .execute_with_stage_observer(
                 &UpdateExecutionRequest {
@@ -1402,7 +1495,7 @@ mod tests {
                 },
                 token,
                 CancellationSignal::default(),
-                |stage| stages.push(stage),
+                move |stage| observed_stages.lock().unwrap().push(stage),
             )
             .await
             .unwrap();
@@ -1411,10 +1504,20 @@ mod tests {
         assert_eq!(builds.load(Ordering::SeqCst), 1);
         assert_eq!(executed.load(Ordering::SeqCst), 1);
         assert_eq!(
-            stages,
+            *stages.lock().unwrap(),
             vec![
-                UpdateExecutionStage::Validating,
-                UpdateExecutionStage::Updating
+                UpdateExecutionProgress {
+                    stage: UpdateExecutionStage::Validating,
+                    subject: None,
+                    current: None,
+                    total: None,
+                },
+                UpdateExecutionProgress {
+                    stage: UpdateExecutionStage::Updating,
+                    subject: None,
+                    current: Some(0),
+                    total: Some(0),
+                },
             ]
         );
         assert!(matches!(
@@ -1489,7 +1592,7 @@ mod tests {
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "alpha".to_string(),
                     observed_digest: "alpha-observed".to_string(),
-                    placement_agent_ids: Vec::new(),
+                    adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
@@ -1497,7 +1600,7 @@ mod tests {
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "beta".to_string(),
                     observed_digest: "beta-observed".to_string(),
-                    placement_agent_ids: Vec::new(),
+                    adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
@@ -1762,6 +1865,62 @@ mod tests {
             UpdateCoverage::NotUpdated { .. }
         ));
         assert_eq!(response.outcome, UpdateOutcome::Failed);
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_acquisition_returns_a_structured_cancelled_response() {
+        let manager = Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000_000,
+            },
+            || 1_000,
+        ));
+        let token = PreviewToken {
+            generation: "preview-v1-cancel".to_string(),
+            registry_revision: "registry-1".to_string(),
+            environment_revision: "environment-1".to_string(),
+            context_revision: ContextSnapshotRevision::parse("context-v1-cancel").unwrap(),
+        };
+        let context = ContextRef {
+            environment: EnvironmentRef::Host,
+            scope: ContextScope::Global,
+        };
+        let service = UpdateService::new(
+            manager,
+            Planner {
+                token: token.clone(),
+                rebuilds: Arc::new(AtomicUsize::new(0)),
+            },
+            CancellingAcquirer,
+            Executor(Arc::new(AtomicUsize::new(0))),
+        );
+
+        let response = service
+            .execute(
+                &UpdateExecutionRequest {
+                    request: UpdateRequest {
+                        context,
+                        skill_names: vec!["demo".to_string()],
+                    },
+                    overwrite_private_entries: Vec::new(),
+                },
+                token,
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.outcome, UpdateOutcome::Cancelled);
+        assert_eq!(response.sources.len(), 1);
+        assert_eq!(response.skills.len(), 1);
+        assert!(response.skills[0].mutation.is_none());
+        assert!(matches!(
+            response.skills[0].coverage,
+            UpdateCoverage::NotUpdated { ref error }
+                if error.code == OperationErrorCode::MutationCancelled
+        ));
     }
 
     #[test]

@@ -24,7 +24,7 @@ const preview = (name = 'demo'): UpdatePreview => ({
     skillName: name,
     sourceDisplay: 'github.com/backend/repo',
     refDisplay: 'release',
-    placementAgentIds: ['codex'],
+    adapterTargets: [],
     capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
     cleanCopyCount: 0,
     overwritePrivateEntries: [],

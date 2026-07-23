@@ -12,12 +12,6 @@ pub trait AtomicDocumentIo: Send + Sync {
         target: &'a ResourceLocator,
     ) -> IoFuture<'a, Result<Option<Vec<u8>>, AppError>>;
 
-    #[cfg(test)]
-    fn backup_exists<'a>(
-        &'a self,
-        target: &'a ResourceLocator,
-    ) -> IoFuture<'a, Result<bool, AppError>>;
-
     fn write_atomic<'a>(
         &'a self,
         target: &'a ResourceLocator,

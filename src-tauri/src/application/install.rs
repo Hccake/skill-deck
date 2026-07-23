@@ -9,6 +9,7 @@ use specta::Type;
 use crate::application::agent_intent::{
     validate_agent_intents, AgentTargetFallbackPreview, AgentWriteIntent,
 };
+use crate::application::mutation::coordinator::MutationUnitObserver;
 use crate::application::mutation::plan::{MutationPlan, PreviewToken};
 use crate::application::mutation::result::{MutationUnitResult, OperationErrorCode};
 use crate::application::payload_session::{
@@ -82,6 +83,15 @@ pub trait InstallPlanExecutor: Send + Sync {
         plan: MutationPlan,
         cancellation: CancellationSignal,
     ) -> InstallFuture<'a, Vec<MutationUnitResult>>;
+
+    fn execute_with_observer<'a>(
+        &'a self,
+        plan: MutationPlan,
+        cancellation: CancellationSignal,
+        _observer: MutationUnitObserver<'a>,
+    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
+        self.execute(plan, cancellation)
+    }
 }
 
 pub struct InstallService<P, E> {

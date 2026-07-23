@@ -536,14 +536,6 @@ mod tests {
             })
         }
 
-        #[cfg(test)]
-        fn backup_exists<'a>(
-            &'a self,
-            _target: &'a crate::environment::types::ResourceLocator,
-        ) -> IoFuture<'a, Result<bool, AppError>> {
-            Box::pin(async { Ok(false) })
-        }
-
         fn write_atomic<'a>(
             &'a self,
             _target: &'a crate::environment::types::ResourceLocator,

@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_lock_io_keeps_exactly_one_previous_atomic_version() {
+    async fn host_lock_io_does_not_leave_a_previous_version_sidecar() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("state/lock.json");
         let locator = ResourceLocator {
@@ -121,13 +121,10 @@ mod tests {
         io.write_atomic(&locator, b"second".to_vec()).await.unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"second");
-        assert_eq!(
-            std::fs::read(path.with_file_name("lock.json.bak")).unwrap(),
-            b"first"
-        );
+        assert!(!path.with_file_name("lock.json.bak").exists());
         assert_eq!(
             std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-            2
+            1
         );
     }
 }

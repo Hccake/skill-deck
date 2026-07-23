@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use crate::application::mutation::plan::{ExecutionUnit, MutationPlan, RuntimeRevisions};
 use crate::application::mutation::result::{
@@ -14,6 +15,15 @@ use crate::error::AppError;
 use crate::storage::lock_plan::{LockCommitReceipt, PreparedLockMutation};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MutationUnitProgress {
+    pub skill_name: String,
+    pub current: u32,
+    pub total: u32,
+}
+
+pub type MutationUnitObserver<'a> = Arc<dyn Fn(MutationUnitProgress) + Send + Sync + 'a>;
 
 pub trait PreparedEntryExecutor: Send + Sync {
     type Staged: Send;
@@ -111,11 +121,23 @@ where
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn execute(
+        &self,
+        plan: MutationPlan,
+        cancellation: CancellationSignal,
+    ) -> Vec<MutationUnitResult> {
+        self.execute_with_observer(plan, cancellation, Arc::new(|_| {}))
+            .await
+    }
+
+    pub async fn execute_with_observer(
         &self,
         mut plan: MutationPlan,
         cancellation: CancellationSignal,
+        observer: MutationUnitObserver<'_>,
     ) -> Vec<MutationUnitResult> {
+        let total = u32::try_from(plan.units.len()).unwrap_or(u32::MAX);
         let mut staged_units = BTreeMap::new();
         for index in 0..plan.units.len() {
             let unit = plan.units[index].clone();
@@ -166,6 +188,11 @@ where
         let mut blocked_targets = BTreeSet::new();
         for index in 0..plan.units.len() {
             let unit = plan.units[index].clone();
+            observer(MutationUnitProgress {
+                skill_name: unit.skill_name.clone(),
+                current: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                total,
+            });
             let staged = staged_units
                 .remove(&index)
                 .expect("every unit has a preflight result");
@@ -763,6 +790,36 @@ mod tests {
                 "verify:one",
                 "lock:one",
                 "cleanup:one",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn observer_reports_each_unit_before_its_destructive_phase() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&progress);
+        coordinator(Failure::None, log)
+            .execute_with_observer(
+                plan(vec![unit("one", key("one")), unit("two", key("two"))]),
+                CancellationSignal::default(),
+                Arc::new(move |item| observed.lock().unwrap().push(item)),
+            )
+            .await;
+
+        assert_eq!(
+            *progress.lock().unwrap(),
+            vec![
+                MutationUnitProgress {
+                    skill_name: "one".to_string(),
+                    current: 1,
+                    total: 2,
+                },
+                MutationUnitProgress {
+                    skill_name: "two".to_string(),
+                    current: 2,
+                    total: 2,
+                },
             ]
         );
     }

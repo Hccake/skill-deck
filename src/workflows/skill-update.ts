@@ -10,9 +10,7 @@ export type SkillUpdatePhase =
   | 'loadingPreview'
   | 'previewError'
   | 'ready'
-  | 'acquiring'
-  | 'validating'
-  | 'updating'
+  | 'executing'
   | 'result';
 
 interface SkillUpdateWorkflowState {
@@ -81,7 +79,7 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
     const { context, skillNames, preview, batch, conflictDecisions, phase, confirming } = get();
     if (phase !== 'ready' || confirming || !context || !preview) return;
     const generation = get().generation;
-    set({ confirming: true });
+    set({ phase: 'executing', confirming: true });
     try {
       const execution = { request: { context, skillNames }, overwritePrivateEntries: [...conflictDecisions] };
       const result = batch
@@ -108,12 +106,7 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
   acceptMutation: (mutation) => {
     const { context, phase } = get();
     if (!context || !mutation || mutation.kind !== 'update' || contextKey(mutation.context) !== contextKey(context)) return;
-    const nextPhase = mutation.phase === 'acquiring'
-      ? 'acquiring'
-      : mutation.phase === 'validating'
-        ? 'validating'
-        : 'updating';
-    if (phase !== 'result' && phase !== 'closed') set({ phase: nextPhase });
+    if (phase !== 'result' && phase !== 'closed') set({ phase: 'executing' });
   },
   close: () => set((state) => ({ ...closedState, generation: state.generation + 1 })),
   reset: () => set((state) => ({ ...closedState, generation: state.generation + 1 })),

@@ -96,19 +96,13 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const syncUpdates = useSkillsDataStore((s) => s.syncUpdates);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const activeUpdatePhase = useSkillUpdateWorkflow((s) => (
-    s.phase === 'acquiring' || s.phase === 'validating' || s.phase === 'updating'
-      ? s.phase
-      : null
+    s.phase === 'executing' ? 'updating' : null
   ));
   const activeUpdateContext = useSkillUpdateWorkflow((s) => (
-    s.phase === 'acquiring' || s.phase === 'validating' || s.phase === 'updating'
-      ? s.context
-      : null
+    s.phase === 'executing' ? s.context : null
   ));
   const activeUpdateSkillNames = useSkillUpdateWorkflow((s) => (
-    s.phase === 'acquiring' || s.phase === 'validating' || s.phase === 'updating'
-      ? s.skillNames
-      : EMPTY_SKILL_NAMES
+    s.phase === 'executing' ? s.skillNames : EMPTY_SKILL_NAMES
   ));
   const openUpdate = useSkillUpdateWorkflow((s) => s.open);
   const refreshWorkspace = useSkillsDataStore((s) => s.refreshWorkspace);

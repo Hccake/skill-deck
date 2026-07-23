@@ -278,21 +278,18 @@ describe('SkillsPanel', () => {
     expect(screen.getByTestId('repair:global:cached')).toBeDefined();
   });
 
-  it.each(['acquiring', 'validating', 'updating'] as const)(
-    'projects the %s update phase into the matching list row',
-    (phase) => {
-      mocks.skillsDataState.snapshots = {
-        'host/global': snapshot([makeSkill('toolkit')]),
-      };
-      mocks.updateWorkflowState.phase = phase;
-      mocks.updateWorkflowState.context = hostGlobal;
-      mocks.updateWorkflowState.skillNames = ['toolkit'];
+  it('projects an executing update into the matching list row', () => {
+    mocks.skillsDataState.snapshots = {
+      'host/global': snapshot([makeSkill('toolkit')]),
+    };
+    mocks.updateWorkflowState.phase = 'executing';
+    mocks.updateWorkflowState.context = hostGlobal;
+    mocks.updateWorkflowState.skillNames = ['toolkit'];
 
-      render(<SkillsPanel compact={false} />);
+    render(<SkillsPanel compact={false} />);
 
-      expect(screen.getByTestId('phase:global:toolkit').textContent).toBe(phase);
-    },
-  );
+    expect(screen.getByTestId('phase:global:toolkit').textContent).toBe('updating');
+  });
 
   it('keeps update subscriptions stable while the preview dialog opens', () => {
     mocks.skillsDataState.snapshots = {
@@ -314,7 +311,7 @@ describe('SkillsPanel', () => {
       skillNames: ['toolkit'],
     };
     const ready = { ...loadingPreview, phase: 'ready' };
-    const updating = { ...loadingPreview, phase: 'updating' };
+    const executing = { ...loadingPreview, phase: 'executing' };
 
     const closedValues = mocks.updateWorkflowSelectors.map((selector) => selector(closed));
     expect(mocks.updateWorkflowSelectors.every((selector, index) => (
@@ -324,7 +321,7 @@ describe('SkillsPanel', () => {
       Object.is(selector(ready), closedValues[index])
     ))).toBe(true);
     expect(mocks.updateWorkflowSelectors.some((selector, index) => (
-      !Object.is(selector(updating), closedValues[index])
+      !Object.is(selector(executing), closedValues[index])
     ))).toBe(true);
   });
 

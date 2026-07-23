@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, CircleAlert, CircleStop, LoaderCircle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { useMutationStore } from '@/stores/mutation';
@@ -23,7 +24,14 @@ import {
   formatMutationError,
   formatMutationWarning,
 } from '@/lib/mutation-results';
-import type { AgentId, ContextRef, ErrorReport, UpdateSkillResult } from '@/bindings';
+import type {
+  AgentId,
+  ContextRef,
+  ErrorReport,
+  ObservedEntryOwner,
+  UpdateSkillPreview,
+  UpdateSkillResult,
+} from '@/bindings';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { contextKey } from '@/lib/context';
 import { formatAppError } from '@/utils/format-app-error';
@@ -36,33 +44,6 @@ interface UpdatePlanDialogProps {
   skillNames: string[];
   agentDisplayNames?: Map<AgentId, string>;
   onOpenChange: (open: boolean) => void;
-}
-
-function AgentList({
-  agents,
-  agentDisplayNames,
-}: {
-  agents: AgentId[];
-  agentDisplayNames?: Map<AgentId, string>;
-}) {
-  const visibleAgents = agents.slice(0, 3);
-  const hiddenCount = agents.length - visibleAgents.length;
-
-  return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground sm:justify-end">
-      {visibleAgents.map((agent, index) => (
-        <span key={agent} className="inline-flex items-center gap-x-1.5">
-          <span className="truncate">{agentDisplayNames?.get(agent) ?? agent}</span>
-          {index < visibleAgents.length - 1 ? <span className="text-muted-foreground/40">·</span> : null}
-        </span>
-      ))}
-      {hiddenCount > 0 ? (
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-          +{hiddenCount}
-        </span>
-      ) : null}
-    </div>
-  );
 }
 
 function isCancelled(report: ErrorReport | null | undefined): boolean {
@@ -80,6 +61,131 @@ function updateSkillStatus(item: UpdateSkillResult, sourceError?: ErrorReport | 
   return 'failed';
 }
 
+function ownerLabels(
+  owners: ObservedEntryOwner[],
+  names?: Map<AgentId, string>,
+): string {
+  return owners
+    .map((owner) => names?.get(owner.agentId) ?? owner.displayName ?? owner.agentId)
+    .join(' · ');
+}
+
+function PreviewSkillRow({
+  skill,
+  decisions,
+  setConflictDecision,
+  agentDisplayNames,
+}: {
+  skill: UpdateSkillPreview;
+  decisions: Set<string>;
+  setConflictDecision: (entryId: string, overwrite: boolean) => void;
+  agentDisplayNames?: Map<AgentId, string>;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="space-y-2.5 py-3 first:pt-0 last:pb-0">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <p className="min-w-0 truncate text-sm font-semibold">{skill.skillName}</p>
+        {skill.blockingReasons.length > 0 ? (
+          <Badge variant="destructive" className="shrink-0 text-xs">
+            {t('skills.updatePlan.blocked')}
+          </Badge>
+        ) : null}
+      </div>
+
+      <div className="space-y-1 text-xs text-muted-foreground">
+        <p>{t('skills.updatePlan.sharedSkillAction')}</p>
+        {skill.cleanCopyCount > 0 ? (
+          <p>{t('skills.updatePlan.cleanCopiesAction', { count: skill.cleanCopyCount })}</p>
+        ) : null}
+        {skill.adapterTargets.length > 0 ? (
+          <p>
+            {t('skills.updatePlan.adapterTargetsAction', {
+              agents: ownerLabels(skill.adapterTargets, agentDisplayNames),
+            })}
+          </p>
+        ) : null}
+      </div>
+
+      {skill.overwritePrivateEntries.length > 0 ? (
+        <div className="space-y-2 border-l-2 border-warning/40 pl-3">
+          <p className="text-xs font-medium text-foreground">
+            {t('skills.updatePlan.conflictingCopies')}
+          </p>
+          {skill.overwritePrivateEntries.map((entry) => (
+            <label
+              key={entry.entryId}
+              className="flex min-w-0 cursor-pointer items-start gap-2.5 text-xs text-muted-foreground"
+            >
+              <Checkbox
+                checked={decisions.has(entry.entryId)}
+                aria-label={t('skills.updatePlan.overwritePrivateEntry')}
+                onCheckedChange={(checked) => {
+                  setConflictDecision(entry.entryId, checked === true);
+                }}
+              />
+              <span className="min-w-0">
+                <span className="block text-foreground">
+                  {ownerLabels(entry.owners, agentDisplayNames)}
+                </span>
+                <span>{t('skills.updatePlan.preserveConflictDefault')}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ExecutionView({
+  batch,
+  phase,
+  subject,
+  current,
+  total,
+  cancelling,
+}: {
+  batch: boolean;
+  phase: string;
+  subject?: string | null;
+  current?: number | null;
+  total?: number | null;
+  cancelling: boolean;
+}) {
+  const { t } = useTranslation();
+  const progressValue = current != null && total != null && total > 0
+    ? Math.min(100, (current / total) * 100)
+    : null;
+
+  return (
+    <div
+      className="flex min-h-52 flex-col items-center justify-center px-6 py-8 text-center"
+      role="status"
+      aria-live="polite"
+    >
+      <LoaderCircle className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
+      <p className="mt-4 text-base font-semibold">
+        {cancelling ? t('skills.updatePlan.stopping') : t(`mutation.phase.${phase}`)}
+      </p>
+      <p className="mt-1 max-w-md text-sm text-muted-foreground">
+        {subject
+          ? t('skills.updatePlan.currentSkill', { skillName: subject })
+          : t('skills.updatePlan.executionDescription')}
+      </p>
+      {batch && progressValue != null ? (
+        <div className="mt-5 w-full max-w-sm space-y-2">
+          <Progress value={progressValue} className="h-2" />
+          <p className="text-xs text-muted-foreground">
+            {t('skills.updatePlan.progress', { current, total })}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function UpdatePlanDialog({
   open,
   context,
@@ -88,89 +194,39 @@ export function UpdatePlanDialog({
   onOpenChange,
 }: UpdatePlanDialogProps) {
   const { t } = useTranslation();
-  const phase = useSkillUpdateWorkflow((s) => s.phase);
-  const preview = useSkillUpdateWorkflow((s) => s.preview);
-  const result = useSkillUpdateWorkflow((s) => s.result);
-  const executionError = useSkillUpdateWorkflow((s) => s.executionError);
-  const confirming = useSkillUpdateWorkflow((s) => s.confirming);
-  const decisions = useSkillUpdateWorkflow((s) => s.conflictDecisions);
-  const setConflictDecision = useSkillUpdateWorkflow((s) => s.setConflictDecision);
-  const confirmWorkflow = useSkillUpdateWorkflow((s) => s.confirm);
-  const retryWorkflow = useSkillUpdateWorkflow((s) => s.retryFailed);
-  const retryPreview = useSkillUpdateWorkflow((s) => s.open);
-  const acceptMutation = useSkillUpdateWorkflow((s) => s.acceptMutation);
-  const displayResponse = result;
-  const displayResults = result?.skills ?? EMPTY_RESULTS;
-  const displayPreview = preview;
+  const phase = useSkillUpdateWorkflow((state) => state.phase);
+  const preview = useSkillUpdateWorkflow((state) => state.preview);
+  const result = useSkillUpdateWorkflow((state) => state.result);
+  const executionError = useSkillUpdateWorkflow((state) => state.executionError);
+  const decisions = useSkillUpdateWorkflow((state) => state.conflictDecisions);
+  const setConflictDecision = useSkillUpdateWorkflow((state) => state.setConflictDecision);
+  const confirmWorkflow = useSkillUpdateWorkflow((state) => state.confirm);
+  const retryWorkflow = useSkillUpdateWorkflow((state) => state.retryFailed);
+  const retryPreview = useSkillUpdateWorkflow((state) => state.open);
+  const acceptMutation = useSkillUpdateWorkflow((state) => state.acceptMutation);
   const activeMutation = useMutationStore((state) => state.activeMutation);
+  const cancelling = useMutationStore((state) => state.cancelling);
   const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
-  const matchingUpdateMutation = context !== null && activeMutation?.kind === 'update'
-    && contextKey(activeMutation.context) === contextKey(context);
-  const irreversibleUpdate = matchingUpdateMutation && !activeMutation.cancelable;
-  const closeBlocked = irreversibleUpdate || (confirming && !matchingUpdateMutation);
-  const writeBlocked = activeMutation !== null;
   const environments = useEnvironmentStore((state) => state.environments);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
+  const displayResults = result?.skills ?? EMPTY_RESULTS;
+  const batch = skillNames.length > 1;
+  const executing = phase === 'executing';
+  const matchingUpdateMutation = context !== null && activeMutation?.kind === 'update'
+    && contextKey(activeMutation.context) === contextKey(context);
+  const writeBlocked = activeMutation !== null;
 
   useEffect(() => {
     acceptMutation(activeMutation);
   }, [acceptMutation, activeMutation]);
 
-  const resultCounts = useMemo(() => {
-    const results = displayResults;
-    const sourceErrors = new Map(
-      displayResponse?.sources.map((source) => [source.id, source.error]) ?? [],
-    );
-    return {
-      success: results.filter((item) => item.mutation?.status === 'succeeded').length,
-      partial: results.filter((item) => (
-        item.coverage.kind === 'preservedConflicts'
-        || item.mutation?.status === 'notRun'
-        || item.mutation?.status === 'skipped'
-      )).length,
-      failed: results.filter((item) => (
-        updateSkillStatus(item, sourceErrors.get(item.sourceResultId)) === 'failed'
-      )).length,
-      skipped: results.filter((item) => (
-        updateSkillStatus(item, sourceErrors.get(item.sourceResultId)) === 'cancelled'
-      )).length,
-    };
-  }, [displayResponse, displayResults]);
-  const retryableResults = useMemo(
-    () => displayResults.filter((item) => item.retryable),
-    [displayResults],
-  );
-  const resultPresentations = useMemo(
-    () => new Map(displayResults.flatMap((item) => item.mutation ? [[
-      item.skillIdentity.skillName,
-      presentMutationUnit(item.mutation, t, { environments, projectsByEnvironment }),
-    ] as const] : [])),
-    [environments, displayResults, projectsByEnvironment, t],
-  );
-  const privateEntries = useMemo(
-    () => displayPreview?.skills.flatMap((skill) => skill.overwritePrivateEntries) ?? [],
-    [displayPreview],
-  );
-  const ownerDisplayNameCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const entry of privateEntries) {
-      for (const owner of entry.owners) {
-        counts.set(owner.displayName, (counts.get(owner.displayName) ?? 0) + 1);
-      }
-    }
-    return counts;
-  }, [privateEntries]);
-  const cleanCopyCounts = useMemo(
-    () => displayPreview?.skills.filter((skill) => skill.cleanCopyCount > 0) ?? [],
-    [displayPreview],
-  );
   const previewGroups = useMemo(() => {
     const groups = new Map<string, {
       sourceDisplay: string;
       refDisplay: string;
-      skills: NonNullable<typeof displayPreview>['skills'];
+      skills: UpdateSkillPreview[];
     }>();
-    for (const skill of displayPreview?.skills ?? []) {
+    for (const skill of preview?.skills ?? []) {
       const key = `${skill.sourceDisplay}\u0000${skill.refDisplay}`;
       const group = groups.get(key) ?? {
         sourceDisplay: skill.sourceDisplay,
@@ -181,342 +237,324 @@ export function UpdatePlanDialog({
       groups.set(key, group);
     }
     return [...groups.values()];
-  }, [displayPreview]);
+  }, [preview]);
+
+  const sourceErrors = useMemo(
+    () => new Map(result?.sources.map((source) => [source.id, source.error]) ?? []),
+    [result],
+  );
+  const resultCounts = useMemo(() => ({
+    success: displayResults.filter((item) => item.mutation?.status === 'succeeded').length,
+    partial: displayResults.filter((item) => item.coverage.kind === 'preservedConflicts').length,
+    failed: displayResults.filter((item) => (
+      updateSkillStatus(item, sourceErrors.get(item.sourceResultId)) === 'failed'
+    )).length,
+    skipped: displayResults.filter((item) => (
+      updateSkillStatus(item, sourceErrors.get(item.sourceResultId)) === 'cancelled'
+    )).length,
+  }), [displayResults, sourceErrors]);
+  const retryableResults = useMemo(
+    () => displayResults.filter((item) => item.retryable),
+    [displayResults],
+  );
+  const resultPresentations = useMemo(
+    () => new Map(displayResults.flatMap((item) => item.mutation ? [[
+      item.skillIdentity.skillName,
+      presentMutationUnit(item.mutation, t, { environments, projectsByEnvironment }),
+    ] as const] : [])),
+    [displayResults, environments, projectsByEnvironment, t],
+  );
+  const detailResults = useMemo(() => displayResults.filter((item) => (
+    item.mutation?.status !== 'succeeded'
+    || item.coverage.kind !== 'updated'
+    || (item.mutation?.warnings.length ?? 0) > 0
+    || item.warnings.length > 0
+    || item.mutation?.recovery != null
+  )), [displayResults]);
 
   if (!context) return null;
+
   const canConfirm = preview?.skills.some((skill) => (
     skill.capability.canRunUpdate && skill.blockingReasons.length === 0
   )) ?? false;
-  const readyTitleCount = preview
-    ? preview.skills.filter((skill) => (
-      skill.capability.canRunUpdate && skill.blockingReasons.length === 0
-    )).length
-    : skillNames.length;
-  const phaseStatus = phase === 'acquiring' || phase === 'validating' || phase === 'updating'
-    ? phase
-    : null;
-  const progress = matchingUpdateMutation ? activeMutation.progress : null;
+  const readyCount = preview?.skills.filter((skill) => (
+    skill.capability.canRunUpdate && skill.blockingReasons.length === 0
+  )).length ?? skillNames.length;
+  const singleSkill = preview?.skills[0];
+  const dialogTitle = phase === 'result'
+    ? t('skills.updatePlan.resultTitle')
+    : executing
+      ? t(batch ? 'skills.updatePlan.executingBatchTitle' : 'skills.updatePlan.executingTitle', {
+        skillName: singleSkill?.skillName ?? skillNames[0],
+      })
+      : batch
+        ? t('skills.updatePlan.readyTitle', { count: readyCount })
+        : t('skills.updatePlan.singleTitle', { skillName: singleSkill?.skillName ?? skillNames[0] });
+  const dialogDescription = executing
+    ? t('skills.updatePlan.executionDescription')
+    : phase === 'result'
+      ? t('skills.updatePlan.resultDescription')
+      : t('skills.updatePlan.readyDescription');
 
-  const handleConfirm = async () => {
-    await confirmWorkflow();
-  };
-
-  const handleRetryFailed = async () => {
-    await retryWorkflow();
-  };
-
-  const handlePreviewRetry = async () => {
-    await retryPreview(context, skillNames);
-  };
-
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) return onOpenChange(true);
-    if (closeBlocked) return;
-    if (matchingUpdateMutation) {
-      void cancelActiveMutation();
-      return;
-    }
-    onOpenChange(false);
+  const handleDismiss = () => {
+    if (!executing) onOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) onOpenChange(true);
+        else handleDismiss();
+      }}
+    >
       <DialogContent
-        className={`${skillNames.length > 1
-          ? 'h-[min(40rem,calc(100dvh-2rem))]'
-          : 'h-[min(30rem,calc(100dvh-2rem))]'} grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-2xl`}
-        showCloseButton={!closeBlocked}
-        aria-busy={phase === 'loadingPreview' || phase === 'acquiring' || phase === 'validating' || phase === 'updating'}
+        className={`${batch
+          ? 'h-[min(40rem,calc(100dvh-2rem))] sm:max-w-2xl'
+          : 'max-h-[min(32rem,calc(100dvh-2rem))] sm:max-w-xl'} grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0`}
+        showCloseButton={!executing}
+        aria-busy={phase === 'loadingPreview' || executing}
+        onPointerDownOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => {
+          if (executing) event.preventDefault();
+        }}
       >
         <DialogHeader className="border-b border-border px-6 pt-6 pb-4">
-          <DialogTitle>{t('skills.updatePlan.readyTitle', { count: readyTitleCount })}</DialogTitle>
-          <DialogDescription>{t('skills.updatePlan.readyDescription')}</DialogDescription>
+          <DialogTitle>{dialogTitle}</DialogTitle>
+          <DialogDescription>{dialogDescription}</DialogDescription>
         </DialogHeader>
 
         <div
           data-testid="update-plan-dialog-body"
-          className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-6 py-4"
+          className="min-h-0 overflow-y-auto overscroll-contain px-6 py-4"
         >
           {phase === 'loadingPreview' ? (
-            <div className="space-y-3" role="status" aria-live="polite">
+            <div className="min-h-48 space-y-3" role="status" aria-live="polite">
               <span className="sr-only">{t('skills.updatePlan.loadingPreview')}</span>
+              <Skeleton className="h-12 w-full" />
               <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-16 w-4/5" />
+              <Skeleton className="h-12 w-4/5" />
             </div>
           ) : phase === 'previewError' ? (
-            <div className="py-8 text-sm text-destructive" role="alert">
+            <div className="min-h-48 py-8 text-sm text-destructive" role="alert">
               {t('skills.updatePlan.previewError')}
             </div>
-          ) : phase !== 'result' ? (
-            <>
-              {phaseStatus ? (
-                <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm" role="status" aria-live="polite">
-                  <p className="font-medium">{t(`mutation.phase.${phaseStatus}`)}</p>
-                  {progress?.current != null && progress.total != null ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('skills.updatePlan.progress', { current: progress.current, total: progress.total })}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {cleanCopyCounts.length > 0 ? (
-                <section className="space-y-1" aria-label={t('skills.updatePlan.cleanCopyCount')}>
-                  <p className="text-sm text-muted-foreground">
-                    {t('skills.updatePlan.cleanCopyCount', {
-                      count: cleanCopyCounts.reduce((total, skill) => total + skill.cleanCopyCount, 0),
-                    })}
-                  </p>
-                  {cleanCopyCounts.map((skill) => (
-                    <p key={skill.skillName} className="text-xs text-muted-foreground">
-                      {t('skills.updatePlan.cleanCopyCountForSkill', {
-                        skillName: skill.skillName,
-                        count: skill.cleanCopyCount,
-                      })}
-                    </p>
-                  ))}
-                </section>
-              ) : null}
-              {privateEntries.length > 0 ? (
-                <section className="space-y-2" aria-labelledby="update-private-entries-title">
-                  <div>
-                    <p id="update-private-entries-title" className="text-sm font-medium">
-                      {t('skills.updatePlan.privateCopiesTitle')}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {t('skills.updatePlan.privateCopiesDescription')}
-                    </p>
-                  </div>
-                  {privateEntries.map((entry, entryIndex) => {
-                    const checked = decisions.has(entry.entryId);
-                    return (
-                      <label
-                        key={entry.entryId}
-                        className="flex min-w-0 cursor-pointer items-start gap-3 rounded-md border border-border/70 p-3"
-                      >
-                        <Checkbox
-                          checked={checked}
-                          aria-label={t('skills.updatePlan.overwritePrivateEntry')}
-                          onCheckedChange={(nextChecked) => {
-                            setConflictDecision(entry.entryId, nextChecked === true);
-                          }}
-                        />
-                        <span className="flex min-w-0 flex-1 items-start justify-between gap-3 text-xs text-muted-foreground">
-                          <span className="flex min-w-0 flex-wrap gap-x-1">
-                            {entry.owners.map((owner, index) => (
-                              <span key={`${entry.entryId}:${owner.logicalTargetId}`} className="inline-flex flex-wrap gap-x-1">
-                                <span>{owner.displayName}</span>
-                                {(ownerDisplayNameCounts.get(owner.displayName) ?? 0) > 1 ? (
-                                  <span>{owner.agentId} - {owner.logicalTargetId}</span>
-                                ) : null}
-                                {index < entry.owners.length - 1 ? <span aria-hidden="true">·</span> : null}
-                              </span>
-                            ))}
-                          </span>
-                          <span className="shrink-0">#{entryIndex + 1}</span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </section>
-              ) : null}
-              {previewGroups.map((group) => (
-                <div
-                  key={`${group.sourceDisplay}:${group.refDisplay}`}
-                  className="overflow-hidden rounded-md border border-border/70 bg-background/60"
-                >
-                  <div className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-2.5">
+          ) : executing ? (
+            <ExecutionView
+              batch={batch}
+              phase={matchingUpdateMutation ? activeMutation.phase : 'preparing'}
+              subject={matchingUpdateMutation ? activeMutation.progress?.subject : null}
+              current={matchingUpdateMutation ? activeMutation.progress?.current : null}
+              total={matchingUpdateMutation ? activeMutation.progress?.total : null}
+              cancelling={cancelling}
+            />
+          ) : phase === 'ready' && preview ? (
+            <div className="space-y-4">
+              {!batch && singleSkill ? (
+                <>
+                  <div className="flex items-start justify-between gap-4 border-b border-border pb-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{group.sourceDisplay}</p>
-                      {group.refDisplay ? (
+                      <p className="truncate text-sm font-medium">{singleSkill.sourceDisplay}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t('skills.refBadge', { ref: singleSkill.refDisplay })}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {t('skills.updatePlan.source')}
+                    </span>
+                  </div>
+                  <PreviewSkillRow
+                    skill={singleSkill}
+                    decisions={decisions}
+                    setConflictDecision={setConflictDecision}
+                    agentDisplayNames={agentDisplayNames}
+                  />
+                </>
+              ) : (
+                previewGroups.map((group) => (
+                  <section key={`${group.sourceDisplay}:${group.refDisplay}`}>
+                    <div className="flex items-end justify-between gap-3 border-b border-border pb-2">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-sm font-semibold">{group.sourceDisplay}</h3>
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {t('skills.refBadge', { ref: group.refDisplay })}
                         </p>
-                      ) : null}
-                    </div>
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                      {t('skills.updatePlan.skillCount', { count: group.skills.length })}
-                    </span>
-                  </div>
-                  <div className="divide-y divide-border/60">
-                    {group.skills.map((skill) => (
-                      <div
-                        key={skill.skillName}
-                        className="grid gap-1.5 px-3 py-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,1.15fr)] sm:items-center"
-                      >
-                        <span className="min-w-0 truncate text-sm font-medium">{skill.skillName}</span>
-                        <AgentList agents={skill.placementAgentIds} agentDisplayNames={agentDisplayNames} />
                       </div>
-                    ))}
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {t('skills.updatePlan.skillCount', { count: group.skills.length })}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-border/70">
+                      {group.skills.map((skill) => (
+                        <PreviewSkillRow
+                          key={skill.skillName}
+                          skill={skill}
+                          decisions={decisions}
+                          setConflictDecision={setConflictDecision}
+                          agentDisplayNames={agentDisplayNames}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))
+              )}
+            </div>
+          ) : phase === 'result' ? (
+            <div className="min-h-48 space-y-4" role="status" aria-live="polite">
+              <div className="flex items-start gap-3">
+                {result?.outcome === 'succeeded' ? (
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-success" aria-hidden="true" />
+                ) : result?.outcome === 'cancelled' ? (
+                  <CircleStop className="mt-0.5 h-5 w-5 text-warning" aria-hidden="true" />
+                ) : (
+                  <CircleAlert className="mt-0.5 h-5 w-5 text-warning" aria-hidden="true" />
+                )}
+                <div>
+                  <p className="text-sm font-semibold">
+                    {result
+                      ? t(`skills.updatePlan.resultOutcome.${result.outcome}`)
+                      : t('skills.updatePlan.resultOutcome.failed')}
+                  </p>
+                  {executionError ? (
+                    <p className="mt-1 text-sm text-destructive" role="alert">
+                      {formatAppError(executionError, t)}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('skills.updatePlan.resultSummary', resultCounts)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {result?.sources.filter((source) => source.error).map((source) => (
+                <div key={source.id} className="border-t border-border pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{source.source}</span>
+                    <Badge variant="outline" className="text-xs">
+                      {t(`mutation.result.status.${isCancelled(source.error) ? 'cancelled' : source.status}`)}
+                    </Badge>
                   </div>
+                  {source.error ? (
+                    <p className="mt-1 text-xs text-destructive" role="alert">
+                      {formatMutationError(source.error, t)}
+                    </p>
+                  ) : null}
                 </div>
               ))}
-            </>
-          ) : null}
 
-          {phase === 'result' ? (
-            <div className="rounded-md border border-border p-3" role="status" aria-live="polite">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <CheckCircle2 className="h-4 w-4 text-success" />
-                {t('skills.updatePlan.resultTitle')}
-                {displayResponse ? (
-                  <Badge variant="outline" className="text-xs">
-                    {t(`skills.updatePlan.resultOutcome.${displayResponse.outcome}`)}
-                  </Badge>
-                ) : null}
-              </div>
-              {executionError ? (
-                <p className="mt-2 text-sm text-destructive" role="alert">{formatAppError(executionError, t)}</p>
-              ) : (
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <span>{t('skills.updatePlan.resultSuccess', { count: resultCounts.success })}</span>
-                  <span>{t('skills.updatePlan.resultPartial', { count: resultCounts.partial })}</span>
-                  <span>{t('skills.updatePlan.resultFailed', { count: resultCounts.failed })}</span>
-                  <span>{t('skills.updatePlan.resultSkipped', { count: resultCounts.skipped })}</span>
-                </div>
-              )}
-              {!executionError && displayResults.length ? (
-                <div className="mt-3 space-y-2">
-                  {displayResponse?.sources.map((source) => {
-                    const status = isCancelled(source.error) ? 'cancelled' : source.status;
-                    return (
-                      <div key={source.id} className="rounded-md border border-border/70 p-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium">{source.source}</span>
-                          <Badge variant="outline" className="text-xs">
-                            {t(`mutation.result.status.${status}`)}
-                          </Badge>
-                        </div>
-                        {source.error ? (
-                          <p className="mt-1 text-xs text-destructive" role="alert">
-                            {formatMutationError(source.error, t)}
-                          </p>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                  {displayResults.map((item) => {
-                    const mutation = item.mutation;
-                    const presentation = resultPresentations.get(item.skillIdentity.skillName);
-                    const source = displayResponse?.sources.find(
-                      (candidate) => candidate.id === item.sourceResultId,
-                    );
-                    const coverageError = item.coverage.kind === 'notUpdated'
-                      ? item.coverage.error
-                      : null;
-                    const error = mutation?.error
-                      ?? (source?.error?.code === coverageError?.code ? null : coverageError);
-                    const status = updateSkillStatus(item, source?.error);
-                    return (
-                      <div key={item.skillIdentity.skillName} className="rounded-md border border-border/70 p-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium">{item.skillIdentity.skillName}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {t(`mutation.result.status.${status}`)}
-                        </Badge>
-                        {source ? <span className="text-xs text-muted-foreground">{source.source}</span> : null}
-                        {mutation?.fallbackReason ? (
-                          <span className="text-xs text-muted-foreground">
-                            {formatFallbackReason(mutation.fallbackReason, t)}
-                          </span>
-                        ) : null}
-                      </div>
-                      {presentation ? <p className="mt-1 text-xs text-muted-foreground">
+              {detailResults.map((item) => {
+                const mutation = item.mutation;
+                const presentation = resultPresentations.get(item.skillIdentity.skillName);
+                const source = result?.sources.find((entry) => entry.id === item.sourceResultId);
+                const coverageError = item.coverage.kind === 'notUpdated'
+                  ? item.coverage.error
+                  : null;
+                const error = mutation?.error
+                  ?? (source?.error?.code === coverageError?.code ? null : coverageError);
+                const status = updateSkillStatus(item, source?.error);
+                return (
+                  <div key={item.skillIdentity.skillName} className="border-t border-border pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">{item.skillIdentity.skillName}</span>
+                      <Badge variant="outline" className="text-xs">
+                        {t(`mutation.result.status.${status}`)}
+                      </Badge>
+                      {source ? (
+                        <span className="text-xs text-muted-foreground">{source.source}</span>
+                      ) : null}
+                    </div>
+                    {presentation ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {t('mutation.result.location', {
                           environment: presentation.environmentLabel,
                           scope: presentation.scopeLabel,
                         })}
-                      </p> : null}
-                      {error ? (
-                        <p className="mt-1 text-xs text-destructive" role="alert">
-                          {formatMutationError(error, t)}
-                        </p>
-                      ) : null}
-                      {mutation?.warnings.map((warning, index) => (
-                        <p key={`${item.skillIdentity.skillName}:warning:${warning.code}:${index}`} className="mt-1 text-xs text-warning">
-                          {formatMutationWarning(warning, t)}
-                        </p>
-                      )) ?? null}
-                      {item.warnings.includes('preservedConflictingCopy') ? (
-                        <p className="mt-1 text-xs text-warning">{t('skills.updatePlan.preservedConflicts')}</p>
-                      ) : null}
-                      {mutation?.agentTargets.length ? (
-                        <div className="mt-2 space-y-1">
-                          {mutation.agentTargets.map((agentResult) => (
-                            <div
-                              key={`${item.skillIdentity.skillName}:${agentResult.targetId}`}
-                              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-                            >
-                              <span className="font-medium text-foreground">
-                                {agentDisplayNames?.get(agentResult.agentId) ?? agentResult.agentId}
-                              </span>
-                              <Badge variant="secondary" className="text-[11px]">
-                                {t(`mutation.result.status.${agentResult.status}`)}
-                              </Badge>
-                              {agentResult.actualMode ? (
-                                <Badge variant="outline" className="text-[11px]">
-                                  {t(`mutation.result.modes.${agentResult.actualMode}`)}
-                                </Badge>
-                              ) : null}
-                              {agentResult.fallbackReason ? (
-                                <span>{formatFallbackReason(agentResult.fallbackReason, t)}</span>
-                              ) : null}
-                              {agentResult.error ? (
-                                <span className="text-destructive" role="alert">
-                                  {formatMutationError(agentResult.error, t)}
-                                </span>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {mutation?.recovery ? <RecoveryActions recovery={mutation.recovery} /> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
+                      </p>
+                    ) : null}
+                    {error ? (
+                      <p className="mt-1 text-xs text-destructive" role="alert">
+                        {formatMutationError(error, t)}
+                      </p>
+                    ) : null}
+                    {mutation?.fallbackReason ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatFallbackReason(mutation.fallbackReason, t)}
+                      </p>
+                    ) : null}
+                    {mutation?.warnings.map((warning, index) => (
+                      <p key={`${item.skillIdentity.skillName}:warning:${warning.code}:${index}`} className="mt-1 text-xs text-warning">
+                        {formatMutationWarning(warning, t)}
+                      </p>
+                    )) ?? null}
+                    {item.warnings.includes('preservedConflictingCopy') ? (
+                      <p className="mt-1 text-xs text-warning">
+                        {t('skills.updatePlan.preservedConflicts')}
+                      </p>
+                    ) : null}
+                    {mutation?.recovery ? <RecoveryActions recovery={mutation.recovery} /> : null}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
         </div>
 
-        <DialogFooter className="border-t border-border px-6 py-4">
+        <DialogFooter className="min-h-17 border-t border-border px-6 py-4">
           {phase === 'previewError' ? (
             <>
-              {!closeBlocked ? (
-                <Button variant="outline" onClick={() => handleOpenChange(false)}>{t('common.cancel')}</Button>
-              ) : null}
-              <Button onClick={() => { void handlePreviewRetry(); }}>{t('common.retry')}</Button>
+              <Button variant="outline" onClick={handleDismiss}>{t('common.cancel')}</Button>
+              <Button onClick={() => { void retryPreview(context, skillNames); }}>
+                {t('common.retry')}
+              </Button>
             </>
+          ) : phase === 'ready' ? (
+            <>
+              <Button variant="outline" onClick={handleDismiss}>{t('common.cancel')}</Button>
+              <Button
+                onClick={() => { void confirmWorkflow(); }}
+                disabled={writeBlocked || !canConfirm}
+              >
+                {t('skills.updatePlan.confirm')}
+              </Button>
+            </>
+          ) : executing ? (
+            matchingUpdateMutation && activeMutation.cancelable ? (
+              <Button
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                disabled={cancelling}
+                onClick={() => { void cancelActiveMutation(); }}
+              >
+                {cancelling ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <CircleStop className="h-4 w-4" aria-hidden="true" />
+                )}
+                {cancelling ? t('skills.updatePlan.stopping') : t('skills.updatePlan.stop')}
+              </Button>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {t(matchingUpdateMutation
+                  ? 'skills.updatePlan.finishing'
+                  : 'skills.updatePlan.starting')}
+              </p>
+            )
           ) : phase === 'result' ? (
             <>
               {retryableResults.length > 0 ? (
                 <Button
                   variant="outline"
-                  title={t('skills.updatePlan.retryFailed')}
                   disabled={writeBlocked}
-                  onClick={() => {
-                    void handleRetryFailed();
-                  }}
+                  onClick={() => { void retryWorkflow(); }}
                 >
                   {t('skills.updatePlan.retryFailed')}
                 </Button>
               ) : null}
-              {!closeBlocked ? (
-                <Button onClick={() => handleOpenChange(false)}>{t('common.close')}</Button>
-              ) : null}
+              <Button onClick={handleDismiss}>{t('common.close')}</Button>
             </>
           ) : (
-            <>
-              {!closeBlocked ? (
-                <Button variant="outline" onClick={() => handleOpenChange(false)}>
-                  {t('common.cancel')}
-                </Button>
-              ) : null}
-              <Button onClick={handleConfirm} disabled={writeBlocked || confirming || phase !== 'ready' || !canConfirm}>
-                {t('skills.updatePlan.confirm')}
-              </Button>
-            </>
+            <Button variant="outline" onClick={handleDismiss}>{t('common.cancel')}</Button>
           )}
         </DialogFooter>
       </DialogContent>

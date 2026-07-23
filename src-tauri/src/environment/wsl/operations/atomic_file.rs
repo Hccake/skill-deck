@@ -12,11 +12,8 @@ use crate::error::AppError;
 use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
 
 const READ_SCRIPT: &str = include_str!("../scripts/atomic-file.sh");
-const BACKUP_EXISTS_SCRIPT: &str = include_str!("../scripts/atomic-file.sh");
 pub(crate) const WRITE_SCRIPT: &str = include_str!("../scripts/atomic-file.sh");
 const READ_OPERATION: WslOperationDescriptor = wsl_operation("atomic-file", "read", READ_SCRIPT);
-const BACKUP_EXISTS_OPERATION: WslOperationDescriptor =
-    wsl_operation("atomic-file", "backup-exists", BACKUP_EXISTS_SCRIPT);
 const WRITE_OPERATION: WslOperationDescriptor = wsl_operation("atomic-file", "write", WRITE_SCRIPT);
 
 pub struct WslAtomicDocumentIo {
@@ -84,19 +81,6 @@ impl AtomicDocumentIo for WslAtomicDocumentIo {
         })
     }
 
-    #[cfg(test)]
-    fn backup_exists<'a>(
-        &'a self,
-        target: &'a ResourceLocator,
-    ) -> IoFuture<'a, Result<bool, AppError>> {
-        Box::pin(async move {
-            let output = self
-                .run(&BACKUP_EXISTS_OPERATION, self.path(target)?, Vec::new(), 32)
-                .await?;
-            parse_exists_response(&output)
-        })
-    }
-
     fn write_atomic<'a>(
         &'a self,
         target: &'a ResourceLocator,
@@ -120,14 +104,6 @@ pub fn parse_read_response(bytes: &[u8]) -> Result<Option<Vec<u8>>, AppError> {
     match exists {
         b"0" if body.is_empty() => Ok(None),
         b"1" => Ok(Some(body.to_vec())),
-        _ => Err(protocol_error()),
-    }
-}
-
-fn parse_exists_response(bytes: &[u8]) -> Result<bool, AppError> {
-    match parse_read_response(bytes)? {
-        None => Ok(false),
-        Some(body) if body.is_empty() => Ok(true),
         _ => Err(protocol_error()),
     }
 }
@@ -189,21 +165,22 @@ mod tests {
     }
 
     #[test]
-    fn posix_atomic_write_preserves_one_previous_binary_version() {
+    fn posix_atomic_write_leaves_no_sidecar() {
         let temp = tempdir().expect("temp");
         let path = temp.path().join("state/document.json");
         run_write(&path, &[0, 1, 2]);
         assert_eq!(fs::read(&path).unwrap(), [0, 1, 2]);
         assert!(!backup_path(&path).exists());
 
+        fs::write(backup_path(&path), b"legacy backup").expect("legacy backup");
         run_write(&path, &[3, 0, 4]);
         assert_eq!(fs::read(&path).unwrap(), [3, 0, 4]);
-        assert_eq!(fs::read(backup_path(&path)).unwrap(), [0, 1, 2]);
+        assert!(!backup_path(&path).exists());
 
         run_write(&path, &[5]);
         assert_eq!(fs::read(&path).unwrap(), [5]);
-        assert_eq!(fs::read(backup_path(&path)).unwrap(), [3, 0, 4]);
-        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 2);
+        assert!(!backup_path(&path).exists());
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
     }
 
     #[test]

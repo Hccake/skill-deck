@@ -353,7 +353,7 @@ describe('SkillsPage', () => {
       scope: 'global',
     };
     mocks.skillsDataState.snapshots['host/global'] = snapshot([makeSkill('toolkit')]);
-    mocks.updateWorkflowState.phase = 'updating';
+    mocks.updateWorkflowState.phase = 'executing';
     mocks.updateWorkflowState.context = hostGlobal;
     mocks.updateWorkflowState.skillNames = ['toolkit'];
 

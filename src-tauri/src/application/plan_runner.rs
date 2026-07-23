@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::install::{InstallFuture, InstallPlanExecutor};
 use crate::application::mutation::coordinator::{
-    BoxFuture, MutationCoordinator, PreparedLockCommitter, RuntimeRevisionSnapshot,
-    RuntimeRevisionSource,
+    BoxFuture, MutationCoordinator, MutationUnitObserver, PreparedLockCommitter,
+    RuntimeRevisionSnapshot, RuntimeRevisionSource,
 };
 use crate::application::mutation::plan::{MutationPlan, RuntimeRevisions};
 use crate::application::mutation::result::{ErrorReport, MutationUnitResult, MutationUnitStatus};
@@ -149,6 +149,7 @@ impl RuntimePlanExecutor {
         &self,
         plan: MutationPlan,
         cancellation: CancellationSignal,
+        observer: MutationUnitObserver<'_>,
     ) -> Vec<MutationUnitResult> {
         let environment = match single_plan_environment(&plan) {
             Ok(environment) => environment,
@@ -170,7 +171,7 @@ impl RuntimePlanExecutor {
                     SharedLocks(Arc::clone(&self.locks)),
                     SharedRevisions(Arc::clone(&self.revisions)),
                 )
-                .execute(plan, cancellation)
+                .execute_with_observer(plan, cancellation, observer)
                 .await
             }
             EnvironmentRef::Wsl { distro_name } => {
@@ -186,6 +187,7 @@ impl RuntimePlanExecutor {
                 let revisions = Arc::clone(&self.revisions);
                 let recovery_graph = self.recovery_graph.clone();
                 let cancellation_for_run = cancellation.clone();
+                let observer_for_run = Arc::clone(&observer);
                 match self
                     .environments
                     .with_session(&distro_name, move |session| {
@@ -194,6 +196,7 @@ impl RuntimePlanExecutor {
                         let revisions = Arc::clone(&revisions);
                         let recovery_graph = recovery_graph.clone();
                         let cancellation = cancellation_for_run.clone();
+                        let observer = Arc::clone(&observer_for_run);
                         async move {
                             let plan = plan.ok_or_else(|| AppError::ExecutionFailed {
                                 message: "WSL mutation plan was consumed more than once"
@@ -218,7 +221,7 @@ impl RuntimePlanExecutor {
                                 SharedLocks(locks),
                                 SharedRevisions(revisions),
                             )
-                            .execute(plan, cancellation)
+                            .execute_with_observer(plan, cancellation, observer)
                             .await)
                         }
                     })
@@ -238,7 +241,16 @@ impl InstallPlanExecutor for RuntimePlanExecutor {
         plan: MutationPlan,
         cancellation: CancellationSignal,
     ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
-        Box::pin(async move { self.run(plan, cancellation).await })
+        Box::pin(async move { self.run(plan, cancellation, Arc::new(|_| {})).await })
+    }
+
+    fn execute_with_observer<'a>(
+        &'a self,
+        plan: MutationPlan,
+        cancellation: CancellationSignal,
+        observer: MutationUnitObserver<'a>,
+    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
+        Box::pin(async move { self.run(plan, cancellation, observer).await })
     }
 }
 

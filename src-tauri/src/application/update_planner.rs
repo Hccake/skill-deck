@@ -60,7 +60,7 @@ pub struct LocalUpdateInspection {
 pub struct LocalUpdateSkillInspection {
     pub skill_name: String,
     pub observed_digest: String,
-    pub placement_agent_ids: Vec<AgentId>,
+    pub adapter_targets: Vec<ObservedEntryOwner>,
     pub(crate) clean_copies: Vec<ObservedPhysicalEntry>,
     pub conflicts: Vec<ObservedPhysicalEntry>,
     pub blocking_reasons: Vec<OperationErrorCode>,
@@ -192,11 +192,6 @@ where
                     &locked[seed.locked_index],
                     facts_slice,
                     &seed.candidates,
-                    placement_agent_ids(
-                        &facts.agent_runtime,
-                        &request.context.scope,
-                        &seed.candidates,
-                    ),
                     &mut manifests,
                     observed_digest,
                 )
@@ -216,7 +211,6 @@ where
         locked: &LockedUpdateSkill,
         facts: &[ResolvedTargetFact],
         candidates: &[CandidateKind],
-        placement_agent_ids: Vec<AgentId>,
         manifests: &mut BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
         observed_digest: String,
     ) -> Result<LocalUpdateSkillInspection, AppError>
@@ -231,9 +225,17 @@ where
         };
         let mut clean = BTreeMap::<PhysicalTargetKey, ObservedPhysicalEntry>::new();
         let mut conflicts = BTreeMap::<PhysicalTargetKey, ObservedPhysicalEntry>::new();
+        let mut adapter_targets = BTreeMap::<String, ObservedEntryOwner>::new();
         for (fact, candidate) in facts.iter().zip(candidates).skip(1) {
-            let CandidateKind::Private { target_id, owner } = candidate else {
-                continue;
+            let (target_id, owner) = match candidate {
+                CandidateKind::Private { target_id, owner } => (target_id, owner),
+                CandidateKind::Adapter { owner }
+                    if fact.entry_kind == TargetEntryKind::Directory =>
+                {
+                    adapter_targets.insert(owner.logical_target_id.clone(), owner.clone());
+                    continue;
+                }
+                CandidateKind::Canonical | CandidateKind::Adapter { .. } => continue,
             };
             if fact.key == canonical.key
                 || matches!(
@@ -263,7 +265,7 @@ where
         Ok(LocalUpdateSkillInspection {
             skill_name: locked.name.clone(),
             observed_digest,
-            placement_agent_ids,
+            adapter_targets: adapter_targets.into_values().collect(),
             clean_copies,
             conflicts: conflicts.into_values().collect(),
             blocking_reasons,
@@ -818,23 +820,6 @@ fn shared_owners(runtime: &AgentRuntimeSnapshot, scope: &ContextScope) -> Vec<Ag
     owners
 }
 
-fn placement_agent_ids(
-    runtime: &AgentRuntimeSnapshot,
-    scope: &ContextScope,
-    candidates: &[CandidateKind],
-) -> Vec<AgentId> {
-    let mut agents = shared_owners(runtime, scope);
-    agents.extend(candidates.iter().filter_map(|candidate| match candidate {
-        CandidateKind::Canonical => None,
-        CandidateKind::Private { owner, .. } | CandidateKind::Adapter { owner } => {
-            Some(owner.agent_id.clone())
-        }
-    }));
-    agents.sort();
-    agents.dedup();
-    agents
-}
-
 fn agent_scope<'a>(
     runtime: &'a AgentRuntimeSnapshot,
     id: &AgentId,
@@ -1127,7 +1112,7 @@ mod tests {
                 project_id: "project-1".to_string(),
             },
         };
-        let facts = InstallPlanningFacts {
+        let mut facts = InstallPlanningFacts {
             resolved_context: ResolvedContext {
                 context: context.clone(),
                 project: None,
@@ -1147,6 +1132,15 @@ mod tests {
             )
             .unwrap(),
         };
+        for index in 0..75 {
+            let missing_root = physical_root.join(format!(".missing-{index}/skills"));
+            let (id, resolved) = agent(
+                &format!("missing-agent-{index}"),
+                &format!("Missing Agent {index}"),
+                &missing_root,
+            );
+            facts.agent_runtime.agents.insert(id, resolved);
+        }
         let manifest_reads = Arc::new(Mutex::new(BTreeMap::new()));
         let planner = ConcreteUpdatePlanner::new(
             Facts(facts),
@@ -1166,6 +1160,7 @@ mod tests {
         assert_eq!(inspection.source_candidates.len(), 1);
         assert_eq!(inspection.skills[0].clean_copies.len(), 1);
         assert!(inspection.skills[0].conflicts.is_empty());
+        assert!(inspection.skills[0].adapter_targets.is_empty());
         assert_eq!(
             manifest_reads
                 .lock()

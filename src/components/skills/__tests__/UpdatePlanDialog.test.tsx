@@ -42,7 +42,7 @@ describe('UpdatePlanDialog', () => {
           skillName: 'toolkit',
           sourceDisplay: 'should-not-render-before-ready',
           refDisplay: 'HEAD',
-          placementAgentIds: [],
+          adapterTargets: [],
           capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [],
@@ -56,7 +56,7 @@ describe('UpdatePlanDialog', () => {
 
     const dialog = screen.getByRole('dialog');
     const body = screen.getByTestId('update-plan-dialog-body');
-    expect(dialog.className).toContain('h-[min(30rem,calc(100dvh-2rem))]');
+    expect(dialog.className).toContain('max-h-[min(32rem,calc(100dvh-2rem))]');
     expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
     expect(body.className).toContain('min-h-0');
     expect(body.className).toContain('overflow-y-auto');
@@ -86,11 +86,39 @@ describe('UpdatePlanDialog', () => {
       .toContain('h-[min(40rem,calc(100dvh-2rem))]');
   });
 
+  it('ignores the overlay but allows Escape and the close button before execution', () => {
+    const onOpenChange = vi.fn();
+    useSkillUpdateWorkflow.setState({
+      phase: 'loadingPreview', context, skillNames: ['toolkit'], batch: false,
+    });
+
+    render(
+      <UpdatePlanDialog
+        open
+        context={context}
+        skillNames={['toolkit']}
+        onOpenChange={onOpenChange}
+      />,
+    );
+
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    expect(overlay).not.toBeNull();
+    fireEvent.pointerDown(overlay!);
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+
+    onOpenChange.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('uses workflow preview conflicts and confirmation instead of store legacy state', () => {
     const confirm = vi.fn();
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', placementAgentIds: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 0, overwritePrivateEntries: [{ entryId: 'private', owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
+      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 0, overwritePrivateEntries: [{ entryId: 'private', owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
       conflictDecisions: new Set(), confirm,
     });
 
@@ -117,7 +145,7 @@ describe('UpdatePlanDialog', () => {
           skillName: 'toolkit',
           sourceDisplay: 'github.com/backend/repo',
           refDisplay: 'release',
-          placementAgentIds: ['codex'],
+          adapterTargets: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-adapter' }],
           capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [],
@@ -137,7 +165,7 @@ describe('UpdatePlanDialog', () => {
 
     expect(screen.getByText('github.com/backend/repo')).toBeTruthy();
     expect(screen.getByText('skills.refBadge:release')).toBeTruthy();
-    expect(screen.getByText('Codex')).toBeTruthy();
+    expect(screen.getByText('skills.updatePlan.adapterTargetsAction')).toBeTruthy();
     expect(screen.queryByText('stale/repo')).toBeNull();
     expect(screen.queryByText('legacy-agent')).toBeNull();
   });
@@ -151,7 +179,7 @@ describe('UpdatePlanDialog', () => {
           skillName: 'toolkit',
           sourceDisplay: 'github.com/owner/repo',
           refDisplay: 'HEAD',
-          placementAgentIds: [],
+          adapterTargets: [],
           capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [
@@ -166,8 +194,9 @@ describe('UpdatePlanDialog', () => {
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
 
-    expect(screen.getByText('custom-a - target-a')).toBeTruthy();
-    expect(screen.getByText('custom-b - target-b')).toBeTruthy();
+    expect(screen.getAllByText('Custom')).toHaveLength(2);
+    expect(screen.queryByText('custom-a - target-a')).toBeNull();
+    expect(screen.queryByText('custom-b - target-b')).toBeNull();
     const checkboxes = screen.getAllByRole('checkbox', { name: 'skills.updatePlan.overwritePrivateEntry' });
     fireEvent.click(checkboxes[0]!);
     expect(useSkillUpdateWorkflow.getState().conflictDecisions).toEqual(new Set(['private-a']));
@@ -178,13 +207,12 @@ describe('UpdatePlanDialog', () => {
   it('shows clean-copy totals without making clean copies selectable', () => {
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', placementAgentIds: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 2, overwritePrivateEntries: [{ entryId: 'private', owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
+      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null }, cleanCopyCount: 2, overwritePrivateEntries: [{ entryId: 'private', owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }] }], blockingReasons: [], fallbackForecasts: [] }] },
     });
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
 
-    expect(screen.getByText('skills.updatePlan.cleanCopyCount')).toBeTruthy();
-    expect(screen.getByText('skills.updatePlan.cleanCopyCountForSkill')).toBeTruthy();
+    expect(screen.getByText('skills.updatePlan.cleanCopiesAction')).toBeTruthy();
     expect(screen.getAllByRole('checkbox', { name: 'skills.updatePlan.overwritePrivateEntry' })).toHaveLength(1);
   });
 
@@ -248,12 +276,12 @@ describe('UpdatePlanDialog', () => {
   it('allows direct reinstall when preview permits it even though the display plan has no update row', () => {
     useSkillUpdateWorkflow.setState({
       phase: 'ready', context, skillNames: ['toolkit'], batch: false,
-      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', placementAgentIds: [], capability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' }, cleanCopyCount: 0, overwritePrivateEntries: [], blockingReasons: [], fallbackForecasts: [] }] },
+      preview: { token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' }, skills: [{ skillName: 'toolkit', sourceDisplay: 'github.com/owner/repo', refDisplay: 'HEAD', adapterTargets: [], capability: { canRunUpdate: true, canCheckForUpdates: false, reason: 'missingRemoteHash' }, cleanCopyCount: 0, overwritePrivateEntries: [], blockingReasons: [], fallbackForecasts: [] }] },
     });
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
     expect((screen.getByRole('button', { name: 'skills.updatePlan.confirm' }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByRole('heading', { name: 'skills.updatePlan.readyTitle:1' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'skills.updatePlan.singleTitle' })).toBeTruthy();
   });
 
   it('requests cancellation and remains open when its active update can still be cancelled', () => {
@@ -262,20 +290,38 @@ describe('UpdatePlanDialog', () => {
     const activeMutation: ActiveMutation = {
       id: 'update-1', kind: 'update', context, phase: 'acquiring', progress: null, cancelable: true,
     };
-    useSkillUpdateWorkflow.setState({ phase: 'acquiring', context, skillNames: ['toolkit'] });
+    useSkillUpdateWorkflow.setState({ phase: 'executing', context, skillNames: ['toolkit'] });
     useMutationStore.setState({ activeMutation, cancelActiveMutation });
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={onOpenChange} />);
-    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.updatePlan.stop' }));
 
     expect(cancelActiveMutation).toHaveBeenCalledTimes(1);
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
+  it('keeps implicit dismissal separate from explicitly stopping an active update', () => {
+    const onOpenChange = vi.fn();
+    const cancelActiveMutation = vi.fn().mockResolvedValue(true);
+    const activeMutation: ActiveMutation = {
+      id: 'update-1', kind: 'update', context, phase: 'acquiring', progress: null, cancelable: true,
+    };
+    useSkillUpdateWorkflow.setState({ phase: 'executing', context, skillNames: ['toolkit'] });
+    useMutationStore.setState({ activeMutation, cancelActiveMutation });
+
+    render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={onOpenChange} />);
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(cancelActiveMutation).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'skills.updatePlan.stop' }));
+    expect(cancelActiveMutation).toHaveBeenCalledTimes(1);
+  });
+
   it('blocks close while confirmation is waiting for mutation admission', () => {
     const onOpenChange = vi.fn();
     useSkillUpdateWorkflow.setState({
-      phase: 'ready',
+      phase: 'executing',
       context,
       skillNames: ['toolkit'],
       confirming: true,
@@ -285,7 +331,7 @@ describe('UpdatePlanDialog', () => {
           skillName: 'toolkit',
           sourceDisplay: 'github.com/owner/repo',
           refDisplay: 'HEAD',
-          placementAgentIds: [],
+          adapterTargets: [],
           capability: { canRunUpdate: true, canCheckForUpdates: true, reason: null },
           cleanCopyCount: 0,
           overwritePrivateEntries: [],
@@ -309,7 +355,7 @@ describe('UpdatePlanDialog', () => {
     const activeMutation: ActiveMutation = {
       id: 'update-1', kind: 'update', context, phase: 'committing', progress: null, cancelable: false,
     };
-    useSkillUpdateWorkflow.setState({ phase: 'updating', context, skillNames: ['toolkit'] });
+    useSkillUpdateWorkflow.setState({ phase: 'executing', context, skillNames: ['toolkit'] });
     useMutationStore.setState({ activeMutation });
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={onOpenChange} />);
@@ -320,25 +366,48 @@ describe('UpdatePlanDialog', () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it.each(['acquiring', 'validating', 'updating'] as const)(
+  it.each(['acquiring', 'validating', 'committing'] as const)(
     'announces the %s phase with Backend progress',
     (phase) => {
       const activeMutation: ActiveMutation = {
         id: 'update-1', kind: 'update', context,
-        phase: phase === 'updating' ? 'committing' : phase,
+        phase,
         progress: { subject: '/private/path', current: 2, total: 5 }, cancelable: true,
       };
-      useSkillUpdateWorkflow.setState({ phase, context, skillNames: ['toolkit'] });
+      useSkillUpdateWorkflow.setState({ phase: 'executing', context, skillNames: ['toolkit'] });
       useMutationStore.setState({ activeMutation });
 
       render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
 
       expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite');
       expect(screen.getByText(`mutation.phase.${phase}`)).toBeTruthy();
-      expect(screen.getByText('skills.updatePlan.progress')).toBeTruthy();
+      expect(screen.queryByText('skills.updatePlan.progress')).toBeNull();
       expect(screen.queryByText('/private/path')).toBeNull();
     },
   );
+
+  it('shows count progress while a batch update is executing', () => {
+    const activeMutation: ActiveMutation = {
+      id: 'update-1', kind: 'update', context, phase: 'committing',
+      progress: { subject: 'reviewer', current: 2, total: 5 }, cancelable: true,
+    };
+    useSkillUpdateWorkflow.setState({
+      phase: 'executing', context, skillNames: ['toolkit', 'reviewer'], batch: true,
+    });
+    useMutationStore.setState({ activeMutation });
+
+    render(
+      <UpdatePlanDialog
+        open
+        context={context}
+        skillNames={['toolkit', 'reviewer']}
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('skills.updatePlan.progress')).toBeTruthy();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+  });
 
   it('shows a command-level execution error once without offering retry', () => {
     useSkillUpdateWorkflow.setState({
