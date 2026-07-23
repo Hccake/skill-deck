@@ -977,6 +977,7 @@ fn join_entry(root: &ResourceLocator, child: &str) -> ResourceLocator {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use std::sync::{Arc, Mutex};
 
@@ -1056,6 +1057,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn private_copy_requires_observed_selection_while_symlink_follows_canonical() {
         let temp = tempdir().unwrap();

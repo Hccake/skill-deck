@@ -171,7 +171,9 @@ mod tests {
 
     use crate::environment::content_manifest::{ContentManifest, ContentManifestRecord};
 
-    use super::{parse_content_manifest, CONTENT_MANIFEST_SCRIPT};
+    use super::parse_content_manifest;
+    #[cfg(target_os = "linux")]
+    use super::CONTENT_MANIFEST_SCRIPT;
 
     fn fixture_bytes(records: &[(&str, &str, bool, &str)]) -> Vec<u8> {
         let mut bytes = b"SDCM 1\n".to_vec();

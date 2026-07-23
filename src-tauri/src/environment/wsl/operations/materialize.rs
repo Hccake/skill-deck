@@ -790,6 +790,7 @@ mod tests {
         ContextSnapshotRevision, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    #[cfg(target_os = "linux")]
     use crate::environment::wsl::operations::entry::{parse_entry_states, ENTRY_STATE_SCRIPT};
     use crate::environment::wsl_protocol::WslExecutionProfile;
     use crate::models::InstallMode;
