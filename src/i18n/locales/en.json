@@ -207,6 +207,8 @@
       "symlinkHint": "Link to the shared Skill directory so future updates use one source",
       "copyHint": "Copy files into the agent directory for environments without link support",
       "save": "Save Changes",
+      "previewError": "Agent access could not be loaded. Try again.",
+      "retryPreview": "Retry",
       "success": "Agent access updated",
       "cleanupSuccess": "Extra copies removed"
     },

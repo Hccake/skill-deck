@@ -46,7 +46,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
 
   return (
     <Dialog open={Boolean(target)} onOpenChange={(open) => !open && !removing && close()}>
-      <DialogContent className="min-w-0 max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-lg">
+      <DialogContent className="h-[min(30rem,calc(100dvh-2rem))] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-lg">
         <DialogHeader className="min-w-0 px-6 pt-6 pb-4">
           <DialogTitle>{t('skills.deleteConfirm.title')}</DialogTitle>
           <DialogDescription className="min-w-0 break-words pr-6">

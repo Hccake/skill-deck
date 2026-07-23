@@ -1,7 +1,7 @@
 // src/components/skills/ManageAgentsDialog.tsx
 import { useState, useCallback, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { agentId } from '@/lib/agents';
@@ -35,6 +36,8 @@ interface ManageAgentsDialogProps {
   allAgents: ResolvedAgent[];
   agentDetails?: ManageAgentsPreview | null;
   loadingAgentDetails?: boolean;
+  previewFailed?: boolean;
+  onRetry?: () => void;
   onClose: () => void;
   onSave: (
     addAgents: AgentId[],
@@ -50,9 +53,98 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   allAgents,
   agentDetails,
   loadingAgentDetails = false,
+  previewFailed = false,
+  onRetry,
   onClose,
   onSave,
 }: ManageAgentsDialogProps) {
+  const { t } = useTranslation();
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && onClose()}>
+      <DialogContent className="h-[min(38rem,calc(100dvh-2rem))] min-w-0 max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-xl">
+        <DialogHeader className="min-w-0 border-b px-6 pt-6 pb-4">
+          <DialogTitle>{t('skills.manageAgents.title')}</DialogTitle>
+          <DialogDescription className="min-w-0 break-words">
+            {t('skills.manageAgents.description', { name: skill?.name })}
+          </DialogDescription>
+        </DialogHeader>
+
+        {loadingAgentDetails ? (
+          <>
+            <div
+              data-testid="manage-agents-dialog-body"
+              role="status"
+              aria-live="polite"
+              className="min-h-0 space-y-3 overflow-y-auto overscroll-contain px-6 py-4"
+            >
+              <span className="sr-only">{t('common.loading')}</span>
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-10 w-3/4" />
+            </div>
+            <DialogFooter className="border-t px-6 py-4">
+              <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
+            </DialogFooter>
+          </>
+        ) : previewFailed ? (
+          <>
+            <div
+              data-testid="manage-agents-dialog-body"
+              className="min-h-0 overflow-y-auto overscroll-contain px-6 py-4"
+            >
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive">
+                <p role="alert">{t('skills.manageAgents.previewError')}</p>
+              </div>
+            </div>
+            <DialogFooter className="border-t px-6 py-4">
+              <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
+              <Button onClick={onRetry} disabled={!onRetry}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                {t('skills.manageAgents.retryPreview')}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <ManageAgentsReadySession
+            skill={skill}
+            scope={scope}
+            allAgents={allAgents}
+            agentDetails={agentDetails}
+            saving={saving}
+            onSavingChange={setSaving}
+            onClose={onClose}
+            onSave={onSave}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+});
+
+interface ManageAgentsReadySessionProps {
+  skill: InstalledSkill | null;
+  scope: SkillScope;
+  allAgents: ResolvedAgent[];
+  agentDetails?: ManageAgentsPreview | null;
+  saving: boolean;
+  onSavingChange: (saving: boolean) => void;
+  onClose: () => void;
+  onSave: ManageAgentsDialogProps['onSave'];
+}
+
+function ManageAgentsReadySession({
+  skill,
+  scope,
+  allAgents,
+  agentDetails,
+  saving,
+  onSavingChange,
+  onClose,
+  onSave,
+}: ManageAgentsReadySessionProps) {
   const initialSelected = useMemo(() => {
     if (!skill) return [] as AgentId[];
     const installScope = scope === 'project' ? 'project' : 'global';
@@ -92,34 +184,34 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
       scope={scope}
       allAgents={allAgents}
       agentDetails={agentDetails}
-      loadingAgentDetails={loadingAgentDetails}
       initialSelected={initialSelected}
       initialOptional={initialOptional}
+      saving={saving}
+      onSavingChange={onSavingChange}
       onClose={onClose}
       onSave={onSave}
     />
   );
-});
+}
 
-interface ManageAgentsDialogBodyProps extends ManageAgentsDialogProps {
+interface ManageAgentsDialogBodyProps extends ManageAgentsReadySessionProps {
   initialSelected: AgentId[];
   initialOptional: AgentId[];
 }
 
 function ManageAgentsDialogBody({
-  skill,
   scope,
   allAgents,
   agentDetails,
-  loadingAgentDetails = false,
   initialSelected,
   initialOptional,
+  saving,
+  onSavingChange,
   onClose,
   onSave,
 }: ManageAgentsDialogBodyProps) {
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
-  const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState<InstallMode>('symlink');
   const selectableAgents = useMemo(
     () => agentDetails?.availableAgents ?? allAgents,
@@ -201,53 +293,37 @@ function ManageAgentsDialogBody({
   }, [mixedSelectionGroups, selectedAgents]);
 
   const handleSave = useCallback(async () => {
-    setSaving(true);
+    onSavingChange(true);
     try {
       await onSave(addAgents, removeEntryIds, mode, addOptionalAgents);
     } finally {
-      setSaving(false);
+      onSavingChange(false);
     }
-  }, [addAgents, addOptionalAgents, mode, onSave, removeEntryIds]);
+  }, [addAgents, addOptionalAgents, mode, onSave, onSavingChange, removeEntryIds]);
 
   const showMode = addAgents.length > 0 || addOptionalAgents.length > 0;
   const modeDisabled = saving;
 
   return (
-    <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && onClose()}>
-      <DialogContent className="min-w-0 max-w-[calc(100vw-2rem)] sm:max-w-xl gap-0 overflow-hidden">
-        <DialogHeader className="min-w-0">
-          <DialogTitle>{t('skills.manageAgents.title')}</DialogTitle>
-          <DialogDescription className="min-w-0 break-words">
-            {t('skills.manageAgents.description', { name: skill?.name })}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div data-testid="manage-agents-dialog-body" className="mt-4 min-w-0 max-w-full max-h-[60vh] overflow-y-auto overflow-x-hidden">
-          <AgentSelector
-            selectedAgents={selectedAgents}
-            privateCopyAgents={optionalAgents}
-            allAgents={selectableAgents}
-            selectionGroups={selectionGroups}
-            onSelectionChange={handleRequiredSelectionChange}
-            onPrivateCopyChange={setOptionalAgents}
-            scope={scope === 'project' ? 'project' : 'global'}
-            privateCopyAgentsExpanded={optionalExpanded}
-            onPrivateCopyExpandedChange={setOptionalExpanded}
-            showPaths={false}
-          />
-        </div>
-
-        {loadingAgentDetails ? (
-          <div role="status" aria-live="polite" className="mt-4 rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
-            {t('common.loading')}
-          </div>
-        ) : null}
-
-        {showMode && (
-        <div
-          className="mt-4 min-w-0 max-w-full pt-4 border-t border-border/50 space-y-2"
-          aria-disabled={modeDisabled}
-        >
+    <>
+      <div data-testid="manage-agents-dialog-body" className="min-h-0 min-w-0 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-4">
+        <AgentSelector
+          selectedAgents={selectedAgents}
+          privateCopyAgents={optionalAgents}
+          allAgents={selectableAgents}
+          selectionGroups={selectionGroups}
+          onSelectionChange={handleRequiredSelectionChange}
+          onPrivateCopyChange={setOptionalAgents}
+          scope={scope === 'project' ? 'project' : 'global'}
+          privateCopyAgentsExpanded={optionalExpanded}
+          onPrivateCopyExpandedChange={setOptionalExpanded}
+          showPaths={false}
+        />
+        {showMode ? (
+          <div
+            className="mt-4 min-w-0 max-w-full space-y-2 border-t border-border/50 pt-4"
+            aria-disabled={modeDisabled}
+          >
           <Label className="text-[13px] font-semibold text-foreground">
             {t('skills.manageAgents.modeTitle')}
           </Label>
@@ -303,10 +379,11 @@ function ManageAgentsDialogBody({
               </div>
             </Label>
           </RadioGroup>
-        </div>
-        )}
+          </div>
+        ) : null}
+      </div>
 
-        <DialogFooter className="mt-4">
+        <DialogFooter className="border-t px-6 py-4">
           <Button variant="outline" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
           </Button>
@@ -324,8 +401,7 @@ function ManageAgentsDialogBody({
             )}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }
 

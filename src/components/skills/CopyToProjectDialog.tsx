@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Skeleton } from '@/components/ui/skeleton';
 import { environmentKey, sameEnvironment } from '@/lib/context';
 import type { ContextRef, EnvironmentInfo, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
@@ -49,6 +50,28 @@ type ProjectPresence = 'installed' | 'absent' | 'unknown';
 export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   skill,
   sourceContext,
+  ...sessionProps
+}: CopyToProjectDialogProps) {
+  const scopeKey = sourceContext.scope.scope === 'project'
+    ? `project:${sourceContext.scope.project_id}`
+    : 'global';
+  const sessionKey = skill
+    ? `${environmentKey(sourceContext.environment)}:${scopeKey}:${skill.canonicalPath}`
+    : 'closed';
+
+  return (
+    <CopyToProjectDialogSession
+      key={sessionKey}
+      skill={skill}
+      sourceContext={sourceContext}
+      {...sessionProps}
+    />
+  );
+});
+
+function CopyToProjectDialogSession({
+  skill,
+  sourceContext,
   environments,
   projectsByEnvironment,
   onLoadProjects,
@@ -69,17 +92,6 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   const [presenceByProject, setPresenceByProject] = useState<Map<string, ProjectPresence>>(
     () => new Map(),
   );
-
-  // render-time reset
-  const [prevSkill, setPrevSkill] = useState(skill);
-  if (skill !== prevSkill) {
-    setPrevSkill(skill);
-    setSelected(new Set());
-    setPresenceByProject(new Map());
-    setPresenceState('idle');
-    setProjectLoadState('idle');
-    setTargetEnvironmentKey(environmentKey(sourceContext.environment));
-  }
 
   const targetEnvironment = environments.find(
     (entry) => environmentKey(entry.environment) === targetEnvironmentKey,
@@ -181,16 +193,20 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
 
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !copying && onClose()}>
-      <DialogContent className="sm:max-w-md gap-0">
-        <DialogHeader>
+      <DialogContent className="h-[min(32rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-md">
+        <DialogHeader className="border-b px-6 pt-6 pb-4">
           <DialogTitle>{t('skills.copyToProject.title')}</DialogTitle>
           <DialogDescription>
             {t('skills.copyToProject.description', { name: skill?.name })}
           </DialogDescription>
         </DialogHeader>
 
+        <div
+          data-testid="copy-to-project-dialog-body"
+          className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-6 py-4"
+        >
         {showSourceInfoNote ? (
-          <div role="note" className="mt-4 flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-2">
+          <div role="note" className="flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-2">
             <Info className="h-3.5 w-3.5 shrink-0 mt-px text-muted-foreground" />
             <p className="text-xs text-muted-foreground leading-relaxed">
               {t('skills.copyToProject.metadataWarning')}
@@ -198,7 +214,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
           </div>
         ) : null}
 
-        <div className="mt-4 space-y-1.5">
+        <div className="space-y-1.5">
           <Label>{t('skills.copyToProject.targetEnvironment')}</Label>
           <Select
             value={targetEnvironmentKey}
@@ -226,11 +242,14 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
           </Select>
         </div>
 
-        <div className={showSourceInfoNote ? 'mt-2 space-y-1.5 max-h-[50vh] overflow-y-auto' : 'mt-4 space-y-1.5 max-h-[50vh] overflow-y-auto'}>
+        <div className="space-y-1.5">
           {projectLoadState === 'loading' || projectLoadState === 'idle' ? (
-            <p role="status" aria-live="polite" className="py-4 text-center text-sm text-muted-foreground">
-              {t('common.loading')}
-            </p>
+            <div role="status" aria-live="polite" className="space-y-2">
+              <span className="sr-only">{t('common.loading')}</span>
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-4/5" />
+            </div>
           ) : projectLoadState === 'error' ? (
             <Alert>
               <AlertDescription>
@@ -310,8 +329,9 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
             </p>
           )}
         </div>
+        </div>
 
-        <DialogFooter className="mt-4">
+        <DialogFooter className="border-t px-6 py-4">
           <Button variant="outline" onClick={onClose} disabled={copying}>
             {t('common.cancel')}
           </Button>
@@ -332,4 +352,4 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
       </DialogContent>
     </Dialog>
   );
-});
+}

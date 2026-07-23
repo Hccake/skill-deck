@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => ({
     manageAgentsSkill: null,
     manageAgentsScope: 'global',
     copySkill: null as InstalledSkill | null,
+    copyContext: null as ContextRef | null,
     openCopyToProject: vi.fn(),
     closeCopyToProject: vi.fn(),
     executeCopy: vi.fn(),
@@ -114,13 +115,17 @@ vi.mock('@/stores/workspace-context', () => ({
 }));
 
 vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: typeof mocks.projectState) => unknown) =>
-    selector(mocks.projectState),
+  useProjectStore: Object.assign(
+    (selector: (state: typeof mocks.projectState) => unknown) => selector(mocks.projectState),
+    { getState: () => mocks.projectState },
+  ),
 }));
 
 vi.mock('@/stores/environment', () => ({
-  useEnvironmentStore: (selector: (state: typeof mocks.environmentState) => unknown) =>
-    selector(mocks.environmentState),
+  useEnvironmentStore: Object.assign(
+    (selector: (state: typeof mocks.environmentState) => unknown) => selector(mocks.environmentState),
+    { getState: () => mocks.environmentState },
+  ),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
@@ -184,9 +189,12 @@ vi.mock('@/components/skills', () => ({
   ),
 }));
 
-vi.mock('@/components/skills/UpdatePlanDialog', () => ({
-  UpdatePlanDialog: ({ open }: { open: boolean }) => (
-    <div data-testid="page-update-dialog" data-open={open ? 'true' : 'false'} />
+vi.mock('@/components/skills/UpdatePlanDialogContainer', () => ({
+  UpdatePlanDialogContainer: () => (
+    <div
+      data-testid="page-update-dialog"
+      data-open={mocks.updateWorkflowState.phase !== 'closed' ? 'true' : 'false'}
+    />
   ),
 }));
 
@@ -242,6 +250,7 @@ describe('SkillsPage', () => {
     mocks.skillDetailState.reloadContent.mockReset();
     mocks.skillDialogState.openDelete.mockReset();
     mocks.skillDialogState.copySkill = null;
+    mocks.skillDialogState.copyContext = null;
     mocks.resizable.groups.length = 0;
     mocks.resizable.panels.length = 0;
     mocks.resizable.lifecycle.length = 0;
@@ -456,6 +465,7 @@ describe('SkillsPage', () => {
       'wsl:ubuntu/project:current': snapshot(),
     };
     mocks.skillDialogState.copySkill = makeSkill('toolkit', { scope: 'project' });
+    mocks.skillDialogState.copyContext = mocks.workspaceContextState.selectedContext;
 
     const { getByText, queryByText } = render(<SkillsPage />);
 
@@ -503,6 +513,7 @@ describe('SkillsPage', () => {
       'wsl:ubuntu/project:current': snapshot(),
     };
     mocks.skillDialogState.copySkill = makeSkill('toolkit', { scope: 'project' });
+    mocks.skillDialogState.copyContext = mocks.workspaceContextState.selectedContext;
     mocks.tauriApi.listSkills.mockRejectedValue(new Error('inspection failed'));
 
     const { findByRole, getByText } = render(<SkillsPage />);

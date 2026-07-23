@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManageAgentsDialog } from '../ManageAgentsDialog';
@@ -71,6 +71,50 @@ const skill: InstalledSkill = {
 describe('ManageAgentsDialog', () => {
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  it('shows a lightweight loading shell before mounting the Agent selector', () => {
+    render(
+      <ManageAgentsDialog
+        skill={skill}
+        scope="project"
+        allAgents={allAgents}
+        loadingAgentDetails
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    const dialog = screen.getByRole('dialog');
+    const body = screen.getByTestId('manage-agents-dialog-body');
+    expect(dialog.className).toContain('h-[min(38rem,calc(100dvh-2rem))]');
+    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
+    expect(body.className).toContain('min-h-0');
+    expect(body.className).toContain('overflow-y-auto');
+    expect(body.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+    expect(screen.getByRole('status').textContent).toBe('common.loading');
+    expect(screen.queryByText('Cursor')).toBeNull();
+    expect(screen.getByRole('button', { name: 'common.cancel' })).not.toBeNull();
+  });
+
+  it('keeps the dialog open and offers retry when the preview fails', () => {
+    const onRetry = vi.fn();
+    render(
+      <ManageAgentsDialog
+        skill={skill}
+        scope="project"
+        allAgents={allAgents}
+        previewFailed
+        onRetry={onRetry}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('alert').textContent).toBe('skills.manageAgents.previewError');
+    fireEvent.click(screen.getByRole('button', { name: 'skills.manageAgents.retryPreview' }));
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(screen.getByRole('dialog')).not.toBeNull();
   });
 
   it('disables saving changes while another mutation is active', async () => {

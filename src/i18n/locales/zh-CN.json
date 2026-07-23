@@ -207,6 +207,8 @@
       "symlinkHint": "通过链接接入通用 Skill 目录，后续更新会共享同一份源文件",
       "copyHint": "复制一份到 Agent 目录，适合不支持链接的环境",
       "save": "保存更改",
+      "previewError": "无法加载 Agent 接入信息，请重试。",
+      "retryPreview": "重试",
       "success": "Agent 使用范围已更新",
       "cleanupSuccess": "额外副本已移除"
     },

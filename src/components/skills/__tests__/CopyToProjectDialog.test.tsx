@@ -76,6 +76,28 @@ describe('CopyToProjectDialog', () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  it('keeps a stable dialog frame while target projects are loading', () => {
+    const projectLoad = deferred<void>();
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        onLoadProjects={() => projectLoad.promise}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    const dialog = screen.getByRole('dialog');
+    const body = screen.getByTestId('copy-to-project-dialog-body');
+    expect(dialog.className).toContain('h-[min(32rem,calc(100dvh-2rem))]');
+    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
+    expect(body.className).toContain('min-h-0');
+    expect(body.className).toContain('overflow-y-auto');
+    expect(body.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'common.cancel' })).not.toBeNull();
+  });
+
   it('disables copying while another mutation is active', async () => {
     useMutationStore.setState({
       activeMutation: {
@@ -149,6 +171,40 @@ describe('CopyToProjectDialog', () => {
         name: 'skills.copyToProject.copy',
       }) as HTMLButtonElement).disabled).toBe(false);
     });
+  });
+
+  it('starts a fresh selection session when the source skill changes', async () => {
+    const { rerender } = render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    const checkbox = await screen.findByRole('checkbox');
+    fireEvent.click(checkbox);
+    expect((checkbox as HTMLButtonElement).dataset.state).toBe('checked');
+
+    rerender(
+      <CopyToProjectDialog
+        skill={skill({
+          name: 'other-skill',
+          path: '/project/.agents/skills/other-skill',
+          canonicalPath: '/project/.agents/skills/other-skill',
+        })}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    const resetCheckbox = await screen.findByRole('checkbox');
+    expect((resetCheckbox as HTMLButtonElement).dataset.state).toBe('unchecked');
+    expect((screen.getByRole('button', {
+      name: 'skills.copyToProject.copy',
+    }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('does not show a source note when copied skill can keep update metadata', async () => {

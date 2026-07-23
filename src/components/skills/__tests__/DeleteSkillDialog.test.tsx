@@ -91,7 +91,8 @@ describe('DeleteSkillDialog', () => {
     const dialog = screen.getByRole('dialog');
     const body = screen.getByTestId('delete-skill-dialog-body');
     expect(dialog.className).toContain('min-w-0');
-    expect(dialog.className).toContain('max-h-[calc(100dvh-2rem)]');
+    expect(dialog.className).toContain('h-[min(30rem,calc(100dvh-2rem))]');
+    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
     expect(dialog.className).toContain('overflow-hidden');
     expect(body.className).toContain('min-w-0');
     expect(body.className).toContain('overflow-y-auto');

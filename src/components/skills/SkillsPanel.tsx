@@ -35,6 +35,7 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   requestId: 0,
 };
 const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
+const EMPTY_SKILL_NAMES: string[] = [];
 
 /** 按搜索关键词 + agent 筛选过滤 skills — 单次遍历 (js-combine-iterations) */
 function filterSkills<T extends InstalledSkill>(skills: T[], searchQuery: string, agentFilter: string): T[] {
@@ -94,9 +95,21 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   ));
   const syncUpdates = useSkillsDataStore((s) => s.syncUpdates);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
-  const updatePhase = useSkillUpdateWorkflow((s) => s.phase);
-  const updateContext = useSkillUpdateWorkflow((s) => s.context);
-  const updateSkillNames = useSkillUpdateWorkflow((s) => s.skillNames);
+  const activeUpdatePhase = useSkillUpdateWorkflow((s) => (
+    s.phase === 'acquiring' || s.phase === 'validating' || s.phase === 'updating'
+      ? s.phase
+      : null
+  ));
+  const activeUpdateContext = useSkillUpdateWorkflow((s) => (
+    s.phase === 'acquiring' || s.phase === 'validating' || s.phase === 'updating'
+      ? s.context
+      : null
+  ));
+  const activeUpdateSkillNames = useSkillUpdateWorkflow((s) => (
+    s.phase === 'acquiring' || s.phase === 'validating' || s.phase === 'updating'
+      ? s.skillNames
+      : EMPTY_SKILL_NAMES
+  ));
   const openUpdate = useSkillUpdateWorkflow((s) => s.open);
   const refreshWorkspace = useSkillsDataStore((s) => s.refreshWorkspace);
   const syncSkills = useSkillsDataStore((s) => s.syncSkills);
@@ -175,17 +188,12 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   );
 
   const updatingSkills = useMemo<Map<string, SkillUpdateDisplayStatus>>(() => {
-    const activeUpdatePhase = updatePhase === 'acquiring'
-      || updatePhase === 'validating'
-      || updatePhase === 'updating'
-      ? updatePhase
-      : null;
-    if (!activeUpdatePhase || !updateContext) return new Map();
-    const updateContextKey = contextKey(updateContext);
+    if (!activeUpdatePhase || !activeUpdateContext) return new Map();
+    const updateContextKey = contextKey(activeUpdateContext);
     const result = new Map<string, SkillUpdateDisplayStatus>();
     for (const skill of [...globalSkills, ...projectSkills]) {
       const skillContextKey = skill.scope === 'project' ? selectedContextKey : globalContextKey;
-      if (skillContextKey !== updateContextKey || !updateSkillNames.includes(skill.name)) continue;
+      if (skillContextKey !== updateContextKey || !activeUpdateSkillNames.includes(skill.name)) continue;
       result.set(getSkillIdentityKey({
         name: skill.name,
         scope: skill.scope,
@@ -193,7 +201,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
       }), activeUpdatePhase);
     }
     return result;
-  }, [globalContextKey, globalSkills, projectPath, projectSkills, selectedContextKey, updateContext, updatePhase, updateSkillNames]);
+  }, [activeUpdateContext, activeUpdatePhase, activeUpdateSkillNames, globalContextKey, globalSkills, projectPath, projectSkills, selectedContextKey]);
 
   // 使用 deferredQuery 而非 searchQuery，列表过滤作为低优先级更新
   const filteredGlobalSkills = useMemo(

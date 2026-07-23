@@ -86,6 +86,12 @@ const mocks = vi.hoisted(() => ({
     openRepairSource: vi.fn(),
   },
   updateWorkflowState: { phase: 'closed', context: null as ContextRef | null, skillNames: [] as string[], open: vi.fn().mockResolvedValue(true) },
+  updateWorkflowSelectors: [] as Array<(state: {
+    phase: string;
+    context: ContextRef | null;
+    skillNames: string[];
+    open: (...args: unknown[]) => unknown;
+  }) => unknown>,
 }));
 
 vi.mock('react-i18next', () => ({
@@ -120,7 +126,10 @@ vi.mock('@/stores/skill-dialog', () => ({
 }));
 
 vi.mock('@/workflows/skill-update', () => ({
-  useSkillUpdateWorkflow: (selector: (state: typeof mocks.updateWorkflowState) => unknown) => selector(mocks.updateWorkflowState),
+  useSkillUpdateWorkflow: (selector: (state: typeof mocks.updateWorkflowState) => unknown) => {
+    mocks.updateWorkflowSelectors.push(selector as never);
+    return selector(mocks.updateWorkflowState);
+  },
 }));
 
 vi.mock('../SkillsToolbar', () => ({
@@ -213,6 +222,7 @@ describe('SkillsPanel', () => {
     mocks.updateWorkflowState.phase = 'closed';
     mocks.updateWorkflowState.context = null;
     mocks.updateWorkflowState.skillNames = [];
+    mocks.updateWorkflowSelectors.length = 0;
     mocks.skillsDataState.syncSkills.mockClear();
     mocks.skillsDataState.auditCache = {};
     mocks.skillsDataState.fetchAuditForSkills.mockClear();
@@ -283,6 +293,40 @@ describe('SkillsPanel', () => {
       expect(screen.getByTestId('phase:global:toolkit').textContent).toBe(phase);
     },
   );
+
+  it('keeps update subscriptions stable while the preview dialog opens', () => {
+    mocks.skillsDataState.snapshots = {
+      'host/global': snapshot([makeSkill('toolkit')]),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    const closed = {
+      ...mocks.updateWorkflowState,
+      phase: 'closed',
+      context: null,
+      skillNames: [],
+    };
+    const loadingPreview = {
+      ...closed,
+      phase: 'loadingPreview',
+      context: hostGlobal,
+      skillNames: ['toolkit'],
+    };
+    const ready = { ...loadingPreview, phase: 'ready' };
+    const updating = { ...loadingPreview, phase: 'updating' };
+
+    const closedValues = mocks.updateWorkflowSelectors.map((selector) => selector(closed));
+    expect(mocks.updateWorkflowSelectors.every((selector, index) => (
+      Object.is(selector(loadingPreview), closedValues[index])
+    ))).toBe(true);
+    expect(mocks.updateWorkflowSelectors.every((selector, index) => (
+      Object.is(selector(ready), closedValues[index])
+    ))).toBe(true);
+    expect(mocks.updateWorkflowSelectors.some((selector, index) => (
+      !Object.is(selector(updating), closedValues[index])
+    ))).toBe(true);
+  });
 
   it('formats a structured load error and retries the committed context', async () => {
     mocks.workspaceContextState.selectedContext = ubuntuGlobal;

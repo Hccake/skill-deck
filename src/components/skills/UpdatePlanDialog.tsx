@@ -12,6 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { useMutationStore } from '@/stores/mutation';
 import { useEnvironmentStore } from '@/stores/environment';
@@ -221,19 +222,27 @@ export function UpdatePlanDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="sm:max-w-2xl gap-0"
+        className={`${skillNames.length > 1
+          ? 'h-[min(40rem,calc(100dvh-2rem))]'
+          : 'h-[min(30rem,calc(100dvh-2rem))]'} grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-2xl`}
         showCloseButton={!closeBlocked}
         aria-busy={phase === 'loadingPreview' || phase === 'acquiring' || phase === 'validating' || phase === 'updating'}
       >
-        <DialogHeader className="pb-4 border-b border-border">
+        <DialogHeader className="border-b border-border px-6 pt-6 pb-4">
           <DialogTitle>{t('skills.updatePlan.readyTitle', { count: readyTitleCount })}</DialogTitle>
           <DialogDescription>{t('skills.updatePlan.readyDescription')}</DialogDescription>
         </DialogHeader>
 
-        <div className="py-4 space-y-4 max-h-[60vh] overflow-y-auto">
+        <div
+          data-testid="update-plan-dialog-body"
+          className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-6 py-4"
+        >
           {phase === 'loadingPreview' ? (
-            <div className="py-8 text-sm text-muted-foreground" role="status">
-              {t('skills.updatePlan.loadingPreview')}
+            <div className="space-y-3" role="status" aria-live="polite">
+              <span className="sr-only">{t('skills.updatePlan.loadingPreview')}</span>
+              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-16 w-4/5" />
             </div>
           ) : phase === 'previewError' ? (
             <div className="py-8 text-sm text-destructive" role="alert">
@@ -471,7 +480,7 @@ export function UpdatePlanDialog({
           ) : null}
         </div>
 
-        <DialogFooter className="pt-4 border-t border-border">
+        <DialogFooter className="border-t border-border px-6 py-4">
           {phase === 'previewError' ? (
             <>
               {!closeBlocked ? (
