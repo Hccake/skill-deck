@@ -154,9 +154,14 @@ export function AgentSettingsPage({
   const [staleRevision, setStaleRevision] = useState(false);
   const [staleDeleted, setStaleDeleted] = useState(false);
   const [configurationPersisted, setConfigurationPersisted] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CustomAgentDefinition | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<AgentDeleteImpact | null>(null);
+  const [deletePreviewState, setDeletePreviewState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [deletePreviewRevision, setDeletePreviewRevision] = useState<string | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [deleteExecutionError, setDeleteExecutionError] = useState(false);
+  const [deleteStale, setDeleteStale] = useState(false);
   const [pendingSecondaryAction, setPendingSecondaryAction] = useState<string | null>(null);
   const [invalidRecord, setInvalidRecord] = useState<InvalidCustomAgentRecord | null>(null);
   const [deletingInvalid, setDeletingInvalid] = useState(false);
@@ -169,6 +174,7 @@ export function AgentSettingsPage({
   const handledConfigurationAgentId = useRef<string | null>(null);
   const handledRouteDraftKey = useRef<string | null>(null);
   const staleReloadRevision = useRef<string | null>(null);
+  const deletePreviewRequestId = useRef(0);
   const detachedDraftFields = useRef<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const data = snapshot?.data;
@@ -545,25 +551,41 @@ export function AgentSettingsPage({
     setConfigurationPersisted(false);
   };
 
-  const previewDelete = async (definition: CustomAgentDefinition) => {
-    if (!data || readOnly || pendingSecondaryAction) return;
+  const loadDeletePreview = async (definition: CustomAgentDefinition, revision: string) => {
+    const requestId = ++deletePreviewRequestId.current;
     const action = `delete-preview:${definition.id}`;
+    setDeleteImpact(null);
+    setDeletePreviewState('loading');
+    setDeletePreviewRevision(revision);
+    setDeleteExecutionError(false);
     setPendingSecondaryAction(action);
     try {
-      const impact = await loadDeleteImpact(runtimeContext, definition.id, data.registryRevision);
-      if (impact) {
+      const impact = await loadDeleteImpact(runtimeContext, definition.id, revision);
+      if (requestId === deletePreviewRequestId.current && impact) {
         setDeleteImpact(impact);
-        setDeleteConfirmation('');
+        setDeletePreviewState('ready');
+      } else if (requestId === deletePreviewRequestId.current) {
+        setDeletePreviewState('error');
       }
     } catch {
-      toast.error(t('settings.agents.deletePreviewError'));
+      if (requestId === deletePreviewRequestId.current) setDeletePreviewState('error');
     } finally {
       setPendingSecondaryAction((current) => current === action ? null : current);
     }
   };
 
+  const previewDelete = (definition: CustomAgentDefinition) => {
+    if (!data || readOnly || pendingSecondaryAction) return;
+    setDeleteTarget(definition);
+    setDeleteConfirmation('');
+    setDeleteExecutionError(false);
+    setDeleteStale(false);
+    void loadDeletePreview(definition, data.registryRevision);
+  };
+
   const confirmDelete = async () => {
     if (!deleteImpact) return;
+    setDeleteExecutionError(false);
     setDeleting(true);
     try {
       const result = await agentDefinitionWorkflow.delete(
@@ -571,14 +593,23 @@ export function AgentSettingsPage({
         deleteImpact.agentId,
         deleteImpact.registryRevision,
       );
+      setDeleteTarget(null);
       setDeleteImpact(null);
       setDeleteConfirmation('');
       toast.success(t('settings.agents.deleted'));
       for (const warning of result.warnings) {
         toast.warning(t(`settings.agents.warnings.${warning.code}`));
       }
-    } catch {
-      toast.error(t('settings.agents.deleteError'));
+    } catch (error) {
+      const commandError = asAgentCommandError(error);
+      if (commandError?.kind === 'staleRegistryRevision' && deleteTarget) {
+        setDeleting(false);
+        setDeleteConfirmation('');
+        setDeleteStale(true);
+        await loadDeletePreview(deleteTarget, commandError.actual);
+      } else {
+        setDeleteExecutionError(true);
+      }
     } finally {
       setDeleting(false);
     }
@@ -886,15 +917,35 @@ export function AgentSettingsPage({
       </AlertDialog>
 
       <AgentDeleteDialog
+        target={deleteTarget ? {
+          agentId: deleteTarget.id,
+          displayName: deleteTarget.displayName,
+        } : null}
         impact={deleteImpact}
+        previewState={deletePreviewState}
         confirmation={deleteConfirmation}
         deleting={deleting}
+        executionError={deleteExecutionError}
+        stale={deleteStale}
         onConfirmationChange={setDeleteConfirmation}
         onClose={() => {
+          deletePreviewRequestId.current += 1;
+          setDeleteTarget(null);
           setDeleteImpact(null);
+          setDeletePreviewRevision(null);
           setDeleteConfirmation('');
+          setDeleteExecutionError(false);
+          setDeleteStale(false);
         }}
         onConfirm={() => void confirmDelete()}
+        onRetryPreview={() => {
+          if (deleteTarget && (deletePreviewRevision || data)) {
+            void loadDeletePreview(
+              deleteTarget,
+              deletePreviewRevision ?? data?.registryRevision ?? '',
+            );
+          }
+        }}
       />
 
       <AlertDialog

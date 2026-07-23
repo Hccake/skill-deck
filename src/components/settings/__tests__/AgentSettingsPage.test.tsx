@@ -907,6 +907,84 @@ describe('AgentSettingsPage', () => {
     await waitFor(() => expect(actions.deleteAgent).toHaveBeenCalledWith(context, 'my-agent', 'registry-1'));
   });
 
+  it('opens the Agent deletion shell immediately while loading its impact', () => {
+    actions.loadDeleteImpact.mockImplementation(() => new Promise(() => undefined));
+    render(<AgentSettingsPage context={context} />);
+
+    selectCustomMenuAction('settings.agents.delete');
+
+    expect(screen.getByText('settings.agents.deleteTitle')).toBeDefined();
+    expect(screen.getByRole('status').textContent)
+      .toContain('settings.agents.deletePreviewLoading');
+  });
+
+  it('keeps a delete preview failure in the dialog and retries it in place', async () => {
+    actions.loadDeleteImpact
+      .mockRejectedValueOnce(new Error('preview failed'))
+      .mockResolvedValueOnce({
+        agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
+        environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
+        filesWillBeDeleted: false,
+      });
+    render(<AgentSettingsPage context={context} />);
+
+    selectCustomMenuAction('settings.agents.delete');
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('settings.agents.deletePreviewError');
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.retryDeletePreview' }));
+    expect(await screen.findByText('settings.agents.deleteFilesSafe')).toBeDefined();
+    expect(actions.loadDeleteImpact).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the confirmation after a delete failure and retries without another preview', async () => {
+    actions.deleteAgent
+      .mockRejectedValueOnce(new Error('delete failed'))
+      .mockResolvedValueOnce([]);
+    render(<AgentSettingsPage context={context} />);
+    selectCustomMenuAction('settings.agents.delete');
+    await screen.findByText('settings.agents.deleteFilesSafe');
+    const confirmation = screen.getByLabelText('settings.agents.deleteConfirmId') as HTMLInputElement;
+    fireEvent.change(confirmation, { target: { value: 'my-agent' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.confirmDelete' }));
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('settings.agents.deleteError');
+    expect(confirmation.value).toBe('my-agent');
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.retryDelete' }));
+    await waitFor(() => expect(actions.deleteAgent).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-previews stale Agent deletion impact and clears the typed confirmation', async () => {
+    actions.loadDeleteImpact
+      .mockResolvedValueOnce({
+        agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
+        environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
+        filesWillBeDeleted: false,
+      })
+      .mockResolvedValueOnce({
+        agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-2',
+        environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
+        filesWillBeDeleted: false,
+      });
+    actions.deleteAgent.mockRejectedValueOnce({
+      kind: 'staleRegistryRevision', expected: 'registry-1', actual: 'registry-2',
+    });
+    render(<AgentSettingsPage context={context} />);
+    selectCustomMenuAction('settings.agents.delete');
+    await screen.findByText('settings.agents.deleteFilesSafe');
+    const confirmation = screen.getByLabelText('settings.agents.deleteConfirmId') as HTMLInputElement;
+    fireEvent.change(confirmation, { target: { value: 'my-agent' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.confirmDelete' }));
+
+    await waitFor(() => expect(actions.loadDeleteImpact).toHaveBeenCalledTimes(2));
+    expect(actions.loadDeleteImpact).toHaveBeenLastCalledWith(context, 'my-agent', 'registry-2');
+    expect(confirmation.value).toBe('');
+    expect(screen.getByRole('alert').textContent).toContain('settings.agents.deleteStale');
+  });
+
   it('prefills an Agent request and reports cancellation to the Wizard', async () => {
     const finished = vi.fn();
     render(
@@ -1351,7 +1429,7 @@ describe('AgentSettingsPage', () => {
     await waitFor(() => expect(actions.duplicateDraft).toHaveBeenCalledWith('my-agent', 'my-agent-copy'));
   });
 
-  it('reports duplicate and delete-preview failures without leaving actions pending', async () => {
+  it('reports duplicate failures and keeps delete-preview failures retryable', async () => {
     actions.duplicateDraft.mockRejectedValueOnce(new Error('duplicate failed'));
     actions.loadDeleteImpact.mockRejectedValueOnce(new Error('preview failed'));
     render(<AgentSettingsPage context={context} />);
@@ -1363,10 +1441,11 @@ describe('AgentSettingsPage', () => {
     expect((screen.getByRole('button', { name: 'settings.agents.moreActionsNamed' }) as HTMLButtonElement).disabled).toBe(false);
 
     selectCustomMenuAction('settings.agents.delete');
-    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith(
-      'settings.agents.deletePreviewError',
-    ));
-    expect((screen.getByRole('button', { name: 'settings.agents.moreActionsNamed' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('settings.agents.deletePreviewError');
+    expect((screen.getByRole('button', {
+      name: 'settings.agents.retryDeletePreview',
+    }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('reviews invalid raw data before a confirmed deletion and reports failure', async () => {

@@ -76,7 +76,10 @@
       "description": "确定要从 Skill Deck 中移除「{{name}}」吗？这不会删除本地文件。",
       "unregisterOnly": "此操作只解除 Skill Deck 中的项目注册，项目目录及其中的文件不会发生变化。",
       "cancel": "取消",
-      "confirm": "移除"
+      "confirm": "移除",
+      "removing": "正在移除…",
+      "removeError": "无法从 Skill Deck 中移除此项目，本地文件未受影响，请重试。",
+      "retry": "重试"
     }
   },
   "skills": {
@@ -121,7 +124,12 @@
       "overwriteNotice": "修复会覆盖当前 Skill 内容，并保留当前关联的 Agent。",
       "repair": "修复",
       "repairing": "正在修复...",
-      "repairFailed": "修复失败，请检查安装结果后重试。"
+      "stop": "停止修复",
+      "stopping": "正在停止…",
+      "repairStopped": "修复已停止，已经完成的写入会保留当前结果。",
+      "repairPartial": "部分目标未完成修复。如弹窗中提供了恢复信息，请先处理后再重试。",
+      "stopFailed": "无法发送停止请求，修复仍在继续。",
+      "repairFailed": "修复失败，请检查结果后重试。"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -207,8 +215,13 @@
       "symlinkHint": "通过链接接入通用 Skill 目录，后续更新会共享同一份源文件",
       "copyHint": "复制一份到 Agent 目录，适合不支持链接的环境",
       "save": "保存更改",
+      "retrySave": "重试保存",
       "previewError": "无法加载 Agent 接入信息，请重试。",
       "retryPreview": "重试",
+      "blocked": "当前有其他操作正在执行，请稍后再试。",
+      "failed": "Agent 接入未能更新，当前选择仍保留。",
+      "partial": "部分 Agent 接入未能更新，已完成的更改已保留。",
+      "stale": "Agent 接入状态已经变化，请检查刷新后的内容再保存。",
       "success": "Agent 使用范围已更新",
       "cleanupSuccess": "额外副本已移除"
     },
@@ -226,7 +239,9 @@
       "metadataWarning": "当前 Skill 缺少用于自动检查更新的来源信息。复制到其他项目后，仍无法自动检查更新。",
       "success": "已成功复制到 {{count}} 个项目",
       "skippedAgents": "已复制到通用 Skill 目录。部分 Agent 因目标项目目录不存在，未单独接入：{{agents}}",
-      "partialError": "{{success}} 个成功，{{fail}} 个失败"
+      "partialError": "已复制 {{success}} 个项目，仍有 {{fail}} 个项目需要处理。",
+      "copyError": "复制未完成，已选择的项目仍可重试。",
+      "retryFailed": "重试失败项目"
     },
     "deleteSuccess": "已删除「{{name}}」",
     "partialDeleteSuccess": "已从 {{count}} 个目标中移除「{{name}}」",
@@ -567,6 +582,8 @@
       "saveError": "Agent 保存失败",
       "duplicateError": "复制 Agent 定义失败",
       "deletePreviewError": "无法检查删除此 Agent 定义的影响",
+      "deletePreviewLoading": "正在检查删除影响…",
+      "retryDeletePreview": "重新检查",
       "invalidDeleteError": "删除无效 Agent 记录失败",
       "reviewInvalid": "查看无效 Agent 记录",
       "invalidDetailTitle": "查看无效 Agent 记录",
@@ -579,6 +596,9 @@
       },
       "deleted": "Agent 定义已删除",
       "deleteError": "Agent 定义删除失败",
+      "deleteStale": "Agent Registry 已发生变化，请检查刷新后的影响并重新输入 Agent ID。",
+      "deleting": "正在删除…",
+      "retryDelete": "重试删除",
       "deleteTitle": "删除 {{name}}？",
       "deleteDescription": "此操作只会从 Skill Deck 中移除该自定义 Agent 定义。",
       "deleteFilesSafe": "不会删除已安装的 Skill 文件，也不会删除 Agent 目录。",

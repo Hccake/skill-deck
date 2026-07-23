@@ -256,6 +256,89 @@ describe('skill workflows', () => {
     }));
   });
 
+  it('returns a failed outcome and keeps the management dialog open when execution fails', async () => {
+    useSkillDialogStore.setState({
+      manageAgentsSkill: skill,
+      manageAgentsContext: context,
+      manageAgentDetails: managePreview,
+    });
+    mocks.manageSkillAgents.mockResolvedValueOnce({
+      units: [{ status: 'failed', error: null }],
+    });
+
+    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
+
+    expect(outcome.status).toBe('failed');
+    expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
+    expect(useSkillDialogStore.getState().manageAgentDetails).toBe(managePreview);
+    expect(mocks.syncSkills).toHaveBeenCalledWith(context);
+  });
+
+  it('returns a partial outcome when only some Agent changes fail', async () => {
+    useSkillDialogStore.setState({
+      manageAgentsSkill: skill,
+      manageAgentsContext: context,
+      manageAgentDetails: managePreview,
+    });
+    mocks.manageSkillAgents.mockResolvedValueOnce({
+      units: [
+        { status: 'succeeded', error: null },
+        { status: 'failed', error: null },
+      ],
+    });
+
+    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
+
+    expect(outcome.status).toBe('partial');
+    expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
+    expect(mocks.syncSkills).toHaveBeenCalledWith(context);
+  });
+
+  it('refreshes the management preview when execution reports a stale scope', async () => {
+    const refreshedPreview = {
+      ...managePreview,
+      token: { ...token, generation: 'manage-preview-2' },
+    } as ManageAgentsPreview;
+    useSkillDialogStore.setState({
+      manageAgentsSkill: skill,
+      manageAgentsContext: context,
+      manageAgentDetails: managePreview,
+    });
+    mocks.manageSkillAgents.mockResolvedValueOnce({
+      units: [{
+        status: 'failed',
+        error: {
+          code: 'staleTarget',
+          parameters: {},
+          field: null,
+          severity: 'error',
+          retryable: true,
+          technicalDetails: null,
+          environment: context.environment,
+          context,
+          unitId: 'manage:toolkit',
+          recoveryResourceId: null,
+          displayPaths: [],
+        },
+      }],
+    });
+    mocks.previewManageSkillAgents
+      .mockResolvedValueOnce(managePreview)
+      .mockResolvedValueOnce(refreshedPreview);
+
+    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
+
+    expect(outcome.status).toBe('stale');
+    expect(mocks.previewManageSkillAgents).toHaveBeenLastCalledWith(expect.objectContaining({
+      context,
+      skillName: skill.name,
+      add: [],
+      removeEntryIds: [],
+      requestedMode: 'copy',
+    }));
+    expect(useSkillDialogStore.getState().manageAgentDetails).toBe(refreshedPreview);
+  });
+
   it('does not let a slow Agent-management preview replace a newer dialog target', async () => {
     const first = deferred<ManageAgentsPreview>();
     const second = deferred<ManageAgentsPreview>();
@@ -282,14 +365,37 @@ describe('skill workflows', () => {
   it('copies to project IDs in one explicitly selected target Environment', async () => {
     useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
 
-    await executeSkillCopy({ environment: { kind: 'host' }, projectIds: ['host-target'] });
+    const outcome = await executeSkillCopy({ environment: { kind: 'host' }, projectIds: ['host-target'] });
 
+    expect(outcome.status).toBe('succeeded');
     expect(mocks.previewCopySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({
       source: context,
       targetEnvironment: { kind: 'host' },
       targetProjectIds: ['host-target'],
     }));
     expect(mocks.copySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({ token }));
+  });
+
+  it('returns retryable project IDs for partial copy outcomes without closing the dialog', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.copySkillToProjects.mockResolvedValue({
+      units: [
+        { status: 'succeeded', target: { scope: { scope: 'project', project_id: 'project-b' } } },
+        { status: 'failed', retryable: true, target: { scope: { scope: 'project', project_id: 'project-c' } } },
+      ],
+    });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['project-b', 'project-c'],
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'partial',
+      succeededProjectIds: ['project-b'],
+      retryableProjectIds: ['project-c'],
+    });
+    expect(useSkillDialogStore.getState().copySkill).toBe(skill);
   });
 
   it('refreshes the management preview after duplicate cleanup', async () => {

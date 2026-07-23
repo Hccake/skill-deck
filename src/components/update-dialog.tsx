@@ -41,7 +41,12 @@ export function UpdateDialog({ open }: { open: boolean }) {
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent
+          className="sm:max-w-lg"
+          dismissible={status !== 'downloading'}
+          closeLabel={t('common.close')}
+          aria-busy={status === 'downloading'}
+        >
         {/* rendering-conditional-render: 用显式三元避免 && 的 falsy 值风险 */}
         {status === 'available' ? (
           <>

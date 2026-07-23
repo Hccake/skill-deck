@@ -110,7 +110,7 @@ describe('UpdatePlanDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
 
     onOpenChange.mockClear();
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'common.close' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

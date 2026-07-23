@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { environmentKey, sameEnvironment } from '@/lib/context';
 import type { ContextRef, EnvironmentInfo, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+import type { CopyOutcome } from '@/workflows/skill-copy';
 
 export interface CopyTargetSelection {
   environment: EnvironmentRef;
@@ -39,7 +40,7 @@ interface CopyToProjectDialogProps {
     projectIds: string[],
   ) => Promise<Array<{ projectId: string; hasSkill: boolean }>>;
   onClose: () => void;
-  onCopy: (selection: CopyTargetSelection) => Promise<void>;
+  onCopy: (selection: CopyTargetSelection) => Promise<CopyOutcome>;
 }
 
 const SOURCE_INFO_LIMIT_REASONS = new Set(['missing-skill-path', 'missingRemoteHash']);
@@ -92,18 +93,20 @@ function CopyToProjectDialogSession({
   const [presenceByProject, setPresenceByProject] = useState<Map<string, ProjectPresence>>(
     () => new Map(),
   );
+  const [completedProjectIds, setCompletedProjectIds] = useState<Set<string>>(new Set());
+  const [copyOutcome, setCopyOutcome] = useState<CopyOutcome | null>(null);
 
   const targetEnvironment = environments.find(
     (entry) => environmentKey(entry.environment) === targetEnvironmentKey,
   )?.environment ?? sourceContext.environment;
 
   const availableProjects = useMemo(
-    () => (projectsByEnvironment[targetEnvironmentKey] ?? []).filter((project) => !(
+    () => (projectsByEnvironment[targetEnvironmentKey] ?? []).filter((project) => !completedProjectIds.has(project.binding.id) && !(
       sameEnvironment(targetEnvironment, sourceContext.environment)
       && sourceContext.scope.scope === 'project'
       && project.binding.id === sourceContext.scope.project_id
     )),
-    [projectsByEnvironment, sourceContext, targetEnvironment, targetEnvironmentKey],
+    [completedProjectIds, projectsByEnvironment, sourceContext, targetEnvironment, targetEnvironmentKey],
   );
 
   useEffect(() => {
@@ -185,15 +188,32 @@ function CopyToProjectDialogSession({
   const handleCopy = useCallback(async () => {
     setCopying(true);
     try {
-      await onCopy({ environment: targetEnvironment, projectIds: Array.from(selected) });
+      const outcome = await onCopy({ environment: targetEnvironment, projectIds: Array.from(selected) });
+      if (!outcome || outcome.status === 'succeeded') {
+        onClose();
+        return;
+      }
+      setCopyOutcome(outcome);
+      if (outcome.status === 'partial') {
+        setCompletedProjectIds((previous) => new Set([
+          ...previous,
+          ...outcome.succeededProjectIds,
+        ]));
+        setSelected(new Set(outcome.retryableProjectIds));
+      }
     } finally {
       setCopying(false);
     }
-  }, [onCopy, selected, targetEnvironment]);
+  }, [onClose, onCopy, selected, targetEnvironment]);
 
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !copying && onClose()}>
-      <DialogContent className="h-[min(32rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-md">
+      <DialogContent
+        className="h-[min(32rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-md"
+        dismissible={!copying}
+        closeLabel={t('common.close')}
+        aria-busy={projectLoadState === 'loading' || copying}
+      >
         <DialogHeader className="border-b px-6 pt-6 pb-4">
           <DialogTitle>{t('skills.copyToProject.title')}</DialogTitle>
           <DialogDescription>
@@ -205,6 +225,20 @@ function CopyToProjectDialogSession({
           data-testid="copy-to-project-dialog-body"
           className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-6 py-4"
         >
+        {copyOutcome?.status === 'partial' ? (
+          <Alert role="alert" variant="destructive">
+            <AlertDescription>
+              {t('skills.copyToProject.partialError', {
+                success: copyOutcome.succeededProjectIds.length,
+                fail: copyOutcome.failedProjectIds.length,
+              })}
+            </AlertDescription>
+          </Alert>
+        ) : copyOutcome?.status === 'failed' ? (
+          <Alert role="alert" variant="destructive">
+            <AlertDescription>{t('skills.copyToProject.copyError')}</AlertDescription>
+          </Alert>
+        ) : null}
         {showSourceInfoNote ? (
           <div role="note" className="flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-2">
             <Info className="h-3.5 w-3.5 shrink-0 mt-px text-muted-foreground" />
@@ -221,6 +255,8 @@ function CopyToProjectDialogSession({
             onValueChange={(value) => {
               setTargetEnvironmentKey(value);
               setSelected(new Set());
+              setCompletedProjectIds(new Set());
+              setCopyOutcome(null);
               setProjectLoadState('loading');
               setPresenceState('idle');
               setPresenceByProject(new Map());
@@ -345,7 +381,9 @@ function CopyToProjectDialogSession({
                 {t('common.loading')}
               </>
             ) : (
-              t('skills.copyToProject.copy', { count: selected.size })
+              copyOutcome?.status === 'partial'
+                ? t('skills.copyToProject.retryFailed')
+                : t('skills.copyToProject.copy', { count: selected.size })
             )}
           </Button>
         </DialogFooter>

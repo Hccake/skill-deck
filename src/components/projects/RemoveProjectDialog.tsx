@@ -26,16 +26,20 @@ export function RemoveProjectDialog({ request, onClose, onRemoved }: RemoveProje
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [submitting, setSubmitting] = useState(false);
+  const [failedRequest, setFailedRequest] = useState<ProjectRemovalRequest | null>(null);
+  const failed = failedRequest === request;
 
   const confirm = async () => {
     if (!request || writeBlocked || submitting) return;
     const completedRequest = request;
+    setFailedRequest(null);
     setSubmitting(true);
     try {
       await confirmProjectRemoval(completedRequest);
       onClose();
       onRemoved?.(completedRequest);
     } catch (error) {
+      setFailedRequest(completedRequest);
       console.error('Failed to remove project:', error);
     } finally {
       setSubmitting(false);
@@ -46,10 +50,13 @@ export function RemoveProjectDialog({ request, onClose, onRemoved }: RemoveProje
     <AlertDialog
       open={request !== null}
       onOpenChange={(open) => {
-        if (!open && !submitting) onClose();
+        if (!open && !submitting) {
+          setFailedRequest(null);
+          onClose();
+        }
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent dismissible={!submitting} aria-busy={submitting}>
         <AlertDialogHeader>
           <AlertDialogTitle>{t('context.removeConfirm.title')}</AlertDialogTitle>
           <AlertDialogDescription className="space-y-2">
@@ -59,6 +66,11 @@ export function RemoveProjectDialog({ request, onClose, onRemoved }: RemoveProje
             <span className="block">{t('context.removeConfirm.unregisterOnly')}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {failed ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t('context.removeConfirm.removeError')}
+          </p>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={submitting}>
             {t('context.removeConfirm.cancel')}
@@ -71,7 +83,11 @@ export function RemoveProjectDialog({ request, onClose, onRemoved }: RemoveProje
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             disabled={writeBlocked || submitting}
           >
-            {t('context.removeConfirm.confirm')}
+            {t(submitting
+              ? 'context.removeConfirm.removing'
+              : failed
+                ? 'context.removeConfirm.retry'
+                : 'context.removeConfirm.confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

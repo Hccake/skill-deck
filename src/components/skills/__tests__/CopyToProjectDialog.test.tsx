@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CopyToProjectDialog } from '../CopyToProjectDialog';
 import type { InstalledSkill } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+import type { CopyOutcome } from '@/workflows/skill-copy';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -123,7 +124,11 @@ describe('CopyToProjectDialog', () => {
   });
 
   it('selects exactly one target environment and submits project IDs from that environment', async () => {
-    const onCopy = vi.fn(async () => undefined);
+    const onCopy = vi.fn(async () => ({
+      status: 'succeeded',
+      response: { units: [] },
+      succeededProjectIds: ['host-target'],
+    } satisfies CopyOutcome));
     render(
       <CopyToProjectDialog
         skill={skill()}
@@ -171,6 +176,46 @@ describe('CopyToProjectDialog', () => {
         name: 'skills.copyToProject.copy',
       }) as HTMLButtonElement).disabled).toBe(false);
     });
+  });
+
+  it('keeps partial copy results in the dialog and excludes completed projects from retry', async () => {
+    const onCopy = vi.fn(async () => ({
+      status: 'partial' as const,
+      response: { units: [] },
+      succeededProjectIds: ['project-b'],
+      failedProjectIds: ['project-c'],
+      retryableProjectIds: ['project-c'],
+    } satisfies CopyOutcome));
+    const projects = [
+      ...defaultCopyProps.projectsByEnvironment.host,
+      {
+        binding: {
+          id: 'project-c', nativePath: '/project-c', displayName: null,
+          order: null, suppressCrossStorageWarning: false,
+        },
+        storage: { access: 'native' as const, owner: null },
+      },
+    ];
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        projectsByEnvironment={{ host: projects }}
+        onClose={vi.fn()}
+        onCopy={onCopy}
+      />
+    );
+
+    const checkboxes = await screen.findAllByRole('checkbox');
+    fireEvent.click(checkboxes[0]);
+    fireEvent.click(checkboxes[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('skills.copyToProject.partialError');
+    expect(screen.queryByText('/project-b')).toBeNull();
+    expect((screen.getByRole('checkbox') as HTMLButtonElement).dataset.state).toBe('checked');
+    expect(screen.getByRole('button', { name: 'skills.copyToProject.retryFailed' })).toBeDefined();
   });
 
   it('starts a fresh selection session when the source skill changes', async () => {

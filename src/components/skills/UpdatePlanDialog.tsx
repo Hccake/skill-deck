@@ -312,12 +312,9 @@ export function UpdatePlanDialog({
         className={`${batch
           ? 'h-[min(40rem,calc(100dvh-2rem))] sm:max-w-2xl'
           : 'max-h-[min(32rem,calc(100dvh-2rem))] sm:max-w-xl'} grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0`}
-        showCloseButton={!executing}
+        dismissible={!executing}
+        closeLabel={t('common.close')}
         aria-busy={phase === 'loadingPreview' || executing}
-        onPointerDownOutside={(event) => event.preventDefault()}
-        onEscapeKeyDown={(event) => {
-          if (executing) event.preventDefault();
-        }}
       >
         <DialogHeader className="border-b border-border px-6 pt-6 pb-4">
           <DialogTitle>{dialogTitle}</DialogTitle>

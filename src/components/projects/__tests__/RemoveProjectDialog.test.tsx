@@ -79,6 +79,38 @@ describe('RemoveProjectDialog', () => {
     expect(mocks.confirmProjectRemoval).toHaveBeenCalledWith(request);
   });
 
+  it('shows removal progress and prevents implicit dismissal while the request is pending', async () => {
+    mocks.confirmProjectRemoval.mockImplementation(() => new Promise<void>(() => undefined));
+    const onClose = vi.fn();
+    render(<RemoveProjectDialog request={request} onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'context.removeConfirm.confirm' }));
+
+    expect((screen.getByRole('button', {
+      name: 'context.removeConfirm.removing',
+    }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('keeps a failed removal open and retries it in place', async () => {
+    mocks.confirmProjectRemoval
+      .mockRejectedValueOnce(new Error('remove failed'))
+      .mockResolvedValueOnce(undefined);
+    const onClose = vi.fn();
+    render(<RemoveProjectDialog request={request} onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'context.removeConfirm.confirm' }));
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('context.removeConfirm.removeError');
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'context.removeConfirm.retry' }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(mocks.confirmProjectRemoval).toHaveBeenCalledTimes(2);
+  });
+
   it('reports the removed request only after backend removal succeeds', async () => {
     mocks.confirmProjectRemoval.mockResolvedValue(undefined);
     const onRemoved = vi.fn();

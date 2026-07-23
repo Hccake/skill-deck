@@ -114,7 +114,7 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
       ) : null}
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent dismissible={!loading} aria-busy={loading}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('recovery.cleanupTitle')}</AlertDialogTitle>
             <AlertDialogDescription>{t('recovery.cleanupDescription')}</AlertDialogDescription>

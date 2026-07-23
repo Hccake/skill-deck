@@ -47,7 +47,7 @@ export function MutationInterruptionDialog({
         if (!nextOpen && !cancelling) onContinueWaiting();
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent dismissible={!cancelling} aria-busy={cancelling}>
         <AlertDialogHeader>
           <AlertDialogTitle>
             {t(`mutation.interruption.${actionName}Title`)}

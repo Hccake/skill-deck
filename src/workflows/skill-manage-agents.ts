@@ -13,11 +13,43 @@ import type {
   ContextRef,
   InstalledSkill,
   InstallMode,
+  ManageAgentsResponse,
+  MutationUnitResult,
   ObservedEntryId,
 } from '@/bindings';
 import { formatWorkflowError, presentMutationResults } from './mutation-presentation';
 
 let managePreviewGeneration = 0;
+
+const STALE_MANAGE_AGENT_CODES = new Set([
+  'staleContext',
+  'staleRegistry',
+  'staleEnvironment',
+  'stalePayload',
+  'staleTarget',
+  'externalLockChanged',
+]);
+
+export type ManageAgentsOutcome =
+  | { status: 'blocked' }
+  | { status: 'succeeded'; response: ManageAgentsResponse }
+  | { status: 'partial'; response: ManageAgentsResponse; message: string }
+  | { status: 'stale' }
+  | { status: 'failed'; message: string };
+
+function hasStaleManageAgentResult(units: MutationUnitResult[]): boolean {
+  return units.some((unit) => unit.error && STALE_MANAGE_AGENT_CODES.has(unit.error.code));
+}
+
+function isStaleManageAgentError(error: unknown): boolean {
+  return Boolean(
+    error
+      && typeof error === 'object'
+      && 'kind' in error
+      && typeof error.kind === 'string'
+      && (STALE_MANAGE_AGENT_CODES.has(error.kind) || error.kind === 'staleAgentRuntime'),
+  );
+}
 
 export async function openManageAgentChanges(
   skill: InstalledSkill,
@@ -55,10 +87,17 @@ export async function executeManageAgentChanges(
   removeEntryIds: ObservedEntryId[],
   mode: InstallMode,
   addOptionalAgents: AgentId[],
-): Promise<void> {
-  if (useMutationStore.getState().activeMutation) return;
-  const { manageAgentsSkill, manageAgentsContext, manageAgentDetails } = useSkillDialogStore.getState();
-  if (!manageAgentsSkill || !manageAgentsContext || !manageAgentDetails) return;
+): Promise<ManageAgentsOutcome> {
+  if (useMutationStore.getState().activeMutation) return { status: 'blocked' };
+  const {
+    manageAgentsSkill,
+    manageAgentsContext,
+    manageAgentsProjectPath,
+    manageAgentDetails,
+  } = useSkillDialogStore.getState();
+  if (!manageAgentsSkill || !manageAgentsContext || !manageAgentDetails) {
+    return { status: 'blocked' };
+  }
 
   const context = manageAgentsContext;
   try {
@@ -89,28 +128,46 @@ export async function executeManageAgentChanges(
       canonicalPayload: preview.canonicalPayload,
     });
     const presentation = presentMutationResults(result.units, t);
+    const failedUnits = result.units.filter((unit) => unit.status !== 'succeeded');
 
-    if (presentation.failedUnits.length > 0) {
-      toast.error(appendCrossStorageFailureGuidance(
+    if (hasStaleManageAgentResult(failedUnits)) {
+      await openManageAgentChanges(manageAgentsSkill, context, manageAgentsProjectPath);
+      return { status: 'stale' };
+    }
+
+    if (failedUnits.length > 0) {
+      const message = appendCrossStorageFailureGuidance(
         presentation.summary,
         context,
         'manageAgents',
         t,
-      ));
-    } else {
-      toast.success(t('skills.manageAgents.success'));
+      );
+      const { useSkillsDataStore } = await import('@/stores/skills-data');
+      await useSkillsDataStore.getState().syncSkills(context);
+      return result.units.some((unit) => unit.status === 'succeeded')
+        ? { status: 'partial', response: result, message }
+        : { status: 'failed', message };
     }
 
+    toast.success(t('skills.manageAgents.success'));
     useSkillDialogStore.getState().closeManageAgents();
     const { useSkillsDataStore } = await import('@/stores/skills-data');
     await useSkillsDataStore.getState().syncSkills(context);
+    return { status: 'succeeded', response: result };
   } catch (error) {
+    if (isStaleManageAgentError(error)) {
+      await openManageAgentChanges(manageAgentsSkill, context, manageAgentsProjectPath);
+      return { status: 'stale' };
+    }
     console.error('[executeManageAgentChanges] Failed:', error);
-    toast.error(appendCrossStorageFailureGuidance(
-      formatWorkflowError(error, t),
-      context,
-      'manageAgents',
-      t,
-    ));
+    return {
+      status: 'failed',
+      message: appendCrossStorageFailureGuidance(
+        formatWorkflowError(error, t),
+        context,
+        'manageAgents',
+        t,
+      ),
+    };
   }
 }

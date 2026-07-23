@@ -134,6 +134,23 @@ describe('RepairSourceDialog', () => {
     await waitFor(() => expect(mocks.installSkills).toHaveBeenCalled());
     expect(mocks.markSourceRepairSucceeded).not.toHaveBeenCalled();
     expect(useSkillDialogStore.getState().repairSourceTarget).not.toBeNull();
+    expect(screen.getByRole('alert').textContent)
+      .toContain('skills.repairSourceDialog.repairPartial');
+  });
+
+  it('prevents dismissal during repair and exposes an explicit stop action', async () => {
+    mocks.installSkills.mockImplementation(() => new Promise(() => undefined));
+    const cancelActiveMutation = vi.fn().mockResolvedValue(true);
+    useMutationStore.setState({ cancelActiveMutation });
+    openDialog();
+
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+    await waitFor(() => expect(mocks.installSkills).toHaveBeenCalled());
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(useSkillDialogStore.getState().repairSourceTarget).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.stop' }));
+    expect(cancelActiveMutation).toHaveBeenCalledTimes(1);
   });
 
   it('requires explicit acknowledgement for guarded sources', async () => {

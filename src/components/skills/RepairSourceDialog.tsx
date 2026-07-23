@@ -1,7 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
+import { AlertTriangle, CheckCircle2, RefreshCw, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -13,52 +12,36 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import {
-  fetchAvailable,
-  installSkills,
-} from '@/hooks/useTauriApi';
+import { fetchAvailable } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import { formatAppError } from '@/utils/format-app-error';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
-import type { AppError, FetchResult, InstallResponse } from '@/bindings';
-import { prepareInstall } from '@/workflows/skill-install-preparation';
+import type { FetchResult } from '@/bindings';
+import { repairSkillSource } from '@/workflows/skill-repair';
 
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
-type RepairPhase = 'idle' | 'validating' | 'installing';
+type RepairPhase = 'idle' | 'validating' | 'preparing' | 'installing' | 'stopping';
 type ValidationOwner = 'manual' | 'repair' | null;
+type RepairFeedback = 'failed' | 'partial' | 'stopped' | null;
 interface ValidationResult {
   ok: boolean;
   requiresRiskConfirmation: boolean;
   fetchResult: FetchResult | null;
 }
 
-function didRepairInstallSucceed(
-  results: InstallResponse,
-): boolean {
-  return results.units.length > 0
-    && results.units.every((unit) => unit.status === 'succeeded');
-}
-
-function uniqueAgentIds(agents: string[] | undefined): string[] {
-  return Array.from(new Set(agents ?? []));
-}
-
 export function RepairSourceDialog() {
   const target = useSkillDialogStore((s) => s.repairSourceTarget);
-  const closeRepairSource = useSkillDialogStore((s) => s.closeRepairSource);
 
   if (!target) return null;
 
   return (
-    <Dialog open={Boolean(target)} onOpenChange={(open) => { if (!open) closeRepairSource(); }}>
-      <RepairSourceDialogContent
-        key={`${JSON.stringify(target.context)}:${target.scope}:${target.projectPath ?? ''}:${target.skillName}`}
-        target={target}
-      />
-    </Dialog>
+    <RepairSourceDialogContent
+      key={`${JSON.stringify(target.context)}:${target.scope}:${target.projectPath ?? ''}:${target.skillName}`}
+      target={target}
+    />
   );
 }
 
@@ -68,12 +51,18 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const markSourceRepairSucceeded = useSkillsDataStore((s) => s.markSourceRepairSucceeded);
   const syncSkills = useSkillsDataStore((s) => s.syncSkills);
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
+  const cancelling = useMutationStore((state) => state.cancelling);
   const [source, setSource] = useState(target.source);
   const [validateState, setValidateState] = useState<ValidateState>('idle');
   const [validationOwner, setValidationOwner] = useState<ValidationOwner>(null);
   const [riskAcknowledged, setRiskAcknowledged] = useState(false);
   const [requiresRiskConfirmation, setRequiresRiskConfirmation] = useState(false);
   const [repairPhase, setRepairPhase] = useState<RepairPhase>('idle');
+  const [repairFeedback, setRepairFeedback] = useState<RepairFeedback>(null);
+  const [repairErrorMessage, setRepairErrorMessage] = useState<string | null>(null);
+  const operationIdRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
 
   const skillName = target?.skillName ?? '';
   const isChecking = validateState === 'checking';
@@ -122,61 +111,51 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
 
   const handleRepair = useCallback(async () => {
     if (writeBlocked || isWorking) return;
+    const operationId = crypto.randomUUID();
+    operationIdRef.current = operationId;
+    stopRequestedRef.current = false;
+    setRepairFeedback(null);
+    setRepairErrorMessage(null);
     setRepairPhase('validating');
-    let installCompleted = false;
     try {
-      const validation = await validateSource('repair');
-      if (!validation.ok || !validation.fetchResult) return;
-      if (validation.requiresRiskConfirmation && !riskAcknowledged) return;
-
-      setRepairPhase('installing');
-      const targetAgents = uniqueAgentIds(target.privateAdaptedAgents ?? target.agents);
-      const targetPrivateCopyAgents = uniqueAgentIds(target.privateCopyAgents);
-      const privateCopies = new Set(targetPrivateCopyAgents);
-      const agentIntents = uniqueAgentIds([...targetAgents, ...targetPrivateCopyAgents]).map((agentId) => ({
-        agentId,
-        privateEntry: privateCopies.has(agentId) ? 'optionalSelected' as const : 'required' as const,
-        adapterTargets: [],
-      }));
-      const skill = validation.fetchResult.skills.find((item) => item.name === target.skillName)!;
-      const preparation = await prepareInstall({
+      const outcome = await repairSkillSource({
         context: target.context,
         source: source.trim(),
-        discoverySession: validation.fetchResult.discoverySession,
-        skillPaths: [skill.relativePath],
-        skills: [target.skillName],
-        agentIntents,
-        requestedMode: 'copy' as const,
-        acknowledgeRisk: validation.requiresRiskConfirmation ? riskAcknowledged : true,
+        skillName: target.skillName,
+        agents: target.agents,
+        privateAdaptedAgents: target.privateAdaptedAgents,
+        privateCopyAgents: target.privateCopyAgents,
+        acknowledgeRisk: riskAcknowledged,
+        operationId,
+        stopRequested: () => stopRequestedRef.current || operationIdRef.current !== operationId,
+        onPhase: (phase) => setRepairPhase(phase),
       });
-      if (preparation.status === 'failed') throw preparation.error;
-      const results = await installSkills(
-        preparation.prepared.request,
-        preparation.prepared.preview.token,
-      );
-      installCompleted = true;
-      if (!didRepairInstallSucceed(results)) {
-        toast.error(appendCrossStorageFailureGuidance(
-          t('skills.repairSourceDialog.repairFailed'),
+      if (operationIdRef.current !== operationId) return;
+      if (outcome.status === 'succeeded') {
+        markSourceRepairSucceeded(target.context, target.skillName);
+        await syncSkills(target.context);
+        closeRepairSource();
+        return;
+      }
+      if (outcome.status === 'missing') {
+        setValidateState('missing');
+      } else if (outcome.status === 'riskRequired') {
+        setRequiresRiskConfirmation(true);
+      } else if (outcome.status === 'stopped') {
+        setRepairFeedback('stopped');
+      } else if (outcome.status === 'partial') {
+        setRepairFeedback('partial');
+      } else if (outcome.status === 'failed') {
+        setRepairFeedback('failed');
+        setRepairErrorMessage(appendCrossStorageFailureGuidance(
+          formatAppError(outcome.error, t),
           target.context,
           'repair',
           t,
         ));
-        return;
       }
-      markSourceRepairSucceeded(target.context, target.skillName);
-      await syncSkills(target.context);
-      closeRepairSource();
-    } catch (error) {
-      console.error('[RepairSourceDialog] Failed to repair source:', error);
-      const message = error && typeof error === 'object' && 'kind' in error
-        ? formatAppError(error as AppError, t)
-        : t('addSkill.error.unknown');
-      toast.error(installCompleted
-        ? message
-        : appendCrossStorageFailureGuidance(message, target.context, 'repair', t));
     } finally {
-      setRepairPhase('idle');
+      if (operationIdRef.current === operationId) setRepairPhase('idle');
     }
   }, [
     closeRepairSource,
@@ -187,9 +166,27 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     syncSkills,
     t,
     target,
-    validateSource,
     writeBlocked,
   ]);
+
+  const handleStop = useCallback(async () => {
+    if (!isRepairing || stopRequestedRef.current) return;
+    stopRequestedRef.current = true;
+    setRepairPhase('stopping');
+    if (repairPhase !== 'installing') return;
+    try {
+      const accepted = await cancelActiveMutation();
+      if (!accepted) {
+        stopRequestedRef.current = false;
+        setRepairPhase('installing');
+      }
+    } catch {
+      stopRequestedRef.current = false;
+      setRepairFeedback('failed');
+      setRepairErrorMessage(t('skills.repairSourceDialog.stopFailed'));
+      setRepairPhase('installing');
+    }
+  }, [cancelActiveMutation, isRepairing, repairPhase, t]);
 
   const statusLabel = useMemo(() => {
     if (validateState === 'checking') return t('skills.repairSourceDialog.validating');
@@ -200,7 +197,18 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   }, [skillName, t, validateState]);
 
   return (
-      <DialogContent className="gap-0 p-0 sm:max-w-lg">
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !isRepairing) closeRepairSource();
+      }}
+    >
+      <DialogContent
+        className="gap-0 p-0 sm:max-w-lg"
+        dismissible={!isRepairing}
+        aria-busy={isWorking}
+        closeLabel={t('common.close')}
+      >
       <DialogHeader className="px-6 pb-5 pt-6 pr-12">
         <DialogTitle className="text-xl leading-7">
           {t('skills.repairSourceDialog.title', { name: skillName })}
@@ -225,6 +233,8 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
               setValidateState('idle');
               setRiskAcknowledged(false);
               setRequiresRiskConfirmation(false);
+              setRepairFeedback(null);
+              setRepairErrorMessage(null);
             }}
           />
         </section>
@@ -242,6 +252,16 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
             <span>{t('addSkill.risk.openclawAcknowledge')}</span>
           </label>
         ) : null}
+
+        {repairFeedback ? (
+          <p role="alert" className={repairFeedback === 'stopped' ? 'text-sm text-warning' : 'text-sm text-destructive'}>
+            {repairFeedback === 'stopped'
+              ? t('skills.repairSourceDialog.repairStopped')
+              : repairFeedback === 'partial'
+                ? t('skills.repairSourceDialog.repairPartial')
+                : repairErrorMessage ?? t('skills.repairSourceDialog.repairFailed')}
+          </p>
+        ) : null}
         
         <p className="text-xs leading-5 text-muted-foreground">
           {t('skills.repairSourceDialog.overwriteNotice')}
@@ -249,6 +269,18 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       </div>
 
       <DialogFooter className="border-t border-border px-6 py-4">
+        {isRepairing ? (
+          <Button
+            variant="outline"
+            onClick={() => void handleStop()}
+            disabled={repairPhase === 'stopping' || cancelling}
+          >
+            <Square className="h-4 w-4" />
+            {repairPhase === 'stopping'
+              ? t('skills.repairSourceDialog.stopping')
+              : t('skills.repairSourceDialog.stop')}
+          </Button>
+        ) : (
           <Button variant="outline" onClick={() => void handleValidate()} disabled={isWorking}>
           {isManualChecking ? (
             <>
@@ -258,7 +290,8 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           ) : (
             t('skills.repairSourceDialog.validate')
           )}
-        </Button>
+          </Button>
+        )}
         <Button onClick={() => void handleRepair()} disabled={!canRepair || isWorking}>
           {isRepairing ? (
             <>
@@ -273,5 +306,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         </Button>
       </DialogFooter>
     </DialogContent>
+    </Dialog>
   );
 }

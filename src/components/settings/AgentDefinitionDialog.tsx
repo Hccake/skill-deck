@@ -57,7 +57,9 @@ export function AgentDefinitionDialog({
     >
       <DialogContent
         showCloseButton={false}
+        dismissible={!saving}
         className="h-[min(52rem,calc(100vh-2rem))] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-3xl"
+        aria-busy={saving}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           document.getElementById('agent-name')?.focus();

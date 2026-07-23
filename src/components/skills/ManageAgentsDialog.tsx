@@ -1,7 +1,7 @@
 // src/components/skills/ManageAgentsDialog.tsx
 import { useState, useCallback, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,7 @@ import type {
   ObservedPhysicalEntry,
 } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+import type { ManageAgentsOutcome } from '@/workflows/skill-manage-agents';
 
 interface ManageAgentsDialogProps {
   skill: InstalledSkill | null;
@@ -44,7 +45,7 @@ interface ManageAgentsDialogProps {
     removeEntryIds: ObservedEntryId[],
     mode: InstallMode,
     addOptionalAgents: AgentId[],
-  ) => Promise<void>;
+  ) => Promise<ManageAgentsOutcome>;
 }
 
 export const ManageAgentsDialog = memo(function ManageAgentsDialog({
@@ -63,7 +64,12 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
 
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && onClose()}>
-      <DialogContent className="h-[min(38rem,calc(100dvh-2rem))] min-w-0 max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <DialogContent
+        className="h-[min(38rem,calc(100dvh-2rem))] min-w-0 max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-xl"
+        dismissible={!saving}
+        closeLabel={t('common.close')}
+        aria-busy={loadingAgentDetails || saving}
+      >
         <DialogHeader className="min-w-0 border-b px-6 pt-6 pb-4">
           <DialogTitle>{t('skills.manageAgents.title')}</DialogTitle>
           <DialogDescription className="min-w-0 break-words">
@@ -174,8 +180,9 @@ function ManageAgentsReadySession({
       ? `${skill.scope}:${skill.canonicalPath}:${skill.name}`
       : 'none';
     const entriesKey = agentDetails?.observedEntries.map((entry) => entry.entryId).join('\u001f') ?? '';
-    return `${skillKey}:${initialSelected.join('\u001f')}:${initialOptional.join('\u001f')}:${entriesKey}`;
-  }, [agentDetails?.observedEntries, initialOptional, initialSelected, skill]);
+    const previewGeneration = agentDetails?.token.generation ?? 'none';
+    return `${skillKey}:${previewGeneration}:${initialSelected.join('\u001f')}:${initialOptional.join('\u001f')}:${entriesKey}`;
+  }, [agentDetails?.observedEntries, agentDetails?.token.generation, initialOptional, initialSelected, skill]);
 
   return (
     <ManageAgentsDialogBody
@@ -252,6 +259,10 @@ function ManageAgentsDialogBody({
   const [selectedAgents, setSelectedAgents] = useState<AgentId[]>(normalizedInitialSelection.required);
   const [optionalAgents, setOptionalAgents] = useState<AgentId[]>(normalizedInitialSelection.optional);
   const [optionalExpanded, setOptionalExpanded] = useState(normalizedInitialSelection.optional.length > 0);
+  const [saveFeedback, setSaveFeedback] = useState<{
+    status: 'blocked' | 'failed' | 'partial' | 'stale';
+    message?: string;
+  } | null>(null);
   const { addAgents, addOptionalAgents, removeEntryIds, hasChanges } = useMemo(() => {
     const initialSet = new Set(normalizedInitialSelection.required);
     const initialOptionalSet = new Set(normalizedInitialSelection.optional);
@@ -293,9 +304,15 @@ function ManageAgentsDialogBody({
   }, [mixedSelectionGroups, selectedAgents]);
 
   const handleSave = useCallback(async () => {
+    setSaveFeedback(null);
     onSavingChange(true);
     try {
-      await onSave(addAgents, removeEntryIds, mode, addOptionalAgents);
+      const outcome = await onSave(addAgents, removeEntryIds, mode, addOptionalAgents);
+      if (outcome.status !== 'succeeded') {
+        setSaveFeedback(outcome);
+      }
+    } catch {
+      setSaveFeedback({ status: 'failed' });
     } finally {
       onSavingChange(false);
     }
@@ -307,6 +324,18 @@ function ManageAgentsDialogBody({
   return (
     <>
       <div data-testid="manage-agents-dialog-body" className="min-h-0 min-w-0 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-4">
+        {saveFeedback ? (
+          <div
+            role="alert"
+            className="mb-4 flex min-w-0 gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+            <span className="min-w-0 break-words">
+              {t(`skills.manageAgents.${saveFeedback.status}`)}
+              {saveFeedback.message ? ` ${saveFeedback.message}` : null}
+            </span>
+          </div>
+        ) : null}
         <AgentSelector
           selectedAgents={selectedAgents}
           privateCopyAgents={optionalAgents}
@@ -397,7 +426,9 @@ function ManageAgentsDialogBody({
                 {t('common.loading')}
               </>
             ) : (
-              t('skills.manageAgents.save')
+              t(saveFeedback?.status === 'failed' || saveFeedback?.status === 'partial'
+                ? 'skills.manageAgents.retrySave'
+                : 'skills.manageAgents.save')
             )}
           </Button>
         </DialogFooter>

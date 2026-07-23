@@ -76,7 +76,10 @@
       "description": "Remove \"{{name}}\" from Skill Deck? This will not delete local files.",
       "unregisterOnly": "Only the Skill Deck registration is removed. The project directory and its files remain unchanged.",
       "cancel": "Cancel",
-      "confirm": "Remove"
+      "confirm": "Remove",
+      "removing": "Removing…",
+      "removeError": "The project could not be removed from Skill Deck. Your files were not changed. Try again.",
+      "retry": "Retry"
     }
   },
   "skills": {
@@ -121,7 +124,12 @@
       "overwriteNotice": "Repair will overwrite the current Skill content and keep the current agents.",
       "repair": "Repair",
       "repairing": "Repairing...",
-      "repairFailed": "Repair failed. Check the install result and try again."
+      "stop": "Stop repair",
+      "stopping": "Stopping…",
+      "repairStopped": "Repair was stopped. Completed writes, if any, remain unchanged.",
+      "repairPartial": "Repair did not finish for every target. Review recovery details if shown, then retry.",
+      "stopFailed": "The stop request could not be sent. Repair is still running.",
+      "repairFailed": "Repair failed. Check the result and try again."
     },
     "agent": {
       "enable": "Enable {{name}}",
@@ -207,8 +215,13 @@
       "symlinkHint": "Link to the shared Skill directory so future updates use one source",
       "copyHint": "Copy files into the agent directory for environments without link support",
       "save": "Save Changes",
+      "retrySave": "Retry Save",
       "previewError": "Agent access could not be loaded. Try again.",
       "retryPreview": "Retry",
+      "blocked": "Another operation is running. Try again when it finishes.",
+      "failed": "Agent access could not be updated. Your current selection is preserved.",
+      "partial": "Some Agent access could not be updated. Completed changes were preserved.",
+      "stale": "Agent access changed. Review the refreshed state before saving again.",
       "success": "Agent access updated",
       "cleanupSuccess": "Extra copies removed"
     },
@@ -226,7 +239,9 @@
       "metadataWarning": "This Skill is missing the source details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically.",
       "success": "Copied to {{count}} project(s) successfully",
       "skippedAgents": "Copied to the shared Skill directory. Some Agents were not connected separately because their project directory was not found: {{agents}}",
-      "partialError": "{{success}} succeeded, {{fail}} failed"
+      "partialError": "{{success}} project(s) copied. {{fail}} project(s) still need attention.",
+      "copyError": "Copy could not be completed. The selected projects are still available to retry.",
+      "retryFailed": "Retry failed projects"
     },
     "deleteSuccess": "\"{{name}}\" has been deleted",
     "partialDeleteSuccess": "Removed \"{{name}}\" from {{count}} targets",
@@ -567,6 +582,8 @@
       "saveError": "Failed to save Agent",
       "duplicateError": "Failed to duplicate Agent definition",
       "deletePreviewError": "Could not inspect the effects of deleting this Agent definition",
+      "deletePreviewLoading": "Checking what this deletion will affect…",
+      "retryDeletePreview": "Retry preview",
       "invalidDeleteError": "Failed to delete the invalid Agent record",
       "reviewInvalid": "Review invalid Agent record",
       "invalidDetailTitle": "Review invalid Agent record",
@@ -579,6 +596,9 @@
       },
       "deleted": "Agent definition deleted",
       "deleteError": "Failed to delete Agent definition",
+      "deleteStale": "The Agent Registry changed. Review the refreshed impact and enter the Agent ID again.",
+      "deleting": "Deleting…",
+      "retryDelete": "Retry deletion",
       "deleteTitle": "Delete {{name}}?",
       "deleteDescription": "This removes the custom Agent definition from Skill Deck.",
       "deleteFilesSafe": "Installed Skill files and Agent directories will not be deleted.",
