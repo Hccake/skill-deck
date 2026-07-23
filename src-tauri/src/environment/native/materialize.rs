@@ -344,12 +344,24 @@ pub fn prepare_native_mutations(
         .iter()
         .map(|entry| (&entry.key, entry))
         .collect::<BTreeMap<_, _>>();
-    let mut intents = Vec::new();
-    for entry in unit
+    let all_remove = unit
         .canonical_entry
         .iter()
         .chain(unit.required_agent_entries.iter())
-    {
+        .all(|entry| entry.action == PreparedEntryAction::Remove);
+    let entries = if all_remove {
+        unit.required_agent_entries
+            .iter()
+            .chain(unit.canonical_entry.iter())
+            .collect::<Vec<_>>()
+    } else {
+        unit.canonical_entry
+            .iter()
+            .chain(unit.required_agent_entries.iter())
+            .collect::<Vec<_>>()
+    };
+    let mut intents = Vec::new();
+    for entry in entries {
         validate_native_entry(entry, &backend)?;
         let expected = expected
             .get(&entry.key)
@@ -479,6 +491,26 @@ mod tests {
             &mapped[1].action,
             NativeEntryAction::Symlink { target } if target == &canonical
         ));
+    }
+
+    #[test]
+    fn remove_unit_stages_agent_entry_before_canonical_entry() {
+        let temp = tempdir().expect("temp");
+        let canonical = temp.path().join("shared/demo");
+        let agent = temp.path().join("agent/demo");
+        fs::create_dir_all(&canonical).expect("canonical");
+        fs::create_dir_all(&agent).expect("agent");
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Remove),
+            mutation(&agent, PreparedEntryAction::Remove),
+        );
+
+        let mapped =
+            prepare_native_mutations(&unit, &BTreeMap::new(), native_backend()).expect("mapped");
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].destination, agent);
+        assert_eq!(mapped[1].destination, canonical);
     }
 
     #[tokio::test]

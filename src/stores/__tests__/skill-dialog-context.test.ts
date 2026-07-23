@@ -61,6 +61,12 @@ describe('Skill dialog context capture', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
+    useSkillDialogStore.setState({
+      deleteTarget: null,
+      deletePreview: null,
+      deleteFeedback: null,
+      loadingAgentDetails: false,
+    });
     useProjectStore.setState({
       projectsByEnvironment: {
         'wsl:ubuntu': [
@@ -95,6 +101,17 @@ describe('Skill dialog context capture', () => {
     expect(useSkillDialogStore.getState().deleteTarget?.context).toEqual(context);
     expect(useSkillDialogStore.getState().deletePreview).toBeNull();
     expect(mocks.previewRemove).not.toHaveBeenCalled();
+  });
+
+  it('clears deletion feedback when opening or closing the dialog', () => {
+    useSkillDialogStore.setState({ deleteFeedback: 'executionError' });
+
+    useSkillDialogStore.getState().openDelete(skill, context, '/source');
+    expect(useSkillDialogStore.getState().deleteFeedback).toBeNull();
+
+    useSkillDialogStore.getState().setDeleteFeedback('stale');
+    useSkillDialogStore.getState().closeDelete();
+    expect(useSkillDialogStore.getState().deleteFeedback).toBeNull();
   });
 
   it('captures the source context when opening copy to project', () => {

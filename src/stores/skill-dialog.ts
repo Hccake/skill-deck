@@ -27,6 +27,7 @@ interface SkillDialogState {
   // Delete dialog
   deleteTarget: DeleteTarget | null;
   deletePreview: RemovePreview | null;
+  deleteFeedback: 'previewError' | 'executionError' | 'stale' | null;
   loadingAgentDetails: boolean;
 
   // Manage agents dialog
@@ -47,6 +48,7 @@ interface SkillDialogState {
   // Actions
   openDelete: (skill: InstalledSkill, context: ContextRef, projectPath?: string) => void;
   setDeletePreview: (preview: RemovePreview | null) => void;
+  setDeleteFeedback: (feedback: SkillDialogState['deleteFeedback']) => void;
   setDeleteLoading: (loading: boolean) => void;
   closeDelete: () => void;
   openAdd: (context: ContextRef, projectPath?: string) => void;
@@ -77,6 +79,7 @@ function projectPathForContext(context: ContextRef): string | undefined {
 export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
   deleteTarget: null,
   deletePreview: null,
+  deleteFeedback: null,
   loadingAgentDetails: false,
   manageAgentsSkill: null,
   manageAgentsScope: 'global' as SkillScope,
@@ -93,15 +96,23 @@ export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
     set({
       deleteTarget: { skill, scope, projectPath, context },
       deletePreview: null,
+      deleteFeedback: null,
       loadingAgentDetails: true,
     });
   },
 
   setDeletePreview: (deletePreview) => set({ deletePreview }),
 
+  setDeleteFeedback: (deleteFeedback) => set({ deleteFeedback }),
+
   setDeleteLoading: (loadingAgentDetails) => set({ loadingAgentDetails }),
 
-  closeDelete: () => set({ deleteTarget: null, deletePreview: null, loadingAgentDetails: false }),
+  closeDelete: () => set({
+    deleteTarget: null,
+    deletePreview: null,
+    deleteFeedback: null,
+    loadingAgentDetails: false,
+  }),
 
   openAdd: (context, projectPath = projectPathForContext(context)) => {
     if (isMutationWriteBlocked()) return;

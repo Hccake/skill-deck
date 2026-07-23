@@ -108,6 +108,7 @@ describe('skill workflows', () => {
     useSkillDialogStore.setState({
       deleteTarget: null,
       deletePreview: null,
+      deleteFeedback: null,
       loadingAgentDetails: false,
       manageAgentsSkill: null,
       manageAgentsContext: undefined,
@@ -138,21 +139,13 @@ describe('skill workflows', () => {
       deletePreview: removePreview,
     });
 
-    await executeSkillRemoval({
-      removeCanonical: true,
-      entryIds: [],
-      confirmEntityDirectories: false,
-    });
+    await executeSkillRemoval();
 
     expect(mocks.removeSkill).toHaveBeenCalledWith({
       token,
       context,
       skillName: skill.name,
-      selection: {
-        removeCanonical: true,
-        entryIds: [],
-        confirmEntityDirectories: false,
-      },
+      intent: { kind: 'fullSkill' },
     });
     expect(useSkillDialogStore.getState().deleteTarget).toBeNull();
   });
@@ -178,6 +171,69 @@ describe('skill workflows', () => {
     await firstOpen;
     expect(useSkillDialogStore.getState().deleteTarget?.skill.name).toBe(otherSkill.name);
     expect(useSkillDialogStore.getState().deletePreview?.skillName).toBe(otherSkill.name);
+  });
+
+  it('keeps the removal dialog open when preview loading fails', async () => {
+    mocks.previewRemove.mockRejectedValueOnce({ kind: 'staleTarget' });
+
+    await openSkillRemoval(skill, context, '/source');
+
+    expect(useSkillDialogStore.getState().deleteTarget?.skill.name).toBe(skill.name);
+    expect(useSkillDialogStore.getState().deletePreview).toBeNull();
+    expect(useSkillDialogStore.getState().deleteFeedback).toBe('previewError');
+    expect(useSkillDialogStore.getState().loadingAgentDetails).toBe(false);
+  });
+
+  it('keeps the removal preview available when execution fails', async () => {
+    useSkillDialogStore.setState({
+      deleteTarget: { skill, scope: 'project', projectPath: '/source', context },
+      deletePreview: removePreview,
+    });
+    mocks.removeSkill.mockResolvedValueOnce({
+      units: [{ status: 'failed', error: null }],
+    });
+
+    await executeSkillRemoval();
+
+    expect(useSkillDialogStore.getState().deleteTarget?.skill.name).toBe(skill.name);
+    expect(useSkillDialogStore.getState().deletePreview).toBe(removePreview);
+    expect(useSkillDialogStore.getState().deleteFeedback).toBe('executionError');
+  });
+
+  it('reloads the removal preview when execution reports stale scope', async () => {
+    const refreshedPreview = {
+      ...removePreview,
+      token: { ...token, generation: 'preview-2' },
+    } as RemovePreview;
+    useSkillDialogStore.setState({
+      deleteTarget: { skill, scope: 'project', projectPath: '/source', context },
+      deletePreview: removePreview,
+    });
+    mocks.removeSkill.mockResolvedValueOnce({
+      units: [{
+        status: 'failed',
+        error: {
+          code: 'staleTarget',
+          parameters: {},
+          field: null,
+          severity: 'error',
+          retryable: true,
+          technicalDetails: null,
+          environment: null,
+          context: null,
+          unitId: 'remove:toolkit',
+          recoveryResourceId: null,
+          displayPaths: [],
+        },
+      }],
+    });
+    mocks.previewRemove.mockResolvedValueOnce(refreshedPreview);
+
+    await executeSkillRemoval();
+
+    expect(mocks.previewRemove).toHaveBeenCalledWith(context, skill.name);
+    expect(useSkillDialogStore.getState().deletePreview).toBe(refreshedPreview);
+    expect(useSkillDialogStore.getState().deleteFeedback).toBe('stale');
   });
 
   it('passes Backend-owned physical entry removals through unchanged', async () => {

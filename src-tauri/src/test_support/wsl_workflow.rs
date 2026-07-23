@@ -19,7 +19,7 @@ use crate::application::payload_session::{
 use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
 use crate::application::recovery::RecoveryResourceState;
 use crate::application::recovery_runtime::RuntimeRecoveryGraph;
-use crate::application::remove::{RemoveRequest, RemoveSelection, RemoveService};
+use crate::application::remove::{RemoveIntent, RemoveRequest, RemoveService};
 use crate::application::runtime_facts::{HostRuntimeSnapshot, RuntimePlanningFactSource};
 use crate::application::skill_entries::{InstalledSkillPayloadAcquirer, SkillEntryObserver};
 use crate::application::source_evidence::{
@@ -956,15 +956,7 @@ pub async fn run_full_wsl_mutation_workflow(
                 token: remove_preview.token,
                 context: harness.context("source"),
                 skill_name: "demo".to_string(),
-                selection: RemoveSelection {
-                    remove_canonical: true,
-                    entry_ids: remove_preview
-                        .physical_entries
-                        .iter()
-                        .map(|entry| entry.entry_id.clone())
-                        .collect(),
-                    confirm_entity_directories: true,
-                },
+                intent: RemoveIntent::FullSkill,
             },
             CancellationSignal::default(),
         )

@@ -20,7 +20,7 @@ use crate::application::payload_session::{
     PayloadSessionManager,
 };
 use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
-use crate::application::remove::{RemoveRequest, RemoveSelection, RemoveService};
+use crate::application::remove::{RemoveIntent, RemoveRequest, RemoveService};
 use crate::application::runtime_facts::{
     AgentRegistrySnapshotSource, HostRuntimeSnapshot, RuntimePlanningFactSource,
 };
@@ -407,15 +407,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 token: remove_preview.token,
                 context: source_context,
                 skill_name: "demo".to_string(),
-                selection: RemoveSelection {
-                    remove_canonical: true,
-                    entry_ids: remove_preview
-                        .physical_entries
-                        .iter()
-                        .map(|entry| entry.entry_id.clone())
-                        .collect(),
-                    confirm_entity_directories: true,
-                },
+                intent: RemoveIntent::FullSkill,
             },
             CancellationSignal::default(),
         )

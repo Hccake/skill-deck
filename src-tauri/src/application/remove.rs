@@ -65,12 +65,12 @@ pub struct RemovePreview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
-pub struct RemoveSelection {
-    pub remove_canonical: bool,
-    pub entry_ids: Vec<ObservedEntryId>,
-    pub confirm_entity_directories: bool,
+#[derive(PartialEq, Eq)]
+#[serde(tag = "kind", content = "entryIds", rename_all = "camelCase")]
+pub enum RemoveIntent {
+    FullSkill,
+    AgentEntries(Vec<ObservedEntryId>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -80,7 +80,7 @@ pub struct RemoveRequest {
     pub token: PreviewToken,
     pub context: ContextRef,
     pub skill_name: String,
-    pub selection: RemoveSelection,
+    pub intent: RemoveIntent,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -131,17 +131,14 @@ where
             .await?;
         let preview = remove_preview(&request.context, &request.skill_name, &snapshot)?;
         validate_token(&request.token, &preview.token)?;
-        validate_remove_execution(&preview, &request.selection)?;
-        let selected = request.selection.entry_ids.iter().collect::<BTreeSet<_>>();
-        let canonical_entry = request
-            .selection
-            .remove_canonical
-            .then(|| PreparedEntryMutation {
-                key: snapshot.canonical.key.clone(),
-                destination: snapshot.canonical.destination.clone(),
-                action: PreparedEntryAction::Remove,
-                owner_agent_ids: Vec::new(),
-            });
+        let selected = selected_entry_ids(&preview, &request.intent)?;
+        let remove_canonical = request.intent == RemoveIntent::FullSkill;
+        let canonical_entry = remove_canonical.then(|| PreparedEntryMutation {
+            key: snapshot.canonical.key.clone(),
+            destination: snapshot.canonical.destination.clone(),
+            action: PreparedEntryAction::Remove,
+            owner_agent_ids: Vec::new(),
+        });
         let required_agent_entries = snapshot
             .entries
             .iter()
@@ -158,22 +155,26 @@ where
                     .collect(),
             })
             .collect();
-        let lock_mutation = request
-            .selection
-            .remove_canonical
-            .then(|| PreparedLockMutation {
-                target: snapshot.facts.resolved_context.lock.clone(),
-                legacy_target: None,
-                schema: snapshot.facts.lock_schema,
-                skill_name: request.skill_name.clone(),
-                replacement: None,
-                root_replacements: BTreeMap::new(),
-                expected: LockExpectedState::capture(
-                    &snapshot.facts.lock_document,
-                    [&request.skill_name],
-                    std::iter::empty::<&str>(),
-                ),
-            });
+        let lock_mutation = (remove_canonical
+            && snapshot
+                .facts
+                .lock_document
+                .entry_snapshot(&request.skill_name)
+                .value()
+                .is_some())
+        .then(|| PreparedLockMutation {
+            target: snapshot.facts.resolved_context.lock.clone(),
+            legacy_target: None,
+            schema: snapshot.facts.lock_schema,
+            skill_name: request.skill_name.clone(),
+            replacement: None,
+            root_replacements: BTreeMap::new(),
+            expected: LockExpectedState::capture(
+                &snapshot.facts.lock_document,
+                [&request.skill_name],
+                std::iter::empty::<&str>(),
+            ),
+        });
         let plan = MutationPlan {
             operation_id: Uuid::new_v4().simple().to_string(),
             payloads: BTreeMap::new(),
@@ -202,45 +203,42 @@ where
     }
 }
 
-pub fn validate_remove_selection(selection: &RemoveSelection) -> Result<(), AppError> {
+fn selected_entry_ids(
+    preview: &RemovePreview,
+    intent: &RemoveIntent,
+) -> Result<BTreeSet<ObservedEntryId>, AppError> {
+    if intent == &RemoveIntent::FullSkill {
+        return Ok(preview
+            .physical_entries
+            .iter()
+            .map(|entry| entry.entry_id.clone())
+            .collect());
+    }
+    let RemoveIntent::AgentEntries(entry_ids) = intent else {
+        unreachable!("FullSkill is handled above")
+    };
     let mut ids = BTreeSet::new();
-    if selection.entry_ids.iter().any(|id| !ids.insert(id)) {
+    if entry_ids.iter().any(|id| !ids.insert(id.clone())) {
         return Err(AppError::Validation {
             field: Some("entryIds".to_string()),
             message: "duplicate observed entry selection".to_string(),
         });
     }
-    if !selection.remove_canonical && selection.entry_ids.is_empty() {
+    if ids.is_empty() {
         return Err(AppError::Validation {
             field: Some("selection".to_string()),
             message: "nothing is selected for removal".to_string(),
         });
     }
-    Ok(())
-}
-
-pub fn validate_remove_execution(
-    preview: &RemovePreview,
-    selection: &RemoveSelection,
-) -> Result<(), AppError> {
-    validate_remove_selection(selection)?;
     let available = preview
         .physical_entries
         .iter()
-        .map(|entry| (&entry.entry_id, entry))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut selected_directory = false;
-    for id in &selection.entry_ids {
-        let entry = available.get(id).ok_or(AppError::StaleTarget)?;
-        selected_directory |= entry.kind == ObservedEntryKind::Directory;
+        .map(|entry| &entry.entry_id)
+        .collect::<BTreeSet<_>>();
+    if ids.iter().any(|id| !available.contains(id)) {
+        return Err(AppError::StaleTarget);
     }
-    if selected_directory && !selection.confirm_entity_directories {
-        return Err(AppError::Validation {
-            field: Some("confirmEntityDirectories".to_string()),
-            message: "selected entity directories require confirmation".to_string(),
-        });
-    }
-    Ok(())
+    Ok(ids)
 }
 
 fn remove_preview(
@@ -303,21 +301,51 @@ fn validate_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::environment::runtime::ObservedEntryId;
 
     #[test]
-    fn remove_selection_rejects_duplicate_observed_ids() {
-        let id = ObservedEntryId::parse("entry-v1-demo").unwrap();
-        assert!(validate_remove_selection(&RemoveSelection {
-            remove_canonical: false,
-            entry_ids: vec![id.clone(), id],
-            confirm_entity_directories: false,
-        })
-        .is_err());
+    fn remove_intent_has_explicit_wire_shape() {
+        let full: RemoveIntent = serde_json::from_str(r#"{"kind":"fullSkill"}"#).unwrap();
+        assert_eq!(full, RemoveIntent::FullSkill);
+
+        let entries: RemoveIntent =
+            serde_json::from_str(r#"{"kind":"agentEntries","entryIds":["entry-v1-demo"]}"#)
+                .unwrap();
+        assert_eq!(
+            entries,
+            RemoveIntent::AgentEntries(vec![crate::environment::runtime::ObservedEntryId::parse(
+                "entry-v1-demo"
+            )
+            .unwrap()])
+        );
     }
 
     #[test]
-    fn selected_entity_directory_requires_explicit_confirmation() {
+    fn full_skill_request_serializes_without_entry_selection() {
+        let request = RemoveRequest {
+            token: crate::application::mutation::plan::PreviewToken {
+                generation: "preview-v1-remove".to_string(),
+                registry_revision: "registry-1".to_string(),
+                environment_revision: "environment-1".to_string(),
+                context_revision: crate::environment::runtime::ContextSnapshotRevision::parse(
+                    "context-v1-remove",
+                )
+                .unwrap(),
+            },
+            context: ContextRef {
+                environment: crate::environment::types::EnvironmentRef::Host,
+                scope: crate::environment::types::ContextScope::Global,
+            },
+            skill_name: "demo".to_string(),
+            intent: RemoveIntent::FullSkill,
+        };
+
+        let json = serde_json::to_value(request).unwrap();
+        assert_eq!(json["intent"], serde_json::json!({ "kind": "fullSkill" }));
+        assert!(json.get("selection").is_none());
+    }
+
+    #[test]
+    fn agent_entry_intent_rejects_unknown_entry() {
         let id = ObservedEntryId::parse("entry-v1-copy").unwrap();
         let preview = RemovePreview {
             token: crate::application::mutation::plan::PreviewToken {
@@ -335,24 +363,12 @@ mod tests {
             },
             skill_name: "demo".to_string(),
             canonical: ObservedEntryKind::Directory,
-            physical_entries: vec![ObservedPhysicalEntry {
-                entry_id: id.clone(),
-                display_path: ResourceLocator {
-                    environment: crate::environment::types::EnvironmentRef::Host,
-                    native_path: "/agent/skills/demo".to_string(),
-                },
-                kind: ObservedEntryKind::Directory,
-                physical_target_key: "target-v1-copy".to_string(),
-                owners: Vec::new(),
-                will_break_if_canonical_removed: false,
-            }],
-        };
-        let selection = RemoveSelection {
-            remove_canonical: false,
-            entry_ids: vec![id],
-            confirm_entity_directories: false,
+            physical_entries: Vec::new(),
         };
 
-        assert!(validate_remove_execution(&preview, &selection).is_err());
+        assert_eq!(
+            selected_entry_ids(&preview, &RemoveIntent::AgentEntries(vec![id])),
+            Err(AppError::StaleTarget)
+        );
     }
 }

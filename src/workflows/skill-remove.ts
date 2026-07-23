@@ -5,11 +5,41 @@ import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useMutationStore } from '@/stores/mutation';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
-import { t } from '@/stores/skills-utils';
-import type { ContextRef, InstalledSkill, RemoveSelection } from '@/bindings';
+import { t, type DeleteTarget } from '@/stores/skills-utils';
+import type { ContextRef, InstalledSkill } from '@/bindings';
 import { formatWorkflowError, presentMutationResults } from './mutation-presentation';
 
 let removalPreviewGeneration = 0;
+
+const STALE_REMOVAL_CODES = new Set([
+  'staleContext',
+  'staleRegistry',
+  'staleEnvironment',
+  'staleTarget',
+  'externalLockChanged',
+]);
+
+function hasStaleRemovalResult(units: Awaited<ReturnType<typeof removeSkill>>['units']): boolean {
+  return units.some((unit) => unit.error && STALE_REMOVAL_CODES.has(unit.error.code));
+}
+
+function isStaleRemovalError(error: unknown): boolean {
+  return Boolean(
+    error
+      && typeof error === 'object'
+      && 'kind' in error
+      && typeof error.kind === 'string'
+      && (STALE_REMOVAL_CODES.has(error.kind) || error.kind === 'staleAgentRuntime'),
+  );
+}
+
+async function reloadSkillRemoval(target: DeleteTarget): Promise<void> {
+  await openSkillRemoval(target.skill, target.context, target.projectPath);
+  const current = useSkillDialogStore.getState();
+  if (current.deleteTarget?.skill === target.skill && current.deletePreview) {
+    current.setDeleteFeedback('stale');
+  }
+}
 
 export async function openSkillRemoval(
   skill: InstalledSkill,
@@ -24,9 +54,9 @@ export async function openSkillRemoval(
     const current = useSkillDialogStore.getState();
     if (requestGeneration !== removalPreviewGeneration || current.deleteTarget?.skill !== skill) return;
     current.setDeletePreview(preview);
-  } catch (error) {
+  } catch {
     if (requestGeneration === removalPreviewGeneration) {
-      console.warn('Failed to preview removal:', error);
+      useSkillDialogStore.getState().setDeleteFeedback('previewError');
     }
   } finally {
     const current = useSkillDialogStore.getState();
@@ -36,10 +66,11 @@ export async function openSkillRemoval(
   }
 }
 
-export async function executeSkillRemoval(selection: RemoveSelection): Promise<void> {
+export async function executeSkillRemoval(): Promise<void> {
   if (useMutationStore.getState().activeMutation) return;
   const { deleteTarget, deletePreview } = useSkillDialogStore.getState();
   if (!deleteTarget || !deletePreview) return;
+  useSkillDialogStore.getState().setDeleteFeedback(null);
 
   try {
     const context = deleteTarget.context;
@@ -47,11 +78,16 @@ export async function executeSkillRemoval(selection: RemoveSelection): Promise<v
       token: deletePreview.token,
       context,
       skillName: deleteTarget.skill.name,
-      selection,
+      intent: { kind: 'fullSkill' },
     });
     const failed = result.units.filter((unit) => unit.status !== 'succeeded');
     if (failed.length > 0) {
+      if (hasStaleRemovalResult(failed)) {
+        await reloadSkillRemoval(deleteTarget);
+        return;
+      }
       const presentation = presentMutationResults(failed, t);
+      useSkillDialogStore.getState().setDeleteFeedback('executionError');
       toast.error(appendCrossStorageFailureGuidance(
         presentation.summary,
         context,
@@ -61,12 +97,7 @@ export async function executeSkillRemoval(selection: RemoveSelection): Promise<v
       return;
     }
 
-    toast.success(selection.removeCanonical
-      ? t('skills.deleteSuccess', { name: deleteTarget.skill.name })
-      : t('skills.partialDeleteSuccess', {
-          name: deleteTarget.skill.name,
-          count: selection.entryIds.length,
-        }));
+    toast.success(t('skills.deleteSuccess', { name: deleteTarget.skill.name }));
 
     const detailState = useSkillDetailStore.getState();
     const deletedSkillIdentity = getSkillIdentity(
@@ -81,6 +112,11 @@ export async function executeSkillRemoval(selection: RemoveSelection): Promise<v
     const { useSkillsDataStore } = await import('@/stores/skills-data');
     await useSkillsDataStore.getState().syncSkills(context);
   } catch (error) {
+    if (isStaleRemovalError(error)) {
+      await reloadSkillRemoval(deleteTarget);
+      return;
+    }
+    useSkillDialogStore.getState().setDeleteFeedback('executionError');
     toast.error(appendCrossStorageFailureGuidance(
       t('skills.deleteError', {
         name: deleteTarget.skill.name,
@@ -90,6 +126,5 @@ export async function executeSkillRemoval(selection: RemoveSelection): Promise<v
       'delete',
       t,
     ));
-    useSkillDialogStore.getState().closeDelete();
   }
 }

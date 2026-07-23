@@ -7,7 +7,7 @@ use crate::application::mutation::result::{
     MutationUnitResult, MutationUnitStatus, OperationErrorCode,
 };
 use crate::application::remove::{
-    ObservedEntryKind, ObservedPhysicalEntry, RemoveRequest, RemoveSelection,
+    ObservedEntryKind, ObservedPhysicalEntry, RemoveIntent, RemoveRequest,
 };
 use crate::application::remove_runtime::RuntimeRemoveService;
 use crate::core::agent_definition::AgentId;
@@ -58,11 +58,7 @@ impl DuplicateCleanupService {
                     token: preview.token,
                     context,
                     skill_name,
-                    selection: RemoveSelection {
-                        remove_canonical: false,
-                        entry_ids: selected_ids,
-                        confirm_entity_directories: true,
-                    },
+                    intent: RemoveIntent::AgentEntries(selected_ids),
                 },
                 guard.cancellation(),
             )

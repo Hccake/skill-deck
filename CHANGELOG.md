@@ -5,6 +5,12 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **调整 Skill 删除流程** — 从 Skill Card 删除时展示通用 Skill 目录和全部 Agent 软连接或副本，确认后完整删除；只调整部分 Agent 时继续使用 Manage Agents，删除范围变化或执行失败时可以重新确认或重试。
+
 ## [1.6.2] - 2026-07-07
 
 ### Added

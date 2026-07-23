@@ -239,12 +239,24 @@ pub fn prepare_wsl_mutations(
         .iter()
         .map(|entry| (&entry.key, entry))
         .collect::<BTreeMap<_, _>>();
-    let mut mutations = Vec::new();
-    for entry in unit
+    let all_remove = unit
         .canonical_entry
         .iter()
         .chain(unit.required_agent_entries.iter())
-    {
+        .all(|entry| entry.action == PreparedEntryAction::Remove);
+    let entries = if all_remove {
+        unit.required_agent_entries
+            .iter()
+            .chain(unit.canonical_entry.iter())
+            .collect::<Vec<_>>()
+    } else {
+        unit.canonical_entry
+            .iter()
+            .chain(unit.required_agent_entries.iter())
+            .collect::<Vec<_>>()
+    };
+    let mut mutations = Vec::new();
+    for entry in entries {
         validate_wsl_entry(entry, distro_name)?;
         let expected = expected
             .get(&entry.key)
@@ -1352,6 +1364,60 @@ mod tests {
             .entries
             .iter()
             .all(|entry| entry.phase == RecoveryEntryPhase::Verified));
+    }
+
+    #[test]
+    fn remove_unit_stages_agent_entry_before_canonical_entry() {
+        let environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        };
+        let canonical = mutation(
+            "canonical",
+            "/home/alice/.agents/skills/demo",
+            PreparedEntryAction::Remove,
+            &environment,
+        );
+        let agent = mutation(
+            "agent",
+            "/home/alice/.claude/skills/demo",
+            PreparedEntryAction::Remove,
+            &environment,
+        );
+        let expected_targets = [&canonical, &agent]
+            .into_iter()
+            .map(|entry| ExpectedTargetEntry {
+                key: entry.key.clone(),
+                fingerprint: EntryFingerprint(format!(
+                    "entry-v1-{}",
+                    entry.key.normalized_final_child_name
+                )),
+                expected_content_manifest_hash: None,
+            })
+            .collect();
+        let unit = ExecutionUnit {
+            id: "remove-demo".to_string(),
+            skill_name: "demo".to_string(),
+            source: None,
+            target: ContextRef {
+                environment,
+                scope: ContextScope::Global,
+            },
+            expected_revisions: RuntimeRevisions {
+                registry: "registry-1".to_string(),
+                environment: "environment-1".to_string(),
+                context: ContextSnapshotRevision::parse("context-v1-wsl-remove").unwrap(),
+            },
+            canonical_entry: Some(canonical),
+            required_agent_entries: vec![agent],
+            lock_mutation: None,
+            expected_targets,
+        };
+
+        let mapped = prepare_wsl_mutations(&unit, &BTreeMap::new(), "Ubuntu").unwrap();
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].destination, "/home/alice/.claude/skills/demo");
+        assert_eq!(mapped[1].destination, "/home/alice/.agents/skills/demo");
     }
 
     fn mutation(
