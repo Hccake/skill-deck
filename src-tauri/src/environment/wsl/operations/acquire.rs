@@ -787,7 +787,7 @@ fn parse_cleanup_report(bytes: &[u8]) -> Result<PayloadCleanupReport, AppError> 
     Ok(report)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
@@ -1312,5 +1312,55 @@ mod tests {
             .status()
             .unwrap()
             .success()
+    }
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod portable_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::application::payload_session::PayloadLocalSource;
+
+    fn session() -> WslSession {
+        WslSession {
+            distro_name: "Ubuntu".to_string(),
+            user: "alice".to_string(),
+            uid: 1000,
+            home: "/home/alice".to_string(),
+            xdg_state_home: None,
+            config_home: "/home/alice/.config".to_string(),
+            environment: BTreeMap::new(),
+            git_available: true,
+            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
+            ),
+            runtime_generation: 0,
+        }
+    }
+
+    #[test]
+    fn local_source_is_an_opaque_backend_owned_wsl_path() {
+        let storage = WslPayloadSessionStorage::new(session());
+        let key = PayloadStorageKey::new("session-1", "skills/demo");
+        assert_eq!(
+            storage.local_source(&key).expect("local source"),
+            PayloadLocalSource::WslManaged {
+                distro_name: "Ubuntu".to_string(),
+                payload_root: format!(
+                    "/tmp/skill-deck-source-session-1/payload-{}",
+                    digest("skills/demo")
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn source_revision_parser_rejects_non_git_hashes() {
+        assert_eq!(
+            parse_source_revision(format!("1\0{}\0", "A".repeat(40)).as_bytes()).unwrap(),
+            "a".repeat(40)
+        );
+        assert!(parse_source_revision(format!("1\0{}\0", "a".repeat(39)).as_bytes()).is_err());
+        assert!(parse_source_revision(format!("1\0{}z\0", "a".repeat(39)).as_bytes()).is_err());
     }
 }

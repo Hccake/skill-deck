@@ -121,13 +121,17 @@ fn protocol_error() -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use std::fs;
+    #[cfg(target_os = "linux")]
     use std::process::{Command, Stdio};
 
+    #[cfg(target_os = "linux")]
     use tempfile::tempdir;
 
     use super::*;
 
+    #[cfg(target_os = "linux")]
     fn wslpath_available() -> bool {
         Command::new("wslpath")
             .args(["-w", "/"])
@@ -167,6 +171,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn protocol_projects_missing_roots_from_the_resolved_existing_ancestor() {
         if !wslpath_available() {
@@ -203,7 +208,7 @@ mod tests {
         assert!(!destination.parent().unwrap().exists());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn protocol_resolves_an_existing_symlink_before_appending_missing_components() {
         if !wslpath_available() {

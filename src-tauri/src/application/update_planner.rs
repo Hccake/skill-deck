@@ -1074,10 +1074,11 @@ mod tests {
     #[tokio::test]
     async fn private_copy_requires_observed_selection_while_symlink_follows_canonical() {
         let temp = tempdir().unwrap();
-        let canonical_root = temp.path().join(".agents/skills");
-        let copy_root = temp.path().join(".copy/skills");
-        let link_root = temp.path().join(".link/skills");
-        let alias_root = temp.path().join(".alias/skills");
+        let physical_root = fs::canonicalize(temp.path()).unwrap();
+        let canonical_root = physical_root.join(".agents/skills");
+        let copy_root = physical_root.join(".copy/skills");
+        let link_root = physical_root.join(".link/skills");
+        let alias_root = physical_root.join(".alias/skills");
         let source = temp.path().join("source/demo");
         fs::create_dir_all(canonical_root.join("demo")).unwrap();
         fs::create_dir_all(copy_root.join("demo")).unwrap();

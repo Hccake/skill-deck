@@ -106,7 +106,7 @@ fn protocol_error() -> AppError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::process::Command;
 

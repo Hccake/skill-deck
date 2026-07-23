@@ -304,11 +304,12 @@ mod tests {
     #[tokio::test]
     async fn invalid_marker_is_visible_openable_stable_and_never_confirmable() {
         let temp = tempdir().unwrap();
-        let invalid_root = temp.path().join("operation-corrupt");
+        let physical_root = fs::canonicalize(temp.path()).unwrap();
+        let invalid_root = physical_root.join("operation-corrupt");
         fs::create_dir(&invalid_root).unwrap();
         fs::write(invalid_root.join("recovery.json"), b"not-json").unwrap();
         let store: Arc<dyn RecoveryMarkerStore> =
-            Arc::new(NativeRecoveryMarkerStore::new(temp.path()).expect("store"));
+            Arc::new(NativeRecoveryMarkerStore::new(&physical_root).expect("store"));
         let checker = Arc::new(Checker(Mutex::new(RecoveryConsistency::Inconsistent)));
         let repository = Arc::new(RecoveryRepository::new(vec![store], checker));
         repository
@@ -338,7 +339,7 @@ mod tests {
 
         #[cfg(unix)]
         {
-            let redirected = temp.path().join("outside");
+            let redirected = physical_root.join("outside");
             fs::create_dir(&redirected).unwrap();
             fs::remove_dir_all(&invalid_root).unwrap();
             std::os::unix::fs::symlink(&redirected, &invalid_root).unwrap();

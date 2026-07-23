@@ -101,16 +101,21 @@ fn protocol_error() -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
+    #[cfg(target_os = "linux")]
     use std::process::Command;
 
+    #[cfg(target_os = "linux")]
     use tempfile::tempdir;
 
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn host_path_mapping_returns_only_a_versioned_absolute_posix_path() {
+        use std::os::unix::fs::PermissionsExt;
+
         let temp = tempdir().unwrap();
         let tool = temp.path().join("wslpath");
         fs::write(&tool, "#!/bin/sh\nprintf '/custom/c/Bridge Path\\n'\n").unwrap();

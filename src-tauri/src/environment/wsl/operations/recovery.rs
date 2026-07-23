@@ -328,7 +328,7 @@ fn parse_write_response(bytes: &[u8]) -> Result<(), AppError> {
     (bytes == b"1\0").then_some(()).ok_or_else(protocol_error)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::fs;
     use std::io::Write;

@@ -164,7 +164,9 @@ fn protocol_error() -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use std::fs;
+    #[cfg(target_os = "linux")]
     use std::process::Command;
 
     use crate::environment::content_manifest::{ContentManifest, ContentManifestRecord};
@@ -235,7 +237,7 @@ mod tests {
         assert!(parse_content_manifest(&wrong_count).is_err());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn wsl_script_emits_records_only_and_rust_computes_the_manifest_hash() {
         use std::os::unix::fs::{symlink, PermissionsExt};

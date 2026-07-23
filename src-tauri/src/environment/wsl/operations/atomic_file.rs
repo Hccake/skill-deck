@@ -156,7 +156,7 @@ fn backup_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::fs;
     use std::io::Write;
@@ -258,5 +258,20 @@ mod tests {
 
         assert!(!output.status.success());
         assert_eq!(fs::read(&path).expect("preserved document"), b"previous");
+    }
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod portable_tests {
+    use super::parse_read_response;
+
+    #[test]
+    fn optional_read_parser_preserves_binary_body_and_rejects_invalid_header() {
+        assert_eq!(parse_read_response(b"1\0\x30\0").unwrap(), None);
+        assert_eq!(
+            parse_read_response(&[b'1', 0, b'1', 0, 0, 255, 1]).unwrap(),
+            Some(vec![0, 255, 1])
+        );
+        assert!(parse_read_response(b"2\0\x31\0data").is_err());
     }
 }

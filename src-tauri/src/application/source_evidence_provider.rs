@@ -490,12 +490,13 @@ mod tests {
         child: Child,
     }
 
-    impl GitDaemon {
-        fn new(root: PathBuf) -> Self {
+    fn start_git_daemon(root: &Path) -> (Child, SocketAddr) {
+        let mut last_failure = String::new();
+        for attempt in 1..=5 {
             let inner_listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let inner_addr = inner_listener.local_addr().unwrap();
             drop(inner_listener);
-            let child = Command::new("git")
+            let mut child = Command::new("git")
                 .args([
                     "daemon",
                     "--export-all",
@@ -506,15 +507,45 @@ mod tests {
                     root.to_str().unwrap(),
                 ])
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()
                 .unwrap();
-            for _ in 0..100 {
-                if TcpStream::connect(inner_addr).is_ok() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    let mut stderr = String::new();
+                    if let Some(mut pipe) = child.stderr.take() {
+                        let _ = pipe.read_to_string(&mut stderr);
+                    }
+                    last_failure =
+                        format!("attempt {attempt} exited with {status}: {}", stderr.trim());
                     break;
                 }
-                thread::sleep(std::time::Duration::from_millis(5));
+                if TcpStream::connect(inner_addr).is_ok() {
+                    return (child, inner_addr);
+                }
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let mut stderr = String::new();
+                    if let Some(mut pipe) = child.stderr.take() {
+                        let _ = pipe.read_to_string(&mut stderr);
+                    }
+                    last_failure = format!(
+                        "attempt {attempt} timed out waiting for {inner_addr}: {}",
+                        stderr.trim()
+                    );
+                    break;
+                }
+                thread::sleep(std::time::Duration::from_millis(10));
             }
+        }
+        panic!("Git daemon did not become ready: {last_failure}");
+    }
+
+    impl GitDaemon {
+        fn new(root: PathBuf) -> Self {
+            let (child, inner_addr) = start_git_daemon(&root);
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let addr = listener.local_addr().unwrap();

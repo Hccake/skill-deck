@@ -590,6 +590,7 @@ mod tests {
         destination: PathBuf,
         payload: Arc<SkillPayload>,
     ) -> NativeEntryIntent {
+        let destination = fs::canonicalize(&destination).expect("physical destination");
         let expected = inspect_entry_no_follow(&destination).expect("inspect");
         let expected_content_manifest_hash = read_directory(&destination)
             .expect("content manifest")
@@ -769,16 +770,18 @@ mod tests {
     fn stage_creates_a_missing_configured_root_without_making_it_the_mutation_target() {
         let temp = tempdir().expect("temp");
         let destination = temp.path().join(".custom/skills/demo");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let physical_destination = physical_root.join(".custom/skills/demo");
         let target = projected_physical_target_key(
             ExecutionBackend::NativeUnix,
-            physical_parent_identity(temp.path()).expect("ancestor identity"),
+            physical_parent_identity(&physical_root).expect("ancestor identity"),
             [".custom", "skills", "demo"],
             true,
         )
         .unwrap();
         let intent = NativeEntryIntent {
             target,
-            destination: destination.clone(),
+            destination: physical_destination.clone(),
             expected_fingerprint: inspect_entry_no_follow(&destination).unwrap().fingerprint,
             expected_content_manifest_hash: None,
             action: NativeEntryAction::Materialize { payload: payload() },

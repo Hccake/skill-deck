@@ -45,6 +45,20 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  shellcheck:
+    name: ShellCheck bundled WSL assets
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bundled WSL operation scripts
+        run: >-
+          docker run --rm
+          --volume "$PWD:/work"
+          --workdir /work
+          --entrypoint shellcheck
+          koalaman/shellcheck:v0.10.0
+          -s sh src-tauri/src/environment/wsl/scripts/*.sh
+
   rust:
     name: rust (${{ matrix.os }})
     strategy:
@@ -65,16 +79,15 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-      - name: ShellCheck bundled WSL operation assets
-        if: runner.os == 'Linux'
-        run: >-
-          docker run --rm
-          --volume "$PWD:/work"
-          --workdir /work
-          --entrypoint shellcheck
-          koalaman/shellcheck:v0.10.0
-          -s sh src-tauri/src/environment/wsl/scripts/*.sh
-      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
-      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Show Rust toolchain
+        run: |
+          rustc -Vv
+          cargo -V
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Check all Rust targets
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - name: Lint all Rust targets
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Run Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml

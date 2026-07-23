@@ -259,7 +259,7 @@ fn protocol_error(message: &str) -> AppError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::fs;
     use std::process::Command;
@@ -625,6 +625,30 @@ mod tests {
             .expect("plugin manifest entry");
         assert_eq!(plugin.content_bytes, plugin_document);
     }
+
+    #[test]
+    fn parser_rejects_unknown_protocol_and_truncated_content() {
+        let request = ScanRequest {
+            roots: vec!["/tmp".to_string()],
+            stat_only_root_indexes: BTreeSet::new(),
+            recursive: false,
+            per_file_limit: 10,
+            aggregate_limit: 10,
+        };
+        assert!(parse_scan_response(b"99\0", &request).is_err());
+        assert!(parse_scan_response(
+            b"1\0E\0\x30\0SKILL.md\0file\0\x31\x30\0\x31\0\x35\0abc",
+            &request,
+        )
+        .is_err());
+    }
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod portable_tests {
+    use std::collections::BTreeSet;
+
+    use super::{parse_scan_response, ScanRequest};
 
     #[test]
     fn parser_rejects_unknown_protocol_and_truncated_content() {

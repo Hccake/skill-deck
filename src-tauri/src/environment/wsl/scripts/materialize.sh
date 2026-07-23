@@ -5,6 +5,8 @@ fingerprint_content() {
   [ -d "$root" ] && [ ! -L "$root" ] || return 1
   {
     printf 'skill-deck-wsl-content-v1\0'
+    # 变量需要在逐项执行的子 shell 中展开，不能由外层 shell 提前替换。
+    # shellcheck disable=SC2016
     LC_ALL=C find "$root" -mindepth 1 -print0 | LC_ALL=C sort -z | xargs -0 -r -n1 /bin/sh -c '
       root=$1
       path=$2

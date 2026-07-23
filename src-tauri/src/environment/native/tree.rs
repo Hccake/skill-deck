@@ -125,7 +125,7 @@ pub fn inspect_entry_no_follow(path: &Path) -> Result<NativeEntryInspection, App
     )
     .then(|| fs::read_link(path).ok())
     .flatten();
-    let fingerprint = metadata_fingerprint(&metadata, link_target.as_deref());
+    let fingerprint = metadata_fingerprint(path, &metadata, link_target.as_deref())?;
     Ok(NativeEntryInspection {
         kind,
         fingerprint,
@@ -179,7 +179,11 @@ fn classify_metadata(metadata: &fs::Metadata) -> NativeEntryKind {
     }
 }
 
-fn metadata_fingerprint(metadata: &fs::Metadata, link_target: Option<&Path>) -> EntryFingerprint {
+fn metadata_fingerprint(
+    _path: &Path,
+    metadata: &fs::Metadata,
+    link_target: Option<&Path>,
+) -> Result<EntryFingerprint, AppError> {
     let mut hasher = Sha256::new();
     hasher.update(b"skill-deck-native-entry-v1\0");
     #[cfg(unix)]
@@ -195,16 +199,12 @@ fn metadata_fingerprint(metadata: &fs::Metadata, link_target: Option<&Path>) -> 
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
+        let (volume_serial, file_id) = windows_file_identity(_path, true)?;
         hasher.update(metadata.file_attributes().to_le_bytes());
         hasher.update(metadata.file_size().to_le_bytes());
         hasher.update(metadata.last_write_time().to_le_bytes());
-        hasher.update(
-            metadata
-                .volume_serial_number()
-                .unwrap_or_default()
-                .to_le_bytes(),
-        );
-        hasher.update(metadata.file_index().unwrap_or_default().to_le_bytes());
+        hasher.update(volume_serial.to_le_bytes());
+        hasher.update(file_id.to_le_bytes());
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -213,7 +213,10 @@ fn metadata_fingerprint(metadata: &fs::Metadata, link_target: Option<&Path>) -> 
     if let Some(target) = link_target {
         hasher.update(target.to_string_lossy().as_bytes());
     }
-    EntryFingerprint(format!("entry-v1-{:x}", hasher.finalize()))
+    Ok(EntryFingerprint(format!(
+        "entry-v1-{:x}",
+        hasher.finalize()
+    )))
 }
 
 #[cfg(unix)]
@@ -230,20 +233,55 @@ fn platform_parent_identity(
 
 #[cfg(windows)]
 fn platform_parent_identity(
-    metadata: &fs::Metadata,
+    _metadata: &fs::Metadata,
     path: &Path,
 ) -> Result<PhysicalParentIdentity, AppError> {
-    use std::os::windows::fs::MetadataExt;
-    let volume_serial = metadata
-        .volume_serial_number()
-        .ok_or_else(|| stable_identity_unavailable(path))?;
-    let file_id = metadata
-        .file_index()
-        .ok_or_else(|| stable_identity_unavailable(path))?;
+    let (volume_serial, file_id) = windows_file_identity(path, false)?;
     Ok(PhysicalParentIdentity::Windows {
-        volume_serial: u64::from(volume_serial),
-        file_id: u128::from(file_id),
+        volume_serial,
+        file_id,
     })
+}
+
+#[cfg(windows)]
+fn windows_file_identity(path: &Path, no_follow: bool) -> Result<(u64, u128), AppError> {
+    use std::ffi::c_void;
+    use std::mem::{size_of, MaybeUninit};
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
+    };
+
+    let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+    if no_follow {
+        flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+    }
+    let file = fs::OpenOptions::new()
+        .access_mode(0)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(flags)
+        .open(path)?;
+    let mut info = MaybeUninit::<FILE_ID_INFO>::uninit();
+    let succeeded = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            info.as_mut_ptr().cast::<c_void>(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if succeeded == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let info = unsafe { info.assume_init() };
+    Ok((
+        info.VolumeSerialNumber,
+        u128::from_le_bytes(info.FileId.Identifier),
+    ))
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -254,7 +292,7 @@ fn platform_parent_identity(
     Err(stable_identity_unavailable(path))
 }
 
-#[cfg(any(windows, not(any(unix, windows))))]
+#[cfg(not(any(unix, windows)))]
 fn stable_identity_unavailable(path: &Path) -> AppError {
     AppError::CapabilityUnavailable {
         capability: "stableIdentity".to_string(),
@@ -312,7 +350,7 @@ mod tests {
         assert!(link.symlink_metadata().is_err());
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn parent_identity_is_shared_by_siblings_and_differs_across_parents() {
         let temp = tempdir().expect("temp");
@@ -338,9 +376,29 @@ mod tests {
     }
 
     #[test]
+    fn different_entries_have_different_fingerprints() {
+        let temp = tempdir().expect("temp");
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        fs::write(&first, b"same content").expect("first");
+        fs::write(&second, b"same content").expect("second");
+
+        let first_fingerprint = inspect_entry_no_follow(&first).expect("first fingerprint");
+        let second_fingerprint = inspect_entry_no_follow(&second).expect("second fingerprint");
+
+        assert_ne!(
+            first_fingerprint.fingerprint,
+            second_fingerprint.fingerprint
+        );
+    }
+
+    #[test]
     fn target_projection_resolves_existing_ancestors_without_creating_the_root() {
         let temp = tempdir().expect("temp");
         let destination = temp.path().join(".custom/skills/demo");
+        let physical_destination = fs::canonicalize(temp.path())
+            .expect("physical temp root")
+            .join(".custom/skills/demo");
 
         let projection = project_target(
             &destination,
@@ -349,7 +407,7 @@ mod tests {
         .expect("projection");
 
         assert!(!destination.parent().unwrap().exists());
-        assert_eq!(projection.physical_destination, destination);
+        assert_eq!(projection.physical_destination, physical_destination);
         assert_eq!(projection.fingerprint.0, "entry-v1-missing");
         assert_eq!(
             projection.key.normalized_final_child_name,

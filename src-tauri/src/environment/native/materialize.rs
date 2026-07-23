@@ -516,8 +516,9 @@ mod tests {
     #[tokio::test]
     async fn executor_persists_recovery_before_swap_and_cleans_after_restore() {
         let temp = tempdir().expect("temp");
-        let canonical = temp.path().join("shared/demo");
-        let agent = temp.path().join("agent/demo");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let canonical = physical_root.join("shared/demo");
+        let agent = physical_root.join("agent/demo");
         fs::create_dir_all(&canonical).expect("canonical");
         fs::write(canonical.join("SKILL.md"), b"old").expect("old skill");
         fs::create_dir_all(agent.parent().unwrap()).expect("agent parent");
@@ -613,8 +614,9 @@ mod tests {
     #[tokio::test]
     async fn executor_installs_a_new_canonical_entry_before_activating_its_symlink() {
         let temp = tempdir().expect("temp");
-        let canonical = temp.path().join("shared/demo");
-        let agent = temp.path().join("agent/demo");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let canonical = physical_root.join("shared/demo");
+        let agent = physical_root.join("agent/demo");
         fs::create_dir_all(canonical.parent().unwrap()).expect("canonical parent");
         fs::create_dir_all(agent.parent().unwrap()).expect("agent parent");
         let payload = payload(temp.path());

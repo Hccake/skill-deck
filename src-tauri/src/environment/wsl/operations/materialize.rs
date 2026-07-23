@@ -768,7 +768,9 @@ fn now_epoch_ms() -> u64 {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    #[cfg(target_os = "linux")]
     use std::io::Write;
+    #[cfg(target_os = "linux")]
     use std::process::{Command, Output, Stdio};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -806,6 +808,7 @@ mod tests {
         (payload, managed)
     }
 
+    #[cfg(target_os = "linux")]
     fn fingerprint(path: &std::path::Path) -> String {
         let output = Command::new("/bin/sh")
             .arg("-c")
@@ -821,6 +824,7 @@ mod tests {
             .clone()
     }
 
+    #[cfg(target_os = "linux")]
     fn run(script: &str, args: &[String], stdin: &[u8]) -> Output {
         let mut child = Command::new("/bin/sh")
             .arg("-c")
@@ -892,6 +896,7 @@ mod tests {
         ));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn materialize_stage_rejects_a_truncated_fixed_width_header() {
         let temp = tempdir().unwrap();
@@ -944,6 +949,7 @@ mod tests {
         assert_eq!(store.create_count.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn entry_set_stages_swaps_verifies_restores_and_cleans_full_payload() {
         let temp = tempdir().unwrap();
@@ -1017,6 +1023,7 @@ mod tests {
         assert!(!operation_root.exists());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn stale_entry_recheck_prevents_every_final_write_in_the_set() {
         let temp = tempdir().unwrap();
@@ -1066,6 +1073,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn existing_child_content_change_is_detected_before_wsl_swap() {
         let temp = tempdir().unwrap();
@@ -1107,6 +1115,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn tampered_stage_is_rejected_before_any_wsl_final_write() {
         let temp = tempdir().unwrap();
@@ -1154,6 +1163,7 @@ mod tests {
             .exists());
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn symlink_and_remove_share_the_same_swap_and_restore_boundary() {
         let temp = tempdir().unwrap();
@@ -1222,6 +1232,7 @@ mod tests {
         assert_eq!(fs::read(removed.join("SKILL.md")).unwrap(), b"private");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn stage_creates_a_missing_configured_root_before_staging_the_skill_child() {
         let temp = tempdir().unwrap();

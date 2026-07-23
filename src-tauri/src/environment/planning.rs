@@ -400,7 +400,9 @@ mod tests {
     #[tokio::test]
     async fn host_facts_resolve_physical_destinations_and_missing_entry_fingerprints() {
         let temp = tempdir().unwrap();
-        let destination = temp.path().join(".custom/skills/demo");
+        let destination = std::fs::canonicalize(temp.path())
+            .unwrap()
+            .join(".custom/skills/demo");
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,

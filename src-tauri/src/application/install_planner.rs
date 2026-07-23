@@ -524,7 +524,8 @@ mod tests {
     #[tokio::test]
     async fn planner_builds_canonical_private_and_lock_as_one_unit() {
         let temp = tempdir().unwrap();
-        let canonical_root = temp.path().join(".agents/skills");
+        let physical_root = fs::canonicalize(temp.path()).unwrap();
+        let canonical_root = physical_root.join(".agents/skills");
         fs::create_dir_all(&canonical_root).unwrap();
         let source = temp.path().join("source/demo");
         fs::create_dir_all(&source).unwrap();
@@ -567,14 +568,14 @@ mod tests {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
-        let private_root = temp.path().join(".custom/skills");
+        let private_root = physical_root.join(".custom/skills");
         let facts = InstallPlanningFacts {
             resolved_context: ResolvedContext {
                 context: context.clone(),
                 project: None,
-                home: locator(temp.path()),
+                home: locator(&physical_root),
                 skill_root: locator(&canonical_root),
-                lock: locator(&temp.path().join(".agents/.skill-lock.json")),
+                lock: locator(&physical_root.join(".agents/.skill-lock.json")),
             },
             agent_runtime: runtime(private_root.to_string_lossy().as_ref()),
             revisions: RuntimeRevisions {
