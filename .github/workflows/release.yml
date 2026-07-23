@@ -24,6 +24,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
       commit_sha: ${{ steps.release.outputs.commit_sha }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,10 +50,16 @@ jobs:
           test -n "$COMMIT_SHA" || { echo "::error::Tag has no commit"; exit 1; }
           git show "${COMMIT_SHA}:CHANGELOG.md" | grep -Fq "## [${VERSION}]" \
             || { echo "::error::Missing CHANGELOG entry for ${VERSION}"; exit 1; }
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
           {
             echo "tag=$TAG"
             echo "version=$VERSION"
             echo "commit_sha=$COMMIT_SHA"
+            echo "prerelease=$PRERELEASE"
           } >> "$GITHUB_OUTPUT"
 
   build-artifacts:
@@ -189,12 +196,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
+          EXPECTED_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
-          if STATE="$(gh release view "$TAG" --json isDraft,assets 2>/dev/null)"; then
+          if STATE="$(gh release view "$TAG" --json isDraft,isPrerelease,assets 2>/dev/null)"; then
             IS_DRAFT="$(node -e 'console.log(JSON.parse(process.argv[1]).isDraft)' "$STATE")"
             test "$IS_DRAFT" = true || { echo "::error::Refusing to modify a published Release"; exit 1; }
+            IS_PRERELEASE="$(node -e 'console.log(JSON.parse(process.argv[1]).isPrerelease)' "$STATE")"
+            test "$IS_PRERELEASE" = "$EXPECTED_PRERELEASE" \
+              || { echo "::error::Release prerelease state does not match version"; exit 1; }
             node - <<'NODE' "$STATE"
             const { execFileSync } = require('child_process');
             const release = JSON.parse(process.argv[2]);
@@ -221,7 +232,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release create "$TAG" --verify-tag --draft --title "Skill Deck ${TAG}" --generate-notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRERELEASE_ARGS=()
+          if [[ "${{ needs.validate.outputs.prerelease }}" == "true" ]]; then
+            PRERELEASE_ARGS+=(--prerelease)
+          fi
+          gh release create "$TAG" \
+            --verify-tag \
+            --draft \
+            "${PRERELEASE_ARGS[@]}" \
+            --title "Skill Deck ${TAG}" \
+            --generate-notes
       - name: Upload validated installers and signatures
         env:
           GH_TOKEN: ${{ github.token }}

@@ -66,6 +66,24 @@ test("release workflow binds tag, package version, and artifacts to one commit S
   assert.match(workflow, /git show "\$\{COMMIT_SHA\}:CHANGELOG\.md"/);
 });
 
+test("release workflow derives and enforces GitHub prerelease state from the version", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
+
+  assert.match(
+    workflow,
+    /prerelease: \$\{\{ steps\.release\.outputs\.prerelease \}\}/,
+  );
+  assert.match(workflow, /if \[\[ "\$VERSION" == \*-\* \]\]/);
+  assert.match(workflow, /echo "prerelease=\$PRERELEASE"/);
+  assert.match(aggregate, /--json isDraft,isPrerelease,assets/);
+  assert.match(aggregate, /EXPECTED_PRERELEASE/);
+  assert.match(aggregate, /Release prerelease state does not match version/);
+  assert.match(aggregate, /PRERELEASE_ARGS=\(\)/);
+  assert.match(aggregate, /PRERELEASE_ARGS\+=\(--prerelease\)/);
+  assert.match(aggregate, /gh release create[\s\S]*"\$\{PRERELEASE_ARGS\[@\]\}"/);
+});
+
 test("release verification rejects stale managed assets and verifies the final manifest", async () => {
   const workflow = await readFile(workflowUrl, "utf8");
   const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
