@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-#[cfg(target_os = "windows")]
-use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
 #[cfg(target_os = "windows")]
 use tokio::time::{timeout, Duration};
 
+#[cfg(target_os = "windows")]
+use crate::background_process::tokio_command;
 use crate::environment::types::{
     EnvironmentKey, EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus,
 };
@@ -462,7 +462,7 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
 
 #[cfg(target_os = "windows")]
 pub async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
-    let mut command = Command::new("wsl.exe");
+    let mut command = tokio_command("wsl.exe");
     command.args(["--list", "--quiet"]);
     let outcome = match timeout(Duration::from_secs(10), command.output()).await {
         Err(_) => WslDiscoveryCommandOutcome::TimedOut,
@@ -484,7 +484,7 @@ pub async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
 #[cfg(target_os = "windows")]
 pub async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, AppError> {
     const SCRIPT: &str = include_str!("wsl/scripts/session.sh");
-    let mut command = Command::new("wsl.exe");
+    let mut command = tokio_command("wsl.exe");
     command.args([
         "--distribution",
         distro_name,
@@ -535,6 +535,10 @@ pub async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, A
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "WSL parser 测试需要直接执行被验证的 bundled shell 脚本"
+)]
 mod tests {
     #[cfg(unix)]
     use std::process::Command;

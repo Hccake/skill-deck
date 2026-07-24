@@ -7,12 +7,12 @@ use std::process::Stdio;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
-#[cfg(target_os = "windows")]
-use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, Instant};
 
+#[cfg(target_os = "windows")]
+use crate::background_process::tokio_command;
 use crate::core::mutation::CancellationSignal;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::WslSession;
@@ -441,7 +441,7 @@ impl WslCommandRunner {
     #[cfg(target_os = "windows")]
     pub async fn run(request: WslCommandRequest) -> Result<WslCommandOutput, AppError> {
         let args = build_wsl_runner_exec_args(&request);
-        let mut command = Command::new("wsl.exe");
+        let mut command = tokio_command("wsl.exe");
         command
             .args(args)
             .stdin(Stdio::piped())
@@ -531,6 +531,10 @@ pub(crate) async fn run_wsl_script(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "WSL supervisor 测试需要直接启动受控 shell 子进程"
+)]
 mod tests {
     use std::collections::BTreeMap;
 

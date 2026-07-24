@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "该 test-support 模块需要直接启动真实 Git fixture"
+)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -100,6 +100,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "path mapping 协议测试需要直接执行被验证的 shell fixture"
+)]
 mod tests {
     #[cfg(target_os = "linux")]
     use std::fs;

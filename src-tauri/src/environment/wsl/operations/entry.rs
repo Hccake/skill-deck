@@ -160,6 +160,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "entry 协议测试需要直接执行被验证的 shell fixture"
+)]
 mod tests {
     use std::fs;
     use std::os::unix::fs::symlink;

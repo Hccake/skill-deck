@@ -8,6 +8,7 @@
 //!
 //! 与 CLI git.ts 行为一致
 
+use crate::background_process::std_command;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::error::AppError;
@@ -96,7 +97,7 @@ where
     let repo_path = temp_dir.path().to_path_buf();
 
     // 构建 git clone 命令，添加 --progress 以便 git 输出进度
-    let mut cmd = Command::new("git");
+    let mut cmd = std_command("git");
     cmd.arg("clone").arg("--depth").arg("1").arg("--progress");
     apply_clone_env(&mut cmd);
 
@@ -210,14 +211,6 @@ where
     // 设置 stderr 捕获
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    // Windows: 隐藏控制台窗口
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
     if cancellation.is_cancelled() {
         return Err(AppError::MutationCancelled);
     }
@@ -321,19 +314,12 @@ pub fn compute_local_tree_sha(repo_path: &Path, folder_path: &str) -> Option<Str
         format!("HEAD:{}", normalized)
     };
 
-    let mut cmd = Command::new("git");
+    let mut cmd = std_command("git");
     cmd.arg("-C")
         .arg(repo_path)
         .arg("rev-parse")
         .arg("--verify")
         .arg(&spec);
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
 
     let output = cmd.output().ok()?;
     if !output.status.success() {
@@ -343,7 +329,7 @@ pub fn compute_local_tree_sha(repo_path: &Path, folder_path: &str) -> Option<Str
 }
 
 pub fn compute_local_ref_revision(repo_path: &Path) -> Option<String> {
-    let output = Command::new("git")
+    let output = std_command("git")
         .arg("-C")
         .arg(repo_path)
         .args(["rev-parse", "--verify", "HEAD"])
@@ -361,7 +347,7 @@ pub fn probe_remote_ref_revision(
     git_ref: Option<&str>,
     cancellation: CancellationSignal,
 ) -> Result<String, AppError> {
-    let mut cmd = Command::new("git");
+    let mut cmd = std_command("git");
     cmd.arg("ls-remote").arg("--exit-code").arg(url);
     match git_ref.filter(|value| !value.is_empty()) {
         Some(value) if value.starts_with("refs/") => {
@@ -380,13 +366,6 @@ pub fn probe_remote_ref_revision(
         }
     }
     apply_clone_env(&mut cmd);
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
 
     let output = execute_with_timeout_and_progress(
         &mut cmd,
@@ -524,6 +503,10 @@ fn classify_git_command_error(output: &CommandOutput, url: &str, operation: &str
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "Git 测试夹具需要直接启动真实 Git 或可控子进程"
+)]
 mod tests {
     use super::*;
 

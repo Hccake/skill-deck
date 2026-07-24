@@ -107,6 +107,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "directory count 协议测试需要直接执行被验证的 shell fixture"
+)]
 mod tests {
     use std::process::Command;
 

@@ -791,6 +791,10 @@ fn parse_cleanup_report(bytes: &[u8]) -> Result<PayloadCleanupReport, AppError> 
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "acquire 协议测试需要直接执行真实 Git 和 shell fixture"
+)]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;

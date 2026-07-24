@@ -767,6 +767,10 @@ fn now_epoch_ms() -> u64 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "materialize 协议测试需要直接执行被验证的 shell fixture"
+)]
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;

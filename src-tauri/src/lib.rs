@@ -10,6 +10,7 @@ use environment::types::EnvironmentRuntimeEvent;
 use runtime::RuntimeServiceGraph;
 
 mod application;
+mod background_process;
 mod commands;
 mod core;
 mod environment;
