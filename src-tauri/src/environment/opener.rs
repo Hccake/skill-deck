@@ -29,10 +29,10 @@ fn open_command(target: &ResourceLocator) -> Result<(&'static str, String), AppE
         EnvironmentRef::Wsl { distro_name } => {
             #[cfg(target_os = "windows")]
             {
-                return Ok((
+                Ok((
                     "explorer.exe",
                     wsl_unc_path(distro_name, &target.native_path)?,
-                ));
+                ))
             }
             #[cfg(not(target_os = "windows"))]
             {

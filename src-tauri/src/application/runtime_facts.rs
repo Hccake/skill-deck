@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(facts.agent_runtime.registry_revision, "registry-1");
         assert_eq!(
             facts.resolved_context.skill_root.native_path,
-            selected.join(".agents/skills").to_string_lossy()
+            selected.join(".agents").join("skills").to_string_lossy()
         );
         assert_eq!(
             facts

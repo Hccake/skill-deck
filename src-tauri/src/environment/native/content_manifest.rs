@@ -152,8 +152,10 @@ fn executable(_metadata: &fs::Metadata) -> bool {
 mod tests {
     use std::fs;
 
+    #[cfg(unix)]
     use sha2::Digest;
 
+    #[cfg(unix)]
     use crate::environment::content_manifest::{ContentManifestRecord, ContentManifestRecordKind};
 
     use super::read_directory;

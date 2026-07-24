@@ -536,6 +536,7 @@ pub async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, A
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -1136,6 +1137,7 @@ mod tests {
             .supports(WslExecutionFeature::StableStat));
     }
 
+    #[cfg(unix)]
     #[test]
     fn bundled_session_script_reports_a_versioned_execution_profile() {
         let output = Command::new("/bin/sh")

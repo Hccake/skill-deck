@@ -21,8 +21,11 @@ use crate::environment::wsl_protocol::{
 use crate::error::AppError;
 
 const PROTOCOL_VERSION: &str = "1";
+#[cfg(all(test, target_os = "linux"))]
 const OWNER_FILE: &str = ".skill-deck-owner";
+#[cfg(all(test, target_os = "linux"))]
 const MANIFEST_FILE: &str = "manifest.json";
+#[cfg(all(test, target_os = "linux"))]
 const BLOB_LIST_FILE: &str = "blob-list";
 const MAX_MANIFEST_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BRIDGE_BLOB_BYTES: usize = 256 * 1024 * 1024;

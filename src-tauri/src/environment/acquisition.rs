@@ -231,7 +231,9 @@ fn acquisition_protocol_error() -> AppError {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use std::process::Command;
 
     use super::{
@@ -241,6 +243,7 @@ mod tests {
     use crate::core::mutation::CancellationSignal;
     use crate::environment::wsl::WslSession;
 
+    #[cfg(unix)]
     fn git(cwd: &std::path::Path, args: &[&str]) -> String {
         let output = Command::new("git")
             .current_dir(cwd)
@@ -279,6 +282,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn git_acquisition_reports_cloned_head_even_if_source_advances_after_clone() {
         let temp = tempfile::tempdir().expect("temp");
@@ -426,6 +430,7 @@ mod tests {
         assert!(matches!(error, crate::error::AppError::UnsafePath { .. }));
     }
 
+    #[cfg(unix)]
     #[test]
     fn git_acquisition_rejects_an_unmanaged_destination_before_deleting_it() {
         let temp = tempfile::tempdir().expect("temp");
@@ -449,6 +454,7 @@ mod tests {
         assert!(destination.join("keep").is_file());
     }
 
+    #[cfg(unix)]
     #[test]
     fn failed_git_acquisition_removes_its_managed_temporary_root() {
         let managed_root = std::path::PathBuf::from(format!(

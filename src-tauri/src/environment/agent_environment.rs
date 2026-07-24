@@ -20,7 +20,7 @@ use crate::environment::wsl::operations::path_metadata::{
 use crate::environment::wsl::WslSession;
 use crate::error::AppError;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use crate::environment::wsl::operations::path_metadata::PATH_METADATA_SCRIPT as WSL_PATH_METADATA_SCRIPT;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1127,9 +1127,11 @@ mod tests {
 
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use super::WSL_PATH_METADATA_SCRIPT;
     use super::{
         parse_wsl_path_metadata, AgentEnvironmentResolver, DirectoryPresenceState,
-        EnvironmentContext, PathEntryKind, PathMetadata, WSL_PATH_METADATA_SCRIPT,
+        EnvironmentContext, PathEntryKind, PathMetadata,
     };
     use crate::core::agent_definition::{
         AgentAdapter, AgentDefinition, AgentId, AgentSource, CustomAgentDefinition, CustomPathBase,

@@ -78,7 +78,7 @@ fn normalize_posix_path(path: &str) -> String {
     }
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
 pub fn wsl_unc_to_linux_path(path: &str, distro_name: &str) -> Result<String, AppError> {
     let (distro, linux_path) = parse_wsl_unc_path(path).ok_or_else(|| AppError::Path {
         message: format!("not a WSL UNC path: {path}"),
@@ -128,7 +128,7 @@ pub async fn map_windows_path_with_wslpath(
     }
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg(test)]
 pub fn linux_path_to_host_path(path: &str) -> Option<String> {
     let remainder = path.strip_prefix("/mnt/")?;
     let (drive, tail) = remainder.split_once('/').unwrap_or((remainder, ""));
@@ -143,7 +143,7 @@ pub fn linux_path_to_host_path(path: &str) -> Option<String> {
     }
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg(test)]
 pub fn host_path_to_linux_path(path: &str) -> Option<String> {
     let bytes = path.as_bytes();
     if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {

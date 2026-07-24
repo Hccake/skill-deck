@@ -1896,16 +1896,9 @@ mod tests {
             .await
             .expect("resolve one current-environment snapshot");
 
-        let inspections = crate::environment::directory_inspection::inspect_host(&[
-            temp.path()
-                .join(".agents/skills")
-                .to_string_lossy()
-                .to_string(),
-            project
-                .join(".my-agent/skills")
-                .to_string_lossy()
-                .to_string(),
-        ])
+        let inspections = crate::environment::directory_inspection::inspect_host(
+            &delete_impact_resolved_paths(&runtime, &definition.id),
+        )
         .await;
         let impact = build_delete_impact(
             &runtime,

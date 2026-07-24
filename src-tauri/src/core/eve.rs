@@ -355,7 +355,10 @@ mod tests {
         assert_eq!(
             targets[1].path,
             temp.path()
-                .join("agent/subagents/research/skills")
+                .join("agent")
+                .join("subagents")
+                .join("research")
+                .join("skills")
                 .to_string_lossy()
                 .to_string()
         );

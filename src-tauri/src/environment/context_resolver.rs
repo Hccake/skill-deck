@@ -218,7 +218,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(global.home.native_path, "/home/alice");
-        assert_eq!(global.skill_root.native_path, "/home/alice/.agents/skills");
+        assert_eq!(
+            global.skill_root.native_path,
+            PathBuf::from("/home/alice")
+                .join(".agents")
+                .join("skills")
+                .to_string_lossy()
+        );
         assert_eq!(global.lock.native_path, "/state/skills/.skill-lock.json");
         assert_eq!(global.context_root(), "/home/alice");
         assert!(global.project.is_none());
@@ -237,11 +243,16 @@ mod tests {
         .unwrap();
         assert_eq!(
             project_context.skill_root.native_path,
-            "/work/app/.agents/skills"
+            PathBuf::from("/work/app")
+                .join(".agents")
+                .join("skills")
+                .to_string_lossy()
         );
         assert_eq!(
             project_context.lock.native_path,
-            "/work/app/skills-lock.json"
+            PathBuf::from("/work/app")
+                .join("skills-lock.json")
+                .to_string_lossy()
         );
         assert_eq!(project_context.context_root(), "/work/app");
         assert_eq!(project_context.project.unwrap().id, "app");

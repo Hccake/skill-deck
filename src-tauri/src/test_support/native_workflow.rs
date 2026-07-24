@@ -45,6 +45,7 @@ use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::EnvironmentRegistry;
 use crate::error::AppError;
+use crate::git_fixture::{BareSkillRepo as FileBareSkillRepo, CountingGitTransport};
 use crate::models::InstallMode;
 
 pub(crate) struct StaticRegistry(pub(crate) Arc<AgentRegistrySnapshot>);
@@ -635,13 +636,9 @@ async fn native_workflows_share_one_runtime_and_preserve_skill_deck_metadata() {
 
 #[cfg(test)]
 mod update_lifecycle {
-    use std::io::{self, Read, Write};
-    use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-    use std::path::{Path, PathBuf};
-    use std::process::{Child, Command, Stdio};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::thread;
 
     use super::*;
     use crate::application::install::{InstallFuture, InstallPlanExecutor};
@@ -669,7 +666,7 @@ mod update_lifecycle {
     use crate::application::update_check::UpdateCheckService;
     use crate::application::update_runtime::{RuntimeUpdatePayloadAcquirer, RuntimeUpdateService};
     use crate::core::mutation::CancellationSignal;
-    use crate::core::skill_payload::{compute_cli_project_hash_from_payload, PayloadId};
+    use crate::core::skill_payload::PayloadId;
     use crate::environment::native::materialize::{
         NativePreparedEntryExecutor, NativePreparedEntrySet,
     };
@@ -694,284 +691,6 @@ mod update_lifecycle {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.inner.detect(request, previous, cancellation)
         }
-    }
-
-    struct BareSkillRepo {
-        _root: tempfile::TempDir,
-        work: PathBuf,
-        remote: PathBuf,
-        server: GitDaemon,
-        revision: AtomicUsize,
-    }
-
-    impl BareSkillRepo {
-        fn new(skill_names: &[&str]) -> Self {
-            let root = tempfile::tempdir().expect("bare repository tempdir");
-            let work = root.path().join("work");
-            let remote = root.path().join("remote.git");
-            run_git(
-                root.path(),
-                &[
-                    "init",
-                    "-q",
-                    "-b",
-                    "main",
-                    work.to_str().expect("work path"),
-                ],
-            );
-            run_git(&work, &["config", "user.email", "test@example.com"]);
-            run_git(&work, &["config", "user.name", "Skill Deck Test"]);
-            run_git(&work, &["config", "commit.gpgsign", "false"]);
-            for skill_name in skill_names {
-                write_remote_skill(&work, skill_name, "v1").expect("write initial Skill");
-            }
-            run_git(&work, &["add", "-A"]);
-            run_git(&work, &["commit", "-q", "-m", "initial"]);
-            run_git(
-                root.path(),
-                &[
-                    "clone",
-                    "-q",
-                    "--bare",
-                    work.to_str().expect("work path"),
-                    remote.to_str().expect("remote path"),
-                ],
-            );
-            let server = GitDaemon::new(root.path().to_path_buf());
-            Self {
-                _root: root,
-                work,
-                remote,
-                server,
-                revision: AtomicUsize::new(1),
-            }
-        }
-
-        fn source(&self) -> String {
-            format!("git://{}/remote.git", self.server.addr)
-        }
-
-        fn clone_count(&self) -> usize {
-            self.server.clone_count.load(Ordering::SeqCst)
-        }
-
-        fn publish_change(&self, skill_name: &str) {
-            let revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
-            write_remote_skill(&self.work, skill_name, &format!("v{revision}"))
-                .expect("write changed Skill");
-            run_git(&self.work, &["add", "-A"]);
-            run_git(
-                &self.work,
-                &["commit", "-q", "-m", &format!("change {skill_name}")],
-            );
-            run_git(
-                &self.work,
-                &[
-                    "push",
-                    "-q",
-                    self.remote.to_str().expect("remote path"),
-                    "main",
-                ],
-            );
-        }
-
-        fn computed_hash(&self, skill_name: &str) -> String {
-            let payload = build_skill_payload(&self.work.join("skills").join(skill_name))
-                .expect("build expected payload");
-            compute_cli_project_hash_from_payload(&payload).expect("compute expected CLI hash")
-        }
-    }
-
-    struct GitDaemon {
-        addr: SocketAddr,
-        clone_count: Arc<AtomicUsize>,
-        stopped: Arc<AtomicBool>,
-        worker: Option<thread::JoinHandle<()>>,
-        child: Child,
-    }
-
-    fn start_git_daemon(root: &Path) -> (Child, SocketAddr) {
-        let mut last_failure = String::new();
-        for attempt in 1..=5 {
-            let inner_listener = TcpListener::bind("127.0.0.1:0").expect("reserve Git port");
-            let inner_addr = inner_listener.local_addr().expect("Git daemon address");
-            drop(inner_listener);
-            let mut child = Command::new("git")
-                .args([
-                    "daemon",
-                    "--export-all",
-                    "--reuseaddr",
-                    "--listen=127.0.0.1",
-                    &format!("--port={}", inner_addr.port()),
-                    &format!("--base-path={}", root.display()),
-                    root.to_str().expect("repository root"),
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-                .expect("start Git daemon");
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                if let Some(status) = child.try_wait().expect("query Git daemon status") {
-                    let mut stderr = String::new();
-                    if let Some(mut pipe) = child.stderr.take() {
-                        let _ = pipe.read_to_string(&mut stderr);
-                    }
-                    last_failure =
-                        format!("attempt {attempt} exited with {status}: {}", stderr.trim());
-                    break;
-                }
-                if TcpStream::connect(inner_addr).is_ok() {
-                    return (child, inner_addr);
-                }
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let mut stderr = String::new();
-                    if let Some(mut pipe) = child.stderr.take() {
-                        let _ = pipe.read_to_string(&mut stderr);
-                    }
-                    last_failure = format!(
-                        "attempt {attempt} timed out waiting for {inner_addr}: {}",
-                        stderr.trim()
-                    );
-                    break;
-                }
-                thread::sleep(std::time::Duration::from_millis(10));
-            }
-        }
-        panic!("Git daemon did not become ready: {last_failure}");
-    }
-
-    impl GitDaemon {
-        fn new(root: PathBuf) -> Self {
-            let (child, inner_addr) = start_git_daemon(&root);
-
-            let listener = TcpListener::bind("127.0.0.1:0").expect("bind Git proxy");
-            listener
-                .set_nonblocking(true)
-                .expect("nonblocking Git proxy");
-            let addr = listener.local_addr().expect("Git proxy address");
-            let clone_count = Arc::new(AtomicUsize::new(0));
-            let stopped = Arc::new(AtomicBool::new(false));
-            let worker = {
-                let clone_count = clone_count.clone();
-                let stopped = stopped.clone();
-                thread::spawn(move || {
-                    while !stopped.load(Ordering::SeqCst) {
-                        match listener.accept() {
-                            Ok((stream, _)) => {
-                                let clone_count = clone_count.clone();
-                                thread::spawn(move || {
-                                    proxy_git_connection(stream, inner_addr, clone_count)
-                                });
-                            }
-                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                                thread::sleep(std::time::Duration::from_millis(2));
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                })
-            };
-            Self {
-                addr,
-                clone_count,
-                stopped,
-                worker: Some(worker),
-                child,
-            }
-        }
-    }
-
-    impl Drop for GitDaemon {
-        fn drop(&mut self) {
-            self.stopped.store(true, Ordering::SeqCst);
-            let _ = TcpStream::connect(self.addr);
-            if let Some(worker) = self.worker.take() {
-                let _ = worker.join();
-            }
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-
-    fn proxy_git_connection(
-        mut client: TcpStream,
-        upstream_addr: SocketAddr,
-        clone_count: Arc<AtomicUsize>,
-    ) {
-        let Ok(mut upstream) = TcpStream::connect(upstream_addr) else {
-            return;
-        };
-        let mut client_reader = client.try_clone().expect("clone proxy client");
-        let mut upstream_writer = upstream.try_clone().expect("clone proxy upstream");
-        let inbound = thread::spawn(move || {
-            let mut buffer = [0_u8; 8 * 1024];
-            let mut recent = Vec::new();
-            let mut counted = false;
-            loop {
-                match client_reader.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(length) => {
-                        recent.extend_from_slice(&buffer[..length]);
-                        if !counted
-                            && (recent.windows(5).any(|window| window == b"want ")
-                                || recent.windows(13).any(|window| window == b"command=fetch"))
-                        {
-                            clone_count.fetch_add(1, Ordering::SeqCst);
-                            counted = true;
-                        }
-                        if recent.len() > 32 {
-                            recent.drain(..recent.len() - 32);
-                        }
-                        if upstream_writer.write_all(&buffer[..length]).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-            let _ = upstream_writer.shutdown(Shutdown::Write);
-        });
-        let _ = io::copy(&mut upstream, &mut client);
-        let _ = client.shutdown(Shutdown::Write);
-        let _ = inbound.join();
-    }
-
-    fn run_git(cwd: &Path, args: &[&str]) {
-        let status = Command::new("git")
-            .current_dir(cwd)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("run Git fixture command");
-        assert!(status.success(), "Git fixture command failed: {args:?}");
-    }
-
-    fn write_remote_skill(root: &Path, skill_name: &str, version: &str) -> Result<(), AppError> {
-        let skill_root = root.join("skills").join(skill_name);
-        fs::create_dir_all(skill_root.join("scripts"))?;
-        fs::create_dir_all(skill_root.join("references"))?;
-        fs::create_dir_all(skill_root.join("assets"))?;
-        fs::write(
-            skill_root.join("SKILL.md"),
-            format!("---\nname: {skill_name}\ndescription: {version} lifecycle skill\n---\n"),
-        )?;
-        fs::write(
-            skill_root.join("scripts/run.sh"),
-            format!("#!/bin/sh\necho {skill_name}-{version}\n"),
-        )?;
-        fs::write(
-            skill_root.join("references/guide.md"),
-            format!("{skill_name}-{version}-guide"),
-        )?;
-        fs::write(
-            skill_root.join("assets/payload.bin"),
-            format!("{skill_name}-{version}-asset").as_bytes(),
-        )?;
-        Ok(())
     }
 
     struct StageFailureEntryExecutor {
@@ -1085,7 +804,8 @@ mod update_lifecycle {
 
     struct UpdateLifecycleFixture {
         _root: tempfile::TempDir,
-        remote: BareSkillRepo,
+        remote: FileBareSkillRepo,
+        git_transport: Arc<CountingGitTransport>,
         project_path: PathBuf,
         recovery_root: PathBuf,
         environments: Arc<EnvironmentRegistry>,
@@ -1155,11 +875,14 @@ mod update_lifecycle {
             ));
             let snapshots = Arc::new(SourceSnapshotReuseIndex::default());
             let detector_calls = Arc::new(AtomicUsize::new(0));
+            let remote = FileBareSkillRepo::new(&skill_names);
+            let git_transport = Arc::new(CountingGitTransport::for_repo(&remote));
             let detector = Arc::new(CountingDetector {
-                inner: RuntimeSourceEvidenceDetector::new(
+                inner: RuntimeSourceEvidenceDetector::with_git_transport(
                     payloads.clone(),
                     environments.clone(),
                     snapshots.clone(),
+                    git_transport.clone(),
                 ),
                 calls: detector_calls.clone(),
             });
@@ -1168,10 +891,10 @@ mod update_lifecycle {
             let execution =
                 RuntimeExecutionDependencies::new(environments.clone(), recovery_root.clone())
                     .expect("lifecycle execution dependencies");
-            let remote = BareSkillRepo::new(&skill_names);
             Self {
                 _root: root,
                 remote,
+                git_transport,
                 project_path,
                 recovery_root,
                 environments,
@@ -1205,11 +928,12 @@ mod update_lifecycle {
                     self.payloads.clone(),
                     fixed_time,
                 ),
-                RuntimeUpdatePayloadAcquirer::new(
+                RuntimeUpdatePayloadAcquirer::with_git_transport(
                     self.payloads.clone(),
                     self.environments.clone(),
                     self.snapshots.clone(),
                     self.evidence.clone(),
+                    self.git_transport.clone(),
                 ),
                 self.executor(),
             )
@@ -1220,24 +944,27 @@ mod update_lifecycle {
         }
 
         async fn install(&self) {
-            let discovery =
-                SourceDiscoveryService::new(self.payloads.clone(), self.environments.as_ref())
-                    .discover_parsed_with_cancellation(
-                        self.context(),
-                        ParsedSource {
-                            source_type: SourceType::Git,
-                            url: self.remote.source(),
-                            subpath: None,
-                            local_path: None,
-                            git_ref: Some("main".to_string()),
-                            skill_filter: None,
-                        },
-                        self.remote.source(),
-                        |_| {},
-                        CancellationSignal::default(),
-                    )
-                    .await
-                    .expect("discover lifecycle source");
+            let discovery = SourceDiscoveryService::with_git_transport(
+                self.payloads.clone(),
+                self.environments.as_ref(),
+                self.git_transport.clone(),
+            )
+            .discover_parsed_with_cancellation(
+                self.context(),
+                ParsedSource {
+                    source_type: SourceType::Git,
+                    url: self.remote.source(),
+                    subpath: None,
+                    local_path: None,
+                    git_ref: Some("main".to_string()),
+                    skill_filter: None,
+                },
+                self.remote.source(),
+                |_| {},
+                CancellationSignal::default(),
+            )
+            .await
+            .expect("discover lifecycle source");
             let handles = SelectedPayloadAcquisitionService::new(self.payloads.clone())
                 .acquire(AcquireSelectedPayloadsRequest {
                     discovery_session: discovery.discovery_session.clone(),
@@ -1309,7 +1036,7 @@ mod update_lifecycle {
         }
 
         fn clone_count(&self) -> usize {
-            self.remote.clone_count()
+            self.git_transport.clone_count()
         }
 
         async fn publish_change(&self, skill_name: &str) {
@@ -1485,11 +1212,12 @@ mod update_lifecycle {
                     self.payloads.clone(),
                     fixed_time,
                 ),
-                RuntimeUpdatePayloadAcquirer::new(
+                RuntimeUpdatePayloadAcquirer::with_git_transport(
                     self.payloads.clone(),
                     self.environments.clone(),
                     self.snapshots.clone(),
                     self.evidence.clone(),
+                    self.git_transport.clone(),
                 ),
                 StageFailurePlanExecutor {
                     environments: self.environments.clone(),

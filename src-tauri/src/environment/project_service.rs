@@ -261,7 +261,11 @@ async fn write_wsl_projects(
     projects::write_projects(session, projects).await
 }
 
-#[cfg(all(target_os = "windows", debug_assertions))]
+#[cfg(all(
+    target_os = "windows",
+    debug_assertions,
+    feature = "wsl-integration-tests"
+))]
 pub(crate) async fn write_wsl_projects_for_integration(
     session: &WslSession,
     projects: Vec<crate::environment::types::ProjectBinding>,

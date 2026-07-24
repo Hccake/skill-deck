@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+#[cfg(unix)]
+use std::path::Component;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -484,7 +486,22 @@ fn staged_directory_link_matches(link: &Path, target: &Path) -> Result<bool, App
     if target.exists() {
         return Ok(fs::canonicalize(link)? == fs::canonicalize(target)?);
     }
-    Ok(fs::read_link(link)? == target)
+    let actual = fs::read_link(link)?;
+    Ok(normalized_windows_link_target(&actual) == normalized_windows_link_target(target))
+}
+
+#[cfg(windows)]
+fn normalized_windows_link_target(path: &Path) -> String {
+    let mut value = path.to_string_lossy().replace('/', "\\");
+    if let Some(suffix) = value.strip_prefix(r"\\?\UNC\") {
+        value = format!(r"\\{suffix}");
+    } else if let Some(suffix) = value
+        .strip_prefix(r"\\?\")
+        .or_else(|| value.strip_prefix(r"\??\"))
+    {
+        value = suffix.to_string();
+    }
+    value.to_lowercase()
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -500,6 +517,7 @@ fn staged_directory_link_matches(_link: &Path, _target: &Path) -> Result<bool, A
     Ok(false)
 }
 
+#[cfg(unix)]
 fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
     let from = fs::canonicalize(from).ok()?;
     let to = fs::canonicalize(to).ok()?;

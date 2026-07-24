@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::application::git_transport::{GitSourceTransport, ProcessGitTransport};
 use crate::application::mutation::coordinator::RuntimeRevisionSource;
 use crate::application::payload_session::{
     DiscoverySessionHandle, DiscoverySourceLocation, PayloadPlanningMetadata, PayloadSessionManager,
@@ -21,9 +22,9 @@ use crate::application::update::{
 };
 use crate::application::update_check::UpdateCheckService;
 use crate::application::update_planner::ConcreteUpdatePlanner;
+use crate::core::compute_local_ref_revision;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::source_identity::{NormalizedRef, SourceProvider};
-use crate::core::{compute_local_ref_revision, probe_remote_ref_revision};
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::EnvironmentRegistry;
@@ -34,6 +35,7 @@ pub struct RuntimeUpdatePayloadAcquirer {
     environments: Arc<EnvironmentRegistry>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
     evidence: SourceEvidenceCoordinator,
+    git_transport: Arc<dyn GitSourceTransport>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +78,24 @@ impl RuntimeUpdatePayloadAcquirer {
             environments,
             snapshots,
             evidence,
+            git_transport: Arc::new(ProcessGitTransport),
+        }
+    }
+
+    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+    pub(crate) fn with_git_transport(
+        payloads: Arc<PayloadSessionManager>,
+        environments: Arc<EnvironmentRegistry>,
+        snapshots: Arc<SourceSnapshotReuseIndex>,
+        evidence: SourceEvidenceCoordinator,
+        git_transport: Arc<dyn GitSourceTransport>,
+    ) -> Self {
+        Self {
+            payloads,
+            environments,
+            snapshots,
+            evidence,
+            git_transport,
         }
     }
 
@@ -97,8 +117,9 @@ impl RuntimeUpdatePayloadAcquirer {
                 let probe_source = group.descriptor.source().to_string();
                 let probe_ref = group.descriptor.git_ref().map(ToString::to_string);
                 let probe_cancellation = cancellation.clone();
+                let git_transport = Arc::clone(&self.git_transport);
                 let probed = tokio::task::spawn_blocking(move || {
-                    probe_remote_ref_revision(
+                    git_transport.probe_ref_revision(
                         &probe_source,
                         probe_ref.as_deref(),
                         probe_cancellation,
@@ -208,16 +229,20 @@ impl RuntimeUpdatePayloadAcquirer {
         let parsed = group
             .descriptor
             .parsed_source(group.evidence_key.remote.provider());
-        SourceDiscoveryService::new(self.payloads.clone(), self.environments.as_ref())
-            .discover_parsed_with_cancellation(
-                group.context.clone(),
-                parsed,
-                source,
-                |_| {},
-                cancellation,
-            )
-            .await
-            .map(|discovery| discovery.discovery_session)
+        SourceDiscoveryService::with_git_transport(
+            self.payloads.clone(),
+            self.environments.as_ref(),
+            Arc::clone(&self.git_transport),
+        )
+        .discover_parsed_with_cancellation(
+            group.context.clone(),
+            parsed,
+            source,
+            |_| {},
+            cancellation,
+        )
+        .await
+        .map(|discovery| discovery.discovery_session)
     }
 }
 

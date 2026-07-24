@@ -500,7 +500,7 @@ impl WslOperationExecutor {
     }
 }
 
-#[cfg(any(test, feature = "wsl-integration-tests"))]
+#[cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]
 pub(crate) async fn run_wsl_script(
     session: &WslSession,
     script: &'static str,
@@ -533,23 +533,165 @@ pub(crate) async fn run_wsl_script(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::process::Stdio;
 
-    use tokio::process::{Child, Command};
-    use tokio::time::{timeout, Duration};
+    use tokio::time::Duration;
 
     use super::{
         build_wsl_exec_args, decode_nul_records, interpret_wsl_command_output,
         interpret_wsl_operation_output, interpret_wsl_transport_output, operation_command_request,
-        supervise_child, WslCommandOutput, WslCommandRequest, WslCommandRunner,
-        WslExecutionFeature, WslExecutionProfile, WslOperationDescriptor, WslOperationExecutor,
-        WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
-        WSL_SHELL_STARTED_MARKER,
+        WslCommandOutput, WslCommandRequest, WslCommandRunner, WslExecutionFeature,
+        WslExecutionProfile, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+        DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT, WSL_SHELL_STARTED_MARKER,
     };
     use crate::core::mutation::CancellationSignal;
     use crate::environment::types::EnvironmentRef;
     use crate::environment::wsl::WslSession;
     use crate::error::AppError;
+
+    #[cfg(unix)]
+    mod unix_tests {
+        use std::process::Stdio;
+
+        use tokio::process::{Child, Command};
+        use tokio::time::timeout;
+
+        use super::super::supervise_child;
+        use super::*;
+
+        fn spawn_shell(script: &str) -> (Child, u32) {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args(["-c", script])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let child = command.spawn().expect("spawn test shell");
+            let pid = child.id().expect("child pid");
+            (child, pid)
+        }
+
+        async fn assert_process_stopped(pid: u32) {
+            for _ in 0..20 {
+                if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("process {pid} was not reaped");
+        }
+
+        #[tokio::test]
+        async fn supervisor_collects_stdout_stderr_and_exit_code() {
+            let (child, _) = spawn_shell("printf stdout; printf stderr >&2; exit 7");
+            let output =
+                supervise_child(child, Vec::new(), Duration::from_secs(1), 1024, 1024, None)
+                    .await
+                    .expect("supervise child");
+
+            assert_eq!(output.stdout, b"stdout");
+            assert_eq!(output.stderr, b"stderr");
+            assert_eq!(output.exit_code, Some(7));
+        }
+
+        #[tokio::test]
+        async fn supervisor_rejects_stdout_and_stderr_over_their_limits() {
+            for (script, expected_stream) in
+                [("printf 12345", "stdout"), ("printf 12345 >&2", "stderr")]
+            {
+                let (child, _) = spawn_shell(script);
+                let error = supervise_child(child, Vec::new(), Duration::from_secs(1), 4, 4, None)
+                    .await
+                    .expect_err("output must be bounded");
+
+                assert!(matches!(
+                    error,
+                    AppError::WslOutputLimitExceeded { stream, limit }
+                        if stream == expected_stream && limit == 4
+                ));
+            }
+        }
+
+        #[tokio::test]
+        async fn supervisor_kills_and_reaps_a_timed_out_child_and_writer() {
+            let (child, pid) = spawn_shell("exec sleep 5");
+            let error = supervise_child(
+                child,
+                vec![b'x'; 32 * 1024 * 1024],
+                Duration::from_millis(25),
+                1024,
+                1024,
+                None,
+            )
+            .await
+            .expect_err("command must time out");
+
+            assert_eq!(error, AppError::WslCommandTimedOut);
+            assert_process_stopped(pid).await;
+        }
+
+        #[tokio::test]
+        async fn supervisor_kills_and_reaps_a_cancelled_child() {
+            let cancellation = CancellationSignal::default();
+            let cancel_from_task = cancellation.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                cancel_from_task.cancel();
+            });
+            let (child, pid) = spawn_shell("exec sleep 5");
+
+            let error = supervise_child(
+                child,
+                Vec::new(),
+                Duration::from_secs(1),
+                1024,
+                1024,
+                Some(cancellation),
+            )
+            .await
+            .expect_err("command must be cancelled");
+
+            assert_eq!(error, AppError::MutationCancelled);
+            assert_process_stopped(pid).await;
+        }
+
+        #[tokio::test]
+        async fn supervisor_does_not_deadlock_when_child_closes_stdin_early() {
+            let (child, _) = spawn_shell("exec 0<&-; printf done");
+            let result = timeout(
+                Duration::from_secs(1),
+                supervise_child(
+                    child,
+                    vec![b'x'; 32 * 1024 * 1024],
+                    Duration::from_secs(1),
+                    1024,
+                    1024,
+                    None,
+                ),
+            )
+            .await;
+
+            assert!(result.is_ok(), "stdin writer must be joined or aborted");
+        }
+
+        #[tokio::test]
+        async fn supervisor_keeps_timeout_active_while_draining_process_pipes() {
+            let (child, _) = spawn_shell("(sleep 0.3) & exit 0");
+
+            let error = supervise_child(
+                child,
+                Vec::new(),
+                Duration::from_millis(25),
+                1024,
+                1024,
+                None,
+            )
+            .await
+            .expect_err("open descendant pipes must not outlive the deadline");
+
+            assert_eq!(error, AppError::WslCommandTimedOut);
+        }
+    }
 
     fn test_session() -> WslSession {
         WslSession {
@@ -564,31 +706,6 @@ mod tests {
             execution_profile: WslExecutionProfile::default(),
             runtime_generation: 0,
         }
-    }
-
-    #[cfg(unix)]
-    fn spawn_shell(script: &str) -> (Child, u32) {
-        let mut command = Command::new("/bin/sh");
-        command
-            .args(["-c", script])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let child = command.spawn().expect("spawn test shell");
-        let pid = child.id().expect("child pid");
-        (child, pid)
-    }
-
-    #[cfg(unix)]
-    async fn assert_process_stopped(pid: u32) {
-        for _ in 0..20 {
-            if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("process {pid} was not reaped");
     }
 
     #[test]
@@ -642,122 +759,6 @@ mod tests {
         assert_eq!(request.stdout_limit, 16 * 1024 * 1024);
         assert_eq!(request.stderr_limit, 1024 * 1024);
         let _runner = WslCommandRunner;
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn supervisor_collects_stdout_stderr_and_exit_code() {
-        let (child, _) = spawn_shell("printf stdout; printf stderr >&2; exit 7");
-        let output = supervise_child(child, Vec::new(), Duration::from_secs(1), 1024, 1024, None)
-            .await
-            .expect("supervise child");
-
-        assert_eq!(output.stdout, b"stdout");
-        assert_eq!(output.stderr, b"stderr");
-        assert_eq!(output.exit_code, Some(7));
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn supervisor_rejects_stdout_and_stderr_over_their_limits() {
-        for (script, expected_stream) in
-            [("printf 12345", "stdout"), ("printf 12345 >&2", "stderr")]
-        {
-            let (child, _) = spawn_shell(script);
-            let error = supervise_child(child, Vec::new(), Duration::from_secs(1), 4, 4, None)
-                .await
-                .expect_err("output must be bounded");
-
-            assert!(matches!(
-                error,
-                AppError::WslOutputLimitExceeded { stream, limit }
-                    if stream == expected_stream && limit == 4
-            ));
-        }
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn supervisor_kills_and_reaps_a_timed_out_child_and_writer() {
-        let (child, pid) = spawn_shell("exec sleep 5");
-        let error = supervise_child(
-            child,
-            vec![b'x'; 32 * 1024 * 1024],
-            Duration::from_millis(25),
-            1024,
-            1024,
-            None,
-        )
-        .await
-        .expect_err("command must time out");
-
-        assert_eq!(error, AppError::WslCommandTimedOut);
-        assert_process_stopped(pid).await;
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn supervisor_kills_and_reaps_a_cancelled_child() {
-        let cancellation = CancellationSignal::default();
-        let cancel_from_task = cancellation.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            cancel_from_task.cancel();
-        });
-        let (child, pid) = spawn_shell("exec sleep 5");
-
-        let error = supervise_child(
-            child,
-            Vec::new(),
-            Duration::from_secs(1),
-            1024,
-            1024,
-            Some(cancellation),
-        )
-        .await
-        .expect_err("command must be cancelled");
-
-        assert_eq!(error, AppError::MutationCancelled);
-        assert_process_stopped(pid).await;
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn supervisor_does_not_deadlock_when_child_closes_stdin_early() {
-        let (child, _) = spawn_shell("exec 0<&-; printf done");
-        let result = timeout(
-            Duration::from_secs(1),
-            supervise_child(
-                child,
-                vec![b'x'; 32 * 1024 * 1024],
-                Duration::from_secs(1),
-                1024,
-                1024,
-                None,
-            ),
-        )
-        .await;
-
-        assert!(result.is_ok(), "stdin writer must be joined or aborted");
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn supervisor_keeps_timeout_active_while_draining_process_pipes() {
-        let (child, _) = spawn_shell("(sleep 0.3) & exit 0");
-
-        let error = supervise_child(
-            child,
-            Vec::new(),
-            Duration::from_millis(25),
-            1024,
-            1024,
-            None,
-        )
-        .await
-        .expect_err("open descendant pipes must not outlive the deadline");
-
-        assert_eq!(error, AppError::WslCommandTimedOut);
     }
 
     #[test]

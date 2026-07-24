@@ -461,7 +461,12 @@ mod tests {
             .unwrap();
         let lease = manager.pin_verified(&handle).await.unwrap();
         let destination = temp.path().join("target/demo");
-        let projected = project_target(&destination, ExecutionBackend::NativeUnix).unwrap();
+        let backend = if cfg!(windows) {
+            ExecutionBackend::NativeWindows
+        } else {
+            ExecutionBackend::NativeUnix
+        };
+        let projected = project_target(&destination, backend).unwrap();
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,

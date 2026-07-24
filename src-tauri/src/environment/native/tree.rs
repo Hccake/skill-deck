@@ -152,9 +152,13 @@ pub fn remove_entry_no_follow(path: &Path) -> Result<(), AppError> {
         NativeEntryKind::ReparsePoint => fs::remove_dir(path)
             .or_else(|_| fs::remove_file(path))
             .map_err(Into::into),
-        NativeEntryKind::File | NativeEntryKind::Symlink | NativeEntryKind::Other => {
-            fs::remove_file(path).map_err(Into::into)
-        }
+        #[cfg(windows)]
+        NativeEntryKind::Symlink => fs::remove_dir(path)
+            .or_else(|_| fs::remove_file(path))
+            .map_err(Into::into),
+        #[cfg(not(windows))]
+        NativeEntryKind::Symlink => fs::remove_file(path).map_err(Into::into),
+        NativeEntryKind::File | NativeEntryKind::Other => fs::remove_file(path).map_err(Into::into),
     }
 }
 

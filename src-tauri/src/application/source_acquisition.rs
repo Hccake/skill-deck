@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use specta::Type;
 use walkdir::WalkDir;
 
+use crate::application::git_transport::{GitSourceTransport, ProcessGitTransport};
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, DiscoverySkillSnapshot,
     DiscoverySourceDescriptor, DiscoverySourceLocation, PayloadPlanningMetadata,
@@ -20,8 +21,8 @@ use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
 use crate::core::wellknown::{extract_hostname, fetch_wellknown_skills, WellKnownTrustMetadata};
 use crate::core::{
-    clone_repo_with_progress, compute_local_tree_sha, discover_skills, get_owner_repo,
-    parse_source, select_discovered_skills, source_risk_policy, CloneProgress, DiscoverOptions,
+    compute_local_tree_sha, discover_skills, get_owner_repo, parse_source,
+    select_discovered_skills, source_risk_policy, CloneProgress, DiscoverOptions,
     DiscoveryDocument, DiscoveryInventory,
 };
 use crate::environment::acquisition::{
@@ -49,6 +50,7 @@ pub struct AcquireSelectedPayloadsRequest {
 pub struct SourceDiscoveryService<'a> {
     sessions: Arc<PayloadSessionManager>,
     environments: &'a EnvironmentRegistry,
+    git_transport: Arc<dyn GitSourceTransport>,
 }
 
 impl<'a> SourceDiscoveryService<'a> {
@@ -59,6 +61,19 @@ impl<'a> SourceDiscoveryService<'a> {
         Self {
             sessions,
             environments,
+            git_transport: Arc::new(ProcessGitTransport),
+        }
+    }
+
+    pub(crate) fn with_git_transport(
+        sessions: Arc<PayloadSessionManager>,
+        environments: &'a EnvironmentRegistry,
+        git_transport: Arc<dyn GitSourceTransport>,
+    ) -> Self {
+        Self {
+            sessions,
+            environments,
+            git_transport,
         }
     }
 
@@ -151,12 +166,14 @@ impl<'a> SourceDiscoveryService<'a> {
                 let clone_url = parsed.url.clone();
                 let clone_ref = parsed.git_ref.clone();
                 let clone_cancellation = cancellation.clone();
+                let git_transport = Arc::clone(&self.git_transport);
+                let clone_progress = on_progress.clone();
                 let _clone_permit = shared_source_clone_gate().acquire(&cancellation).await?;
                 let cloned = tokio::task::spawn_blocking(move || {
-                    clone_repo_with_progress(
+                    git_transport.clone_source(
                         &clone_url,
                         clone_ref.as_deref(),
-                        on_progress,
+                        &clone_progress,
                         clone_cancellation,
                     )
                 })

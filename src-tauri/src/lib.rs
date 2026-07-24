@@ -19,6 +19,9 @@ mod runtime;
 mod storage;
 
 #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[path = "test_support/git_fixture.rs"]
+mod git_fixture;
+#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
 #[path = "test_support/native_workflow.rs"]
 mod native_workflow_integration_support;
 #[cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]

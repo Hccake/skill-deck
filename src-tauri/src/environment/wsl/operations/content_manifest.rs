@@ -2,7 +2,7 @@ use tokio::time::Duration;
 
 use crate::core::mutation::CancellationSignal;
 use crate::environment::content_manifest::{
-    ContentManifest, ContentManifestReader, ContentManifestRecord, ContentManifestTarget,
+    ContentManifest, ContentManifestRecord, ContentManifestTarget,
 };
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{normalized_wsl_distro_name, EnvironmentRef};
@@ -25,27 +25,6 @@ const CONTENT_MANIFEST_OPERATION: WslOperationDescriptor = wsl_operation_with_fe
         WslExecutionFeature::StableStat,
     ],
 );
-
-pub struct WslContentManifestReader {
-    session: WslSession,
-}
-
-impl WslContentManifestReader {
-    pub fn new(session: WslSession) -> Self {
-        Self { session }
-    }
-}
-
-impl ContentManifestReader for WslContentManifestReader {
-    fn read<'a>(
-        &'a self,
-        target: &'a ContentManifestTarget,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<ContentManifest, AppError>> + Send + 'a>,
-    > {
-        Box::pin(inspect(&self.session, target, None))
-    }
-}
 
 pub async fn inspect(
     session: &WslSession,

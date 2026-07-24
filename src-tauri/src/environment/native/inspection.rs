@@ -368,7 +368,11 @@ mod tests {
             .unwrap();
 
         assert!(snapshot.facts.iter().any(|fact| {
-            fact.relative_path == "toolkit" && fact.kind == FilesystemEntryKind::ReparsePoint
+            fact.relative_path == "toolkit"
+                && matches!(
+                    fact.kind,
+                    FilesystemEntryKind::Symlink | FilesystemEntryKind::ReparsePoint
+                )
         }));
         let skill_document = snapshot
             .facts

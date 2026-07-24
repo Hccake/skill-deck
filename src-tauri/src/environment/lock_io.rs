@@ -25,7 +25,7 @@ impl EnvironmentLockIo {
         }
     }
 
-    #[cfg(any(target_os = "windows", test))]
+    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
     pub async fn read(&self, locator: &ResourceLocator) -> Result<Vec<u8>, AppError> {
         self.read_optional(locator)
             .await?

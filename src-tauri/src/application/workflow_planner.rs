@@ -459,11 +459,19 @@ mod tests {
         assert_eq!(plan.required_agent_roots.len(), 2);
         assert_eq!(
             plan.required_agent_roots[0].root.native_path,
-            "/work/app/agent/skills"
+            std::path::Path::new("/work/app")
+                .join("agent")
+                .join("skills")
+                .to_string_lossy()
         );
         assert_eq!(
             plan.required_agent_roots[1].root.native_path,
-            "/work/app/agent/subagents/research-team/skills"
+            std::path::Path::new("/work/app")
+                .join("agent")
+                .join("subagents")
+                .join("research-team")
+                .join("skills")
+                .to_string_lossy()
         );
     }
 }

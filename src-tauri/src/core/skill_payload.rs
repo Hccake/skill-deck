@@ -794,7 +794,11 @@ mod tests {
         );
         assert_eq!(
             payload.payload_root_hash,
-            "1e970bd3d1b2da10d37000f4bc5e3964eed67957b14b663f50a3e50794c13bdd"
+            if cfg!(unix) {
+                "1e970bd3d1b2da10d37000f4bc5e3964eed67957b14b663f50a3e50794c13bdd"
+            } else {
+                "1f426a8f630882dae9008ce8ccddf8d945276cb99953e43e5f249222ba2c316c"
+            }
         );
     }
 

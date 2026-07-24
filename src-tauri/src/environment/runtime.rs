@@ -171,47 +171,42 @@ where
 }
 
 pub fn posix_relative_target(
-    canonical_parent: &std::path::Path,
-    canonical_target: &std::path::Path,
-) -> Result<std::path::PathBuf, AppError> {
-    if !canonical_parent.is_absolute() || !canonical_target.is_absolute() {
+    canonical_parent: &str,
+    canonical_target: &str,
+) -> Result<String, AppError> {
+    let components = |path: &str| {
+        if !path.starts_with('/') {
+            return None;
+        }
+        path.split('/')
+            .skip(1)
+            .filter(|component| !component.is_empty())
+            .map(|component| match component {
+                "." | ".." => None,
+                value => Some(value.to_string()),
+            })
+            .collect::<Option<Vec<_>>>()
+    };
+    let (Some(parent), Some(target)) = (components(canonical_parent), components(canonical_target))
+    else {
         return Err(AppError::UnsafePath {
-            path: canonical_target.to_string_lossy().into_owned(),
-            reason: "POSIX link target paths must be absolute".to_string(),
+            path: canonical_target.to_string(),
+            reason: "POSIX link target paths must be absolute and canonical".to_string(),
         });
-    }
-    let parent = canonical_parent
-        .components()
-        .filter_map(|component| match component {
-            std::path::Component::RootDir => None,
-            std::path::Component::Normal(value) => Some(value.to_owned()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let target = canonical_target
-        .components()
-        .filter_map(|component| match component {
-            std::path::Component::RootDir => None,
-            std::path::Component::Normal(value) => Some(value.to_owned()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    };
     let common = parent
         .iter()
         .zip(&target)
         .take_while(|(left, right)| left == right)
         .count();
-    let mut relative = std::path::PathBuf::new();
-    for _ in common..parent.len() {
-        relative.push("..");
-    }
-    for component in &target[common..] {
-        relative.push(component);
-    }
-    if relative.as_os_str().is_empty() {
-        relative.push(".");
-    }
-    Ok(relative)
+    let relative = std::iter::repeat_n("..", parent.len() - common)
+        .chain(target[common..].iter().map(String::as_str))
+        .collect::<Vec<_>>();
+    Ok(if relative.is_empty() {
+        ".".to_string()
+    } else {
+        relative.join("/")
+    })
 }
 
 pub fn physical_paths_overlap(
@@ -406,21 +401,17 @@ mod tests {
     fn posix_relative_target_uses_the_physical_parent() {
         assert_eq!(
             posix_relative_target(
-                std::path::Path::new("/home/alice/.config/agent/skills"),
-                std::path::Path::new("/home/alice/.agents/skills/demo"),
+                "/home/alice/.config/agent/skills",
+                "/home/alice/.agents/skills/demo",
             )
             .unwrap(),
-            std::path::PathBuf::from("../../../.agents/skills/demo")
+            "../../../.agents/skills/demo"
         );
     }
 
     #[test]
     fn posix_relative_target_rejects_non_absolute_paths() {
-        assert!(posix_relative_target(
-            std::path::Path::new("agent/skills"),
-            std::path::Path::new("/home/alice/.agents/skills/demo"),
-        )
-        .is_err());
+        assert!(posix_relative_target("agent/skills", "/home/alice/.agents/skills/demo",).is_err());
     }
 
     fn project(id: &str, path: &str) -> ProjectBinding {

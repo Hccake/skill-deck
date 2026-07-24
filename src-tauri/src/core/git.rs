@@ -127,7 +127,7 @@ where
                 })
             } else {
                 // 分类错误
-                let error = classify_git_error(&output.stderr, url);
+                let error = classify_git_command_error(&output, url, "clone");
                 on_progress(CloneProgress {
                     phase: ClonePhase::Error,
                     elapsed_secs: output.elapsed_secs,
@@ -395,7 +395,7 @@ pub fn probe_remote_ref_revision(
                 ref_name: git_ref.unwrap_or("HEAD").to_string(),
             });
         }
-        return Err(classify_git_error(&output.stderr, url));
+        return Err(classify_git_command_error(&output, url, "probe ref"));
     }
 
     let lines = output.stdout;
@@ -500,6 +500,24 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
     }
 }
 
+fn classify_git_command_error(output: &CommandOutput, url: &str, operation: &str) -> AppError {
+    let classified = classify_git_error(&output.stderr, url);
+    if !matches!(classified, AppError::GitCloneFailed { .. }) {
+        return classified;
+    }
+
+    let status = output
+        .status_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    AppError::GitCloneFailed {
+        message: format!(
+            "Git {operation} failed with exit status {status}: {}",
+            output.stderr.trim()
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,8 +542,21 @@ mod tests {
 
     #[test]
     fn test_classify_generic_error() {
-        let err = classify_git_error("Some random error", "https://example.com");
-        assert!(matches!(err, AppError::GitCloneFailed { .. }));
+        let output = CommandOutput {
+            success: false,
+            status_code: Some(128),
+            stdout: String::new(),
+            stderr: "Some random error".to_string(),
+            elapsed_secs: 0,
+        };
+        let err = classify_git_command_error(&output, "https://example.com", "clone");
+        assert!(matches!(
+            err,
+            AppError::GitCloneFailed { message }
+                if message.contains("clone")
+                    && message.contains("exit status 128")
+                    && message.contains("Some random error")
+        ));
     }
 
     #[test]

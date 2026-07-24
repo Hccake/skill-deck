@@ -301,12 +301,14 @@ pub fn prepare_wsl_mutations(
                 if target == entry.destination.native_path {
                     return Err(AppError::SelfCopy);
                 }
-                let parent = std::path::Path::new(&entry.destination.native_path)
-                    .parent()
+                let parent = entry
+                    .destination
+                    .native_path
+                    .rsplit_once('/')
+                    .map(|(parent, _)| parent)
+                    .filter(|parent| !parent.is_empty())
                     .ok_or(AppError::StaleTarget)?;
-                let relative_target = posix_relative_target(parent, std::path::Path::new(&target))?
-                    .to_string_lossy()
-                    .into_owned();
+                let relative_target = posix_relative_target(parent, &target)?;
                 WslEntryAction::Symlink {
                     target: relative_target,
                 }
@@ -1459,12 +1461,14 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn initialize_operation_root(root: &std::path::Path, id: &str) {
         fs::create_dir_all(root).unwrap();
         fs::write(root.join(".skill-deck-owner"), format!("1\n{id}\n")).unwrap();
         fs::write(root.join("recovery.json"), b"{}").unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     fn operation_args(subcommand: &str, root: &std::path::Path, id: &str) -> Vec<String> {
         vec![
             subcommand.to_string(),

@@ -976,145 +976,154 @@ fn join_entry(root: &ResourceLocator, child: &str) -> ResourceLocator {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::fs;
-    #[cfg(unix)]
-    use std::os::unix::fs::symlink;
-    use std::sync::{Arc, Mutex};
 
     use tempfile::tempdir;
 
     use super::*;
-    use crate::application::install::InstallFuture;
-    use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
-    use crate::application::mutation::plan::RuntimeRevisions;
-    use crate::application::payload_session::{
-        PayloadPlanningMetadata, PayloadSessionLimits, PayloadSessionManager,
-    };
-    use crate::application::update::{UpdateExecutionRequest, UpdatePlanner, UpdateRequest};
     use crate::core::agent_definition::{
-        AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, PathSpec,
-        ScopeDefinition,
+        AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, ScopeDefinition,
     };
-    use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
-    use crate::core::skill_payload::build_skill_payload;
+    use crate::core::lossless_lock::LockSchema;
     use crate::environment::agent_environment::{
         AgentRuntimeSnapshot, DetectionState, ResolvedAgent, ResolvedAgentScope,
     };
-    use crate::environment::content_manifest::{
-        ContentManifest, ContentManifestReader, ContentManifestTarget,
-    };
-    use crate::environment::context_resolver::ResolvedContext;
-    use crate::environment::planning::RuntimeTargetFactResolver;
-    use crate::environment::planning::{TargetFactFuture, TargetFactResolver};
-    use crate::environment::runtime::ContextSnapshotRevision;
-    use crate::environment::types::{
-        ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
-    };
-    use crate::environment::wsl::EnvironmentRegistry;
-
-    struct Facts(InstallPlanningFacts);
-
-    impl InstallPlanningFactSource for Facts {
-        fn current<'a>(
-            &'a self,
-            _context: &'a ContextRef,
-        ) -> InstallFuture<'a, Result<InstallPlanningFacts, crate::error::AppError>> {
-            Box::pin(async move { Ok(self.0.clone()) })
-        }
-    }
-
-    struct CountingTargets {
-        inner: RuntimeTargetFactResolver,
-        manifest_reads: Arc<Mutex<BTreeMap<PhysicalTargetKey, usize>>>,
-    }
-
-    impl TargetFactResolver for CountingTargets {
-        fn resolve<'a>(
-            &'a self,
-            context: &'a ContextRef,
-            logical_destinations: &'a [ResourceLocator],
-            cancellation: Option<crate::core::mutation::CancellationSignal>,
-        ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
-            self.inner
-                .resolve(context, logical_destinations, cancellation)
-        }
-    }
-
-    impl ContentManifestReader for CountingTargets {
-        fn read<'a>(
-            &'a self,
-            target: &'a ContentManifestTarget,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<ContentManifest, AppError>> + Send + 'a>,
-        > {
-            *self
-                .manifest_reads
-                .lock()
-                .unwrap()
-                .entry(target.key.clone())
-                .or_default() += 1;
-            self.inner.read(target)
-        }
-    }
+    use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn private_copy_requires_observed_selection_while_symlink_follows_canonical() {
-        let temp = tempdir().unwrap();
-        let physical_root = fs::canonicalize(temp.path()).unwrap();
-        let canonical_root = physical_root.join(".agents/skills");
-        let copy_root = physical_root.join(".copy/skills");
-        let link_root = physical_root.join(".link/skills");
-        let alias_root = physical_root.join(".alias/skills");
-        let source = temp.path().join("source/demo");
-        fs::create_dir_all(canonical_root.join("demo")).unwrap();
-        fs::create_dir_all(copy_root.join("demo")).unwrap();
-        fs::create_dir_all(&link_root).unwrap();
-        fs::create_dir_all(alias_root.parent().unwrap()).unwrap();
-        symlink(canonical_root.join("demo"), link_root.join("demo")).unwrap();
-        symlink(&copy_root, &alias_root).unwrap();
-        fs::create_dir_all(&source).unwrap();
-        fs::write(source.join("SKILL.md"), b"---\nname: demo\n---\nnew").unwrap();
-        let payload = build_skill_payload(&source).unwrap();
-        let manager = Arc::new(PayloadSessionManager::in_memory(
-            PayloadSessionLimits {
-                ttl_ms: 60_000,
-                max_sessions: 4,
-                max_bytes: 1_000_000,
-            },
-            || 1_000,
-        ));
-        let discovery = manager
-            .discover(EnvironmentRef::Host, "source-fingerprint")
-            .await
-            .unwrap();
-        let handle = manager
-            .acquire_payload_with_metadata(
-                &discovery,
-                "skills/demo",
-                payload,
-                PayloadPlanningMetadata {
-                    skill_name: "demo".to_string(),
-                    install_dir_name: "demo".to_string(),
-                    source: "owner/repo".to_string(),
-                    source_type: "github".to_string(),
-                    source_url: Some("https://github.com/owner/repo.git".to_string()),
-                    ref_name: Some("main".to_string()),
-                    skill_path: "skills/demo".to_string(),
-                    plugin_name: None,
-                    computed_hash: "new-computed".to_string(),
-                    upstream_revision: Some("new-remote".to_string()),
-                },
-            )
-            .await
-            .unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
-                project_id: "project-1".to_string(),
-            },
+    mod unix_tests {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use std::sync::{Arc, Mutex};
+
+        use super::*;
+        use crate::application::install::InstallFuture;
+        use crate::application::install_planner::{
+            InstallPlanningFactSource, InstallPlanningFacts,
         };
-        let mut facts = InstallPlanningFacts {
+        use crate::application::mutation::plan::RuntimeRevisions;
+        use crate::application::payload_session::{
+            PayloadPlanningMetadata, PayloadSessionLimits, PayloadSessionManager,
+        };
+        use crate::application::update::{UpdateExecutionRequest, UpdatePlanner, UpdateRequest};
+        use crate::core::agent_definition::PathSpec;
+        use crate::core::lossless_lock::LosslessLockDocument;
+        use crate::core::skill_payload::build_skill_payload;
+        use crate::environment::content_manifest::{
+            ContentManifest, ContentManifestReader, ContentManifestTarget,
+        };
+        use crate::environment::context_resolver::ResolvedContext;
+        use crate::environment::planning::{
+            RuntimeTargetFactResolver, TargetFactFuture, TargetFactResolver,
+        };
+        use crate::environment::runtime::ContextSnapshotRevision;
+        use crate::environment::types::{ContextRef, ContextScope, ResourceLocator};
+        use crate::environment::wsl::EnvironmentRegistry;
+
+        struct Facts(InstallPlanningFacts);
+
+        impl InstallPlanningFactSource for Facts {
+            fn current<'a>(
+                &'a self,
+                _context: &'a ContextRef,
+            ) -> InstallFuture<'a, Result<InstallPlanningFacts, crate::error::AppError>>
+            {
+                Box::pin(async move { Ok(self.0.clone()) })
+            }
+        }
+
+        struct CountingTargets {
+            inner: RuntimeTargetFactResolver,
+            manifest_reads: Arc<Mutex<BTreeMap<PhysicalTargetKey, usize>>>,
+        }
+
+        impl TargetFactResolver for CountingTargets {
+            fn resolve<'a>(
+                &'a self,
+                context: &'a ContextRef,
+                logical_destinations: &'a [ResourceLocator],
+                cancellation: Option<crate::core::mutation::CancellationSignal>,
+            ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
+                self.inner
+                    .resolve(context, logical_destinations, cancellation)
+            }
+        }
+
+        impl ContentManifestReader for CountingTargets {
+            fn read<'a>(
+                &'a self,
+                target: &'a ContentManifestTarget,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<ContentManifest, AppError>> + Send + 'a,
+                >,
+            > {
+                *self
+                    .manifest_reads
+                    .lock()
+                    .unwrap()
+                    .entry(target.key.clone())
+                    .or_default() += 1;
+                self.inner.read(target)
+            }
+        }
+
+        #[tokio::test]
+        async fn private_copy_requires_observed_selection_while_symlink_follows_canonical() {
+            let temp = tempdir().unwrap();
+            let physical_root = fs::canonicalize(temp.path()).unwrap();
+            let canonical_root = physical_root.join(".agents/skills");
+            let copy_root = physical_root.join(".copy/skills");
+            let link_root = physical_root.join(".link/skills");
+            let alias_root = physical_root.join(".alias/skills");
+            let source = temp.path().join("source/demo");
+            fs::create_dir_all(canonical_root.join("demo")).unwrap();
+            fs::create_dir_all(copy_root.join("demo")).unwrap();
+            fs::create_dir_all(&link_root).unwrap();
+            fs::create_dir_all(alias_root.parent().unwrap()).unwrap();
+            symlink(canonical_root.join("demo"), link_root.join("demo")).unwrap();
+            symlink(&copy_root, &alias_root).unwrap();
+            fs::create_dir_all(&source).unwrap();
+            fs::write(source.join("SKILL.md"), b"---\nname: demo\n---\nnew").unwrap();
+            let payload = build_skill_payload(&source).unwrap();
+            let manager = Arc::new(PayloadSessionManager::in_memory(
+                PayloadSessionLimits {
+                    ttl_ms: 60_000,
+                    max_sessions: 4,
+                    max_bytes: 1_000_000,
+                },
+                || 1_000,
+            ));
+            let discovery = manager
+                .discover(EnvironmentRef::Host, "source-fingerprint")
+                .await
+                .unwrap();
+            let handle = manager
+                .acquire_payload_with_metadata(
+                    &discovery,
+                    "skills/demo",
+                    payload,
+                    PayloadPlanningMetadata {
+                        skill_name: "demo".to_string(),
+                        install_dir_name: "demo".to_string(),
+                        source: "owner/repo".to_string(),
+                        source_type: "github".to_string(),
+                        source_url: Some("https://github.com/owner/repo.git".to_string()),
+                        ref_name: Some("main".to_string()),
+                        skill_path: "skills/demo".to_string(),
+                        plugin_name: None,
+                        computed_hash: "new-computed".to_string(),
+                        upstream_revision: Some("new-remote".to_string()),
+                    },
+                )
+                .await
+                .unwrap();
+            let context = ContextRef {
+                environment: EnvironmentRef::Host,
+                scope: ContextScope::Project {
+                    project_id: "project-1".to_string(),
+                },
+            };
+            let mut facts = InstallPlanningFacts {
             resolved_context: ResolvedContext {
                 context: context.clone(),
                 project: None,
@@ -1134,106 +1143,179 @@ mod tests {
             )
             .unwrap(),
         };
-        for index in 0..75 {
-            let missing_root = physical_root.join(format!(".missing-{index}/skills"));
-            let (id, resolved) = agent(
-                &format!("missing-agent-{index}"),
-                &format!("Missing Agent {index}"),
-                &missing_root,
+            for index in 0..75 {
+                let missing_root = physical_root.join(format!(".missing-{index}/skills"));
+                let (id, resolved) = agent(
+                    &format!("missing-agent-{index}"),
+                    &format!("Missing Agent {index}"),
+                    &missing_root,
+                );
+                facts.agent_runtime.agents.insert(id, resolved);
+            }
+            let manifest_reads = Arc::new(Mutex::new(BTreeMap::new()));
+            let planner = ConcreteUpdatePlanner::new(
+                Facts(facts),
+                CountingTargets {
+                    inner: RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default())),
+                    manifest_reads: Arc::clone(&manifest_reads),
+                },
+                Arc::clone(&manager),
+                || "2026-07-18T00:00:00.000Z".to_string(),
             );
-            facts.agent_runtime.agents.insert(id, resolved);
-        }
-        let manifest_reads = Arc::new(Mutex::new(BTreeMap::new()));
-        let planner = ConcreteUpdatePlanner::new(
-            Facts(facts),
-            CountingTargets {
-                inner: RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default())),
-                manifest_reads: Arc::clone(&manifest_reads),
-            },
-            Arc::clone(&manager),
-            || "2026-07-18T00:00:00.000Z".to_string(),
-        );
-        let request = UpdateRequest {
-            context,
-            skill_names: vec!["demo".to_string()],
-        };
+            let request = UpdateRequest {
+                context,
+                skill_names: vec!["demo".to_string()],
+            };
 
-        let inspection = planner.inspect(&request).await.unwrap();
-        assert_eq!(inspection.source_candidates.len(), 1);
-        assert_eq!(inspection.skills[0].clean_copies.len(), 1);
-        assert!(inspection.skills[0].conflicts.is_empty());
-        assert!(inspection.skills[0].adapter_targets.is_empty());
-        assert_eq!(
-            manifest_reads
+            let inspection = planner.inspect(&request).await.unwrap();
+            assert_eq!(inspection.source_candidates.len(), 1);
+            assert_eq!(inspection.skills[0].clean_copies.len(), 1);
+            assert!(inspection.skills[0].conflicts.is_empty());
+            assert!(inspection.skills[0].adapter_targets.is_empty());
+            assert_eq!(
+                manifest_reads
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .copied()
+                    .sum::<usize>(),
+                2
+            );
+            assert!(manifest_reads
                 .lock()
                 .unwrap()
                 .values()
-                .copied()
-                .sum::<usize>(),
-            2
-        );
-        assert!(manifest_reads
-            .lock()
-            .unwrap()
-            .values()
-            .all(|reads| *reads == 1));
+                .all(|reads| *reads == 1));
 
-        assert_eq!(inspection.skills[0].clean_copies.len(), 1);
-        assert_eq!(inspection.skills[0].clean_copies[0].owners.len(), 2);
-        let execution = UpdateExecutionRequest {
-            request: request.clone(),
-            overwrite_private_entries: vec![inspection.skills[0].clean_copies[0].entry_id.clone()],
-        };
-        let (token, plan) = planner
-            .build(
-                &execution,
-                vec![handle.clone()],
-                vec![manager.pin_verified(&handle).await.unwrap()],
-            )
-            .await
-            .unwrap();
+            assert_eq!(inspection.skills[0].clean_copies.len(), 1);
+            assert_eq!(inspection.skills[0].clean_copies[0].owners.len(), 2);
+            let execution = UpdateExecutionRequest {
+                request: request.clone(),
+                overwrite_private_entries: vec![inspection.skills[0].clean_copies[0]
+                    .entry_id
+                    .clone()],
+            };
+            let (token, plan) = planner
+                .build(
+                    &execution,
+                    vec![handle.clone()],
+                    vec![manager.pin_verified(&handle).await.unwrap()],
+                )
+                .await
+                .unwrap();
 
-        assert_eq!(inspection.token, token);
-        assert_eq!(plan.units.len(), 1);
-        assert!(plan.units[0]
-            .canonical_entry
-            .iter()
-            .chain(&plan.units[0].required_agent_entries)
-            .all(
-                |mutation| plan.units[0].expected_targets.iter().any(|expected| {
-                    expected.key == mutation.key
-                        && expected.expected_content_manifest_hash.is_some()
-                })
-            ));
-        assert!(plan.units[0].canonical_entry.is_some());
-        assert_eq!(plan.units[0].required_agent_entries.len(), 1);
-        assert_eq!(
-            plan.units[0].required_agent_entries[0]
-                .destination
-                .native_path,
-            copy_root.join("demo").to_string_lossy()
-        );
-        assert_eq!(
-            plan.units[0]
-                .lock_mutation
-                .as_ref()
+            assert_eq!(inspection.token, token);
+            assert_eq!(plan.units.len(), 1);
+            assert!(plan.units[0]
+                .canonical_entry
+                .iter()
+                .chain(&plan.units[0].required_agent_entries)
+                .all(
+                    |mutation| plan.units[0].expected_targets.iter().any(|expected| {
+                        expected.key == mutation.key
+                            && expected.expected_content_manifest_hash.is_some()
+                    })
+                ));
+            assert!(plan.units[0].canonical_entry.is_some());
+            assert_eq!(plan.units[0].required_agent_entries.len(), 1);
+            assert_eq!(
+                plan.units[0].required_agent_entries[0]
+                    .destination
+                    .native_path,
+                copy_root.join("demo").to_string_lossy()
+            );
+            assert_eq!(
+                plan.units[0]
+                    .lock_mutation
+                    .as_ref()
+                    .unwrap()
+                    .replacement
+                    .as_ref()
+                    .unwrap()["remoteHash"],
+                "new-remote"
+            );
+
+            fs::write(copy_root.join("demo/local-change.txt"), b"modified").unwrap();
+            let changed = planner.inspect(&request).await.unwrap();
+            assert_ne!(changed.token, token);
+            assert_eq!(changed.skills[0].clean_copies.len(), 0);
+            assert_eq!(changed.skills[0].conflicts.len(), 1);
+            assert!(manifest_reads
+                .lock()
                 .unwrap()
-                .replacement
-                .as_ref()
-                .unwrap()["remoteHash"],
-            "new-remote"
-        );
+                .values()
+                .all(|reads| *reads == 3));
+        }
 
-        fs::write(copy_root.join("demo/local-change.txt"), b"modified").unwrap();
-        let changed = planner.inspect(&request).await.unwrap();
-        assert_ne!(changed.token, token);
-        assert_eq!(changed.skills[0].clean_copies.len(), 0);
-        assert_eq!(changed.skills[0].conflicts.len(), 1);
-        assert!(manifest_reads
-            .lock()
-            .unwrap()
-            .values()
-            .all(|reads| *reads == 3));
+        fn locator(path: &std::path::Path) -> ResourceLocator {
+            ResourceLocator {
+                environment: EnvironmentRef::Host,
+                native_path: path.to_string_lossy().into_owned(),
+            }
+        }
+
+        fn runtime(
+            copy_root: &std::path::Path,
+            link_root: &std::path::Path,
+            alias_root: &std::path::Path,
+        ) -> AgentRuntimeSnapshot {
+            AgentRuntimeSnapshot {
+                registry_revision: "registry-1".to_string(),
+                environment_revision: "environment-1".to_string(),
+                environment: EnvironmentRef::Host,
+                availability: EnvironmentStatus::Available,
+                project_path: None,
+                agents: BTreeMap::from([
+                    agent("copy-agent", "Copy Agent", copy_root),
+                    agent("link-agent", "Link Agent", link_root),
+                    agent("alias-agent", "Alias Agent", alias_root),
+                ]),
+            }
+        }
+
+        fn agent(id: &str, display_name: &str, root: &std::path::Path) -> (AgentId, ResolvedAgent) {
+            let id = AgentId::parse(id).unwrap();
+            let scope = ResolvedAgentScope {
+                enabled: true,
+                reads_shared: true,
+                shared_path: Some("unused".to_string()),
+                private_path: Some(root.to_string_lossy().into_owned()),
+                read_paths: Vec::new(),
+                shared_presence: None,
+                private_presence: None,
+                legacy_paths: Vec::new(),
+            };
+            (
+                id.clone(),
+                ResolvedAgent {
+                    definition: AgentDefinition {
+                        id,
+                        display_name: display_name.to_string(),
+                        source: AgentSource::Custom,
+                        aliases: Vec::new(),
+                        global: ScopeDefinition {
+                            enabled: false,
+                            reads_shared: false,
+                            private_path: None,
+                        },
+                        project: ScopeDefinition {
+                            enabled: true,
+                            reads_shared: true,
+                            private_path: Some(PathSpec::project(".agent/skills")),
+                        },
+                        detection: DetectionSpec::AnyPathExists {
+                            paths: vec![PathSpec::home(".agent")],
+                        },
+                        legacy_paths: Vec::new(),
+                        adapter: AgentAdapter::Standard,
+                    },
+                    detection: DetectionState::Detected,
+                    detection_reason: None,
+                    global: scope.clone(),
+                    project: scope,
+                },
+            )
+        }
     }
 
     #[test]
@@ -1313,76 +1395,6 @@ mod tests {
         assert!(capability.can_run_update);
         assert!(capability.can_check_for_updates);
         assert_eq!(capability.reason, None);
-    }
-
-    fn locator(path: &std::path::Path) -> ResourceLocator {
-        ResourceLocator {
-            environment: EnvironmentRef::Host,
-            native_path: path.to_string_lossy().into_owned(),
-        }
-    }
-
-    fn runtime(
-        copy_root: &std::path::Path,
-        link_root: &std::path::Path,
-        alias_root: &std::path::Path,
-    ) -> AgentRuntimeSnapshot {
-        AgentRuntimeSnapshot {
-            registry_revision: "registry-1".to_string(),
-            environment_revision: "environment-1".to_string(),
-            environment: EnvironmentRef::Host,
-            availability: EnvironmentStatus::Available,
-            project_path: None,
-            agents: BTreeMap::from([
-                agent("copy-agent", "Copy Agent", copy_root),
-                agent("link-agent", "Link Agent", link_root),
-                agent("alias-agent", "Alias Agent", alias_root),
-            ]),
-        }
-    }
-
-    fn agent(id: &str, display_name: &str, root: &std::path::Path) -> (AgentId, ResolvedAgent) {
-        let id = AgentId::parse(id).unwrap();
-        let scope = ResolvedAgentScope {
-            enabled: true,
-            reads_shared: true,
-            shared_path: Some("unused".to_string()),
-            private_path: Some(root.to_string_lossy().into_owned()),
-            read_paths: Vec::new(),
-            shared_presence: None,
-            private_presence: None,
-            legacy_paths: Vec::new(),
-        };
-        (
-            id.clone(),
-            ResolvedAgent {
-                definition: AgentDefinition {
-                    id,
-                    display_name: display_name.to_string(),
-                    source: AgentSource::Custom,
-                    aliases: Vec::new(),
-                    global: ScopeDefinition {
-                        enabled: false,
-                        reads_shared: false,
-                        private_path: None,
-                    },
-                    project: ScopeDefinition {
-                        enabled: true,
-                        reads_shared: true,
-                        private_path: Some(PathSpec::project(".agent/skills")),
-                    },
-                    detection: DetectionSpec::AnyPathExists {
-                        paths: vec![PathSpec::home(".agent")],
-                    },
-                    legacy_paths: Vec::new(),
-                    adapter: AgentAdapter::Standard,
-                },
-                detection: DetectionState::Detected,
-                detection_reason: None,
-                global: scope.clone(),
-                project: scope,
-            },
-        )
     }
 
     fn eve_runtime(project: &str) -> AgentRuntimeSnapshot {

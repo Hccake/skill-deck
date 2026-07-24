@@ -1,3 +1,4 @@
+#[cfg(all(test, target_os = "linux"))]
 use std::path::{Path, PathBuf};
 
 use tokio::time::Duration;
@@ -126,6 +127,7 @@ fn protocol_error() -> AppError {
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
 fn backup_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".bak");

@@ -61,11 +61,14 @@ jobs:
 
   rust:
     name: rust (${{ matrix.os }})
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
@@ -79,15 +82,37 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-      - name: Show Rust toolchain
+      - name: Capture runner diagnostics
+        shell: bash
         run: |
-          rustc -Vv
-          cargo -V
+          mkdir -p ci-diagnostics
+          {
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "image_os=${ImageOS:-unknown}"
+            echo "image_version=${ImageVersion:-unknown}"
+            rustc -Vv
+            cargo -V
+            git --version
+            git config --show-origin --get-regexp '^protocol\..*\.allow$' || true
+          } | tee ci-diagnostics/toolchain.txt
       - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+        shell: bash
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check 2>&1 | tee ci-diagnostics/fmt.log
       - name: Check all Rust targets
-        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
+        shell: bash
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets 2>&1 | tee ci-diagnostics/check.log
       - name: Lint all Rust targets
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+        shell: bash
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings 2>&1 | tee ci-diagnostics/clippy.log
       - name: Run Rust tests
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+        shell: bash
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml 2>&1 | tee ci-diagnostics/test.log
+      - name: Upload Rust failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-diagnostics-${{ matrix.os }}
+          path: ci-diagnostics
+          if-no-files-found: error
+          retention-days: 7

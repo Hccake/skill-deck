@@ -385,7 +385,9 @@ mod tests {
             *opened.lock().unwrap(),
             vec![locator(
                 EnvironmentRef::Host,
-                "/work/project/.agents/skills/demo"
+                &std::path::Path::new("/work/project/.agents/skills")
+                    .join("demo")
+                    .to_string_lossy()
             )]
         );
     }
@@ -457,7 +459,9 @@ mod tests {
             *read.lock().unwrap(),
             vec![locator(
                 EnvironmentRef::Host,
-                "/work/project/.agents/skills/demo"
+                &std::path::Path::new("/work/project/.agents/skills")
+                    .join("demo")
+                    .to_string_lossy()
             )]
         );
     }
