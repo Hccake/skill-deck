@@ -1122,7 +1122,7 @@ fn join_posix(base: &str, child: &str) -> String {
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "Agent Environment 测试需要直接执行被验证的 shell 脚本"
+    reason = "Agent Environment 测试需要直接运行待验证的 shell 脚本"
 )]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};

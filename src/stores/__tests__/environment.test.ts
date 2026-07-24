@@ -91,6 +91,28 @@ describe('useEnvironmentStore', () => {
     });
   });
 
+  it('keeps Host available when the initial discovery request rejects', async () => {
+    const error: AppError = {
+      kind: 'environmentDiscoveryFailed',
+      data: { message: 'listEnvironments IPC failed' },
+    };
+    mocks.listEnvironments.mockRejectedValue(error);
+
+    await expect(useEnvironmentStore.getState().discover('initial')).rejects.toEqual(error);
+
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [{
+        environment: { kind: 'host' },
+        displayName: 'Host',
+        status: 'available',
+        revision: 0,
+        error: null,
+      }],
+      discoveryState: 'error',
+      discoveryError: error,
+    });
+  });
+
   it('shares one in-flight request across all discovery intents', async () => {
     const request = deferred<{ environments: EnvironmentInfo[]; error: AppError | null }>();
     mocks.listEnvironments.mockReturnValue(request.promise);

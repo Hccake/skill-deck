@@ -533,7 +533,7 @@ pub(crate) async fn run_wsl_script(
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "WSL supervisor 测试需要直接启动受控 shell 子进程"
+    reason = "WSL 子进程监督器测试需要直接启动受控的 shell 子进程"
 )]
 mod tests {
     use std::collections::BTreeMap;

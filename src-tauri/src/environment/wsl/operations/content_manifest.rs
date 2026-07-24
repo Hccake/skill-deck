@@ -144,7 +144,7 @@ fn protocol_error() -> AppError {
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "content manifest 协议测试需要直接执行被验证的 shell fixture"
+    reason = "内容清单协议测试需要直接运行待验证的 shell 测试脚本"
 )]
 mod tests {
     #[cfg(target_os = "linux")]

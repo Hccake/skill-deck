@@ -505,7 +505,7 @@ fn classify_git_command_error(output: &CommandOutput, url: &str, operation: &str
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "Git 测试夹具需要直接启动真实 Git 或可控子进程"
+    reason = "Git 测试夹具需要直接调用真实 Git 或启动可控子进程"
 )]
 mod tests {
     use super::*;

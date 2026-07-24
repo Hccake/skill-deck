@@ -137,7 +137,7 @@ fn backup_path(path: &Path) -> PathBuf {
 #[cfg(all(test, target_os = "linux"))]
 #[allow(
     clippy::disallowed_methods,
-    reason = "atomic file 协议测试需要直接执行被验证的 shell fixture"
+    reason = "原子文件协议测试需要直接运行待验证的 shell 测试脚本"
 )]
 mod tests {
     use std::fs;

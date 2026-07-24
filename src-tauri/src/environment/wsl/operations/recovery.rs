@@ -331,7 +331,7 @@ fn parse_write_response(bytes: &[u8]) -> Result<(), AppError> {
 #[cfg(all(test, target_os = "linux"))]
 #[allow(
     clippy::disallowed_methods,
-    reason = "recovery 协议测试需要直接执行被验证的 shell fixture"
+    reason = "恢复协议测试需要直接运行待验证的 shell 测试脚本"
 )]
 mod tests {
     use std::fs;

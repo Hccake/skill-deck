@@ -231,7 +231,7 @@ fn acquisition_protocol_error() -> AppError {
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "acquisition 测试夹具需要直接启动真实 Git 和 shell"
+    reason = "acquisition 流程测试需要直接调用真实 Git 并运行 shell 测试脚本"
 )]
 mod tests {
     use std::collections::BTreeMap;

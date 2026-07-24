@@ -1,7 +1,7 @@
 #![cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]
 #![allow(
     clippy::disallowed_methods,
-    reason = "WSL integration harness 需要直接终止和清理 disposable distro fixture"
+    reason = "WSL 集成测试需要直接终止并清理用后即弃的测试发行版"
 )]
 
 use std::process::Command;

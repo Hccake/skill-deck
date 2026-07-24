@@ -537,7 +537,7 @@ pub async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, A
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "WSL parser 测试需要直接执行被验证的 bundled shell 脚本"
+    reason = "WSL 解析测试需要直接运行内置的 shell 脚本"
 )]
 mod tests {
     #[cfg(unix)]

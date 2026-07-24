@@ -1,6 +1,6 @@
 #![allow(
     clippy::disallowed_methods,
-    reason = "该 Windows test-support 模块需要直接控制 disposable WSL fixture"
+    reason = "该 Windows test-support 模块需要直接管理用后即弃的 WSL 测试发行版"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};

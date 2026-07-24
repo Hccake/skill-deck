@@ -59,6 +59,22 @@ function runtimeInfo(event: EnvironmentRuntimeEvent, previous?: EnvironmentInfo)
   };
 }
 
+const FALLBACK_HOST_ENVIRONMENT: EnvironmentInfo = {
+  environment: { kind: 'host' },
+  displayName: 'Host',
+  status: 'available',
+  revision: 0,
+  error: null,
+};
+
+function withHostFallback(
+  environments: EnvironmentInfo[],
+  runtimeByEnvironment: Record<string, EnvironmentInfo>,
+): EnvironmentInfo[] {
+  if (environments.some((entry) => entry.environment.kind === 'host')) return environments;
+  return [runtimeByEnvironment.host ?? FALLBACK_HOST_ENVIRONMENT, ...environments];
+}
+
 const DISCOVERY_COOLDOWN_MS = 30_000;
 let discoveryInFlight: Promise<void> | null = null;
 let discoverySequence = 0;
@@ -95,14 +111,18 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
           const discoveredByKey = Object.fromEntries(
             discovered.map((entry) => [environmentKey(entry.environment), entry]),
           );
-          const nextEnvironments = snapshot.error
-            ? Array.from(new Map([
+          const retainedEnvironments = Array.from(new Map([
               ...state.environments.map((entry) => [environmentKey(entry.environment), entry] as const),
               ...discovered.map((entry) => [environmentKey(entry.environment), entry] as const),
-            ]).values())
+            ]).values());
+          const nextEnvironments = snapshot.error
+            ? withHostFallback(retainedEnvironments, state.runtimeByEnvironment)
             : discovered;
+          const nextByKey = Object.fromEntries(
+            nextEnvironments.map((entry) => [environmentKey(entry.environment), entry]),
+          );
           const runtimeByEnvironment = snapshot.error
-            ? { ...state.runtimeByEnvironment, ...discoveredByKey }
+            ? { ...state.runtimeByEnvironment, ...discoveredByKey, ...nextByKey }
             : discoveredByKey;
 
           return {
@@ -116,9 +136,23 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
           };
         });
       } catch (error) {
-        set({
-          discoveryState: 'error',
-          discoveryError: toAppError(error),
+        set((state) => {
+          const environments = withHostFallback(
+            state.environments,
+            state.runtimeByEnvironment,
+          );
+          const host = environments.find((entry) => entry.environment.kind === 'host');
+          return {
+            environments,
+            runtimeByEnvironment: host
+              ? { ...state.runtimeByEnvironment, host }
+              : state.runtimeByEnvironment,
+            errorsByEnvironment: host
+              ? { ...state.errorsByEnvironment, host: host.error }
+              : state.errorsByEnvironment,
+            discoveryState: 'error',
+            discoveryError: toAppError(error),
+          };
         });
         throw error;
       } finally {

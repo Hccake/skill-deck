@@ -100,7 +100,7 @@ pub fn snapshot_from_scan_response(
 #[cfg(all(test, target_os = "linux"))]
 #[allow(
     clippy::disallowed_methods,
-    reason = "inspection 协议测试需要直接执行被验证的 shell fixture"
+    reason = "检查协议测试需要直接运行待验证的 shell 测试脚本"
 )]
 mod tests {
     use std::collections::BTreeSet;
