@@ -7,6 +7,7 @@ const workflowUrl = new URL(
   import.meta.url,
 );
 const ciWorkflowUrl = new URL("../../.github/workflows/ci.yml", import.meta.url);
+const packagerUrl = new URL("../package-updater-artifact.mjs", import.meta.url);
 
 test("PR CI keeps stable required jobs and enforces the exact Rust gate", async () => {
   const workflow = await readFile(ciWorkflowUrl, "utf8");
@@ -29,7 +30,7 @@ test("release workflow keeps platform jobs artifact-only and uses one aggregator
   assert.match(workflow, /build-artifacts:[\s\S]*strategy:[\s\S]*matrix:/);
   assert.match(
     workflow,
-    /build-artifacts:[\s\S]*pnpm bindings:check[\s\S]*pnpm lint[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*cargo test --locked[\s\S]*tauri-action@v1/,
+    /build-artifacts:[\s\S]*pnpm bindings:check[\s\S]*pnpm lint[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*cargo test --locked[\s\S]*tauri-action@[0-9a-f]{40}/,
   );
   assert.match(workflow, /build-artifacts:[\s\S]*package smoke/i);
   assert.doesNotMatch(
@@ -37,6 +38,20 @@ test("release workflow keeps platform jobs artifact-only and uses one aggregator
     /gh release|releaseDraft|uploadUpdaterJson|tagName:/,
   );
   assert.match(workflow, /aggregate:[\s\S]*aggregate-updater-manifest\.mjs/);
+});
+
+test("release workflow builds exactly one Tauri v2 updater bundle per platform", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const build = workflow.match(/\n  build-artifacts:[\s\S]*?(?=\n  aggregate:)/)?.[0] ?? "";
+
+  assert.match(build, /args: --target aarch64-apple-darwin --bundles app/);
+  assert.match(build, /args: --target x86_64-apple-darwin --bundles app/);
+  assert.match(build, /args: --bundles appimage/);
+  assert.match(build, /args: --bundles nsis/);
+  assert.doesNotMatch(build, /mapfile\b/);
+  assert.match(build, /id: tauri-build/);
+  assert.match(build, /TAURI_ARTIFACT_PATHS: \$\{\{ steps\.tauri-build\.outputs\.artifactPaths \}\}/);
+  assert.match(build, /node scripts\/package-updater-artifact\.mjs/);
 });
 
 test("release mutation is fail-closed, idempotent for drafts, and publishes latest.json last", async () => {
@@ -55,13 +70,18 @@ test("release mutation is fail-closed, idempotent for drafts, and publishes late
 });
 
 test("release workflow binds tag, package version, and artifacts to one commit SHA", async () => {
-  const workflow = await readFile(workflowUrl, "utf8");
+  const [workflow, packager] = await Promise.all([
+    readFile(workflowUrl, "utf8"),
+    readFile(packagerUrl, "utf8"),
+  ]);
 
   assert.match(workflow, /git rev-list -n 1/);
   assert.match(workflow, /EXPECTED_TAG="v\$\{VERSION\}"/);
   assert.match(workflow, /commit_sha/);
   assert.match(workflow, /metadata\.json/);
-  assert.match(workflow, /signatureName/);
+  assert.match(workflow, /package-updater-artifact\.mjs/);
+  assert.match(packager, /signatureName/);
+  assert.match(packager, /commitSha/);
   assert.match(workflow, /git show "\$\{COMMIT_SHA\}:package\.json"/);
   assert.match(workflow, /git show "\$\{COMMIT_SHA\}:CHANGELOG\.md"/);
 });

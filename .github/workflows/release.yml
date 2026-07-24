@@ -69,29 +69,17 @@ jobs:
       matrix:
         include:
           - runner: macos-latest
-            args: --target aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app
             platform_key: darwin-aarch64
-            os_name: darwin
-            architecture: aarch64
-            extension: tar.gz
           - runner: macos-latest
-            args: --target x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles app
             platform_key: darwin-x86_64
-            os_name: darwin
-            architecture: x86_64
-            extension: tar.gz
           - runner: ubuntu-22.04
-            args: ""
+            args: --bundles appimage
             platform_key: linux-x86_64
-            os_name: linux
-            architecture: x86_64
-            extension: AppImage.tar.gz
           - runner: windows-latest
-            args: ""
+            args: --bundles nsis
             platform_key: windows-x86_64
-            os_name: windows
-            architecture: x86_64
-            extension: nsis.zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -123,44 +111,21 @@ jobs:
       - name: Run Backend tests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Build signed updater artifact
-        uses: tauri-apps/tauri-action@v1
+        id: tauri-build
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.args }}
       - name: Package smoke and private metadata
-        shell: bash
         env:
           PLATFORM_KEY: ${{ matrix.platform_key }}
-          OS_NAME: ${{ matrix.os_name }}
-          ARCHITECTURE: ${{ matrix.architecture }}
-          EXTENSION: ${{ matrix.extension }}
           VERSION: ${{ needs.validate.outputs.version }}
           TAG: ${{ needs.validate.outputs.tag }}
           COMMIT_SHA: ${{ needs.validate.outputs.commit_sha }}
-          ASSET_NAME: skill-deck_${{ needs.validate.outputs.version }}_${{ matrix.os_name }}_${{ matrix.architecture }}.${{ matrix.extension }}
-        run: |
-          set -euo pipefail
-          mapfile -t SOURCES < <(find src-tauri/target -type f -name "*.${EXTENSION}" ! -name '*.sig' -print | sort)
-          test "${#SOURCES[@]}" -eq 1 || { echo "::error::Expected one updater package, found ${#SOURCES[@]}"; exit 1; }
-          SOURCE="${SOURCES[0]}"
-          test -s "$SOURCE" || { echo "::error::Updater package smoke failed"; exit 1; }
-          test -s "${SOURCE}.sig" || { echo "::error::Missing updater signature"; exit 1; }
-          mkdir -p release-artifact
-          ASSET_NAME="skill-deck_${VERSION}_${OS_NAME}_${ARCHITECTURE}.${EXTENSION}"
-          cp "$SOURCE" "release-artifact/${ASSET_NAME}"
-          cp "${SOURCE}.sig" "release-artifact/${ASSET_NAME}.sig"
-          node -e '
-            const fs=require("fs"); const e=process.env; const asset=e.ASSET_NAME;
-            const signature=fs.readFileSync(`release-artifact/${asset}.sig`, "utf8").trim();
-            if (!signature) throw new Error("Empty updater signature");
-            fs.writeFileSync("release-artifact/metadata.json", JSON.stringify({
-              platform:e.PLATFORM_KEY, architecture:e.ARCHITECTURE, version:e.VERSION,
-              tag:e.TAG, commitSha:e.COMMIT_SHA, assetName:asset,
-              signatureName:`${asset}.sig`, signature
-            }, null, 2));
-          '
+          TAURI_ARTIFACT_PATHS: ${{ steps.tauri-build.outputs.artifactPaths }}
+        run: node scripts/package-updater-artifact.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: updater-${{ matrix.platform_key }}
