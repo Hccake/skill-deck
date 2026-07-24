@@ -18,6 +18,7 @@ use crate::error::AppError;
 pub enum DiscoverySourceLocation {
     Native {
         root: PathBuf,
+        ref_revision: Option<String>,
     },
     WslNative {
         distro_name: String,
@@ -1457,6 +1458,7 @@ mod tests {
                 RetainedDiscoverySource::new(
                     DiscoverySourceLocation::Native {
                         root: PathBuf::from("/managed/source"),
+                        ref_revision: None,
                     },
                     DiscoverySourceDescriptor {
                         source: "source".to_string(),
@@ -1479,6 +1481,7 @@ mod tests {
                 .location(),
             &DiscoverySourceLocation::Native {
                 root: PathBuf::from("/managed/source"),
+                ref_revision: None,
             }
         );
 

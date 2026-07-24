@@ -663,6 +663,13 @@ mod tests {
     use super::*;
     use crate::environment::types::{EnvironmentRef, ResourceLocator};
 
+    #[cfg(unix)]
+    const COMMITTED_FIXTURE_PAYLOAD_HASH: &str =
+        "1e970bd3d1b2da10d37000f4bc5e3964eed67957b14b663f50a3e50794c13bdd";
+    #[cfg(not(unix))]
+    const COMMITTED_FIXTURE_PAYLOAD_HASH: &str =
+        "1f426a8f630882dae9008ce8ccddf8d945276cb99953e43e5f249222ba2c316c";
+
     fn synthetic_payload(paths: &[(&str, PayloadEntryKind)]) -> SkillPayload {
         SkillPayload {
             entries: paths
@@ -784,7 +791,20 @@ mod tests {
     }
 
     #[test]
-    fn committed_fixture_has_fixed_payload_and_cli_hash_vectors() {
+    fn payload_root_hash_includes_executable_metadata() {
+        let mut payload = synthetic_payload(&[("scripts/run.sh", PayloadEntryKind::File)]);
+        let without_executable = compute_payload_root_hash(&payload.entries);
+
+        payload.entries[0].executable = true;
+
+        assert_ne!(
+            compute_payload_root_hash(&payload.entries),
+            without_executable
+        );
+    }
+
+    #[test]
+    fn committed_fixture_has_platform_payload_and_portable_cli_hash_vectors() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/payload/demo");
         let payload = build_skill_payload(&root).expect("fixture payload");
 
@@ -792,14 +812,7 @@ mod tests {
             compute_cli_project_hash(&root).expect("fixture CLI hash"),
             "05e752629100fb12fd9bf4197908b5fb7dd3feeadc7ac50e4a999fc9ad3ee418"
         );
-        assert_eq!(
-            payload.payload_root_hash,
-            if cfg!(unix) {
-                "1e970bd3d1b2da10d37000f4bc5e3964eed67957b14b663f50a3e50794c13bdd"
-            } else {
-                "1f426a8f630882dae9008ce8ccddf8d945276cb99953e43e5f249222ba2c316c"
-            }
-        );
+        assert_eq!(payload.payload_root_hash, COMMITTED_FIXTURE_PAYLOAD_HASH);
     }
 
     #[cfg(unix)]

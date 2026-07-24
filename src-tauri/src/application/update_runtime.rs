@@ -311,11 +311,12 @@ async fn source_ref_revision(
 ) -> Result<String, AppError> {
     let retained = payloads.source_snapshot(discovery)?;
     match retained.location() {
-        DiscoverySourceLocation::Native { root } => {
-            compute_local_ref_revision(root).ok_or_else(|| AppError::GitCloneFailed {
+        DiscoverySourceLocation::Native { root, ref_revision } => ref_revision
+            .clone()
+            .or_else(|| compute_local_ref_revision(root))
+            .ok_or_else(|| AppError::GitCloneFailed {
                 message: "acquired source has no resolvable HEAD revision".to_string(),
-            })
-        }
+            }),
         DiscoverySourceLocation::WslNative { ref_revision, .. } => {
             ref_revision
                 .clone()

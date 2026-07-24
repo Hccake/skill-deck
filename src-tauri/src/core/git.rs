@@ -57,6 +57,9 @@ pub struct CloneResult {
     pub _temp_dir: TempDir,
     /// 仓库路径
     pub repo_path: PathBuf,
+    /// clone 完成时捕获的 HEAD revision。transport 将其传递给后续 source workflow，
+    /// 避免 consumer 再次依赖系统 Git 读取同一份 metadata。
+    pub ref_revision: Option<String>,
 }
 
 /// 克隆仓库到临时目录（带进度回调）
@@ -121,9 +124,11 @@ where
                     timeout_secs,
                     message: None,
                 });
+                let ref_revision = compute_local_ref_revision(&repo_path);
                 Ok(CloneResult {
                     _temp_dir: temp_dir,
                     repo_path,
+                    ref_revision,
                 })
             } else {
                 // 分类错误

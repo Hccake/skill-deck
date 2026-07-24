@@ -9,27 +9,58 @@ use url::Url;
 use crate::application::git_transport::{GitSourceTransport, ProcessGitTransport};
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
-use crate::core::{CloneProgress, CloneResult};
+use crate::core::{ClonePhase, CloneProgress, CloneResult};
 use crate::error::AppError;
 
-/// 对真实 process Git 做计数和故障注入，不自行模拟 Git wire protocol。
-#[derive(Debug, Default)]
-pub(crate) struct CountingGitTransport {
-    process: ProcessGitTransport,
-    clone_count: AtomicUsize,
-    reject_probes: AtomicBool,
-    public_source: Option<String>,
-    local_source: Option<String>,
+/// 不启动 Git process 的可变 Skill tree，用于 application 层的确定性测试。
+pub(crate) struct SkillTreeFixture {
+    _root: TempDir,
+    work: PathBuf,
+    revision: std::sync::Arc<AtomicUsize>,
 }
 
-impl CountingGitTransport {
-    pub(crate) fn for_repo(repo: &BareSkillRepo) -> Self {
+impl SkillTreeFixture {
+    pub(crate) fn new(skills: &[&str]) -> Self {
+        let root = tempfile::tempdir().expect("Skill tree fixture tempdir");
+        let work = root.path().join("work");
+        fs::create_dir_all(&work).expect("create Skill tree fixture");
+        for skill in skills {
+            write_skill(&work, skill, "v1").expect("write initial Skill");
+        }
         Self {
-            process: ProcessGitTransport,
+            _root: root,
+            work,
+            revision: std::sync::Arc::new(AtomicUsize::new(1)),
+        }
+    }
+
+    pub(crate) fn source(&self) -> String {
+        "https://git-fixture.invalid/skill-deck/remote.git".to_string()
+    }
+
+    pub(crate) fn commit_change(&self, skill: &str) {
+        let revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
+        write_skill(&self.work, skill, &format!("v{revision}")).expect("write changed Skill");
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct DeterministicGitTransport {
+    source: String,
+    source_root: PathBuf,
+    revision: std::sync::Arc<AtomicUsize>,
+    clone_count: AtomicUsize,
+    reject_probes: AtomicBool,
+}
+
+impl DeterministicGitTransport {
+    pub(crate) fn for_fixture(fixture: &SkillTreeFixture) -> Self {
+        Self {
+            source: fixture.source(),
+            source_root: fixture.work.clone(),
+            revision: fixture.revision.clone(),
             clone_count: AtomicUsize::new(0),
             reject_probes: AtomicBool::new(false),
-            public_source: Some(repo.source()),
-            local_source: Some(repo.local_source()),
         }
     }
 
@@ -39,6 +70,97 @@ impl CountingGitTransport {
 
     pub(crate) fn reject_probes(&self) {
         self.reject_probes.store(true, Ordering::SeqCst);
+    }
+
+    fn revision(&self) -> String {
+        format!("fixture-revision-{}", self.revision.load(Ordering::SeqCst))
+    }
+
+    fn validate_source(&self, source: &str) -> Result<(), AppError> {
+        if source == self.source {
+            Ok(())
+        } else {
+            Err(AppError::InvalidSource {
+                value: source.to_string(),
+            })
+        }
+    }
+}
+
+impl GitSourceTransport for DeterministicGitTransport {
+    fn clone_source(
+        &self,
+        url: &str,
+        _git_ref: Option<&str>,
+        on_progress: &(dyn Fn(CloneProgress) + Send + Sync),
+        cancellation: CancellationSignal,
+    ) -> Result<CloneResult, AppError> {
+        self.validate_source(url)?;
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        self.clone_count.fetch_add(1, Ordering::SeqCst);
+        on_progress(CloneProgress {
+            phase: ClonePhase::Connecting,
+            elapsed_secs: 0,
+            timeout_secs: 0,
+            message: None,
+        });
+        let temp_dir = tempfile::tempdir()?;
+        copy_tree(&self.source_root, temp_dir.path())?;
+        on_progress(CloneProgress {
+            phase: ClonePhase::Done,
+            elapsed_secs: 0,
+            timeout_secs: 0,
+            message: None,
+        });
+        Ok(CloneResult {
+            repo_path: temp_dir.path().to_path_buf(),
+            ref_revision: Some(self.revision()),
+            _temp_dir: temp_dir,
+        })
+    }
+
+    fn probe_ref_revision(
+        &self,
+        url: &str,
+        _git_ref: Option<&str>,
+        cancellation: CancellationSignal,
+    ) -> Result<String, AppError> {
+        self.validate_source(url)?;
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        if self.reject_probes.load(Ordering::SeqCst) {
+            return Err(AppError::GitCloneFailed {
+                message: "injected remote ref probe failure".to_string(),
+            });
+        }
+        Ok(self.revision())
+    }
+}
+
+/// 对真实 process Git 做计数，并将公开 fixture URL 映射到本地 `file://` remote。
+#[derive(Debug, Default)]
+pub(crate) struct CountingGitTransport {
+    process: ProcessGitTransport,
+    clone_count: AtomicUsize,
+    public_source: Option<String>,
+    local_source: Option<String>,
+}
+
+impl CountingGitTransport {
+    pub(crate) fn for_repo(repo: &BareSkillRepo) -> Self {
+        Self {
+            process: ProcessGitTransport,
+            clone_count: AtomicUsize::new(0),
+            public_source: Some(repo.source()),
+            local_source: Some(repo.local_source()),
+        }
+    }
+
+    pub(crate) fn clone_count(&self) -> usize {
+        self.clone_count.load(Ordering::SeqCst)
     }
 
     fn resolved_source<'a>(&'a self, source: &'a str) -> &'a str {
@@ -73,11 +195,6 @@ impl GitSourceTransport for CountingGitTransport {
         git_ref: Option<&str>,
         cancellation: CancellationSignal,
     ) -> Result<String, AppError> {
-        if self.reject_probes.load(Ordering::SeqCst) {
-            return Err(AppError::GitCloneFailed {
-                message: "injected remote ref probe failure".to_string(),
-            });
-        }
         self.process
             .probe_ref_revision(self.resolved_source(url), git_ref, cancellation)
     }
@@ -137,14 +254,10 @@ impl BareSkillRepo {
         "https://git-fixture.invalid/skill-deck/remote.git".to_string()
     }
 
-    fn local_source(&self) -> String {
+    pub(crate) fn local_source(&self) -> String {
         Url::from_file_path(&self.remote)
             .expect("bare repository file URL")
             .to_string()
-    }
-
-    pub(crate) fn commit_change(&self, skill: &str) {
-        self.publish(skill, "change");
     }
 
     pub(crate) fn publish_change(&self, skill: &str) {
@@ -210,6 +323,21 @@ fn write_skill(root: &Path, skill: &str, version: &str) -> Result<(), AppError> 
         skill_root.join("assets/payload.bin"),
         format!("{name}-{version}-asset").as_bytes(),
     )?;
+    Ok(())
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<(), AppError> {
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            fs::create_dir_all(&destination_path)?;
+            copy_tree(&source_path, &destination_path)?;
+        } else {
+            fs::copy(source_path, destination_path)?;
+        }
+    }
     Ok(())
 }
 

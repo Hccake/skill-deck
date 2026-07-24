@@ -120,13 +120,14 @@ fn window(app: &App<MockRuntime>, label: &str) -> WebviewWindow<MockRuntime> {
 }
 
 fn invoke(window: &WebviewWindow<MockRuntime>, command: &str) -> Result<Value, Value> {
+    let url = window.url().expect("mock webview URL");
     get_ipc_response(
         window,
         InvokeRequest {
             cmd: command.into(),
             callback: tauri::ipc::CallbackFn(0),
             error: tauri::ipc::CallbackFn(1),
-            url: "tauri://localhost".parse().expect("Tauri URL"),
+            url,
             body: tauri::ipc::InvokeBody::default(),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),
@@ -137,9 +138,17 @@ fn invoke(window: &WebviewWindow<MockRuntime>, command: &str) -> Result<Value, V
 
 fn assert_denied(result: Result<Value, Value>, command: &str) {
     let error = result.expect_err("command must be denied");
+    let message = error.as_str().expect("ACL denial must be a string");
     assert!(
-        error.to_string().contains("not allowed"),
+        message.contains("not allowed"),
         "{command} returned an unexpected denial: {error}"
+    );
+    assert!(
+        message
+            .lines()
+            .next()
+            .is_some_and(|line| line.ends_with("URL: local")),
+        "{command} must be denied from the local app origin: {error}"
     );
 }
 

@@ -162,6 +162,7 @@ mod tests {
         RetainedDiscoverySource::new(
             DiscoverySourceLocation::Native {
                 root: "/tmp/source".into(),
+                ref_revision: None,
             },
             DiscoverySourceDescriptor {
                 source: "acme/tools".to_string(),

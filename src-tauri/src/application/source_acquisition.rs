@@ -138,7 +138,10 @@ impl<'a> SourceDiscoveryService<'a> {
                     context.environment,
                     parsed,
                     requested_source,
-                    DiscoverySourceLocation::Native { root: root.clone() },
+                    DiscoverySourceLocation::Native {
+                        root: root.clone(),
+                        ref_revision: None,
+                    },
                     root,
                     (),
                     None,
@@ -154,7 +157,10 @@ impl<'a> SourceDiscoveryService<'a> {
                     context.environment,
                     parsed,
                     requested_source,
-                    DiscoverySourceLocation::Native { root: root.clone() },
+                    DiscoverySourceLocation::Native {
+                        root: root.clone(),
+                        ref_revision: None,
+                    },
                     root.clone(),
                     ManagedDownloadedDirectory::new(root),
                     None,
@@ -182,12 +188,16 @@ impl<'a> SourceDiscoveryService<'a> {
                     message: format!("native Git clone task failed: {error}"),
                 })??;
                 let root = cloned.repo_path.clone();
+                let ref_revision = cloned.ref_revision.clone();
                 retain_discovered_source(
                     self.sessions.clone(),
                     context.environment,
                     parsed,
                     requested_source,
-                    DiscoverySourceLocation::Native { root: root.clone() },
+                    DiscoverySourceLocation::Native {
+                        root: root.clone(),
+                        ref_revision,
+                    },
                     root,
                     cloned,
                     None,
@@ -218,7 +228,10 @@ impl<'a> SourceDiscoveryService<'a> {
                                 environment,
                                 parsed,
                                 requested_source,
-                                DiscoverySourceLocation::Native { root: root.clone() },
+                                DiscoverySourceLocation::Native {
+                                    root: root.clone(),
+                                    ref_revision: None,
+                                },
                                 root,
                                 owner,
                                 Some(storage),
@@ -748,7 +761,7 @@ impl SelectedPayloadAcquisitionService {
         let mut handles = Vec::with_capacity(request.skill_paths.len());
 
         match source.location() {
-            DiscoverySourceLocation::Native { root } => {
+            DiscoverySourceLocation::Native { root, .. } => {
                 let mut existing = BTreeMap::new();
                 for skill_path in &request.skill_paths {
                     let skill = source.skill(skill_path).ok_or(AppError::StalePayload)?;
@@ -1575,6 +1588,7 @@ mod tests {
                 RetainedDiscoverySource::new(
                     DiscoverySourceLocation::Native {
                         root: source.path().to_path_buf(),
+                        ref_revision: None,
                     },
                     DiscoverySourceDescriptor {
                         source: "owner/repo".to_string(),

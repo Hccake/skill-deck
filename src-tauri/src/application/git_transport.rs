@@ -48,3 +48,41 @@ impl GitSourceTransport for ProcessGitTransport {
         probe_remote_ref_revision(url, git_ref, cancellation)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{GitSourceTransport, ProcessGitTransport};
+    use crate::core::mutation::CancellationSignal;
+    use crate::git_fixture::BareSkillRepo;
+
+    #[test]
+    fn process_transport_clones_and_probes_a_local_file_remote() {
+        let remote = BareSkillRepo::new(&["skills/alpha"]);
+        let transport = ProcessGitTransport;
+        let source = remote.local_source();
+
+        let initial_revision = transport
+            .probe_ref_revision(&source, Some("main"), CancellationSignal::default())
+            .expect("probe initial revision");
+        let cloned = transport
+            .clone_source(
+                &source,
+                Some("main"),
+                &|_| {},
+                CancellationSignal::default(),
+            )
+            .expect("clone local remote");
+
+        assert!(cloned.repo_path.join("skills/alpha/SKILL.md").is_file());
+        assert_eq!(
+            cloned.ref_revision.as_deref(),
+            Some(initial_revision.as_str())
+        );
+
+        remote.publish_change("skills/alpha");
+        let changed_revision = transport
+            .probe_ref_revision(&source, Some("main"), CancellationSignal::default())
+            .expect("probe changed revision");
+        assert_ne!(changed_revision, initial_revision);
+    }
+}

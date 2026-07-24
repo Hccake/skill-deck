@@ -354,6 +354,52 @@ mod tests {
         assert!(link.symlink_metadata().is_err());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn inspection_and_removal_do_not_follow_a_final_junction() {
+        let temp = tempdir().expect("temp");
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        fs::create_dir(&target).expect("target");
+        fs::write(target.join("keep.txt"), b"keep").expect("content");
+        junction::create(&target, &link).expect("junction");
+
+        let inspected = inspect_entry_no_follow(&link).expect("inspect");
+        assert!(matches!(
+            inspected.kind,
+            NativeEntryKind::Symlink | NativeEntryKind::ReparsePoint
+        ));
+
+        remove_entry_no_follow(&link).expect("remove junction");
+        assert!(link.symlink_metadata().is_err());
+        assert_eq!(
+            fs::read(target.join("keep.txt")).expect("target remains"),
+            b"keep"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dangling_junction_is_visible_and_removable() {
+        let temp = tempdir().expect("temp");
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        fs::create_dir(&target).expect("target");
+        junction::create(&target, &link).expect("junction");
+        fs::remove_dir(&target).expect("remove junction target");
+
+        let inspected = inspect_entry_no_follow(&link).expect("inspect dangling junction");
+        assert!(matches!(
+            inspected.kind,
+            NativeEntryKind::Symlink | NativeEntryKind::ReparsePoint
+        ));
+        assert!(!link.exists());
+        assert!(link.symlink_metadata().is_ok());
+
+        remove_entry_no_follow(&link).expect("remove dangling junction");
+        assert!(link.symlink_metadata().is_err());
+    }
+
     #[cfg(any(unix, windows))]
     #[test]
     fn parent_identity_is_shared_by_siblings_and_differs_across_parents() {

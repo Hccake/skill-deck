@@ -15,9 +15,7 @@ use crate::application::source_snapshot_reuse::{PayloadAcquisitionKey, SourceSna
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::source_identity::{NormalizedRef, SourceProvider};
-use crate::core::{
-    compute_local_ref_revision, GithubApiClient, GithubTreeFailure, GithubTreeFetchOutcome,
-};
+use crate::core::{GithubApiClient, GithubTreeFailure, GithubTreeFetchOutcome};
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::EnvironmentRegistry;
 use crate::error::AppError;
@@ -272,7 +270,7 @@ impl RuntimeSourceEvidenceDetector {
                     .payloads
                     .source_snapshot(&discovery.discovery_session)?;
                 let ref_revision = match snapshot.location() {
-                    DiscoverySourceLocation::Native { root } => compute_local_ref_revision(root),
+                    DiscoverySourceLocation::Native { ref_revision, .. } => ref_revision.clone(),
                     DiscoverySourceLocation::WslNative { .. } => None,
                 }
                 .ok_or_else(|| AppError::GitCloneFailed {
@@ -426,7 +424,7 @@ mod tests {
     use crate::core::GithubApiClient;
     use crate::environment::types::EnvironmentRef;
     use crate::environment::wsl::EnvironmentRegistry;
-    use crate::git_fixture::{BareSkillRepo as FileBareSkillRepo, CountingGitTransport};
+    use crate::git_fixture::{DeterministicGitTransport, SkillTreeFixture};
 
     fn payloads() -> Arc<PayloadSessionManager> {
         Arc::new(PayloadSessionManager::in_memory(
@@ -806,7 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn clone_detector_discovers_all_paths_but_hashes_only_requested_skills() {
-        let remote = FileBareSkillRepo::new(&["skills/alpha", "skills/beta"]);
+        let remote = SkillTreeFixture::new(&["skills/alpha", "skills/beta"]);
         let parsed = ParsedSource {
             source_type: SourceType::Git,
             url: remote.source(),
@@ -817,7 +815,7 @@ mod tests {
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
         let payloads = payloads();
-        let git_transport = Arc::new(CountingGitTransport::for_repo(&remote));
+        let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = RuntimeSourceEvidenceDetector::with_git_transport(
             payloads.clone(),
             Arc::new(EnvironmentRegistry::default()),
@@ -847,7 +845,7 @@ mod tests {
             NormalizedRef::Named("main".into())
         );
         assert_eq!(evidence.snapshot_id.resolved_ref, "main");
-        assert_eq!(evidence.snapshot_id.commit_revision.len(), 40);
+        assert_eq!(evidence.snapshot_id.commit_revision, "fixture-revision-1");
         assert_eq!(evidence.complete_skill_path_catalog.len(), 2);
         assert!(matches!(
             evidence.skill_revisions.get("skills/alpha"),
@@ -866,7 +864,7 @@ mod tests {
 
     #[tokio::test]
     async fn clone_detector_enriches_a_retained_snapshot_without_recloning() {
-        let remote = FileBareSkillRepo::new(&["skills/alpha", "skills/beta"]);
+        let remote = SkillTreeFixture::new(&["skills/alpha", "skills/beta"]);
         let parsed = ParsedSource {
             source_type: SourceType::Git,
             url: remote.source(),
@@ -878,7 +876,7 @@ mod tests {
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
         let payloads = payloads();
         let snapshots = Arc::new(SourceSnapshotReuseIndex::default());
-        let git_transport = Arc::new(CountingGitTransport::for_repo(&remote));
+        let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = Arc::new(RuntimeSourceEvidenceDetector::with_git_transport(
             payloads,
             Arc::new(EnvironmentRegistry::default()),
@@ -916,7 +914,7 @@ mod tests {
 
     #[tokio::test]
     async fn clone_detector_reacquires_when_the_remote_ref_changes() {
-        let remote = FileBareSkillRepo::new(&["skills/alpha"]);
+        let remote = SkillTreeFixture::new(&["skills/alpha"]);
         let parsed = ParsedSource {
             source_type: SourceType::Git,
             url: remote.source(),
@@ -926,7 +924,7 @@ mod tests {
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
-        let git_transport = Arc::new(CountingGitTransport::for_repo(&remote));
+        let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = RuntimeSourceEvidenceDetector::with_git_transport(
             payloads(),
             Arc::new(EnvironmentRegistry::default()),
@@ -964,7 +962,7 @@ mod tests {
 
     #[tokio::test]
     async fn clone_detector_does_not_reuse_after_remote_probe_failure() {
-        let remote = FileBareSkillRepo::new(&["skills/alpha"]);
+        let remote = SkillTreeFixture::new(&["skills/alpha"]);
         let parsed = ParsedSource {
             source_type: SourceType::Git,
             url: remote.source(),
@@ -974,7 +972,7 @@ mod tests {
             skill_filter: None,
         };
         let identity = SourceIdentity::from_parsed(&parsed).unwrap();
-        let git_transport = Arc::new(CountingGitTransport::for_repo(&remote));
+        let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = RuntimeSourceEvidenceDetector::with_git_transport(
             payloads(),
             Arc::new(EnvironmentRegistry::default()),
