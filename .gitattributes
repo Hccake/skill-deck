@@ -1,0 +1,8 @@
+# 统一仓库中文本文件的行尾，不受贡献者 core.autocrlf 配置影响。
+* text=auto eol=lf
+
+# 应用资源和按字节校验的 fixture 必须保持原始内容。
+*.bin binary
+*.icns binary
+*.ico binary
+*.png binary
