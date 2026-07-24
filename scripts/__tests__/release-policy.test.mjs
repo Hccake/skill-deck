@@ -51,7 +51,23 @@ test("release workflow builds exactly one Tauri v2 updater bundle per platform",
   assert.doesNotMatch(build, /mapfile\b/);
   assert.match(build, /id: tauri-build/);
   assert.match(build, /TAURI_ARTIFACT_PATHS: \$\{\{ steps\.tauri-build\.outputs\.artifactPaths \}\}/);
-  assert.match(build, /node scripts\/package-updater-artifact\.mjs/);
+  assert.match(build, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(build, /path: \.release-tooling/);
+  assert.match(build, /node \.release-tooling\/scripts\/package-updater-artifact\.mjs/);
+});
+
+test("release helpers come from the workflow commit instead of the tagged application commit", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const build = workflow.match(/\n  build-artifacts:[\s\S]*?(?=\n  aggregate:)/)?.[0] ?? "";
+  const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
+
+  for (const job of [build, aggregate]) {
+    assert.match(job, /name: Checkout release tooling/);
+    assert.match(job, /ref: \$\{\{ github\.workflow_sha \}\}/);
+    assert.match(job, /path: \.release-tooling/);
+    assert.match(job, /sparse-checkout: scripts/);
+  }
+  assert.match(aggregate, /node \.release-tooling\/scripts\/aggregate-updater-manifest\.mjs/);
 });
 
 test("release mutation is fail-closed, idempotent for drafts, and publishes latest.json last", async () => {
