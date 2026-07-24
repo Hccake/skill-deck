@@ -5,11 +5,30 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.7.0-beta.1] - 2026-07-24
+
+### Added
+
+- **新增 Custom Agent 管理功能** — `Settings > Agents` 支持创建、编辑、复制和删除 Custom Agent，并可将其用于安装、默认目标、Detection 和 Skill 管理。
+- **新增 Windows/WSL Environment 支持** — Windows 可以在 Host 与多个 WSL 发行版之间切换，并分别管理 Global/Project Context、Project、Skill 和 Agent 状态。
+- **新增 Recovery Center** — 写操作无法自动恢复时保留恢复数据，并提供查看、刷新和清理入口。
 
 ### Changed
 
+- **重构 Skill 生命周期管理代码** — 安装、更新、移除、Manage Agents 和项目复制改为先生成变更预览，再按 Skill 或项目返回执行结果。
+- **调整 Skill 目录内容处理方式** — 安装、更新和复制会保留 `SKILL.md`、scripts、references、assets、metadata、嵌套目录及其他有效文件。
+- **调整更新检查和来源维护流程** — 更新检查区分有更新、已是最新、检查失败、来源不可达、信息不足和上游已删除，并支持重新选择来源。
+- **调整更新时的 copy 处理方式** — link 和未修改的 copy 随更新同步；存在本地修改的独立 copy 由用户决定是否覆盖。
+- **调整 Project Skill 复制流程** — 复制时支持选择目标 Environment，并在该 Environment 中选择目标项目。
+- **调整 Agent 解析和分组规则** — 安装、默认目标和 Manage Agents 按实际目录分组；Skill 页面只展示实际能够读取该 Skill 的 Agent。
+- **调整安装确认流程** — 确认页固定已选择的 Skill 内容并生成变更预览，准备失败时保留当前步骤并显示原因。
 - **调整 Skill 删除流程** — 从 Skill Card 删除时展示通用 Skill 目录和全部 Agent 软连接或副本，确认后完整删除；只调整部分 Agent 时继续使用 Manage Agents，删除范围变化或执行失败时可以重新确认或重试。
+- **调整应用更新失败处理** — 更新检查或安装失败后在更新对话框中显示错误，并提供重试入口。
+
+### Fixed
+
+- **修复安装目标状态丢失问题** — 切换安装步骤、重新准备或完成 Custom Agent 配置后，保留已选择的 Agent、adapter target 和安装方式。
+- **修复启动偏好恢复时机** — 主窗口和安装向导在首次渲染前应用已保存的主题和语言。
 
 ## [1.6.2] - 2026-07-07
 
