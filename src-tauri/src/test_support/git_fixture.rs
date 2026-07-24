@@ -1,6 +1,6 @@
 #![allow(
     clippy::disallowed_methods,
-    reason = "该 test-support 模块需要直接调用真实 Git 构建测试仓库"
+    reason = "该测试支持模块需要直接调用真实 Git 构建测试仓库"
 )]
 
 use std::fs;
