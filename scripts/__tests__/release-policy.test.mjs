@@ -8,6 +8,7 @@ const workflowUrl = new URL(
 );
 const ciWorkflowUrl = new URL("../../.github/workflows/ci.yml", import.meta.url);
 const packagerUrl = new URL("../package-updater-artifact.mjs", import.meta.url);
+const releaseVerifierUrl = new URL("../verify-release-assets.mjs", import.meta.url);
 
 test("PR CI keeps stable required jobs and enforces the exact Rust gate", async () => {
   const workflow = await readFile(ciWorkflowUrl, "utf8");
@@ -71,11 +72,14 @@ test("release helpers come from the workflow commit instead of the tagged applic
 });
 
 test("release mutation is fail-closed, idempotent for drafts, and publishes latest.json last", async () => {
-  const workflow = await readFile(workflowUrl, "utf8");
+  const [workflow, verifier] = await Promise.all([
+    readFile(workflowUrl, "utf8"),
+    readFile(releaseVerifierUrl, "utf8"),
+  ]);
   const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
 
   assert.match(aggregate, /isDraft/);
-  assert.match(aggregate, /published Release/i);
+  assert.match(verifier, /published Release/i);
   assert.match(aggregate, /gh release create/);
   assert.match(aggregate, /gh release upload[\s\S]*--clobber/);
   assert.match(
@@ -83,6 +87,21 @@ test("release mutation is fail-closed, idempotent for drafts, and publishes late
     /Verify remote assets[\s\S]*Upload latest\.json last/,
   );
   assert.doesNotMatch(aggregate, /gh release upload[^\n]*metadata/i);
+});
+
+test("release aggregation uses tested scripts instead of inline Node heredocs", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
+
+  assert.doesNotMatch(aggregate, /node\s+-\s+<<|<<['\"]?NODE/);
+  assert.match(
+    aggregate,
+    /node \.release-tooling\/scripts\/verify-release-assets\.mjs[\s\S]*--mode draft/,
+  );
+  assert.match(
+    aggregate,
+    /node \.release-tooling\/scripts\/verify-release-assets\.mjs[\s\S]*--mode uploaded/,
+  );
 });
 
 test("release workflow binds tag, package version, and artifacts to one commit SHA", async () => {
@@ -103,7 +122,10 @@ test("release workflow binds tag, package version, and artifacts to one commit S
 });
 
 test("release workflow derives and enforces GitHub prerelease state from the version", async () => {
-  const workflow = await readFile(workflowUrl, "utf8");
+  const [workflow, verifier] = await Promise.all([
+    readFile(workflowUrl, "utf8"),
+    readFile(releaseVerifierUrl, "utf8"),
+  ]);
   const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
 
   assert.match(
@@ -114,20 +136,23 @@ test("release workflow derives and enforces GitHub prerelease state from the ver
   assert.match(workflow, /echo "prerelease=\$PRERELEASE"/);
   assert.match(aggregate, /--json isDraft,isPrerelease,assets/);
   assert.match(aggregate, /EXPECTED_PRERELEASE/);
-  assert.match(aggregate, /Release prerelease state does not match version/);
+  assert.match(verifier, /Release prerelease state does not match version/);
   assert.match(aggregate, /PRERELEASE_ARGS=\(\)/);
   assert.match(aggregate, /PRERELEASE_ARGS\+=\(--prerelease\)/);
   assert.match(aggregate, /gh release create[\s\S]*"\$\{PRERELEASE_ARGS\[@\]\}"/);
 });
 
 test("release verification rejects stale managed assets and verifies the final manifest", async () => {
-  const workflow = await readFile(workflowUrl, "utf8");
+  const [workflow, verifier] = await Promise.all([
+    readFile(workflowUrl, "utf8"),
+    readFile(releaseVerifierUrl, "utf8"),
+  ]);
   const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
 
-  assert.match(aggregate, /unexpected managed updater asset/i);
+  assert.match(verifier, /unexpected managed updater asset/i);
   assert.match(aggregate, /Verify uploaded latest\.json/);
   assert.ok(
-    aggregate.indexOf("Unexpected managed updater asset")
+    aggregate.indexOf("--mode draft")
       < aggregate.indexOf('gh release upload "$TAG" "${FILES[@]}" --clobber'),
     "unexpected managed updater assets must be rejected before the first upload",
   );

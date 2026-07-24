@@ -177,29 +177,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if STATE="$(gh release view "$TAG" --json isDraft,isPrerelease,assets 2>/dev/null)"; then
-            IS_DRAFT="$(node -e 'console.log(JSON.parse(process.argv[1]).isDraft)' "$STATE")"
-            test "$IS_DRAFT" = true || { echo "::error::Refusing to modify a published Release"; exit 1; }
-            IS_PRERELEASE="$(node -e 'console.log(JSON.parse(process.argv[1]).isPrerelease)' "$STATE")"
-            test "$IS_PRERELEASE" = "$EXPECTED_PRERELEASE" \
-              || { echo "::error::Release prerelease state does not match version"; exit 1; }
-            node - <<'NODE' "$STATE"
-            const { execFileSync } = require('child_process');
-            const release = JSON.parse(process.argv[2]);
-            const expected = new Set(execFileSync(
-              'find',
-              ['release-artifacts', '-type', 'f', '!', '-name', 'metadata.json'],
-              { encoding: 'utf8' },
-            ).trim().split('\n').filter(Boolean).map(file => file.split('/').pop()));
-            for (const asset of release.assets) {
-              if (asset.name === 'metadata.json' || asset.name.endsWith('/metadata.json')) {
-                throw new Error('Metadata fragments must never be published');
-              }
-              if (asset.name.startsWith('skill-deck_') && !expected.has(asset.name)) {
-                throw new Error(`Unexpected managed updater asset: ${asset.name}`);
-              }
-            }
-            NODE
+          if gh release view "$TAG" --json isDraft,isPrerelease,assets > release-state.json 2>/dev/null; then
+            node .release-tooling/scripts/verify-release-assets.mjs \
+              --mode draft \
+              --release release-state.json \
+              --input release-artifacts \
+              --expected-prerelease "$EXPECTED_PRERELEASE"
             echo 'exists=true' >> "$GITHUB_OUTPUT"
           else
             echo 'exists=false' >> "$GITHUB_OUTPUT"
@@ -236,27 +219,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
-          VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           gh release view "$TAG" --json assets > remote-assets.json
-          node - <<'NODE'
-          const fs = require('fs');
-          const { execFileSync } = require('child_process');
-          const local = execFileSync('find', ['release-artifacts', '-type', 'f', '!', '-name', 'metadata.json'], { encoding: 'utf8' })
-            .trim().split('\n').filter(Boolean).map(file => ({ name: file.split('/').pop(), size: fs.statSync(file).size }));
-          const remoteAssets = JSON.parse(fs.readFileSync('remote-assets.json')).assets;
-          const remote = new Map(remoteAssets.map(asset => [asset.name, asset.size]));
-          for (const asset of local) if (remote.get(asset.name) !== asset.size) throw new Error(`Remote asset mismatch: ${asset.name}`);
-          const expected = new Set(local.map(asset => asset.name));
-          for (const asset of remoteAssets) {
-            if (asset.name === 'metadata.json' || asset.name.endsWith('/metadata.json')) throw new Error('Metadata fragments must never be published');
-            if (asset.name.startsWith('skill-deck_') && !expected.has(asset.name)) {
-              throw new Error(`Unexpected managed updater asset: ${asset.name}`);
-            }
-          }
-          NODE
+          node .release-tooling/scripts/verify-release-assets.mjs \
+            --mode uploaded \
+            --release remote-assets.json \
+            --input release-artifacts
       - name: Upload latest.json last
         env:
           GH_TOKEN: ${{ github.token }}
