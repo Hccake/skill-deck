@@ -30,15 +30,17 @@ describe('Environment revision convergence', () => {
     vi.clearAllMocks();
     useEnvironmentStore.setState({
       environments: [],
+      runtimeByEnvironment: {},
       discoveryState: 'idle',
       discoveryError: null,
       errorsByEnvironment: {},
+      discoveryCompletedAt: null,
     });
   });
 
   it('rejects older events and older discovery snapshots per Environment', async () => {
     api.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
-    await useEnvironmentStore.getState().discover();
+    await useEnvironmentStore.getState().discover('initial');
 
     const newer: EnvironmentRuntimeEvent = {
       revision: 7,
@@ -56,7 +58,7 @@ describe('Environment revision convergence', () => {
       environments: [host, { ...ubuntu, revision: 6 }],
       error: null,
     });
-    await useEnvironmentStore.getState().discover();
+    await useEnvironmentStore.getState().discover('userRetry');
 
     expect(useEnvironmentStore.getState().environments[1]).toMatchObject({
       status: 'unavailable',
@@ -75,7 +77,7 @@ describe('Environment revision convergence', () => {
     useEnvironmentStore.getState().applyRuntimeEvent(event);
     api.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
 
-    await useEnvironmentStore.getState().discover();
+    await useEnvironmentStore.getState().discover('initial');
 
     expect(useEnvironmentStore.getState().environments[1]).toMatchObject({
       status: 'connecting',

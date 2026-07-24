@@ -685,7 +685,7 @@ export function AgentSettingsPage({
             discoveryError={discoveryError}
             connectionErrors={connectionErrors}
             pendingEnvironment={pendingEnvironment}
-            onRetryDiscovery={() => void discoverEnvironments().catch(() => undefined)}
+            onRetryDiscovery={() => void discoverEnvironments('userRetry').catch(() => undefined)}
             onRetryConnection={(environment) => void switchEnvironment(environment).catch(() => undefined)}
             className="h-8 min-w-48 rounded-md border border-border/60 bg-background px-3 text-xs"
           />

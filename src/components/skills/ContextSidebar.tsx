@@ -266,7 +266,7 @@ export function ContextSidebar() {
             discoveryError={discoveryError}
             connectionErrors={connectionErrors}
             pendingEnvironment={pendingEnvironment}
-            onRetryDiscovery={() => discover().catch((error) => {
+            onRetryDiscovery={() => discover('userRetry').catch((error) => {
               console.error('Failed to discover environments:', error);
             })}
             onRetryConnection={(target) => switchEnvironment(target).catch((error) => {

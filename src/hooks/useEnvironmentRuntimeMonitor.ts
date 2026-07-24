@@ -1,6 +1,9 @@
 import { useEffect } from 'react';
 import { events } from '@/bindings';
-import { useEnvironmentStore } from '@/stores/environment';
+import {
+  useEnvironmentStore,
+  type EnvironmentDiscoveryIntent,
+} from '@/stores/environment';
 
 export function useEnvironmentRuntimeMonitor() {
   const applyRuntimeEvent = useEnvironmentStore((state) => state.applyRuntimeEvent);
@@ -11,16 +14,16 @@ export function useEnvironmentRuntimeMonitor() {
     let unlisten: (() => void) | undefined;
     let subscribing = false;
 
-    const refreshSnapshot = async () => {
+    const refreshSnapshot = async (intent: EnvironmentDiscoveryIntent) => {
       if (disposed) return;
       try {
-        await discover();
+        await discover(intent);
       } catch (error) {
         if (!disposed) console.error('Failed to refresh environment runtime state:', error);
       }
     };
 
-    const subscribe = async () => {
+    const subscribe = async (intent: EnvironmentDiscoveryIntent) => {
       if (disposed || subscribing || unlisten) return;
       subscribing = true;
       try {
@@ -37,13 +40,13 @@ export function useEnvironmentRuntimeMonitor() {
       } finally {
         subscribing = false;
       }
-      await refreshSnapshot();
+      await refreshSnapshot(intent);
     };
 
-    void subscribe();
+    void subscribe('initial');
     const refreshOnFocus = () => {
-      if (unlisten) void refreshSnapshot();
-      else void subscribe();
+      if (unlisten) void refreshSnapshot('resume');
+      else void subscribe('resume');
     };
     window.addEventListener('focus', refreshOnFocus);
 
