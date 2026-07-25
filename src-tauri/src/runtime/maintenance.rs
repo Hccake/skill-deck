@@ -27,10 +27,7 @@ pub struct MaintenanceTaskOutcome {
 pub type MaintenanceFuture<'a> = Pin<Box<dyn Future<Output = MaintenanceTaskOutcome> + Send + 'a>>;
 
 pub trait RuntimeMaintenanceBackend: Send + Sync {
-    fn run<'a>(
-        &'a self,
-        environment: &'a EnvironmentRef,
-    ) -> MaintenanceFuture<'a>;
+    fn run<'a>(&'a self, environment: &'a EnvironmentRef) -> MaintenanceFuture<'a>;
 }
 
 pub struct RuntimeMaintenanceTasks {
@@ -118,10 +115,7 @@ impl RuntimeMaintenanceTasks {
 }
 
 impl RuntimeMaintenanceBackend for RuntimeMaintenanceTasks {
-    fn run<'a>(
-        &'a self,
-        environment: &'a EnvironmentRef,
-    ) -> MaintenanceFuture<'a> {
+    fn run<'a>(&'a self, environment: &'a EnvironmentRef) -> MaintenanceFuture<'a> {
         Box::pin(async move {
             let _lease = match self
                 .mutation
@@ -137,9 +131,7 @@ impl RuntimeMaintenanceBackend for RuntimeMaintenanceTasks {
             };
             match environment {
                 EnvironmentRef::Host => self.run_host().await,
-                EnvironmentRef::Wsl { distro_name } => {
-                    self.run_wsl(environment, distro_name).await
-                }
+                EnvironmentRef::Wsl { distro_name } => self.run_wsl(environment, distro_name).await,
             }
         })
     }
@@ -287,10 +279,7 @@ impl RuntimeMaintenanceCoordinator {
             }
         };
 
-        let outcome = self
-            .backend
-            .run(&environment)
-            .await;
+        let outcome = self.backend.run(&environment).await;
         let mut issues = Vec::new();
         match outcome.payload {
             Ok(report) => {
@@ -379,7 +368,7 @@ fn state_error() -> AppError {
 mod tests {
     use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use tokio::sync::{Notify, Semaphore};
 
@@ -429,10 +418,7 @@ mod tests {
     }
 
     impl RuntimeMaintenanceBackend for FakeBackend {
-        fn run<'a>(
-            &'a self,
-            _environment: &'a EnvironmentRef,
-        ) -> MaintenanceFuture<'a> {
+        fn run<'a>(&'a self, _environment: &'a EnvironmentRef) -> MaintenanceFuture<'a> {
             Box::pin(async move {
                 let call = self.calls.fetch_add(1, Ordering::SeqCst);
                 self.started.notify_waiters();
