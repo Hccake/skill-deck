@@ -13,13 +13,7 @@ pub async fn preview_remove(
     skill_name: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<RemovePreview, AppError> {
-    let result = runtime.remove().preview(&context, &skill_name).await;
-    crate::diagnostics::record_command_result(
-        crate::diagnostics::DiagnosticOperation::Remove,
-        &result,
-        &context,
-    );
-    result
+    runtime.remove().preview(&context, &skill_name).await
 }
 
 #[tauri::command]
@@ -28,7 +22,7 @@ pub async fn remove_skill(
     request: RemoveRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<RemoveResponse, AppError> {
-    let result = async {
+    async {
         let guard = runtime
             .mutation()
             .begin(MutationKind::Remove, request.context.clone())?;
@@ -38,11 +32,5 @@ pub async fn remove_skill(
             .execute(&request, guard.cancellation())
             .await
     }
-    .await;
-    crate::diagnostics::record_command_result(
-        crate::diagnostics::DiagnosticOperation::Remove,
-        &result,
-        &request.context,
-    );
-    result
+    .await
 }

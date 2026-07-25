@@ -69,16 +69,6 @@ fn open_config_resource() -> &'static str {
 }
 
 #[tauri::command]
-fn open_diagnostics_directory() -> &'static str {
-    "open-diagnostics-directory"
-}
-
-#[tauri::command]
-fn read_recent_diagnostics() -> &'static str {
-    "read-recent-diagnostics"
-}
-
-#[tauri::command]
 fn check_application_update() -> &'static str {
     "check-application-update"
 }
@@ -109,8 +99,6 @@ fn test_app() -> App<MockRuntime> {
             open_recovery_resource,
             open_skill_resource,
             open_config_resource,
-            open_diagnostics_directory,
-            read_recent_diagnostics,
             check_application_update,
             request_agent_configuration,
             complete_agent_configuration,
@@ -183,14 +171,6 @@ fn main_window_allows_skill_repair_commands() {
     assert_eq!(
         invoke(&main, "open_config_resource"),
         Ok(Value::from("open-config-resource"))
-    );
-    assert_eq!(
-        invoke(&main, "open_diagnostics_directory"),
-        Ok(Value::from("open-diagnostics-directory"))
-    );
-    assert_eq!(
-        invoke(&main, "read_recent_diagnostics"),
-        Ok(Value::from("read-recent-diagnostics"))
     );
     assert_eq!(
         invoke(&main, "complete_agent_configuration"),
@@ -279,14 +259,6 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "open_config_resource"),
         "open_config_resource",
-    );
-    assert_denied(
-        invoke(&wizard, "open_diagnostics_directory"),
-        "open_diagnostics_directory",
-    );
-    assert_denied(
-        invoke(&wizard, "read_recent_diagnostics"),
-        "read_recent_diagnostics",
     );
     assert_denied(
         invoke(&wizard, "check_application_update"),

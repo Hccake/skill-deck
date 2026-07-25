@@ -249,7 +249,6 @@ where
             match self.entries.cleanup(staged).await {
                 Ok(warnings) => results.push(success_result(&unit, lock_committed, warnings)),
                 Err(error) => {
-                    crate::diagnostics::record_mutation_cleanup_warning(&error.to_string());
                     results.push(success_result(
                         &unit,
                         lock_committed,
@@ -374,7 +373,6 @@ fn failed_result(
         _ => MutationUnitStatus::Failed,
     };
     let report = ErrorReport::from_app_error(error, Some(unit.target.clone()));
-    crate::diagnostics::record_mutation_failure(&report);
     if status == MutationUnitStatus::RecoveryRequired {
         let mut result = MutationUnitResult::recovery_required(
             unit.id.clone(),

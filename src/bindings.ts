@@ -233,22 +233,6 @@ async openConfigResource(context: ContextRef, kind: ConfigResourceKind) : Promis
     else return { status: "error", error: e  as any };
 }
 },
-async openDiagnosticsDirectory() : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("open_diagnostics_directory") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async readRecentDiagnostics() : Promise<Result<string, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("read_recent_diagnostics") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async cleanupDuplicateAgentCopies(context: ContextRef, skillName: string, agents: AgentId[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copies", { context, skillName, agents }) };

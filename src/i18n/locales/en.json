@@ -810,16 +810,6 @@
     "aboutSections": {
       "tagline": "Desktop Agent Manager"
     },
-    "diagnostics": {
-      "title": "Diagnostics",
-      "description": "Redacted records for failed operations are stored on this device.",
-      "openDirectory": "Open Diagnostics Folder",
-      "openError": "The diagnostics folder could not be opened. You can still copy the diagnostics.",
-      "copy": "Copy Diagnostics",
-      "copySuccess": "Diagnostics copied",
-      "copyError": "Diagnostics could not be copied.",
-      "empty": "No diagnostics have been recorded yet."
-    },
     "links": {
       "openSource": "OPEN SOURCE",
       "githubTitle": "GitHub Repo",

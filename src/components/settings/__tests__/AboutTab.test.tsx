@@ -1,15 +1,10 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useUpdaterStore } from '@/stores/updater';
 import { AboutTab } from '../AboutTab';
-
-const mocks = vi.hoisted(() => ({
-  openDiagnosticsDirectory: vi.fn().mockResolvedValue(undefined),
-  readRecentDiagnostics: vi.fn().mockResolvedValue('diagnostic-record'),
-}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -23,21 +18,12 @@ vi.mock('@/lifecycle/useWindowLifecycle', () => ({
   useWindowLifecycle: () => ({ requestAction: vi.fn() }),
 }));
 
-vi.mock('@/hooks/useTauriApi', () => ({
-  openDiagnosticsDirectory: mocks.openDiagnosticsDirectory,
-  readRecentDiagnostics: mocks.readRecentDiagnostics,
-}));
-
 describe('AboutTab updater actions', () => {
   const checkForUpdate = vi.fn().mockResolvedValue(undefined);
   const showDialog = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-    });
     useUpdaterStore.setState({
       status: 'idle',
       newVersion: null,
@@ -88,25 +74,5 @@ describe('AboutTab updater actions', () => {
     render(<AboutTab />);
 
     expect(screen.getByText(/settings\.links\.cliCompatibility v1\.5\.13/)).toBeTruthy();
-  });
-
-  it('opens the local diagnostics directory from the low-frequency support area', async () => {
-    render(<AboutTab />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'settings.diagnostics.openDirectory' }));
-
-    await waitFor(() => expect(mocks.openDiagnosticsDirectory).toHaveBeenCalledTimes(1));
-  });
-
-  it('copies bounded local diagnostics when the directory cannot be opened', async () => {
-    mocks.openDiagnosticsDirectory.mockRejectedValueOnce(new Error('unsupported'));
-    render(<AboutTab />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'settings.diagnostics.openDirectory' }));
-    await waitFor(() => expect(mocks.openDiagnosticsDirectory).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole('button', { name: 'settings.diagnostics.copy' }));
-
-    await waitFor(() => expect(mocks.readRecentDiagnostics).toHaveBeenCalledTimes(1));
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('diagnostic-record');
   });
 });

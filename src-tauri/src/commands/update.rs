@@ -24,13 +24,7 @@ pub async fn preview_update(
     request: UpdateRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdatePreview, AppError> {
-    let result = runtime.update().preview(&request).await;
-    crate::diagnostics::record_command_result(
-        crate::diagnostics::DiagnosticOperation::Update,
-        &result,
-        &request.context,
-    );
-    result
+    runtime.update().preview(&request).await
 }
 
 #[tauri::command]
@@ -40,15 +34,7 @@ pub async fn update_skill(
     expected_token: PreviewToken,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
-    let validation = validate_single_skill_update(&execution);
-    if validation.is_err() {
-        crate::diagnostics::record_command_result(
-            crate::diagnostics::DiagnosticOperation::Update,
-            &validation,
-            &execution.request.context,
-        );
-    }
-    validation?;
+    validate_single_skill_update(&execution)?;
     execute_update(execution, expected_token, runtime).await
 }
 
@@ -78,7 +64,7 @@ async fn execute_update(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
     let context = execution.request.context.clone();
-    let result = async {
+    async {
         let guard = runtime
             .mutation()
             .begin(MutationKind::Update, context.clone())?;
@@ -114,13 +100,7 @@ async fn execute_update(
         guard.transition(MutationPhase::Finishing, None, false);
         result
     }
-    .await;
-    crate::diagnostics::record_command_result(
-        crate::diagnostics::DiagnosticOperation::Update,
-        &result,
-        &context,
-    );
-    result
+    .await
 }
 
 #[cfg(test)]

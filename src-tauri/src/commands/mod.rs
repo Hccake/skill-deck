@@ -4,7 +4,6 @@ pub mod agents;
 pub mod audit;
 pub mod config;
 pub mod copy_skill;
-pub mod diagnostics;
 pub mod duplicate_copies;
 pub mod environments;
 pub mod install;
