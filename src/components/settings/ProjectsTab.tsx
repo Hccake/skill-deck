@@ -59,10 +59,6 @@ export function ProjectsTab() {
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const environments = useEnvironmentStore((state) => state.environments);
-  const discoveryState = useEnvironmentStore((state) => state.discoveryState);
-  const discoveryError = useEnvironmentStore((state) => state.discoveryError);
-  const connectionErrors = useEnvironmentStore((state) => state.errorsByEnvironment);
-  const discover = useEnvironmentStore((state) => state.discover);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
@@ -131,16 +127,7 @@ export function ProjectsTab() {
           console.error('Failed to switch environment:', error);
         })}
         disabled={pendingEnvironment !== null}
-        discoveryState={discoveryState}
-        discoveryError={discoveryError}
-        connectionErrors={connectionErrors}
         pendingEnvironment={pendingEnvironment}
-        onRetryDiscovery={() => discover().catch((error) => {
-          console.error('Failed to discover environments:', error);
-        })}
-        onRetryConnection={(target) => switchEnvironment(target).catch((error) => {
-          console.error('Failed to reconnect environment:', error);
-        })}
         className="h-9 w-full max-w-xs rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
       />
 

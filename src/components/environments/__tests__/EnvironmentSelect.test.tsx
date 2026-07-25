@@ -28,29 +28,12 @@ const ubuntu: EnvironmentInfo = {
   revision: 1,
   error: null,
 };
-const discoveryError: AppError = {
-  kind: 'environmentDiscoveryFailed',
-  data: { message: 'wsl.exe timed out' },
-};
-const connectionError: AppError = {
-  kind: 'environmentUnavailable',
-  data: {
-    environment: ubuntu.environment,
-    message: 'distribution is unavailable',
-  },
-};
-
 function renderSelect(overrides: Partial<React.ComponentProps<typeof EnvironmentSelect>> = {}) {
   const props: React.ComponentProps<typeof EnvironmentSelect> = {
     environments: [host],
     value: host.environment,
     onChange: vi.fn(),
-    discoveryState: 'ready',
-    discoveryError: null,
-    connectionErrors: {},
     pendingEnvironment: null,
-    onRetryDiscovery: vi.fn(),
-    onRetryConnection: vi.fn(),
     ...overrides,
   };
   return { ...render(<EnvironmentSelect {...props} />), props };
@@ -64,20 +47,7 @@ describe('EnvironmentSelect', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 
-  it('keeps discovery failure recoverable when only Host is available', () => {
-    const onRetryDiscovery = vi.fn();
-    renderSelect({
-      discoveryState: 'error',
-      discoveryError,
-      onRetryDiscovery,
-    });
-
-    expect(screen.getByRole('status').textContent).toContain('context.environmentDiscoveryFailed');
-    fireEvent.click(screen.getByRole('button', { name: 'context.environmentRetry' }));
-    expect(onRetryDiscovery).toHaveBeenCalledTimes(1);
-  });
-
-  it('announces and names the pending environment switch', () => {
+  it('keeps pending feedback inside the existing trigger', () => {
     renderSelect({
       environments: [host, ubuntu],
       pendingEnvironment: ubuntu.environment,
@@ -86,42 +56,80 @@ describe('EnvironmentSelect', () => {
     const select = screen.getByRole('combobox', { name: 'context.environmentLabel' });
     expect(select.getAttribute('data-slot')).toBe('select-trigger');
     expect((select as HTMLSelectElement).disabled).toBe(true);
-    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite');
-    expect(screen.getByRole('status').textContent).toContain(
+    expect(select.getAttribute('aria-busy')).toBe('true');
+    const status = screen.getByRole('status');
+    expect(status.closest('[data-slot="select-trigger"]')).toBe(select);
+    expect(status.textContent).toContain(
       'context.environmentConnectingTo:Ubuntu 24.04 Long Environment Name',
     );
   });
 
-  it('offers retry for the failed distribution and preserves full option text', () => {
-    const onRetryConnection = vi.fn();
+  it('keeps a non-current failed distribution in the selector without a persistent alert', () => {
+    const connectionError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution is stopped' },
+    };
     renderSelect({
-      environments: [host, { ...ubuntu, status: 'unavailable' }],
-      connectionErrors: {
-        'wsl:ubuntu-24.04-long-environment-name': connectionError,
-      },
-      onRetryConnection,
+      environments: [host, { ...ubuntu, status: 'unavailable', error: connectionError }],
     });
 
-    expect(screen.getByRole('status').textContent).toContain(
-      'context.environmentConnectionFailed:Ubuntu 24.04 Long Environment Name',
-    );
-    fireEvent.click(screen.getByRole('button', {
-      name: 'context.environmentRetryNamed:Ubuntu 24.04 Long Environment Name',
-    }));
-    expect(onRetryConnection).toHaveBeenCalledWith(ubuntu.environment);
+    expect(screen.queryByRole('status')).toBeNull();
     fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
     expect(screen.getByRole('option', {
       name: /Ubuntu 24\.04 Long Environment Name/,
     }).getAttribute('title')).toBe('Ubuntu 24.04 Long Environment Name');
   });
 
-  it('selects an environment through the shadcn Select contract', () => {
+  it('shows a typed discovery error without adding an independent retry', () => {
+    const discoveryError: AppError = {
+      kind: 'environmentDiscoveryFailed',
+      data: { message: 'wsl.exe unavailable' },
+    };
+    renderSelect({
+      environments: [host],
+      discoveryError,
+    });
+
+    expect(screen.getByText('context.environmentDiscoveryFailed')).toBeDefined();
+    expect(screen.getByText('addSkill.error.environmentDiscoveryFailed')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'context.environmentRetry' })).toBeNull();
+  });
+
+  it('shows a reconnect action only for the selected failed environment', () => {
     const onChange = vi.fn();
-    renderSelect({ environments: [host, ubuntu], onChange });
+    const connectionError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution is stopped' },
+    };
+    renderSelect({
+      environments: [host, { ...ubuntu, status: 'unavailable', error: connectionError }],
+      value: ubuntu.environment,
+      onChange,
+    });
+
+    expect(screen.getByText('context.environmentConnectionFailed:Ubuntu 24.04 Long Environment Name'))
+      .toBeDefined();
+    expect(screen.getByText('addSkill.error.environmentUnavailable')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', {
+      name: 'context.environmentRetryNamed:Ubuntu 24.04 Long Environment Name',
+    }));
+    expect(onChange).toHaveBeenCalledWith(ubuntu.environment);
+  });
+
+  it('retries a non-current failed environment through normal selection', () => {
+    const onChange = vi.fn();
+    const connectionError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution is stopped' },
+    };
+    renderSelect({
+      environments: [host, { ...ubuntu, status: 'unavailable', error: connectionError }],
+      onChange,
+    });
 
     fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
     fireEvent.click(screen.getByRole('option', {
-      name: 'Ubuntu 24.04 Long Environment Name',
+      name: /Ubuntu 24\.04 Long Environment Name/,
     }));
 
     expect(onChange).toHaveBeenCalledWith(ubuntu.environment);

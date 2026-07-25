@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,6 +25,10 @@ import { openConfigResource } from '@/hooks/useTauriApi';
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
 import { cn } from '@/lib/utils';
 import { useMutationStore } from '@/stores/mutation';
+import { formatAppError } from '@/utils/format-app-error';
+import { toAppError } from '@/utils/to-app-error';
+
+const EMPTY_PROJECTS: ProjectInfo[] = [];
 
 function getProjectName(project: ProjectInfo): string {
   if (project.binding.displayName) return project.binding.displayName;
@@ -187,14 +192,12 @@ export function ContextSidebar() {
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const environments = useEnvironmentStore((state) => state.environments);
-  const discoveryState = useEnvironmentStore((state) => state.discoveryState);
   const discoveryError = useEnvironmentStore((state) => state.discoveryError);
-  const connectionErrors = useEnvironmentStore((state) => state.errorsByEnvironment);
-  const discover = useEnvironmentStore((state) => state.discover);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
   const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
+  const selectGlobal = useWorkspaceContextStore((state) => state.selectGlobal);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
   const loadStateByEnvironment = useProjectStore((state) => state.loadStateByEnvironment);
   const errorsByEnvironment = useProjectStore((state) => state.errorsByEnvironment);
@@ -206,9 +209,12 @@ export function ContextSidebar() {
   const focusAfterRemovalRef = useRef<string | null>(null);
   const environment = selectedContext.environment;
   const key = environmentKey(environment);
-  const projects = projectsByEnvironment[key] ?? [];
+  const projects = projectsByEnvironment[key] ?? EMPTY_PROJECTS;
   const loadState = loadStateByEnvironment[key] ?? 'idle';
   const loadError = errorsByEnvironment[key];
+  const selectedProjectId = selectedContext.scope.scope === 'project'
+    ? selectedContext.scope.project_id
+    : null;
   const selectedStatus = environments.find(
     (entry) => sameEnvironment(entry.environment, environment),
   )?.status;
@@ -218,6 +224,12 @@ export function ContextSidebar() {
       void refresh(environment).catch(() => undefined);
     }
   }, [environment, loadState, pendingEnvironment, refresh, selectedStatus]);
+
+  useEffect(() => {
+    if (!selectedProjectId || loadState !== 'ready' || pendingEnvironment) return;
+    if (projects.some((entry) => entry.binding.id === selectedProjectId)) return;
+    selectGlobal();
+  }, [loadState, pendingEnvironment, projects, selectGlobal, selectedProjectId]);
 
   const addProject = async () => {
     const targetEnvironment = environment;
@@ -259,19 +271,11 @@ export function ContextSidebar() {
             environments={environments}
             value={environment}
             onChange={(target) => void switchEnvironment(target).catch((error) => {
-              console.error('Failed to switch environment:', error);
+              toast.error(formatAppError(toAppError(error), t));
             })}
             disabled={pendingEnvironment !== null}
-            discoveryState={discoveryState}
-            discoveryError={discoveryError}
-            connectionErrors={connectionErrors}
             pendingEnvironment={pendingEnvironment}
-            onRetryDiscovery={() => discover().catch((error) => {
-              console.error('Failed to discover environments:', error);
-            })}
-            onRetryConnection={(target) => switchEnvironment(target).catch((error) => {
-              console.error('Failed to reconnect environment:', error);
-            })}
+            discoveryError={discoveryError}
           />
         </div>
 

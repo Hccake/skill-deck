@@ -3,7 +3,13 @@
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import type { ContextRef, EnvironmentInfo, EnvironmentRef, ProjectInfo } from '@/bindings';
+import type {
+  AppError,
+  ContextRef,
+  EnvironmentInfo,
+  EnvironmentRef,
+  ProjectInfo,
+} from '@/bindings';
 import type { ProjectRemovalRequest } from '@/stores/project-removal';
 import { useMutationStore } from '@/stores/mutation';
 import { ContextSidebar } from '../ContextSidebar';
@@ -17,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   add: vi.fn(),
   captureProjectRemoval: vi.fn(),
+  toastError: vi.fn(),
+  discoveryError: null as AppError | null,
   environments: [{
     environment: { kind: 'host' as const },
     displayName: 'Windows',
@@ -41,13 +49,20 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open }));
+vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }));
 vi.mock('@/hooks/useTauriApi', () => ({ openConfigResource: mocks.openConfigResource }));
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: EnvironmentRef) => (
     environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
   ),
-  useEnvironmentStore: (selector: (state: { environments: EnvironmentInfo[] }) => unknown) => (
-    selector({ environments: mocks.environments })
+  useEnvironmentStore: (selector: (state: {
+    environments: EnvironmentInfo[];
+    discoveryError: AppError | null;
+  }) => unknown) => (
+    selector({
+      environments: mocks.environments,
+      discoveryError: mocks.discoveryError,
+    })
   ),
 }));
 vi.mock('@/stores/projects', () => ({
@@ -118,6 +133,7 @@ describe('ContextSidebar', () => {
     };
     mocks.workspace.pendingEnvironment = null;
     mocks.workspace.contextRevision = 0;
+    mocks.discoveryError = null;
     mocks.projects.projectsByEnvironment = { host: [] };
     mocks.projects.loadStateByEnvironment = { host: 'ready' };
     mocks.projects.errorsByEnvironment = {};
@@ -154,6 +170,22 @@ describe('ContextSidebar', () => {
     expect(mocks.switchEnvironment).toHaveBeenCalledWith(ubuntu.environment);
   });
 
+  it('shows one toast when an environment switch fails', async () => {
+    const error: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution stopped' },
+    };
+    mocks.environments = [mocks.environments[0], ubuntu];
+    mocks.switchEnvironment.mockRejectedValue(error);
+    render(<ContextSidebar />);
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Ubuntu' }));
+
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledTimes(1));
+    expect(mocks.toastError).toHaveBeenCalledWith('addSkill.error.environmentUnavailable');
+  });
+
   it('disables environment selection during a pending switch', () => {
     mocks.environments = [mocks.environments[0], ubuntu];
     mocks.workspace.pendingEnvironment = ubuntu.environment;
@@ -162,6 +194,36 @@ describe('ContextSidebar', () => {
     expect((screen.getByRole('combobox', {
       name: 'context.environmentLabel',
     }) as HTMLSelectElement).disabled).toBe(true);
+  });
+
+  it('returns to Global only after a ready project snapshot confirms the project is gone', async () => {
+    mocks.workspace.selectedContext = {
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'missing-project' },
+    };
+    mocks.projects.projectsByEnvironment = { host: [project('another-project')] };
+    mocks.projects.loadStateByEnvironment = { host: 'ready' };
+
+    render(<ContextSidebar />);
+
+    await waitFor(() => expect(mocks.selectGlobal).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    ['loading snapshot', 'loading' as const, []],
+    ['failed snapshot', 'error' as const, []],
+    ['snapshot containing the selected project', 'ready' as const, [project('project-a')]],
+  ])('keeps the selected project for a %s', (_label, loadState, projects) => {
+    mocks.workspace.selectedContext = {
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'project-a' },
+    };
+    mocks.projects.projectsByEnvironment = { host: projects };
+    mocks.projects.loadStateByEnvironment = { host: loadState };
+
+    render(<ContextSidebar />);
+
+    expect(mocks.selectGlobal).not.toHaveBeenCalled();
   });
 
   it('renders every project in one scrollable list and selects by stable ID', () => {
