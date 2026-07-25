@@ -3,7 +3,7 @@ subcommand=$1
 shift
 case "$subcommand" in
   read)
-    if [ -f "$1" ]; then printf '1\01\0'; cat -- "$1"; elif [ ! -e "$1" ]; then printf '1\00\0'; else exit 66; fi
+    if [ -f "$1" ]; then printf '1\0'; printf '1\0'; cat -- "$1"; elif [ ! -e "$1" ]; then printf '1\0'; printf '0\0'; else exit 66; fi
     ;;
   write)
 

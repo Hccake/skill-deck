@@ -1394,9 +1394,6 @@ mod tests {
             xdg_state_home: Some("/home/alice/.local/state".to_string()),
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available: true,
-            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
-            ),
             runtime_generation: 0,
         }
     }
@@ -2739,9 +2736,6 @@ mod tests {
             xdg_state_home: Some("/home/alice/.local/state".to_string()),
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::from([("CODEX_HOME".to_string(), "/opt/codex".to_string())]),
-            git_available: true,
-            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
-            ),
             runtime_generation: 0,
         };
         let resolved = ResolvedContext {

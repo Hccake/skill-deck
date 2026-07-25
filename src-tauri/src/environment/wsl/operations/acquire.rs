@@ -15,8 +15,8 @@ use crate::core::skill_payload::{
 };
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{
-    wsl_operation, wsl_operation_with_features, WslExecutionFeature, WslOperationDescriptor,
-    WslOperationExecutor, WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
+    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+    DEFAULT_WSL_STDERR_LIMIT,
 };
 use crate::error::AppError;
 
@@ -51,68 +51,27 @@ const REMOVE_SESSION_SCRIPT: &str = include_str!("../scripts/acquire.sh");
 const SWEEP_ORPHANS_SCRIPT: &str = include_str!("../scripts/acquire.sh");
 const SOURCE_FINGERPRINT_SCRIPT: &str = include_str!("../scripts/acquire.sh");
 const SOURCE_REVISION_SCRIPT: &str = include_str!("../scripts/acquire.sh");
-const ACQUIRE_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "payload",
-    "acquire",
-    ACQUIRE_SCRIPT,
-    &[
-        WslExecutionFeature::NulSafeXargs,
-        WslExecutionFeature::NulSafeSort,
-        WslExecutionFeature::Sha256Sum,
-        WslExecutionFeature::CanonicalReadlink,
-        WslExecutionFeature::StableStat,
-    ],
-);
+const ACQUIRE_OPERATION: WslOperationDescriptor =
+    wsl_operation("payload", "acquire", ACQUIRE_SCRIPT);
 const STORE_BEGIN_OPERATION: WslOperationDescriptor =
     wsl_operation("payload", "store-begin", STORE_BEGIN_SCRIPT);
-const STORE_BLOB_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "payload",
-    "store-blob",
-    STORE_BLOB_SCRIPT,
-    &[WslExecutionFeature::Sha256Sum],
-);
-const STORE_FINALIZE_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "payload",
-    "store-finalize",
-    STORE_FINALIZE_SCRIPT,
-    &[WslExecutionFeature::Sha256Sum],
-);
-const FINALIZE_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "payload",
-    "finalize",
-    FINALIZE_SCRIPT,
-    &[WslExecutionFeature::Sha256Sum],
-);
-const VERIFY_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "payload",
-    "verify",
-    VERIFY_SCRIPT,
-    &[WslExecutionFeature::Sha256Sum],
-);
-const READ_BLOB_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "payload",
-    "read-blob",
-    READ_BLOB_SCRIPT,
-    &[WslExecutionFeature::Sha256Sum],
-);
+const STORE_BLOB_OPERATION: WslOperationDescriptor =
+    wsl_operation("payload", "store-blob", STORE_BLOB_SCRIPT);
+const STORE_FINALIZE_OPERATION: WslOperationDescriptor =
+    wsl_operation("payload", "store-finalize", STORE_FINALIZE_SCRIPT);
+const FINALIZE_OPERATION: WslOperationDescriptor =
+    wsl_operation("payload", "finalize", FINALIZE_SCRIPT);
+const VERIFY_OPERATION: WslOperationDescriptor = wsl_operation("payload", "verify", VERIFY_SCRIPT);
+const READ_BLOB_OPERATION: WslOperationDescriptor =
+    wsl_operation("payload", "read-blob", READ_BLOB_SCRIPT);
 const REMOVE_PAYLOAD_OPERATION: WslOperationDescriptor =
     wsl_operation("payload", "remove-payload", REMOVE_PAYLOAD_SCRIPT);
 const REMOVE_SESSION_OPERATION: WslOperationDescriptor =
     wsl_operation("payload", "remove-session", REMOVE_SESSION_SCRIPT);
 const SWEEP_ORPHANS_OPERATION: WslOperationDescriptor =
     wsl_operation("payload", "sweep-orphans", SWEEP_ORPHANS_SCRIPT);
-const SOURCE_FINGERPRINT_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "payload",
-    "fingerprint",
-    SOURCE_FINGERPRINT_SCRIPT,
-    &[
-        WslExecutionFeature::NulSafeXargs,
-        WslExecutionFeature::NulSafeSort,
-        WslExecutionFeature::Sha256Sum,
-        WslExecutionFeature::CanonicalReadlink,
-        WslExecutionFeature::StableStat,
-    ],
-);
+const SOURCE_FINGERPRINT_OPERATION: WslOperationDescriptor =
+    wsl_operation("payload", "fingerprint", SOURCE_FINGERPRINT_SCRIPT);
 const SOURCE_REVISION_OPERATION: WslOperationDescriptor =
     wsl_operation("payload", "source-revision", SOURCE_REVISION_SCRIPT);
 
@@ -373,12 +332,6 @@ impl PayloadSessionStorage for WslPayloadSessionStorage {
         skill_path: &'a str,
     ) -> PayloadStorageFuture<'a, Result<Option<String>, AppError>> {
         Box::pin(async move {
-            if !self.session.git_available {
-                return Err(AppError::CapabilityUnavailable {
-                    capability: "wslGit".to_string(),
-                    path: Some(repository_root.to_string()),
-                });
-            }
             if !repository_root.starts_with('/') {
                 return Err(AppError::UnsafePath {
                     path: repository_root.to_string(),
@@ -791,6 +744,10 @@ fn parse_cleanup_report(bytes: &[u8]) -> Result<PayloadCleanupReport, AppError> 
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "获取协议测试需要直接调用真实 Git 并运行 shell 测试脚本"
+)]
 mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
@@ -817,9 +774,6 @@ mod tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available: true,
-            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
-            ),
             runtime_generation: 0,
         }
     }
@@ -1334,9 +1288,6 @@ mod portable_tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available: true,
-            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
-            ),
             runtime_generation: 0,
         }
     }

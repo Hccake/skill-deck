@@ -8,23 +8,15 @@ use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{normalized_wsl_distro_name, EnvironmentRef};
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{
-    wsl_operation_with_features, WslExecutionFeature, WslOperationDescriptor, WslOperationExecutor,
-    WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
+    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+    DEFAULT_WSL_STDERR_LIMIT,
 };
 use crate::error::AppError;
 
 const PROTOCOL_HEADER: &[u8] = b"SDCM 1\n";
 pub(crate) const CONTENT_MANIFEST_SCRIPT: &str = include_str!("../scripts/content-manifest.sh");
-const CONTENT_MANIFEST_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "content-manifest",
-    "inspect",
-    CONTENT_MANIFEST_SCRIPT,
-    &[
-        WslExecutionFeature::Sha256Sum,
-        WslExecutionFeature::CanonicalReadlink,
-        WslExecutionFeature::StableStat,
-    ],
-);
+const CONTENT_MANIFEST_OPERATION: WslOperationDescriptor =
+    wsl_operation("content-manifest", "inspect", CONTENT_MANIFEST_SCRIPT);
 
 pub async fn inspect(
     session: &WslSession,
@@ -142,6 +134,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "内容清单协议测试需要直接运行待验证的 shell 测试脚本"
+)]
 mod tests {
     #[cfg(target_os = "linux")]
     use std::fs;
@@ -150,9 +146,9 @@ mod tests {
 
     use crate::environment::content_manifest::{ContentManifest, ContentManifestRecord};
 
-    use super::parse_content_manifest;
     #[cfg(target_os = "linux")]
     use super::CONTENT_MANIFEST_SCRIPT;
+    use super::{parse_content_manifest, CONTENT_MANIFEST_OPERATION};
 
     fn fixture_bytes(records: &[(&str, &str, bool, &str)]) -> Vec<u8> {
         let mut bytes = b"SDCM 1\n".to_vec();
@@ -171,6 +167,47 @@ mod tests {
         }
         bytes.extend_from_slice(format!("E {}\n", records.len()).as_bytes());
         bytes
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn content_manifest_remains_readable_without_nul_safe_xargs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temporary content root");
+        let content = temp.path().join("skill");
+        fs::create_dir_all(&content).expect("content directory");
+        fs::write(content.join("SKILL.md"), "# Demo\n").expect("skill content");
+
+        let commands = temp.path().join("commands");
+        fs::create_dir_all(&commands).expect("command directory");
+        let xargs = commands.join("xargs");
+        fs::write(&xargs, "#!/bin/sh\nexit 1\n").expect("failing xargs");
+        fs::set_permissions(&xargs, fs::Permissions::from_mode(0o755)).expect("xargs permissions");
+
+        let path = format!(
+            "{}:{}",
+            commands.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(CONTENT_MANIFEST_SCRIPT)
+            .arg("--")
+            .arg("inspect")
+            .arg(&content)
+            .env("PATH", path)
+            .output()
+            .expect("content manifest script");
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let manifest = parse_content_manifest(&output.stdout).expect("content manifest");
+        assert_eq!(manifest.records().len(), 1);
+        assert_eq!(CONTENT_MANIFEST_OPERATION.subcommand, "inspect");
     }
 
     #[test]
