@@ -4,7 +4,6 @@ import { Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Header } from '@/components/layout/Header';
 import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
-import { RecoveryCenter } from '@/components/recovery/RecoveryCenter';
 import { AgentConfigurationRequestRouter } from '@/components/settings/AgentConfigurationRequestRouter';
 import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
 import { useSkillsDataStore } from '@/stores/skills-data';
@@ -36,7 +35,6 @@ export default function MainLayout() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <Header />
-      <RecoveryCenter />
       <AgentConfigurationRequestRouter />
       <main className="flex flex-1 flex-col overflow-hidden">
         <Suspense fallback={<ContentFallback />}>

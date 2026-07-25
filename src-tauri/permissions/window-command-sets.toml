@@ -46,7 +46,6 @@ permissions = [
   "allow-remove-skill",
   "allow-request-cancel-active-mutation",
   "allow-retry-host-project-migration",
-  "allow-retry-runtime-maintenance",
   "allow-save-config",
   "allow-save-custom-agent",
   "allow-save-default-target-agents",

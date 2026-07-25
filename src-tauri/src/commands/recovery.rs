@@ -1,8 +1,6 @@
 use tauri::State;
 
 use crate::application::recovery::{RecoveryResourceStatus, RecoveryResourcesSnapshot};
-use crate::environment::maintenance::RuntimeMaintenanceStatus;
-use crate::environment::types::EnvironmentRef;
 use crate::error::{AppError, RecoveryResourceId};
 use crate::runtime::RuntimeServiceGraph;
 
@@ -47,13 +45,4 @@ pub async fn open_recovery_resource(
 ) -> Result<(), AppError> {
     let target = runtime.recovery().open_target(&resource_id)?;
     crate::environment::opener::open_authorized_resource(&target)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn retry_runtime_maintenance(
-    environment: EnvironmentRef,
-    runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<RuntimeMaintenanceStatus, AppError> {
-    runtime.maintenance().retry(environment).await
 }

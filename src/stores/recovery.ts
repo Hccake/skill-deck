@@ -1,9 +1,9 @@
 import { create } from 'zustand';
-import { listRecoveryResources, retryRuntimeMaintenance } from '@/hooks/useTauriApi';
+import { listRecoveryResources } from '@/hooks/useTauriApi';
 import { toAppError } from '@/utils/to-app-error';
 import { environmentKey } from '@/lib/context';
 import type {
-  AppError, EnvironmentRef, RecoveryResourceStatus, RuntimeMaintenanceStatus,
+  AppError, RecoveryResourceStatus, RuntimeMaintenanceStatus,
 } from '@/bindings';
 
 type RecoveryLoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -15,7 +15,6 @@ interface RecoveryState {
   error: AppError | null;
   load: () => Promise<void>;
   applyMaintenance: (status: RuntimeMaintenanceStatus) => void;
-  retryMaintenance: (environment: EnvironmentRef) => Promise<void>;
 }
 
 let loadGeneration = 0;
@@ -30,7 +29,7 @@ export const useRecoveryStore = create<RecoveryState>()((set) => ({
   load: () => {
     if (inFlightLoad) return inFlightLoad;
     const requestId = ++loadGeneration;
-    set({ state: 'loading', error: null });
+    set({ state: 'loading' });
     const request = listRecoveryResources()
       .then((snapshot) => {
         if (requestId !== loadGeneration) return;
@@ -60,14 +59,4 @@ export const useRecoveryStore = create<RecoveryState>()((set) => ({
     const maintenance = state.maintenance.filter((item) => environmentKey(item.environment) !== key);
     return { maintenance: [...maintenance, status] };
   }),
-
-  retryMaintenance: async (environment) => {
-    const status = await retryRuntimeMaintenance(environment);
-    set((state) => {
-      const key = environmentKey(status.environment);
-      const maintenance = state.maintenance.filter((item) => environmentKey(item.environment) !== key);
-      return { maintenance: [...maintenance, status] };
-    });
-    await useRecoveryStore.getState().load();
-  },
 }));

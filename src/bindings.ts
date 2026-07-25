@@ -217,14 +217,6 @@ async openRecoveryResource(resourceId: RecoveryResourceId) : Promise<Result<null
     else return { status: "error", error: e  as any };
 }
 },
-async retryRuntimeMaintenance(environment: EnvironmentRef) : Promise<Result<RuntimeMaintenanceStatus, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("retry_runtime_maintenance", { environment }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async openSkillResource(identity: SkillIdentity) : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_skill_resource", { identity }) };

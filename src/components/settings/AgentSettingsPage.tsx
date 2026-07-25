@@ -133,10 +133,6 @@ export function AgentSettingsPage({
   const duplicateDraft = useAgentRegistryStore((state) => state.duplicateDraft);
   const loadDeleteImpact = useAgentRegistryStore((state) => state.loadDeleteImpact);
   const environments = useEnvironmentStore((state) => state.environments);
-  const discoveryState = useEnvironmentStore((state) => state.discoveryState);
-  const discoveryError = useEnvironmentStore((state) => state.discoveryError);
-  const connectionErrors = useEnvironmentStore((state) => state.errorsByEnvironment);
-  const discoverEnvironments = useEnvironmentStore((state) => state.discover);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
   const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
 
@@ -681,12 +677,7 @@ export function AgentSettingsPage({
             value={context.environment}
             onChange={(environment) => void switchEnvironment(environment).catch(() => undefined)}
             disabled={pendingEnvironment !== null}
-            discoveryState={discoveryState}
-            discoveryError={discoveryError}
-            connectionErrors={connectionErrors}
             pendingEnvironment={pendingEnvironment}
-            onRetryDiscovery={() => void discoverEnvironments('userRetry').catch(() => undefined)}
-            onRetryConnection={(environment) => void switchEnvironment(environment).catch(() => undefined)}
             className="h-8 min-w-48 rounded-md border border-border/60 bg-background px-3 text-xs"
           />
         </div>

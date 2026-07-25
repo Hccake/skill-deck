@@ -11,7 +11,7 @@ import { toAppError } from '@/utils/to-app-error';
 
 export { environmentKey } from '@/lib/context';
 
-export type EnvironmentDiscoveryIntent = 'initial' | 'resume' | 'userRetry';
+export type EnvironmentDiscoveryIntent = 'initial' | 'resume';
 
 export type EnvironmentDiscoveryState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -87,13 +87,13 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   errorsByEnvironment: {},
   discoveryCompletedAt: null,
 
-  discover: (intent) => {
+  discover: (_intent) => {
     if (discoveryInFlight) return discoveryInFlight;
 
     const { discoveryCompletedAt, environments } = get();
     const coolingDown = discoveryCompletedAt !== null
       && Date.now() < discoveryCompletedAt + DISCOVERY_COOLDOWN_MS;
-    if (intent !== 'userRetry' && coolingDown) return Promise.resolve();
+    if (coolingDown) return Promise.resolve();
 
     if (environments.length === 0) {
       set({ discoveryState: 'loading', discoveryError: null });

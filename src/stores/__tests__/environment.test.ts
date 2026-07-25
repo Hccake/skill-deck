@@ -113,16 +113,13 @@ describe('useEnvironmentStore', () => {
     });
   });
 
-  it('shares one in-flight request across all discovery intents', async () => {
+  it('shares one in-flight request across discovery intents', async () => {
     const request = deferred<{ environments: EnvironmentInfo[]; error: AppError | null }>();
     mocks.listEnvironments.mockReturnValue(request.promise);
 
     const initial = useEnvironmentStore.getState().discover('initial');
     const resume = useEnvironmentStore.getState().discover('resume');
-    const retry = useEnvironmentStore.getState().discover('userRetry');
-
     expect(resume).toBe(initial);
-    expect(retry).toBe(initial);
     expect(mocks.listEnvironments).toHaveBeenCalledTimes(1);
 
     request.resolve({ environments: [host, ubuntu], error: null });
@@ -142,23 +139,6 @@ describe('useEnvironmentStore', () => {
     expect(mocks.listEnvironments).toHaveBeenCalledTimes(2);
   });
 
-  it('lets a user retry bypass cooldown without bypassing singleflight', async () => {
-    mocks.listEnvironments.mockResolvedValueOnce({ environments: [host, ubuntu], error: null });
-    await useEnvironmentStore.getState().discover('initial');
-
-    const request = deferred<{ environments: EnvironmentInfo[]; error: AppError | null }>();
-    mocks.listEnvironments.mockReturnValueOnce(request.promise);
-    now += 1;
-    const retry = useEnvironmentStore.getState().discover('userRetry');
-    const resume = useEnvironmentStore.getState().discover('resume');
-
-    expect(resume).toBe(retry);
-    expect(mocks.listEnvironments).toHaveBeenCalledTimes(2);
-
-    request.resolve({ environments: [host, ubuntu], error: null });
-    await retry;
-  });
-
   it('keeps the last successful inventory when discovery returns a typed error', async () => {
     const error: AppError = {
       kind: 'environmentDiscoveryFailed',
@@ -169,8 +149,8 @@ describe('useEnvironmentStore', () => {
       .mockResolvedValueOnce({ environments: [host], error });
 
     await useEnvironmentStore.getState().discover('initial');
-    now += 1;
-    await useEnvironmentStore.getState().discover('userRetry');
+    now += 30_000;
+    await useEnvironmentStore.getState().discover('resume');
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [host, ubuntu],
@@ -193,8 +173,8 @@ describe('useEnvironmentStore', () => {
       .mockRejectedValueOnce(error);
 
     await useEnvironmentStore.getState().discover('initial');
-    now += 1;
-    await expect(useEnvironmentStore.getState().discover('userRetry')).rejects.toEqual(error);
+    now += 30_000;
+    await expect(useEnvironmentStore.getState().discover('resume')).rejects.toEqual(error);
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [host, ubuntu],
@@ -212,8 +192,8 @@ describe('useEnvironmentStore', () => {
 
     const request = deferred<{ environments: EnvironmentInfo[]; error: AppError | null }>();
     mocks.listEnvironments.mockReturnValueOnce(request.promise);
-    now += 1;
-    const refresh = useEnvironmentStore.getState().discover('userRetry');
+    now += 30_000;
+    const refresh = useEnvironmentStore.getState().discover('resume');
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [host, ubuntu, debian],

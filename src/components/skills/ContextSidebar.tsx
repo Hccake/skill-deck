@@ -187,10 +187,6 @@ export function ContextSidebar() {
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const environments = useEnvironmentStore((state) => state.environments);
-  const discoveryState = useEnvironmentStore((state) => state.discoveryState);
-  const discoveryError = useEnvironmentStore((state) => state.discoveryError);
-  const connectionErrors = useEnvironmentStore((state) => state.errorsByEnvironment);
-  const discover = useEnvironmentStore((state) => state.discover);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
@@ -262,16 +258,7 @@ export function ContextSidebar() {
               console.error('Failed to switch environment:', error);
             })}
             disabled={pendingEnvironment !== null}
-            discoveryState={discoveryState}
-            discoveryError={discoveryError}
-            connectionErrors={connectionErrors}
             pendingEnvironment={pendingEnvironment}
-            onRetryDiscovery={() => discover('userRetry').catch((error) => {
-              console.error('Failed to discover environments:', error);
-            })}
-            onRetryConnection={(target) => switchEnvironment(target).catch((error) => {
-              console.error('Failed to reconnect environment:', error);
-            })}
           />
         </div>
 

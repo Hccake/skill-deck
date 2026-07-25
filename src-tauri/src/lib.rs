@@ -167,7 +167,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::recovery::get_recovery_resource_status,
             commands::recovery::confirm_recovery_resource_resolved,
             commands::recovery::open_recovery_resource,
-            commands::recovery::retry_runtime_maintenance,
             commands::resources::open_skill_resource,
             commands::resources::open_config_resource,
             commands::duplicate_copies::cleanup_duplicate_agent_copies,
@@ -295,13 +294,14 @@ pub fn run() {
                     )
                 {
                     let environment = event.environment;
+                    let revision = event.revision;
                     if let Err(error) = maintenance_for_environments.register(environment.clone()) {
                         log::warn!("Failed to register WSL runtime maintenance: {error}");
                         return;
                     }
                     let maintenance = maintenance_for_environments.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(error) = maintenance.start(environment).await {
+                        if let Err(error) = maintenance.start(environment, revision).await {
                             log::warn!("Failed to run WSL runtime maintenance: {error}");
                         }
                     });
@@ -321,7 +321,7 @@ pub fn run() {
             maintenance.register(host_environment.clone())?;
             let host_maintenance = maintenance.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = host_maintenance.start(host_environment).await {
+                if let Err(error) = host_maintenance.start(host_environment, 0).await {
                     log::warn!("Failed to run Host runtime maintenance: {error}");
                 }
             });

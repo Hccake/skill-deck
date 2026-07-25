@@ -20,11 +20,11 @@
   "recovery": {
     "title": "需要恢复处理",
     "center": {
-      "count": "有 {{count}} 项恢复数据需要处理",
-      "maintenanceCount": "有 {{count}} 个环境需要完成本地数据检查",
+      "title": "需要处理的问题",
+      "description": "查看 Environment 连接、运行时维护和恢复数据的异常状态。",
+      "open": "查看需要处理的问题",
       "loadError": "无法加载恢复数据",
-      "show": "查看恢复项",
-      "hide": "收起恢复项"
+      "show": "查看恢复项"
     },
     "loading": "正在检查恢复状态…",
     "open": "打开恢复数据",
@@ -32,12 +32,19 @@
     "cleanup": "移除恢复数据",
     "refreshError": "无法刷新恢复状态，恢复数据已保留。",
     "openError": "无法打开恢复目录，请稍后重试。",
-    "retryMaintenance": "重新检查",
+    "environment": {
+      "discoveryTitle": "无法刷新 WSL Environment",
+      "connectionTitle": "无法连接 {{environment}}"
+    },
     "maintenance": {
       "title": "{{environment}} 本地数据检查",
       "pending": "正在检查临时文件和恢复数据，完成前暂时不能修改 Skill。",
-      "failed": "本地数据检查未完成，当前环境暂时不能修改 Skill。",
-      "ready": "本地数据检查已完成。"
+      "failed": "本次连接的本地数据检查未完成，当前 Environment 暂时不能修改 Skill。请切换到其他 Environment 后重新进入，或处理环境问题后重启应用。",
+      "ready": "本地数据检查已完成。",
+      "issues": {
+        "payloadSweepFailed": "临时 Payload 检查或清理失败。",
+        "recoveryReindexFailed": "恢复数据索引检查失败。"
+      }
     },
     "cleanupTitle": "移除恢复数据？",
     "cleanupDescription": "只会移除恢复数据。仅当 Skill Deck 确认目标状态一致后才会提供此操作。",

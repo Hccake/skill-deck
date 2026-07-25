@@ -47,7 +47,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "request_agent_configuration",
     "request_cancel_active_mutation",
     "retry_host_project_migration",
-    "retry_runtime_maintenance",
     "save_config",
     "save_custom_agent",
     "save_default_target_agents",

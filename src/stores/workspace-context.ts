@@ -30,7 +30,6 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
     set({ pendingEnvironment: target });
     try {
       await useEnvironmentStore.getState().connect(target);
-      await useProjectStore.getState().refresh(target);
       set((state) => ({
         selectedContext: globalContext(target),
         contextRevision: state.contextRevision + 1,
@@ -38,6 +37,7 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
     } finally {
       set({ pendingEnvironment: null });
     }
+    void useProjectStore.getState().refresh(target).catch(() => undefined);
   },
 
   selectGlobal: () => {

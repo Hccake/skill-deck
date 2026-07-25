@@ -20,11 +20,11 @@
   "recovery": {
     "title": "Recovery required",
     "center": {
-      "count": "{{count}} recovery item(s) need attention",
-      "maintenanceCount": "{{count}} environment(s) need a local data check",
+      "title": "Issues requiring attention",
+      "description": "Review Environment connection, runtime maintenance, and recovery data issues.",
+      "open": "View issues requiring attention",
       "loadError": "Recovery items could not be loaded",
-      "show": "Show recovery items",
-      "hide": "Hide recovery items"
+      "show": "Show recovery items"
     },
     "loading": "Checking recovery state...",
     "open": "Open recovery data",
@@ -32,12 +32,19 @@
     "cleanup": "Remove recovery data",
     "refreshError": "Recovery state could not be refreshed. The recovery data has been preserved.",
     "openError": "The recovery directory could not be opened. Try again later.",
-    "retryMaintenance": "Check again",
+    "environment": {
+      "discoveryTitle": "WSL Environments could not be refreshed",
+      "connectionTitle": "Could not connect to {{environment}}"
+    },
     "maintenance": {
       "title": "{{environment}} local data check",
       "pending": "Temporary files and recovery data are being checked. Skill changes are paused until this completes.",
-      "failed": "The local data check did not complete. Skill changes are paused in this environment.",
-      "ready": "The local data check is complete."
+      "failed": "The local data check did not complete for this connection. Skill changes are paused in this Environment. Switch away and re-enter it, or restart the app after resolving the Environment issue.",
+      "ready": "The local data check is complete.",
+      "issues": {
+        "payloadSweepFailed": "The temporary Payload check or cleanup failed.",
+        "recoveryReindexFailed": "The recovery data index check failed."
+      }
     },
     "cleanupTitle": "Remove recovery data?",
     "cleanupDescription": "Only recovery data is removed. This is available after Skill Deck verifies that the target is consistent.",

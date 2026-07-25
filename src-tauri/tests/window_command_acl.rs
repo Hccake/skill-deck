@@ -59,11 +59,6 @@ fn list_recovery_resources() -> &'static str {
 }
 
 #[tauri::command]
-fn retry_runtime_maintenance() -> &'static str {
-    "retry-runtime-maintenance"
-}
-
-#[tauri::command]
 fn open_skill_resource() -> &'static str {
     "open-skill-resource"
 }
@@ -101,7 +96,6 @@ fn test_app() -> App<MockRuntime> {
             preview_install,
             install_skills,
             list_recovery_resources,
-            retry_runtime_maintenance,
             open_recovery_resource,
             open_skill_resource,
             open_config_resource,
@@ -169,10 +163,6 @@ fn main_window_allows_settings_and_recovery_but_not_source_discovery() {
     assert_eq!(
         invoke(&main, "open_recovery_resource"),
         Ok(Value::from("open-recovery-resource"))
-    );
-    assert_eq!(
-        invoke(&main, "retry_runtime_maintenance"),
-        Ok(Value::from("retry-runtime-maintenance"))
     );
     assert_eq!(
         invoke(&main, "open_skill_resource"),
@@ -246,10 +236,6 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "open_recovery_resource"),
         "open_recovery_resource",
-    );
-    assert_denied(
-        invoke(&wizard, "retry_runtime_maintenance"),
-        "retry_runtime_maintenance",
     );
     assert_denied(
         invoke(&wizard, "open_skill_resource"),

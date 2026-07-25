@@ -65,4 +65,28 @@ describe('Recovery store', () => {
     await Promise.all([first, second]);
     expect(useRecoveryStore.getState().resources).toHaveLength(1);
   });
+
+  it('keeps the last load error visible until a refresh succeeds', async () => {
+    api.listRecoveryResources.mockRejectedValueOnce(new Error('read failed'));
+    await useRecoveryStore.getState().load();
+    expect(useRecoveryStore.getState().error).not.toBeNull();
+
+    let resolve!: (resources: RecoveryResourceStatus[]) => void;
+    api.listRecoveryResources.mockReturnValueOnce(new Promise((done) => {
+      resolve = done;
+    }));
+    const refresh = useRecoveryStore.getState().load();
+
+    expect(useRecoveryStore.getState()).toMatchObject({
+      state: 'loading',
+      error: expect.anything(),
+    });
+
+    resolve([]);
+    await refresh;
+    expect(useRecoveryStore.getState()).toMatchObject({
+      state: 'ready',
+      error: null,
+    });
+  });
 });

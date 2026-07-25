@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { Sun, Moon, Package, Settings, Check, Compass } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { RecoveryCenter } from '@/components/recovery/RecoveryCenter';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -72,6 +73,7 @@ export function Header() {
 
       {/* Right: Tool Buttons */}
       <div className="flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 justify-end">
+        <RecoveryCenter />
         {/* Language Selector */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

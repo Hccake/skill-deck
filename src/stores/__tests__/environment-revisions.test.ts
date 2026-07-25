@@ -58,7 +58,8 @@ describe('Environment revision convergence', () => {
       environments: [host, { ...ubuntu, revision: 6 }],
       error: null,
     });
-    await useEnvironmentStore.getState().discover('userRetry');
+    useEnvironmentStore.setState({ discoveryCompletedAt: null });
+    await useEnvironmentStore.getState().discover('resume');
 
     expect(useEnvironmentStore.getState().environments[1]).toMatchObject({
       status: 'unavailable',
