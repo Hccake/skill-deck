@@ -36,16 +36,26 @@ vi.mock('../ManageAgentsDialog', () => ({
 
 vi.mock('../CopyToProjectDialog', () => ({
   CopyToProjectDialog: (props: {
+    open: boolean;
     skill: InstalledSkill;
     sourceContext: ContextRef;
+    onRepairSource?: (skill: InstalledSkill, context: ContextRef) => void;
   }) => (
     <div
       data-testid="copy-container-dialog"
+      data-open={String(props.open)}
       data-skill={props.skill.name}
       data-project={props.sourceContext.scope.scope === 'project'
         ? props.sourceContext.scope.project_id
         : 'global'}
-    />
+    >
+      <button
+        type="button"
+        onClick={() => props.onRepairSource?.(props.skill, props.sourceContext)}
+      >
+        repair source
+      </button>
+    </div>
   ),
 }));
 
@@ -71,6 +81,8 @@ const skill: InstalledSkill = {
   canonicalPath: '/project/.agents/skills/toolkit',
   scope: 'project',
   agents: [],
+  associatedAgents: [],
+  source: 'owner/repo',
 };
 
 describe('Skill dialog containers', () => {
@@ -78,6 +90,7 @@ describe('Skill dialog containers', () => {
     mocks.openManageAgentChanges.mockReset();
     useSkillDialogStore.getState().closeManageAgents();
     useSkillDialogStore.getState().closeCopyToProject();
+    useSkillDialogStore.getState().closeRepairSource();
     useSkillUpdateWorkflow.getState().reset();
   });
 
@@ -104,6 +117,30 @@ describe('Skill dialog containers', () => {
     const dialog = screen.getByTestId('copy-container-dialog');
     expect(dialog.dataset.skill).toBe('toolkit');
     expect(dialog.dataset.project).toBe('source-project');
+  });
+
+  it('keeps the Copy session mounted while source repair is open', () => {
+    act(() => {
+      useSkillDialogStore.getState().openCopyToProject(skill, context);
+    });
+    render(<CopyToProjectDialogContainer />);
+
+    const dialog = screen.getByTestId('copy-container-dialog');
+    expect(dialog.dataset.open).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'repair source' }));
+
+    expect(screen.getByTestId('copy-container-dialog')).toBe(dialog);
+    expect(dialog.dataset.open).toBe('false');
+    expect(useSkillDialogStore.getState().copySkill).toBe(skill);
+    expect(useSkillDialogStore.getState().repairSourceTarget?.skillName).toBe('toolkit');
+
+    act(() => {
+      useSkillDialogStore.getState().closeRepairSource();
+    });
+
+    expect(screen.getByTestId('copy-container-dialog')).toBe(dialog);
+    expect(dialog.dataset.open).toBe('true');
   });
 
   it('mounts Update Plan only while the workflow owns an open session', () => {

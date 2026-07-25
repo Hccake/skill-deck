@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { environmentKey, sameEnvironment } from '@/lib/context';
 import type { ContextRef, EnvironmentInfo, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { useMutationStore } from '@/stores/mutation';
 import type { CopyOutcome } from '@/workflows/skill-copy';
 
@@ -28,6 +29,7 @@ export interface CopyTargetSelection {
 }
 
 interface CopyToProjectDialogProps {
+  open?: boolean;
   skill: InstalledSkill | null;
   sourceContext: ContextRef;
   environments: EnvironmentInfo[];
@@ -40,15 +42,17 @@ interface CopyToProjectDialogProps {
     projectIds: string[],
   ) => Promise<Array<{ projectId: string; hasSkill: boolean }>>;
   onClose: () => void;
+  onRepairSource?: (skill: InstalledSkill, context: ContextRef) => void;
   onCopy: (selection: CopyTargetSelection) => Promise<CopyOutcome>;
 }
 
-const SOURCE_INFO_LIMIT_REASONS = new Set(['missing-skill-path', 'missingRemoteHash']);
+const SOURCE_INFO_LIMIT_REASONS = new Set(['missingRemoteHash']);
 type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
 type PresenceState = 'idle' | 'loading' | 'ready' | 'error';
 type ProjectPresence = 'installed' | 'absent' | 'unknown';
 
 export const CopyToProjectDialog = memo(function CopyToProjectDialog({
+  open = true,
   skill,
   sourceContext,
   ...sessionProps
@@ -63,6 +67,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   return (
     <CopyToProjectDialogSession
       key={sessionKey}
+      open={open}
       skill={skill}
       sourceContext={sourceContext}
       {...sessionProps}
@@ -71,6 +76,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
 });
 
 function CopyToProjectDialogSession({
+  open = true,
   skill,
   sourceContext,
   environments,
@@ -78,6 +84,7 @@ function CopyToProjectDialogSession({
   onLoadProjects,
   checkExistence,
   onClose,
+  onRepairSource,
   onCopy,
 }: CopyToProjectDialogProps) {
   const { t } = useTranslation();
@@ -167,11 +174,13 @@ function CopyToProjectDialogSession({
     return count;
   }, [presenceByProject, selected]);
 
-  const showSourceInfoNote = useMemo(() => {
-    if (!skill) return false;
-    if (!skill.source && !skill.sourceUrl) return true;
-    return SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? '');
-  }, [skill]);
+  const sourceNeedsRepair = copyOutcome?.status === 'sourceRepairRequired';
+  const showSourceInfoNote = useMemo(
+    () => Boolean(
+      skill && (sourceNeedsRepair || SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? ''))
+    ),
+    [skill, sourceNeedsRepair],
+  );
 
   const toggleProject = useCallback((projectId: string) => {
     setSelected((prev) => {
@@ -187,6 +196,7 @@ function CopyToProjectDialogSession({
 
   const handleCopy = useCallback(async () => {
     setCopying(true);
+    setCopyOutcome(null);
     try {
       const outcome = await onCopy({ environment: targetEnvironment, projectIds: Array.from(selected) });
       if (!outcome || outcome.status === 'succeeded') {
@@ -200,6 +210,8 @@ function CopyToProjectDialogSession({
           ...outcome.succeededProjectIds,
         ]));
         setSelected(new Set(outcome.retryableProjectIds));
+      } else if (outcome.status === 'recoveryRequired') {
+        setSelected(new Set());
       }
     } finally {
       setCopying(false);
@@ -207,7 +219,10 @@ function CopyToProjectDialogSession({
   }, [onClose, onCopy, selected, targetEnvironment]);
 
   return (
-    <Dialog open={!!skill} onOpenChange={(open) => !open && !copying && onClose()}>
+    <Dialog
+      open={open && !!skill}
+      onOpenChange={(nextOpen) => !nextOpen && open && !copying && onClose()}
+    >
       <DialogContent
         className="h-[min(32rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-md"
         dismissible={!copying}
@@ -234,17 +249,53 @@ function CopyToProjectDialogSession({
               })}
             </AlertDescription>
           </Alert>
+        ) : copyOutcome?.status === 'recoveryRequired' ? (
+          <Alert role="alert" variant="destructive">
+            <AlertDescription>
+              <p>{t('skills.copyToProject.recoveryDescription')}</p>
+              {copyOutcome.recovery.map((action) => (
+                <RecoveryActions key={action.resourceId} recovery={action} />
+              ))}
+            </AlertDescription>
+          </Alert>
         ) : copyOutcome?.status === 'failed' ? (
           <Alert role="alert" variant="destructive">
             <AlertDescription>{t('skills.copyToProject.copyError')}</AlertDescription>
           </Alert>
         ) : null}
+        {copyOutcome?.status === 'partial' && copyOutcome.recovery?.length ? (
+          <div className="space-y-2" role="status">
+            <p className="text-sm text-destructive">{t('skills.copyToProject.recoveryDescription')}</p>
+            {copyOutcome.recovery.map((action) => (
+              <RecoveryActions key={action.resourceId} recovery={action} />
+            ))}
+          </div>
+        ) : null}
         {showSourceInfoNote ? (
-          <div role="note" className="flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-2">
+          <div
+            role="note"
+            className={`flex items-start gap-1.5 rounded-md px-2.5 py-2 ${
+              sourceNeedsRepair ? 'bg-warning/10' : 'bg-muted/40'
+            }`}
+          >
             <Info className="h-3.5 w-3.5 shrink-0 mt-px text-muted-foreground" />
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {t('skills.copyToProject.metadataWarning')}
-            </p>
+            <div className="min-w-0 space-y-1">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {t(sourceNeedsRepair
+                  ? 'skills.copyToProject.sourceRepairRequired'
+                  : 'skills.copyToProject.metadataWarning')}
+              </p>
+              {sourceNeedsRepair && onRepairSource && skill ? (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={() => onRepairSource(skill, sourceContext)}
+                >
+                  {t('skills.copyToProject.repairSource')}
+                </Button>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -373,7 +424,12 @@ function CopyToProjectDialogSession({
           </Button>
           <Button
             onClick={handleCopy}
-            disabled={writeBlocked || copying || projectLoadState !== 'ready' || selected.size === 0}
+            disabled={
+              writeBlocked
+              || copying
+              || projectLoadState !== 'ready'
+              || selected.size === 0
+            }
           >
             {copying ? (
               <>

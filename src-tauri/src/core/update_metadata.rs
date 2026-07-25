@@ -136,6 +136,15 @@ mod tests {
         assert_eq!(metadata.remote_hash, None);
         assert_eq!(metadata.comparison_baseline(), Some("project-cli-hash"));
     }
+
+    #[test]
+    fn local_source_cannot_check_or_run_update() {
+        let capability = derive_update_capability(&project("local", "local-hash", None));
+
+        assert!(!capability.can_check_for_updates);
+        assert!(!capability.can_run_update);
+        assert_eq!(capability.reason.as_deref(), Some("local-source"));
+    }
 }
 
 pub fn normalize_global_lock_entry(entry: &SkillLockEntry) -> NormalizedUpdateMetadata {

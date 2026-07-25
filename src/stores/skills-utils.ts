@@ -395,9 +395,8 @@ export function createSkillRepairDraft(
   > & { gitRef?: string | null },
   context: ContextRef,
   projectPath?: string,
-): RepairSourceDraft | null {
-  const source = buildRepairSource(skill);
-  if (!source) return null;
+): RepairSourceDraft {
+  const source = buildRepairSource(skill) ?? '';
   const scope = context.scope.scope;
   const privateAdaptedAgents = skill.privateAdaptedAgents ?? skill.agents;
   const privateCopyAgents = skill.privateCopyAgents ?? [];

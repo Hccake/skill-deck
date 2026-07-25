@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, RefreshCw, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -16,16 +17,16 @@ import { fetchAvailable } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
-import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
-import { formatAppError } from '@/utils/format-app-error';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
-import type { FetchResult } from '@/bindings';
+import type { FetchResult, RecoveryAction } from '@/bindings';
 import { repairSkillSource } from '@/workflows/skill-repair';
+import { sameContext } from '@/lib/context';
 
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
 type RepairPhase = 'idle' | 'validating' | 'preparing' | 'installing' | 'stopping';
 type ValidationOwner = 'manual' | 'repair' | null;
-type RepairFeedback = 'failed' | 'partial' | 'stopped' | null;
+type RepairFeedback = 'failed' | 'stopped' | 'recoveryRequired' | null;
 interface ValidationResult {
   ok: boolean;
   requiresRiskConfirmation: boolean;
@@ -61,6 +62,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const [repairPhase, setRepairPhase] = useState<RepairPhase>('idle');
   const [repairFeedback, setRepairFeedback] = useState<RepairFeedback>(null);
   const [repairErrorMessage, setRepairErrorMessage] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
   const operationIdRef = useRef<string | null>(null);
   const stopRequestedRef = useRef(false);
 
@@ -69,9 +71,11 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const isManualChecking = isChecking && validationOwner === 'manual';
   const isRepairing = repairPhase !== 'idle';
   const isWorking = isChecking || isRepairing;
+  const recoveryRequired = repairFeedback === 'recoveryRequired';
   const canRepair =
     !writeBlocked
     && !isWorking
+    && !recoveryRequired
     && validateState !== 'missing'
     && (!requiresRiskConfirmation || riskAcknowledged);
 
@@ -116,6 +120,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     stopRequestedRef.current = false;
     setRepairFeedback(null);
     setRepairErrorMessage(null);
+    setRecovery([]);
     setRepairPhase('validating');
     try {
       const outcome = await repairSkillSource({
@@ -134,7 +139,16 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       if (outcome.status === 'succeeded') {
         markSourceRepairSucceeded(target.context, target.skillName);
         await syncSkills(target.context);
+        const { copySkill, copyContext } = useSkillDialogStore.getState();
+        const shouldReturnToCopy = Boolean(
+          copySkill?.name === target.skillName
+          && copyContext
+          && sameContext(copyContext, target.context)
+        );
         closeRepairSource();
+        if (shouldReturnToCopy) {
+          toast.success(t('skills.repairSourceDialog.copyRetry'));
+        }
         return;
       }
       if (outcome.status === 'missing') {
@@ -143,16 +157,12 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         setRequiresRiskConfirmation(true);
       } else if (outcome.status === 'stopped') {
         setRepairFeedback('stopped');
-      } else if (outcome.status === 'partial') {
-        setRepairFeedback('partial');
       } else if (outcome.status === 'failed') {
         setRepairFeedback('failed');
-        setRepairErrorMessage(appendCrossStorageFailureGuidance(
-          formatAppError(outcome.error, t),
-          target.context,
-          'repair',
-          t,
-        ));
+        setRepairErrorMessage(null);
+      } else if (outcome.status === 'recoveryRequired') {
+        setRepairFeedback('recoveryRequired');
+        setRecovery(outcome.recovery);
       }
     } finally {
       if (operationIdRef.current === operationId) setRepairPhase('idle');
@@ -164,8 +174,8 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     source,
     isWorking,
     syncSkills,
-    t,
     target,
+    t,
     writeBlocked,
   ]);
 
@@ -226,7 +236,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           <Input
             aria-label={t('skills.repairSourceDialog.sourceLabel')}
             className="h-9 flex-1 font-mono text-[13px]"
-            disabled={isWorking}
+            disabled={isWorking || recoveryRequired}
             value={source}
             onChange={(event) => {
               setSource(event.target.value);
@@ -235,6 +245,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
               setRequiresRiskConfirmation(false);
               setRepairFeedback(null);
               setRepairErrorMessage(null);
+              setRecovery([]);
             }}
           />
         </section>
@@ -257,11 +268,18 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           <p role="alert" className={repairFeedback === 'stopped' ? 'text-sm text-warning' : 'text-sm text-destructive'}>
             {repairFeedback === 'stopped'
               ? t('skills.repairSourceDialog.repairStopped')
-              : repairFeedback === 'partial'
-                ? t('skills.repairSourceDialog.repairPartial')
+              : repairFeedback === 'recoveryRequired'
+                ? t('skills.repairSourceDialog.recoveryDescription')
                 : repairErrorMessage ?? t('skills.repairSourceDialog.repairFailed')}
           </p>
         ) : null}
+        {repairFeedback === 'recoveryRequired' ? recovery.map((action) => (
+          <RecoveryActions
+            key={action.resourceId}
+            recovery={action}
+            onResolved={closeRepairSource}
+          />
+        )) : null}
         
         <p className="text-xs leading-5 text-muted-foreground">
           {t('skills.repairSourceDialog.overwriteNotice')}
@@ -269,7 +287,11 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       </div>
 
       <DialogFooter className="border-t border-border px-6 py-4">
-        {isRepairing ? (
+        {recoveryRequired ? (
+          <Button variant="outline" onClick={closeRepairSource}>
+            {t('common.close')}
+          </Button>
+        ) : isRepairing ? (
           <Button
             variant="outline"
             onClick={() => void handleStop()}
@@ -292,18 +314,20 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           )}
           </Button>
         )}
-        <Button onClick={() => void handleRepair()} disabled={!canRepair || isWorking}>
-          {isRepairing ? (
-            <>
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              {t(repairPhase === 'validating'
-                ? 'skills.repairSourceDialog.validating'
-                : 'skills.repairSourceDialog.repairing')}
-            </>
-          ) : (
-            t('skills.repairSourceDialog.repair')
-          )}
-        </Button>
+        {!recoveryRequired ? (
+          <Button onClick={() => void handleRepair()} disabled={!canRepair || isWorking}>
+            {isRepairing ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                {t(repairPhase === 'validating'
+                  ? 'skills.repairSourceDialog.validating'
+                  : 'skills.repairSourceDialog.repairing')}
+              </>
+            ) : (
+              t('skills.repairSourceDialog.repair')
+            )}
+          </Button>
+        ) : null}
       </DialogFooter>
     </DialogContent>
     </Dialog>
