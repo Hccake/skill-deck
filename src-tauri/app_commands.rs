@@ -17,7 +17,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "fetch_available",
     "get_active_mutation",
     "get_agent_settings_snapshot",
-    "get_backend_activity",
     "get_config",
     "get_default_target_agents",
     "get_recovery_resource_status",

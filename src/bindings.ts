@@ -398,9 +398,6 @@ async retryHostProjectMigration() : Promise<Result<ProjectInfo[], AppError>> {
 async getActiveMutation() : Promise<MutationSnapshot> {
     return await TAURI_INVOKE("get_active_mutation");
 },
-async getBackendActivity() : Promise<BackendActivitySnapshot> {
-    return await TAURI_INVOKE("get_backend_activity");
-},
 async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("request_cancel_active_mutation") };

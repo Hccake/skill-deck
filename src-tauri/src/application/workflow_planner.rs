@@ -6,7 +6,7 @@ use crate::application::agent_intent::{
 use crate::core::agent_definition::{AgentAdapter, AgentId};
 use crate::core::skill::sanitize_name;
 use crate::environment::agent_environment::{
-    AgentRuntimeSnapshot, ResolvedAgent, ResolvedAgentScope,
+    AgentRuntimeSnapshot, DetectionState, ResolvedAgent, ResolvedAgentScope,
 };
 use crate::environment::types::{
     same_environment_identity, ContextRef, ContextScope, EnvironmentRef, ResourceLocator,
@@ -131,6 +131,13 @@ fn resolve_eve(
         return Err(validation(
             "Eve requires explicit project adapter targets without a private entry intent",
         ));
+    }
+    if runtime
+        .agents
+        .get(&intent.agent_id)
+        .is_none_or(|agent| agent.detection != DetectionState::Detected)
+    {
+        return Err(validation("Eve is not detected in the selected Project"));
     }
     let project = runtime
         .project_path
@@ -473,5 +480,39 @@ mod tests {
                 .join("skills")
                 .to_string_lossy()
         );
+    }
+
+    #[test]
+    fn eve_requires_a_detected_project() {
+        for detection in [DetectionState::NotDetected, DetectionState::Indeterminate] {
+            let mut runtime = runtime(vec![agent(
+                "eve",
+                AgentSource::Builtin,
+                AgentAdapter::Eve,
+                false,
+                Some("/work/app/agent/skills"),
+            )]);
+            runtime
+                .agents
+                .get_mut(&AgentId::parse("eve").unwrap())
+                .unwrap()
+                .detection = detection;
+            let intent = AgentWriteIntent {
+                agent_id: AgentId::parse("eve").unwrap(),
+                private_entry: PrivateEntryIntent::None,
+                adapter_targets: vec![AdapterTargetId("eve:root".to_string())],
+            };
+
+            assert!(matches!(
+                resolve_agent_entry_plan(
+                    &context(ContextScope::Project {
+                        project_id: "project-1".to_string(),
+                    }),
+                    &runtime,
+                    &[intent],
+                ),
+                Err(AppError::Validation { .. })
+            ));
+        }
     }
 }

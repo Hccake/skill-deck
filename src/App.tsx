@@ -4,6 +4,7 @@ import {
   Route,
   RouterProvider,
   Routes,
+  useLocation,
 } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -34,6 +35,8 @@ function RouteFallback() {
 
 function ApplicationShell() {
   const { t } = useTranslation();
+  const { pathname } = useLocation();
+  const isInstallWizard = pathname === '/wizard';
   const status = useUpdaterStore((state) => state.status);
   const dialogVisible = useUpdaterStore((state) => state.dialogVisible);
   const checkForUpdate = useUpdaterStore((state) => state.checkForUpdate);
@@ -41,12 +44,12 @@ function ApplicationShell() {
 
   // advanced-init-once: 启动时自动检查更新，guard 防止 Strict Mode 双调用
   useEffect(() => {
-    if (didInit) return;
+    if (didInit || isInstallWizard) return;
     didInit = true;
     if (shouldAutoCheck()) {
       checkForUpdate();
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isInstallWizard]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 错误时弹 toast — rerender-defer-reads: 用 getState() 按需读取 error
   useEffect(() => {
@@ -62,7 +65,7 @@ function ApplicationShell() {
     }
   }, [status, t]);
 
-  const showUpdateDialog = dialogVisible
+  const showUpdateDialog = !isInstallWizard && dialogVisible
     && (status === 'available' || status === 'downloading' || status === 'ready' || status === 'error');
 
   return (

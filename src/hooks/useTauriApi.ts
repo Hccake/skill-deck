@@ -16,7 +16,7 @@ import type {
   CustomAgentDefinition,
   CustomAgentDraftValidation,
   AddProjectResult, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo, EnvironmentRef,
-  BackendActivitySnapshot, MutationSnapshot,
+  MutationSnapshot,
   ProjectBinding, ProjectInfo, WslSession, ActiveMutation,
   SkillIdentity,
   InstallRequest, InstallPreview, InstallResponse, PreviewToken,
@@ -38,7 +38,7 @@ export type {
   SkillAuditData, DuplicateCleanupResult,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
   InstallTargetInfo, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
-  EnvironmentRef, AddProjectResult, BackendActivitySnapshot, MutationSnapshot, ProjectBinding, ProjectInfo, WslSession,
+  EnvironmentRef, AddProjectResult, MutationSnapshot, ProjectBinding, ProjectInfo, WslSession,
   ActiveMutation, AgentDeleteImpact, AgentDeleteResult, AgentOperationWarning,
   AgentSettingsSnapshot, CustomAgentDefinition, CustomAgentDraftValidation,
   SkillIdentity, InstallRequest, InstallPreview, InstallResponse, PreviewToken,
@@ -350,10 +350,6 @@ export async function setEnvironmentProjectCrossStorageWarning(
 
 export async function retryHostProjectMigration(): Promise<ProjectInfo[]> {
   return unwrap(await commands.retryHostProjectMigration());
-}
-
-export async function getBackendActivity(): Promise<BackendActivitySnapshot> {
-  return await commands.getBackendActivity();
 }
 
 export async function getActiveMutation(): Promise<MutationSnapshot> {

@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   monitorEnvironmentRuntime: vi.fn(),
   agentConfigurationRouter: vi.fn(),
   recoveryCenter: vi.fn(),
+  checkForUpdate: vi.fn(),
+  shouldAutoCheck: vi.fn(() => false),
   wizardResultHandler: null as null | (() => void),
 }));
 
@@ -69,8 +71,8 @@ vi.mock('@/stores/updater', () => ({
   useUpdaterStore: Object.assign((selector: (state: unknown) => unknown) => selector({
     status: 'idle',
     dialogVisible: false,
-    checkForUpdate: vi.fn(),
-    shouldAutoCheck: () => false,
+    checkForUpdate: mocks.checkForUpdate,
+    shouldAutoCheck: mocks.shouldAutoCheck,
   }), { getState: () => ({ error: null }) }),
 }));
 vi.mock('@/stores/workspace-context', () => ({
@@ -91,6 +93,9 @@ describe('App', () => {
     mocks.monitorEnvironmentRuntime.mockClear();
     mocks.agentConfigurationRouter.mockClear();
     mocks.recoveryCenter.mockClear();
+    mocks.checkForUpdate.mockClear();
+    mocks.shouldAutoCheck.mockReset();
+    mocks.shouldAutoCheck.mockReturnValue(false);
     mocks.wizardResultHandler = null;
     window.history.replaceState({}, '', '/');
   });
@@ -132,5 +137,15 @@ describe('App', () => {
     expect(mocks.monitorEnvironmentRuntime).not.toHaveBeenCalled();
     expect(mocks.recoveryCenter).not.toHaveBeenCalled();
     expect(mocks.agentConfigurationRouter).not.toHaveBeenCalled();
+  });
+
+  it('does not check for application updates from the install wizard', () => {
+    mocks.shouldAutoCheck.mockReturnValue(true);
+    window.history.pushState({}, '', '/wizard');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    render(<App />);
+
+    expect(mocks.checkForUpdate).not.toHaveBeenCalled();
   });
 });

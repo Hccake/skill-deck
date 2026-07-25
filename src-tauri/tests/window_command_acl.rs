@@ -39,6 +39,31 @@ fn list_eve_install_targets() -> &'static str {
 }
 
 #[tauri::command]
+fn check_skill_audit() -> &'static str {
+    "check-skill-audit"
+}
+
+#[tauri::command]
+fn list_environment_projects() -> &'static str {
+    "list-environment-projects"
+}
+
+#[tauri::command]
+fn get_active_mutation() -> &'static str {
+    "get-active-mutation"
+}
+
+#[tauri::command]
+fn request_cancel_active_mutation() -> &'static str {
+    "request-cancel-active-mutation"
+}
+
+#[tauri::command]
+fn execute_lifecycle_action() -> &'static str {
+    "execute-lifecycle-action"
+}
+
+#[tauri::command]
 fn preview_install() -> &'static str {
     "preview-install"
 }
@@ -93,6 +118,11 @@ fn test_app() -> App<MockRuntime> {
             get_default_target_agents,
             list_agent_selection_groups,
             list_eve_install_targets,
+            check_skill_audit,
+            list_environment_projects,
+            get_active_mutation,
+            request_cancel_active_mutation,
+            execute_lifecycle_action,
             preview_install,
             install_skills,
             list_recovery_resources,
@@ -264,4 +294,27 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
         invoke(&wizard, "check_application_update"),
         "check_application_update",
     );
+}
+
+#[test]
+fn install_wizard_allows_every_shared_runtime_command_used_by_the_flow() {
+    let app = test_app();
+    let wizard = window(&app, "install-wizard");
+
+    for (command, expected) in [
+        ("check_skill_audit", "check-skill-audit"),
+        ("list_environment_projects", "list-environment-projects"),
+        ("get_active_mutation", "get-active-mutation"),
+        (
+            "request_cancel_active_mutation",
+            "request-cancel-active-mutation",
+        ),
+        ("execute_lifecycle_action", "execute-lifecycle-action"),
+    ] {
+        assert_eq!(
+            invoke(&wizard, command),
+            Ok(Value::from(expected)),
+            "{command}"
+        );
+    }
 }

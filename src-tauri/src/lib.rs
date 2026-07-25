@@ -190,7 +190,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::environments::set_environment_project_cross_storage_warning,
             commands::environments::retry_host_project_migration,
             commands::mutations::get_active_mutation,
-            commands::mutations::get_backend_activity,
             commands::mutations::request_cancel_active_mutation,
             commands::agent_configuration::request_agent_configuration,
             commands::agent_configuration::complete_agent_configuration,
