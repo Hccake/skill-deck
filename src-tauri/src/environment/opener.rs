@@ -7,6 +7,11 @@ use crate::error::AppError;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemResourceOpener;
 
+/// 按用户明确请求打开外部资源；该进程属于可见的前台交互，不应用后台隐藏策略。
+#[allow(
+    clippy::disallowed_methods,
+    reason = "用户主动打开资源时需要保留外部应用的前台窗口"
+)]
 pub fn open_authorized_resource(target: &ResourceLocator) -> Result<(), AppError> {
     let (program, path) = open_command(target)?;
     Command::new(program).arg(path).spawn()?;
