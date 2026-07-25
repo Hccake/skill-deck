@@ -10,6 +10,7 @@ const requiredKeys = [
   'copyWarning',
   'previewError',
   'executionError',
+  'recoveryRequired',
   'stale',
   'retryPreview',
   'retryDelete',
@@ -32,5 +33,20 @@ describe('Skill deletion copy', () => {
     expect(zhCN.skills.deleteConfirm.copyMode).toBe('副本');
     expect(en.skills.deleteConfirm.linkMode).toBe('Symbolic link');
     expect(en.skills.deleteConfirm.copyMode).toBe('Copy');
+  });
+
+  it('explains removal recovery as an incomplete operation that needs file review', () => {
+    expect(zhCN.skills.deleteConfirm.recoveryRequired)
+      .toBe('删除未完成，相关文件需要检查。请先处理下方恢复项。');
+    expect(en.skills.deleteConfirm.recoveryRequired)
+      .toBe('Deletion did not finish. Some files need to be checked before continuing.');
+  });
+
+  it('describes restore failure as an unfinished user operation', () => {
+    expect(zhCN.mutation.result.errors.restoreFailed)
+      .toBe('Skill Deck 未能妥善完成这次操作，相关文件需要检查。');
+    expect(zhCN.mutation.result.errors.restoreFailed).not.toContain('自动恢复');
+    expect(en.mutation.result.errors.restoreFailed)
+      .toBe('Skill Deck could not safely complete this operation. The related files need review.');
   });
 });

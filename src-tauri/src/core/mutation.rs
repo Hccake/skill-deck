@@ -258,6 +258,7 @@ impl SingleMutationController {
             })
     }
 
+    #[cfg(test)]
     pub fn activity_snapshot(&self) -> BackendActivitySnapshot {
         let state = self
             .state

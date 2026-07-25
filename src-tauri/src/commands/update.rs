@@ -34,13 +34,18 @@ pub async fn update_skill(
     expected_token: PreviewToken,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
-    if execution.request.skill_names.len() != 1 {
-        return Err(AppError::Validation {
-            field: Some("skillNames".to_string()),
-            message: "single-Skill update requires exactly one Skill".to_string(),
-        });
-    }
+    validate_single_skill_update(&execution)?;
     execute_update(execution, expected_token, runtime).await
+}
+
+fn validate_single_skill_update(execution: &UpdateExecutionRequest) -> Result<(), AppError> {
+    if execution.request.skill_names.len() == 1 {
+        return Ok(());
+    }
+    Err(AppError::Validation {
+        field: Some("skillNames".to_string()),
+        message: "single-Skill update requires exactly one Skill".to_string(),
+    })
 }
 
 #[tauri::command]
@@ -58,9 +63,10 @@ async fn execute_update(
     expected_token: PreviewToken,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
+    let context = execution.request.context.clone();
     let guard = runtime
         .mutation()
-        .begin(MutationKind::Update, execution.request.context.clone())?;
+        .begin(MutationKind::Update, context.clone())?;
     guard.transition(MutationPhase::Acquiring, None, true);
     let result = runtime
         .update()
@@ -87,4 +93,33 @@ async fn execute_update(
         .await;
     guard.transition(MutationPhase::Finishing, None, false);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::update::UpdateRequest;
+    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+
+    #[test]
+    fn single_skill_update_rejects_batch_requests() {
+        let execution = UpdateExecutionRequest {
+            request: UpdateRequest {
+                context: ContextRef {
+                    environment: EnvironmentRef::Host,
+                    scope: ContextScope::Global,
+                },
+                skill_names: vec!["alpha".to_string(), "beta".to_string()],
+            },
+            overwrite_private_entries: Vec::new(),
+        };
+
+        assert!(matches!(
+            validate_single_skill_update(&execution),
+            Err(AppError::Validation {
+                field: Some(field),
+                ..
+            }) if field == "skillNames"
+        ));
+    }
 }

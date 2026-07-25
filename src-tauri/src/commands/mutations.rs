@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::core::mutation::{BackendActivitySnapshot, MutationSnapshot};
+use crate::core::mutation::MutationSnapshot;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -8,12 +8,6 @@ use crate::runtime::RuntimeServiceGraph;
 #[specta::specta]
 pub fn get_active_mutation(runtime: State<'_, RuntimeServiceGraph>) -> MutationSnapshot {
     runtime.mutation().snapshot()
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn get_backend_activity(runtime: State<'_, RuntimeServiceGraph>) -> BackendActivitySnapshot {
-    runtime.mutation().activity_snapshot()
 }
 
 #[tauri::command]
