@@ -185,7 +185,7 @@ async removeSkill(request: RemoveRequest) : Promise<Result<RemoveResponse, AppEr
     else return { status: "error", error: e  as any };
 }
 },
-async listRecoveryResources() : Promise<Result<RecoveryResourcesSnapshot, AppError>> {
+async listRecoveryResources() : Promise<Result<RecoveryResourceStatus[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_recovery_resources") };
 } catch (e) {
@@ -770,7 +770,6 @@ export type RecoveryAction = { resourceId: RecoveryResourceId; suggestedActionCo
 export type RecoveryResourceId = string
 export type RecoveryResourceState = "needsAttention" | "consistentCanCleanup" | "environmentUnavailable" | "invalid" | "missing"
 export type RecoveryResourceStatus = { resourceId: RecoveryResourceId; state: RecoveryResourceState; revision: string; environment: EnvironmentRef | null; createdAtEpochMs: number; displayPaths: ResourceLocator[]; diagnostic: ErrorReport | null }
-export type RecoveryResourcesSnapshot = { maintenance: RuntimeMaintenanceStatus[]; resources: RecoveryResourceStatus[] }
 export type RemoveIntent = { kind: "fullSkill" } | { kind: "agentEntries"; entryIds: ObservedEntryId[] }
 export type RemovePreview = { token: PreviewToken; context: ContextRef; skillName: string; canonical: ObservedEntryKind; physicalEntries: ObservedPhysicalEntry[] }
 export type RemoveRequest = { token: PreviewToken; context: ContextRef; skillName: string; intent: RemoveIntent }

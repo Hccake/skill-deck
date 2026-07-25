@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { events } from '@/bindings';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,29 +11,19 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { environmentKey } from '@/lib/context';
-import { useEnvironmentStore } from '@/stores/environment';
 import { useRecoveryStore } from '@/stores/recovery';
 import { formatAppError } from '@/utils/format-app-error';
 
 export function RecoveryCenter() {
   const { t } = useTranslation();
   const resources = useRecoveryStore((state) => state.resources);
-  const maintenance = useRecoveryStore((state) => state.maintenance ?? []);
   const state = useRecoveryStore((store) => store.state);
   const error = useRecoveryStore((store) => store.error);
   const load = useRecoveryStore((store) => store.load);
-  const applyMaintenance = useRecoveryStore((store) => store.applyMaintenance ?? (() => {}));
-  const environments = useEnvironmentStore((store) => store.environments);
-  const discoveryError = useEnvironmentStore((store) => store.discoveryError);
-  const connectionErrors = useEnvironmentStore((store) => store.errorsByEnvironment);
-  const environmentRevisionSignature = environments.map((environment) => (
-    `${environmentKey(environment.environment)}:${environment.revision}`
-  )).join('|');
 
   useEffect(() => {
     void load();
-  }, [environmentRevisionSignature, load]);
+  }, [load]);
 
   useEffect(() => {
     const refresh = () => void load();
@@ -42,41 +31,7 @@ export function RecoveryCenter() {
     return () => window.removeEventListener('focus', refresh);
   }, [load]);
 
-  useEffect(() => {
-    let disposed = false;
-    let stop: (() => void) | undefined;
-    void events.runtimeMaintenanceChanged.listen((event) => {
-      if (!disposed) {
-        applyMaintenance(event.payload.status);
-        void load();
-      }
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else stop = unlisten;
-    }).catch((listenError) => {
-      console.error('Failed to listen for runtime maintenance changes:', listenError);
-    });
-    return () => {
-      disposed = true;
-      stop?.();
-    };
-  }, [applyMaintenance, load]);
-
-  const failedMaintenance = maintenance.filter((item) => item.state === 'failed');
-  const connectionFailures = Object.entries(connectionErrors).flatMap(([key, itemError]) => {
-    if (!itemError) return [];
-    const environment = environments.find((item) => environmentKey(item.environment) === key);
-    return [{
-      key,
-      error: itemError,
-      environment: environment?.displayName ?? key,
-    }];
-  });
-  const hasIssues = resources.length > 0
-    || failedMaintenance.length > 0
-    || discoveryError !== null
-    || connectionFailures.length > 0
-    || error !== null;
+  const hasIssues = resources.length > 0 || error !== null;
 
   if (!hasIssues) return null;
 
@@ -125,49 +80,6 @@ export function RecoveryCenter() {
                 <p className="mt-1 text-xs text-muted-foreground">{formatAppError(error, t)}</p>
               </section>
             ) : null}
-
-            {discoveryError ? (
-              <section className="border-b pb-4">
-                <h3 className="text-sm font-medium">{t('recovery.environment.discoveryTitle')}</h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatAppError(discoveryError, t)}
-                </p>
-              </section>
-            ) : null}
-
-            {connectionFailures.map((failure) => (
-              <section key={`connection:${failure.key}`} className="border-b pb-4">
-                <h3 className="text-sm font-medium">
-                  {t('recovery.environment.connectionTitle', { environment: failure.environment })}
-                </h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatAppError(failure.error, t)}
-                </p>
-              </section>
-            ))}
-
-            {failedMaintenance.map((item) => {
-              const environment = item.environment.kind === 'host'
-                ? t('mutation.host')
-                : item.environment.distro_name;
-              return (
-                <section key={`maintenance:${environmentKey(item.environment)}`} className="border-b pb-4">
-                  <h3 className="text-sm font-medium">
-                    {t('recovery.maintenance.title', { environment })}
-                  </h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {t('recovery.maintenance.failed')}
-                  </p>
-                  {item.issues.length > 0 ? (
-                    <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-                      {item.issues.map((issue) => (
-                        <li key={issue}>{t(`recovery.maintenance.issues.${issue}`)}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </section>
-              );
-            })}
 
             {resources.map((resource) => (
               <RecoveryActions

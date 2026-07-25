@@ -21,7 +21,7 @@
     "title": "Recovery required",
     "center": {
       "title": "Issues requiring attention",
-      "description": "Review Environment connection, runtime maintenance, and recovery data issues.",
+      "description": "Review recovery data that needs attention.",
       "open": "View issues requiring attention",
       "loadError": "Recovery items could not be loaded",
       "show": "Show recovery items"
@@ -32,20 +32,6 @@
     "cleanup": "Remove recovery data",
     "refreshError": "Recovery state could not be refreshed. The recovery data has been preserved.",
     "openError": "The recovery directory could not be opened. Try again later.",
-    "environment": {
-      "discoveryTitle": "WSL Environments could not be refreshed",
-      "connectionTitle": "Could not connect to {{environment}}"
-    },
-    "maintenance": {
-      "title": "{{environment}} local data check",
-      "pending": "Temporary files and recovery data are being checked. Skill changes are paused until this completes.",
-      "failed": "The local data check did not complete for this connection. Skill changes are paused in this Environment. Switch away and re-enter it, or restart the app after resolving the Environment issue.",
-      "ready": "The local data check is complete.",
-      "issues": {
-        "payloadSweepFailed": "The temporary Payload check or cleanup failed.",
-        "recoveryReindexFailed": "The recovery data index check failed."
-      }
-    },
     "cleanupTitle": "Remove recovery data?",
     "cleanupDescription": "Only recovery data is removed. This is available after Skill Deck verifies that the target is consistent.",
     "confirmCleanup": "Remove recovery data",
@@ -231,6 +217,8 @@
       "blocked": "Another operation is running. Try again when it finishes.",
       "failed": "Linked Agent settings could not be saved",
       "failedDescription": "The change could not be completed. Your current selection is still available, so you can retry or continue viewing the Skill content.",
+      "recoveryRequired": "This operation did not finish",
+      "recoveryDescription": "Some files need to be checked. Review the recovery items below before saving again.",
       "stale": "Linked Agents changed. Review the latest settings before saving again.",
       "success": "Linked Agents updated",
       "cleanupSuccess": "Extra copies removed"
@@ -251,6 +239,7 @@
       "skippedAgents": "Copied to the shared Skill directory. Some Agents were not connected separately because their project directory was not found: {{agents}}",
       "partialError": "{{success}} project(s) copied. {{fail}} project(s) still need attention.",
       "copyError": "Copy could not be completed. The selected projects are still available to retry.",
+      "recoveryDescription": "This operation did not finish. Some files need to be checked before retrying.",
       "retryFailed": "Retry failed projects"
     },
     "deleteSuccess": "\"{{name}}\" has been deleted",

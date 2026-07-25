@@ -16,14 +16,15 @@ import { fetchAvailable } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
-import type { FetchResult } from '@/bindings';
+import type { FetchResult, RecoveryAction } from '@/bindings';
 import { repairSkillSource } from '@/workflows/skill-repair';
 
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
 type RepairPhase = 'idle' | 'validating' | 'preparing' | 'installing' | 'stopping';
 type ValidationOwner = 'manual' | 'repair' | null;
-type RepairFeedback = 'failed' | 'stopped' | null;
+type RepairFeedback = 'failed' | 'stopped' | 'recoveryRequired' | null;
 interface ValidationResult {
   ok: boolean;
   requiresRiskConfirmation: boolean;
@@ -59,6 +60,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const [repairPhase, setRepairPhase] = useState<RepairPhase>('idle');
   const [repairFeedback, setRepairFeedback] = useState<RepairFeedback>(null);
   const [repairErrorMessage, setRepairErrorMessage] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
   const operationIdRef = useRef<string | null>(null);
   const stopRequestedRef = useRef(false);
 
@@ -114,6 +116,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     stopRequestedRef.current = false;
     setRepairFeedback(null);
     setRepairErrorMessage(null);
+    setRecovery([]);
     setRepairPhase('validating');
     try {
       const outcome = await repairSkillSource({
@@ -144,6 +147,9 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       } else if (outcome.status === 'failed') {
         setRepairFeedback('failed');
         setRepairErrorMessage(null);
+      } else if (outcome.status === 'recoveryRequired') {
+        setRepairFeedback('recoveryRequired');
+        setRecovery(outcome.recovery);
       }
     } finally {
       if (operationIdRef.current === operationId) setRepairPhase('idle');
@@ -225,6 +231,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
               setRequiresRiskConfirmation(false);
               setRepairFeedback(null);
               setRepairErrorMessage(null);
+              setRecovery([]);
             }}
           />
         </section>
@@ -247,9 +254,14 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           <p role="alert" className={repairFeedback === 'stopped' ? 'text-sm text-warning' : 'text-sm text-destructive'}>
             {repairFeedback === 'stopped'
               ? t('skills.repairSourceDialog.repairStopped')
-              : repairErrorMessage ?? t('skills.repairSourceDialog.repairFailed')}
+              : repairFeedback === 'recoveryRequired'
+                ? t('skills.repairSourceDialog.recoveryDescription')
+                : repairErrorMessage ?? t('skills.repairSourceDialog.repairFailed')}
           </p>
         ) : null}
+        {repairFeedback === 'recoveryRequired' ? recovery.map((action) => (
+          <RecoveryActions key={action.resourceId} recovery={action} />
+        )) : null}
         
         <p className="text-xs leading-5 text-muted-foreground">
           {t('skills.repairSourceDialog.overwriteNotice')}

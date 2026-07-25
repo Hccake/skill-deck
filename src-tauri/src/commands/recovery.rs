@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::application::recovery::{RecoveryResourceStatus, RecoveryResourcesSnapshot};
+use crate::application::recovery::RecoveryResourceStatus;
 use crate::error::{AppError, RecoveryResourceId};
 use crate::runtime::RuntimeServiceGraph;
 
@@ -8,11 +8,8 @@ use crate::runtime::RuntimeServiceGraph;
 #[specta::specta]
 pub async fn list_recovery_resources(
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<RecoveryResourcesSnapshot, AppError> {
-    Ok(RecoveryResourcesSnapshot {
-        maintenance: runtime.maintenance().statuses()?,
-        resources: runtime.recovery().list().await?,
-    })
+) -> Result<Vec<RecoveryResourceStatus>, AppError> {
+    runtime.recovery().list().await
 }
 
 #[tauri::command]

@@ -21,7 +21,7 @@
     "title": "需要恢复处理",
     "center": {
       "title": "需要处理的问题",
-      "description": "查看 Environment 连接、运行时维护和恢复数据的异常状态。",
+      "description": "查看需要处理的恢复数据。",
       "open": "查看需要处理的问题",
       "loadError": "无法加载恢复数据",
       "show": "查看恢复项"
@@ -32,20 +32,6 @@
     "cleanup": "移除恢复数据",
     "refreshError": "无法刷新恢复状态，恢复数据已保留。",
     "openError": "无法打开恢复目录，请稍后重试。",
-    "environment": {
-      "discoveryTitle": "无法刷新 WSL Environment",
-      "connectionTitle": "无法连接 {{environment}}"
-    },
-    "maintenance": {
-      "title": "{{environment}} 本地数据检查",
-      "pending": "正在检查临时文件和恢复数据，完成前暂时不能修改 Skill。",
-      "failed": "本次连接的本地数据检查未完成，当前 Environment 暂时不能修改 Skill。请切换到其他 Environment 后重新进入，或处理环境问题后重启应用。",
-      "ready": "本地数据检查已完成。",
-      "issues": {
-        "payloadSweepFailed": "临时 Payload 检查或清理失败。",
-        "recoveryReindexFailed": "恢复数据索引检查失败。"
-      }
-    },
     "cleanupTitle": "移除恢复数据？",
     "cleanupDescription": "只会移除恢复数据。仅当 Skill Deck 确认目标状态一致后才会提供此操作。",
     "confirmCleanup": "移除恢复数据",
@@ -231,6 +217,8 @@
       "blocked": "当前有其他操作正在执行，请稍后再试。",
       "failed": "暂时无法保存关联 Agent 设置",
       "failedDescription": "这次更改未能完成。当前选择仍保留，你可以重试或继续查看 Skill 内容。",
+      "recoveryRequired": "本次操作未完成",
+      "recoveryDescription": "相关文件需要检查。请先处理下方恢复项，再决定是否重新保存。",
       "stale": "关联 Agent 已发生变化，请检查最新设置后重新保存。",
       "success": "关联 Agent 已更新",
       "cleanupSuccess": "额外副本已移除"
@@ -251,6 +239,7 @@
       "skippedAgents": "已复制到通用 Skill 目录。部分 Agent 因目标项目目录不存在，未单独接入：{{agents}}",
       "partialError": "已复制 {{success}} 个项目，仍有 {{fail}} 个项目需要处理。",
       "copyError": "复制未完成，已选择的项目仍可重试。",
+      "recoveryDescription": "本次操作未完成，相关文件需要检查。请先处理下方恢复项。",
       "retryFailed": "重试失败项目"
     },
     "deleteSuccess": "已删除「{{name}}」",

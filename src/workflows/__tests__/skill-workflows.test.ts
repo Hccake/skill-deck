@@ -65,6 +65,11 @@ const token = {
   contextRevision: 'context-1',
 };
 
+const recoveryAction = {
+  resourceId: 'recovery-1',
+  suggestedActionCode: 'reviewChanges',
+} as const;
+
 const removePreview = {
   token,
   context,
@@ -274,6 +279,26 @@ describe('skill workflows', () => {
     expect(mocks.syncSkills).toHaveBeenCalledWith(context);
   });
 
+  it('keeps a management recovery action separate from an ordinary failure', async () => {
+    useSkillDialogStore.setState({
+      manageAgentsSkill: skill,
+      manageAgentsContext: context,
+      manageAgentDetails: managePreview,
+    });
+    mocks.manageSkillAgents.mockResolvedValueOnce({
+      units: [{ status: 'recoveryRequired', recovery: recoveryAction, error: null }],
+    });
+
+    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
+
+    expect(outcome).toEqual({
+      status: 'recoveryRequired',
+      response: { units: [{ status: 'recoveryRequired', recovery: recoveryAction, error: null }] },
+      recovery: [recoveryAction],
+    });
+    expect(mocks.syncSkills).not.toHaveBeenCalled();
+  });
+
   it('returns a failed outcome when an atomic Agent change reports mixed unit results', async () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
@@ -394,6 +419,33 @@ describe('skill workflows', () => {
       status: 'partial',
       succeededProjectIds: ['project-b'],
       retryableProjectIds: ['project-c'],
+    });
+    expect(useSkillDialogStore.getState().copySkill).toBe(skill);
+  });
+
+  it('keeps copy recovery separate from ordinary retryable targets', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.copySkillToProjects.mockResolvedValue({
+      units: [
+        { status: 'succeeded', target: { scope: { scope: 'project', project_id: 'project-b' } } },
+        {
+          status: 'recoveryRequired',
+          retryable: false,
+          recovery: recoveryAction,
+          target: { scope: { scope: 'project', project_id: 'project-c' } },
+        },
+      ],
+    });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['project-b', 'project-c'],
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'recoveryRequired',
+      succeededProjectIds: ['project-b'],
+      recovery: [recoveryAction],
     });
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);
   });

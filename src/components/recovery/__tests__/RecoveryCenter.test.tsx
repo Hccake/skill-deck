@@ -111,7 +111,7 @@ describe('RecoveryCenter', () => {
     expect(screen.queryByRole('button', { name: 'recovery.center.open' })).toBeNull();
   });
 
-  it('shows failed maintenance in a stable dialog without retry', () => {
+  it('does not turn failed runtime maintenance into a Recovery Center item', () => {
     mocks.maintenance = [{
       environment: { kind: 'host' },
       state: 'failed',
@@ -120,15 +120,10 @@ describe('RecoveryCenter', () => {
 
     render(<RecoveryCenter />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.open' }));
-    expect(screen.getByRole('dialog')).toBeDefined();
-    expect(screen.getByText('recovery.maintenance.title:mutation.host')).toBeDefined();
-    expect(screen.getByText('recovery.maintenance.failed')).toBeDefined();
-    expect(screen.getByText('recovery.maintenance.issues.payloadSweepFailed')).toBeDefined();
-    expect(screen.queryByText('recovery.retryMaintenance')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'recovery.center.open' })).toBeNull();
   });
 
-  it('shows saved Discovery and Connection errors in the dialog', () => {
+  it('does not turn Environment discovery or connection errors into Recovery items', () => {
     mocks.discoveryError = {
       kind: 'environmentDiscoveryFailed',
       data: { message: 'wsl.exe timed out' },
@@ -145,10 +140,7 @@ describe('RecoveryCenter', () => {
 
     render(<RecoveryCenter />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.open' }));
-    expect(screen.getByText('recovery.environment.discoveryTitle')).toBeDefined();
-    expect(screen.getByText('recovery.environment.connectionTitle:Ubuntu')).toBeDefined();
-    expect(screen.queryByText('context.environmentRetry')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'recovery.center.open' })).toBeNull();
   });
 
   it('keeps recovery resource actions available in the dialog', () => {
@@ -168,7 +160,7 @@ describe('RecoveryCenter', () => {
     ]);
   });
 
-  it('keeps initial and focus recovery refresh without registering a second Environment listener', async () => {
+  it('refreshes on initial load and window focus', async () => {
     render(<RecoveryCenter />);
 
     await waitFor(() => expect(mocks.load).toHaveBeenCalled());

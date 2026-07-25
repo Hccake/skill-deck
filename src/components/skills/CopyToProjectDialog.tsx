@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { environmentKey, sameEnvironment } from '@/lib/context';
 import type { ContextRef, EnvironmentInfo, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { useMutationStore } from '@/stores/mutation';
 import type { CopyOutcome } from '@/workflows/skill-copy';
 
@@ -200,6 +201,8 @@ function CopyToProjectDialogSession({
           ...outcome.succeededProjectIds,
         ]));
         setSelected(new Set(outcome.retryableProjectIds));
+      } else if (outcome.status === 'recoveryRequired') {
+        setSelected(new Set());
       }
     } finally {
       setCopying(false);
@@ -234,10 +237,27 @@ function CopyToProjectDialogSession({
               })}
             </AlertDescription>
           </Alert>
+        ) : copyOutcome?.status === 'recoveryRequired' ? (
+          <Alert role="alert" variant="destructive">
+            <AlertDescription>
+              <p>{t('skills.copyToProject.recoveryDescription')}</p>
+              {copyOutcome.recovery.map((action) => (
+                <RecoveryActions key={action.resourceId} recovery={action} />
+              ))}
+            </AlertDescription>
+          </Alert>
         ) : copyOutcome?.status === 'failed' ? (
           <Alert role="alert" variant="destructive">
             <AlertDescription>{t('skills.copyToProject.copyError')}</AlertDescription>
           </Alert>
+        ) : null}
+        {copyOutcome?.status === 'partial' && copyOutcome.recovery?.length ? (
+          <div className="space-y-2" role="status">
+            <p className="text-sm text-destructive">{t('skills.copyToProject.recoveryDescription')}</p>
+            {copyOutcome.recovery.map((action) => (
+              <RecoveryActions key={action.resourceId} recovery={action} />
+            ))}
+          </div>
         ) : null}
         {showSourceInfoNote ? (
           <div role="note" className="flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-2">

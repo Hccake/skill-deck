@@ -15,6 +15,7 @@ import type {
   ManageAgentsResponse,
   MutationUnitResult,
   ObservedEntryId,
+  RecoveryAction,
 } from '@/bindings';
 
 let managePreviewGeneration = 0;
@@ -32,10 +33,21 @@ export type ManageAgentsOutcome =
   | { status: 'blocked' }
   | { status: 'succeeded'; response: ManageAgentsResponse }
   | { status: 'stale' }
+  | { status: 'recoveryRequired'; response: ManageAgentsResponse; recovery: RecoveryAction[] }
   | { status: 'failed' };
 
 function hasStaleManageAgentResult(units: MutationUnitResult[]): boolean {
   return units.some((unit) => unit.error && STALE_MANAGE_AGENT_CODES.has(unit.error.code));
+}
+
+function recoveryActions(units: MutationUnitResult[]): RecoveryAction[] {
+  const seen = new Set<string>();
+  return units.flatMap((unit) => {
+    const recovery = unit.recovery;
+    if (!recovery || seen.has(recovery.resourceId)) return [];
+    seen.add(recovery.resourceId);
+    return [recovery];
+  });
 }
 
 function isStaleManageAgentError(error: unknown): boolean {
@@ -129,6 +141,11 @@ export async function executeManageAgentChanges(
     if (hasStaleManageAgentResult(failedUnits)) {
       await openManageAgentChanges(manageAgentsSkill, context, manageAgentsProjectPath);
       return { status: 'stale' };
+    }
+
+    const recoveries = recoveryActions(result.units);
+    if (recoveries.length > 0) {
+      return { status: 'recoveryRequired', response: result, recovery: recoveries };
     }
 
     if (failedUnits.length > 0) {

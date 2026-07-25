@@ -4,7 +4,6 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::application::mutation::result::ErrorReport;
-use crate::environment::maintenance::RuntimeMaintenanceStatus;
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
 use crate::error::{AppError, RecoveryResourceId};
 use crate::storage::recovery_repository::{
@@ -33,14 +32,6 @@ pub struct RecoveryResourceStatus {
     pub created_at_epoch_ms: u64,
     pub display_paths: Vec<ResourceLocator>,
     pub diagnostic: Option<ErrorReport>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct RecoveryResourcesSnapshot {
-    pub maintenance: Vec<RuntimeMaintenanceStatus>,
-    pub resources: Vec<RecoveryResourceStatus>,
 }
 
 pub struct RecoveryService<C> {

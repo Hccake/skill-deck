@@ -17,6 +17,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { agentId } from '@/lib/agents';
 import { canCreatePrivateCopy, isPrivateRequiredAgent } from '@/lib/agentTargets';
 import { AgentSelector } from '@/components/agents/AgentSelector';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import type {
   AgentId,
   AgentSelectionGroup,
@@ -27,6 +28,7 @@ import type {
   ManageAgentsPreview,
   ObservedEntryId,
   ObservedPhysicalEntry,
+  RecoveryAction,
 } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
 import type { ManageAgentsOutcome } from '@/workflows/skill-manage-agents';
@@ -260,8 +262,9 @@ function ManageAgentsDialogBody({
   const [optionalAgents, setOptionalAgents] = useState<AgentId[]>(normalizedInitialSelection.optional);
   const [optionalExpanded, setOptionalExpanded] = useState(normalizedInitialSelection.optional.length > 0);
   const [saveFeedback, setSaveFeedback] = useState<{
-    status: 'blocked' | 'failed' | 'stale';
+    status: 'blocked' | 'failed' | 'stale' | 'recoveryRequired';
   } | null>(null);
+  const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
   const { addAgents, addOptionalAgents, removeEntryIds, hasChanges } = useMemo(() => {
     const initialSet = new Set(normalizedInitialSelection.required);
     const initialOptionalSet = new Set(normalizedInitialSelection.optional);
@@ -304,11 +307,13 @@ function ManageAgentsDialogBody({
 
   const handleSave = useCallback(async () => {
     setSaveFeedback(null);
+    setRecovery([]);
     onSavingChange(true);
     try {
       const outcome = await onSave(addAgents, removeEntryIds, mode, addOptionalAgents);
       if (outcome.status !== 'succeeded') {
         setSaveFeedback(outcome);
+        setRecovery(outcome.status === 'recoveryRequired' ? outcome.recovery : []);
       }
     } catch {
       setSaveFeedback({ status: 'failed' });
@@ -337,6 +342,15 @@ function ManageAgentsDialogBody({
                 <span className="block text-muted-foreground">
                   {t('skills.manageAgents.failedDescription')}
                 </span>
+              ) : saveFeedback.status === 'recoveryRequired' ? (
+                <>
+                  <span className="block text-muted-foreground">
+                    {t('skills.manageAgents.recoveryDescription')}
+                  </span>
+                  {recovery.map((action) => (
+                    <RecoveryActions key={action.resourceId} recovery={action} />
+                  ))}
+                </>
               ) : null}
             </span>
           </div>

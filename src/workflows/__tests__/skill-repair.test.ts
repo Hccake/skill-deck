@@ -64,6 +64,20 @@ describe('repairSkillSource', () => {
     });
   });
 
+  it('preserves a recovery action from the single Skill mutation', async () => {
+    const workflowApi = api();
+    const recovery = { resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' } as const;
+    workflowApi.installSkills.mockResolvedValue({
+      units: [{ unitId: 'toolkit', status: 'recoveryRequired', recovery }],
+    });
+
+    await expect(repairSkillSource(request(), workflowApi as never)).resolves.toEqual({
+      status: 'recoveryRequired',
+      response: { units: [{ unitId: 'toolkit', status: 'recoveryRequired', recovery }] },
+      recovery: [recovery],
+    });
+  });
+
   it('stops before preparation when cancellation is requested after discovery', async () => {
     const workflowApi = api();
     const stopRequested = vi.fn()

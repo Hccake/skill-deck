@@ -28,7 +28,7 @@ import type {
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   AgentConfigurationOutcome,
-  RecoveryResourceId, RecoveryResourceStatus, RecoveryResourcesSnapshot,
+  RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
 } from '@/bindings';
 
@@ -50,7 +50,7 @@ export type {
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   AgentConfigurationOutcome,
-  RecoveryResourceId, RecoveryResourceStatus, RecoveryResourcesSnapshot,
+  RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
 };
 
@@ -143,7 +143,7 @@ export async function getRecoveryResourceStatus(
   return unwrap(await commands.getRecoveryResourceStatus(resourceId));
 }
 
-export async function listRecoveryResources(): Promise<RecoveryResourcesSnapshot> {
+export async function listRecoveryResources(): Promise<RecoveryResourceStatus[]> {
   return unwrap(await commands.listRecoveryResources());
 }
 
