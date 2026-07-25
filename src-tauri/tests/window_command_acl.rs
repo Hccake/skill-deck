@@ -39,6 +39,31 @@ fn list_eve_install_targets() -> &'static str {
 }
 
 #[tauri::command]
+fn check_skill_audit() -> &'static str {
+    "check-skill-audit"
+}
+
+#[tauri::command]
+fn list_environment_projects() -> &'static str {
+    "list-environment-projects"
+}
+
+#[tauri::command]
+fn get_active_mutation() -> &'static str {
+    "get-active-mutation"
+}
+
+#[tauri::command]
+fn request_cancel_active_mutation() -> &'static str {
+    "request-cancel-active-mutation"
+}
+
+#[tauri::command]
+fn execute_lifecycle_action() -> &'static str {
+    "execute-lifecycle-action"
+}
+
+#[tauri::command]
 fn preview_install() -> &'static str {
     "preview-install"
 }
@@ -56,11 +81,6 @@ fn open_recovery_resource() -> &'static str {
 #[tauri::command]
 fn list_recovery_resources() -> &'static str {
     "list-recovery-resources"
-}
-
-#[tauri::command]
-fn retry_runtime_maintenance() -> &'static str {
-    "retry-runtime-maintenance"
 }
 
 #[tauri::command]
@@ -98,10 +118,14 @@ fn test_app() -> App<MockRuntime> {
             get_default_target_agents,
             list_agent_selection_groups,
             list_eve_install_targets,
+            check_skill_audit,
+            list_environment_projects,
+            get_active_mutation,
+            request_cancel_active_mutation,
+            execute_lifecycle_action,
             preview_install,
             install_skills,
             list_recovery_resources,
-            retry_runtime_maintenance,
             open_recovery_resource,
             open_skill_resource,
             open_config_resource,
@@ -153,7 +177,7 @@ fn assert_denied(result: Result<Value, Value>, command: &str) {
 }
 
 #[test]
-fn main_window_allows_settings_and_recovery_but_not_source_discovery() {
+fn main_window_allows_skill_repair_commands() {
     let app = test_app();
     let main = window(&app, "main");
 
@@ -171,10 +195,6 @@ fn main_window_allows_settings_and_recovery_but_not_source_discovery() {
         Ok(Value::from("open-recovery-resource"))
     );
     assert_eq!(
-        invoke(&main, "retry_runtime_maintenance"),
-        Ok(Value::from("retry-runtime-maintenance"))
-    );
-    assert_eq!(
         invoke(&main, "open_skill_resource"),
         Ok(Value::from("open-skill-resource"))
     );
@@ -190,7 +210,22 @@ fn main_window_allows_settings_and_recovery_but_not_source_discovery() {
         invoke(&main, "request_agent_configuration"),
         "request_agent_configuration",
     );
-    assert_denied(invoke(&main, "fetch_available"), "fetch_available");
+    assert_eq!(
+        invoke(&main, "fetch_available"),
+        Ok(Value::from("fetch-available"))
+    );
+    assert_eq!(
+        invoke(&main, "acquire_selected_payloads"),
+        Ok(Value::from("acquire-selected-payloads"))
+    );
+    assert_eq!(
+        invoke(&main, "preview_install"),
+        Ok(Value::from("preview-install"))
+    );
+    assert_eq!(
+        invoke(&main, "install_skills"),
+        Ok(Value::from("install-skills"))
+    );
 }
 
 #[test]
@@ -248,10 +283,6 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
         "open_recovery_resource",
     );
     assert_denied(
-        invoke(&wizard, "retry_runtime_maintenance"),
-        "retry_runtime_maintenance",
-    );
-    assert_denied(
         invoke(&wizard, "open_skill_resource"),
         "open_skill_resource",
     );
@@ -263,4 +294,27 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
         invoke(&wizard, "check_application_update"),
         "check_application_update",
     );
+}
+
+#[test]
+fn install_wizard_allows_every_shared_runtime_command_used_by_the_flow() {
+    let app = test_app();
+    let wizard = window(&app, "install-wizard");
+
+    for (command, expected) in [
+        ("check_skill_audit", "check-skill-audit"),
+        ("list_environment_projects", "list-environment-projects"),
+        ("get_active_mutation", "get-active-mutation"),
+        (
+            "request_cancel_active_mutation",
+            "request-cancel-active-mutation",
+        ),
+        ("execute_lifecycle_action", "execute-lifecycle-action"),
+    ] {
+        assert_eq!(
+            invoke(&wizard, command),
+            Ok(Value::from(expected)),
+            "{command}"
+        );
+    }
 }

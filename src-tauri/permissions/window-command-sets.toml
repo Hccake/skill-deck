@@ -1,11 +1,29 @@
 [[set]]
+identifier = "shared-business-commands"
+description = "Commands shared by the main window and install wizard"
+permissions = [
+  "allow-acquire-selected-payloads",
+  "allow-check-skill-audit",
+  "allow-execute-lifecycle-action",
+  "allow-fetch-available",
+  "allow-get-active-mutation",
+  "allow-get-default-target-agents",
+  "allow-install-skills",
+  "allow-list-agent-selection-groups",
+  "allow-list-agents",
+  "allow-list-environment-projects",
+  "allow-list-eve-install-targets",
+  "allow-preview-install",
+  "allow-request-cancel-active-mutation"
+]
+
+[[set]]
 identifier = "main-commands"
 description = "Application commands available to the main window"
 permissions = [
-  "allow-acquire-selected-payloads",
+  "shared-business-commands",
   "allow-add-environment-project",
   "allow-check-application-update",
-  "allow-check-skill-audit",
   "allow-check-updates",
   "allow-complete-agent-configuration",
   "allow-confirm-recovery-resource-resolved",
@@ -16,18 +34,10 @@ permissions = [
   "allow-delete-invalid-custom-agent",
   "allow-download-and-install-application-update",
   "allow-duplicate-custom-agent-draft",
-  "allow-execute-lifecycle-action",
-  "allow-get-active-mutation",
   "allow-get-agent-settings-snapshot",
-  "allow-get-backend-activity",
   "allow-get-config",
-  "allow-get-default-target-agents",
   "allow-get-recovery-resource-status",
-  "allow-list-agent-selection-groups",
-  "allow-list-agents",
-  "allow-list-environment-projects",
   "allow-list-environments",
-  "allow-list-eve-install-targets",
   "allow-list-recovery-resources",
   "allow-list-skills",
   "allow-manage-skill-agents",
@@ -44,9 +54,7 @@ permissions = [
   "allow-read-skill-content",
   "allow-remove-environment-project",
   "allow-remove-skill",
-  "allow-request-cancel-active-mutation",
   "allow-retry-host-project-migration",
-  "allow-retry-runtime-maintenance",
   "allow-save-config",
   "allow-save-custom-agent",
   "allow-save-default-target-agents",
@@ -60,17 +68,6 @@ permissions = [
 identifier = "install-wizard-commands"
 description = "Application commands available to the install wizard"
 permissions = [
-  "allow-acquire-selected-payloads",
-  "allow-execute-lifecycle-action",
-  "allow-fetch-available",
-  "allow-get-active-mutation",
-  "allow-get-backend-activity",
-  "allow-get-default-target-agents",
-  "allow-install-skills",
-  "allow-list-agent-selection-groups",
-  "allow-list-agents",
-  "allow-list-eve-install-targets",
-  "allow-preview-install",
-  "allow-request-agent-configuration",
-  "allow-request-cancel-active-mutation"
+  "shared-business-commands",
+  "allow-request-agent-configuration"
 ]

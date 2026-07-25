@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   monitorEnvironmentRuntime: vi.fn(),
   agentConfigurationRouter: vi.fn(),
   recoveryCenter: vi.fn(),
+  checkForUpdate: vi.fn(),
+  shouldAutoCheck: vi.fn(() => false),
   wizardResultHandler: null as null | (() => void),
 }));
 
@@ -69,8 +71,8 @@ vi.mock('@/stores/updater', () => ({
   useUpdaterStore: Object.assign((selector: (state: unknown) => unknown) => selector({
     status: 'idle',
     dialogVisible: false,
-    checkForUpdate: vi.fn(),
-    shouldAutoCheck: () => false,
+    checkForUpdate: mocks.checkForUpdate,
+    shouldAutoCheck: mocks.shouldAutoCheck,
   }), { getState: () => ({ error: null }) }),
 }));
 vi.mock('@/stores/workspace-context', () => ({
@@ -91,6 +93,9 @@ describe('App', () => {
     mocks.monitorEnvironmentRuntime.mockClear();
     mocks.agentConfigurationRouter.mockClear();
     mocks.recoveryCenter.mockClear();
+    mocks.checkForUpdate.mockClear();
+    mocks.shouldAutoCheck.mockReset();
+    mocks.shouldAutoCheck.mockReturnValue(false);
     mocks.wizardResultHandler = null;
     window.history.replaceState({}, '', '/');
   });
@@ -99,19 +104,25 @@ describe('App', () => {
     mocks.refreshWorkspace.mockResolvedValue(undefined);
 
     render(<App />);
-    await waitFor(() => expect(mocks.wizardResultHandler).not.toBeNull());
+    await waitFor(
+      () => expect(mocks.wizardResultHandler).not.toBeNull(),
+      { timeout: 5000 },
+    );
     act(() => mocks.wizardResultHandler?.());
 
-    await waitFor(() => expect(mocks.refreshWorkspace).toHaveBeenCalledWith({
-      environment: { kind: 'host' },
-      scope: { scope: 'global' },
-    }));
+    await waitFor(
+      () => expect(mocks.refreshWorkspace).toHaveBeenCalledWith({
+        environment: { kind: 'host' },
+        scope: { scope: 'global' },
+      }),
+      { timeout: 5000 },
+    );
   });
 
-  it('mounts the global mutation status in the main window', () => {
+  it('mounts the global mutation status in the main window', async () => {
     render(<App />);
 
-    expect(screen.getByText('mutation-status-bar')).toBeDefined();
+    expect(await screen.findByText('mutation-status-bar', {}, { timeout: 5000 })).toBeDefined();
   });
 
   it('mounts lifecycle error toasts in the wizard window', () => {
@@ -132,5 +143,15 @@ describe('App', () => {
     expect(mocks.monitorEnvironmentRuntime).not.toHaveBeenCalled();
     expect(mocks.recoveryCenter).not.toHaveBeenCalled();
     expect(mocks.agentConfigurationRouter).not.toHaveBeenCalled();
+  });
+
+  it('does not check for application updates from the install wizard', () => {
+    mocks.shouldAutoCheck.mockReturnValue(true);
+    window.history.pushState({}, '', '/wizard');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    render(<App />);
+
+    expect(mocks.checkForUpdate).not.toHaveBeenCalled();
   });
 });
