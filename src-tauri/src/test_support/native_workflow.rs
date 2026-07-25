@@ -1,23 +1,31 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::application::agent_intent::{AgentWriteIntent, PrivateEntryIntent};
+use crate::application::agent_intent::{AdapterTargetId, AgentWriteIntent, PrivateEntryIntent};
 use crate::application::copy::{CopyExecutionRequest, CopyRequest, CopyService};
 use crate::application::copy_runtime::RuntimeCopyProjectComparator;
-use crate::application::install::{InstallRequest, InstallService};
+use crate::application::install::{
+    InstallFuture, InstallPlanExecutor, InstallRequest, InstallService,
+};
 use crate::application::install_planner::ConcreteInstallPlanner;
 use crate::application::manage_agents::{
     ManageAgentsPreviewRequest, ManageAgentsRequest, ManageAgentsService,
 };
-use crate::application::mutation::coordinator::RuntimeRevisionSource;
-use crate::application::mutation::result::{MutationUnitResult, MutationUnitStatus};
+use crate::application::mutation::coordinator::{
+    BoxFuture, MutationCoordinator, PreparedEntryExecutor, PreparedLockCommitter,
+    RuntimeRevisionSource,
+};
+use crate::application::mutation::plan::{ExecutionUnit, MutationPlan};
+use crate::application::mutation::result::{
+    MutationUnitResult, MutationUnitStatus, MutationWarning,
+};
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, PayloadPlanningMetadata, PayloadSessionLimits,
-    PayloadSessionManager,
+    PayloadSessionManager, PinnedPayloadLease,
 };
 use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
 use crate::application::remove::{RemoveIntent, RemoveRequest, RemoveService};
@@ -37,16 +45,24 @@ use crate::core::agent_definition::{
 };
 use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
 use crate::core::agent_settings::CustomAgentRecord;
+use crate::core::builtin_agent_definitions::builtin_agent_definitions;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{
-    build_skill_payload, compute_cli_project_hash_from_payload, SkillPayload,
+    build_skill_payload, compute_cli_project_hash_from_payload, PayloadId, SkillPayload,
 };
+use crate::environment::native::materialize::{
+    NativePreparedEntryExecutor, NativePreparedEntrySet,
+};
+use crate::environment::native::recovery::NativeRecoveryMarkerStore;
 use crate::environment::planning::RuntimeTargetFactResolver;
+use crate::environment::recovery::RecoveryMarkerStore;
+use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::EnvironmentRegistry;
 use crate::error::AppError;
 use crate::git_fixture::{BareSkillRepo as FileBareSkillRepo, CountingGitTransport};
 use crate::models::InstallMode;
+use crate::storage::lock_plan::{LockCommitReceipt, PreparedLockMutation};
 
 pub(crate) struct StaticRegistry(pub(crate) Arc<AgentRegistrySnapshot>);
 
@@ -59,6 +75,153 @@ impl AgentRegistrySnapshotSource for StaticRegistry {
 #[derive(Clone)]
 pub(crate) struct FixedUpdateAcquirer {
     pub(crate) handle: AcquiredPayloadHandle,
+}
+
+struct VerifyFailureEntryExecutor {
+    inner: NativePreparedEntryExecutor,
+}
+
+impl PreparedEntryExecutor for VerifyFailureEntryExecutor {
+    type Staged = NativePreparedEntrySet;
+
+    fn stage<'a>(
+        &'a self,
+        unit: &'a ExecutionUnit,
+        payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<Self::Staged, AppError>> {
+        self.inner.stage(unit, payloads, cancellation)
+    }
+
+    fn recheck_entries<'a>(
+        &'a self,
+        staged: &'a Self::Staged,
+    ) -> BoxFuture<'a, Result<(), AppError>> {
+        self.inner.recheck_entries(staged)
+    }
+
+    fn swap<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        self.inner.swap(staged)
+    }
+
+    fn verify<'a>(&'a self, staged: &'a Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        Box::pin(async move {
+            self.inner.verify(staged).await?;
+            Err(AppError::ExecutionFailed {
+                message: "injected Manage Agents verify failure".to_string(),
+            })
+        })
+    }
+
+    fn restore<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        self.inner.restore(staged)
+    }
+
+    fn cleanup<'a>(
+        &'a self,
+        staged: Self::Staged,
+    ) -> BoxFuture<'a, Result<Vec<MutationWarning>, AppError>> {
+        self.inner.cleanup(staged)
+    }
+}
+
+struct VerifyFailurePlanExecutor {
+    environments: Arc<EnvironmentRegistry>,
+    facts: RuntimePlanningFactSource,
+    recovery_root: PathBuf,
+}
+
+struct LockFailurePlanExecutor {
+    facts: RuntimePlanningFactSource,
+    recovery_root: PathBuf,
+    attempted: Arc<std::sync::atomic::AtomicBool>,
+}
+
+struct RejectingLockCommitter {
+    attempted: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PreparedLockCommitter for RejectingLockCommitter {
+    fn commit<'a>(
+        &'a self,
+        _mutation: &'a PreparedLockMutation,
+    ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
+        self.attempted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {
+            Err(AppError::ExecutionFailed {
+                message: "injected Manage Agents lock failure".to_string(),
+            })
+        })
+    }
+}
+
+impl InstallPlanExecutor for LockFailurePlanExecutor {
+    fn execute<'a>(
+        &'a self,
+        plan: MutationPlan,
+        cancellation: CancellationSignal,
+    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
+        Box::pin(async move {
+            let recovery: Arc<dyn RecoveryMarkerStore> = Arc::new(
+                NativeRecoveryMarkerStore::new(&self.recovery_root)
+                    .expect("native Manage Agents recovery store"),
+            );
+            let entries = NativePreparedEntryExecutor::new(
+                if cfg!(windows) {
+                    ExecutionBackend::NativeWindows
+                } else {
+                    ExecutionBackend::NativeUnix
+                },
+                plan.operation_id.clone(),
+                recovery,
+            );
+            MutationCoordinator::new(
+                entries,
+                RejectingLockCommitter {
+                    attempted: Arc::clone(&self.attempted),
+                },
+                self.facts.clone(),
+            )
+            .execute(plan, cancellation)
+            .await
+        })
+    }
+}
+
+impl InstallPlanExecutor for VerifyFailurePlanExecutor {
+    fn execute<'a>(
+        &'a self,
+        plan: MutationPlan,
+        cancellation: CancellationSignal,
+    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
+        Box::pin(async move {
+            let recovery: Arc<dyn RecoveryMarkerStore> = Arc::new(
+                NativeRecoveryMarkerStore::new(&self.recovery_root)
+                    .expect("native Manage Agents recovery store"),
+            );
+            let entries = VerifyFailureEntryExecutor {
+                inner: NativePreparedEntryExecutor::new(
+                    if cfg!(windows) {
+                        ExecutionBackend::NativeWindows
+                    } else {
+                        ExecutionBackend::NativeUnix
+                    },
+                    plan.operation_id.clone(),
+                    recovery,
+                ),
+            };
+            MutationCoordinator::new(
+                entries,
+                crate::application::plan_runner::RuntimeLockCommitter::new(
+                    self.environments.clone(),
+                ),
+                self.facts.clone(),
+            )
+            .execute(plan, cancellation)
+            .await
+        })
+    }
 }
 
 impl UpdatePayloadAcquirer for FixedUpdateAcquirer {
@@ -116,6 +279,11 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         fs::create_dir_all(project.join(".builtin"))?;
         fs::create_dir_all(project.join(".custom"))?;
     }
+    fs::create_dir_all(source_project.join("agent/subagents/research/skills"))?;
+    fs::write(
+        source_project.join("package.json"),
+        r#"{"dependencies":{"eve":"^0.11.5"}}"#,
+    )?;
     fs::create_dir_all(projects_path.parent().expect("state parent"))?;
     fs::create_dir_all(&home)?;
     fs::create_dir_all(&config_home)?;
@@ -216,13 +384,22 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         ConcreteInstallPlanner::new(facts.clone(), targets.clone(), payloads.clone(), fixed_time),
         executor(&execution, &environments, &facts),
     );
+    let mut initial_agent_intents = both_agent_intents();
+    initial_agent_intents.push(AgentWriteIntent {
+        agent_id: AgentId::parse("eve").expect("Eve Agent id"),
+        private_entry: PrivateEntryIntent::None,
+        adapter_targets: vec![
+            AdapterTargetId("eve:root".to_string()),
+            AdapterTargetId("eve:research".to_string()),
+        ],
+    });
     let install_request = InstallRequest {
         context: source_context.clone(),
         source: "owner/repo".to_string(),
         discovery_session: discovery_v1,
         payloads: vec![handle_v1],
         skills: vec!["demo".to_string()],
-        agent_intents: both_agent_intents(),
+        agent_intents: initial_agent_intents,
         requested_mode: InstallMode::Copy,
         acknowledge_risk: true,
     };
@@ -238,11 +415,19 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert_payload_tree(&source_project.join(".agents/skills/demo"), "v1")?;
     assert_payload_tree(&source_project.join(".builtin/skills/demo"), "v1")?;
     assert_payload_tree(&source_project.join(".custom/skills/demo"), "v1")?;
+    assert!(source_project
+        .join("agent/subagents/research/skills/demo")
+        .is_dir());
+    assert!(source_project.join("agent/skills/demo").is_dir());
     assert_lock_fields(
         &source_project.join("skills-lock.json"),
         "computed-v1",
         "remote-v1",
     )?;
+    assert_eq!(
+        read_json(&source_project.join("skills-lock.json"))?["skills"]["demo"]["subagents"],
+        json!(["", "research"])
+    );
 
     let observer = SkillEntryObserver::new(facts.clone(), targets.clone());
     let observed = observer.observe(&source_context, "demo").await?;
@@ -252,7 +437,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .flat_map(|entry| entry.public.owners.iter())
         .map(|owner| owner.agent_id.as_str())
         .collect::<BTreeSet<_>>();
-    assert_eq!(owners, BTreeSet::from(["builtin-test", "custom-test"]));
+    assert_eq!(
+        owners,
+        BTreeSet::from(["builtin-test", "custom-test", "eve"])
+    );
 
     let update = UpdateService::new(
         payloads.clone(),
@@ -291,6 +479,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert_payload_tree(&source_project.join(".agents/skills/demo"), "v2")?;
     assert_payload_tree(&source_project.join(".builtin/skills/demo"), "v2")?;
     assert_payload_tree(&source_project.join(".custom/skills/demo"), "v2")?;
+    assert!(source_project
+        .join("agent/subagents/research/skills/demo")
+        .is_dir());
+    assert!(source_project.join("agent/skills/demo").is_dir());
     assert_lock_fields(
         &source_project.join("skills-lock.json"),
         "computed-v2",
@@ -305,36 +497,90 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         executor(&execution, &environments, &facts),
     );
     let manage_observed = observer.observe(&source_context, "demo").await?;
-    let custom_entry = manage_observed
+    let removed_entries = manage_observed
         .entries
         .iter()
-        .find(|entry| {
-            entry
-                .public
-                .owners
-                .iter()
-                .any(|owner| owner.agent_id.as_str() == "custom-test")
+        .filter(|entry| {
+            entry.public.owners.iter().any(|owner| {
+                matches!(owner.agent_id.as_str(), "builtin-test" | "custom-test")
+                    || owner.logical_target_id.starts_with("eve:")
+            })
         })
-        .expect("custom Agent physical entry")
-        .public
-        .entry_id
-        .clone();
+        .map(|entry| entry.public.entry_id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(removed_entries.len(), 4, "four physical Agent entries");
     let manage_preview_request = ManageAgentsPreviewRequest {
         context: source_context.clone(),
         skill_name: "demo".to_string(),
         add: Vec::new(),
-        remove_entry_ids: vec![custom_entry.clone()],
+        remove_entry_ids: removed_entries.clone(),
         requested_mode: InstallMode::Copy,
     };
     let manage_preview = manage.preview(&manage_preview_request).await?;
-    let managed = manage
+    fs::write(
+        source_project.join(".custom/skills/demo/external-change.txt"),
+        b"changed after preview",
+    )?;
+    let stale_error = manage
         .execute(
             &ManageAgentsRequest {
                 token: manage_preview.token,
                 context: source_context.clone(),
                 skill_name: "demo".to_string(),
                 add: Vec::new(),
-                remove_entry_ids: vec![custom_entry],
+                remove_entry_ids: removed_entries.clone(),
+                requested_mode: InstallMode::Copy,
+                confirm_entity_directories: true,
+                canonical_payload: None,
+            },
+            CancellationSignal::default(),
+        )
+        .await
+        .expect_err("stale Manage Agents preview must be rejected");
+    assert!(matches!(
+        stale_error,
+        AppError::StaleContext | AppError::StaleTarget
+    ));
+    assert!(source_project.join(".builtin/skills/demo").exists());
+    assert!(source_project.join(".custom/skills/demo").exists());
+
+    let refreshed_entries = observer
+        .observe(&source_context, "demo")
+        .await?
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            entry.public.owners.iter().any(|owner| {
+                matches!(owner.agent_id.as_str(), "builtin-test" | "custom-test")
+                    || owner.logical_target_id.starts_with("eve:")
+            })
+        })
+        .map(|entry| entry.public.entry_id)
+        .collect::<Vec<_>>();
+    let refreshed_preview_request = ManageAgentsPreviewRequest {
+        remove_entry_ids: refreshed_entries.clone(),
+        ..manage_preview_request
+    };
+    let failing_manage = ManageAgentsService::new(
+        SkillEntryObserver::new(facts.clone(), targets.clone()),
+        targets.clone(),
+        payloads.clone(),
+        InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
+        VerifyFailurePlanExecutor {
+            environments: environments.clone(),
+            facts: facts.clone(),
+            recovery_root: recovery_root.clone(),
+        },
+    );
+    let failing_preview = failing_manage.preview(&refreshed_preview_request).await?;
+    let failed = failing_manage
+        .execute(
+            &ManageAgentsRequest {
+                token: failing_preview.token,
+                context: source_context.clone(),
+                skill_name: "demo".to_string(),
+                add: Vec::new(),
+                remove_entry_ids: refreshed_entries.clone(),
                 requested_mode: InstallMode::Copy,
                 confirm_entity_directories: true,
                 canonical_payload: None,
@@ -342,8 +588,195 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             CancellationSignal::default(),
         )
         .await?;
+    assert_eq!(failed.units.len(), 1, "Manage Agents failure stays atomic");
+    assert_eq!(failed.units[0].status, MutationUnitStatus::Failed);
+    assert!(source_project.join(".builtin/skills/demo").exists());
+    assert!(source_project.join(".custom/skills/demo").exists());
+    assert!(source_project
+        .join(".custom/skills/demo/external-change.txt")
+        .is_file());
+    assert!(source_project
+        .join("agent/subagents/research/skills/demo")
+        .is_dir());
+    assert!(source_project.join("agent/skills/demo").is_dir());
+    assert_no_staging_leaks(root)?;
+    assert_recovery_graph_is_empty(&recovery_root)?;
+
+    let lock_before_failure = fs::read(source_project.join("skills-lock.json"))?;
+    let lock_attempted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let lock_failing_manage = ManageAgentsService::new(
+        SkillEntryObserver::new(facts.clone(), targets.clone()),
+        targets.clone(),
+        payloads.clone(),
+        InstalledSkillPayloadAcquirer::new(payloads.clone(), environments.clone()),
+        LockFailurePlanExecutor {
+            facts: facts.clone(),
+            recovery_root: recovery_root.clone(),
+            attempted: Arc::clone(&lock_attempted),
+        },
+    );
+    let lock_failing_preview = lock_failing_manage
+        .preview(&refreshed_preview_request)
+        .await?;
+    let lock_failed = lock_failing_manage
+        .execute(
+            &ManageAgentsRequest {
+                token: lock_failing_preview.token,
+                context: source_context.clone(),
+                skill_name: "demo".to_string(),
+                add: Vec::new(),
+                remove_entry_ids: refreshed_entries.clone(),
+                requested_mode: InstallMode::Copy,
+                confirm_entity_directories: true,
+                canonical_payload: None,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_eq!(lock_failed.units[0].status, MutationUnitStatus::Failed);
+    assert!(lock_attempted.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(source_project.join(".builtin/skills/demo").exists());
+    assert!(source_project.join(".custom/skills/demo").exists());
+    assert!(source_project
+        .join("agent/subagents/research/skills/demo")
+        .is_dir());
+    assert!(source_project.join("agent/skills/demo").is_dir());
+    assert_eq!(
+        fs::read(source_project.join("skills-lock.json"))?,
+        lock_before_failure
+    );
+    assert_no_staging_leaks(root)?;
+    assert_recovery_graph_is_empty(&recovery_root)?;
+
+    let research_entry_id = observer
+        .observe(&source_context, "demo")
+        .await?
+        .entries
+        .into_iter()
+        .find(|entry| {
+            entry
+                .public
+                .owners
+                .iter()
+                .any(|owner| owner.logical_target_id == "eve:research")
+        })
+        .map(|entry| entry.public.entry_id)
+        .expect("Eve research entry");
+    let remove_research_request = ManageAgentsPreviewRequest {
+        context: source_context.clone(),
+        skill_name: "demo".to_string(),
+        add: Vec::new(),
+        remove_entry_ids: vec![research_entry_id.clone()],
+        requested_mode: InstallMode::Copy,
+    };
+    let remove_research_preview = manage.preview(&remove_research_request).await?;
+    let research_removed = manage
+        .execute(
+            &ManageAgentsRequest {
+                token: remove_research_preview.token,
+                context: source_context.clone(),
+                skill_name: "demo".to_string(),
+                add: Vec::new(),
+                remove_entry_ids: vec![research_entry_id],
+                requested_mode: InstallMode::Copy,
+                confirm_entity_directories: true,
+                canonical_payload: None,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(&research_removed.units);
+    assert!(source_project.join("agent/skills/demo").is_dir());
+    assert!(!source_project
+        .join("agent/subagents/research/skills/demo")
+        .exists());
+    assert_eq!(
+        read_json(&source_project.join("skills-lock.json"))?["skills"]["demo"]["subagents"],
+        json!([""])
+    );
+
+    let remaining_entries = observer
+        .observe(&source_context, "demo")
+        .await?
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            entry.public.owners.iter().any(|owner| {
+                matches!(owner.agent_id.as_str(), "builtin-test" | "custom-test")
+                    || owner.logical_target_id == "eve:root"
+            })
+        })
+        .map(|entry| entry.public.entry_id)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_entries.len(), 3);
+    let final_manage_request = ManageAgentsPreviewRequest {
+        context: source_context.clone(),
+        skill_name: "demo".to_string(),
+        add: Vec::new(),
+        remove_entry_ids: remaining_entries.clone(),
+        requested_mode: InstallMode::Copy,
+    };
+    let manage_preview = manage.preview(&final_manage_request).await?;
+    let managed = manage
+        .execute(
+            &ManageAgentsRequest {
+                token: manage_preview.token,
+                context: source_context.clone(),
+                skill_name: "demo".to_string(),
+                add: Vec::new(),
+                remove_entry_ids: remaining_entries,
+                requested_mode: InstallMode::Copy,
+                confirm_entity_directories: true,
+                canonical_payload: None,
+            },
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_eq!(
+        managed.units.len(),
+        1,
+        "Manage Agents must stay atomic per Skill"
+    );
     assert_succeeded(&managed.units);
+    assert!(!source_project.join(".builtin/skills/demo").exists());
     assert!(!source_project.join(".custom/skills/demo").exists());
+    assert!(!source_project
+        .join("agent/subagents/research/skills/demo")
+        .exists());
+    let managed_lock = read_json(&source_project.join("skills-lock.json"))?;
+    assert_eq!(managed_lock["skills"]["demo"]["subagents"], json!([]));
+
+    let update_after_removal_request = UpdateRequest {
+        context: source_context.clone(),
+        skill_names: vec!["demo".to_string()],
+    };
+    let update_after_removal_preview = update.preview(&update_after_removal_request).await?;
+    assert!(update_after_removal_preview.skills[0]
+        .adapter_targets
+        .iter()
+        .all(|owner| owner.agent_id.as_str() != "eve"));
+    let update_after_removal = update
+        .execute(
+            &UpdateExecutionRequest {
+                request: update_after_removal_request,
+                overwrite_private_entries: Vec::new(),
+            },
+            update_after_removal_preview.token,
+            CancellationSignal::default(),
+        )
+        .await?;
+    assert_succeeded(
+        &update_after_removal
+            .skills
+            .iter()
+            .filter_map(|skill| skill.mutation.clone())
+            .collect::<Vec<_>>(),
+    );
+    assert!(!source_project.join("agent/skills/demo").exists());
+    assert_eq!(
+        read_json(&source_project.join("skills-lock.json"))?["skills"]["demo"]["subagents"],
+        json!([])
+    );
 
     let source_lock_path = source_project.join("skills-lock.json");
     let mut source_lock = read_json(&source_lock_path)?;
@@ -485,7 +918,11 @@ pub(crate) fn test_registry() -> AgentRegistrySnapshot {
         },
         detection_paths: vec![CustomPathSpec::based(CustomPathBase::Project, ".custom")],
     };
-    AgentRegistry::build(vec![builtin], vec![CustomAgentRecord::valid(custom)])
+    let eve = builtin_agent_definitions()
+        .into_iter()
+        .find(|definition| definition.id.as_str() == "eve")
+        .expect("built-in Eve definition");
+    AgentRegistry::build(vec![builtin, eve], vec![CustomAgentRecord::valid(custom)])
         .snapshot()
         .clone()
 }

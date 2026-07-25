@@ -79,7 +79,7 @@ describe('SkillDetailPanel', () => {
     for (const title of [
       'skills.actions.update',
       'skills.actions.copyToProject',
-      'skills.manageAgents.title',
+      'skills.manageAgents.action',
       'skills.actions.delete',
     ]) {
       expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(true);

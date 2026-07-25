@@ -8,8 +8,8 @@ case "$subcommand" in
     if mkdir -- "$probe_root" 2>/dev/null; then
       probe_root_created=1
       trap 'rm -rf -- "$probe_root"' EXIT HUP INT TERM
-      printf 'x\0' > "$probe_root/xargs-expected"
-      if printf 'x\0' | xargs -0 -r -n1 printf %s > "$probe_root/xargs-actual" 2>/dev/null \
+      printf 'a\nb\n' > "$probe_root/xargs-expected"
+      if printf 'a\0b\0' | xargs -0 -r -n1 printf '%s\n' > "$probe_root/xargs-actual" 2>/dev/null \
           && cmp -s "$probe_root/xargs-expected" "$probe_root/xargs-actual"; then
         nul_xargs=1
       else

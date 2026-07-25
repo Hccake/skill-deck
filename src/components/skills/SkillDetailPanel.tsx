@@ -286,7 +286,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
-                    title={t('skills.manageAgents.title')}
+                    title={t('skills.manageAgents.action')}
                     disabled={writeBlocked}
                     onClick={handleManageAgents}
                   >

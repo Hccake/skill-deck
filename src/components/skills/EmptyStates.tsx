@@ -1,6 +1,6 @@
 // src/components/skills/EmptyStates.tsx
 import { useTranslation } from 'react-i18next';
-import { Package, Sparkles } from 'lucide-react';
+import { FolderOpen, Package, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useMutationStore } from '@/stores/mutation';
 
@@ -67,6 +67,30 @@ export function ProjectEmptyState({ onAdd }: ProjectEmptyStateProps) {
             {t('skills.add')}
           </Button>
         )}
+      </div>
+    </div>
+  );
+}
+
+export function ProjectUnavailableState() {
+  const { t } = useTranslation();
+
+  return (
+    <div
+      role="status"
+      aria-label={t('skills.projectUnavailableTitle')}
+      className="overflow-hidden rounded-md border border-dashed border-border/80 bg-accent/20 px-5 py-5"
+    >
+      <div className="flex flex-col items-center text-center">
+        <div className="mb-2.5 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+          <FolderOpen className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <p className="mb-1 text-sm font-heading font-bold text-foreground">
+          {t('skills.projectUnavailableTitle')}
+        </p>
+        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+          {t('skills.projectUnavailableDescription')}
+        </p>
       </div>
     </div>
   );

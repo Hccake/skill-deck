@@ -135,7 +135,7 @@ describe('RepairSourceDialog', () => {
     expect(mocks.markSourceRepairSucceeded).not.toHaveBeenCalled();
     expect(useSkillDialogStore.getState().repairSourceTarget).not.toBeNull();
     expect(screen.getByRole('alert').textContent)
-      .toContain('skills.repairSourceDialog.repairPartial');
+      .toContain('skills.repairSourceDialog.repairFailed');
   });
 
   it('prevents dismissal during repair and exposes an explicit stop action', async () => {

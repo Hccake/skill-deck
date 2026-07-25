@@ -299,6 +299,14 @@ export async function openConfigResource(
   unwrap(await commands.openConfigResource(context, kind));
 }
 
+export async function openDiagnosticsDirectory(): Promise<void> {
+  unwrap(await commands.openDiagnosticsDirectory());
+}
+
+export async function readRecentDiagnostics(): Promise<string> {
+  return unwrap(await commands.readRecentDiagnostics());
+}
+
 // ============ Environment / mutation API ============
 
 export async function listEnvironments(): Promise<EnvironmentDiscoverySnapshot> {

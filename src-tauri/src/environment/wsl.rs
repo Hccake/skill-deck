@@ -540,8 +540,8 @@ pub async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, A
     reason = "WSL 解析测试需要直接运行内置的 shell 脚本"
 )]
 mod tests {
-    #[cfg(unix)]
-    use std::process::Command;
+    #[cfg(target_os = "linux")]
+    use std::process::{Command, Output, Stdio};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -552,6 +552,39 @@ mod tests {
     use crate::environment::types::{EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus};
     use crate::environment::wsl_protocol::{WslExecutionFeature, WslExecutionProfile};
     use crate::error::{AppError, LockConflictTarget};
+
+    #[cfg(target_os = "linux")]
+    fn command_output_with_timeout(
+        command: &mut Command,
+        timeout: std::time::Duration,
+    ) -> std::io::Result<Output> {
+        use std::os::unix::process::CommandExt;
+
+        command
+            .process_group(0)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn()?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if child.try_wait()?.is_some() {
+                return child.wait_with_output();
+            }
+            if std::time::Instant::now() >= deadline {
+                if let Ok(process_group_id) = i32::try_from(child.id()) {
+                    // The shell contract can spawn probe commands, so terminate the whole group.
+                    let _ = unsafe { libc::kill(-process_group_id, libc::SIGKILL) };
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "shell contract exceeded its execution deadline",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     fn sample_session(distro_name: &str, user: &str) -> WslSession {
         WslSession {
@@ -1141,16 +1174,32 @@ mod tests {
             .supports(WslExecutionFeature::StableStat));
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shell_contract_runner_terminates_a_hung_process_group() {
+        let started = std::time::Instant::now();
+        let error = command_output_with_timeout(
+            Command::new("/bin/sh").arg("-c").arg("sleep 30"),
+            std::time::Duration::from_millis(100),
+        )
+        .expect_err("hung shell contract must time out");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn bundled_session_script_reports_a_versioned_execution_profile() {
-        let output = Command::new("/bin/sh")
-            .arg("-c")
-            .arg(include_str!("wsl/scripts/session.sh"))
-            .arg("--")
-            .arg("session")
-            .output()
-            .expect("session script");
+        let output = command_output_with_timeout(
+            Command::new("/bin/sh")
+                .arg("-c")
+                .arg(include_str!("wsl/scripts/session.sh"))
+                .arg("--")
+                .arg("session"),
+            std::time::Duration::from_secs(10),
+        )
+        .expect("session script");
 
         assert!(
             output.status.success(),
@@ -1158,7 +1207,101 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(output.stdout.starts_with(b"2\0"));
-        parse_wsl_session_output("Ubuntu", &output.stdout).expect("parse bundled session output");
+        let session = parse_wsl_session_output("Ubuntu", &output.stdout)
+            .expect("parse bundled session output");
+        for feature in [
+            WslExecutionFeature::NulSafeXargs,
+            WslExecutionFeature::NulSafeSort,
+            WslExecutionFeature::Sha256Sum,
+            WslExecutionFeature::CanonicalReadlink,
+            WslExecutionFeature::StableStat,
+        ] {
+            assert!(
+                session.execution_profile.supports(feature),
+                "bundled session script did not detect {feature:?}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bundled_session_script_keeps_session_readable_without_nul_safe_xargs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temporary command directory");
+        let xargs = temp.path().join("xargs");
+        std::fs::write(&xargs, "#!/bin/sh\nexit 1\n").expect("write failing xargs");
+        std::fs::set_permissions(&xargs, std::fs::Permissions::from_mode(0o755))
+            .expect("make failing xargs executable");
+        let path = format!(
+            "{}:{}",
+            temp.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let output = command_output_with_timeout(
+            Command::new("/bin/sh")
+                .arg("-c")
+                .arg(include_str!("wsl/scripts/session.sh"))
+                .arg("--")
+                .arg("session")
+                .env("PATH", path),
+            std::time::Duration::from_secs(10),
+        )
+        .expect("session script");
+
+        assert!(output.status.success());
+        let session = parse_wsl_session_output("Ubuntu", &output.stdout)
+            .expect("parse bundled session output");
+        assert!(!session.user.is_empty());
+        assert!(session.home.starts_with('/'));
+        assert!(!session
+            .execution_profile
+            .supports(WslExecutionFeature::NulSafeXargs));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bundled_session_script_reports_each_missing_execution_capability() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for (command, feature) in [
+            ("xargs", WslExecutionFeature::NulSafeXargs),
+            ("sort", WslExecutionFeature::NulSafeSort),
+            ("sha256sum", WslExecutionFeature::Sha256Sum),
+            ("readlink", WslExecutionFeature::CanonicalReadlink),
+            ("stat", WslExecutionFeature::StableStat),
+        ] {
+            let temp = tempfile::tempdir().expect("temporary command directory");
+            let command_path = temp.path().join(command);
+            std::fs::write(&command_path, "#!/bin/sh\nexit 1\n").expect("write failing command");
+            std::fs::set_permissions(&command_path, std::fs::Permissions::from_mode(0o755))
+                .expect("make failing command executable");
+            let path = format!(
+                "{}:{}",
+                temp.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            );
+
+            let output = command_output_with_timeout(
+                Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg(include_str!("wsl/scripts/session.sh"))
+                    .arg("--")
+                    .arg("session")
+                    .env("PATH", path),
+                std::time::Duration::from_secs(10),
+            )
+            .expect("session script");
+
+            assert!(output.status.success(), "{command} probe broke the session");
+            let session = parse_wsl_session_output("Ubuntu", &output.stdout)
+                .expect("parse bundled session output");
+            assert!(
+                !session.execution_profile.supports(feature),
+                "missing {command} was reported as supported"
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,50 @@
+name: WSL Acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skill-deck-wsl-acceptance
+  cancel-in-progress: false
+
+jobs:
+  mutation-workflows:
+    name: Real Windows and WSL mutation workflows
+    runs-on: [self-hosted, Windows, skill-deck-wsl]
+    timeout-minutes: 45
+    env:
+      RUST_BACKTRACE: 1
+      SKILL_DECK_TEST_WSL_DISTRO_A: ${{ vars.SKILL_DECK_TEST_WSL_DISTRO_A }}
+      SKILL_DECK_TEST_WSL_DISTRO_B: ${{ vars.SKILL_DECK_TEST_WSL_DISTRO_B }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: Verify dedicated WSL acceptance environment
+        shell: pwsh
+        run: |
+          if (-not $env:SKILL_DECK_TEST_WSL_DISTRO_A -or -not $env:SKILL_DECK_TEST_WSL_DISTRO_B) {
+            throw "Configure SKILL_DECK_TEST_WSL_DISTRO_A and SKILL_DECK_TEST_WSL_DISTRO_B repository variables."
+          }
+          if ($env:SKILL_DECK_TEST_WSL_DISTRO_A -eq $env:SKILL_DECK_TEST_WSL_DISTRO_B) {
+            throw "WSL acceptance requires two different disposable distributions."
+          }
+          wsl.exe --status
+          $configured = wsl.exe --list --quiet
+          foreach ($distro in @($env:SKILL_DECK_TEST_WSL_DISTRO_A, $env:SKILL_DECK_TEST_WSL_DISTRO_B)) {
+            if ($configured -notcontains $distro) {
+              throw "Configured WSL acceptance distribution '$distro' is not installed."
+            }
+          }
+      - name: Run real WSL acceptance
+        shell: pwsh
+        run: |
+          cargo test --locked --manifest-path src-tauri/Cargo.toml `
+            --features wsl-integration-tests `
+            --test wsl_environment_integration `
+            -- --ignored --nocapture

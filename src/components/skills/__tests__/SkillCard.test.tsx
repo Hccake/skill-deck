@@ -63,7 +63,7 @@ describe('SkillCard', () => {
     for (const title of [
       'skills.actions.update',
       'skills.actions.copyToProject',
-      'skills.manageAgents.title',
+      'skills.manageAgents.action',
       'skills.actions.delete',
     ]) {
       expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(true);
@@ -590,7 +590,12 @@ describe('SkillCard', () => {
     expect(screen.getByText('Codex')).toBeTruthy();
   });
 
-  it('uses the same diagnostic row for temporary update check failures', () => {
+  it('shows a temporary update failure reason from the focusable status label', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
     render(
       <TooltipProvider>
         <SkillCard
@@ -610,19 +615,18 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    const diagnostic = screen.getByText('skills.updateHint.network-error');
     const updateBadge = screen.getByText('skills.updateStatusLabel.checkFailed');
     const agent = screen.getByText('Claude Code');
 
+    expect(screen.queryByText('skills.updateHint.network-error')).toBeNull();
+    expect(updateBadge.getAttribute('tabindex')).toBe('0');
     expect(updateBadge.className).toContain('text-warning');
     expect(updateBadge.className).not.toContain('text-primary');
-    expect(diagnostic.parentElement?.className).not.toContain('mb-');
-    expect(diagnostic.parentElement?.className).toContain('items-center');
-    expect(diagnostic.parentElement?.className).not.toContain('bg-muted');
-    expect(diagnostic.parentElement?.querySelector('svg')?.getAttribute('class')).toContain('text-muted-foreground');
-    expect(
-      diagnostic.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    expect(updateBadge.className).not.toContain('bg-warning');
+    expect(agent).toBeTruthy();
+
+    fireEvent.focus(updateBadge);
+    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.updateHint.network-error');
   });
 
   it('shows repair source action for missing skill path metadata', () => {
@@ -807,6 +811,6 @@ describe('SkillCard', () => {
     );
 
     expect(screen.getByText('skills.updateStatusLabel.checkFailed')).toBeTruthy();
-    expect(screen.getByText(expectedKey)).toBeTruthy();
+    expect(screen.queryByText(expectedKey)).toBeNull();
   });
 });

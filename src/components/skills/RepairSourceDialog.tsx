@@ -16,8 +16,6 @@ import { fetchAvailable } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
-import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
-import { formatAppError } from '@/utils/format-app-error';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
 import type { FetchResult } from '@/bindings';
 import { repairSkillSource } from '@/workflows/skill-repair';
@@ -25,7 +23,7 @@ import { repairSkillSource } from '@/workflows/skill-repair';
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
 type RepairPhase = 'idle' | 'validating' | 'preparing' | 'installing' | 'stopping';
 type ValidationOwner = 'manual' | 'repair' | null;
-type RepairFeedback = 'failed' | 'partial' | 'stopped' | null;
+type RepairFeedback = 'failed' | 'stopped' | null;
 interface ValidationResult {
   ok: boolean;
   requiresRiskConfirmation: boolean;
@@ -143,16 +141,9 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         setRequiresRiskConfirmation(true);
       } else if (outcome.status === 'stopped') {
         setRepairFeedback('stopped');
-      } else if (outcome.status === 'partial') {
-        setRepairFeedback('partial');
       } else if (outcome.status === 'failed') {
         setRepairFeedback('failed');
-        setRepairErrorMessage(appendCrossStorageFailureGuidance(
-          formatAppError(outcome.error, t),
-          target.context,
-          'repair',
-          t,
-        ));
+        setRepairErrorMessage(null);
       }
     } finally {
       if (operationIdRef.current === operationId) setRepairPhase('idle');
@@ -164,7 +155,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     source,
     isWorking,
     syncSkills,
-    t,
     target,
     writeBlocked,
   ]);
@@ -257,9 +247,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           <p role="alert" className={repairFeedback === 'stopped' ? 'text-sm text-warning' : 'text-sm text-destructive'}>
             {repairFeedback === 'stopped'
               ? t('skills.repairSourceDialog.repairStopped')
-              : repairFeedback === 'partial'
-                ? t('skills.repairSourceDialog.repairPartial')
-                : repairErrorMessage ?? t('skills.repairSourceDialog.repairFailed')}
+              : repairErrorMessage ?? t('skills.repairSourceDialog.repairFailed')}
           </p>
         ) : null}
         

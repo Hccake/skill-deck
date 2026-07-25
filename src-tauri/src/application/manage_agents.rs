@@ -473,8 +473,13 @@ fn manage_lock_mutation(
     let subagents = target_ids
         .iter()
         .filter_map(|target| target.strip_prefix("eve:"))
-        .filter(|target| *target != "root")
-        .map(|target| serde_json::Value::String(target.to_string()))
+        .map(|target| {
+            serde_json::Value::String(if target == "root" {
+                String::new()
+            } else {
+                target.to_string()
+            })
+        })
         .collect::<Vec<_>>();
     let mut replacement = raw;
     replacement

@@ -46,7 +46,7 @@ pub struct LockedUpdateSkill {
     pub remote_hash: Option<String>,
     pub computed_hash: Option<String>,
     pub installed_at: Option<String>,
-    pub subagents: Vec<String>,
+    pub subagents: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -428,8 +428,7 @@ fn locked_skill(
                     .filter_map(Value::as_str)
                     .map(str::to_string)
                     .collect()
-            })
-            .unwrap_or_default(),
+            }),
     };
     if !skill.capability().can_run_update {
         return Err(AppError::InvalidSource {
@@ -779,7 +778,9 @@ fn lock_mutation(
             entry.insert("skillPath".to_string(), json!(metadata.skill_path));
             entry.insert("computedHash".to_string(), json!(metadata.computed_hash));
             entry.insert("pluginName".to_string(), json!(metadata.plugin_name));
-            entry.insert("subagents".to_string(), json!(locked.subagents));
+            if let Some(subagents) = &locked.subagents {
+                entry.insert("subagents".to_string(), json!(subagents));
+            }
             if let Some(revision) = &metadata.upstream_revision {
                 entry.insert("remoteHash".to_string(), json!(revision));
             }
@@ -847,14 +848,18 @@ fn eve_adapter_roots(
     let Some(project) = runtime.project_path.as_deref() else {
         return Ok(Vec::new());
     };
-    let target_ids = if skill.subagents.is_empty() {
-        vec!["eve:root".to_string()]
-    } else {
-        skill
-            .subagents
+    let target_ids = match &skill.subagents {
+        None => vec!["eve:root".to_string()],
+        Some(subagents) => subagents
             .iter()
-            .map(|subagent| format!("eve:{}", crate::core::skill::sanitize_name(subagent)))
-            .collect()
+            .map(|subagent| {
+                if subagent.is_empty() {
+                    "eve:root".to_string()
+                } else {
+                    format!("eve:{}", crate::core::skill::sanitize_name(subagent))
+                }
+            })
+            .collect(),
     };
     target_ids
         .into_iter()
@@ -1333,9 +1338,10 @@ mod tests {
             remote_hash: Some("old".to_string()),
             computed_hash: None,
             installed_at: None,
-            subagents: Vec::new(),
+            subagents: None,
         };
 
+        skill.subagents = Some(vec!["".to_string()]);
         let root = eve_adapter_roots(&runtime, &skill, &EnvironmentRef::Host).unwrap();
         assert_eq!(root.len(), 1);
         assert_eq!(
@@ -1343,14 +1349,48 @@ mod tests {
             project.join("agent/skills").to_string_lossy()
         );
 
-        skill.subagents = vec!["Research Team".to_string()];
+        skill.subagents = Some(vec!["".to_string(), "Research Team".to_string()]);
         let subagents = eve_adapter_roots(&runtime, &skill, &EnvironmentRef::Host).unwrap();
-        assert_eq!(subagents.len(), 1);
+        assert_eq!(subagents.len(), 2);
         assert_eq!(
-            subagents[0].1.native_path,
+            subagents[1].1.native_path,
             project
                 .join("agent/subagents/research-team/skills")
                 .to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn eve_adapter_roots_distinguish_legacy_missing_targets_from_explicit_empty_targets() {
+        let temp = tempdir().unwrap();
+        let runtime = eve_runtime(temp.path().join("project").to_string_lossy().as_ref());
+        let base = json!({
+            "source": "owner/repo",
+            "sourceType": "github",
+            "sourceUrl": "https://github.com/owner/repo",
+            "skillPath": "skills/demo",
+            "remoteHash": "old",
+            "computedHash": "old"
+        });
+
+        let legacy = locked_skill("demo", LockSchema::Project, &base).unwrap();
+        assert_eq!(
+            eve_adapter_roots(&runtime, &legacy, &EnvironmentRef::Host)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let mut explicit_empty = base;
+        explicit_empty
+            .as_object_mut()
+            .unwrap()
+            .insert("subagents".to_string(), json!([]));
+        let explicit_empty = locked_skill("demo", LockSchema::Project, &explicit_empty).unwrap();
+        assert!(
+            eve_adapter_roots(&runtime, &explicit_empty, &EnvironmentRef::Host)
+                .unwrap()
+                .is_empty()
         );
     }
 
@@ -1366,7 +1406,7 @@ mod tests {
             remote_hash: Some("tree".to_string()),
             computed_hash: Some("content-v1".to_string()),
             installed_at: None,
-            subagents: Vec::new(),
+            subagents: None,
         };
 
         let capability = skill.capability();

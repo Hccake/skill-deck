@@ -1138,7 +1138,7 @@ mod tests {
             remote_hash: Some("old".to_string()),
             computed_hash: None,
             installed_at: None,
-            subagents: Vec::new(),
+            subagents: None,
         }
     }
 
@@ -1160,7 +1160,7 @@ mod tests {
                         remote_hash: Some("old".to_string()),
                         computed_hash: None,
                         installed_at: None,
-                        subagents: Vec::new(),
+                        subagents: None,
                     }],
                     skills: vec![
                         crate::application::update_planner::LocalUpdateSkillInspection {

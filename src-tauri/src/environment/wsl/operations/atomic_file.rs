@@ -170,6 +170,23 @@ mod tests {
         parse_write_response(&output.stdout).expect("write response");
     }
 
+    fn run_read(path: &Path) -> Vec<u8> {
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(READ_SCRIPT)
+            .arg("--")
+            .arg("read")
+            .arg(path)
+            .output()
+            .expect("read script");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    }
+
     #[test]
     fn posix_atomic_write_leaves_no_sidecar() {
         let temp = tempdir().expect("temp");
@@ -197,6 +214,23 @@ mod tests {
             Some(vec![0, 255, 1])
         );
         assert!(parse_read_response(b"2\0\x31\0data").is_err());
+    }
+
+    #[test]
+    fn optional_read_script_separates_protocol_fields_before_file_content() {
+        let temp = tempdir().expect("temp");
+        let path = temp.path().join("projects.json");
+        fs::write(&path, br#"{"schemaVersion":1}"#).expect("fixture document");
+
+        assert_eq!(
+            parse_read_response(&run_read(&path)).expect("read response"),
+            Some(br#"{"schemaVersion":1}"#.to_vec())
+        );
+        assert_eq!(
+            parse_read_response(&run_read(&temp.path().join("missing.json")))
+                .expect("missing response"),
+            None
+        );
     }
 
     #[cfg(unix)]

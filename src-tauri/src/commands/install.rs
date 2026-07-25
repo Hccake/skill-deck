@@ -25,16 +25,24 @@ pub async fn fetch_available(
     operation_id: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<FetchResult, AppError> {
+    let diagnostic_context = context.clone();
     let window = window.clone();
-    SourceDiscoveryService::new(Arc::new(runtime.payloads().clone()), runtime.environments())
-        .discover(context, source, move |progress| {
-            let _ = window.emit(
-                "clone-progress",
-                &SourceFetchProgressEvent {
-                    operation_id: operation_id.clone(),
-                    progress,
-                },
-            );
-        })
-        .await
+    let result =
+        SourceDiscoveryService::new(Arc::new(runtime.payloads().clone()), runtime.environments())
+            .discover(context, source, move |progress| {
+                let _ = window.emit(
+                    "clone-progress",
+                    &SourceFetchProgressEvent {
+                        operation_id: operation_id.clone(),
+                        progress,
+                    },
+                );
+            })
+            .await;
+    crate::diagnostics::record_command_result(
+        crate::diagnostics::DiagnosticOperation::SourceDiscovery,
+        &result,
+        &diagnostic_context,
+    );
+    result
 }

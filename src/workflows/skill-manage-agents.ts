@@ -7,7 +7,6 @@ import { buildAgentWriteIntents } from '@/lib/install-workflow';
 import { useMutationStore } from '@/stores/mutation';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { t } from '@/stores/skills-utils';
-import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import type {
   AgentId,
   ContextRef,
@@ -17,7 +16,6 @@ import type {
   MutationUnitResult,
   ObservedEntryId,
 } from '@/bindings';
-import { formatWorkflowError, presentMutationResults } from './mutation-presentation';
 
 let managePreviewGeneration = 0;
 
@@ -33,9 +31,8 @@ const STALE_MANAGE_AGENT_CODES = new Set([
 export type ManageAgentsOutcome =
   | { status: 'blocked' }
   | { status: 'succeeded'; response: ManageAgentsResponse }
-  | { status: 'partial'; response: ManageAgentsResponse; message: string }
   | { status: 'stale' }
-  | { status: 'failed'; message: string };
+  | { status: 'failed' };
 
 function hasStaleManageAgentResult(units: MutationUnitResult[]): boolean {
   return units.some((unit) => unit.error && STALE_MANAGE_AGENT_CODES.has(unit.error.code));
@@ -127,7 +124,6 @@ export async function executeManageAgentChanges(
       ),
       canonicalPayload: preview.canonicalPayload,
     });
-    const presentation = presentMutationResults(result.units, t);
     const failedUnits = result.units.filter((unit) => unit.status !== 'succeeded');
 
     if (hasStaleManageAgentResult(failedUnits)) {
@@ -136,17 +132,9 @@ export async function executeManageAgentChanges(
     }
 
     if (failedUnits.length > 0) {
-      const message = appendCrossStorageFailureGuidance(
-        presentation.summary,
-        context,
-        'manageAgents',
-        t,
-      );
       const { useSkillsDataStore } = await import('@/stores/skills-data');
       await useSkillsDataStore.getState().syncSkills(context);
-      return result.units.some((unit) => unit.status === 'succeeded')
-        ? { status: 'partial', response: result, message }
-        : { status: 'failed', message };
+      return { status: 'failed' };
     }
 
     toast.success(t('skills.manageAgents.success'));
@@ -160,14 +148,6 @@ export async function executeManageAgentChanges(
       return { status: 'stale' };
     }
     console.error('[executeManageAgentChanges] Failed:', error);
-    return {
-      status: 'failed',
-      message: appendCrossStorageFailureGuidance(
-        formatWorkflowError(error, t),
-        context,
-        'manageAgents',
-        t,
-      ),
-    };
+    return { status: 'failed' };
   }
 }

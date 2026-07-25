@@ -352,7 +352,6 @@ describe('ManageAgentsDialog', () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue({
       status: 'failed',
-      message: 'Agent update failed',
     } satisfies ManageAgentsOutcome);
 
     render(
@@ -368,34 +367,10 @@ describe('ManageAgentsDialog', () => {
     await user.click(screen.getByText('Cursor'));
     await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
 
-    expect(screen.getByRole('alert').textContent).toContain('Agent update failed');
+    expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.failed');
+    expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.failedDescription');
     expect(screen.getByRole('dialog')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'skills.manageAgents.retrySave' })).not.toBeNull();
-  });
-
-  it('keeps the dialog open after a partial save and reports the completed operation', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue({
-      status: 'partial',
-      response: { units: [] },
-      message: 'One Agent could not be updated',
-    } satisfies ManageAgentsOutcome);
-
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
-    );
-
-    await user.click(screen.getByText('Cursor'));
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(screen.getByRole('alert').textContent).toContain('One Agent could not be updated');
-    expect(screen.getByRole('dialog')).not.toBeNull();
   });
 
   it('groups shared owners into one checkbox and removes the whole physical group', async () => {

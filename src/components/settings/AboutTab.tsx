@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, RefreshCw, Check, Github, Bug, Terminal } from 'lucide-react';
+import {
+  ExternalLink,
+  RefreshCw,
+  Check,
+  Github,
+  Bug,
+  Terminal,
+  FolderOpen,
+  Copy,
+} from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useUpdaterStore } from '@/stores/updater';
 import { Progress } from '@/components/ui/progress';
 import { COMPATIBLE_CLI_VERSION } from '@/constants';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
+import { openDiagnosticsDirectory, readRecentDiagnostics } from '@/hooks/useTauriApi';
 
 import logoUrl from '@/assets/logo.png';
 
@@ -24,11 +35,41 @@ export function AboutTab() {
   const { requestAction } = useWindowLifecycle();
 
   const [version, setVersion] = useState('');
+  const [openingDiagnostics, setOpeningDiagnostics] = useState(false);
+  const [copyingDiagnostics, setCopyingDiagnostics] = useState(false);
 
   // 动态获取应用版本号
   useEffect(() => {
     getVersion().then(setVersion);
   }, []);
+
+  const handleOpenDiagnostics = async () => {
+    setOpeningDiagnostics(true);
+    try {
+      await openDiagnosticsDirectory();
+    } catch {
+      toast.error(t('settings.diagnostics.openError'));
+    } finally {
+      setOpeningDiagnostics(false);
+    }
+  };
+
+  const handleCopyDiagnostics = async () => {
+    setCopyingDiagnostics(true);
+    try {
+      const diagnostics = await readRecentDiagnostics();
+      if (!diagnostics) {
+        toast.info(t('settings.diagnostics.empty'));
+        return;
+      }
+      await navigator.clipboard.writeText(diagnostics);
+      toast.success(t('settings.diagnostics.copySuccess'));
+    } catch {
+      toast.error(t('settings.diagnostics.copyError'));
+    } finally {
+      setCopyingDiagnostics(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full relative py-3 sm:py-5 max-w-xl mx-auto">
@@ -176,6 +217,41 @@ export function AboutTab() {
           )}
         </div>
 
+      </div>
+
+      <div className="flex w-full items-center justify-between gap-4 border-t border-border/60 px-2 pt-4 sm:px-0">
+        <div className="min-w-0 text-left">
+          <p className="text-sm font-medium text-foreground">
+            {t('settings.diagnostics.title')}
+          </p>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+            {t('settings.diagnostics.description')}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t('settings.diagnostics.copy')}
+            title={t('settings.diagnostics.copy')}
+            disabled={copyingDiagnostics}
+            onClick={() => void handleCopyDiagnostics()}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            disabled={openingDiagnostics}
+            onClick={() => void handleOpenDiagnostics()}
+          >
+            <FolderOpen className="h-4 w-4" />
+            {t('settings.diagnostics.openDirectory')}
+          </Button>
+        </div>
       </div>
       </div>
 

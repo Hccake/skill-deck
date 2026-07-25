@@ -14,7 +14,8 @@ pub async fn cleanup_duplicate_agent_copies(
     agents: Vec<AgentId>,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<Vec<DuplicateCleanupResult>, AppError> {
-    runtime
+    let diagnostic_context = context.clone();
+    let result = runtime
         .duplicate_cleanup()
         .execute(
             context,
@@ -23,5 +24,11 @@ pub async fn cleanup_duplicate_agent_copies(
             runtime.remove(),
             runtime.mutation(),
         )
-        .await
+        .await;
+    crate::diagnostics::record_command_result(
+        crate::diagnostics::DiagnosticOperation::DuplicateCleanup,
+        &result,
+        &diagnostic_context,
+    );
+    result
 }

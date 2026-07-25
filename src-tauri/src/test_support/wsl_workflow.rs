@@ -55,7 +55,7 @@ use crate::environment::recovery::{
 use crate::environment::runtime::{ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey};
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
-use crate::environment::wsl::operations::content_manifest::WslContentManifestReader;
+use crate::environment::wsl::operations::content_manifest::inspect as inspect_wsl_content_manifest;
 use crate::environment::wsl::operations::projection::project_targets;
 use crate::environment::wsl::{connect_wsl_environment, EnvironmentRegistry, WslSession};
 use crate::environment::wsl_protocol::run_wsl_script;
@@ -366,8 +366,9 @@ async fn wsl_manifest(
         .into_iter()
         .next()
         .ok_or_else(|| AppError::StaleTarget)?;
-    WslContentManifestReader::new(harness.session.clone())
-        .read(&ContentManifestTarget {
+    inspect_wsl_content_manifest(
+        &harness.session,
+        &ContentManifestTarget {
             key: PhysicalTargetKey {
                 backend: ExecutionBackend::WslPosix {
                     distro_name: crate::environment::types::normalized_wsl_distro_name(
@@ -384,8 +385,10 @@ async fn wsl_manifest(
                 normalized_final_child_name: projected.relative_components.join("/"),
             },
             location: locator(&harness.session, projected.physical_destination),
-        })
-        .await
+        },
+        None,
+    )
+    .await
 }
 
 async fn assert_wsl_update_contracts(harness: &WslWorkflowHarness) -> Result<(), AppError> {
@@ -401,6 +404,7 @@ async fn assert_wsl_update_contracts(harness: &WslWorkflowHarness) -> Result<(),
                 "sourceUrl": "https://github.com/owner/repo.git",
                 "ref": "main",
                 "skillPath": "skills/demo",
+                "computedHash": "computed-v1",
                 "remoteHash": "previous-revision"
             }
         }
@@ -897,6 +901,11 @@ pub async fn run_full_wsl_mutation_workflow(
             CancellationSignal::default(),
         )
         .await?;
+    if managed.units.len() != 1 {
+        return Err(AppError::Custom {
+            message: "WSL Manage Agents must stay atomic per Skill".to_string(),
+        });
+    }
     assert_succeeded(&managed.units);
 
     let copy = CopyService::new(

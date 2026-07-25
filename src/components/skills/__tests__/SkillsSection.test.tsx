@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SkillsSection } from '../SkillsSection';
 import type { InstalledSkill } from '@/bindings';
+import type { SkillListItem } from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -40,8 +42,8 @@ vi.mock('../SkillCard', () => ({
 
 const makeSkill = (
   scope: 'global' | 'project',
-  overrides: Partial<InstalledSkill> = {},
-): InstalledSkill => ({
+  overrides: Partial<SkillListItem> = {},
+): SkillListItem => ({
   name: 'toolkit',
   description: '',
   path: `/skills/${scope}/toolkit`,
@@ -180,11 +182,56 @@ describe('SkillsSection', () => {
     });
   });
 
-  it('shows Backend source freshness, attempt, and retry diagnostics', () => {
+  it('shows an inaccessible project as a neutral empty state without actions', () => {
+    render(
+      <SkillsSection
+        title="Project"
+        skills={[]}
+        scope="project"
+        pathExists={false}
+        projectPath="D:\\Code\\project-a"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    const unavailable = screen.getByRole('status', {
+      name: 'skills.projectUnavailableTitle',
+    });
+
+    expect(screen.getByText('skills.projectUnavailableDescription')).toBeTruthy();
+    expect(screen.queryByText('skills.projectNotFound')).toBeNull();
+    expect(screen.queryByText('skills.upToDate')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(unavailable.className).toContain('border-dashed');
+    expect(unavailable.className).not.toContain('border-l-');
+    expect(unavailable.className).not.toContain('warning');
+    expect(unavailable.className).not.toContain('amber');
+  });
+
+  it('summarizes failed Skill checks without exposing source diagnostics', () => {
     render(
       <SkillsSection
         title="Global"
-        skills={[makeSkill('global', { hasUpdate: false })]}
+        skills={[
+          makeSkill('global', {
+            name: 'toolkit',
+            hasUpdate: false,
+            canCheckForUpdates: true,
+            updateStatus: 'cannotCheck',
+            updateReason: 'rate-limited',
+          }),
+          makeSkill('global', {
+            name: 'writer',
+            hasUpdate: false,
+            canCheckForUpdates: true,
+            updateStatus: 'cannotCheck',
+            updateReason: 'network-error',
+          }),
+        ]}
         scope="global"
         updatingSkills={new Map()}
         updateCheck={{
@@ -228,12 +275,93 @@ describe('SkillsSection', () => {
       />
     );
 
-    expect(screen.getByText('github.com/owner/stale')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.freshness.stale')).toBeTruthy();
-    expect(screen.getByText('github.com/owner/cooling-down')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.freshness.coolingDown')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.lastAttempt')).toBeTruthy();
-    expect(screen.getByText('skills.updateEvidence.providerCooldownUntil')).toBeTruthy();
+    expect(screen.getByText('skills.updateCheckFailureCount')).toBeTruthy();
+    expect(screen.queryByText('skills.uncheckableUpdateCount')).toBeNull();
+    expect(screen.queryByText('skills.upToDate')).toBeNull();
+    expect(screen.queryByText('github.com/owner/stale')).toBeNull();
+    expect(screen.queryByText('github.com/owner/cooling-down')).toBeNull();
+    expect(screen.queryByLabelText('skills.updateEvidence.title')).toBeNull();
+  });
+
+  it('disables update checks only when every checkable Skill is cooling down', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const retryAtEpochMs = Date.now() + 60_000;
+    const coolingDownSource = {
+      source: 'github.com/owner/repo',
+      requestedRef: 'main',
+      resolvedRef: 'main',
+      refRevision: 'revision-1',
+      checkedAtEpochMs: 100,
+      expiresAtEpochMs: 200,
+      freshness: 'coolingDown' as const,
+      lastAttempt: {
+        checkedAtEpochMs: 300,
+        failure: {
+          reason: 'rateLimited' as const,
+          message: 'rate limited',
+          retryAtEpochMs,
+          providerCooldown: true,
+        },
+      },
+    };
+    const skills = [
+      makeSkill('global', {
+        hasUpdate: false,
+        updateStatus: 'cannotCheck',
+        updateReason: 'rate-limited',
+      }),
+    ];
+
+    const { rerender } = render(
+      <TooltipProvider>
+        <SkillsSection
+          title="Global"
+          skills={skills}
+          scope="global"
+          updatingSkills={new Map()}
+          updateCheck={{
+            skillFreshness: { toolkit: 'coolingDown' },
+            sources: [coolingDownSource],
+          }}
+          onSkillClick={vi.fn()}
+          onPrepareUpdate={vi.fn(async () => true)}
+          onDelete={vi.fn()}
+          onAdd={vi.fn()}
+          onCheckUpdates={vi.fn(async () => true)}
+        />
+      </TooltipProvider>
+    );
+
+    const cooldownButton = screen.getByRole('button', { name: 'skills.checkUpdates' });
+    expect(cooldownButton.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.focus(cooldownButton);
+    expect((await screen.findByRole('tooltip')).textContent).toContain('skills.updateCheckRetryAt');
+
+    rerender(
+      <TooltipProvider>
+        <SkillsSection
+          title="Global"
+          skills={[...skills, makeSkill('global', { name: 'writer', hasUpdate: false })]}
+          scope="global"
+          updatingSkills={new Map()}
+          updateCheck={{
+            skillFreshness: { toolkit: 'coolingDown', writer: 'fresh' },
+            sources: [coolingDownSource],
+          }}
+          onSkillClick={vi.fn()}
+          onPrepareUpdate={vi.fn(async () => true)}
+          onDelete={vi.fn()}
+          onAdd={vi.fn()}
+          onCheckUpdates={vi.fn(async () => true)}
+        />
+      </TooltipProvider>
+    );
+
+    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('hides the check-updates action when no skills in the section can be checked', () => {

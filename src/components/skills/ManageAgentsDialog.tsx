@@ -260,8 +260,7 @@ function ManageAgentsDialogBody({
   const [optionalAgents, setOptionalAgents] = useState<AgentId[]>(normalizedInitialSelection.optional);
   const [optionalExpanded, setOptionalExpanded] = useState(normalizedInitialSelection.optional.length > 0);
   const [saveFeedback, setSaveFeedback] = useState<{
-    status: 'blocked' | 'failed' | 'partial' | 'stale';
-    message?: string;
+    status: 'blocked' | 'failed' | 'stale';
   } | null>(null);
   const { addAgents, addOptionalAgents, removeEntryIds, hasChanges } = useMemo(() => {
     const initialSet = new Set(normalizedInitialSelection.required);
@@ -330,9 +329,15 @@ function ManageAgentsDialogBody({
             className="mb-4 flex min-w-0 gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm"
           >
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-            <span className="min-w-0 break-words">
-              {t(`skills.manageAgents.${saveFeedback.status}`)}
-              {saveFeedback.message ? ` ${saveFeedback.message}` : null}
+            <span className="min-w-0 space-y-1 break-words">
+              <span className="block font-medium">
+                {t(`skills.manageAgents.${saveFeedback.status}`)}
+              </span>
+              {saveFeedback.status === 'failed' ? (
+                <span className="block text-muted-foreground">
+                  {t('skills.manageAgents.failedDescription')}
+                </span>
+              ) : null}
             </span>
           </div>
         ) : null}
@@ -426,7 +431,7 @@ function ManageAgentsDialogBody({
                 {t('common.loading')}
               </>
             ) : (
-              t(saveFeedback?.status === 'failed' || saveFeedback?.status === 'partial'
+              t(saveFeedback?.status === 'failed'
                 ? 'skills.manageAgents.retrySave'
                 : 'skills.manageAgents.save')
             )}

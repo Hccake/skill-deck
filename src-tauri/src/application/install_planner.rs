@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
@@ -367,7 +367,7 @@ fn build_unit(
         expected_revisions: facts.revisions.clone(),
         canonical_entry,
         required_agent_entries,
-        lock_mutation: Some(lock_mutation(facts, metadata, now)?),
+        lock_mutation: Some(lock_mutation(facts, metadata, agent_plan, now)?),
         expected_targets,
     })
 }
@@ -375,6 +375,7 @@ fn build_unit(
 fn lock_mutation(
     facts: &InstallPlanningFacts,
     metadata: &crate::application::payload_session::PayloadPlanningMetadata,
+    agent_plan: &AgentEntryPlan,
     now: String,
 ) -> Result<PreparedLockMutation, AppError> {
     let expected = LockExpectedState::capture(
@@ -418,6 +419,15 @@ fn lock_mutation(
             entry.insert("pluginName".to_string(), json!(metadata.plugin_name));
             if let Some(remote_hash) = &metadata.upstream_revision {
                 entry.insert("remoteHash".to_string(), json!(remote_hash));
+            }
+            let eve_subagents = agent_plan
+                .required_agent_roots
+                .iter()
+                .filter_map(|target| target.target_id.strip_prefix("eve:"))
+                .map(|target| if target == "root" { "" } else { target })
+                .collect::<BTreeSet<_>>();
+            if !eve_subagents.is_empty() {
+                entry.insert("subagents".to_string(), json!(eve_subagents));
             }
             Value::Object(entry)
         }
@@ -763,6 +773,13 @@ mod tests {
         assert_eq!(preview.token, token);
         assert_eq!(plan.payloads.len(), 2);
         let unit = &plan.units[0];
+        assert_eq!(
+            unit.lock_mutation
+                .as_ref()
+                .and_then(|mutation| mutation.replacement.as_ref())
+                .and_then(|entry| entry.get("subagents")),
+            Some(&json!([""]))
+        );
         let canonical = unit.canonical_entry.as_ref().unwrap();
         let eve = &unit.required_agent_entries[0];
         let PreparedEntryAction::Replace {

@@ -69,6 +69,16 @@ fn open_config_resource() -> &'static str {
 }
 
 #[tauri::command]
+fn open_diagnostics_directory() -> &'static str {
+    "open-diagnostics-directory"
+}
+
+#[tauri::command]
+fn read_recent_diagnostics() -> &'static str {
+    "read-recent-diagnostics"
+}
+
+#[tauri::command]
 fn check_application_update() -> &'static str {
     "check-application-update"
 }
@@ -99,6 +109,8 @@ fn test_app() -> App<MockRuntime> {
             open_recovery_resource,
             open_skill_resource,
             open_config_resource,
+            open_diagnostics_directory,
+            read_recent_diagnostics,
             check_application_update,
             request_agent_configuration,
             complete_agent_configuration,
@@ -147,7 +159,7 @@ fn assert_denied(result: Result<Value, Value>, command: &str) {
 }
 
 #[test]
-fn main_window_allows_settings_and_recovery_but_not_source_discovery() {
+fn main_window_allows_skill_repair_commands() {
     let app = test_app();
     let main = window(&app, "main");
 
@@ -173,6 +185,14 @@ fn main_window_allows_settings_and_recovery_but_not_source_discovery() {
         Ok(Value::from("open-config-resource"))
     );
     assert_eq!(
+        invoke(&main, "open_diagnostics_directory"),
+        Ok(Value::from("open-diagnostics-directory"))
+    );
+    assert_eq!(
+        invoke(&main, "read_recent_diagnostics"),
+        Ok(Value::from("read-recent-diagnostics"))
+    );
+    assert_eq!(
         invoke(&main, "complete_agent_configuration"),
         Ok(Value::from("complete-agent-configuration"))
     );
@@ -180,7 +200,22 @@ fn main_window_allows_settings_and_recovery_but_not_source_discovery() {
         invoke(&main, "request_agent_configuration"),
         "request_agent_configuration",
     );
-    assert_denied(invoke(&main, "fetch_available"), "fetch_available");
+    assert_eq!(
+        invoke(&main, "fetch_available"),
+        Ok(Value::from("fetch-available"))
+    );
+    assert_eq!(
+        invoke(&main, "acquire_selected_payloads"),
+        Ok(Value::from("acquire-selected-payloads"))
+    );
+    assert_eq!(
+        invoke(&main, "preview_install"),
+        Ok(Value::from("preview-install"))
+    );
+    assert_eq!(
+        invoke(&main, "install_skills"),
+        Ok(Value::from("install-skills"))
+    );
 }
 
 #[test]
@@ -244,6 +279,14 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "open_config_resource"),
         "open_config_resource",
+    );
+    assert_denied(
+        invoke(&wizard, "open_diagnostics_directory"),
+        "open_diagnostics_directory",
+    );
+    assert_denied(
+        invoke(&wizard, "read_recent_diagnostics"),
+        "read_recent_diagnostics",
     );
     assert_denied(
         invoke(&wizard, "check_application_update"),

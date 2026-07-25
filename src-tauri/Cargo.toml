@@ -79,6 +79,9 @@ zip = "4.6.1"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["process", "io-util", "time", "sync", "macros"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 junction = "1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

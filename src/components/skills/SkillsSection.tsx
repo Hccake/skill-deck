@@ -1,18 +1,19 @@
 // src/components/skills/SkillsSection.tsx
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, AlertTriangle, Check, ArrowUpCircle } from 'lucide-react';
+import { Plus, Check, ArrowUpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SkillCard } from './SkillCard';
+import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
 import type { AgentId, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
 import {
   buildUpdatePlan,
-  resolveEvidenceFailureReasonI18nKey,
-  resolveEvidenceFreshnessI18nKey,
   isSkillUpdateActive,
   resolveSkillMaintenanceAction,
+  resolveUpdateStatusLabelI18nKey,
   type SkillUpdateDisplayStatus,
   type SkillListItem,
   type UpdateCheckDisplaySnapshot,
@@ -84,6 +85,8 @@ export const SkillsSection = memo(function SkillsSection({
   let isAnyUpdating = false;
   let completedCount = 0;
   let totalUpdating = 0;
+  let updateCheckFailureCount = 0;
+  let maintenanceCount = 0;
   for (const skill of skills) {
     const updatingStatus = updatingSkills.get(
       getSkillIdentityKey({ name: skill.name, scope: skill.scope, projectPath })
@@ -96,21 +99,41 @@ export const SkillsSection = memo(function SkillsSection({
         completedCount++;
       }
     }
+    const updateStatusLabelKey = resolveUpdateStatusLabelI18nKey(skill);
+    if (updateStatusLabelKey === 'skills.updateStatusLabel.checkFailed') {
+      updateCheckFailureCount++;
+    } else if (updateStatusLabelKey && updateStatusLabelKey !== 'skills.updateStatusLabel.available') {
+      maintenanceCount++;
+    }
   }
   const updatePlanPreview = useMemo(
     () => buildUpdatePlan(skills, scope, scope === 'project' ? projectPath : undefined),
     [projectPath, scope, skills]
   );
   const updatesCount = updatePlanPreview.updatableCount;
-  const maintenanceCount = updatePlanPreview.repairableCount + updatePlanPreview.skippedCount;
   const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
-  const sourceDiagnostics = useMemo(
-    () => (updateCheck?.sources ?? []).filter((source) => (
-      (source.freshness !== 'fresh' && source.freshness !== 'cached')
-      || source.lastAttempt?.failure != null
-    )),
-    [updateCheck?.sources],
-  );
+  const [cooldownClock, setCooldownClock] = useState(() => Date.now());
+  const cooldownRetryAt = useMemo(() => {
+    const checkableSkills = skills.filter((skill) => skill.canCheckForUpdates === true);
+    if (
+      checkableSkills.length === 0
+      || checkableSkills.some((skill) => updateCheck?.skillFreshness[skill.name] !== 'coolingDown')
+    ) {
+      return null;
+    }
+
+    const retryTimes = (updateCheck?.sources ?? []).flatMap((source) => {
+      const retryAt = source.lastAttempt?.failure?.retryAtEpochMs;
+      return retryAt != null && retryAt > cooldownClock ? [retryAt] : [];
+    });
+    return retryTimes.length > 0 ? Math.min(...retryTimes) : null;
+  }, [cooldownClock, skills, updateCheck]);
+  const cooldownRetryTime = cooldownRetryAt == null
+    ? null
+    : new Intl.DateTimeFormat(i18n.language, {
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date(cooldownRetryAt));
 
   // 检测 isCheckingUpdates true → false 转换，短暂显示完成态
   const [checkDone, setCheckDone] = useState(false);
@@ -124,6 +147,15 @@ export const SkillsSection = memo(function SkillsSection({
     };
   }, []);
 
+  useEffect(() => {
+    if (cooldownRetryAt == null) return;
+    const timer = setTimeout(
+      () => setCooldownClock(Date.now()),
+      Math.max(0, cooldownRetryAt - Date.now()) + 50,
+    );
+    return () => clearTimeout(timer);
+  }, [cooldownRetryAt]);
+
   const showCheckDone = useCallback(() => {
     if (hideCheckDoneTimerRef.current) {
       clearTimeout(hideCheckDoneTimerRef.current);
@@ -136,11 +168,11 @@ export const SkillsSection = memo(function SkillsSection({
   }, []);
 
   const handleCheckUpdates = useCallback(async () => {
-    if (!onCheckUpdates || isCheckingUpdates) return;
+    if (!onCheckUpdates || isCheckingUpdates || cooldownRetryAt != null) return;
     const succeeded = await onCheckUpdates();
     if (!succeeded) return;
     showCheckDone();
-  }, [isCheckingUpdates, onCheckUpdates, showCheckDone]);
+  }, [cooldownRetryAt, isCheckingUpdates, onCheckUpdates, showCheckDone]);
 
   const openPreparedUpdatePlan = useCallback(async (nextPlan: UpdatePlan, batch: boolean) => {
     if (nextPlan.updatableCount === 0) return;
@@ -176,14 +208,14 @@ export const SkillsSection = memo(function SkillsSection({
             {title}
             <span className="text-xs font-semibold opacity-50">({skills.length})</span>
           </h2>
-          {isCheckingUpdates && updatesCount === 0 && (
+          {pathExists && isCheckingUpdates && updatesCount === 0 && (
             <div className="flex items-center gap-1 text-xs">
               <span className="text-border mr-0.5">·</span>
               <span className="text-xs text-muted-foreground">{t('skills.checking')}</span>
             </div>
           )}
 
-          {isAnyUpdating ? (
+          {pathExists && (isAnyUpdating ? (
             <div className="flex items-center gap-1.5 text-xs">
               <span className="text-border mr-0.5">·</span>
               <span className="font-medium text-primary">
@@ -197,8 +229,16 @@ export const SkillsSection = memo(function SkillsSection({
                 {`${updatesCount} ${t(updatesCount === 1 ? 'skills.update' : 'skills.updates')}`}
               </span>
             </div>
+          ) : null)}
+          {pathExists && !isAnyUpdating && updateCheckFailureCount > 0 ? (
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="mr-0.5 text-border">·</span>
+              <span role="status" className="font-medium text-muted-foreground/80">
+                {t('skills.updateCheckFailureCount', { count: updateCheckFailureCount })}
+              </span>
+            </div>
           ) : null}
-          {!isAnyUpdating && maintenanceCount > 0 ? (
+          {pathExists && !isAnyUpdating && maintenanceCount > 0 ? (
             <div className="flex items-center gap-1.5 text-xs">
               <span className="text-border mr-0.5">·</span>
               <span className="font-medium text-muted-foreground/80">
@@ -206,7 +246,7 @@ export const SkillsSection = memo(function SkillsSection({
               </span>
             </div>
           ) : null}
-          {!isAnyUpdating && updatesCount === 0 && maintenanceCount === 0 && !isCheckingUpdates ? (
+          {pathExists && !isAnyUpdating && updatesCount === 0 && updateCheckFailureCount === 0 && maintenanceCount === 0 && !isCheckingUpdates ? (
             <div className="flex items-center gap-1 text-xs">
               <span className="text-border mr-0.5">·</span>
               <span className="font-medium text-muted-foreground/80">
@@ -218,7 +258,7 @@ export const SkillsSection = memo(function SkillsSection({
         
         {/* Right Actions: Secondary maintenance actions + primary add action */}
         <div data-testid="skills-section-actions" className="flex items-center gap-2">
-          {!isAnyUpdating && (updatesCount > 0 || (onCheckUpdates && skills.length > 0 && checkableCount > 0)) && (
+          {pathExists && !isAnyUpdating && (updatesCount > 0 || (onCheckUpdates && skills.length > 0 && checkableCount > 0)) && (
             <div data-testid="skills-section-secondary-actions" className="flex items-center gap-0.5">
               {updatesCount > 0 && (
                 <Button
@@ -239,14 +279,35 @@ export const SkillsSection = memo(function SkillsSection({
                     {t('skills.updateDone')}
                   </span>
                 ) : (
-                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
-                    disabled={isCheckingUpdates}
-                    onClick={() => {
-                      void handleCheckUpdates();
-                    }}>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                    {t('skills.checkUpdates')}
-                  </Button>
+                  cooldownRetryAt != null ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          data-testid="update-check-cooldown"
+                          aria-disabled="true"
+                          className="h-7 cursor-not-allowed gap-1.5 px-2 text-xs font-medium text-muted-foreground opacity-50"
+                        >
+                          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                          {t('skills.checkUpdates')}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{t('skills.updateCheckRetryAt', { time: cooldownRetryTime })}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+                      disabled={isCheckingUpdates}
+                      onClick={() => {
+                        void handleCheckUpdates();
+                      }}>
+                      <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                      {t('skills.checkUpdates')}
+                    </Button>
+                  )
                 )
               )}
             </div>
@@ -268,70 +329,7 @@ export const SkillsSection = memo(function SkillsSection({
         </div>
       </div>
 
-      {sourceDiagnostics.length > 0 ? (
-        <div
-          role="status"
-          aria-label={t('skills.updateEvidence.title')}
-          className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/20 border-l-2 border-l-amber-600 bg-amber-500/[0.04] px-3 py-2 text-xs text-muted-foreground dark:border-l-amber-400"
-        >
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-          <div className="min-w-0 space-y-1">
-            {sourceDiagnostics.map((source) => {
-              const attempt = source.lastAttempt;
-              const failure = attempt?.failure;
-              const retryAt = failure?.retryAtEpochMs;
-              return (
-                <p
-                  key={`${source.source}:${source.requestedRef ?? ''}`}
-                  className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-normal"
-                >
-                  <span className="max-w-full truncate font-medium text-foreground/80">
-                    {source.source}
-                  </span>
-                  <span>{t(resolveEvidenceFreshnessI18nKey(source.freshness))}</span>
-                  {source.checkedAtEpochMs != null ? (
-                    <span>
-                      {t('skills.updateEvidence.lastChecked', {
-                        time: new Date(source.checkedAtEpochMs).toLocaleString(i18n.language),
-                      })}
-                    </span>
-                  ) : null}
-                  {attempt ? (
-                    <span>
-                      {t('skills.updateEvidence.lastAttempt', {
-                        time: new Date(attempt.checkedAtEpochMs).toLocaleString(i18n.language),
-                      })}
-                    </span>
-                  ) : null}
-                  {failure ? (
-                    <span>{t(resolveEvidenceFailureReasonI18nKey(failure.reason))}</span>
-                  ) : null}
-                  {retryAt != null ? (
-                    <span>
-                      {t(
-                        failure?.providerCooldown
-                          ? 'skills.updateEvidence.providerCooldownUntil'
-                          : 'skills.updateEvidence.retryAt',
-                        { time: new Date(retryAt).toLocaleString(i18n.language) },
-                      )}
-                    </span>
-                  ) : null}
-                </p>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {/* 路径不存在提示 */}
-      {!pathExists && (
-        <div className="flex items-center gap-2 py-2 px-3 mb-3 text-xs text-[#D97706] dark:text-[#FBBF24] rounded-md border border-amber-500/20 border-l-2 border-l-[#D97706] dark:border-l-[#F59E0B] bg-[#D97706]/[0.04] dark:bg-[#F59E0B]/[0.04]">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span className="leading-normal font-medium">
-            {t('skills.projectNotFound', { path: projectPath })}
-          </span>
-        </div>
-      )}
+      {!pathExists && <ProjectUnavailableState />}
 
       {/* Skills List */}
       {pathExists && (

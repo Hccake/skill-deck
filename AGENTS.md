@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **skill-deck** (2734 symbols, 6942 relationships, 233 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **skill-deck** (7498 symbols, 22008 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
@@ -41,3 +41,13 @@ This project is indexed by GitNexus as **skill-deck** (2734 symbols, 6942 relati
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## 项目协作规则
+
+- 与用户沟通和长期维护文档默认使用符合中文语境的陈述体。Agent、Skill、Environment、Context、Backend、WSL 等专业术语可以保留 English 原文。
+- 开始任务时先阅读[文档地图](./docs/README.md)，按其中的任务路由进入唯一 owner 文档。不要在 `AGENTS.md` 复制产品、架构或领域正文。
+- 当前工作区可能包含尚未提交的用户改动。只修改本任务需要的文件，不回退、不覆盖、不顺带整理无关内容。
+- `docs/plans/**` 与 `docs/superpowers/**` 保存本地设计、计划和 review 过程，不属于 tracked authority，不得 stage 或 commit。
+- 代码变更遵循 test-first，并按[贡献指南](./CONTRIBUTING.md)同步 bindings、ACL、i18n、长期文档和验证。
+- 完成前运行与改动范围相符的验证，并依据最新输出报告结果。
+- 仓库只保留这一份共享 Agent instruction。不要创建目录级 `AGENTS.md` 或 `CLAUDE.md`；工具专属入口只引用本文件。

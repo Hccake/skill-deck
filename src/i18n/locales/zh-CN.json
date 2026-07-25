@@ -134,7 +134,6 @@
       "stop": "停止修复",
       "stopping": "正在停止…",
       "repairStopped": "修复已停止，已经完成的写入会保留当前结果。",
-      "repairPartial": "部分目标未完成修复。如弹窗中提供了恢复信息，请先处理后再重试。",
       "stopFailed": "无法发送停止请求，修复仍在继续。",
       "repairFailed": "修复失败，请检查结果后重试。"
     },
@@ -166,10 +165,13 @@
       "alsoInGlobal": "同时安装在全局",
       "alsoInProject": "同时安装在此项目"
     },
-    "projectNotFound": "项目路径不存在：{{path}}",
+    "projectUnavailableTitle": "无法读取项目 Skill",
+    "projectUnavailableDescription": "当前 Environment 无法访问该项目。请检查项目位置，或切换到已添加该项目的 Environment。",
+    "updateCheckFailureCount": "{{count}} 个检查失败",
+    "updateCheckRetryAt": "{{time}} 后可重新检查",
     "card": {
       "extraCopies": "有额外接入项",
-      "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理 Agents”调整。"
+      "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理关联 Agent”调整。"
     },
     "detail": {
       "title": "Skill 详情",
@@ -192,10 +194,10 @@
       "emptyContent": "该 skill 没有内容",
       "retry": "重试",
       "duplicateCopiesTitle": "发现 {{count}} 个额外接入项",
-      "extraCopiesHint": "这些 Agent 已可通过通用 Skill 目录使用此 Skill，但自己的目录中还保留了链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可点击右上角“管理 Agents”调整。",
-      "extraCopiesNamedHint": "的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理 Agents”中调整。",
+      "extraCopiesHint": "这些 Agent 已可通过通用 Skill 目录使用此 Skill，但自己的目录中还保留了链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可点击右上角“管理关联 Agent”调整。",
+      "extraCopiesNamedHint": "的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理关联 Agent”中调整。",
       "extraCopiesAgentSummaryMore": "{{agents}} 等 {{count}} 个 Agent",
-      "extraCopiesCountHint": "发现 {{count}} 个额外接入项。选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理 Agents”中查看并调整。",
+      "extraCopiesCountHint": "发现 {{count}} 个额外接入项。选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理关联 Agent”中查看并调整。",
       "duplicateCopiesHint": "这些 Agent 目录中的链接或副本可能不再需要。建议保留通用 Skill 目录中的版本。",
       "manageDuplicates": "查看接入项"
     },
@@ -216,20 +218,21 @@
       "confirm": "确认删除"
     },
     "manageAgents": {
-      "title": "管理 Agents",
-      "description": "查看哪些 Agent 可以使用 \"{{name}}\"，并为需要的 Agent 添加接入方式",
+      "action": "管理关联 Agent",
+      "title": "关联 Agent",
+      "description": "选择可以使用「{{name}}」的 Agent。",
       "modeTitle": "Skill 安装方式",
       "symlinkHint": "通过链接接入通用 Skill 目录，后续更新会共享同一份源文件",
       "copyHint": "复制一份到 Agent 目录，适合不支持链接的环境",
       "save": "保存更改",
       "retrySave": "重试保存",
-      "previewError": "无法加载 Agent 接入信息，请重试。",
+      "previewError": "暂时无法加载关联 Agent，请重试。",
       "retryPreview": "重试",
       "blocked": "当前有其他操作正在执行，请稍后再试。",
-      "failed": "Agent 接入未能更新，当前选择仍保留。",
-      "partial": "部分 Agent 接入未能更新，已完成的更改已保留。",
-      "stale": "Agent 接入状态已经变化，请检查刷新后的内容再保存。",
-      "success": "Agent 使用范围已更新",
+      "failed": "暂时无法保存关联 Agent 设置",
+      "failedDescription": "这次更改未能完成。当前选择仍保留，你可以重试或继续查看 Skill 内容。",
+      "stale": "关联 Agent 已发生变化，请检查最新设置后重新保存。",
+      "success": "关联 Agent 已更新",
       "cleanupSuccess": "额外副本已移除"
     },
     "copyToProject": {
@@ -818,6 +821,16 @@
     "aboutSections": {
       "tagline": "桌面级 Agent 管理器"
     },
+    "diagnostics": {
+      "title": "诊断记录",
+      "description": "操作失败时会在本机保留经过脱敏的记录。",
+      "openDirectory": "打开诊断目录",
+      "openError": "暂时无法打开诊断目录，你仍可复制诊断信息。",
+      "copy": "复制诊断信息",
+      "copySuccess": "诊断信息已复制",
+      "copyError": "暂时无法复制诊断信息。",
+      "empty": "暂无诊断信息。"
+    },
     "links": {
       "openSource": "开源项目",
       "githubTitle": "GitHub 仓库",
@@ -895,7 +908,7 @@
       "update": "更新 Skill",
       "remove": "移除 Skill",
       "copy": "复制 Skill",
-      "manageAgents": "更新 Agent",
+      "manageAgents": "更新关联 Agent",
       "duplicateCleanup": "清理重复副本",
       "repair": "修复来源",
       "saveAgentDefaults": "保存 Agent 默认值",

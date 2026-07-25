@@ -154,14 +154,6 @@ where
                 Ok((staged, runtime.authority))
             }
             .await;
-            if let Err(error) = &preflight {
-                log::error!(
-                    "Skill mutation failed: operation_id={} unit_id={} skill={} phase=preflight error={error}",
-                    plan.operation_id,
-                    unit.id,
-                    unit.skill_name,
-                );
-            }
             staged_units.insert(index, preflight);
         }
 
@@ -245,12 +237,6 @@ where
                                 .map(|target| target.key.clone()),
                         );
                     }
-                    log::error!(
-                        "Skill mutation failed: operation_id={} unit_id={} skill={} phase=apply error={error}",
-                        plan.operation_id,
-                        unit.id,
-                        unit.skill_name,
-                    );
                     results.push(failed_result(&unit, error, false));
                     continue;
                 }
@@ -263,12 +249,7 @@ where
             match self.entries.cleanup(staged).await {
                 Ok(warnings) => results.push(success_result(&unit, lock_committed, warnings)),
                 Err(error) => {
-                    log::warn!(
-                        "Skill mutation cleanup warning: operation_id={} unit_id={} skill={} error={error}",
-                        plan.operation_id,
-                        unit.id,
-                        unit.skill_name,
-                    );
+                    crate::diagnostics::record_mutation_cleanup_warning(&error.to_string());
                     results.push(success_result(
                         &unit,
                         lock_committed,
@@ -393,6 +374,7 @@ fn failed_result(
         _ => MutationUnitStatus::Failed,
     };
     let report = ErrorReport::from_app_error(error, Some(unit.target.clone()));
+    crate::diagnostics::record_mutation_failure(&report);
     if status == MutationUnitStatus::RecoveryRequired {
         let mut result = MutationUnitResult::recovery_required(
             unit.id.clone(),

@@ -801,6 +801,38 @@ mod tests {
     use crate::environment::wsl_protocol::WslExecutionProfile;
     use crate::models::InstallMode;
 
+    #[tokio::test]
+    async fn materialize_stage_is_blocked_without_nul_safe_xargs() {
+        let mut session = test_session();
+        session.execution_profile = WslExecutionProfile::from_supported([
+            WslExecutionFeature::NulSafeSort,
+            WslExecutionFeature::Sha256Sum,
+            WslExecutionFeature::CanonicalReadlink,
+            WslExecutionFeature::StableStat,
+        ]);
+
+        let error = WslOperationExecutor::execute(
+            &STAGE_OPERATION,
+            WslOperationRequest {
+                session,
+                args: vec!["/tmp/operation".to_string(), "owner".to_string()],
+                stdin: Vec::new(),
+                timeout: Duration::from_secs(1),
+                stdout_limit: 1024,
+                stderr_limit: 1024,
+                cancellation: None,
+            },
+        )
+        .await
+        .expect_err("materialize must fail before transport");
+
+        assert!(matches!(
+            error,
+            AppError::CapabilityUnavailable { capability, path: None }
+                if capability == "wslExecutionFeature.nulSafeXargs"
+        ));
+    }
+
     fn payload_fixture(root: &std::path::Path) -> (SkillPayload, std::path::PathBuf) {
         let source = root.join("source");
         fs::create_dir_all(source.join("scripts")).unwrap();

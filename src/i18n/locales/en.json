@@ -134,7 +134,6 @@
       "stop": "Stop repair",
       "stopping": "Stopping…",
       "repairStopped": "Repair was stopped. Completed writes, if any, remain unchanged.",
-      "repairPartial": "Repair did not finish for every target. Review recovery details if shown, then retry.",
       "stopFailed": "The stop request could not be sent. Repair is still running.",
       "repairFailed": "Repair failed. Check the result and try again."
     },
@@ -166,10 +165,13 @@
       "alsoInGlobal": "Also installed globally",
       "alsoInProject": "Also installed in this project"
     },
-    "projectNotFound": "Project path not found: {{path}}",
+    "projectUnavailableTitle": "Project skills unavailable",
+    "projectUnavailableDescription": "This Environment cannot access the project. Check its location, or switch to an Environment where the project has been added.",
+    "updateCheckFailureCount": "{{count}} checks failed",
+    "updateCheckRetryAt": "Check again after {{time}}",
     "card": {
       "extraCopies": "Extra setup items",
-      "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage Agents\" to adjust them."
+      "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" to adjust them."
     },
     "detail": {
       "title": "Skill Details",
@@ -192,10 +194,10 @@
       "emptyContent": "This skill has no content",
       "retry": "Retry",
       "duplicateCopiesTitle": "Extra setup items found",
-      "extraCopiesHint": "These Agents can already use this Skill through the shared Skill directory, but their own directories still keep a link or copy. Copied files may not update with the shared Skill. Use \"Manage Agents\" in the top right to adjust them.",
-      "extraCopiesNamedHint": "still keep a link or copy for this Skill in their own directory. Copied files may not update with the shared Skill. Use \"Manage Agents\" in the top right to adjust it.",
+      "extraCopiesHint": "These Agents can already use this Skill through the shared Skill directory, but their own directories still keep a link or copy. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to adjust them.",
+      "extraCopiesNamedHint": "still keep a link or copy for this Skill in their own directory. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to adjust it.",
       "extraCopiesAgentSummaryMore": "{{agents}} and {{count}} Agents total",
-      "extraCopiesCountHint": "{{count}} extra setup items found. Copied files may not update with the shared Skill. Use \"Manage Agents\" in the top right to review and adjust them.",
+      "extraCopiesCountHint": "{{count}} extra setup items found. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to review and adjust them.",
       "duplicateCopiesHint": "These links or copies in Agent directories may no longer be needed. Keep the shared Skill directory version when possible.",
       "manageDuplicates": "View setup items"
     },
@@ -216,20 +218,21 @@
       "confirm": "Delete Skill"
     },
     "manageAgents": {
-      "title": "Manage Agents",
-      "description": "Review which Agents can use \"{{name}}\" and add setup for Agents that need it.",
+      "action": "Manage linked Agents",
+      "title": "Linked Agents",
+      "description": "Choose which Agents can use \"{{name}}\".",
       "modeTitle": "Skill install method",
       "symlinkHint": "Link to the shared Skill directory so future updates use one source",
       "copyHint": "Copy files into the agent directory for environments without link support",
       "save": "Save Changes",
       "retrySave": "Retry Save",
-      "previewError": "Agent access could not be loaded. Try again.",
+      "previewError": "Linked Agents are temporarily unavailable. Try again.",
       "retryPreview": "Retry",
       "blocked": "Another operation is running. Try again when it finishes.",
-      "failed": "Agent access could not be updated. Your current selection is preserved.",
-      "partial": "Some Agent access could not be updated. Completed changes were preserved.",
-      "stale": "Agent access changed. Review the refreshed state before saving again.",
-      "success": "Agent access updated",
+      "failed": "Linked Agent settings could not be saved",
+      "failedDescription": "The change could not be completed. Your current selection is still available, so you can retry or continue viewing the Skill content.",
+      "stale": "Linked Agents changed. Review the latest settings before saving again.",
+      "success": "Linked Agents updated",
       "cleanupSuccess": "Extra copies removed"
     },
     "copyToProject": {
@@ -818,6 +821,16 @@
     "aboutSections": {
       "tagline": "Desktop Agent Manager"
     },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "description": "Redacted records for failed operations are stored on this device.",
+      "openDirectory": "Open Diagnostics Folder",
+      "openError": "The diagnostics folder could not be opened. You can still copy the diagnostics.",
+      "copy": "Copy Diagnostics",
+      "copySuccess": "Diagnostics copied",
+      "copyError": "Diagnostics could not be copied.",
+      "empty": "No diagnostics have been recorded yet."
+    },
     "links": {
       "openSource": "OPEN SOURCE",
       "githubTitle": "GitHub Repo",
@@ -895,7 +908,7 @@
       "update": "Updating",
       "remove": "Removing",
       "copy": "Copying",
-      "manageAgents": "Updating agents",
+      "manageAgents": "Updating linked Agents",
       "duplicateCleanup": "Cleaning duplicates",
       "repair": "Repairing source",
       "saveAgentDefaults": "Saving agent defaults",

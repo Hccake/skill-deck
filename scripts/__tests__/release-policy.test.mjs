@@ -7,6 +7,10 @@ const workflowUrl = new URL(
   import.meta.url,
 );
 const ciWorkflowUrl = new URL("../../.github/workflows/ci.yml", import.meta.url);
+const wslAcceptanceWorkflowUrl = new URL(
+  "../../.github/workflows/wsl-acceptance.yml",
+  import.meta.url,
+);
 const packagerUrl = new URL("../package-updater-artifact.mjs", import.meta.url);
 const releaseVerifierUrl = new URL("../verify-release-assets.mjs", import.meta.url);
 
@@ -19,9 +23,29 @@ test("PR CI keeps stable required jobs and enforces the exact Rust gate", async 
   assert.match(workflow, /cargo check[^\n]*--locked[^\n]*--all-targets/);
   assert.match(
     workflow,
+    /name: Check Windows WSL integration feature[\s\S]*?if: runner\.os == 'Windows'[\s\S]*?cargo check[^\n]*--features wsl-integration-tests/,
+  );
+  assert.match(
+    workflow,
     /cargo clippy[^\n]*--locked[^\n]*--all-targets[^\n]*-- -D warnings/,
   );
   assert.match(workflow, /cargo test[^\n]*--locked/);
+});
+
+test("real WSL acceptance stays manual and isolated from normal release gates", async () => {
+  const workflow = await readFile(wslAcceptanceWorkflowUrl, "utf8");
+
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /pull_request:|push:/);
+  assert.match(workflow, /runs-on: \[self-hosted, Windows, skill-deck-wsl\]/);
+  assert.match(workflow, /group: skill-deck-wsl-acceptance/);
+  assert.match(workflow, /shell: pwsh/);
+  assert.match(workflow, /SKILL_DECK_TEST_WSL_DISTRO_A/);
+  assert.match(workflow, /SKILL_DECK_TEST_WSL_DISTRO_B/);
+  assert.match(
+    workflow,
+    /cargo test[\s\S]*--features wsl-integration-tests[\s\S]*--test wsl_environment_integration[\s\S]*-- --ignored --nocapture/,
+  );
 });
 
 test("release workflow keeps platform jobs artifact-only and uses one aggregator", async () => {

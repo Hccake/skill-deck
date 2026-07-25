@@ -13,6 +13,7 @@ mod application;
 mod background_process;
 mod commands;
 mod core;
+mod diagnostics;
 mod environment;
 mod error;
 mod models;
@@ -169,6 +170,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::recovery::open_recovery_resource,
             commands::resources::open_skill_resource,
             commands::resources::open_config_resource,
+            commands::diagnostics::open_diagnostics_directory,
+            commands::diagnostics::read_recent_diagnostics,
             commands::duplicate_copies::cleanup_duplicate_agent_copies,
             commands::update::check_updates,
             commands::update::preview_update,
@@ -260,8 +263,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(diagnostics::plugin())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
+            diagnostics::initialize(app.handle());
             let payload_cache_root = app.path().app_cache_dir()?.join("payload-sessions");
             let recovery_root = app.path().app_local_data_dir()?.join("recovery");
             let runtime = RuntimeServiceGraph::new(
@@ -329,12 +334,6 @@ pub fn run() {
             app.manage(runtime);
             builder.mount_events(app);
 
-            #[cfg(debug_assertions)]
-            app.handle().plugin(
-                tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .build(),
-            )?;
             Ok(())
         })
         .run(tauri::generate_context!())

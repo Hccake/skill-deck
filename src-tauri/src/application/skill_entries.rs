@@ -263,26 +263,26 @@ where
 }
 
 fn eve_target_ids(facts: &InstallPlanningFacts, skill_name: &str) -> Vec<String> {
-    let subagents = facts
-        .lock_document
-        .entry_snapshot(skill_name)
-        .value()
+    eve_target_ids_from_lock_entry(facts.lock_document.entry_snapshot(skill_name).value())
+}
+
+fn eve_target_ids_from_lock_entry(entry: Option<&serde_json::Value>) -> Vec<String> {
+    match entry
         .and_then(|entry| entry.get("subagents"))
         .and_then(serde_json::Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(crate::core::skill::sanitize_name)
-                .filter(|value| !value.is_empty())
-                .map(|value| format!("eve:{value}"))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if subagents.is_empty() {
-        vec!["eve:root".to_string()]
-    } else {
-        subagents
+    {
+        Some(values) => values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(|subagent| {
+                if subagent.is_empty() {
+                    "eve:root".to_string()
+                } else {
+                    format!("eve:{}", crate::core::skill::sanitize_name(subagent))
+                }
+            })
+            .collect(),
+        None => vec!["eve:root".to_string()],
     }
 }
 
@@ -415,6 +415,24 @@ mod tests {
     use crate::environment::wsl::EnvironmentRegistry;
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[test]
+    fn eve_targets_distinguish_legacy_missing_metadata_from_explicit_empty_targets() {
+        assert_eq!(
+            eve_target_ids_from_lock_entry(Some(&serde_json::json!({}))),
+            vec!["eve:root"]
+        );
+        assert!(eve_target_ids_from_lock_entry(Some(&serde_json::json!({
+            "subagents": []
+        })))
+        .is_empty());
+        assert_eq!(
+            eve_target_ids_from_lock_entry(Some(&serde_json::json!({
+                "subagents": ["", "Research Team"]
+            }))),
+            vec!["eve:root", "eve:research-team"]
+        );
+    }
 
     #[test]
     fn physical_entries_group_all_owners_and_mark_links_to_canonical() {

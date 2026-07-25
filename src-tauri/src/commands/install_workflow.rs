@@ -12,7 +12,13 @@ pub async fn preview_install(
     request: InstallRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallPreview, AppError> {
-    runtime.install().preview(&request).await
+    let result = runtime.install().preview(&request).await;
+    crate::diagnostics::record_command_result(
+        crate::diagnostics::DiagnosticOperation::Install,
+        &result,
+        &request.context,
+    );
+    result
 }
 
 #[tauri::command]
@@ -22,12 +28,21 @@ pub async fn install_skills(
     expected_token: PreviewToken,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallResponse, AppError> {
-    let guard = runtime
-        .mutation()
-        .begin(MutationKind::Install, request.context.clone())?;
-    guard.transition(MutationPhase::Acquiring, None, true);
-    runtime
-        .install()
-        .execute(&request, expected_token, guard.cancellation())
-        .await
+    let result = async {
+        let guard = runtime
+            .mutation()
+            .begin(MutationKind::Install, request.context.clone())?;
+        guard.transition(MutationPhase::Acquiring, None, true);
+        runtime
+            .install()
+            .execute(&request, expected_token, guard.cancellation())
+            .await
+    }
+    .await;
+    crate::diagnostics::record_command_result(
+        crate::diagnostics::DiagnosticOperation::Install,
+        &result,
+        &request.context,
+    );
+    result
 }

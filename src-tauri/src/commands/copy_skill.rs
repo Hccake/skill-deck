@@ -11,7 +11,13 @@ pub async fn preview_copy_skill_to_projects(
     request: CopyRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<CopyPreview, AppError> {
-    runtime.copy().preview(&request).await
+    let result = runtime.copy().preview(&request).await;
+    crate::diagnostics::record_command_result(
+        crate::diagnostics::DiagnosticOperation::Copy,
+        &result,
+        &request.source,
+    );
+    result
 }
 
 #[tauri::command]
@@ -20,9 +26,19 @@ pub async fn copy_skill_to_projects(
     request: CopyExecutionRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<CopyResponse, AppError> {
-    let guard = runtime
-        .mutation()
-        .begin(MutationKind::Copy, request.request.source.clone())?;
-    guard.transition(MutationPhase::Preparing, None, false);
-    runtime.copy().execute(&request, guard.cancellation()).await
+    let context = request.request.source.clone();
+    let result = async {
+        let guard = runtime
+            .mutation()
+            .begin(MutationKind::Copy, context.clone())?;
+        guard.transition(MutationPhase::Preparing, None, false);
+        runtime.copy().execute(&request, guard.cancellation()).await
+    }
+    .await;
+    crate::diagnostics::record_command_result(
+        crate::diagnostics::DiagnosticOperation::Copy,
+        &result,
+        &context,
+    );
+    result
 }

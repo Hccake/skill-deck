@@ -268,13 +268,13 @@ describe('skill workflows', () => {
 
     const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
 
-    expect(outcome.status).toBe('failed');
+    expect(outcome).toEqual({ status: 'failed' });
     expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
     expect(useSkillDialogStore.getState().manageAgentDetails).toBe(managePreview);
     expect(mocks.syncSkills).toHaveBeenCalledWith(context);
   });
 
-  it('returns a partial outcome when only some Agent changes fail', async () => {
+  it('returns a failed outcome when an atomic Agent change reports mixed unit results', async () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
@@ -289,7 +289,7 @@ describe('skill workflows', () => {
 
     const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
 
-    expect(outcome.status).toBe('partial');
+    expect(outcome).toEqual({ status: 'failed' });
     expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
     expect(mocks.syncSkills).toHaveBeenCalledWith(context);
   });

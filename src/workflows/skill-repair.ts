@@ -25,11 +25,14 @@ export interface RepairSkillSourceRequest {
 
 export type RepairOutcome =
   | { status: 'succeeded'; response: InstallResponse }
-  | { status: 'partial'; response: InstallResponse }
   | { status: 'stopped' }
   | { status: 'missing' }
   | { status: 'riskRequired' }
-  | { status: 'failed'; stage: 'validation' | 'preparation' | 'execution'; error: AppError };
+  | {
+    status: 'failed';
+    stage: 'validation' | 'preparation' | 'execution';
+    error: AppError | null;
+  };
 
 export interface RepairWorkflowApi {
   fetchAvailable: typeof fetchAvailable;
@@ -115,5 +118,7 @@ export async function repairSkillSource(
     return { status: 'failed', stage: 'execution', error: toAppError(error) };
   }
   if (request.stopRequested()) return { status: 'stopped' };
-  return isSuccessful(response) ? { status: 'succeeded', response } : { status: 'partial', response };
+  return isSuccessful(response)
+    ? { status: 'succeeded', response }
+    : { status: 'failed', stage: 'execution', error: null };
 }
