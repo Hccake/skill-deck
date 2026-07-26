@@ -11,6 +11,7 @@ use crate::application::payload_session::{
 };
 use crate::application::remove::{ObservedEntryKind, ObservedEntryOwner, ObservedPhysicalEntry};
 use crate::core::agent_definition::AgentAdapter;
+use crate::environment::agent_environment::DetectionState;
 use crate::environment::planning::TargetFactResolver;
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
 use crate::environment::runtime::{observed_entry_id, PhysicalTargetKey};
@@ -211,14 +212,13 @@ where
                 logical_target_id: format!("agent:{}:private", agent_id.as_str()),
             });
         }
-        if let Some((eve_id, eve)) = facts
-            .agent_runtime
-            .agents
-            .iter()
-            .find(|(_, agent)| agent.definition.adapter == AgentAdapter::Eve)
-        {
+        if let Some((eve_id, eve)) = facts.agent_runtime.agents.iter().find(|(_, agent)| {
+            agent.definition.adapter == AgentAdapter::Eve
+                && agent.project.enabled
+                && agent.detection == DetectionState::Detected
+        }) {
             if let Some(project) = facts.agent_runtime.project_path.as_deref() {
-                for target_id in eve_target_ids(&facts, skill_name) {
+                for target_id in eve_target_ids(&facts, skill_name)? {
                     let relative = if target_id == "eve:root" {
                         "agent/skills".to_string()
                     } else {
@@ -262,27 +262,33 @@ where
     }
 }
 
-fn eve_target_ids(facts: &InstallPlanningFacts, skill_name: &str) -> Vec<String> {
-    let subagents = facts
-        .lock_document
-        .entry_snapshot(skill_name)
-        .value()
-        .and_then(|entry| entry.get("subagents"))
-        .and_then(serde_json::Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(crate::core::skill::sanitize_name)
-                .filter(|value| !value.is_empty())
-                .map(|value| format!("eve:{value}"))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if subagents.is_empty() {
-        vec!["eve:root".to_string()]
-    } else {
-        subagents
+fn eve_target_ids(facts: &InstallPlanningFacts, skill_name: &str) -> Result<Vec<String>, AppError> {
+    eve_target_ids_from_lock_entry(facts.lock_document.entry_snapshot(skill_name).value())
+}
+
+fn eve_target_ids_from_lock_entry(
+    entry: Option<&serde_json::Value>,
+) -> Result<Vec<String>, AppError> {
+    match entry.and_then(|entry| entry.get("subagents")) {
+        Some(serde_json::Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                let subagent = value
+                    .as_str()
+                    .ok_or_else(|| AppError::ConfigurationCorrupted {
+                        message: "Eve placement must contain only strings".to_string(),
+                    })?;
+                Ok(if subagent.is_empty() {
+                    "eve:root".to_string()
+                } else {
+                    format!("eve:{}", crate::core::skill::sanitize_name(subagent))
+                })
+            })
+            .collect(),
+        Some(_) => Err(AppError::ConfigurationCorrupted {
+            message: "Eve placement must be an array".to_string(),
+        }),
+        None => Ok(vec!["eve:root".to_string()]),
     }
 }
 
@@ -415,6 +421,39 @@ mod tests {
     use crate::environment::wsl::EnvironmentRegistry;
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[test]
+    fn eve_targets_distinguish_legacy_missing_metadata_from_explicit_empty_targets() {
+        assert_eq!(
+            eve_target_ids_from_lock_entry(Some(&serde_json::json!({}))).unwrap(),
+            vec!["eve:root"]
+        );
+        assert!(eve_target_ids_from_lock_entry(Some(&serde_json::json!({
+            "subagents": []
+        })))
+        .unwrap()
+        .is_empty());
+        assert_eq!(
+            eve_target_ids_from_lock_entry(Some(&serde_json::json!({
+                "subagents": ["", "Research Team"]
+            })))
+            .unwrap(),
+            vec!["eve:root", "eve:research-team"]
+        );
+    }
+
+    #[test]
+    fn eve_targets_reject_malformed_lock_metadata() {
+        for entry in [
+            serde_json::json!({ "subagents": "root" }),
+            serde_json::json!({ "subagents": ["", 1] }),
+        ] {
+            assert!(matches!(
+                eve_target_ids_from_lock_entry(Some(&entry)),
+                Err(AppError::ConfigurationCorrupted { .. })
+            ));
+        }
+    }
 
     #[test]
     fn physical_entries_group_all_owners_and_mark_links_to_canonical() {
