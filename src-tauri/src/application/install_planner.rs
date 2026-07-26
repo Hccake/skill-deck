@@ -426,7 +426,9 @@ fn lock_mutation(
                 .filter_map(|target| target.target_id.strip_prefix("eve:"))
                 .map(|target| if target == "root" { "" } else { target })
                 .collect::<BTreeSet<_>>();
-            if !eve_subagents.is_empty() {
+            if !eve_subagents.is_empty()
+                && !(eve_subagents.len() == 1 && eve_subagents.contains(""))
+            {
                 entry.insert("subagents".to_string(), json!(eve_subagents));
             }
             Value::Object(entry)
@@ -778,7 +780,7 @@ mod tests {
                 .as_ref()
                 .and_then(|mutation| mutation.replacement.as_ref())
                 .and_then(|entry| entry.get("subagents")),
-            Some(&json!([""]))
+            None
         );
         let canonical = unit.canonical_entry.as_ref().unwrap();
         let eve = &unit.required_agent_entries[0];
@@ -822,6 +824,82 @@ mod tests {
             lock.replacement.as_ref().unwrap()["remoteHash"],
             "canonical-tree-hash"
         );
+    }
+
+    #[test]
+    fn eve_lock_placement_matches_cli_root_and_named_target_semantics() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        let context = ContextRef {
+            environment: EnvironmentRef::Host,
+            scope: ContextScope::Project {
+                project_id: "project-1".to_string(),
+            },
+        };
+        let facts = InstallPlanningFacts {
+            resolved_context: ResolvedContext {
+                context: context.clone(),
+                project: None,
+                home: locator(temp.path()),
+                skill_root: locator(&project.join(".agents/skills")),
+                lock: locator(&project.join("skills-lock.json")),
+            },
+            agent_runtime: eve_runtime(project.to_string_lossy().as_ref()),
+            revisions: RuntimeRevisions {
+                registry: "registry-1".to_string(),
+                environment: "environment-1".to_string(),
+                context: ContextSnapshotRevision::parse("context-v1-eve").unwrap(),
+            },
+            lock_schema: LockSchema::Project,
+            lock_document: LosslessLockDocument::empty(LockSchema::Project),
+        };
+        let metadata = PayloadPlanningMetadata {
+            skill_name: "demo".to_string(),
+            install_dir_name: "demo".to_string(),
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo.git".to_string()),
+            ref_name: Some("main".to_string()),
+            skill_path: "skills/demo".to_string(),
+            plugin_name: None,
+            computed_hash: "computed".to_string(),
+            upstream_revision: Some("remote".to_string()),
+        };
+        let root = |target_id: &str| crate::application::workflow_planner::LogicalAgentEntryRoot {
+            target_id: target_id.to_string(),
+            root: locator(temp.path()),
+            owner_agent_ids: Vec::new(),
+        };
+
+        let no_targets = AgentEntryPlan {
+            canonical_owner_agent_ids: Vec::new(),
+            required_agent_roots: Vec::new(),
+        };
+        let no_targets = lock_mutation(&facts, &metadata, &no_targets, "now".to_string())
+            .unwrap()
+            .replacement
+            .unwrap();
+        assert!(!no_targets.as_object().unwrap().contains_key("subagents"));
+
+        let root_only = AgentEntryPlan {
+            canonical_owner_agent_ids: Vec::new(),
+            required_agent_roots: vec![root("eve:root")],
+        };
+        let root_only = lock_mutation(&facts, &metadata, &root_only, "now".to_string())
+            .unwrap()
+            .replacement
+            .unwrap();
+        assert!(!root_only.as_object().unwrap().contains_key("subagents"));
+
+        let named_and_root = AgentEntryPlan {
+            canonical_owner_agent_ids: Vec::new(),
+            required_agent_roots: vec![root("eve:builder"), root("eve:root"), root("eve:builder")],
+        };
+        let named_and_root = lock_mutation(&facts, &metadata, &named_and_root, "now".to_string())
+            .unwrap()
+            .replacement
+            .unwrap();
+        assert_eq!(named_and_root["subagents"], json!(["", "builder"]));
     }
 
     fn payload_skill_md(payload: &crate::core::skill_payload::SkillPayload) -> &str {
