@@ -1131,7 +1131,10 @@ mod tests {
                 source.clone(),
                 planning_facts(source.clone(), &source_root, true),
             ),
-            (first.clone(), planning_facts(first, &first_root, false)),
+            (
+                first.clone(),
+                planning_facts(first.clone(), &first_root, false),
+            ),
             (second.clone(), planning_facts(second, &second_root, false)),
         ])));
         let environments = Arc::new(EnvironmentRegistry::default());
@@ -1166,6 +1169,33 @@ mod tests {
         let preview = service.preview(&request).await.unwrap();
         assert_eq!(preview.targets.len(), 2);
         facts.lock().unwrap().remove(&request.source);
+
+        facts
+            .lock()
+            .unwrap()
+            .get_mut(&first)
+            .unwrap()
+            .revisions
+            .environment = "environment-2".to_string();
+        let stale_error = service
+            .execute(
+                &CopyExecutionRequest {
+                    request: request.clone(),
+                    token: preview.token.clone(),
+                    payload: preview.payload.clone(),
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(stale_error, AppError::StaleEnvironment));
+        facts
+            .lock()
+            .unwrap()
+            .get_mut(&first)
+            .unwrap()
+            .revisions
+            .environment = "environment-1".to_string();
 
         service
             .execute(

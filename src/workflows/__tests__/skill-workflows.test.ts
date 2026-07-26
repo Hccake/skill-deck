@@ -423,7 +423,30 @@ describe('skill workflows', () => {
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);
   });
 
-  it('keeps copy recovery separate from ordinary retryable targets', async () => {
+  it('returns recoveryRequired directly for a single project', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.copySkillToProjects.mockResolvedValue({
+      units: [{
+        status: 'recoveryRequired',
+        retryable: false,
+        recovery: recoveryAction,
+        target: { scope: { scope: 'project', project_id: 'project-c' } },
+      }],
+    });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['project-c'],
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'recoveryRequired',
+      succeededProjectIds: [],
+      recovery: [recoveryAction],
+    });
+  });
+
+  it('keeps copy recovery in a multi-project partial outcome without making it retryable', async () => {
     useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
     mocks.copySkillToProjects.mockResolvedValue({
       units: [
@@ -443,8 +466,9 @@ describe('skill workflows', () => {
     });
 
     expect(outcome).toMatchObject({
-      status: 'recoveryRequired',
+      status: 'partial',
       succeededProjectIds: ['project-b'],
+      retryableProjectIds: [],
       recovery: [recoveryAction],
     });
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);

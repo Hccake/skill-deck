@@ -98,7 +98,7 @@ export async function executeSkillCopy({
     }
     const recoveries = recoveryActions(failed);
     const ordinaryFailed = failed.filter((unit) => unit.status !== 'recoveryRequired' || !unit.recovery);
-    if (ordinaryFailed.length === 0 && recoveries.length > 0) {
+    if (targetProjectIds.length === 1 && ordinaryFailed.length === 0 && recoveries.length > 0) {
       return {
         status: 'recoveryRequired',
         response,
