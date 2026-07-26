@@ -30,6 +30,7 @@ import type {
   AgentConfigurationOutcome,
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
+  GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
 } from '@/bindings';
 
 export type {
@@ -52,6 +53,7 @@ export type {
   AgentConfigurationOutcome,
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
+  GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -209,6 +211,20 @@ export async function getConfig(): Promise<SkillDeckConfig> {
  */
 export async function saveConfig(config: SkillDeckConfig): Promise<void> {
   unwrap(await commands.saveConfig(config));
+}
+
+export async function getGithubCredentialStatus(): Promise<GithubCredentialStatus> {
+  return unwrap(await commands.getGithubCredentialStatus());
+}
+
+export async function saveGithubCredential(
+  token: string,
+): Promise<GithubCredentialSaveResult> {
+  return unwrap(await commands.saveGithubCredential(token));
+}
+
+export async function clearGithubCredential(): Promise<GithubCredentialClearResult> {
+  return unwrap(await commands.clearGithubCredential());
 }
 
 // ============ Agent 选择相关 API ============

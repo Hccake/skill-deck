@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type {
   EvidenceFailureReason,
   EvidenceFreshness,
+  GithubCredentialSource,
+  GithubCredentialValidationStatus,
   SkillUpdateCheckStatus,
   UpdateCheckReasonCode,
 } from '@/bindings';
@@ -21,6 +23,12 @@ const evidenceFreshness: EvidenceFreshness[] = [
 const evidenceFailures: EvidenceFailureReason[] = [
   'rateLimited', 'authenticationRequired', 'refNotFound', 'repositoryNotFound',
   'notFoundOrUnauthorized', 'network', 'incompleteEvidence', 'sourceUnavailable',
+];
+const credentialSources: GithubCredentialSource[] = [
+  'keyring', 'githubTokenEnv', 'ghTokenEnv', 'none',
+];
+const credentialValidationStatuses: GithubCredentialValidationStatus[] = [
+  'unconfigured', 'verified', 'invalid', 'rateLimited', 'unavailable',
 ];
 
 describe('update lifecycle copy', () => {
@@ -79,6 +87,30 @@ describe('update lifecycle copy', () => {
       }
       expect(skills.updateStatusLabel.checkIncomplete).toEqual(expect.any(String));
       expect(skills.checkCompleted).toEqual(expect.any(String));
+    }
+  });
+
+  it('defines every GitHub credential status and feedback value in both locales', () => {
+    for (const locale of [en, zhCN]) {
+      const credential = locale.settings.githubCredential as unknown as {
+        status: Record<string, string>;
+        source: Record<string, string>;
+        feedback: Record<string, string>;
+        storageUnavailable: string;
+      };
+      for (const status of credentialValidationStatuses) {
+        expect(credential.status[status], status).toEqual(expect.any(String));
+      }
+      for (const source of credentialSources) {
+        expect(credential.source[source], source).toEqual(expect.any(String));
+      }
+      for (const feedback of [
+        'saved', 'invalid', 'rateLimited', 'retryAt', 'unavailable',
+        'unconfigured', 'verified', 'clearFailed',
+      ]) {
+        expect(credential.feedback[feedback], feedback).toEqual(expect.any(String));
+      }
+      expect(credential.storageUnavailable).toEqual(expect.any(String));
     }
   });
 });

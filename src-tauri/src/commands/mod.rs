@@ -6,6 +6,7 @@ pub mod config;
 pub mod copy_skill;
 pub mod duplicate_copies;
 pub mod environments;
+pub mod github_credentials;
 pub mod install;
 pub mod install_workflow;
 pub mod lifecycle;

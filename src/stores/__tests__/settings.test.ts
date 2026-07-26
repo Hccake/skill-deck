@@ -4,6 +4,7 @@ import type {
   ContextRef,
   DefaultTargetAgents,
   EnvironmentRef,
+  GithubCredentialStatus,
   ResolvedAgent,
 } from '@/bindings';
 import { makeAgentRuntimeSnapshot, makeResolvedAgent } from '@/test-utils';
@@ -12,12 +13,18 @@ const mockGetDefaultTargetAgents = vi.fn();
 const mockSaveDefaultTargetAgents = vi.fn();
 const mockListAgents = vi.fn();
 const mockListAgentSelectionGroups = vi.fn();
+const mockGetGithubCredentialStatus = vi.fn();
+const mockSaveGithubCredential = vi.fn();
+const mockClearGithubCredential = vi.fn();
 
 vi.mock('@/hooks/useTauriApi', () => ({
   getDefaultTargetAgents: (...args: unknown[]) => mockGetDefaultTargetAgents(...args),
   saveDefaultTargetAgents: (...args: unknown[]) => mockSaveDefaultTargetAgents(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
   listAgentSelectionGroups: (...args: unknown[]) => mockListAgentSelectionGroups(...args),
+  getGithubCredentialStatus: (...args: unknown[]) => mockGetGithubCredentialStatus(...args),
+  saveGithubCredential: (...args: unknown[]) => mockSaveGithubCredential(...args),
+  clearGithubCredential: (...args: unknown[]) => mockClearGithubCredential(...args),
   getAgentSettingsSnapshot: vi.fn(),
   validateCustomAgentDraft: vi.fn(),
   saveCustomAgent: vi.fn(),
@@ -35,6 +42,17 @@ import { contextKey } from '@/lib/context';
 const host: EnvironmentRef = { kind: 'host' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
 const debian: EnvironmentRef = { kind: 'wsl', distro_name: 'Debian' };
+
+const verifiedCredential: GithubCredentialStatus = {
+  source: 'keyring',
+  storage: 'available',
+  validation: 'verified',
+  account: 'octocat',
+  rateLimitRemaining: 4_999,
+  rateLimitLimit: 5_000,
+  rateLimitResetAtEpochMs: 2_000,
+  retryAtEpochMs: null,
+};
 
 const activeMutation: ActiveMutation = {
   kind: 'install',
@@ -98,7 +116,22 @@ describe('useSettingsStore', () => {
     mockListAgentSelectionGroups.mockResolvedValue({ global: [], project: [] });
     mockGetDefaultTargetAgents.mockResolvedValue(null);
     mockSaveDefaultTargetAgents.mockResolvedValue(undefined);
-    useSettingsStore.setState({ agentDefaultsByEnvironment: {} });
+    mockGetGithubCredentialStatus.mockResolvedValue(verifiedCredential);
+    mockClearGithubCredential.mockResolvedValue({
+      cleared: true,
+      status: { ...verifiedCredential, source: 'none', validation: 'unconfigured' },
+    });
+    useSettingsStore.setState({
+      agentDefaultsByEnvironment: {},
+      githubCredential: {
+        status: null,
+        loadState: 'idle',
+        requestId: 0,
+        saving: false,
+        clearing: false,
+        error: null,
+      },
+    });
     useAgentRegistryStore.setState({ settingsByEnvironment: {}, runtimeByContext: {} });
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
@@ -317,5 +350,37 @@ describe('useSettingsStore', () => {
 
     expect(useSettingsStore.getState().agentDefaultsByEnvironment.host.defaults).toEqual(original);
     expect(mockSaveDefaultTargetAgents).not.toHaveBeenCalled();
+  });
+
+  it('loads GitHub credential status without storing the token', async () => {
+    await useSettingsStore.getState().loadGithubCredential();
+
+    expect(useSettingsStore.getState().githubCredential.status).toEqual(verifiedCredential);
+    expect(JSON.stringify(useSettingsStore.getState())).not.toContain('secret-token');
+  });
+
+  it('does not replace the active credential when a new token is invalid', async () => {
+    mockSaveGithubCredential.mockResolvedValue({
+      saved: false,
+      status: {
+        ...verifiedCredential,
+        source: 'none',
+        validation: 'invalid',
+        account: null,
+      },
+    });
+    useSettingsStore.setState((state) => ({
+      githubCredential: {
+        ...state.githubCredential,
+        status: verifiedCredential,
+        loadState: 'ready',
+      },
+    }));
+
+    const result = await useSettingsStore.getState().saveGithubCredential('secret-token');
+
+    expect(result?.saved).toBe(false);
+    expect(useSettingsStore.getState().githubCredential.status).toEqual(verifiedCredential);
+    expect(JSON.stringify(useSettingsStore.getState())).not.toContain('secret-token');
   });
 });

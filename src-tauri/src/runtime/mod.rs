@@ -4,6 +4,9 @@ use std::sync::Arc;
 use crate::application::agents::ManagedAgentRegistry;
 use crate::application::copy_runtime::{build_runtime_copy_service, RuntimeCopyService};
 use crate::application::duplicate_cleanup::DuplicateCleanupService;
+use crate::application::github_credentials::{
+    resolve_environment_github_token, GithubCredentialService,
+};
 use crate::application::install_runtime::{build_runtime_install_service, RuntimeInstallService};
 use crate::application::manage_agents_runtime::{
     build_runtime_manage_agents_service, RuntimeManageAgentsService,
@@ -20,10 +23,12 @@ use crate::application::update_runtime::{
 };
 use crate::core::mutation::SingleMutationController;
 use crate::core::projects::ProjectMigrationRegistry;
+use crate::core::{GithubApiClient, GithubTokenProvider};
 use crate::environment::native::acquire::NativePayloadSessionStorage;
 use crate::environment::project_service::initialize_host_project_migration;
 use crate::environment::wsl::EnvironmentRegistry;
 use crate::error::AppError;
+use crate::storage::github_credentials::KeyringGithubCredentialStore;
 
 pub mod maintenance;
 
@@ -45,6 +50,7 @@ pub struct RuntimeServiceGraph {
     manage_agents: RuntimeManageAgentsService,
     copy: RuntimeCopyService,
     resources: RuntimeResourceService,
+    github_credentials: Arc<GithubCredentialService>,
 }
 
 impl RuntimeServiceGraph {
@@ -62,6 +68,12 @@ impl RuntimeServiceGraph {
         let source_snapshots = Arc::new(
             crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex::default(),
         );
+        let github_credentials = Arc::new(GithubCredentialService::new(
+            Arc::new(KeyringGithubCredentialStore),
+            Arc::new(GithubApiClient::new()),
+            Arc::new(resolve_environment_github_token),
+        ));
+        let github_token_provider: Arc<dyn GithubTokenProvider> = github_credentials.clone();
         let recovery_graph = execution.recovery_graph();
         let maintenance_backend = Arc::new(RuntimeMaintenanceTasks::new(
             payloads.clone(),
@@ -84,6 +96,7 @@ impl RuntimeServiceGraph {
             payloads.clone(),
             environments.clone(),
             source_snapshots.clone(),
+            github_token_provider,
         )?;
         let update_check = build_runtime_update_check_service(
             environments.clone(),
@@ -129,6 +142,7 @@ impl RuntimeServiceGraph {
             manage_agents,
             copy,
             resources,
+            github_credentials,
         })
     }
 
@@ -194,6 +208,10 @@ impl RuntimeServiceGraph {
 
     pub fn resources(&self) -> &RuntimeResourceService {
         &self.resources
+    }
+
+    pub fn github_credentials(&self) -> &GithubCredentialService {
+        self.github_credentials.as_ref()
     }
 }
 

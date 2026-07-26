@@ -797,6 +797,42 @@
       "title": "Git",
       "description": "Adjust how Skill Deck installs and updates skills from Git sources."
     },
+    "githubCredential": {
+      "title": "GitHub Access Credential",
+      "description": "Provides a higher request quota for GitHub update checks and access to repositories that require authorization.",
+      "tokenLabel": "GitHub token",
+      "tokenPlaceholder": "Enter a fine-grained PAT",
+      "verifyAndSave": "Verify and save",
+      "clear": "Clear",
+      "refresh": "Refresh credential status",
+      "rateLimit": "Remaining quota: {{remaining}} / {{limit}}",
+      "storageUnavailable": "Secure storage is unavailable on this system, so the token will not be saved.",
+      "environmentFallback": "You can still provide a credential through GITHUB_TOKEN or GH_TOKEN.",
+      "requestFailed": "GitHub credential status is temporarily unavailable. Try again later.",
+      "status": {
+        "unconfigured": "Not configured",
+        "verified": "Verified",
+        "invalid": "Invalid",
+        "rateLimited": "Rate limited",
+        "unavailable": "Verification unavailable"
+      },
+      "source": {
+        "keyring": "System secure storage",
+        "githubTokenEnv": "GITHUB_TOKEN environment variable",
+        "ghTokenEnv": "GH_TOKEN environment variable",
+        "none": "No credential in use"
+      },
+      "feedback": {
+        "saved": "The token was verified and saved.",
+        "invalid": "This token is invalid. Check its value and permissions.",
+        "rateLimited": "GitHub temporarily limited this verification request. Wait for the quota to reset.",
+        "retryAt": "Try again after {{time}}.",
+        "unavailable": "Skill Deck could not reach GitHub to verify this token.",
+        "unconfigured": "Enter a valid token.",
+        "verified": "The token was verified but could not be saved.",
+        "clearFailed": "The token could not be removed from system secure storage."
+      }
+    },
     "cloneTimeout": {
       "title": "Remote Fetch Timeout",
       "description": "Controls how long remote Git installs and updates can wait before timing out. ",

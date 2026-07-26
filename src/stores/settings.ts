@@ -3,13 +3,24 @@ import { persist } from 'zustand/middleware';
 import i18n from '@/i18n';
 import {
   getDefaultTargetAgents,
+  getGithubCredentialStatus,
   listAgentSelectionGroups,
+  clearGithubCredential,
+  saveGithubCredential,
   saveDefaultTargetAgents,
 } from '@/hooks/useTauriApi';
 import { useAgentRegistryStore } from './agent-registry';
 import { isMutationWriteBlocked } from './mutation';
 import type { DefaultTargetAgents } from '@/hooks/useTauriApi';
-import type { AgentSelectionGroups, AppError, EnvironmentRef, ResolvedAgent } from '@/bindings';
+import type {
+  AgentSelectionGroups,
+  AppError,
+  EnvironmentRef,
+  GithubCredentialClearResult,
+  GithubCredentialSaveResult,
+  GithubCredentialStatus,
+  ResolvedAgent,
+} from '@/bindings';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import { agentId, agentsForScope } from '@/lib/agents';
 import {
@@ -36,6 +47,15 @@ export interface AgentDefaultsSnapshot {
   error: AppError | null;
 }
 
+export interface GithubCredentialSnapshot {
+  status: GithubCredentialStatus | null;
+  loadState: 'idle' | 'loading' | 'ready' | 'error';
+  requestId: number;
+  saving: boolean;
+  clearing: boolean;
+  error: AppError | null;
+}
+
 interface SettingsState {
   // 主题和语言（保持 localStorage 持久化）
   theme: Theme;
@@ -51,6 +71,11 @@ interface SettingsState {
     environment: EnvironmentRef,
     defaults: DefaultTargetAgents,
   ) => Promise<void>;
+
+  githubCredential: GithubCredentialSnapshot;
+  loadGithubCredential: () => Promise<void>;
+  saveGithubCredential: (token: string) => Promise<GithubCredentialSaveResult | null>;
+  clearGithubCredential: () => Promise<GithubCredentialClearResult | null>;
 }
 
 export const applyPersistedAppearance = (theme: Theme) => {
@@ -74,6 +99,17 @@ function emptyAgentDefaultsSnapshot(): AgentDefaultsSnapshot {
     loadRequestId: 0,
     saveRequestId: 0,
     saving: false,
+    error: null,
+  };
+}
+
+function emptyGithubCredentialSnapshot(): GithubCredentialSnapshot {
+  return {
+    status: null,
+    loadState: 'idle',
+    requestId: 0,
+    saving: false,
+    clearing: false,
     error: null,
   };
 }
@@ -260,6 +296,113 @@ export const useSettingsStore = create<SettingsState>()(
               },
             };
           });
+        }
+      },
+
+      githubCredential: emptyGithubCredentialSnapshot(),
+
+      loadGithubCredential: async () => {
+        const requestId = get().githubCredential.requestId + 1;
+        set((state) => ({
+          githubCredential: {
+            ...state.githubCredential,
+            loadState: 'loading',
+            requestId,
+            error: null,
+          },
+        }));
+        try {
+          const status = await getGithubCredentialStatus();
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: {
+              ...state.githubCredential,
+              status,
+              loadState: 'ready',
+              error: null,
+            },
+          } : state);
+        } catch (error) {
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: {
+              ...state.githubCredential,
+              loadState: 'error',
+              error: toAppError(error),
+            },
+          } : state);
+        }
+      },
+
+      saveGithubCredential: async (token) => {
+        const requestId = get().githubCredential.requestId + 1;
+        set((state) => ({
+          githubCredential: {
+            ...state.githubCredential,
+            requestId,
+            saving: true,
+            error: null,
+          },
+        }));
+        try {
+          const result = await saveGithubCredential(token);
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: {
+              ...state.githubCredential,
+              status: result.saved ? result.status : state.githubCredential.status,
+              loadState: 'ready',
+              error: null,
+            },
+          } : state);
+          return result;
+        } catch (error) {
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: {
+              ...state.githubCredential,
+              loadState: 'error',
+              error: toAppError(error),
+            },
+          } : state);
+          return null;
+        } finally {
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: { ...state.githubCredential, saving: false },
+          } : state);
+        }
+      },
+
+      clearGithubCredential: async () => {
+        const requestId = get().githubCredential.requestId + 1;
+        set((state) => ({
+          githubCredential: {
+            ...state.githubCredential,
+            requestId,
+            clearing: true,
+            error: null,
+          },
+        }));
+        try {
+          const result = await clearGithubCredential();
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: {
+              ...state.githubCredential,
+              status: result.cleared ? result.status : state.githubCredential.status,
+              loadState: 'ready',
+              error: null,
+            },
+          } : state);
+          return result;
+        } catch (error) {
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: {
+              ...state.githubCredential,
+              loadState: 'error',
+              error: toAppError(error),
+            },
+          } : state);
+          return null;
+        } finally {
+          set((state) => state.githubCredential.requestId === requestId ? {
+            githubCredential: { ...state.githubCredential, clearing: false },
+          } : state);
         }
       },
     }),

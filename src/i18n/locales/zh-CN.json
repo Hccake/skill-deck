@@ -797,6 +797,42 @@
       "title": "Git",
       "description": "调整从 Git 来源安装和更新 Skill 时的行为。"
     },
+    "githubCredential": {
+      "title": "GitHub 访问凭据",
+      "description": "为 GitHub 更新检查提供更高的请求额度，并支持需要授权的仓库。",
+      "tokenLabel": "GitHub Token",
+      "tokenPlaceholder": "输入 fine-grained PAT",
+      "verifyAndSave": "验证并保存",
+      "clear": "清除",
+      "refresh": "刷新凭据状态",
+      "rateLimit": "剩余额度：{{remaining}} / {{limit}}",
+      "storageUnavailable": "当前系统的安全存储不可用，Token 不会保存。",
+      "environmentFallback": "仍可通过 GITHUB_TOKEN 或 GH_TOKEN 环境变量提供凭据。",
+      "requestFailed": "暂时无法获取 GitHub 凭据状态，请稍后重试。",
+      "status": {
+        "unconfigured": "未配置",
+        "verified": "已验证",
+        "invalid": "已失效",
+        "rateLimited": "额度受限",
+        "unavailable": "暂时无法验证"
+      },
+      "source": {
+        "keyring": "系统安全存储",
+        "githubTokenEnv": "GITHUB_TOKEN 环境变量",
+        "ghTokenEnv": "GH_TOKEN 环境变量",
+        "none": "未使用凭据"
+      },
+      "feedback": {
+        "saved": "Token 已验证并保存。",
+        "invalid": "Token 无效，请检查内容和权限。",
+        "rateLimited": "GitHub 暂时限制了验证请求，请等待额度恢复。",
+        "retryAt": "可在 {{time}} 后重试。",
+        "unavailable": "暂时无法连接 GitHub 完成验证。",
+        "unconfigured": "请输入有效的 Token。",
+        "verified": "Token 已通过验证，但未能保存。",
+        "clearFailed": "无法清除系统安全存储中的 Token。"
+      }
+    },
     "cloneTimeout": {
       "title": "远程拉取超时",
       "description": "控制从远程 Git 仓库安装或更新 Skill 时的最长等待时间。",
