@@ -426,9 +426,7 @@ fn lock_mutation(
                 .filter_map(|target| target.target_id.strip_prefix("eve:"))
                 .map(|target| if target == "root" { "" } else { target })
                 .collect::<BTreeSet<_>>();
-            if !eve_subagents.is_empty()
-                && !(eve_subagents.len() == 1 && eve_subagents.contains(""))
-            {
+            if eve_subagents.iter().any(|target| !target.is_empty()) {
                 entry.insert("subagents".to_string(), json!(eve_subagents));
             }
             Value::Object(entry)
