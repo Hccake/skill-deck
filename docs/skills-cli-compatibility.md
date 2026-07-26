@@ -28,7 +28,7 @@ Skill Deck 以 [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 的
 |---|---|---|
 | 来源 | 简写、Git/URL/Local/Well-known 解析，`ref` 与 Skill 子路径 | 按 Environment 获取、发现会话和风险信息 |
 | Agent | 内置 Agent ID、路径、检测和基础目标语义 | 自定义 Agent、开放注册表、按 Context 选择默认目标、目录检查和物理归属 |
-| 安装 | 通用 Skill 目录、Agent 目录项、link/copy 和重新安装语义 | 预览与执行、批量执行单元、跨 Environment 内容传递和恢复资源 |
+| 安装 | 通用 Skill 目录、Agent 目录项、符号链接/复制和重新安装语义 | 预览与执行、批量执行单元、跨 Environment 内容传递和恢复资源 |
 | Global lock | CLI v3 共享字段与路径 | `defaultTargetAgents` 和无损局部写回 |
 | Project lock | CLI v1 共享字段、排序和内容哈希 | `sourceUrl`、`remoteHash`、`pluginName` 和远端更新检查 |
 | 更新 | 根据保存的来源与 `skillPath` 重新安装 | 更新能力判断、远端比较、批量计划和来源修复 |
@@ -85,7 +85,7 @@ Project lock 位于 `<project>/skills-lock.json`，当前格式版本为 `1`。�
 | `sourceType` | CLI / Skill Deck | 来源类别 |
 | `skillPath` | CLI / Skill Deck | 仓库内指向 `SKILL.md` 的相对路径，更新写回时规范化为目录 |
 | `computedHash` | CLI / Skill Deck | Project Skill 当前目录的递归内容哈希 |
-| `subagents` | CLI / Skill Deck | Eve 项目的落位信息；空字符串表示 root Agent，其他字符串表示 subagent 目录名 |
+| `subagents` | CLI / Skill Deck | Eve 项目的落位信息；空字符串表示根 Agent，其他字符串表示子 Agent 目录名 |
 | `sourceUrl` | Skill Deck | 私有来源或原始来源的保真信息 |
 | `remoteHash` | Skill Deck | 上游提供者可比较的修订号；GitHub 使用 Skill 目录的 tree object ID |
 | `pluginName` | Skill Deck | 用于展示的 plugin 元数据 |
@@ -209,7 +209,7 @@ CLI v1.5.13 在符号链接创建失败时会退回复制，但仍返回 `mode: 
 | 来源解析 | 简写、URL、SSH、`ref`、筛选条件、alias 和子路径 |
 | 发现 | 根目录提前返回条件、优先目录、plugin 路径、递归回退、目录深度、遮蔽、lock 筛选、同名去重和精确 `skillPath` |
 | Well-known | endpoint 顺序、格式、摘要、归档与路径安全 |
-| 安装 | 通用 Skill 目录、Agent 目标、排除项、link/copy 和链接失败行为 |
+| 安装 | 通用 Skill 目录、Agent 目标、排除项、符号链接/复制和链接失败行为 |
 | Global lock | 版本、路径、字段、默认目标投影和未知字段 |
 | Project lock | 版本、字段、排序、哈希和记录替换 |
 | 更新 | 重新安装定位、缺失元数据、上游删除和结果语义 |

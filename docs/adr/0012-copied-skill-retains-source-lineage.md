@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# 跨 Environment 复制不改变来源能力
+# 跨 Environment 复制保留来源原有能力
 
 ## 背景
 
@@ -10,12 +10,16 @@ status: accepted
 
 ## 决定
 
-复制保留来源本来具备的能力。Remote、Git 和 Well-known 等可重新获取来源，在目标 lock 中保留后续更新需要的信息，并由目标 Environment 直接重新获取；Local 来源只保留来源凭据和内容基线，复制后仍不可更新。
+复制保留来源本来具备的能力。远端（`Remote`）、Git 和 Well-known 等可重新获取来源在目标 lock 中保留后续更新需要的信息，并由目标 Environment 直接重新获取；本地（`Local`）来源保留来源凭据和内容基线，复制后仍不可更新。
 
 来源 Environment 只负责在复制前固定完整内容快照。快照固定后，目标执行不再依赖来源 Environment 在线，也不会重新读取原始来源；目标 Environment 仍必须保持可用并负责写入。
 
-## 理由与重新讨论条件
+## 理由
 
-复制应该改变内容所在位置，而不应改变来源的客观能力。固定快照还能把来源连接生命周期与目标写入解耦，避免为普通执行维持跨 Environment 会话。只有 Local 来源获得明确、可验证的同步协议，或者新的来源类型改变“可重新获取”的判断方式时，才重新讨论这项边界。
+复制改变内容所在位置，同时保留来源的客观能力。固定快照把来源连接生命周期与目标写入解耦，也避免为普通执行维持跨 Environment 会话。
+
+## 重新讨论条件
+
+Local 来源获得明确且可验证的同步协议，或者新的来源类型改变“可重新获取”的判断方式时，可以重新评估这项边界。
 
 当前行为由[Skill 生命周期](../skill-lifecycle.md#复制到项目)、[`skills` CLI 兼容](../skills-cli-compatibility.md#安装与更新语义)和[执行与恢复](../execution-and-recovery.md#skill-内容快照)负责说明。
