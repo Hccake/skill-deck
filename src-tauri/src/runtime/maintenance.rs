@@ -151,13 +151,10 @@ struct MaintenanceEntry {
     running: Option<watch::Sender<bool>>,
 }
 
-type MaintenanceListener = Arc<dyn Fn(RuntimeMaintenanceStatus) + Send + Sync>;
-
 pub struct RuntimeMaintenanceCoordinator {
     payloads: Arc<PayloadSessionManager>,
     backend: Arc<dyn RuntimeMaintenanceBackend>,
     entries: Mutex<HashMap<EnvironmentKey, MaintenanceEntry>>,
-    listener: Mutex<Option<MaintenanceListener>>,
 }
 
 impl RuntimeMaintenanceCoordinator {
@@ -169,7 +166,6 @@ impl RuntimeMaintenanceCoordinator {
             payloads,
             backend,
             entries: Mutex::new(HashMap::new()),
-            listener: Mutex::new(None),
         }
     }
 
@@ -194,14 +190,6 @@ impl RuntimeMaintenanceCoordinator {
             .status
             .clone();
         Ok(status)
-    }
-
-    pub fn set_listener(
-        &self,
-        listener: impl Fn(RuntimeMaintenanceStatus) + Send + Sync + 'static,
-    ) -> Result<(), AppError> {
-        *self.listener.lock().map_err(|_| state_error())? = Some(Arc::new(listener));
-        Ok(())
     }
 
     pub async fn start(
@@ -248,11 +236,10 @@ impl RuntimeMaintenanceCoordinator {
                     entry.status.issues.clear();
                     let (completion, _) = watch::channel(false);
                     entry.running = Some(completion);
-                    let status = entry.status.clone();
                     let generation = entry.generation;
                     drop(entries);
                     if let Err(error) = self.payloads.begin_maintenance(&environment) {
-                        let (status, completion) = {
+                        let completion = {
                             let mut entries = self.lock_entries()?;
                             let entry = entries.get_mut(&key).ok_or_else(state_error)?;
                             if entry.generation != generation {
@@ -260,15 +247,13 @@ impl RuntimeMaintenanceCoordinator {
                             }
                             entry.status.state = RuntimeMaintenanceState::Failed;
                             entry.status.issues = vec![MaintenanceIssueCode::PayloadSweepFailed];
-                            (entry.status.clone(), entry.running.take())
+                            entry.running.take()
                         };
                         if let Some(completion) = completion {
                             let _ = completion.send(true);
                         }
-                        self.publish(status);
                         return Err(error);
                     }
-                    self.publish(status);
                     break generation;
                 }
             };
@@ -335,19 +320,7 @@ impl RuntimeMaintenanceCoordinator {
         if let Some(completion) = notify {
             let _ = completion.send(true);
         }
-        self.publish(status.clone());
         Ok(status)
-    }
-
-    fn publish(&self, status: RuntimeMaintenanceStatus) {
-        let listener = self
-            .listener
-            .lock()
-            .ok()
-            .and_then(|listener| listener.clone());
-        if let Some(listener) = listener {
-            listener(status);
-        }
     }
 
     fn lock_entries(

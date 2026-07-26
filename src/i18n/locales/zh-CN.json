@@ -18,29 +18,29 @@
     "settings": "设置"
   },
   "recovery": {
-    "title": "需要恢复处理",
+    "title": "本次操作未完成",
     "center": {
       "title": "需要处理的问题",
-      "description": "查看需要处理的恢复数据。",
+      "description": "查看未完成操作留下的文件和处理记录。",
       "open": "查看需要处理的问题",
-      "loadError": "无法加载恢复数据",
-      "show": "查看恢复项"
+      "loadError": "无法加载需要处理的问题",
+      "show": "查看处理项"
     },
-    "loading": "正在检查恢复状态…",
-    "open": "打开恢复数据",
-    "refresh": "刷新",
-    "cleanup": "移除恢复数据",
-    "refreshError": "无法刷新恢复状态，恢复数据已保留。",
-    "openError": "无法打开恢复目录，请稍后重试。",
-    "cleanupTitle": "移除恢复数据？",
-    "cleanupDescription": "只会移除恢复数据。仅当 Skill Deck 确认目标状态一致后才会提供此操作。",
-    "confirmCleanup": "移除恢复数据",
+    "loading": "正在检查当前状态…",
+    "open": "打开相关文件",
+    "refresh": "重新检查",
+    "cleanup": "清理记录",
+    "refreshError": "重新检查失败，这条记录仍会保留。",
+    "openError": "无法打开相关文件，请稍后重试。",
+    "cleanupTitle": "清理这条记录？",
+    "cleanupDescription": "只会清理 Skill Deck 保存的处理记录，不会删除相关文件。仅当 Skill Deck 确认当前状态一致后才会提供此操作。",
+    "confirmCleanup": "清理记录",
     "state": {
-      "needsAttention": "请先检查恢复数据和目标文件。",
-      "consistentCanCleanup": "目标状态一致，现在可以移除恢复数据。",
-      "environmentUnavailable": "当前环境不可用，恢复数据已保留。",
-      "invalid": "恢复记录损坏。可以打开目录查看，但不会自动删除。",
-      "missing": "恢复数据已不存在。"
+      "needsAttention": "请检查相关文件，并根据实际情况手动处理。",
+      "consistentCanCleanup": "当前状态已一致，可以清理这条记录。",
+      "environmentUnavailable": "当前 Environment 不可用，请在其恢复可用后重新检查。",
+      "invalid": "这条记录已损坏。可以打开相关文件查看，Skill Deck 不会自动清理。",
+      "missing": "相关处理记录已不存在。"
     }
   },
   "context": {

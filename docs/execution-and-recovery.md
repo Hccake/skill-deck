@@ -255,11 +255,13 @@ stateDiagram-v2
 
 Recovery Center 展示的是动态 assessment，而不是直接显示 marker kind。Backend 每次检查会返回 `NeedsAttention`、`ConsistentCanCleanup` 或 `EnvironmentUnavailable`；同一个 marker 在 Environment 恢复后可以得到新的 assessment 和 status revision。
 
+Runtime maintenance 只在 Backend 内部负责 payload 清理、Recovery reindex 和写入 gate，不向 Frontend 发布独立状态事件。Maintenance 失败本身不会进入 Recovery Center；只有持久 Recovery Resource 或其加载错误会形成用户可见入口。
+
 Backup 与 destination 必须位于同一 Environment 和物理父目录。Recovery Center 通过 opaque resource ID 打开受控位置；Frontend 不接收或提交可用于删除的任意路径。
 
 用户确认“已处理”时，Backend 重新检查当前 consistency 和 status revision。Stale confirmation 被拒绝。只有能够证明 final entry、lock 和残留资源已经一致时才删除 marker。
 
-Recovery resource 继续提供打开受控位置、刷新状态，以及在 Backend 证明一致后由用户确认清理的能力；不承诺自动或手动恢复一定成功，也不自动 TTL 清理。一个 Environment 的失败不扩散到其他 Environment。用户可见的状态反馈由[产品设计](./product.md#移除与-recovery-resource)定义。
+Recovery Resource 不提供自动续跑或自动恢复。用户可以打开相关文件自行处理，随后重新检查；Backend 只验证当前状态是否一致，并在用户确认后清理处理记录。Skill Deck 不替用户继续执行未完成的操作，也不自动 TTL 清理。一个 Environment 的失败不扩散到其他 Environment。用户可见的状态反馈由[产品设计](./product.md#移除与-recovery-resource)定义。
 
 ## 必须保持的不变量
 

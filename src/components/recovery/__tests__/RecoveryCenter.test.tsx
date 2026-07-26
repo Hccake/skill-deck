@@ -9,45 +9,16 @@ import { RecoveryCenter } from '../RecoveryCenter';
 const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   resources: [] as RecoveryResourceStatus[],
-  maintenance: [] as Array<{ environment: { kind: 'host' } | { kind: 'wsl'; distro_name: string }; state: 'pending' | 'ready' | 'failed'; issues: string[] }>,
   actionStatuses: [] as RecoveryResourceStatus[],
   recoveryError: null as AppError | null,
-  discoveryError: null as AppError | null,
-  errorsByEnvironment: {} as Record<string, AppError | null>,
-  listen: vi.fn().mockResolvedValue(() => undefined),
-}));
-
-vi.mock('@/bindings', () => ({
-  events: {
-    runtimeMaintenanceChanged: {
-      listen: mocks.listen,
-    },
-  },
 }));
 
 vi.mock('@/stores/recovery', () => ({
   useRecoveryStore: (selector: (state: unknown) => unknown) => selector({
     resources: mocks.resources,
-    maintenance: mocks.maintenance,
     state: 'ready',
     error: mocks.recoveryError,
     load: mocks.load,
-    applyMaintenance: vi.fn(),
-  }),
-}));
-
-vi.mock('@/stores/environment', () => ({
-  useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
-    environments: [{
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      displayName: 'Ubuntu',
-      status: 'unavailable',
-      revision: 2,
-      error: null,
-    }],
-    discoveryState: mocks.discoveryError ? 'error' : 'ready',
-    discoveryError: mocks.discoveryError,
-    errorsByEnvironment: mocks.errorsByEnvironment,
   }),
 }));
 
@@ -92,55 +63,28 @@ describe('RecoveryCenter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.actionStatuses = [];
-    mocks.maintenance = [];
     mocks.recoveryError = null;
-    mocks.discoveryError = null;
-    mocks.errorsByEnvironment = {};
     mocks.load.mockResolvedValue(undefined);
     mocks.resources = [];
   });
 
-  it('does not show an entry for normal or pending maintenance', () => {
-    mocks.maintenance = [
-      { environment: { kind: 'host' }, state: 'ready', issues: [] },
-      { environment: { kind: 'wsl', distro_name: 'Ubuntu' }, state: 'pending', issues: [] },
-    ];
-
+  it('does not show an entry when there are no persistent resources or load errors', () => {
     render(<RecoveryCenter />);
 
     expect(screen.queryByRole('button', { name: 'recovery.center.open' })).toBeNull();
   });
 
-  it('does not turn failed runtime maintenance into a Recovery Center item', () => {
-    mocks.maintenance = [{
-      environment: { kind: 'host' },
-      state: 'failed',
-      issues: ['payloadSweepFailed'],
-    }];
-
-    render(<RecoveryCenter />);
-
-    expect(screen.queryByRole('button', { name: 'recovery.center.open' })).toBeNull();
-  });
-
-  it('does not turn Environment discovery or connection errors into Recovery items', () => {
-    mocks.discoveryError = {
-      kind: 'environmentDiscoveryFailed',
-      data: { message: 'wsl.exe timed out' },
-    };
-    mocks.errorsByEnvironment = {
-      'wsl:ubuntu': {
-        kind: 'environmentUnavailable',
-        data: {
-          environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-          message: 'distribution is unavailable',
-        },
-      },
+  it('shows a persistent resource load error without inventing another issue source', () => {
+    mocks.recoveryError = {
+      kind: 'io',
+      data: { message: 'recovery index unavailable' },
     };
 
     render(<RecoveryCenter />);
 
-    expect(screen.queryByRole('button', { name: 'recovery.center.open' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.open' }));
+    expect(screen.getByText('recovery.center.loadError')).toBeDefined();
+    expect(screen.getByText('recovery index unavailable')).toBeDefined();
   });
 
   it('keeps recovery resource actions available in the dialog', () => {

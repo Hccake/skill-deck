@@ -6,7 +6,6 @@ use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
 use commands::lifecycle::LifecycleActionRequestedEvent;
 use commands::ManagedAgentRegistry;
-use environment::maintenance::RuntimeMaintenanceChanged;
 use environment::types::EnvironmentRuntimeEvent;
 use runtime::RuntimeServiceGraph;
 
@@ -205,7 +204,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
         ])
         .events(collect_events![
             EnvironmentRuntimeEvent,
-            RuntimeMaintenanceChanged,
             LifecycleActionRequestedEvent,
             commands::agent_configuration::AgentConfigurationRequestedEvent,
             commands::agent_configuration::AgentConfigurationCompletedEvent,
@@ -287,15 +285,6 @@ pub fn run() {
             )?;
             let environments = runtime.environments_arc();
             let maintenance = runtime.maintenance().clone();
-
-            let maintenance_app_handle = app.handle().clone();
-            maintenance.set_listener(move |status| {
-                if let Err(error) =
-                    (RuntimeMaintenanceChanged { status }).emit(&maintenance_app_handle)
-                {
-                    log::warn!("Failed to emit runtime maintenance state: {error}");
-                }
-            })?;
 
             let environment_app_handle = app.handle().clone();
             let maintenance_for_environments = maintenance.clone();

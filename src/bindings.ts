@@ -447,14 +447,12 @@ export const events = __makeEvents__<{
 agentConfigurationCompletedEvent: AgentConfigurationCompletedEvent,
 agentConfigurationRequestedEvent: AgentConfigurationRequestedEvent,
 environmentRuntimeEvent: EnvironmentRuntimeEvent,
-lifecycleActionRequestedEvent: LifecycleActionRequestedEvent,
-runtimeMaintenanceChanged: RuntimeMaintenanceChanged
+lifecycleActionRequestedEvent: LifecycleActionRequestedEvent
 }>({
 agentConfigurationCompletedEvent: "agent-configuration-completed-event",
 agentConfigurationRequestedEvent: "agent-configuration-requested-event",
 environmentRuntimeEvent: "environment-runtime-event",
-lifecycleActionRequestedEvent: "lifecycle-action-requested-event",
-runtimeMaintenanceChanged: "runtime-maintenance-changed"
+lifecycleActionRequestedEvent: "lifecycle-action-requested-event"
 })
 
 /** user-defined constants **/
@@ -718,7 +716,6 @@ export type ListSkillsResult = { skills: InstalledSkill[];
  */
 pathExists: boolean }
 export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
-export type MaintenanceIssueCode = "payloadSweepFailed" | "recoveryReindexFailed"
 export type ManageAgentsPreview = { token: PreviewToken; context: ContextRef; skillName: string; availableAgents: ResolvedAgent[]; selectionGroups: AgentSelectionGroups; observedEntries: ObservedPhysicalEntry[]; canonicalPayload: AcquiredPayloadHandle | null; addTargets: ResourceLocator[] }
 export type ManageAgentsPreviewRequest = { context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode }
 export type ManageAgentsRequest = { token: PreviewToken; context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode; confirmEntityDirectories: boolean; canonicalPayload: AcquiredPayloadHandle | null }
@@ -763,9 +760,6 @@ export type ResourceLocator = { environment: EnvironmentRef; nativePath: string 
  * 风险等级
  */
 export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical" | "unknown"
-export type RuntimeMaintenanceChanged = { status: RuntimeMaintenanceStatus }
-export type RuntimeMaintenanceState = "pending" | "ready" | "failed"
-export type RuntimeMaintenanceStatus = { environment: EnvironmentRef; state: RuntimeMaintenanceState; issues: MaintenanceIssueCode[] }
 /**
  * 安装范围
  */
