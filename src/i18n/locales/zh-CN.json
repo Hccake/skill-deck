@@ -18,36 +18,29 @@
     "settings": "设置"
   },
   "recovery": {
-    "title": "需要恢复处理",
+    "title": "本次操作未完成",
     "center": {
-      "count": "有 {{count}} 项恢复数据需要处理",
-      "maintenanceCount": "有 {{count}} 个环境需要完成本地数据检查",
-      "loadError": "无法加载恢复数据",
-      "show": "查看恢复项",
-      "hide": "收起恢复项"
+      "title": "需要处理的问题",
+      "description": "查看未完成操作留下的文件和处理记录。",
+      "open": "查看需要处理的问题",
+      "loadError": "无法加载需要处理的问题",
+      "show": "查看处理项"
     },
-    "loading": "正在检查恢复状态…",
-    "open": "打开恢复数据",
-    "refresh": "刷新",
-    "cleanup": "移除恢复数据",
-    "refreshError": "无法刷新恢复状态，恢复数据已保留。",
-    "openError": "无法打开恢复目录，请稍后重试。",
-    "retryMaintenance": "重新检查",
-    "maintenance": {
-      "title": "{{environment}} 本地数据检查",
-      "pending": "正在检查临时文件和恢复数据，完成前暂时不能修改 Skill。",
-      "failed": "本地数据检查未完成，当前环境暂时不能修改 Skill。",
-      "ready": "本地数据检查已完成。"
-    },
-    "cleanupTitle": "移除恢复数据？",
-    "cleanupDescription": "只会移除恢复数据。仅当 Skill Deck 确认目标状态一致后才会提供此操作。",
-    "confirmCleanup": "移除恢复数据",
+    "loading": "正在检查当前状态…",
+    "open": "打开相关文件",
+    "refresh": "重新检查",
+    "cleanup": "清理记录",
+    "refreshError": "重新检查失败，这条记录仍会保留。",
+    "openError": "无法打开相关文件，请稍后重试。",
+    "cleanupTitle": "清理这条记录？",
+    "cleanupDescription": "只会清理 Skill Deck 保存的处理记录，不会删除相关文件。仅当 Skill Deck 确认当前状态一致后才会提供此操作。",
+    "confirmCleanup": "清理记录",
     "state": {
-      "needsAttention": "请先检查恢复数据和目标文件。",
-      "consistentCanCleanup": "目标状态一致，现在可以移除恢复数据。",
-      "environmentUnavailable": "当前环境不可用，恢复数据已保留。",
-      "invalid": "恢复记录损坏。可以打开目录查看，但不会自动删除。",
-      "missing": "恢复数据已不存在。"
+      "needsAttention": "请检查相关文件，并根据实际情况手动处理。",
+      "consistentCanCleanup": "当前状态已一致，可以清理这条记录。",
+      "environmentUnavailable": "当前 Environment 不可用，请在其恢复可用后重新检查。",
+      "invalid": "这条记录已损坏。可以打开相关文件查看，Skill Deck 不会自动清理。",
+      "missing": "相关处理记录已不存在。"
     }
   },
   "context": {
@@ -127,9 +120,9 @@
       "stop": "停止修复",
       "stopping": "正在停止…",
       "repairStopped": "修复已停止，已经完成的写入会保留当前结果。",
-      "repairPartial": "部分目标未完成修复。如弹窗中提供了恢复信息，请先处理后再重试。",
       "stopFailed": "无法发送停止请求，修复仍在继续。",
-      "repairFailed": "修复失败，请检查结果后重试。"
+      "repairFailed": "修复失败，请检查结果后重试。",
+      "copyRetry": "来源已修复，请重新点击「复制」继续。"
     },
     "agent": {
       "enable": "启用 {{name}}",
@@ -145,11 +138,17 @@
       "select": "选择项目",
       "clear": "清除"
     },
-    "search": "搜索 Skills...",
+    "search": "搜索 Skills…",
     "sync": "刷新",
     "filter": {
       "allAgents": "全部 Agents",
-      "noResults": "未找到 {{name}} 的 Skills"
+      "agentLabel": "按 Agent 筛选 Skill",
+      "searchAgents": "查找 Agent…",
+      "noMatchingAgents": "没有匹配的 Agent",
+      "emptyAgent": "没有可供 {{name}} 使用的 Skill",
+      "emptySearch": "没有匹配“{{query}}”的 Skill",
+      "emptyCombined": "没有符合当前条件的 Skill",
+      "clear": "清除筛选"
     },
     "scopeIcon": {
       "project": "项目 Skill",
@@ -159,10 +158,12 @@
       "alsoInGlobal": "同时安装在全局",
       "alsoInProject": "同时安装在此项目"
     },
-    "projectNotFound": "项目路径不存在：{{path}}",
+    "projectUnavailableTitle": "无法读取项目 Skill",
+    "projectUnavailableDescription": "当前 Environment 无法访问该项目。请检查项目位置，或切换到已添加该项目的 Environment。",
+    "updateCheckFailureCount": "{{count}} 个检查失败",
     "card": {
       "extraCopies": "有额外接入项",
-      "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理 Agents”调整。"
+      "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理关联 Agent”调整。"
     },
     "detail": {
       "title": "Skill 详情",
@@ -185,10 +186,10 @@
       "emptyContent": "该 skill 没有内容",
       "retry": "重试",
       "duplicateCopiesTitle": "发现 {{count}} 个额外接入项",
-      "extraCopiesHint": "这些 Agent 已可通过通用 Skill 目录使用此 Skill，但自己的目录中还保留了链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可点击右上角“管理 Agents”调整。",
-      "extraCopiesNamedHint": "的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理 Agents”中调整。",
+      "extraCopiesHint": "这些 Agent 已可通过通用 Skill 目录使用此 Skill，但自己的目录中还保留了链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可点击右上角“管理关联 Agent”调整。",
+      "extraCopiesNamedHint": "的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理关联 Agent”中调整。",
       "extraCopiesAgentSummaryMore": "{{agents}} 等 {{count}} 个 Agent",
-      "extraCopiesCountHint": "发现 {{count}} 个额外接入项。选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理 Agents”中查看并调整。",
+      "extraCopiesCountHint": "发现 {{count}} 个额外接入项。选择复制时，副本可能不会随通用 Skill 一起更新。可在右上角“管理关联 Agent”中查看并调整。",
       "duplicateCopiesHint": "这些 Agent 目录中的链接或副本可能不再需要。建议保留通用 Skill 目录中的版本。",
       "manageDuplicates": "查看接入项"
     },
@@ -203,26 +204,30 @@
       "copyWarning": "Agent 目录中存在副本，确认后这些副本也会被删除。",
       "previewError": "无法加载当前删除范围，请重试。",
       "executionError": "删除未完成，当前范围仍保留，可以再次尝试。",
+      "recoveryRequired": "删除未完成，相关文件需要检查。请先处理下方恢复项。",
       "stale": "删除范围已经变化，请检查刷新后的范围并重新确认。",
       "retryPreview": "重新加载",
       "retryDelete": "重试删除",
       "confirm": "确认删除"
     },
     "manageAgents": {
-      "title": "管理 Agents",
-      "description": "查看哪些 Agent 可以使用 \"{{name}}\"，并为需要的 Agent 添加接入方式",
+      "action": "管理关联 Agent",
+      "title": "关联 Agent",
+      "description": "选择可以使用「{{name}}」的 Agent。",
       "modeTitle": "Skill 安装方式",
       "symlinkHint": "通过链接接入通用 Skill 目录，后续更新会共享同一份源文件",
       "copyHint": "复制一份到 Agent 目录，适合不支持链接的环境",
       "save": "保存更改",
       "retrySave": "重试保存",
-      "previewError": "无法加载 Agent 接入信息，请重试。",
+      "previewError": "暂时无法加载关联 Agent，请重试。",
       "retryPreview": "重试",
       "blocked": "当前有其他操作正在执行，请稍后再试。",
-      "failed": "Agent 接入未能更新，当前选择仍保留。",
-      "partial": "部分 Agent 接入未能更新，已完成的更改已保留。",
-      "stale": "Agent 接入状态已经变化，请检查刷新后的内容再保存。",
-      "success": "Agent 使用范围已更新",
+      "failed": "暂时无法保存关联 Agent 设置",
+      "failedDescription": "这次更改未能完成。当前选择仍保留，你可以重试或继续查看 Skill 内容。",
+      "recoveryRequired": "本次操作未完成",
+      "recoveryDescription": "相关文件需要检查。请先处理下方恢复项，再决定是否重新保存。",
+      "stale": "关联 Agent 已发生变化，请检查最新设置后重新保存。",
+      "success": "关联 Agent 已更新",
       "cleanupSuccess": "额外副本已移除"
     },
     "copyToProject": {
@@ -236,11 +241,14 @@
       "presenceUnknown": "无法确认这些项目是否已安装当前 Skill，已有文件可能会被覆盖。",
       "copy": "复制到 {{count}} 个项目",
       "overwriteWarning": "{{count}} 个选中的项目已安装此 skill，将被覆盖",
-      "metadataWarning": "当前 Skill 缺少用于自动检查更新的来源信息。复制到其他项目后，仍无法自动检查更新。",
+      "metadataWarning": "当前 Skill 缺少用于自动检查更新的版本信息。复制到其他项目后，仍无法自动检查更新。",
+      "sourceRepairRequired": "当前 Skill 的来源记录不完整，暂时不能复制。请先修复来源。",
+      "repairSource": "修复来源",
       "success": "已成功复制到 {{count}} 个项目",
       "skippedAgents": "已复制到通用 Skill 目录。部分 Agent 因目标项目目录不存在，未单独接入：{{agents}}",
       "partialError": "已复制 {{success}} 个项目，仍有 {{fail}} 个项目需要处理。",
       "copyError": "复制未完成，已选择的项目仍可重试。",
+      "recoveryDescription": "本次操作未完成，相关文件需要检查。请先处理下方恢复项。",
       "retryFailed": "重试失败项目"
     },
     "deleteSuccess": "已删除「{{name}}」",
@@ -888,7 +896,7 @@
       "update": "更新 Skill",
       "remove": "移除 Skill",
       "copy": "复制 Skill",
-      "manageAgents": "更新 Agent",
+      "manageAgents": "更新关联 Agent",
       "duplicateCleanup": "清理重复副本",
       "repair": "修复来源",
       "saveAgentDefaults": "保存 Agent 默认值",
@@ -966,7 +974,7 @@
         "externalLockChanged": "Skill lock 已被其他进程修改。",
         "mutationCancelled": "操作已取消。",
         "executionFailed": "操作未能完成。",
-        "restoreFailed": "自动恢复未能完成。",
+        "restoreFailed": "Skill Deck 未能妥善完成这次操作，相关文件需要检查。",
         "recoveryRequired": "继续前请先检查恢复数据。",
         "configurationReadOnly": "配置版本高于当前应用，现以只读方式打开。",
         "configurationCorrupted": "无法安全读取配置。"

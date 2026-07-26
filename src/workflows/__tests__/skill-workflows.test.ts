@@ -55,6 +55,7 @@ const skill = {
   canonicalPath: '/canonical/toolkit',
   scope: 'project',
   agents: ['codex'],
+  associatedAgents: ['codex'],
   hasUpdate: false,
 } as InstalledSkill;
 
@@ -64,6 +65,11 @@ const token = {
   environmentRevision: 'environment-1',
   contextRevision: 'context-1',
 };
+
+const recoveryAction = {
+  resourceId: 'recovery-1',
+  suggestedActionCode: 'reviewChanges',
+} as const;
 
 const removePreview = {
   token,
@@ -121,11 +127,14 @@ describe('skill workflows', () => {
     mocks.previewManageSkillAgents.mockResolvedValue(managePreview);
     mocks.manageSkillAgents.mockResolvedValue({ units: [{ status: 'succeeded', error: null }] });
     mocks.previewCopySkillToProjects.mockResolvedValue({
-      token,
-      payload: {},
-      source: context,
-      targetEnvironment: { kind: 'host' },
-      targets: [],
+      status: 'ready',
+      preview: {
+        token,
+        payload: {},
+        source: context,
+        targetEnvironment: { kind: 'host' },
+        targets: [],
+      },
     });
     mocks.copySkillToProjects.mockResolvedValue({ units: [{ status: 'succeeded' }] });
     mocks.cleanupDuplicateAgentCopies.mockResolvedValue([
@@ -200,6 +209,31 @@ describe('skill workflows', () => {
     expect(useSkillDialogStore.getState().deleteFeedback).toBe('executionError');
   });
 
+  it('returns removal recovery actions without turning them into a retryable execution error', async () => {
+    useSkillDialogStore.setState({
+      deleteTarget: { skill, scope: 'project', projectPath: '/source', context },
+      deletePreview: removePreview,
+    });
+    mocks.removeSkill.mockResolvedValueOnce({
+      units: [{
+        status: 'recoveryRequired',
+        retryable: false,
+        recovery: recoveryAction,
+        error: null,
+      }],
+    });
+
+    const outcome = await executeSkillRemoval();
+
+    expect(outcome).toEqual({
+      status: 'recoveryRequired',
+      recovery: [recoveryAction],
+    });
+    expect(useSkillDialogStore.getState().deleteTarget?.skill.name).toBe(skill.name);
+    expect(useSkillDialogStore.getState().deletePreview).toBe(removePreview);
+    expect(useSkillDialogStore.getState().deleteFeedback).toBeNull();
+  });
+
   it('reloads the removal preview when execution reports stale scope', async () => {
     const refreshedPreview = {
       ...removePreview,
@@ -268,13 +302,33 @@ describe('skill workflows', () => {
 
     const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
 
-    expect(outcome.status).toBe('failed');
+    expect(outcome).toEqual({ status: 'failed' });
     expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
     expect(useSkillDialogStore.getState().manageAgentDetails).toBe(managePreview);
     expect(mocks.syncSkills).toHaveBeenCalledWith(context);
   });
 
-  it('returns a partial outcome when only some Agent changes fail', async () => {
+  it('keeps a management recovery action separate from an ordinary failure', async () => {
+    useSkillDialogStore.setState({
+      manageAgentsSkill: skill,
+      manageAgentsContext: context,
+      manageAgentDetails: managePreview,
+    });
+    mocks.manageSkillAgents.mockResolvedValueOnce({
+      units: [{ status: 'recoveryRequired', recovery: recoveryAction, error: null }],
+    });
+
+    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
+
+    expect(outcome).toEqual({
+      status: 'recoveryRequired',
+      response: { units: [{ status: 'recoveryRequired', recovery: recoveryAction, error: null }] },
+      recovery: [recoveryAction],
+    });
+    expect(mocks.syncSkills).not.toHaveBeenCalled();
+  });
+
+  it('returns a failed outcome when an atomic Agent change reports mixed unit results', async () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
@@ -289,7 +343,7 @@ describe('skill workflows', () => {
 
     const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
 
-    expect(outcome.status).toBe('partial');
+    expect(outcome).toEqual({ status: 'failed' });
     expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
     expect(mocks.syncSkills).toHaveBeenCalledWith(context);
   });
@@ -376,6 +430,25 @@ describe('skill workflows', () => {
     expect(mocks.copySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({ token }));
   });
 
+  it('returns source repair guidance without starting copy execution', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.previewCopySkillToProjects.mockResolvedValue({
+      status: 'sourceRepairRequired',
+      reason: 'missingMetadata',
+    });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['host-target'],
+    });
+
+    expect(outcome).toEqual({
+      status: 'sourceRepairRequired',
+      reason: 'missingMetadata',
+    });
+    expect(mocks.copySkillToProjects).not.toHaveBeenCalled();
+  });
+
   it('returns retryable project IDs for partial copy outcomes without closing the dialog', async () => {
     useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
     mocks.copySkillToProjects.mockResolvedValue({
@@ -394,6 +467,57 @@ describe('skill workflows', () => {
       status: 'partial',
       succeededProjectIds: ['project-b'],
       retryableProjectIds: ['project-c'],
+    });
+    expect(useSkillDialogStore.getState().copySkill).toBe(skill);
+  });
+
+  it('returns recoveryRequired directly for a single project', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.copySkillToProjects.mockResolvedValue({
+      units: [{
+        status: 'recoveryRequired',
+        retryable: false,
+        recovery: recoveryAction,
+        target: { scope: { scope: 'project', project_id: 'project-c' } },
+      }],
+    });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['project-c'],
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'recoveryRequired',
+      succeededProjectIds: [],
+      recovery: [recoveryAction],
+    });
+  });
+
+  it('keeps copy recovery in a multi-project partial outcome without making it retryable', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.copySkillToProjects.mockResolvedValue({
+      units: [
+        { status: 'succeeded', target: { scope: { scope: 'project', project_id: 'project-b' } } },
+        {
+          status: 'recoveryRequired',
+          retryable: false,
+          recovery: recoveryAction,
+          target: { scope: { scope: 'project', project_id: 'project-c' } },
+        },
+      ],
+    });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['project-b', 'project-c'],
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'partial',
+      succeededProjectIds: ['project-b'],
+      retryableProjectIds: [],
+      recovery: [recoveryAction],
     });
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);
   });
