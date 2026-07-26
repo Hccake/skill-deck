@@ -9,6 +9,7 @@ import {
   Globe,
   Folder,
   AlertTriangle,
+  CircleAlert,
   Info,
   FolderOutput,
   PackagePlus,
@@ -92,17 +93,7 @@ export const SkillCard = memo(function SkillCard({
   onRepairSource,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
-  const summaryAgents = [
-    ...(skill.defaultAvailableAgents ?? []),
-    ...(skill.privateAdaptedAgents ?? []),
-    ...(skill.privateCopyAgents ?? []),
-  ];
-  const hasAgentSummary = Boolean(
-    skill.defaultAvailableAgents || skill.privateAdaptedAgents || skill.privateCopyAgents
-  );
-  const rawEffectiveAgents = skill.cardAgents
-    ?? (hasAgentSummary ? summaryAgents : skill.agents);
-  const effectiveAgents = Array.from(new Set(rawEffectiveAgents));
+  const effectiveAgents = Array.from(new Set(skill.associatedAgents));
   const duplicateCopyCount = skill.duplicateCopyCount ?? 0;
 
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -147,6 +138,7 @@ export const SkillCard = memo(function SkillCard({
   const updateStatusLabelKey = resolveUpdateStatusLabelI18nKey(skill);
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
   const updateHintKey = !skill.hasUpdate ? resolveUpdateHintI18nKey(skill.updateReason) : null;
+  const isUpdateCheckFailure = updateStatusLabelKey === 'skills.updateStatusLabel.checkFailed';
   const isAttentionHint = skill.updateReason === 'missing-skill-path'
     || skill.updateReason === 'missingRemoteHash'
     || isDeletedUpstream;
@@ -155,7 +147,9 @@ export const SkillCard = memo(function SkillCard({
       ? 'bg-primary/10 text-primary'
       : updateStatusLabelKey === 'skills.updateStatusLabel.autoCheckUnavailable'
         ? 'bg-muted text-muted-foreground'
-        : 'bg-warning/10 text-warning';
+        : isUpdateCheckFailure
+          ? 'gap-1 text-warning'
+          : 'bg-warning/10 text-warning';
 
   return (
     <Card
@@ -193,12 +187,32 @@ export const SkillCard = memo(function SkillCard({
                 {riskLevel ? <RiskBadge risk={riskLevel} /> : null}
 
                 {updateStatusLabelKey ? (
-                  <span className={cn(
-                    "inline-flex h-[20px] items-center rounded-sm px-1.5 text-[11px] font-medium",
-                    updateStatusLabelClassName
-                  )}>
-                    {t(updateStatusLabelKey)}
-                  </span>
+                  isUpdateCheckFailure && updateHintKey ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className={cn(
+                            "inline-flex h-[20px] items-center rounded-sm px-1.5 text-[11px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                            updateStatusLabelClassName
+                          )}
+                        >
+                          <CircleAlert className="h-3 w-3 shrink-0" />
+                          {t(updateStatusLabelKey)}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{t(updateHintKey)}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <span className={cn(
+                      "inline-flex h-[20px] items-center rounded-sm px-1.5 text-[11px] font-medium",
+                      updateStatusLabelClassName
+                    )}>
+                      {t(updateStatusLabelKey)}
+                    </span>
+                  )
                 ) : null}
 
                 {/* Conflict Icon */}
@@ -325,8 +339,8 @@ export const SkillCard = memo(function SkillCard({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
-                aria-label={t('skills.manageAgents.title')}
-                title={t('skills.manageAgents.title')}
+                aria-label={t('skills.manageAgents.action')}
+                title={t('skills.manageAgents.action')}
                 disabled={writeBlocked}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -391,7 +405,7 @@ export const SkillCard = memo(function SkillCard({
           ) : null}
         </div>
 
-        {updateHintKey ? (
+        {updateHintKey && !isUpdateCheckFailure ? (
           <div
             className={cn(
               "flex items-center gap-1 text-xs leading-4",

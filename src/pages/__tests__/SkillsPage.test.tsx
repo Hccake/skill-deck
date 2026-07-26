@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => ({
     manageAgentsScope: 'global',
     copySkill: null as InstalledSkill | null,
     copyContext: null as ContextRef | null,
+    repairSourceTarget: null,
     openCopyToProject: vi.fn(),
     closeCopyToProject: vi.fn(),
     executeCopy: vi.fn(),
@@ -104,6 +105,7 @@ function makeSkill(name: string, overrides: Partial<InstalledSkill> = {}): Insta
     canonicalPath: `/canonical/${name}`,
     scope: 'global',
     agents: [],
+    associatedAgents: [],
     hasUpdate: false,
     ...overrides,
   };
@@ -233,7 +235,7 @@ describe('SkillsPage', () => {
     mocks.environmentState.connect.mockReset();
     mocks.environmentState.connect.mockResolvedValue(undefined);
     mocks.tauriApi.listSkills.mockReset();
-    mocks.tauriApi.listSkills.mockResolvedValue({ skills: [] });
+    mocks.tauriApi.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
     mocks.skillsDataState.snapshots = { 'host/global': snapshot() };
     mocks.skillsDataState.checkingUpdateScopes = new Set();
     mocks.skillsDataState.forceCheckUpdates.mockReset();

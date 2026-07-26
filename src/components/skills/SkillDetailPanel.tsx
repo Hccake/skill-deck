@@ -75,16 +75,9 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const [copied, setCopied] = useState(false);
   const [checkDone, setCheckDone] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const defaultAvailableAgents = skill.defaultAvailableAgents ?? [];
-  const privateAdaptedAgents = skill.privateAdaptedAgents ?? [];
-  const privateCopyAgents = skill.privateCopyAgents ?? [];
-  const summaryAgents = [...defaultAvailableAgents, ...privateAdaptedAgents, ...privateCopyAgents];
-  const hasAgentSummary = Boolean(
-    skill.defaultAvailableAgents || skill.privateAdaptedAgents || skill.privateCopyAgents
+  const displayAgents = skill.associatedAgents.filter(
+    (agentId, index, agents) => agents.indexOf(agentId) === index,
   );
-  const rawDisplayAgents = skill.cardAgents
-    ?? (hasAgentSummary ? summaryAgents : skill.agents);
-  const displayAgents = rawDisplayAgents.filter((agentId, index, agents) => agents.indexOf(agentId) === index);
   const duplicateCopyCount = skill.duplicateCopyCount ?? 0;
   const duplicateCopyAgents = skill.duplicateCopyAgents ?? [];
   const duplicateCopyAgentNames = duplicateCopyAgents.map((agentId) => agentDisplayNames.get(agentId) ?? agentId);
@@ -286,7 +279,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
-                    title={t('skills.manageAgents.title')}
+                    title={t('skills.manageAgents.action')}
                     disabled={writeBlocked}
                     onClick={handleManageAgents}
                   >

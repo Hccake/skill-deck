@@ -13,7 +13,7 @@ import { CompactSkillList } from './CompactSkillList';
 import { CrossStorageWarningBanner } from './CrossStorageWarningBanner';
 import { DeleteSkillDialog } from './DeleteSkillDialog';
 import { RepairSourceDialog } from './RepairSourceDialog';
-import { GlobalEmptyState, ProjectEmptyState } from './EmptyStates';
+import { GlobalEmptyState, ProjectEmptyState, SkillFilterEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
@@ -23,8 +23,13 @@ import { openSkillRemoval } from '@/workflows/skill-remove';
 import { openManageAgentChanges } from '@/workflows/skill-manage-agents';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
+import {
+  countSkillsByAgent,
+  filterSkills,
+  getAgentFilterOptions,
+} from '@/lib/skills/filter';
 import type { SkillUpdateDisplayStatus } from '@/stores/skills-utils';
-import type { InstalledSkill } from '@/bindings';
+import type { AgentId, InstalledSkill, ResolvedAgent } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
@@ -36,21 +41,6 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
 };
 const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 const EMPTY_SKILL_NAMES: string[] = [];
-
-/** 按搜索关键词 + agent 筛选过滤 skills — 单次遍历 (js-combine-iterations) */
-function filterSkills<T extends InstalledSkill>(skills: T[], searchQuery: string, agentFilter: string): T[] {
-  if (!searchQuery && agentFilter === 'all') return skills;
-  const query = searchQuery ? searchQuery.toLowerCase() : '';
-  return skills.filter((s) => {
-    if (query && !s.name.toLowerCase().includes(query) && !s.description.toLowerCase().includes(query)) {
-      return false;
-    }
-    if (agentFilter !== 'all' && !s.agents.includes(agentFilter)) {
-      return false;
-    }
-    return true;
-  });
-}
 
 interface SkillsPanelProps {
   /** 紧凑模式 — 选中 skill 后由 SkillsPage 传入 */
@@ -84,7 +74,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const globalSkills = globalSnapshot.skills;
   const projectSkills = isProjectSelected ? projectSnapshot.skills : EMPTY_SNAPSHOT.skills;
   const projectPathExists = projectSnapshot.pathExists;
-  const allAgents = isProjectSelected ? projectSnapshot.agents : globalSnapshot.agents;
   const loading = (globalSnapshot.loading && globalSkills.length === 0)
     || (isProjectSelected && projectSnapshot.loading && projectSkills.length === 0);
   const error = projectSnapshot.error ?? globalSnapshot.error;
@@ -118,7 +107,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
 
   // ② UI 状态 — 仅 2 个 useState
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedAgentFilter, setSelectedAgentFilter] = useState('all');
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState<AgentId | null>(null);
 
   // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
   const deferredQuery = useDeferredValue(searchQuery);
@@ -166,20 +155,59 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }, [globalSkills, projectSkills, fetchAuditForSkills]);
 
   const filterableAgents = useMemo(() => {
-    const agentIds = new Set<string>();
-    const allSkills = isProjectSelected ? [...globalSkills, ...projectSkills] : globalSkills;
-    for (const s of allSkills) {
-      for (const id of s.agents) agentIds.add(id);
+    const agentsById = new Map<AgentId, ResolvedAgent>();
+    for (const agent of getAgentFilterOptions(globalSnapshot.agents, selectedAgentFilter)) {
+      agentsById.set(agentId(agent), agent);
     }
-    return allAgents
-      .filter((agent) => agentIds.has(agentId(agent)))
-      .sort((left, right) => agentDisplayName(left).localeCompare(agentDisplayName(right)));
-  }, [allAgents, globalSkills, projectSkills, isProjectSelected]);
+    for (const agent of getAgentFilterOptions(projectSnapshot.agents, selectedAgentFilter)) {
+      if (!agentsById.has(agentId(agent))) {
+        agentsById.set(agentId(agent), agent);
+      }
+    }
+    return [...agentsById.values()].sort((left, right) => (
+      agentDisplayName(left).localeCompare(agentDisplayName(right))
+    ));
+  }, [globalSnapshot.agents, projectSnapshot.agents, selectedAgentFilter]);
+
+  const availableAgentIds = useMemo(
+    () => new Set(filterableAgents.map((agent) => agentId(agent))),
+    [filterableAgents],
+  );
+  const isAgentFilterDataLoading = globalSnapshot.loading
+    || globalSnapshot.requestId === 0
+    || (isProjectSelected && (
+      projectSnapshot.loading
+      || projectSnapshot.requestId === 0
+    ));
+  const activeAgentFilter = selectedAgentFilter !== null
+    && (availableAgentIds.has(selectedAgentFilter) || isAgentFilterDataLoading)
+    ? selectedAgentFilter
+    : null;
+
+  useEffect(() => {
+    if (
+      selectedAgentFilter !== null
+      && !isAgentFilterDataLoading
+      && !availableAgentIds.has(selectedAgentFilter)
+    ) {
+      const resetTimer = setTimeout(() => setSelectedAgentFilter(null), 0);
+      return () => clearTimeout(resetTimer);
+    }
+    return undefined;
+  }, [availableAgentIds, isAgentFilterDataLoading, selectedAgentFilter]);
 
   const agentDisplayNames = useMemo(
-    () => new Map(allAgents.map((agent) => [agentId(agent), agentDisplayName(agent)])),
-    [allAgents]
+    () => new Map(
+      [...globalSnapshot.agents, ...projectSnapshot.agents]
+        .map((agent) => [agentId(agent), agentDisplayName(agent)]),
+    ),
+    [globalSnapshot.agents, projectSnapshot.agents]
   );
+
+  const agentMatchCounts = useMemo(() => {
+    const counts = countSkillsByAgent([...globalSkills, ...projectSkills]);
+    return counts;
+  }, [globalSkills, projectSkills]);
 
   const updatingSkills = useMemo<Map<string, SkillUpdateDisplayStatus>>(() => {
     if (!activeUpdatePhase || !activeUpdateContext) return new Map();
@@ -199,14 +227,26 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
 
   // 使用 deferredQuery 而非 searchQuery，列表过滤作为低优先级更新
   const filteredGlobalSkills = useMemo(
-    () => filterSkills(globalSkills, deferredQuery, selectedAgentFilter),
-    [globalSkills, deferredQuery, selectedAgentFilter]
+    () => filterSkills(globalSkills, deferredQuery, activeAgentFilter),
+    [activeAgentFilter, deferredQuery, globalSkills]
   );
 
   const filteredProjectSkills = useMemo(
-    () => filterSkills(projectSkills, deferredQuery, selectedAgentFilter),
-    [projectSkills, deferredQuery, selectedAgentFilter]
+    () => filterSkills(projectSkills, deferredQuery, activeAgentFilter),
+    [activeAgentFilter, deferredQuery, projectSkills]
   );
+
+  const totalSkillCount = globalSkills.length + projectSkills.length;
+  const hasActiveFilters = Boolean(deferredQuery.trim()) || activeAgentFilter !== null;
+
+  const clearFilters = useCallback(() => {
+    setSearchQuery('');
+    setSelectedAgentFilter(null);
+  }, []);
+
+  const selectedAgentName = activeAgentFilter
+    ? agentDisplayNames.get(activeAgentFilter) ?? activeAgentFilter
+    : undefined;
 
   const conflictSkillNames = useMemo(() => {
     const globalNames = new Set(globalSkills.map((s) => s.name));
@@ -255,14 +295,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     openCopyToProject(skill, selectedContext);
   }, [openCopyToProject, selectedContext]);
 
-  const handleCheckProjectUpdates = useCallback(() => {
-    return forceCheckUpdates(selectedContext, { kind: 'all' });
-  }, [forceCheckUpdates, selectedContext]);
-
-  const handleCheckGlobalUpdates = useCallback(() => {
-    return forceCheckUpdates(selectedGlobalContext, { kind: 'all' });
-  }, [forceCheckUpdates, selectedGlobalContext]);
-
   const handleSync = useCallback(() => syncSkills(selectedContext), [selectedContext, syncSkills]);
   const handlePrepareGlobalUpdate = useCallback(
     (skillNames: string[], batch: boolean) => openUpdate(
@@ -278,14 +310,52 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   );
 
   // 缓存 emptyState JSX (rerender-memo-with-default-value)
-  const projectEmptyState = useMemo(
+  const projectInstalledEmptyState = useMemo(
     () => <ProjectEmptyState onAdd={handleAddProject} />,
     [handleAddProject]
   );
-  const globalEmptyState = useMemo(
+  const globalInstalledEmptyState = useMemo(
     () => <GlobalEmptyState onAdd={handleAddGlobal} />,
     [handleAddGlobal]
   );
+  const projectFilterEmptyState = hasActiveFilters && projectSkills.length > 0 && filteredProjectSkills.length === 0
+    ? (
+      <SkillFilterEmptyState
+        agentName={selectedAgentName}
+        searchQuery={deferredQuery}
+      />
+    )
+    : undefined;
+  const globalFilterEmptyState = hasActiveFilters && globalSkills.length > 0 && filteredGlobalSkills.length === 0
+    ? (
+      <SkillFilterEmptyState
+        agentName={selectedAgentName}
+        searchQuery={deferredQuery}
+      />
+    )
+    : undefined;
+  const projectEmptyState = projectFilterEmptyState ?? projectInstalledEmptyState;
+  const globalEmptyState = globalFilterEmptyState ?? globalInstalledEmptyState;
+
+  const handleCheckProjectUpdates = useCallback(() => {
+    const selection = hasActiveFilters
+      ? {
+        kind: 'skills' as const,
+        skills: filteredProjectSkills.map((skill) => ({ context: selectedContext, skillName: skill.name })),
+      }
+      : { kind: 'all' as const };
+    return forceCheckUpdates(selectedContext, selection);
+  }, [filteredProjectSkills, forceCheckUpdates, hasActiveFilters, selectedContext]);
+
+  const handleCheckGlobalUpdates = useCallback(() => {
+    const selection = hasActiveFilters
+      ? {
+        kind: 'skills' as const,
+        skills: filteredGlobalSkills.map((skill) => ({ context: selectedGlobalContext, skillName: skill.name })),
+      }
+      : { kind: 'all' as const };
+    return forceCheckUpdates(selectedGlobalContext, selection);
+  }, [filteredGlobalSkills, forceCheckUpdates, hasActiveFilters, selectedGlobalContext]);
 
   // Loading state
   if (loading) {
@@ -342,15 +412,19 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-panel">
-      {/* Toolbar — compact 模式下只显示搜索框 */}
+      {/* Toolbar — compact 模式也保留搜索与 Agent 筛选 */}
       <div className={compact ? 'px-3 sm:px-4 pt-3 sm:pt-4 pb-2 flex-shrink-0' : 'px-4 sm:px-6 pt-4 sm:pt-5'}>
         <SkillsToolbar
           compact={compact}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
-          selectedAgent={selectedAgentFilter}
+          selectedAgent={activeAgentFilter}
           onAgentChange={setSelectedAgentFilter}
           filterableAgents={filterableAgents}
+          agentMatchCounts={agentMatchCounts}
+          totalSkillCount={totalSkillCount}
+          hasActiveFilters={hasActiveFilters}
+          onClearFilters={clearFilters}
           onSync={handleSync}
           isSyncing={isSyncing}
         />
@@ -372,6 +446,8 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           onAddProject={handleAddProject}
           onAddGlobal={handleAddGlobal}
           onSkillClick={selectSkill}
+          projectEmptyState={projectFilterEmptyState}
+          globalEmptyState={globalFilterEmptyState}
         />
       ) : (
         /* 卡片列表 — 未选中时 */
@@ -382,12 +458,12 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               title={t('skills.projectSkills')}
               skills={filteredProjectSkills}
               scope="project"
+              filterActive={hasActiveFilters}
               conflictSkillNames={conflictSkillNames}
               pathExists={projectPathExists}
               projectPath={projectPath}
               updatingSkills={updatingSkills}
               isCheckingUpdates={isCheckingProject}
-              updateCheck={projectSnapshot.updateCheck}
               agentDisplayNames={agentDisplayNames}
               auditCache={auditCache}
               onSkillClick={selectSkill}
@@ -407,10 +483,10 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             title={t('skills.globalSkills')}
             skills={filteredGlobalSkills}
             scope="global"
+            filterActive={hasActiveFilters}
             conflictSkillNames={conflictSkillNames}
             updatingSkills={updatingSkills}
             isCheckingUpdates={isCheckingGlobal}
-            updateCheck={globalSnapshot.updateCheck}
             agentDisplayNames={agentDisplayNames}
             auditCache={auditCache}
             onSkillClick={selectSkill}

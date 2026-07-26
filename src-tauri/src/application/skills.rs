@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use crate::application::agents::{AgentCommandError, ManagedAgentRegistry};
 use crate::application::skill_read::{
-    build_skill_read_plan, discover_eve_skill_targets, project_skill_snapshot,
+    build_skill_read_plan, discover_eve_skill_targets, project_skill_snapshot, ListSkillsResult,
 };
 use crate::core::local_lock::LocalSkillLockEntry;
-use crate::core::skill::{InstalledSkill, ListSkillsResult};
+use crate::core::skill::InstalledSkill;
 use crate::core::skill_lock::SkillLockEntry;
 use crate::environment::context_resolver::{ContextResolver, ResolvedContext};
 use crate::environment::lock_io::EnvironmentLockIo;
@@ -120,7 +120,7 @@ mod environment_tests {
             path: canonical_path.to_string(),
             canonical_path: canonical_path.to_string(),
             scope,
-            card_agents: Some(agents.clone()),
+            associated_agents: agents.clone(),
             default_available_agent_count: Some(agents.len() as u32),
             private_adapted_agent_count: Some(0),
             duplicate_copy_count: Some(0),
@@ -191,8 +191,8 @@ mod environment_tests {
 
         assert_eq!(skill.description, "Shared toolkit");
         assert_eq!(
-            skill.card_agents,
-            Some(vec![AgentId::parse("codex").unwrap()])
+            skill.associated_agents,
+            vec![AgentId::parse("codex").unwrap()]
         );
         assert_eq!(skill.source.as_deref(), Some("owner/repo"));
         assert_eq!(

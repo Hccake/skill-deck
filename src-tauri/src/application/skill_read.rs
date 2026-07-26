@@ -1,14 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
+use specta::Type;
 
 use crate::core::agent_availability::{
     availability_for_resolved_scope, resolved_agent_presence_from_paths, AgentAvailabilityKind,
 };
 use crate::core::agent_definition::{AgentAdapter, AgentId};
-use crate::core::skill::{InstalledSkill, ListSkillsResult, SkillFrontmatter, SkillScope};
-use crate::environment::agent_environment::{AgentRuntimeSnapshot, DetectionState};
+use crate::core::skill::{InstalledSkill, SkillFrontmatter, SkillScope};
+use crate::environment::agent_environment::{AgentRuntimeSnapshot, DetectionState, ResolvedAgent};
 use crate::environment::context_resolver::ResolvedContext;
 use crate::environment::inspection::{
     FilesystemEntryKind, RawFilesystemSnapshot, ReadPlan, ReadPlanBuilder, ReadRootPurpose,
@@ -34,6 +36,18 @@ pub struct SkillReadPlan {
     pub read_plan: ReadPlan,
     context_root: String,
     owners: BTreeMap<String, Vec<SkillReadOwner>>,
+}
+
+/// `list_skills` 的运行时读取结果。
+/// Skill 与 scope Agents 来自同一次 Agent runtime snapshot，避免 Frontend 拼接不同 revision。
+#[derive(Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct ListSkillsResult {
+    pub skills: Vec<InstalledSkill>,
+    pub agents: Vec<ResolvedAgent>,
+    /// 项目目录是否存在（project scope 时有意义，global 始终为 true）
+    pub path_exists: bool,
 }
 
 #[derive(Debug)]
@@ -316,8 +330,21 @@ pub fn project_skill_snapshot(
         .map(|(name, candidate)| project_candidate(name, candidate, runtime, is_global))
         .collect::<Vec<_>>();
     skills.sort_by(|left, right| left.name.cmp(&right.name));
+    let agents = runtime
+        .agents
+        .values()
+        .filter(|agent| {
+            if is_global {
+                agent.global.enabled
+            } else {
+                agent.project.enabled
+            }
+        })
+        .cloned()
+        .collect();
     Ok(ListSkillsResult {
         skills,
+        agents,
         path_exists,
     })
 }
@@ -388,7 +415,7 @@ fn project_candidate(
     is_global: bool,
 ) -> InstalledSkill {
     let mut agents = Vec::new();
-    let mut card_agents = Vec::new();
+    let mut associated_agents = Vec::new();
     let mut default_available_agents = Vec::new();
     let mut private_adapted_agents = Vec::new();
     let mut duplicate_copy_agents = Vec::new();
@@ -441,7 +468,7 @@ fn project_candidate(
         if effective {
             agents.push(agent_id.clone());
             if resolved.detection == DetectionState::Detected {
-                card_agents.push(agent_id.clone());
+                associated_agents.push(agent_id.clone());
             }
         }
     }
@@ -455,7 +482,7 @@ fn project_candidate(
                 .get(&target.agent)
                 .is_some_and(|agent| agent.detection == DetectionState::Detected)
             {
-                card_agents.push(target.agent.clone());
+                associated_agents.push(target.agent.clone());
             }
         }
     }
@@ -471,7 +498,7 @@ fn project_candidate(
             SkillScope::Project
         },
         agents,
-        card_agents: Some(card_agents),
+        associated_agents,
         source: None,
         source_url: None,
         installed_at: None,
@@ -701,10 +728,29 @@ mod tests {
         assert_eq!(skill.name, "toolkit");
         assert_eq!(skill.agents[0].as_str(), "custom-both");
         assert_eq!(skill.duplicate_copy_count, Some(1));
-        assert_eq!(
-            skill.card_agents.as_ref().unwrap()[0].as_str(),
-            "custom-both"
-        );
+        assert_eq!(skill.associated_agents[0].as_str(), "custom-both");
+    }
+
+    #[test]
+    fn skill_snapshot_returns_the_scope_agents_used_for_projection() {
+        let environment = EnvironmentRef::Host;
+        let context = context(environment.clone());
+        let runtime = runtime(environment.clone());
+        let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
+
+        let result = project_skill_snapshot(
+            &plan,
+            RawFilesystemSnapshot {
+                environment,
+                facts: Vec::new(),
+                total_content_bytes: 0,
+            },
+            &runtime,
+        )
+        .unwrap();
+
+        assert_eq!(result.agents.len(), 1);
+        assert_eq!(result.agents[0].definition.id.as_str(), "custom-both");
     }
 
     #[cfg(unix)]
@@ -754,8 +800,8 @@ mod tests {
             .find(|skill| skill.name == "toolkit")
             .unwrap();
         assert_eq!(
-            skill.card_agents.as_deref(),
-            Some([AgentId::parse("custom-both").unwrap()].as_slice())
+            skill.associated_agents.as_slice(),
+            [AgentId::parse("custom-both").unwrap()].as_slice()
         );
         assert_eq!(
             skill.private_adapted_agents.as_deref(),

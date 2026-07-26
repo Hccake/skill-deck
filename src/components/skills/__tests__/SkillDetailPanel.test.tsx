@@ -35,6 +35,7 @@ const makeSkill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => (
   canonicalPath: '/skills/cache/brainstorming',
   scope: 'global',
   agents: [],
+  associatedAgents: [],
   hasUpdate: true,
   canCheckForUpdates: true,
   ...overrides,
@@ -79,7 +80,7 @@ describe('SkillDetailPanel', () => {
     for (const title of [
       'skills.actions.update',
       'skills.actions.copyToProject',
-      'skills.manageAgents.title',
+      'skills.manageAgents.action',
       'skills.actions.delete',
     ]) {
       expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(true);
@@ -610,7 +611,7 @@ describe('SkillDetailPanel', () => {
         <SkillDetailPanel
           skill={makeSkill({
             agents: ['codex', 'cursor', 'firebender'],
-            cardAgents: ['codex', 'cursor'],
+            associatedAgents: ['codex', 'cursor'],
             defaultAvailableAgents: ['codex'],
             privateAdaptedAgents: ['cursor'],
             privateCopyAgents: ['firebender'],

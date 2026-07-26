@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::application::resources::SkillIdentity;
-use crate::core::skill::ListSkillsResult;
+use crate::application::skill_read::ListSkillsResult;
 use crate::environment::types::ContextRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
