@@ -18,11 +18,6 @@ struct TreesResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct CommitResponse {
-    sha: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct TreeEntry {
     path: String,
     #[serde(rename = "type")]
@@ -56,7 +51,7 @@ pub struct GithubTreeSnapshotEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubTreeFetchOutcome {
     Modified(GithubTreeSnapshot),
-    NotModified { ref_revision: String },
+    NotModified,
     RateLimited { retry_at_epoch_ms: Option<u64> },
     Incomplete,
     Failed(GithubTreeFailure),
@@ -99,36 +94,11 @@ impl GithubApiClient {
         git_ref: &str,
         validation: Option<&str>,
     ) -> GithubTreeFetchOutcome {
-        let commit_url = format!(
-            "{}/repos/{}/commits/{}",
-            self.api_base.trim_end_matches('/'),
-            repository,
-            urlencoding::encode(git_ref)
-        );
-        let mut commit_request = self
-            .client
-            .get(commit_url)
-            .header("Accept", "application/vnd.github.v3+json")
-            .header("User-Agent", "skill-deck");
-        if let Some(token) = &self.token {
-            commit_request = commit_request.header("Authorization", format!("Bearer {token}"));
-        }
-        let commit_response = match commit_request.send().await {
-            Ok(response) => response,
-            Err(_) => return GithubTreeFetchOutcome::Failed(GithubTreeFailure::Network),
-        };
-        if let Some(failure) = response_failure(&commit_response) {
-            return failure;
-        }
-        let ref_revision = match commit_response.json::<CommitResponse>().await {
-            Ok(body) if !body.sha.is_empty() => body.sha,
-            _ => return GithubTreeFetchOutcome::Failed(GithubTreeFailure::Network),
-        };
         let url = format!(
             "{}/repos/{}/git/trees/{}?recursive=1",
             self.api_base.trim_end_matches('/'),
             repository,
-            urlencoding::encode(&ref_revision)
+            urlencoding::encode(git_ref)
         );
         let mut request = self
             .client
@@ -147,7 +117,7 @@ impl GithubApiClient {
         };
         let status = response.status();
         if status == reqwest::StatusCode::NOT_MODIFIED {
-            return GithubTreeFetchOutcome::NotModified { ref_revision };
+            return GithubTreeFetchOutcome::NotModified;
         }
         if let Some(failure) = response_failure(&response) {
             return failure;
@@ -164,8 +134,12 @@ impl GithubApiClient {
         if body.truncated {
             return GithubTreeFetchOutcome::Incomplete;
         }
+        if body.sha.is_empty() {
+            return GithubTreeFetchOutcome::Failed(GithubTreeFailure::SourceUnavailable);
+        }
+        let source_revision = body.sha.clone();
         GithubTreeFetchOutcome::Modified(GithubTreeSnapshot {
-            ref_revision,
+            ref_revision: source_revision,
             root_tree_revision: body.sha,
             validation,
             entries: body
