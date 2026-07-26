@@ -22,7 +22,9 @@ use crate::core::agent_definition::{AgentAdapter, AgentId};
 use crate::core::lossless_lock::LockSchema;
 use crate::core::mutation::MutationKind;
 use crate::core::update_metadata::recover_source_url;
-use crate::environment::agent_environment::{AgentRuntimeSnapshot, ResolvedAgentScope};
+use crate::environment::agent_environment::{
+    AgentRuntimeSnapshot, DetectionState, ResolvedAgentScope,
+};
 use crate::environment::content_manifest::{
     ContentManifestHash, ContentManifestReader, ContentManifestTarget,
 };
@@ -46,7 +48,7 @@ pub struct LockedUpdateSkill {
     pub remote_hash: Option<String>,
     pub computed_hash: Option<String>,
     pub installed_at: Option<String>,
-    pub subagents: Vec<String>,
+    pub subagents: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -407,6 +409,28 @@ fn locked_skill(
         LockSchema::Global => string_field(object, "skillFolderHash"),
         LockSchema::Project => string_field(object, "remoteHash"),
     };
+    let subagents = match (schema, object.get("subagents")) {
+        (LockSchema::Global, _) | (LockSchema::Project, None) => None,
+        (LockSchema::Project, Some(Value::Array(values))) => Some(
+            values
+                .iter()
+                .map(|value| {
+                    value.as_str().map(str::to_string).ok_or_else(|| {
+                        AppError::ConfigurationCorrupted {
+                            message: format!(
+                                "Skill '{name}' Eve placement must contain only strings"
+                            ),
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        (LockSchema::Project, Some(_)) => {
+            return Err(AppError::ConfigurationCorrupted {
+                message: format!("Skill '{name}' Eve placement must be an array"),
+            })
+        }
+    };
     let skill = LockedUpdateSkill {
         name: name.to_string(),
         source,
@@ -419,17 +443,7 @@ fn locked_skill(
             .then(|| string_field(object, "computedHash"))
             .flatten(),
         installed_at: string_field(object, "installedAt"),
-        subagents: object
-            .get("subagents")
-            .and_then(Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default(),
+        subagents,
     };
     if !skill.capability().can_run_update {
         return Err(AppError::InvalidSource {
@@ -779,7 +793,9 @@ fn lock_mutation(
             entry.insert("skillPath".to_string(), json!(metadata.skill_path));
             entry.insert("computedHash".to_string(), json!(metadata.computed_hash));
             entry.insert("pluginName".to_string(), json!(metadata.plugin_name));
-            entry.insert("subagents".to_string(), json!(locked.subagents));
+            if let Some(subagents) = &locked.subagents {
+                entry.insert("subagents".to_string(), json!(subagents));
+            }
             if let Some(revision) = &metadata.upstream_revision {
                 entry.insert("remoteHash".to_string(), json!(revision));
             }
@@ -837,24 +853,42 @@ fn eve_adapter_roots(
     skill: &LockedUpdateSkill,
     environment: &EnvironmentRef,
 ) -> Result<Vec<(String, ResourceLocator, ObservedEntryOwner)>, AppError> {
-    let Some((agent_id, agent)) = runtime
-        .agents
-        .iter()
-        .find(|(_, agent)| agent.definition.adapter == AgentAdapter::Eve && agent.project.enabled)
-    else {
+    let has_explicit_placement = skill
+        .subagents
+        .as_ref()
+        .is_some_and(|targets| !targets.is_empty());
+    let Some((agent_id, agent)) = runtime.agents.iter().find(|(_, agent)| {
+        agent.definition.adapter == AgentAdapter::Eve
+            && agent.project.enabled
+            && agent.detection == DetectionState::Detected
+    }) else {
+        if has_explicit_placement {
+            return Err(AppError::Validation {
+                field: Some("subagents".to_string()),
+                message: format!(
+                    "Skill '{}' records Eve placement, but Eve is not detected in this Project",
+                    skill.name
+                ),
+            });
+        }
         return Ok(Vec::new());
     };
-    let Some(project) = runtime.project_path.as_deref() else {
-        return Ok(Vec::new());
-    };
-    let target_ids = if skill.subagents.is_empty() {
-        vec!["eve:root".to_string()]
-    } else {
-        skill
-            .subagents
+    let project = runtime
+        .project_path
+        .as_deref()
+        .ok_or(AppError::StaleContext)?;
+    let target_ids = match &skill.subagents {
+        None => vec!["eve:root".to_string()],
+        Some(subagents) => subagents
             .iter()
-            .map(|subagent| format!("eve:{}", crate::core::skill::sanitize_name(subagent)))
-            .collect()
+            .map(|subagent| {
+                if subagent.is_empty() {
+                    "eve:root".to_string()
+                } else {
+                    format!("eve:{}", crate::core::skill::sanitize_name(subagent))
+                }
+            })
+            .collect(),
     };
     target_ids
         .into_iter()
@@ -1333,9 +1367,10 @@ mod tests {
             remote_hash: Some("old".to_string()),
             computed_hash: None,
             installed_at: None,
-            subagents: Vec::new(),
+            subagents: None,
         };
 
+        skill.subagents = Some(vec!["".to_string()]);
         let root = eve_adapter_roots(&runtime, &skill, &EnvironmentRef::Host).unwrap();
         assert_eq!(root.len(), 1);
         assert_eq!(
@@ -1343,15 +1378,121 @@ mod tests {
             project.join("agent/skills").to_string_lossy()
         );
 
-        skill.subagents = vec!["Research Team".to_string()];
+        skill.subagents = Some(vec!["".to_string(), "Research Team".to_string()]);
         let subagents = eve_adapter_roots(&runtime, &skill, &EnvironmentRef::Host).unwrap();
-        assert_eq!(subagents.len(), 1);
+        assert_eq!(subagents.len(), 2);
         assert_eq!(
-            subagents[0].1.native_path,
+            subagents[1].1.native_path,
             project
                 .join("agent/subagents/research-team/skills")
                 .to_string_lossy()
         );
+    }
+
+    #[test]
+    fn eve_adapter_roots_distinguish_legacy_missing_targets_from_explicit_empty_targets() {
+        let temp = tempdir().unwrap();
+        let runtime = eve_runtime(temp.path().join("project").to_string_lossy().as_ref());
+        let base = json!({
+            "source": "owner/repo",
+            "sourceType": "github",
+            "sourceUrl": "https://github.com/owner/repo",
+            "skillPath": "skills/demo",
+            "remoteHash": "old",
+            "computedHash": "old"
+        });
+
+        let legacy = locked_skill("demo", LockSchema::Project, &base).unwrap();
+        assert_eq!(
+            eve_adapter_roots(&runtime, &legacy, &EnvironmentRef::Host)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let mut explicit_empty = base;
+        explicit_empty
+            .as_object_mut()
+            .unwrap()
+            .insert("subagents".to_string(), json!([]));
+        let explicit_empty = locked_skill("demo", LockSchema::Project, &explicit_empty).unwrap();
+        assert!(
+            eve_adapter_roots(&runtime, &explicit_empty, &EnvironmentRef::Host)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn eve_adapter_roots_require_a_detected_eve_project() {
+        let temp = tempdir().unwrap();
+        let project = temp.path().join("project");
+        let mut runtime = eve_runtime(project.to_string_lossy().as_ref());
+        runtime.agents.values_mut().next().unwrap().detection = DetectionState::NotDetected;
+        let skill = LockedUpdateSkill {
+            name: "demo".to_string(),
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo".to_string()),
+            ref_name: None,
+            skill_path: "skills/demo".to_string(),
+            remote_hash: Some("old".to_string()),
+            computed_hash: Some("old".to_string()),
+            installed_at: None,
+            subagents: None,
+        };
+
+        assert!(eve_adapter_roots(&runtime, &skill, &EnvironmentRef::Host)
+            .unwrap()
+            .is_empty());
+
+        let mut explicit = skill;
+        explicit.subagents = Some(vec!["research".to_string()]);
+        assert!(matches!(
+            eve_adapter_roots(&runtime, &explicit, &EnvironmentRef::Host),
+            Err(AppError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    fn locked_skill_rejects_malformed_eve_placement() {
+        for subagents in [json!("root"), json!(["", 1])] {
+            let result = locked_skill(
+                "demo",
+                LockSchema::Project,
+                &json!({
+                    "source": "owner/repo",
+                    "sourceType": "github",
+                    "sourceUrl": "https://github.com/owner/repo",
+                    "skillPath": "skills/demo",
+                    "remoteHash": "old",
+                    "computedHash": "old",
+                    "subagents": subagents
+                }),
+            );
+
+            assert!(matches!(
+                result,
+                Err(AppError::ConfigurationCorrupted { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn global_lock_ignores_project_only_eve_placement() {
+        assert!(locked_skill(
+            "demo",
+            LockSchema::Global,
+            &json!({
+                "source": "owner/repo",
+                "sourceType": "github",
+                "sourceUrl": "https://github.com/owner/repo",
+                "skillPath": "skills/demo",
+                "skillFolderHash": "old",
+                "subagents": "external-extension"
+            }),
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1366,7 +1507,7 @@ mod tests {
             remote_hash: Some("tree".to_string()),
             computed_hash: Some("content-v1".to_string()),
             installed_at: None,
-            subagents: Vec::new(),
+            subagents: None,
         };
 
         let capability = skill.capability();
