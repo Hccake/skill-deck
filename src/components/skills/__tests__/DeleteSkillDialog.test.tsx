@@ -17,6 +17,12 @@ vi.mock('@/workflows/skill-remove', () => ({
   openSkillRemoval: (...args: unknown[]) => mocks.openSkillRemoval(...args),
 }));
 
+vi.mock('@/components/recovery/RecoveryActions', () => ({
+  RecoveryActions: ({ recovery }: { recovery: { resourceId: string } }) => (
+    <div>recovery-actions:{recovery.resourceId}</div>
+  ),
+}));
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
@@ -28,6 +34,7 @@ const agentPath = '/home/example/.custom-agent/skills/a-very-long-skill-name';
 describe('DeleteSkillDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.executeSkillRemoval.mockResolvedValue({ status: 'succeeded' });
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
     useSkillDialogStore.setState({
       deleteTarget: {
@@ -116,6 +123,23 @@ describe('DeleteSkillDialog', () => {
       context,
       undefined,
     );
+  });
+
+  it('shows recovery actions and removes ordinary delete retry after recovery is required', async () => {
+    mocks.executeSkillRemoval.mockResolvedValueOnce({
+      status: 'recoveryRequired',
+      recovery: [{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }],
+    });
+    render(<DeleteSkillDialog />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'skills.deleteConfirm.confirm' }));
+    });
+
+    expect(screen.getByText('skills.deleteConfirm.recoveryRequired')).not.toBeNull();
+    expect(screen.getByText('recovery-actions:recovery-1')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.deleteConfirm.confirm' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.deleteConfirm.retryDelete' })).toBeNull();
   });
 
   it('blocks confirmation during another mutation', () => {

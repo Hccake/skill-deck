@@ -197,6 +197,7 @@
       "copyWarning": "Agent 目录中存在副本，确认后这些副本也会被删除。",
       "previewError": "无法加载当前删除范围，请重试。",
       "executionError": "删除未完成，当前范围仍保留，可以再次尝试。",
+      "recoveryRequired": "删除未完成，相关文件需要检查。请先处理下方恢复项。",
       "stale": "删除范围已经变化，请检查刷新后的范围并重新确认。",
       "retryPreview": "重新加载",
       "retryDelete": "重试删除",

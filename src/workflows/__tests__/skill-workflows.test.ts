@@ -205,6 +205,31 @@ describe('skill workflows', () => {
     expect(useSkillDialogStore.getState().deleteFeedback).toBe('executionError');
   });
 
+  it('returns removal recovery actions without turning them into a retryable execution error', async () => {
+    useSkillDialogStore.setState({
+      deleteTarget: { skill, scope: 'project', projectPath: '/source', context },
+      deletePreview: removePreview,
+    });
+    mocks.removeSkill.mockResolvedValueOnce({
+      units: [{
+        status: 'recoveryRequired',
+        retryable: false,
+        recovery: recoveryAction,
+        error: null,
+      }],
+    });
+
+    const outcome = await executeSkillRemoval();
+
+    expect(outcome).toEqual({
+      status: 'recoveryRequired',
+      recovery: [recoveryAction],
+    });
+    expect(useSkillDialogStore.getState().deleteTarget?.skill.name).toBe(skill.name);
+    expect(useSkillDialogStore.getState().deletePreview).toBe(removePreview);
+    expect(useSkillDialogStore.getState().deleteFeedback).toBeNull();
+  });
+
   it('reloads the removal preview when execution reports stale scope', async () => {
     const refreshedPreview = {
       ...removePreview,

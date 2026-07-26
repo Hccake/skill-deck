@@ -1,6 +1,7 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useMutationStore } from '@/stores/mutation';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillRemoval, openSkillRemoval } from '@/workflows/skill-remove';
+import type { RecoveryAction } from '@/bindings';
 
 export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const { t } = useTranslation();
@@ -25,12 +27,19 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const close = useSkillDialogStore((state) => state.closeDelete);
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [removing, setRemoving] = useState(false);
+  const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
+
+  useEffect(() => {
+    setRecovery([]);
+  }, [preview, target]);
 
   const confirm = useCallback(async () => {
     if (!preview) return;
+    setRecovery([]);
     setRemoving(true);
     try {
-      await executeSkillRemoval();
+      const outcome = await executeSkillRemoval();
+      if (outcome.status === 'recoveryRequired') setRecovery(outcome.recovery);
     } finally {
       setRemoving(false);
     }
@@ -42,6 +51,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   }, [target]);
 
   const retryingPreview = feedback === 'previewError' && !preview;
+  const recoveryRequired = recovery.length > 0;
   const hasCopies = preview?.physicalEntries.some((entry) => entry.kind === 'directory') ?? false;
 
   return (
@@ -63,15 +73,22 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
           data-testid="delete-skill-dialog-body"
           className="min-h-0 min-w-0 max-w-full space-y-4 overflow-y-auto overflow-x-hidden overscroll-contain px-6 pb-5"
         >
-          {feedback ? (
+          {feedback || recoveryRequired ? (
             <div
               role="alert"
               className="flex min-w-0 gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-              <span className="min-w-0 break-words">
-                {t(`skills.deleteConfirm.${feedback}`)}
-              </span>
+              <div className="min-w-0 flex-1 break-words">
+                <p>
+                  {recoveryRequired
+                    ? t('skills.deleteConfirm.recoveryRequired')
+                    : t(`skills.deleteConfirm.${feedback}`)}
+                </p>
+                {recovery.map((action) => (
+                  <RecoveryActions key={action.resourceId} recovery={action} />
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -146,20 +163,22 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
 
         <DialogFooter className="min-w-0 border-t px-6 py-4">
           <Button variant="outline" onClick={close} disabled={removing}>
-            {t('common.cancel')}
+            {t(recoveryRequired ? 'common.close' : 'common.cancel')}
           </Button>
-          <Button
-            variant="destructive"
-            onClick={retryingPreview ? retryPreview : confirm}
-            disabled={writeBlocked || removing || loading || (!preview && !retryingPreview)}
-          >
-            {removing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            {retryingPreview
-              ? t('skills.deleteConfirm.retryPreview')
-              : feedback === 'executionError'
-                ? t('skills.deleteConfirm.retryDelete')
-                : t('skills.deleteConfirm.confirm')}
-          </Button>
+          {!recoveryRequired ? (
+            <Button
+              variant="destructive"
+              onClick={retryingPreview ? retryPreview : confirm}
+              disabled={writeBlocked || removing || loading || (!preview && !retryingPreview)}
+            >
+              {removing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              {retryingPreview
+                ? t('skills.deleteConfirm.retryPreview')
+                : feedback === 'executionError'
+                  ? t('skills.deleteConfirm.retryDelete')
+                  : t('skills.deleteConfirm.confirm')}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
