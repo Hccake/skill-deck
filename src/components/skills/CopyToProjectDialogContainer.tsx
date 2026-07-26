@@ -70,6 +70,12 @@ function OpenCopyToProjectDialog({
   const environments = useEnvironmentStore((state) => state.environments);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
   const closeCopyToProject = useSkillDialogStore((state) => state.closeCopyToProject);
+  const openRepairSource = useSkillDialogStore((state) => state.openRepairSource);
+
+  const handleRepairSource = (targetSkill: InstalledSkill, context: ContextRef) => {
+    closeCopyToProject();
+    openRepairSource(targetSkill, context);
+  };
 
   return (
     <CopyToProjectDialog
@@ -80,6 +86,7 @@ function OpenCopyToProjectDialog({
       onLoadProjects={loadTargetProjects}
       checkExistence={checkTargetExistence}
       onClose={closeCopyToProject}
+      onRepairSource={handleRepairSource}
       onCopy={executeSkillCopy}
     />
   );

@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { EnvironmentInfo } from '@/bindings';
+import type { AppError, EnvironmentInfo } from '@/bindings';
 import { EnvironmentSelect } from '../EnvironmentSelect';
 
 vi.mock('react-i18next', () => ({
@@ -74,6 +74,41 @@ describe('EnvironmentSelect', () => {
     expect(screen.getByRole('option', {
       name: /Ubuntu 24\.04 Long Environment Name/,
     }).getAttribute('title')).toBe('Ubuntu 24.04 Long Environment Name');
+  });
+
+  it('shows a typed discovery error without adding an independent retry', () => {
+    const discoveryError: AppError = {
+      kind: 'environmentDiscoveryFailed',
+      data: { message: 'wsl.exe unavailable' },
+    };
+    renderSelect({
+      environments: [host],
+      discoveryError,
+    });
+
+    expect(screen.getByText('context.environmentDiscoveryFailed')).toBeDefined();
+    expect(screen.getByText('addSkill.error.environmentDiscoveryFailed')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'context.environmentRetry' })).toBeNull();
+  });
+
+  it('shows a connection error for the failed environment and retries that environment', () => {
+    const onChange = vi.fn();
+    const connectionError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution is stopped' },
+    };
+    renderSelect({
+      environments: [host, { ...ubuntu, status: 'unavailable', error: connectionError }],
+      onChange,
+    });
+
+    expect(screen.getByText('context.environmentConnectionFailed:Ubuntu 24.04 Long Environment Name'))
+      .toBeDefined();
+    expect(screen.getByText('addSkill.error.environmentUnavailable')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', {
+      name: 'context.environmentRetryNamed:Ubuntu 24.04 Long Environment Name',
+    }));
+    expect(onChange).toHaveBeenCalledWith(ubuntu.environment);
   });
 
   it('selects an environment through the shadcn Select contract', () => {

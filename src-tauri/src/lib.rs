@@ -270,7 +270,10 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
-                .targets([Target::new(TargetKind::Stdout)])
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::LogDir { file_name: None }),
+                ])
                 .build(),
         )
         .invoke_handler(builder.invoke_handler())

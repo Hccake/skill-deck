@@ -41,10 +41,11 @@ interface CopyToProjectDialogProps {
     projectIds: string[],
   ) => Promise<Array<{ projectId: string; hasSkill: boolean }>>;
   onClose: () => void;
+  onRepairSource?: (skill: InstalledSkill, context: ContextRef) => void;
   onCopy: (selection: CopyTargetSelection) => Promise<CopyOutcome>;
 }
 
-const SOURCE_INFO_LIMIT_REASONS = new Set(['missing-skill-path', 'missingRemoteHash']);
+const SOURCE_INFO_LIMIT_REASONS = new Set(['missingRemoteHash']);
 type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
 type PresenceState = 'idle' | 'loading' | 'ready' | 'error';
 type ProjectPresence = 'installed' | 'absent' | 'unknown';
@@ -79,6 +80,7 @@ function CopyToProjectDialogSession({
   onLoadProjects,
   checkExistence,
   onClose,
+  onRepairSource,
   onCopy,
 }: CopyToProjectDialogProps) {
   const { t } = useTranslation();
@@ -168,11 +170,18 @@ function CopyToProjectDialogSession({
     return count;
   }, [presenceByProject, selected]);
 
-  const showSourceInfoNote = useMemo(() => {
-    if (!skill) return false;
-    if (!skill.source && !skill.sourceUrl) return true;
-    return SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? '');
-  }, [skill]);
+  const sourceNeedsRepair = Boolean(
+    skill && (
+      skill.updateReason === 'missing-skill-path'
+      || (!skill.source && !skill.sourceUrl)
+    )
+  );
+  const showSourceInfoNote = useMemo(
+    () => Boolean(
+      skill && (sourceNeedsRepair || SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? ''))
+    ),
+    [skill, sourceNeedsRepair],
+  );
 
   const toggleProject = useCallback((projectId: string) => {
     setSelected((prev) => {
@@ -260,11 +269,30 @@ function CopyToProjectDialogSession({
           </div>
         ) : null}
         {showSourceInfoNote ? (
-          <div role="note" className="flex items-start gap-1.5 rounded-md bg-muted/40 px-2.5 py-2">
+          <div
+            role="note"
+            className={`flex items-start gap-1.5 rounded-md px-2.5 py-2 ${
+              sourceNeedsRepair ? 'bg-warning/10' : 'bg-muted/40'
+            }`}
+          >
             <Info className="h-3.5 w-3.5 shrink-0 mt-px text-muted-foreground" />
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {t('skills.copyToProject.metadataWarning')}
-            </p>
+            <div className="min-w-0 space-y-1">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {t(sourceNeedsRepair
+                  ? 'skills.copyToProject.sourceRepairRequired'
+                  : 'skills.copyToProject.metadataWarning')}
+              </p>
+              {sourceNeedsRepair && onRepairSource && skill ? (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={() => onRepairSource(skill, sourceContext)}
+                >
+                  {t('skills.copyToProject.repairSource')}
+                </Button>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -393,7 +421,13 @@ function CopyToProjectDialogSession({
           </Button>
           <Button
             onClick={handleCopy}
-            disabled={writeBlocked || copying || projectLoadState !== 'ready' || selected.size === 0}
+            disabled={
+              writeBlocked
+              || copying
+              || sourceNeedsRepair
+              || projectLoadState !== 'ready'
+              || selected.size === 0
+            }
           >
             {copying ? (
               <>

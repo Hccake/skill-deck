@@ -187,6 +187,7 @@ export function ContextSidebar() {
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const environments = useEnvironmentStore((state) => state.environments);
+  const discoveryError = useEnvironmentStore((state) => state.discoveryError);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
@@ -259,6 +260,7 @@ export function ContextSidebar() {
             })}
             disabled={pendingEnvironment !== null}
             pendingEnvironment={pendingEnvironment}
+            discoveryError={discoveryError}
           />
         </div>
 

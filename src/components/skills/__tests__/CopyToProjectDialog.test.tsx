@@ -286,6 +286,27 @@ describe('CopyToProjectDialog', () => {
     expect(note.querySelector('.text-warning')).toBeNull();
   });
 
+  it('does not add a copy-specific warning for a local source', async () => {
+    render(
+      <CopyToProjectDialog
+        skill={skill({
+          source: '/home/alice/skills',
+          sourceUrl: null,
+          canRunUpdate: false,
+          canCheckForUpdates: false,
+          updateReason: 'local-source',
+        })}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    await screen.findByText('/project-b');
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.copyToProject.repairSource' })).toBeNull();
+  });
+
   it('does not show the source note for temporary update check failures', async () => {
     render(
       <CopyToProjectDialog
@@ -304,7 +325,8 @@ describe('CopyToProjectDialog', () => {
     expect(screen.queryByText('skills.copyToProject.metadataWarning')).toBeNull();
   });
 
-  it('shows a lightweight source note when source information is missing', async () => {
+  it('blocks copying and offers source repair when source information is missing', async () => {
+    const onRepairSource = vi.fn();
     render(
       <CopyToProjectDialog
         skill={skill({
@@ -317,13 +339,20 @@ describe('CopyToProjectDialog', () => {
         {...defaultCopyProps}
         onClose={vi.fn()}
         onCopy={vi.fn()}
+        onRepairSource={onRepairSource}
       />
     );
 
     await screen.findByText('/project-b');
     const note = screen.getByRole('note');
-    expect(note.textContent).toContain('skills.copyToProject.metadataWarning');
-    expect(note.querySelector('.text-warning')).toBeNull();
+    expect(note.textContent).toContain('skills.copyToProject.sourceRepairRequired');
+    const repair = screen.getByRole('button', { name: 'skills.copyToProject.repairSource' });
+    expect(repair).toBeDefined();
+    expect((screen.getByRole('button', {
+      name: 'skills.copyToProject.copy',
+    }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(repair);
+    expect(onRepairSource).toHaveBeenCalledTimes(1);
   });
 
   it('shows a recoverable error when target projects cannot be loaded', async () => {
