@@ -112,7 +112,7 @@ pnpm bindings:generate
 pnpm bindings:check
 ```
 
-Main 与 Install Wizard 使用不同的最小权限集合。不要为了通过调用而把 command 同时加入两个窗口，也不要绕过 application command manifest 直接依赖 UI 隐藏。
+Main 与 Install Wizard 只共享两边实际使用的安装与运行时 command，Settings、Recovery、Updater 等能力仍按窗口维持最小权限。不要为了通过调用而授权没有真实调用点的 command，也不要绕过 application command manifest 直接依赖 UI 隐藏。
 
 ## 文档
 
@@ -149,7 +149,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
-# 仅检查 WSL integration feature 的编译边界；真实 acceptance 仍需 Windows + 两个测试 distro
+# 仅检查 WSL integration feature 的编译边界；真实 acceptance 仍需 Windows + 一个 reference distro
 cargo check --locked --manifest-path src-tauri/Cargo.toml --features wsl-integration-tests --all-targets
 ```
 
@@ -165,7 +165,7 @@ Pull request CI 包含以下门禁：
 - Windows、macOS、Linux 上的 Rust fmt/check/clippy/test；
 - bundled WSL `/bin/sh` assets 的 ShellCheck。
 
-Native integration tests 使用真实临时 filesystem 验证完整 workflow。真实 WSL tests 标记为 ignored，因为它们需要 Windows 和已配置的测试发行版；普通 PR CI 不自动模拟这类环境。维护者可以手动运行独立的 `WSL Acceptance` workflow，它只会调度到带 `skill-deck-wsl` 标签并配置了两个 disposable distro 的 Windows self-hosted runner。
+Native integration tests 使用真实临时 filesystem 验证完整 workflow。真实 WSL tests 标记为 ignored，因为它们需要 Windows 和已配置的测试发行版；普通 PR CI 不自动模拟这类环境。维护者可以手动运行独立的 `WSL Acceptance` workflow，它只会调度到带 `skill-deck-wsl` 标签并配置了一个 reference distro 的 Windows self-hosted runner。
 
 ## Release 与应用更新
 

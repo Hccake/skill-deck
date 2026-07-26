@@ -180,7 +180,7 @@ Evidence coordinator 以规范化 remote source 与 ref 组织进程级状态，
 
 ### Environment maintenance
 
-应用启动后注册 Host maintenance 状态并异步完成清理与 Recovery reindex，不阻塞主窗口。每个 Environment 的 maintenance 处于 `Pending`、`Ready` 或 `Failed`；依赖 Payload 的写操作只在对应 Environment ready 后开始，读取和 Settings 不受影响。WSL Environment 可用后，以 runtime event 的连接 revision 作为幂等键运行同一流程：同一或更旧 revision 的 `Pending`、`Ready`、`Failed` 都不重复执行，更高 revision 在当前任务结束后执行一轮完整维护。单个 Environment 初始化失败不会阻止其他 Environment 工作。
+应用启动后注册 Host maintenance 状态并异步完成清理与 Recovery reindex，不阻塞主窗口。每个 Environment 的 maintenance 处于 `Pending`、`Ready` 或 `Failed`；依赖 Payload 的写操作只在对应 Environment ready 后开始，读取和 Settings 不受影响。WSL Environment 可用后，以 runtime event 的连接 revision 作为幂等键运行同一流程：同一或更旧 revision 的 `Pending`、`Ready` 不重复执行；`Failed` 只有在用户显式重新进入或启动新一轮 runtime facts 时才重新执行；更高 revision 在当前任务结束后执行一轮完整维护。单个 Environment 初始化失败不会阻止其他 Environment 工作。
 
 Runtime Maintenance 不暴露独立 retry command；重新进入 Environment 或重启应用会重新建立更完整的运行状态。用户可见的状态反馈由[产品设计](./product.md#context-侧栏)定义。
 

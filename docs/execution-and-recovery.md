@@ -168,7 +168,7 @@ Unit 结果使用以下稳定状态：
 
 Error 和 warning 使用稳定 code 与 parameters。Backend technical details 只用于开发和标准本地日志；Frontend 根据 code 选择 i18n 文案、retry 和 recovery 行为。
 
-每个结果携带能够定位 Skill、Environment、Context 和操作目标的结构化 identity。错误按 unit 保留 source、target、Agent target、lock commit 和 recovery 信息。`RecoveryRequired` 必须作为 typed outcome 传到所有相关 workflow（包括 Install、Copy、Repair 和 Manage Agents），不能压成普通 `Failed`；单 unit 不得聚合成 `Partial`。`Skipped` 不计为成功，`NotRun` 不伪装为执行失败。
+每个结果携带能够定位 Skill、Environment、Context 和操作目标的结构化 identity。错误按 unit 保留 source、target、Agent target、lock commit 和 recovery 信息。`RecoveryRequired` 必须作为 typed outcome 传到所有相关 workflow（包括 Install、Copy、Repair、Manage Agents、Remove 和 Update），不能压成普通 `Failed`；单 unit 不得聚合成 `Partial`。`Skipped` 不计为成功，`NotRun` 不伪装为执行失败。
 
 执行状态通过统一 mutation channel 发布 phase 和可选 progress。Update 在 acquisition、validation 和 commit 阶段持续更新状态；Repair Source 至少区分验证、准备和安装阶段；进入逐 unit 执行后，progress 使用 Skill name 作为 subject，并携带当前序号与总数。Frontend 不从日志或路径猜测进度，也不把 Backend raw path 作为用户可见的当前目标。
 

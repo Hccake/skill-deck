@@ -88,7 +88,7 @@ Project lock 位于 `<project>/skills-lock.json`，当前 schema version 为 `1`
 | `remoteHash` | Skill Deck | provider 可比较的 upstream revision；GitHub 为 Skill 目录的 Git tree object ID |
 | `pluginName` | Skill Deck | 展示用 plugin metadata |
 
-Eve root-only placement 遵循 CLI 的最小写入方式，可以省略 `subagents`；具名或 multiple placement 使用明确数组值。没有 Eve target 时不写 Eve placement，也不使用 `subagents: []` 发明新的共享语义。已存在的空数组按外部输入保留，并由已确认的 Eve Context 按兼容规则解释，不能在读取时静默迁移。
+Eve root-only placement 遵循 CLI 的最小写入方式，可以省略 `subagents`；具名或 multiple placement 使用明确数组值。没有 Eve target 时不写 Eve placement，也不使用 `subagents: []` 发明新的共享语义。已存在的空数组按外部输入保留，并由已确认的 Eve Context 按兼容规则解释，不能在读取时静默迁移。字段不是数组或数组中包含非字符串值时，应用按 lock 损坏处理，不能把 malformed placement 当成字段缺失后回退到 root。
 
 CLI 的 `computedHash` 由相对路径和文件内容以确定性顺序计算 SHA-256，并跳过 `.git`、`node_modules` 等非 Skill 内容。Skill Deck 从已经固定的 payload 计算兼容 hash，不能把 payload identity 或 `remoteHash` 写入这个字段。
 
