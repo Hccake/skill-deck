@@ -11,8 +11,6 @@ import { toAppError } from '@/utils/to-app-error';
 
 export { environmentKey } from '@/lib/context';
 
-export type EnvironmentDiscoveryIntent = 'initial' | 'resume';
-
 export type EnvironmentDiscoveryState = 'idle' | 'loading' | 'ready' | 'error';
 
 interface EnvironmentState {
@@ -21,7 +19,7 @@ interface EnvironmentState {
   discoveryState: EnvironmentDiscoveryState;
   discoveryError: AppError | null;
   errorsByEnvironment: Record<string, AppError | null>;
-  discover: (intent: EnvironmentDiscoveryIntent) => Promise<void>;
+  discover: () => Promise<void>;
   connect: (environment: EnvironmentRef) => Promise<void>;
   applyRuntimeEvent: (event: EnvironmentRuntimeEvent) => void;
 }
@@ -87,7 +85,7 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   errorsByEnvironment: {},
   discoveryCompletedAt: null,
 
-  discover: (_intent) => {
+  discover: () => {
     if (discoveryInFlight) return discoveryInFlight;
 
     const { discoveryCompletedAt, environments } = get();

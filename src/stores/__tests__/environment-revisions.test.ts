@@ -40,7 +40,7 @@ describe('Environment revision convergence', () => {
 
   it('rejects older events and older discovery snapshots per Environment', async () => {
     api.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
 
     const newer: EnvironmentRuntimeEvent = {
       revision: 7,
@@ -59,7 +59,7 @@ describe('Environment revision convergence', () => {
       error: null,
     });
     useEnvironmentStore.setState({ discoveryCompletedAt: null });
-    await useEnvironmentStore.getState().discover('resume');
+    await useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState().environments[1]).toMatchObject({
       status: 'unavailable',
@@ -78,7 +78,7 @@ describe('Environment revision convergence', () => {
     useEnvironmentStore.getState().applyRuntimeEvent(event);
     api.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
 
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState().environments[1]).toMatchObject({
       status: 'connecting',

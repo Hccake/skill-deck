@@ -68,7 +68,7 @@ describe('useEnvironmentStore', () => {
   it('discovers environments without connecting a distribution', async () => {
     mocks.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
 
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState().environments).toEqual([host, ubuntu]);
     expect(useEnvironmentStore.getState().discoveryState).toBe('ready');
@@ -82,7 +82,7 @@ describe('useEnvironmentStore', () => {
     };
     mocks.listEnvironments.mockResolvedValue({ environments: [host], error });
 
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [host],
@@ -98,7 +98,7 @@ describe('useEnvironmentStore', () => {
     };
     mocks.listEnvironments.mockRejectedValue(error);
 
-    await expect(useEnvironmentStore.getState().discover('initial')).rejects.toEqual(error);
+    await expect(useEnvironmentStore.getState().discover()).rejects.toEqual(error);
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [{
@@ -113,12 +113,12 @@ describe('useEnvironmentStore', () => {
     });
   });
 
-  it('shares one in-flight request across discovery intents', async () => {
+  it('shares one in-flight request across callers', async () => {
     const request = deferred<{ environments: EnvironmentInfo[]; error: AppError | null }>();
     mocks.listEnvironments.mockReturnValue(request.promise);
 
-    const initial = useEnvironmentStore.getState().discover('initial');
-    const resume = useEnvironmentStore.getState().discover('resume');
+    const initial = useEnvironmentStore.getState().discover();
+    const resume = useEnvironmentStore.getState().discover();
     expect(resume).toBe(initial);
     expect(mocks.listEnvironments).toHaveBeenCalledTimes(1);
 
@@ -129,13 +129,13 @@ describe('useEnvironmentStore', () => {
   it('suppresses automatic discovery for 30 seconds after an attempt completes', async () => {
     mocks.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
 
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
     now += 29_999;
-    await useEnvironmentStore.getState().discover('resume');
+    await useEnvironmentStore.getState().discover();
     expect(mocks.listEnvironments).toHaveBeenCalledTimes(1);
 
     now += 1;
-    await useEnvironmentStore.getState().discover('resume');
+    await useEnvironmentStore.getState().discover();
     expect(mocks.listEnvironments).toHaveBeenCalledTimes(2);
   });
 
@@ -148,9 +148,9 @@ describe('useEnvironmentStore', () => {
       .mockResolvedValueOnce({ environments: [host, ubuntu], error: null })
       .mockResolvedValueOnce({ environments: [host], error });
 
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
     now += 30_000;
-    await useEnvironmentStore.getState().discover('resume');
+    await useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [host, ubuntu],
@@ -159,7 +159,7 @@ describe('useEnvironmentStore', () => {
     });
 
     now += 29_999;
-    await useEnvironmentStore.getState().discover('resume');
+    await useEnvironmentStore.getState().discover();
     expect(mocks.listEnvironments).toHaveBeenCalledTimes(2);
   });
 
@@ -172,9 +172,9 @@ describe('useEnvironmentStore', () => {
       .mockResolvedValueOnce({ environments: [host, ubuntu], error: null })
       .mockRejectedValueOnce(error);
 
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
     now += 30_000;
-    await expect(useEnvironmentStore.getState().discover('resume')).rejects.toEqual(error);
+    await expect(useEnvironmentStore.getState().discover()).rejects.toEqual(error);
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [host, ubuntu],
@@ -188,12 +188,12 @@ describe('useEnvironmentStore', () => {
       environments: [host, ubuntu, debian],
       error: null,
     });
-    await useEnvironmentStore.getState().discover('initial');
+    await useEnvironmentStore.getState().discover();
 
     const request = deferred<{ environments: EnvironmentInfo[]; error: AppError | null }>();
     mocks.listEnvironments.mockReturnValueOnce(request.promise);
     now += 30_000;
-    const refresh = useEnvironmentStore.getState().discover('resume');
+    const refresh = useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState()).toMatchObject({
       environments: [host, ubuntu, debian],
