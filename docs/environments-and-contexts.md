@@ -22,13 +22,13 @@ macOS 和 Linux 只提供 Host。Windows 始终保留 Host，并在发现 WSL �
 
 应用每次启动都从 Host 的 Global Context 开始，不恢复上次选择的 WSL Environment。启动阶段可以发现 WSL 发行版，但不会因此建立连接或启动发行版；只有用户在当前会话中明确切换到某个 WSL Environment，才进入连接流程。用户主动切换或继续使用已经选择的 WSL Environment，表示允许连接流程或一次受控重连按需唤起已经停止的发行版；这不赋予 Skill Deck 单独启动、停止、重启或管理发行版的能力。
 
-WSL 发现（Discovery）是重新获取当前 WSL 发行版列表的过程，它不建立连接，也不判断发行版当前是否可用。一次成功的发现会取代本次应用运行期间保存的上一份列表，列表中已经不存在的发行版会被移除；发现失败只报告发现错误，不推翻本次运行期间最近一次成功结果。应用重启后不会继续使用上一次运行保存的列表。某个已发现的发行版当前是否可用，由后续连接（Connection）或实际操作确认。连接失败只更新该 Environment 的运行状态和错误提示，不会顺带触发发现，也不会修改发行版列表。
+WSL 发现（Discovery）是重新获取当前 WSL 发行版列表的过程，它不建立连接，也不判断发行版当前是否可用。一次成功的发现会取代本次应用运行期间保存的上一份列表，列表中已经不存在的发行版会被移除；发现失败只报告本次发现错误，不推翻本次运行期间最近一次成功结果。应用重启后不会继续使用上一次运行保存的列表。某个已发现的发行版当前是否可用，由后续连接（Connection）或实际操作确认。连接失败只更新该 Environment 的运行状态并提示本次失败，不会顺带触发发现、修改发行版列表或保存独立错误历史。
 
 每个 Environment 具有 status、generation/revision、Home、ConfigHome 和 path mapping。WSL 连接时另外得到是否满足正式支持基线的二元 preflight 结果；不维护供 Frontend 长期组合 fallback 的 capability snapshot。WSL session 丢失或重新连接后 generation 会变化，依赖旧 revision 的 preview、payload 或 runtime fact 不能继续授权执行。
 
 Environment runtime identity 对 Host 使用固定值，对 WSL distro name 使用规范化且不区分大小写的值。用于匹配的规范化 identity 不改写 `EnvironmentRef`、用户配置或界面中的 display name。
 
-发现或连接一个 WSL Environment 失败不会让 Host 或其他已连接 Environment 失效。Frontend 在切换成功前保留原 Context，旧请求也不能覆盖已经切换到的新 Environment。
+发现或连接一个 WSL Environment 失败不会让 Host 或其他已连接 Environment 失效。Frontend 在切换成功前保留原 Context，旧请求也不能覆盖已经切换到的新 Environment。当前已选 Environment 不可用时可以直接重新连接；其他不可用 Environment 由用户再次选择时自然重试，不为每个 Environment 保留长期重试入口。
 
 ## Context
 
@@ -44,7 +44,7 @@ Global 表示当前 Environment 的用户级 Skill 范围。Project 通过稳定
 
 同一个现实项目可以分别登记在 Windows Host 与某个 WSL Environment 中。这些 bindings 表达各自的执行入口、原生路径和 storage facts，不表示需要复制 Agent definition 或建立第二套 Agent catalog。
 
-Project registry 按 Environment 隔离。连接成功后立即提交目标 Environment 的 Global Context，Project 列表随后按目标 Environment 独立加载；Project 加载失败不回滚已经提交的 Environment。连接失败时保持原 Context，不展示来自未提交切换的混合状态。
+Project registry 按 Environment 隔离。切换到其他 Environment 成功后立即提交目标 Environment 的 Global Context，Project 列表随后按目标 Environment 独立加载；Project 加载失败不回滚已经提交的 Environment。当前 Environment 重新连接成功后保留现有 Global 或 Project Context，并刷新对应的 Project 列表。只有成功加载的列表明确确认当前项目已不存在时，Frontend 才回到 Global；加载中、加载失败或仍使用旧列表时继续保留当前 Project Context。连接失败时保持原 Context，不展示来自未提交切换的混合状态。
 
 ## ProjectBinding
 

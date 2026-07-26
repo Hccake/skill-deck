@@ -33,7 +33,6 @@ describe('Environment revision convergence', () => {
       runtimeByEnvironment: {},
       discoveryState: 'idle',
       discoveryError: null,
-      errorsByEnvironment: {},
       discoveryCompletedAt: null,
     });
   });

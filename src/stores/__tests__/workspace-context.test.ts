@@ -101,14 +101,56 @@ describe('useWorkspaceContextStore', () => {
     });
   });
 
-  it('does not reconnect or increment revision for the committed environment', async () => {
-    const connect = vi.spyOn(useEnvironmentStore.getState(), 'connect');
-    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh');
+  it('reconnects the current environment without leaving the selected project', async () => {
+    useWorkspaceContextStore.setState({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      contextRevision: 4,
+    });
+    const connect = vi.spyOn(useEnvironmentStore.getState(), 'connect')
+      .mockResolvedValue(undefined);
+    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh')
+      .mockResolvedValue([]);
 
     await useWorkspaceContextStore.getState().switchEnvironment(host);
 
-    expect(connect).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledWith(host);
+    expect(refresh).toHaveBeenCalledWith(host);
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      pendingEnvironment: null,
+      contextRevision: 4,
+    });
+  });
+
+  it('keeps the selected project when reconnecting the current environment fails', async () => {
+    const error = new Error('host runtime unavailable');
+    useWorkspaceContextStore.setState({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      contextRevision: 4,
+    });
+    vi.spyOn(useEnvironmentStore.getState(), 'connect').mockRejectedValue(error);
+    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh');
+
+    await expect(useWorkspaceContextStore.getState().switchEnvironment(host))
+      .rejects.toThrow('host runtime unavailable');
+
     expect(refresh).not.toHaveBeenCalled();
-    expect(useWorkspaceContextStore.getState().contextRevision).toBe(0);
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      pendingEnvironment: null,
+      contextRevision: 4,
+    });
   });
 });

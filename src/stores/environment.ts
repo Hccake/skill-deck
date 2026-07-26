@@ -18,7 +18,6 @@ interface EnvironmentState {
   runtimeByEnvironment: Record<string, EnvironmentInfo>;
   discoveryState: EnvironmentDiscoveryState;
   discoveryError: AppError | null;
-  errorsByEnvironment: Record<string, AppError | null>;
   discover: () => Promise<void>;
   connect: (environment: EnvironmentRef) => Promise<void>;
   applyRuntimeEvent: (event: EnvironmentRuntimeEvent) => void;
@@ -82,7 +81,6 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   runtimeByEnvironment: {},
   discoveryState: 'idle',
   discoveryError: null,
-  errorsByEnvironment: {},
   discoveryCompletedAt: null,
 
   discover: () => {
@@ -126,9 +124,6 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
           return {
             environments: nextEnvironments,
             runtimeByEnvironment,
-            errorsByEnvironment: Object.fromEntries(
-              nextEnvironments.map((entry) => [environmentKey(entry.environment), entry.error]),
-            ),
             discoveryState: snapshot.error ? 'error' : 'ready',
             discoveryError: snapshot.error,
           };
@@ -145,9 +140,6 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
             runtimeByEnvironment: host
               ? { ...state.runtimeByEnvironment, host }
               : state.runtimeByEnvironment,
-            errorsByEnvironment: host
-              ? { ...state.errorsByEnvironment, host: host.error }
-              : state.errorsByEnvironment,
             discoveryState: 'error',
             discoveryError: toAppError(error),
           };
@@ -163,16 +155,11 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   },
 
   connect: async (environment) => {
-    const key = environmentKey(environment);
     set((state) => ({
       environments: updateEnvironment(state.environments, environment, {
         status: environment.kind === 'host' ? 'available' : 'connecting',
         error: null,
       }),
-      errorsByEnvironment: {
-        ...state.errorsByEnvironment,
-        [key]: null,
-      },
     }));
     if (environment.kind === 'host') return;
 
@@ -191,10 +178,6 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
           status: 'unavailable',
           error: appError,
         }),
-        errorsByEnvironment: {
-          ...state.errorsByEnvironment,
-          [key]: appError,
-        },
       }));
       throw error;
     }
@@ -216,10 +199,6 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
         environments: discovered
           ? updateEnvironment(state.environments, event.environment, next)
           : state.environments,
-        errorsByEnvironment: {
-          ...state.errorsByEnvironment,
-          [key]: event.error,
-        },
       };
     });
   },

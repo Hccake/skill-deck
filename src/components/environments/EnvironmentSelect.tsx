@@ -56,7 +56,11 @@ export function EnvironmentSelect({
     )
     : null;
   const pending = pendingEnvironment !== null || selectedEntry?.status === 'connecting';
-  const failedEntry = environments.find((entry) => entry.error != null);
+  const failedEntry = selectedEntry
+    && (selectedEntry.status === 'unavailable' || selectedEntry.status === 'error')
+    && selectedEntry.error
+    ? selectedEntry
+    : null;
   const connectionError = failedEntry?.error ?? null;
 
   if (!showSelect && !discoveryError && !connectionError) return null;

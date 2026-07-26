@@ -65,8 +65,8 @@ Skills 工作台由 Context 侧栏、Skill 列表和详情区组成。
 - 应用每次启动都进入 Host 的 Global Context，不恢复上次选择的 WSL Environment，也不会仅因启动应用而连接或启动 WSL 发行版。
 - Windows 存在可用 WSL 发行版时，用户可以切换 Environment。只有 Host 时不增加无意义的选择控件。
 - 应用重新获得焦点时，只有最近一次成功获取的 WSL 发行版列表已超过 30 秒有效期，并且距离上一次获取结束也已达到 30 秒，才会再次获取。列表在有效期内可能短暂滞后；一次获取即使失败，也会重新开始计算间隔。Discovery 不提供独立重试按钮。
-- 已有发行版列表时，后续获取在后台进行，界面继续显示当前列表，不切换为整块加载状态。获取成功后一次性更新列表；获取失败时保留当前列表和可回看的错误详情，不打断当前 Context。
-- Environment 连接成功后立即进入目标 Environment 的 Global Context；项目注册信息随后独立加载，加载失败不会回滚 Environment。连接失败时保留原 Context 和可回看的错误详情。切换期间提供不改变工作区布局的进度反馈。
+- 已有发行版列表时，后续获取在后台进行，界面继续显示当前列表，不切换为整块加载状态。获取成功后一次性更新列表；获取失败时保留当前列表并说明本次发现失败，不打断当前 Context。
+- 切换到其他 Environment 成功后立即进入目标 Environment 的 Global Context；项目注册信息随后独立加载，加载失败不会回滚 Environment。当前 Environment 重新连接成功后保留现有 Context，并重新加载项目列表。连接失败时保留原 Context，只提示本次失败；当前 Environment 可以直接重试，其他 Environment 通过再次选择自然重试。切换期间提供不改变工作区布局的进度反馈。
 - 用户可以添加项目、移除项目或打开项目配置资源。Project 记录按 Environment 隔离。
 
 ### Skill 列表与详情

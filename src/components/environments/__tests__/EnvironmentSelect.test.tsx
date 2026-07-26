@@ -64,9 +64,13 @@ describe('EnvironmentSelect', () => {
     );
   });
 
-  it('keeps an unavailable distribution in the selector without adding an error row', () => {
+  it('keeps a non-current failed distribution in the selector without a persistent alert', () => {
+    const connectionError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution is stopped' },
+    };
     renderSelect({
-      environments: [host, { ...ubuntu, status: 'unavailable' }],
+      environments: [host, { ...ubuntu, status: 'unavailable', error: connectionError }],
     });
 
     expect(screen.queryByRole('status')).toBeNull();
@@ -91,7 +95,7 @@ describe('EnvironmentSelect', () => {
     expect(screen.queryByRole('button', { name: 'context.environmentRetry' })).toBeNull();
   });
 
-  it('shows a connection error for the failed environment and retries that environment', () => {
+  it('shows a reconnect action only for the selected failed environment', () => {
     const onChange = vi.fn();
     const connectionError: AppError = {
       kind: 'environmentUnavailable',
@@ -99,6 +103,7 @@ describe('EnvironmentSelect', () => {
     };
     renderSelect({
       environments: [host, { ...ubuntu, status: 'unavailable', error: connectionError }],
+      value: ubuntu.environment,
       onChange,
     });
 
@@ -111,13 +116,20 @@ describe('EnvironmentSelect', () => {
     expect(onChange).toHaveBeenCalledWith(ubuntu.environment);
   });
 
-  it('selects an environment through the shadcn Select contract', () => {
+  it('retries a non-current failed environment through normal selection', () => {
     const onChange = vi.fn();
-    renderSelect({ environments: [host, ubuntu], onChange });
+    const connectionError: AppError = {
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'distribution is stopped' },
+    };
+    renderSelect({
+      environments: [host, { ...ubuntu, status: 'unavailable', error: connectionError }],
+      onChange,
+    });
 
     fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
     fireEvent.click(screen.getByRole('option', {
-      name: 'Ubuntu 24.04 Long Environment Name',
+      name: /Ubuntu 24\.04 Long Environment Name/,
     }));
 
     expect(onChange).toHaveBeenCalledWith(ubuntu.environment);
