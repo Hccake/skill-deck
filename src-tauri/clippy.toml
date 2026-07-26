@@ -1,0 +1,4 @@
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "内部子进程必须通过 crate::background_process::std_command 构造" },
+  { path = "tokio::process::Command::new", reason = "异步内部子进程必须通过 crate::background_process::tokio_command 构造" },
+]
