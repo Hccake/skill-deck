@@ -382,8 +382,7 @@ where
         preview_from_inspection(self.planner.inspect(request).await?)
     }
 
-    #[cfg(any(test, feature = "wsl-integration-tests"))]
-    #[allow(dead_code, reason = "used by the Windows-only WSL acceptance harness")]
+    #[cfg(test)]
     pub async fn execute(
         &self,
         execution: &UpdateExecutionRequest,

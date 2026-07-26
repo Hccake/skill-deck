@@ -102,10 +102,6 @@ jobs:
       - name: Check all Rust targets
         shell: bash
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets 2>&1 | tee ci-diagnostics/check.log
-      - name: Check Windows WSL integration feature
-        if: runner.os == 'Windows'
-        shell: bash
-        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets --features wsl-integration-tests 2>&1 | tee ci-diagnostics/wsl-feature-check.log
       - name: Lint all Rust targets
         shell: bash
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings 2>&1 | tee ci-diagnostics/clippy.log

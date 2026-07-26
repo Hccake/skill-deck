@@ -8,23 +8,15 @@ use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{normalized_wsl_distro_name, EnvironmentRef};
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{
-    wsl_operation_with_features, WslExecutionFeature, WslOperationDescriptor, WslOperationExecutor,
-    WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
+    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+    DEFAULT_WSL_STDERR_LIMIT,
 };
 use crate::error::AppError;
 
 const PROTOCOL_HEADER: &[u8] = b"SDCM 1\n";
 pub(crate) const CONTENT_MANIFEST_SCRIPT: &str = include_str!("../scripts/content-manifest.sh");
-const CONTENT_MANIFEST_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "content-manifest",
-    "inspect",
-    CONTENT_MANIFEST_SCRIPT,
-    &[
-        WslExecutionFeature::Sha256Sum,
-        WslExecutionFeature::CanonicalReadlink,
-        WslExecutionFeature::StableStat,
-    ],
-);
+const CONTENT_MANIFEST_OPERATION: WslOperationDescriptor =
+    wsl_operation("content-manifest", "inspect", CONTENT_MANIFEST_SCRIPT);
 
 pub async fn inspect(
     session: &WslSession,
@@ -157,7 +149,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     use super::CONTENT_MANIFEST_SCRIPT;
     use super::{parse_content_manifest, CONTENT_MANIFEST_OPERATION};
-    use crate::environment::wsl_protocol::WslExecutionFeature;
 
     fn fixture_bytes(records: &[(&str, &str, bool, &str)]) -> Vec<u8> {
         let mut bytes = b"SDCM 1\n".to_vec();
@@ -216,9 +207,7 @@ mod tests {
         );
         let manifest = parse_content_manifest(&output.stdout).expect("content manifest");
         assert_eq!(manifest.records().len(), 1);
-        assert!(!CONTENT_MANIFEST_OPERATION
-            .required_features
-            .contains(&WslExecutionFeature::NulSafeXargs));
+        assert_eq!(CONTENT_MANIFEST_OPERATION.subcommand, "inspect");
     }
 
     #[test]

@@ -17,9 +17,9 @@ test("PR CI keeps stable required jobs and enforces the exact Rust gate", async 
   assert.match(workflow, /\n  msrv:/);
   assert.match(workflow, /name: rust \(\$\{\{ matrix\.os \}\}\)/);
   assert.match(workflow, /cargo check[^\n]*--locked[^\n]*--all-targets/);
-  assert.match(
+  assert.doesNotMatch(
     workflow,
-    /name: Check Windows WSL integration feature[\s\S]*?if: runner\.os == 'Windows'[\s\S]*?cargo check[^\n]*--features wsl-integration-tests/,
+    /wsl-integration-tests|Check Windows WSL integration feature/,
   );
   assert.match(
     workflow,

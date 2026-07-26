@@ -15,12 +15,12 @@
 | L0 纯规则/Domain unit | parser、hash、planner、状态机、错误映射 | 输入到输出的确定性规则 | OS syscall、动态库、Tauri runtime、真实网络 |
 | L1 Adapter/contract | command DTO、ACL、protocol、Git/HTTP adapter | 边界形状、序列化、权限映射、错误分类 | 真实桌面进程启动、目标平台特有行为 |
 | L2 Native workflow integration | `tempdir` 中的真实文件树、lock、mutation、协调器 | 多模块协作、真实 filesystem 读写、清理和冲突语义 | 另一种 OS 的 filesystem 语义、WSL distro |
-| L3 Platform acceptance | Windows/macOS/Linux 的平台分支、junction/reparse、Unix shell、WSL | 目标平台 API、loader、权限、shell 和 guest environment | 没有实际启动应用时的 WebView/UI journey |
+| L3 Platform acceptance | Windows/macOS/Linux 的平台分支、junction/reparse、Unix shell 和 WSL transport contract | 目标平台 API、loader、权限与 bundled shell 行为 | 没有实际启动应用时的 WebView/UI journey，也不能证明具体 WSL 发行版的全部差异 |
 | L4 Started-application smoke/journey | 真实 Tauri application、插件、窗口和关键用户路径 | executable 能启动、manifest/DLL/plugin/window 注册和端到端关键路径 | 纯业务规则的全部组合 |
 
 测试名称和 CI job 应体现层级或能力。`MockRuntime`、fake filesystem 或 HTTP stub 的测试不得命名为 `e2e`、`desktop` 或 `acceptance`，也不得在文档中声称它验证了真实应用启动。
 
-当前仓库已有较完整的 L0-L2：Rust inline unit tests、`src-tauri/src/test_support`、Native workflow tests、Tauri ACL tests、Vitest component/store/workflow tests，以及三平台 Rust matrix。Windows integration harness 已覆盖 Common Controls manifest、dialog plugin loader 和 junction no-follow 语义，但它不启动 Tauri application，因此属于 L3，不作为 L4 证据。当前结构仍有两个长期缺口：没有稳定的 L4 started-app smoke 门禁；真实 WSL tests 由 Windows + 指定 distro 提供，但目前是 ignored/feature-gated，缺少固定的 scheduled 或 release acceptance 责任人。
+当前仓库已有较完整的 L0-L2：Rust inline unit tests、`src-tauri/src/test_support`、Native workflow tests、Tauri ACL tests、Vitest component/store/workflow tests，以及三平台 Rust matrix。Windows integration harness 已覆盖 Common Controls manifest、dialog plugin loader 和 junction no-follow 语义，但它不启动 Tauri application，因此属于 L3，不作为 L4 证据。当前长期缺口是没有稳定的 L4 started-app smoke 门禁。WSL 不建设仓库级真实发行版 acceptance；连接基线由跨平台 parser/protocol tests、ShellCheck 和 Linux 上真实执行 bundled session script 共同约束。
 
 ## 编写流程
 
@@ -52,7 +52,7 @@ Windows manifest、Common Controls、资源文件、DLL 或 plugin 依赖必须�
 
 ### Unix shell 与 WSL
 
-直接执行 `/bin/sh`、依赖 Unix mode bit 或 POSIX syscall 的测试使用 `#[cfg(unix)]`。WSL operation 的 parser/protocol 测试应在所有平台运行；shell asset 的 [ShellCheck](https://www.shellcheck.net/) 和 Unix execution 在 Unix CI 运行。Windows CI 使用 `wsl-integration-tests` feature 编译 production 与 acceptance 边界，但不启动 WSL，也不要求 runner 安装发行版；真实 distro workflow 只在已安装并配置 WSL 的 Windows acceptance 环境运行。
+直接执行 `/bin/sh`、依赖 Unix mode bit 或 POSIX syscall 的测试使用 `#[cfg(unix)]`。WSL operation 的 parser/protocol 测试在所有平台运行；shell asset 的 [ShellCheck](https://www.shellcheck.net/) 和真实执行在 Linux CI 运行。Bundled session script 需要分别覆盖完整基线成功，以及 Git、`xargs -0`、`sort -z`、`sha256sum`、`readlink -f`、稳定 `stat` 任一不可用时连接失败。三平台 Rust matrix 不启动真实 WSL 发行版，也不把发行版差异描述为已验证。
 
 Shell 测试必须捕获 stdout、stderr 和 exit status，设置 timeout，并保证子进程和临时目录清理。用户值只能通过 positional arguments 或结构化 stdin 传入，不能拼接 shell source。ShellCheck 报告（包括 [SC2016](https://www.shellcheck.net/wiki/SC2016)）按错误处理，除非有带理由的局部 suppress。
 
@@ -118,7 +118,7 @@ GitHub Actions 使用 matrix 覆盖 Ubuntu、Windows、macOS，并保留 `fail-f
 |---|---|
 | 纯 Rust/domain | 目标 unit tests、fmt、check、clippy；涉及公共流程时补全 `cargo test` |
 | filesystem/process/Environment | Linux + Windows + macOS Rust matrix；平台分支在对应 runner 真实执行 |
-| WSL script/protocol | Rust protocol tests、ShellCheck、Windows feature compile；只有存在明确 runner、owner 和可查结果时，才用一个 reference distro 执行独立的真实 acceptance |
+| WSL script/protocol | 跨平台 Rust parser/protocol tests、ShellCheck、Linux 上执行 bundled shell，以及三平台 Rust matrix |
 | Tauri command/ACL/bindings | ACL/command integration、`bindings:check`、Frontend tests；涉及 plugin/startup 时补 L4 |
 | Frontend workflow | `pnpm test:scripts`、`pnpm lint`、`pnpm test`、`pnpm build` |
 | CI/release policy | 对 workflow 的 policy tests、目标 job dry-run/审查和完整相关门禁 |
@@ -134,7 +134,7 @@ GitHub Actions 使用 matrix 覆盖 Ubuntu、Windows、macOS，并保留 `fail-f
 - host path、guest path、line ending、mode bit、link type 和 shell 能力没有混用。
 - fixture 不依赖 ambient CWD、环境变量、网络、locale、时序或全局状态，并有 timeout 和 cleanup。
 - 每个 `cfg` 同时包住实现、import 和 fixture；`cargo clippy ... --all-targets -- -D warnings` 无 warning。
-- Windows、macOS、Linux 的结果都被观察；被 `ignore` 或条件编译排除的能力有单独 acceptance owner。
+- Windows、macOS、Linux 的结果都被观察；条件编译排除的能力必须明确证据边界，不能把未运行的真实环境描述为已验证。
 - CI 失败日志能区分 build、harness startup、test assertion、process timeout 和 external dependency failure。
 - 改动共享测试 helper 或生产 symbol 前完成 GitNexus impact analysis；提交前运行 `detect_changes`，确认受影响范围符合预期。
 
@@ -142,10 +142,9 @@ GitHub Actions 使用 matrix 覆盖 Ubuntu、Windows、macOS，并保留 `fail-f
 
 1. **P0：保持现有三平台 Rust matrix、ShellCheck、diagnostics artifact 和 warning-free gate，并补充根 `.gitattributes` 固定 fixture 的 LF/binary 语义。** 这些门禁已经捕获了本轮 Windows manifest、path、junction、Unix shell、line ending、fixture protocol 和 conditional import 问题，不能退回到单平台或只编译不运行。
 2. **P1：建立主发布平台的 L4 started-app smoke。** 低频覆盖 loader/manifest、窗口与 plugin 注册、HTTP、外链，以及 Wizard 的 Project、audit 和 install 关键旅程；不建设三平台完整 GUI E2E。
-3. **P1：在具备真实 owner 和 runner 后建立单 reference distro 的 WSL acceptance。** 明确准备、环境隔离、超时、artifact、最近一次结果和维护责任；条件未满足时不保留形式上的 workflow 入口。
-4. **P1：沉淀跨平台 test helper 和 domain value type。** 统一 native path、POSIX guest path、fixture bytes、link capability 和 process timeout，减少平台偶然行为对 unit test 的影响。
-5. **P2：按 L0-L4 拆分过大的 inline test module 和 shared support。** 先改善命名和 helper ownership，再在有明确维护收益时移动文件；不为形式重构测试。
-6. **P2：增加 coverage 和 flaky-test 趋势报告作为诊断。** 先看 platform/branch/fixture 缺口，再决定是否设置局部 gate。
+3. **P1：沉淀跨平台 test helper 和 domain value type。** 统一 native path、POSIX guest path、fixture bytes、link capability 和 process timeout，减少平台偶然行为对 unit test 的影响。
+4. **P2：按 L0-L4 拆分过大的 inline test module 和 shared support。** 先改善命名和 helper ownership，再在有明确维护收益时移动文件；不为形式重构测试。
+5. **P2：增加 coverage 和 flaky-test 趋势报告作为诊断。** 先看 platform/branch/fixture 缺口，再决定是否设置局部 gate。
 
 ## 权威参考
 

@@ -293,14 +293,6 @@ struct InFlightDetection {
 }
 
 impl SourceEvidenceCoordinator {
-    #[cfg(any(test, feature = "wsl-integration-tests"))]
-    #[allow(dead_code, reason = "used by the feature-gated WSL acceptance harness")]
-    pub fn new(detector: Arc<dyn SourceEvidenceDetector>) -> Self {
-        Self::build(detector, None, || {
-            chrono::Utc::now().timestamp_millis().max(0) as u64
-        })
-    }
-
     pub fn with_snapshot_reuse(
         detector: Arc<dyn SourceEvidenceDetector>,
         snapshots: Arc<SourceSnapshotReuseIndex>,

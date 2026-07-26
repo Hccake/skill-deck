@@ -19,7 +19,7 @@ pub enum CustomAgentRecord {
 }
 
 impl CustomAgentRecord {
-    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+    #[cfg(test)]
     pub fn valid(definition: CustomAgentDefinition) -> Self {
         let raw = serde_json::to_value(&definition)
             .expect("custom definition must serialize for a valid record");

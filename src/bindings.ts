@@ -813,7 +813,7 @@ export type UpdateSkillResult = { skillIdentity: SkillIdentity; sourceResultId: 
 export type UpdateSourceResult = { id: string; source: string; status: UpdateSourceStatus; error: ErrorReport | null }
 export type UpdateSourceStatus = "acquired" | "failed"
 export type UpdateWarningCode = "preservedConflictingCopy"
-export type WslSession = { distroName: string; user: string; uid: number; home: string; xdgStateHome: string | null; configHome: string; environment: Partial<{ [key in string]: string }>; gitAvailable: boolean }
+export type WslSession = { distroName: string; user: string; uid: number; home: string; xdgStateHome: string | null; configHome: string; environment: Partial<{ [key in string]: string }> }
 
 /** tauri-specta globals **/
 

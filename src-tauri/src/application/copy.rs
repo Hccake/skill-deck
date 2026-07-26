@@ -78,6 +78,10 @@ pub struct CopyPreview {
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(tag = "status", rename_all = "camelCase")]
 #[specta(tag = "status", rename_all = "camelCase")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "IPC 结果保持直接 DTO，避免只为内存布局增加 Box 和调用侧解包"
+)]
 pub enum CopyPreviewOutcome {
     Ready { preview: CopyPreview },
     SourceRepairRequired { reason: CopySourceRepairReason },

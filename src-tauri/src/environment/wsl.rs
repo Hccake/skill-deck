@@ -15,7 +15,6 @@ use crate::background_process::tokio_command;
 use crate::environment::types::{
     EnvironmentKey, EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus,
 };
-use crate::environment::wsl_protocol::{WslExecutionFeature, WslExecutionProfile};
 use crate::error::AppError;
 
 pub mod operations;
@@ -31,10 +30,6 @@ pub struct WslSession {
     pub xdg_state_home: Option<String>,
     pub config_home: String,
     pub environment: BTreeMap<String, String>,
-    pub git_available: bool,
-    #[serde(skip)]
-    #[specta(skip)]
-    pub execution_profile: WslExecutionProfile,
     #[serde(skip)]
     #[specta(skip)]
     pub runtime_generation: u64,
@@ -401,38 +396,20 @@ fn interpret_wsl_discovery_outcome(
 pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSession, AppError> {
     let mut fields = bytes
         .split(|byte| *byte == 0)
-        .map(|field| String::from_utf8_lossy(field).into_owned())
-        .collect::<Vec<_>>();
+        .map(|field| {
+            String::from_utf8(field.to_vec()).map_err(|_| AppError::Custom {
+                message: "invalid UTF-8 in WSL session response".to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     if fields.last().is_some_and(String::is_empty) {
         fields.pop();
     }
-    let execution_profile = match (fields.first().map(String::as_str), fields.len()) {
-        (Some("1"), 12) => WslExecutionProfile::all_supported(),
-        (Some("2"), 17) => {
-            let supported = [
-                (12, WslExecutionFeature::NulSafeXargs),
-                (13, WslExecutionFeature::NulSafeSort),
-                (14, WslExecutionFeature::Sha256Sum),
-                (15, WslExecutionFeature::CanonicalReadlink),
-                (16, WslExecutionFeature::StableStat),
-            ]
-            .into_iter()
-            .filter_map(|(index, feature)| match fields[index].as_str() {
-                "1" => Some(Ok(feature)),
-                "0" => None,
-                _ => Some(Err(AppError::Custom {
-                    message: "invalid WSL execution feature flag".to_string(),
-                })),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-            WslExecutionProfile::from_supported(supported)
-        }
-        _ => {
-            return Err(AppError::Custom {
-                message: "invalid WSL session response".to_string(),
-            })
-        }
-    };
+    if fields.len() != 11 || fields.first().map(String::as_str) != Some("3") {
+        return Err(AppError::Custom {
+            message: "invalid WSL session response".to_string(),
+        });
+    }
     let environment = [
         ("CODEX_HOME", 6usize),
         ("CLAUDE_CONFIG_DIR", 7),
@@ -454,8 +431,6 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
         xdg_state_home: (!fields[4].is_empty()).then(|| fields[4].clone()),
         config_home: fields[5].clone(),
         environment,
-        git_available: fields[11] == "1",
-        execution_profile,
         runtime_generation: 0,
     })
 }
@@ -550,7 +525,6 @@ mod tests {
         EnvironmentRegistry, WslDiscoveryCommandOutcome, WslSession,
     };
     use crate::environment::types::{EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus};
-    use crate::environment::wsl_protocol::{WslExecutionFeature, WslExecutionProfile};
     use crate::error::{AppError, LockConflictTarget};
 
     #[cfg(target_os = "linux")]
@@ -595,8 +569,6 @@ mod tests {
             xdg_state_home: None,
             config_home: format!("/home/{user}/.config"),
             environment: std::collections::BTreeMap::new(),
-            git_available: true,
-            execution_profile: WslExecutionProfile::all_supported(),
             runtime_generation: 0,
         }
     }
@@ -1110,8 +1082,6 @@ mod tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: std::collections::BTreeMap::new(),
-            git_available: true,
-            execution_profile: WslExecutionProfile::all_supported(),
             runtime_generation: 0,
         });
 
@@ -1121,7 +1091,7 @@ mod tests {
 
     #[test]
     fn parses_versioned_session_output() {
-        let output = b"1\0alice\x001000\0/home/alice\0/home/alice/.state\0/home/alice/.config\0/opt/codex\0/opt/claude\0\0\0\x001\0";
+        let output = b"3\0alice\x001000\0/home/alice\0/home/alice/.state\0/home/alice/.config\0/opt/codex\0/opt/claude\0\0\0\0";
         let session = parse_wsl_session_output("Ubuntu", output).expect("parse session");
 
         assert_eq!(session.user, "alice");
@@ -1134,44 +1104,28 @@ mod tests {
         assert_eq!(session.config_home, "/home/alice/.config");
         assert_eq!(session.environment["CODEX_HOME"], "/opt/codex");
         assert_eq!(session.environment["CLAUDE_CONFIG_DIR"], "/opt/claude");
-        assert!(session.git_available);
     }
 
     #[test]
-    fn parses_session_output_with_a_partial_execution_profile() {
-        let output = [
-            "2",
-            "alice",
-            "1000",
-            "/home/alice",
-            "",
-            "/home/alice/.config",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "1",
-            "1",
-            "0",
-            "1",
-            "0",
-            "1",
-            "",
-        ]
-        .join("\0");
+    fn rejects_legacy_session_shapes() {
+        for output in [
+            b"1\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\x001\0".as_slice(),
+            b"2\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\x001\x001\x001\x001\x001\x001\0".as_slice(),
+        ] {
+            assert!(parse_wsl_session_output("Ubuntu", output).is_err());
+        }
+    }
 
-        let session = parse_wsl_session_output("Ubuntu", output.as_bytes()).expect("parse session");
-
-        assert!(session
-            .execution_profile
-            .supports(WslExecutionFeature::NulSafeXargs));
-        assert!(!session
-            .execution_profile
-            .supports(WslExecutionFeature::NulSafeSort));
-        assert!(session
-            .execution_profile
-            .supports(WslExecutionFeature::StableStat));
+    #[test]
+    fn rejects_invalid_current_session_payloads() {
+        for output in [
+            b"3\0alice\0not-a-uid\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0".as_slice(),
+            b"3\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0unexpected\0"
+                .as_slice(),
+            b"3\0\xff\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0".as_slice(),
+        ] {
+            assert!(parse_wsl_session_output("Ubuntu", output).is_err());
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -1190,7 +1144,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn bundled_session_script_reports_a_versioned_execution_profile() {
+    fn bundled_session_script_reports_the_complete_session_baseline() {
         let output = command_output_with_timeout(
             Command::new("/bin/sh")
                 .arg("-c")
@@ -1206,72 +1160,19 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(output.stdout.starts_with(b"2\0"));
-        let session = parse_wsl_session_output("Ubuntu", &output.stdout)
-            .expect("parse bundled session output");
-        for feature in [
-            WslExecutionFeature::NulSafeXargs,
-            WslExecutionFeature::NulSafeSort,
-            WslExecutionFeature::Sha256Sum,
-            WslExecutionFeature::CanonicalReadlink,
-            WslExecutionFeature::StableStat,
-        ] {
-            assert!(
-                session.execution_profile.supports(feature),
-                "bundled session script did not detect {feature:?}"
-            );
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn bundled_session_script_keeps_session_readable_without_nul_safe_xargs() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().expect("temporary command directory");
-        let xargs = temp.path().join("xargs");
-        std::fs::write(&xargs, "#!/bin/sh\nexit 1\n").expect("write failing xargs");
-        std::fs::set_permissions(&xargs, std::fs::Permissions::from_mode(0o755))
-            .expect("make failing xargs executable");
-        let path = format!(
-            "{}:{}",
-            temp.path().display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-
-        let output = command_output_with_timeout(
-            Command::new("/bin/sh")
-                .arg("-c")
-                .arg(include_str!("wsl/scripts/session.sh"))
-                .arg("--")
-                .arg("session")
-                .env("PATH", path),
-            std::time::Duration::from_secs(10),
-        )
-        .expect("session script");
-
-        assert!(output.status.success());
+        assert!(output.stdout.starts_with(b"3\0"));
         let session = parse_wsl_session_output("Ubuntu", &output.stdout)
             .expect("parse bundled session output");
         assert!(!session.user.is_empty());
         assert!(session.home.starts_with('/'));
-        assert!(!session
-            .execution_profile
-            .supports(WslExecutionFeature::NulSafeXargs));
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn bundled_session_script_reports_each_missing_execution_capability() {
+    fn bundled_session_script_rejects_each_missing_baseline_tool() {
         use std::os::unix::fs::PermissionsExt;
 
-        for (command, feature) in [
-            ("xargs", WslExecutionFeature::NulSafeXargs),
-            ("sort", WslExecutionFeature::NulSafeSort),
-            ("sha256sum", WslExecutionFeature::Sha256Sum),
-            ("readlink", WslExecutionFeature::CanonicalReadlink),
-            ("stat", WslExecutionFeature::StableStat),
-        ] {
+        for command in ["git", "xargs", "sort", "sha256sum", "readlink", "stat"] {
             let temp = tempfile::tempdir().expect("temporary command directory");
             let command_path = temp.path().join(command);
             std::fs::write(&command_path, "#!/bin/sh\nexit 1\n").expect("write failing command");
@@ -1294,12 +1195,16 @@ mod tests {
             )
             .expect("session script");
 
-            assert!(output.status.success(), "{command} probe broke the session");
-            let session = parse_wsl_session_output("Ubuntu", &output.stdout)
-                .expect("parse bundled session output");
             assert!(
-                !session.execution_profile.supports(feature),
-                "missing {command} was reported as supported"
+                !output.status.success(),
+                "unavailable {command} must reject the WSL session"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .to_ascii_lowercase()
+                    .contains(command),
+                "{command} failure returned stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
         }
     }
@@ -1315,10 +1220,9 @@ mod tests {
 
     #[test]
     fn parses_empty_xdg_state_home_without_shifting_fields() {
-        let output = b"1\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\x001\0";
+        let output = b"3\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0";
         let session = parse_wsl_session_output("Ubuntu", output).expect("parse session");
 
         assert_eq!(session.xdg_state_home, None);
-        assert!(session.git_available);
     }
 }

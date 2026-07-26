@@ -12,7 +12,7 @@
 - Node.js 使用 CI 声明的 active LTS policy，pnpm 版本由 `package.json` 的 `packageManager` 固定，Frontend dependency 以 lockfile 为准；
 - Rust 最低版本以 `src-tauri/Cargo.toml` 的 `rust-version` 为准；
 - Linux、macOS 和 Windows 的系统依赖遵循 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)；
-- Windows 上开发真实 WSL 功能还需要 WSL2 和专用测试发行版。
+- 如需手动排查实际 WSL 行为，Windows 开发机需要 WSL2 和一个满足支持基线的发行版；这不是仓库自动验证的前置条件。
 
 公开开发命令使用标准工具形式：
 
@@ -149,8 +149,6 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
-# 仅检查 WSL integration feature 的编译边界；真实 acceptance 仍需 Windows + 一个 reference distro
-cargo check --locked --manifest-path src-tauri/Cargo.toml --features wsl-integration-tests --all-targets
 ```
 
 根据改动范围先运行最小目标测试，再在完成前运行上述完整集合。只有最新命令输出为 exit 0 才能声称验证通过；已有 baseline failure 需要记录命令、失败项和与本次改动的关系。
@@ -165,7 +163,7 @@ Pull request CI 包含以下门禁：
 - Windows、macOS、Linux 上的 Rust fmt/check/clippy/test；
 - bundled WSL `/bin/sh` assets 的 ShellCheck。
 
-Native integration tests 使用真实临时 filesystem 验证完整 workflow。真实 WSL tests 标记为 ignored，因为它们需要 Windows 和已配置的测试发行版；普通 PR CI 不自动模拟这类环境。维护者可以手动运行独立的 `WSL Acceptance` workflow，它只会调度到带 `skill-deck-wsl` 标签并配置了一个 reference distro 的 Windows self-hosted runner。
+Native integration tests 使用真实临时 filesystem 验证完整 workflow。WSL 验证由跨平台 Rust parser/protocol tests、ShellCheck、Linux 上真实执行 bundled session script，以及 Windows、macOS、Linux 三平台 Rust matrix 组成；仓库不维护真实发行版 acceptance workflow。
 
 ## Release 与应用更新
 
@@ -178,7 +176,7 @@ Release workflow 由 `v*` tag 或人工输入触发，并校验 tag、package ve
 - `latest.json` 覆盖完整平台矩阵，URL 指向当前 repository/tag；
 - Release 不包含内部 metadata fragment 或意外的旧 managed asset。
 
-维护者确认 Draft Release 的版本、平台制品、签名和 `latest.json` 无误后，通过 GitHub UI 手动公开。真实 WSL integration tests 是发布前的可选人工验收，不作为公开 Release 的强制门禁。
+维护者确认 Draft Release 的版本、平台制品、签名和 `latest.json` 无误后，通过 GitHub UI 手动公开。发布不以真实 WSL 发行版验收为门禁；WSL 支持边界由前述自动化协议与 shell 验证固定。
 
 应用 updater 依赖 Tauri signature verification。不得发布缺少 signature 的 package，也不得手工拼接与当前 tag 不一致的 `latest.json`。
 

@@ -336,13 +336,13 @@ pub trait PayloadSessionStorage: Send + Sync {
     ) -> PayloadStorageFuture<'a, Result<(), AppError>>;
 }
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 #[derive(Default)]
 pub struct InMemoryPayloadSessionStorage {
     payloads: Mutex<HashMap<PayloadStorageKey, Arc<SkillPayload>>>,
 }
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 impl PayloadSessionStorage for InMemoryPayloadSessionStorage {
     fn store<'a>(
         &'a self,
@@ -516,7 +516,7 @@ impl PayloadSessionManager {
         }
     }
 
-    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+    #[cfg(test)]
     pub fn in_memory(
         limits: PayloadSessionLimits,
         now: impl Fn() -> u64 + Send + Sync + 'static,

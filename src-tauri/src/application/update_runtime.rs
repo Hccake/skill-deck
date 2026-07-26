@@ -82,7 +82,7 @@ impl RuntimeUpdatePayloadAcquirer {
         }
     }
 
-    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+    #[cfg(test)]
     pub(crate) fn with_git_transport(
         payloads: Arc<PayloadSessionManager>,
         environments: Arc<EnvironmentRegistry>,
