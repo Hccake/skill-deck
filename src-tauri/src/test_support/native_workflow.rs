@@ -745,7 +745,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .join("agent/subagents/research/skills/demo")
         .exists());
     let managed_lock = read_json(&source_project.join("skills-lock.json"))?;
-    assert_eq!(managed_lock["skills"]["demo"]["subagents"], json!([]));
+    assert!(managed_lock["skills"]["demo"].get("subagents").is_none());
 
     let update_after_removal_request = UpdateRequest {
         context: source_context.clone(),
@@ -774,9 +774,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             .collect::<Vec<_>>(),
     );
     assert!(!source_project.join("agent/skills/demo").exists());
-    assert_eq!(
-        read_json(&source_project.join("skills-lock.json"))?["skills"]["demo"]["subagents"],
-        json!([])
+    assert!(
+        read_json(&source_project.join("skills-lock.json"))?["skills"]["demo"]
+            .get("subagents")
+            .is_none()
     );
 
     let source_lock_path = source_project.join("skills-lock.json");

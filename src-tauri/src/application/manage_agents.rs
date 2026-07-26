@@ -489,10 +489,10 @@ fn manage_lock_mutation(
                 .ok_or_else(|| AppError::ConfigurationCorrupted {
                     message: "project lock entry must be an object".to_string(),
                 })?;
-        if subagents.len() == 1 && subagents.contains("") {
-            replacement.remove("subagents");
-        } else {
+        if subagents.iter().any(|target| !target.is_empty()) {
             replacement.insert("subagents".to_string(), serde_json::json!(subagents));
+        } else {
+            replacement.remove("subagents");
         }
     }
     Ok(Some(PreparedLockMutation {
