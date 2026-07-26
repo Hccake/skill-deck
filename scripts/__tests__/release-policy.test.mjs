@@ -46,7 +46,7 @@ test("real WSL acceptance stays manual and isolated from normal release gates", 
   assert.match(workflow, /Upload WSL acceptance evidence/);
   assert.match(
     workflow,
-    /cargo test[\s\S]*--features wsl-integration-tests[\s\S]*--test wsl_environment_integration[\s\S]*runs_full_wsl_mutation_workflow_with_complete_payloads[\s\S]*-- --ignored --exact --nocapture/,
+    /cargo test[\s\S]*--features wsl-integration-tests[\s\S]*--test wsl_environment_integration[\s\S]*runs_reference_wsl_install_workflow_with_complete_payloads[\s\S]*-- --ignored --exact --nocapture/,
   );
 });
 
