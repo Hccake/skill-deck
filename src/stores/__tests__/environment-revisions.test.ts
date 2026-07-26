@@ -30,9 +30,10 @@ describe('Environment revision convergence', () => {
     vi.clearAllMocks();
     useEnvironmentStore.setState({
       environments: [],
+      runtimeByEnvironment: {},
       discoveryState: 'idle',
       discoveryError: null,
-      errorsByEnvironment: {},
+      discoveryCompletedAt: null,
     });
   });
 
@@ -56,6 +57,7 @@ describe('Environment revision convergence', () => {
       environments: [host, { ...ubuntu, revision: 6 }],
       error: null,
     });
+    useEnvironmentStore.setState({ discoveryCompletedAt: null });
     await useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState().environments[1]).toMatchObject({

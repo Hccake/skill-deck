@@ -47,6 +47,7 @@ describe('useEnvironmentRuntimeMonitor', () => {
     mocks.listen.mockResolvedValue(unlisten);
     const view = render(<MonitorHarness />);
     await vi.waitFor(() => expect(mocks.discover).toHaveBeenCalledTimes(1));
+    expect(mocks.discover).toHaveBeenCalledWith();
     expect(mocks.listen.mock.invocationCallOrder[0])
       .toBeLessThan(mocks.discover.mock.invocationCallOrder[0]);
 
@@ -74,7 +75,7 @@ describe('useEnvironmentRuntimeMonitor', () => {
     setInterval.mockRestore();
   });
 
-  it('refreshes the snapshot on focus without starting a polling timer', async () => {
+  it('refreshes on focus without starting a polling timer', async () => {
     const setInterval = vi.spyOn(window, 'setInterval');
     render(<MonitorHarness />);
     await vi.waitFor(() => expect(mocks.discover).toHaveBeenCalledTimes(1));
@@ -82,6 +83,7 @@ describe('useEnvironmentRuntimeMonitor', () => {
     window.dispatchEvent(new Event('focus'));
 
     await vi.waitFor(() => expect(mocks.discover).toHaveBeenCalledTimes(2));
+    expect(mocks.discover).toHaveBeenNthCalledWith(2);
     expect(setInterval).not.toHaveBeenCalled();
     setInterval.mockRestore();
   });
@@ -98,6 +100,8 @@ describe('useEnvironmentRuntimeMonitor', () => {
 
     await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(mocks.discover).toHaveBeenCalledTimes(2));
+    expect(mocks.discover).toHaveBeenNthCalledWith(1);
+    expect(mocks.discover).toHaveBeenNthCalledWith(2);
     expect(consoleError).toHaveBeenCalledTimes(1);
     consoleError.mockRestore();
   });

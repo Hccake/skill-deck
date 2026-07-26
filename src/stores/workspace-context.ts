@@ -24,17 +24,22 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
     if (get().pendingEnvironment) {
       throw new Error('Environment switch already in progress');
     }
-    if (sameEnvironment(get().selectedContext.environment, environment)) return;
 
     const target = environment;
+    const reconnectingCurrentEnvironment = sameEnvironment(
+      get().selectedContext.environment,
+      target,
+    );
     set({ pendingEnvironment: target });
     try {
       await useEnvironmentStore.getState().connect(target);
-      await useProjectStore.getState().refresh(target);
-      set((state) => ({
-        selectedContext: globalContext(target),
-        contextRevision: state.contextRevision + 1,
-      }));
+      if (!reconnectingCurrentEnvironment) {
+        set((state) => ({
+          selectedContext: globalContext(target),
+          contextRevision: state.contextRevision + 1,
+        }));
+      }
+      void useProjectStore.getState().refresh(target).catch(() => undefined);
     } finally {
       set({ pendingEnvironment: null });
     }

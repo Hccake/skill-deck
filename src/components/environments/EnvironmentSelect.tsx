@@ -1,10 +1,6 @@
+import { LoaderCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { AppError, EnvironmentInfo, EnvironmentRef } from '@/bindings';
-import { environmentKey } from '@/stores/environment';
-import type { EnvironmentDiscoveryState } from '@/stores/environment';
-import { formatAppError } from '@/utils/format-app-error';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -12,6 +8,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { environmentKey } from '@/stores/environment';
+import { formatAppError } from '@/utils/format-app-error';
 
 interface EnvironmentSelectProps {
   environments: EnvironmentInfo[];
@@ -19,12 +19,8 @@ interface EnvironmentSelectProps {
   onChange: (environment: EnvironmentRef) => void | Promise<void>;
   className?: string;
   disabled?: boolean;
-  discoveryState?: EnvironmentDiscoveryState;
-  discoveryError?: AppError | null;
-  connectionErrors?: Record<string, AppError | null>;
   pendingEnvironment?: EnvironmentRef | null;
-  onRetryDiscovery?: () => void | Promise<void>;
-  onRetryConnection?: (environment: EnvironmentRef) => void | Promise<void>;
+  discoveryError?: AppError | null;
 }
 
 function statusLabel(status: EnvironmentInfo['status'], t: (key: string) => string): string {
@@ -45,12 +41,8 @@ export function EnvironmentSelect({
   onChange,
   className,
   disabled = false,
-  discoveryState = 'ready',
-  discoveryError = null,
-  connectionErrors = {},
   pendingEnvironment = null,
-  onRetryDiscovery,
-  onRetryConnection,
+  discoveryError = null,
 }: EnvironmentSelectProps) {
   const { t } = useTranslation();
   const showSelect = environments.length > 1;
@@ -63,15 +55,15 @@ export function EnvironmentSelect({
       (entry) => environmentKey(entry.environment) === environmentKey(pendingEnvironment),
     )
     : null;
-  const failedEntry = environments.find(
-    (entry) => connectionErrors[environmentKey(entry.environment)] !== null
-      && connectionErrors[environmentKey(entry.environment)] !== undefined,
-  );
-  const connectionError = failedEntry
-    ? connectionErrors[environmentKey(failedEntry.environment)]
+  const pending = pendingEnvironment !== null || selectedEntry?.status === 'connecting';
+  const failedEntry = selectedEntry
+    && (selectedEntry.status === 'unavailable' || selectedEntry.status === 'error')
+    && selectedEntry.error
+    ? selectedEntry
     : null;
+  const connectionError = failedEntry?.error ?? null;
 
-  if (!showSelect && !discoveryError && !pendingEntry && !connectionError) return null;
+  if (!showSelect && !discoveryError && !connectionError) return null;
 
   const handleChange = (key: string) => {
     const environment = environments.find(
@@ -86,14 +78,24 @@ export function EnvironmentSelect({
         <Select
           value={environmentKey(value)}
           onValueChange={handleChange}
-          disabled={disabled || pendingEnvironment !== null || selectedEntry?.status === 'connecting'}
+          disabled={disabled || pending}
         >
           <SelectTrigger
             aria-label={t('context.environmentLabel')}
-            aria-busy={pendingEnvironment !== null || selectedEntry?.status === 'connecting'}
+            aria-busy={pending}
             className={className ?? 'w-full'}
           >
             <SelectValue />
+            {pending ? (
+              <>
+                <LoaderCircle className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+                <span role="status" aria-live="polite" className="sr-only">
+                  {pendingEntry
+                    ? t('context.environmentConnectingTo', { environment: pendingEntry.displayName })
+                    : t('context.environmentConnecting')}
+                </span>
+              </>
+            ) : null}
           </SelectTrigger>
           <SelectContent position="popper">
             {environments.map((entry) => {
@@ -112,44 +114,30 @@ export function EnvironmentSelect({
         </Select>
       ) : null}
 
-      {pendingEntry ? (
-        <div role="status" aria-live="polite" className="text-xs text-muted-foreground">
-          {t('context.environmentConnectingTo', { environment: pendingEntry.displayName })}
-        </div>
-      ) : discoveryState === 'error' && discoveryError ? (
+      {discoveryError ? (
         <Alert role="status" aria-live="polite" className="py-2.5">
           <AlertTitle>{t('context.environmentDiscoveryFailed')}</AlertTitle>
           <AlertDescription>
             <p className="text-xs">{formatAppError(discoveryError, t)}</p>
-          {onRetryDiscovery ? (
-            <Button
-              variant="link"
-              size="sm"
-              className="h-auto p-0 text-xs"
-              onClick={() => void onRetryDiscovery()}
-            >
-              {t('context.environmentRetry')}
-            </Button>
-          ) : null}
           </AlertDescription>
         </Alert>
-      ) : failedEntry && connectionError ? (
+      ) : null}
+
+      {failedEntry && connectionError ? (
         <Alert role="status" aria-live="polite" className="py-2.5">
           <AlertTitle>
             {t('context.environmentConnectionFailed', { environment: failedEntry.displayName })}
           </AlertTitle>
           <AlertDescription>
             <p className="text-xs">{formatAppError(connectionError, t)}</p>
-          {onRetryConnection ? (
             <Button
               variant="link"
               size="sm"
               className="h-auto p-0 text-xs"
-              onClick={() => void onRetryConnection(failedEntry.environment)}
+              onClick={() => void onChange(failedEntry.environment)}
             >
               {t('context.environmentRetryNamed', { environment: failedEntry.displayName })}
             </Button>
-          ) : null}
           </AlertDescription>
         </Alert>
       ) : null}

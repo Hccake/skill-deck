@@ -43,7 +43,7 @@ describe('useWorkspaceContextStore', () => {
     expect(useWorkspaceContextStore.getState().contextRevision).toBe(2);
   });
 
-  it('keeps the committed context until connection and project refresh both finish', async () => {
+  it('commits the environment as soon as connection finishes', async () => {
     const connecting = deferred<void>();
     const refreshing = deferred<ProjectInfo[]>();
     const connect = vi.spyOn(useEnvironmentStore.getState(), 'connect')
@@ -60,11 +60,24 @@ describe('useWorkspaceContextStore', () => {
 
     connecting.resolve();
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledWith(ubuntu));
-    expect(useWorkspaceContextStore.getState().selectedContext.environment).toEqual(host);
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
+      pendingEnvironment: null,
+      contextRevision: 1,
+    });
     refreshing.resolve([]);
     await switching;
 
     expect(connect).toHaveBeenCalledWith(ubuntu);
+  });
+
+  it('keeps the committed environment when project refresh fails', async () => {
+    const error = new Error('project registry unavailable');
+    vi.spyOn(useEnvironmentStore.getState(), 'connect').mockResolvedValue(undefined);
+    vi.spyOn(useProjectStore.getState(), 'refresh').mockRejectedValue(error);
+
+    await useWorkspaceContextStore.getState().switchEnvironment(ubuntu);
+
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
       pendingEnvironment: null,
@@ -88,14 +101,56 @@ describe('useWorkspaceContextStore', () => {
     });
   });
 
-  it('does not reconnect or increment revision for the committed environment', async () => {
-    const connect = vi.spyOn(useEnvironmentStore.getState(), 'connect');
-    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh');
+  it('reconnects the current environment without leaving the selected project', async () => {
+    useWorkspaceContextStore.setState({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      contextRevision: 4,
+    });
+    const connect = vi.spyOn(useEnvironmentStore.getState(), 'connect')
+      .mockResolvedValue(undefined);
+    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh')
+      .mockResolvedValue([]);
 
     await useWorkspaceContextStore.getState().switchEnvironment(host);
 
-    expect(connect).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledWith(host);
+    expect(refresh).toHaveBeenCalledWith(host);
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      pendingEnvironment: null,
+      contextRevision: 4,
+    });
+  });
+
+  it('keeps the selected project when reconnecting the current environment fails', async () => {
+    const error = new Error('host runtime unavailable');
+    useWorkspaceContextStore.setState({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      contextRevision: 4,
+    });
+    vi.spyOn(useEnvironmentStore.getState(), 'connect').mockRejectedValue(error);
+    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh');
+
+    await expect(useWorkspaceContextStore.getState().switchEnvironment(host))
+      .rejects.toThrow('host runtime unavailable');
+
     expect(refresh).not.toHaveBeenCalled();
-    expect(useWorkspaceContextStore.getState().contextRevision).toBe(0);
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'project-a' },
+      },
+      pendingEnvironment: null,
+      contextRevision: 4,
+    });
   });
 });
