@@ -3,7 +3,7 @@
   <!-- <img src="docs/images/logo.svg" alt="Skill Deck Logo" width="120"> -->
   <h1>Skill Deck</h1>
   <p>
-    <strong>A native desktop UI compatible with the skills CLI.</strong>
+    <strong>A local desktop app for managing Skills with skills CLI interoperability.</strong>
   </p>
 
   <p>
@@ -17,14 +17,14 @@
 
 ---
 
-Skill Deck is a lightweight, native desktop application for managing and exploring **Skills**—a graphical companion to [`vercel-labs/skills`](https://github.com/vercel-labs/skills).
+Skill Deck is a cross-platform desktop application for browsing, installing, reading, updating, copying, and removing Skills used by AI coding agents.
+
+Skill Deck shares common Skill directories, lock formats, and baseline installation semantics with [`vercel-labs/skills`](https://github.com/vercel-labs/skills). The installed desktop app runs independently and can manage the same Skills alongside the CLI.
 
 **Key highlights:**
-- **Native Rust implementation** — Does not invoke the `skills` CLI binary, no Node.js required
-- **Fully compatible** — Uses the same configuration format; CLI and GUI can be used interchangeably
-- **Companion, not replacement** — Switch freely between CLI and GUI, or use both side by side
-
-The goal is simple: make Skills easier to inspect, understand, and apply across projects and editors—without changing how they work.
+- **Cross-platform desktop app** — Windows, macOS, and Linux, with optional WSL environments on Windows
+- **CLI interoperability** — Shared directories, lock formats, and baseline installation semantics
+- **Complete Skill workflows** — Installation, updates, source repair, project copy, agent management, and in-app updates
 
 ---
 
@@ -72,17 +72,16 @@ The goal is simple: make Skills easier to inspect, understand, and apply across 
 - 🗂 **Unified view** — Browse all installed Skills in one place
 - 🌍 **Global & project scope** — Manage Skills at global level or per-project
 - 🧠 **Clear visibility** — Understand where each Skill is applied at a glance
-- 🔄 **Multi-editor support** — Auto-detect supported editors and agents (Cursor, Windsurf, Zed, Eve, etc.) and sync Skills across them
-- ✏️ **Agent management** — Add or remove editor support for installed Skills without reinstalling
+- 🔄 **Agent filtering and management** — Filter Skills by agent and adjust agent associations for installed Skills
+- ✏️ **Custom agents** — Define local agents with their own read paths and detection rules
 - ♻️ **Update detection & upgrade** — Quickly check for available updates and update installed Skills
-- 📦 **Dual install modes** — Choose between Symlink and Copy when installing Skills
+- 📦 **Dual install modes** — Choose between symbolic links and file copies when installing Skills
 - 🔍 **Discover & install** — Install Skills from GitHub repos or local paths
 - 📋 **Copy across projects** — Quickly copy project-level Skills to other projects with one click
 - 🌐 **Bilingual UI** — English and Chinese interface
 - ⚡ **Fast & lightweight** — Built with Tauri v2, fast startup, low resource usage
 
-> ⚠️ Skill disabling is not supported by the underlying model.
-> Skills can be installed or removed only.
+Skill availability is determined by its installation location and agent associations.
 
 ---
 
@@ -103,11 +102,7 @@ Download the installer for your platform from [GitHub Releases](https://github.c
 
 ### Option 2: Build from source
 
-**Prerequisites**:
-- Node.js >= 18
-- pnpm >= 8
-- Rust >= 1.70
-- System dependencies: see [Tauri Prerequisites](https://tauri.app/v2/guides/prerequisites)
+See the [contribution guide](CONTRIBUTING.md#开发环境) for the current development environment. Node.js, pnpm, and Rust versions follow CI, `package.json`, and `src-tauri/Cargo.toml`.
 
 ```bash
 # Clone the repo
@@ -115,7 +110,7 @@ git clone https://github.com/hccake/skill-deck.git
 cd skill-deck
 
 # Install dependencies
-pnpm install
+pnpm install --frozen-lockfile
 
 # Run in development mode
 pnpm tauri dev
@@ -149,13 +144,13 @@ npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 
 ### 3. Install a Skill
 
-Click `+ Add` next to "Global Skills" or any project → enter the Skill source (or paste a CLI command) → select target editors (VS Code / Cursor, etc.) → choose install mode (Symlink / Copy) → confirm.
+Click `+ Add` next to Global Skills or a project, enter the Skill source, select the Skills and target agents, choose an installation mode, and confirm the preview.
 
 When a CLI command is pasted, the `--skill` and `--agent` options are automatically pre-selected in the wizard. You can still modify the selections before confirming.
 
-### 4. Use in your editor
+### 4. Use with an agent
 
-Once installed, open the project in the corresponding editor. The Skill will be automatically loaded by the AI assistant.
+After installation, each selected agent reads the Skill from the shared Skill directory or its own Skill directory, depending on its definition and the selected installation mode.
 
 ---
 

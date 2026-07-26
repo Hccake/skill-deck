@@ -3,7 +3,7 @@
   <!-- <img src="docs/images/logo.svg" alt="Skill Deck Logo" width="120"> -->
   <h1>Skill Deck</h1>
   <p>
-    <strong>兼容 skills CLI 的原生桌面界面</strong>
+    <strong>与 skills CLI 共享格式的本地 Skill 管理桌面应用</strong>
   </p>
 
   <p>
@@ -17,14 +17,15 @@
 
 ---
 
-Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Skills**——[`vercel-labs/skills`](https://github.com/vercel-labs/skills) 的图形化辅助工具。
+Skill Deck 是一款跨平台桌面应用，用于浏览、安装、阅读、更新、复制和移除 AI 编程 Agent 使用的 Skill，也可以管理 Skill 与 Agent 的适配关系。
 
-**核心特点：**
-- **原生 Rust 实现** — 不调用 `skills` CLI 二进制文件，无需 Node.js
-- **完全兼容** — 使用相同的配置格式；CLI 和 GUI 可以互换使用
-- **辅助工具，非替代品** — 自由切换 CLI 和 GUI，或同时使用两者
+Skill Deck 与 [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 共享通用 Skill 目录、lock 格式和基础安装语义。桌面应用独立实现这些能力，已安装的应用可以直接运行，也可以和 `skills` CLI 共同管理同一批 Skill。
 
-目标很简单：让 Skills 更容易检视、理解和应用到不同的项目和编辑器中——而不改变 Skills 本身的工作方式。
+主要特点：
+
+- **跨平台桌面应用**：支持 Windows、macOS 和 Linux；Windows 用户还可以按需使用已安装的 WSL 发行版。
+- **CLI 互操作**：双方可以读取共同维护的 Skill 目录和 lock，并遵循一致的基础安装语义。
+- **完整 Skill 工作流**：提供安装、更新、来源修复、跨项目复制、Agent 管理和应用内更新。
 
 ---
 
@@ -33,19 +34,19 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 <p align="center">
   <img src="docs/images/skill_selected.png" alt="Skill 详情视图" width="900">
 </p>
-<p align="center"><em>在同一界面中浏览已安装 Skills、查看完整详情，并快速检测更新或更新 Skill。</em></p>
+<p align="center"><em>浏览已安装的 Skill，查看完整内容，并检查或执行更新。</em></p>
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/images/skills.png" alt="Skills 总览视图">
+      <img src="docs/images/skills.png" alt="Skills 工作台">
       <br />
-      <em>统一查看全局和项目级 Skills。</em>
+      <em>分别查看 Global 与 Project 中的 Skill，并按 Agent 筛选。</em>
     </td>
     <td width="50%" align="center">
-      <img src="docs/images/discover.png" alt="发现页">
+      <img src="docs/images/discover.png" alt="Discover 页面">
       <br />
-      <em>浏览可安装 Skills，并查看元信息与可信信号。</em>
+      <em>浏览可安装的 Skill，并查看来源、说明和安全信息。</em>
     </td>
   </tr>
 </table>
@@ -53,35 +54,35 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/images/agent_manage.png" alt="Agent 管理功能">
+      <img src="docs/images/agent_manage.png" alt="管理 Agent">
       <br />
-      <em>无需重新安装即可添加或移除 Agent 支持。</em>
+      <em>为已安装的 Skill 调整 Agent 适配关系。</em>
     </td>
     <td width="50%" align="center">
-      <img src="docs/images/copy.png" alt="跨项目复制功能">
+      <img src="docs/images/copy.png" alt="复制到其他项目">
       <br />
-      <em>快速将项目级 Skill 复制到其他项目。</em>
+      <em>将 Project Skill 复制到同一 Environment 或其他 Environment 中的项目。</em>
     </td>
   </tr>
 </table>
 
 ---
 
-## ✨ 特性
+## ✨ 功能
 
-- 🗂 **统一视图** — 在一处浏览所有已安装的 Skills
-- 🌍 **全局与项目级作用域** — 在全局或项目级别管理 Skills
-- 🧠 **清晰可见** — 一目了然地了解每个 Skill 的应用位置
-- 🔄 **多编辑器支持** — 自动检测支持的编辑器和 Agent（Cursor、Windsurf、Zed、Eve 等），并在多个编辑器间同步 Skills
-- ✏️ **Agent 管理** — 为已安装的 Skill 添加或移除编辑器支持，无需重新安装
-- ♻️ **更新检测与升级** — 快速检查可用更新并更新已安装的 Skill
-- 📦 **双安装模式** — 安装 Skills 时可选择 Symlink（符号链接）或 Copy（文件复制）
-- 🔍 **发现与安装** — 从 GitHub 仓库或本地路径安装 Skills
-- 📋 **跨项目复制** — 一键将项目级 Skill 复制到其他项目
-- 🌐 **双语界面** — 支持中英文界面切换
-- ⚡ **快速轻量** — 基于 Tauri v2 构建，启动迅速，资源占用低
+- 🗂 **Skills 工作台**：集中浏览已安装的 Skill，并查看内容、来源、更新状态和关联 Agent
+- 🧠 **Agent 筛选与管理**：按 Agent 筛选 Skill，并为已安装的 Skill 添加或移除 Agent 接入
+- 🌍 **Global 与 Project**：分别管理用户级 Skill 和项目级 Skill
+- 🐧 **可选 WSL Environment**：Windows 用户可以在 Host 与已安装的 WSL 发行版之间切换
+- 🔍 **发现与安装**：支持 GitHub、Git、本地路径、Well-known 地址和 `skills add` 命令
+- ♻️ **更新与来源修复**：检查可用更新，并在来源记录失效时重新选择来源
+- 📋 **跨项目复制**：将 Project Skill 复制到一个或多个目标项目
+- 📦 **两种安装方式**：按目标选择符号链接或文件复制
+- 🧩 **自定义 Agent**：创建本地 Agent 定义并配置读取路径和检测条件
+- 🌐 **中英文界面**：主窗口与安装向导可以切换简体中文和 English
+- 🔄 **应用内更新**：检查、下载并安装 GitHub Release 中的新版本
 
-> ⚠️ 底层模型不支持禁用 Skill。Skills 只能安装或移除。
+Skill 的可用范围由安装位置和 Agent 适配关系共同决定。
 
 ---
 
@@ -94,7 +95,7 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 - **Windows**：`skill-deck_x.x.x_windows_x64-setup.exe` 或 `skill-deck_x.x.x_windows_x64.msi`
 - **macOS Apple Silicon**：`skill-deck_x.x.x_macos_aarch64.dmg`
 - **macOS Intel**：`skill-deck_x.x.x_macos_x64.dmg`
-  > macOS 构建目前未进行 Apple 开发者签名。如果安装后被系统拦截，可执行：
+  > macOS 构建目前没有 Apple 开发者签名。如果安装后被系统拦截，可执行：
   > ```bash
   > sudo xattr -rd com.apple.quarantine "/Applications/Skill Deck.app"
   > ```
@@ -102,11 +103,7 @@ Skill Deck 是一款轻量级的原生桌面应用，用于管理和浏览 **Ski
 
 ### 方式二：从源码构建
 
-**前置要求**：
-- Node.js >= 18
-- pnpm >= 8
-- Rust >= 1.70
-- 系统依赖：见 [Tauri 前置条件](https://tauri.app/v2/guides/prerequisites)
+开发环境和准确版本要求见[贡献指南](./CONTRIBUTING.md#开发环境)。Node.js、pnpm 和 Rust 版本分别以 CI、`package.json` 和 `src-tauri/Cargo.toml` 中的当前配置为准。
 
 ```bash
 # 克隆仓库
@@ -114,9 +111,9 @@ git clone https://github.com/hccake/skill-deck.git
 cd skill-deck
 
 # 安装依赖
-pnpm install
+pnpm install --frozen-lockfile
 
-# 开发模式运行
+# 启动桌面开发模式
 pnpm tauri dev
 
 # 构建生产版本
@@ -131,41 +128,40 @@ pnpm tauri build
 
 ### 1. 添加项目
 
-点击左侧栏 "Projects" 右侧的 `+` 按钮，选择你的代码项目目录。
+在侧栏的“项目”区域点击添加按钮，选择需要管理的代码项目目录。Global Skill 可以跳过此步骤。
 
-### 2. 准备技能来源
+### 2. 准备 Skill 来源
 
-找到你想安装的 Skill 的 GitHub 仓库地址或本地路径。例如：
+复制需要安装的 Skill 来源，例如：
+
 - `https://github.com/vercel-labs/skills`
 - `vercel-labs/skills`（GitHub 简写）
 - `/path/to/local/skill`（本地路径）
 
-你也可以直接粘贴 `skills` CLI 的安装命令 —— Skill Deck 会自动解析其中的来源地址、技能名称和目标 Agent：
+也可以粘贴受支持的 `skills` CLI 安装命令。Skill Deck 会解析其中的来源、Skill 和目标 Agent：
 
 ```bash
 npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 ```
 
-### 3. 安装技能
+### 3. 安装 Skill
 
-点击 "Global Skills" 或任意项目右侧的 `+ Add` 按钮 → 输入技能来源（或粘贴 CLI 命令）→ 选择目标编辑器（VS Code / Cursor 等）→ 选择安装模式（Symlink / Copy）→ 确认安装。
+在 Global 或目标 Project 区域点击新增入口，输入来源并选择 Skill、目标 Agent 和安装方式，然后确认预览并执行安装。粘贴 CLI 命令时，向导会预选命令中的 `--skill` 和 `--agent` 参数，确认前仍可调整。
 
-粘贴 CLI 命令时，命令中的 `--skill` 和 `--agent` 参数会自动预选到向导中，你仍可以在确认前修改选择。
+### 4. 在 Agent 中使用
 
-### 4. 在编辑器中使用
-
-安装完成后，在对应编辑器中打开项目，Skill 将自动加载到 AI 助手的技能列表中。
+安装完成后，对应 Agent 会从通用 Skill 目录或自身的 Skill 目录读取内容。实际读取位置取决于 Agent 定义和本次安装选择。
 
 ---
 
 ## 📄 许可证
 
-[MIT License](LICENSE)
+[Apache License 2.0](LICENSE)
 
 ---
 
 ## 🙏 致谢
 
-- [vercel-labs/skills](https://github.com/vercel-labs/skills) — 原始 CLI 工具
+- [vercel-labs/skills](https://github.com/vercel-labs/skills) — 共享格式与基础语义的上游 CLI
 - [Tauri](https://tauri.app/) — 跨平台桌面应用框架
 - [Linux.do](https://linux.do/) — 社区支持与反馈
