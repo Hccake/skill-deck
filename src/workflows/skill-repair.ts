@@ -6,6 +6,7 @@ import type {
   ContextRef,
   FetchResult,
   InstallResponse,
+  RecoveryAction,
 } from '@/bindings';
 import { toAppError } from '@/utils/to-app-error';
 import { prepareInstall, type InstallPreparationOutcome } from './skill-install-preparation';
@@ -25,11 +26,15 @@ export interface RepairSkillSourceRequest {
 
 export type RepairOutcome =
   | { status: 'succeeded'; response: InstallResponse }
-  | { status: 'partial'; response: InstallResponse }
   | { status: 'stopped' }
   | { status: 'missing' }
   | { status: 'riskRequired' }
-  | { status: 'failed'; stage: 'validation' | 'preparation' | 'execution'; error: AppError };
+  | { status: 'recoveryRequired'; response: InstallResponse; recovery: RecoveryAction[] }
+  | {
+    status: 'failed';
+    stage: 'validation' | 'preparation' | 'execution';
+    error: AppError | null;
+  };
 
 export interface RepairWorkflowApi {
   fetchAvailable: typeof fetchAvailable;
@@ -60,6 +65,16 @@ function buildAgentIntents(request: RepairSkillSourceRequest): AgentWriteIntent[
 function isSuccessful(response: InstallResponse): boolean {
   return response.units.length > 0
     && response.units.every((unit) => unit.status === 'succeeded');
+}
+
+function recoveryActions(response: InstallResponse): RecoveryAction[] {
+  const seen = new Set<string>();
+  return response.units.flatMap((unit) => {
+    const recovery = unit.recovery;
+    if (!recovery || seen.has(recovery.resourceId)) return [];
+    seen.add(recovery.resourceId);
+    return [recovery];
+  });
 }
 
 export async function repairSkillSource(
@@ -115,5 +130,11 @@ export async function repairSkillSource(
     return { status: 'failed', stage: 'execution', error: toAppError(error) };
   }
   if (request.stopRequested()) return { status: 'stopped' };
-  return isSuccessful(response) ? { status: 'succeeded', response } : { status: 'partial', response };
+  const recoveries = recoveryActions(response);
+  if (recoveries.length > 0) {
+    return { status: 'recoveryRequired', response, recovery: recoveries };
+  }
+  return isSuccessful(response)
+    ? { status: 'succeeded', response }
+    : { status: 'failed', stage: 'execution', error: null };
 }

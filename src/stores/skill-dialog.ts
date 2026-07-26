@@ -152,7 +152,6 @@ export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
       context,
       projectPath,
     );
-    if (!repairSourceTarget) return;
     set({ repairSourceTarget });
   },
 

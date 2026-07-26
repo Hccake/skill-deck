@@ -19,7 +19,7 @@ use crate::application::mutation::plan::{
 };
 use crate::application::mutation::result::{MutationUnitResult, OperationErrorCode};
 use crate::application::payload_session::{
-    AcquiredPayloadHandle, PayloadSessionManager, PinnedPayloadLease,
+    AcquiredPayloadHandle, CopySourceSnapshot, PayloadSessionManager, PinnedPayloadLease,
 };
 use crate::application::skill_entries::{
     join_entry, InstalledSkillPayloadAcquirer, SkillEntryObserver,
@@ -76,6 +76,26 @@ pub struct CopyPreview {
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "status", rename_all = "camelCase")]
+#[specta(tag = "status", rename_all = "camelCase")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "IPC 结果保持直接 DTO，避免只为内存布局增加 Box 和调用侧解包"
+)]
+pub enum CopyPreviewOutcome {
+    Ready { preview: CopyPreview },
+    SourceRepairRequired { reason: CopySourceRepairReason },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum CopySourceRepairReason {
+    MissingMetadata,
+    InvalidMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct CopyTargetPreview {
@@ -116,9 +136,14 @@ pub struct ProjectComparison {
 pub type CopyFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait CopyProjectComparator: Send + Sync {
-    fn compare<'a>(
+    fn capture_source<'a>(
         &'a self,
         source: &'a InstallPlanningFacts,
+    ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>>;
+
+    fn compare<'a>(
+        &'a self,
+        source: &'a ResolvedTargetFact,
         target: &'a InstallPlanningFacts,
     ) -> CopyFuture<'a, Result<ProjectComparison, AppError>>;
 }
@@ -159,24 +184,48 @@ where
         }
     }
 
-    pub async fn preview(&self, request: &CopyRequest) -> Result<CopyPreview, AppError> {
+    pub async fn preview(&self, request: &CopyRequest) -> Result<CopyPreviewOutcome, AppError> {
         validate_copy_request(request)?;
         let source = self
             .observer
             .observe(&request.source, &request.skill_name)
             .await?;
+        let source_lock_entry = source
+            .facts
+            .lock_document
+            .entry_snapshot(&request.skill_name)
+            .value()
+            .cloned();
+        if let Err(error) = normalize_copy_metadata(source_lock_entry.as_ref()) {
+            return Ok(CopyPreviewOutcome::SourceRepairRequired {
+                reason: error.repair_reason(),
+            });
+        }
         let handle = self
             .acquirer
             .acquire(&request.source, &request.skill_name, &source.canonical)
             .await?;
         let payload = self.payloads.pin_verified(&handle).await?;
-        let built = self.build(request, source.facts, payload, false).await?;
-        Ok(CopyPreview {
-            token: built.token,
-            payload: handle,
-            source: request.source.clone(),
-            target_environment: request.target_environment.clone(),
-            targets: built.previews,
+        let source_snapshot = CopySourceSnapshot {
+            source_context: request.source.clone(),
+            skill_name: request.skill_name.clone(),
+            revisions: source.facts.revisions.clone(),
+            lock_entry: source_lock_entry,
+            project_identity: self.comparator.capture_source(&source.facts).await?,
+        };
+        self.payloads
+            .bind_copy_source_snapshot(&handle, source_snapshot.clone())?;
+        let built = self
+            .build(request, &source_snapshot, payload, false)
+            .await?;
+        Ok(CopyPreviewOutcome::Ready {
+            preview: CopyPreview {
+                token: built.token,
+                payload: handle,
+                source: request.source.clone(),
+                target_environment: request.target_environment.clone(),
+                targets: built.previews,
+            },
         })
     }
 
@@ -186,19 +235,11 @@ where
         cancellation: CancellationSignal,
     ) -> Result<CopyResponse, AppError> {
         validate_copy_request(&execution.request)?;
-        if !same_environment_identity(
-            &execution.payload.environment,
-            &execution.request.source.environment,
-        ) {
-            return Err(AppError::StalePayload);
-        }
-        let source = self
-            .observer
-            .observe(&execution.request.source, &execution.request.skill_name)
-            .await?;
         let payload = self.payloads.pin_verified(&execution.payload).await?;
+        let source_snapshot = self.payloads.copy_source_snapshot(&execution.payload)?;
+        validate_copy_source_snapshot(&source_snapshot, &execution.request)?;
         let built = self
-            .build(&execution.request, source.facts, payload, true)
+            .build(&execution.request, &source_snapshot, payload, true)
             .await?;
         validate_copy_token(&execution.token, &built.token)?;
         if built.previews.iter().any(|target| {
@@ -219,15 +260,11 @@ where
     async fn build(
         &self,
         request: &CopyRequest,
-        source_facts: InstallPlanningFacts,
+        source: &CopySourceSnapshot,
         canonical_payload: PinnedPayloadLease,
         include_plan: bool,
     ) -> Result<BuiltCopy, AppError> {
-        let source_lock_entry = source_facts
-            .lock_document
-            .entry_snapshot(&request.skill_name)
-            .value()
-            .cloned();
+        let source_lock_entry = source.lock_entry.as_ref();
         let mut targets = Vec::with_capacity(request.target_project_ids.len());
         let canonical = canonical_payload.load_payload().await?;
         let mut needs_eve = false;
@@ -255,7 +292,10 @@ where
             if target_facts.len() != destinations.len() {
                 return Err(AppError::StaleTarget);
             }
-            let comparison = self.comparator.compare(&source_facts, &facts).await?;
+            let comparison = self
+                .comparator
+                .compare(&source.project_identity, &facts)
+                .await?;
             targets.push(BuiltCopyTarget {
                 context,
                 facts,
@@ -283,12 +323,16 @@ where
             )
             .await?;
         }
-        let revisions = aggregate_copy_revisions(&source_facts, &targets)?;
+        let revisions = aggregate_copy_revisions(&source.revisions, &targets)?;
         let observed_state_digest = stable_digest(&(
             &request.skill_name,
             &canonical_payload.manifest().payload_id(),
             &canonical_payload.manifest().payload_root_hash,
-            source_lock_entry.as_ref(),
+            source_lock_entry,
+            (
+                &source.project_identity.key,
+                &source.project_identity.fingerprint,
+            ),
             targets
                 .iter()
                 .map(|target| {
@@ -325,7 +369,7 @@ where
                         target,
                         &canonical_payload,
                         eve_payload.as_ref(),
-                        source_lock_entry.as_ref(),
+                        source_lock_entry,
                         &computed_hash,
                     )
                 })
@@ -409,10 +453,10 @@ fn project_context(environment: &EnvironmentRef, project_id: &str) -> ContextRef
 }
 
 fn aggregate_copy_revisions(
-    source: &InstallPlanningFacts,
+    source: &RuntimeRevisions,
     targets: &[BuiltCopyTarget],
 ) -> Result<RuntimeRevisions, AppError> {
-    let all = std::iter::once(&source.revisions)
+    let all = std::iter::once(source)
         .chain(targets.iter().map(|target| &target.facts.revisions))
         .collect::<Vec<_>>();
     let registry = stable_digest(
@@ -438,6 +482,22 @@ fn aggregate_copy_revisions(
             context_digest.trim_start_matches("digest-v1-")
         ))?,
     })
+}
+
+fn validate_copy_source_snapshot(
+    snapshot: &CopySourceSnapshot,
+    request: &CopyRequest,
+) -> Result<(), AppError> {
+    if snapshot.skill_name != request.skill_name
+        || snapshot.source_context.scope != request.source.scope
+        || !same_environment_identity(
+            &snapshot.source_context.environment,
+            &request.source.environment,
+        )
+    {
+        return Err(AppError::StalePayload);
+    }
+    Ok(())
 }
 
 fn validate_copy_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
@@ -704,17 +764,58 @@ pub(crate) fn compare_resolved_projects(
     }
 }
 
-fn normalize_copy_metadata(source: Option<&Value>) -> NormalizedCopyMetadata {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopyMetadataError {
+    Missing,
+    Invalid(&'static str),
+}
+
+impl CopyMetadataError {
+    fn repair_reason(self) -> CopySourceRepairReason {
+        match self {
+            Self::Missing => CopySourceRepairReason::MissingMetadata,
+            Self::Invalid(_) => CopySourceRepairReason::InvalidMetadata,
+        }
+    }
+
+    fn into_app_error(self) -> AppError {
+        match self {
+            Self::Missing => AppError::InvalidSource {
+                value: "source Skill has no lock metadata; repair its source before copying"
+                    .to_string(),
+            },
+            Self::Invalid(message) => AppError::ConfigurationCorrupted {
+                message: message.to_string(),
+            },
+        }
+    }
+}
+
+fn normalize_copy_metadata(
+    source: Option<&Value>,
+) -> Result<NormalizedCopyMetadata, CopyMetadataError> {
+    let source = source.ok_or(CopyMetadataError::Missing)?;
+    if !source.is_object() {
+        return Err(CopyMetadataError::Invalid(
+            "source lock entry must be an object",
+        ));
+    }
     let text = |field: &str| {
         source
-            .and_then(|entry| entry.get(field))
+            .get(field)
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
     };
-    NormalizedCopyMetadata {
-        source: text("source").unwrap_or_else(|| "installed-canonical".to_string()),
-        source_type: text("sourceType").unwrap_or_else(|| "installed".to_string()),
+    let source_value = text("source").ok_or(CopyMetadataError::Invalid(
+        "source lock entry is missing source identity",
+    ))?;
+    let source_type = text("sourceType").ok_or(CopyMetadataError::Invalid(
+        "source lock entry is missing source type",
+    ))?;
+    Ok(NormalizedCopyMetadata {
+        source: source_value,
+        source_type,
         source_url: text("sourceUrl"),
         ref_name: text("ref"),
         skill_path: text("skillPath"),
@@ -727,19 +828,14 @@ fn normalize_copy_metadata(source: Option<&Value>) -> NormalizedCopyMetadata {
             .flatten()
         }),
         plugin_name: text("pluginName"),
-    }
+    })
 }
 
 fn project_lock_replacement(
     source: Option<&Value>,
     computed_hash: &str,
 ) -> Result<Value, AppError> {
-    if source.is_some_and(|entry| !entry.is_object()) {
-        return Err(AppError::ConfigurationCorrupted {
-            message: "source lock entry must be an object".to_string(),
-        });
-    }
-    let metadata = normalize_copy_metadata(source);
+    let metadata = normalize_copy_metadata(source).map_err(CopyMetadataError::into_app_error)?;
     let mut entry = Map::new();
     entry.insert("source".to_string(), Value::String(metadata.source));
     entry.insert(
@@ -911,24 +1007,53 @@ mod tests {
         assert!(target.get("remoteHash").is_none());
     }
 
+    #[test]
+    fn copying_without_source_lock_metadata_requires_source_repair() {
+        assert!(matches!(
+            project_lock_replacement(None, "target-computed"),
+            Err(AppError::InvalidSource { .. })
+        ));
+    }
+
     #[derive(Clone)]
-    struct Facts(Arc<HashMap<ContextRef, InstallPlanningFacts>>);
+    struct Facts(Arc<Mutex<HashMap<ContextRef, InstallPlanningFacts>>>);
 
     impl InstallPlanningFactSource for Facts {
         fn current<'a>(
             &'a self,
             context: &'a ContextRef,
         ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
-            Box::pin(async move { self.0.get(context).cloned().ok_or(AppError::StaleContext) })
+            Box::pin(async move {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .get(context)
+                    .cloned()
+                    .ok_or(AppError::StaleContext)
+            })
         }
     }
 
     struct DifferentProjects;
 
     impl CopyProjectComparator for DifferentProjects {
+        fn capture_source<'a>(
+            &'a self,
+            source: &'a InstallPlanningFacts,
+        ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>> {
+            Box::pin(async move {
+                let project = source
+                    .resolved_context
+                    .project
+                    .as_ref()
+                    .ok_or(AppError::StaleContext)?;
+                Ok(project_fact(&project.native_path, 1, "source"))
+            })
+        }
+
         fn compare<'a>(
             &'a self,
-            _source: &'a InstallPlanningFacts,
+            _source: &'a ResolvedTargetFact,
             _target: &'a InstallPlanningFacts,
         ) -> CopyFuture<'a, Result<ProjectComparison, AppError>> {
             Box::pin(async {
@@ -1057,6 +1182,125 @@ mod tests {
         }
     }
 
+    async fn preview_with_source_lock(
+        source_lock: LosslessLockDocument,
+        target_project_ids: Vec<String>,
+    ) -> Result<CopyPreviewOutcome, AppError> {
+        let temp = tempdir().unwrap();
+        let source_root = temp.path().join("source");
+        let target_root = temp.path().join("target");
+        let source_skill = source_root.join(".agents/skills/demo");
+        fs::create_dir_all(&source_skill).unwrap();
+        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::create_dir_all(&target_root).unwrap();
+
+        let source = context(EnvironmentRef::Host, "source");
+        let target = context(EnvironmentRef::Host, "target");
+        let mut source_facts = planning_facts(source.clone(), &source_root, false);
+        source_facts.lock_document = source_lock;
+        let facts = Arc::new(Mutex::new(HashMap::from([
+            (source.clone(), source_facts),
+            (target.clone(), planning_facts(target, &target_root, false)),
+        ])));
+        let environments = Arc::new(EnvironmentRegistry::default());
+        let storage =
+            Arc::new(NativePayloadSessionStorage::new(temp.path().join("payloads")).unwrap());
+        let payloads = Arc::new(PayloadSessionManager::new(
+            storage,
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 8,
+                max_bytes: 1024 * 1024,
+            },
+            || 1_000,
+        ));
+        let service = CopyService::new(
+            Facts(facts),
+            crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone()),
+            payloads.clone(),
+            InstalledSkillPayloadAcquirer::new(payloads, environments),
+            CapturingExecutor(Arc::new(Mutex::new(None))),
+            DifferentProjects,
+        );
+        let request = CopyRequest {
+            skill_name: "demo".to_string(),
+            source,
+            target_environment: EnvironmentRef::Host,
+            target_project_ids,
+            requested_mode: InstallMode::Copy,
+            agent_intents: Vec::new(),
+        };
+
+        service.preview(&request).await
+    }
+
+    #[tokio::test]
+    async fn copy_preview_requests_source_repair_when_lock_entry_is_missing() {
+        let outcome = preview_with_source_lock(
+            LosslessLockDocument::empty(LockSchema::Project),
+            vec!["target".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            outcome,
+            CopyPreviewOutcome::SourceRepairRequired {
+                reason: CopySourceRepairReason::MissingMetadata
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn copy_preview_requests_source_repair_when_lock_entry_is_invalid() {
+        let outcome = preview_with_source_lock(
+            LosslessLockDocument::parse(
+                br#"{"version":1,"skills":{"demo":{"source":42,"sourceType":"github"}}}"#,
+            )
+            .unwrap(),
+            vec!["target".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            outcome,
+            CopyPreviewOutcome::SourceRepairRequired {
+                reason: CopySourceRepairReason::InvalidMetadata
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn copy_preview_keeps_non_source_failures_as_app_errors() {
+        let error = preview_with_source_lock(
+            LosslessLockDocument::parse(
+                br#"{"version":1,"skills":{"demo":{"source":"owner/repo","sourceType":"github"}}}"#,
+            )
+            .unwrap(),
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn copy_preview_allows_source_metadata_without_a_remote_hash() {
+        let outcome = preview_with_source_lock(
+            LosslessLockDocument::parse(
+                br#"{"version":1,"skills":{"demo":{"source":"owner/repo","sourceType":"github","skillPath":"skills/demo"}}}"#,
+            )
+            .unwrap(),
+            vec!["target".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CopyPreviewOutcome::Ready { .. }));
+    }
+
     #[tokio::test]
     async fn copy_service_builds_two_atomic_units_from_one_complete_source_payload() {
         let temp = tempdir().unwrap();
@@ -1073,12 +1317,15 @@ mod tests {
         let source = context(EnvironmentRef::Host, "source");
         let first = context(EnvironmentRef::Host, "first");
         let second = context(EnvironmentRef::Host, "second");
-        let facts = Facts(Arc::new(HashMap::from([
+        let facts = Arc::new(Mutex::new(HashMap::from([
             (
                 source.clone(),
                 planning_facts(source.clone(), &source_root, true),
             ),
-            (first.clone(), planning_facts(first, &first_root, false)),
+            (
+                first.clone(),
+                planning_facts(first.clone(), &first_root, false),
+            ),
             (second.clone(), planning_facts(second, &second_root, false)),
         ])));
         let environments = Arc::new(EnvironmentRegistry::default());
@@ -1095,7 +1342,7 @@ mod tests {
         ));
         let captured = Arc::new(Mutex::new(None));
         let service = CopyService::new(
-            facts,
+            Facts(facts.clone()),
             crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone()),
             payloads.clone(),
             InstalledSkillPayloadAcquirer::new(payloads, environments),
@@ -1110,8 +1357,41 @@ mod tests {
             requested_mode: InstallMode::Symlink,
             agent_intents: Vec::new(),
         };
-        let preview = service.preview(&request).await.unwrap();
+        let preview = match service.preview(&request).await.unwrap() {
+            CopyPreviewOutcome::Ready { preview } => preview,
+            CopyPreviewOutcome::SourceRepairRequired { reason } => {
+                panic!("complete source metadata unexpectedly required repair: {reason:?}")
+            }
+        };
         assert_eq!(preview.targets.len(), 2);
+        facts.lock().unwrap().remove(&request.source);
+
+        facts
+            .lock()
+            .unwrap()
+            .get_mut(&first)
+            .unwrap()
+            .revisions
+            .environment = "environment-2".to_string();
+        let stale_error = service
+            .execute(
+                &CopyExecutionRequest {
+                    request: request.clone(),
+                    token: preview.token.clone(),
+                    payload: preview.payload.clone(),
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(stale_error, AppError::StaleEnvironment));
+        facts
+            .lock()
+            .unwrap()
+            .get_mut(&first)
+            .unwrap()
+            .revisions
+            .environment = "environment-1".to_string();
 
         service
             .execute(

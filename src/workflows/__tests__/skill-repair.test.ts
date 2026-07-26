@@ -51,15 +51,30 @@ describe('repairSkillSource', () => {
     expect(workflowApi.fetchAvailable).toHaveBeenCalledWith(context, 'owner/repo', 'repair-1');
   });
 
-  it('preserves a partial execution response for the dialog to present', async () => {
+  it('returns a failed outcome when the single Skill mutation does not succeed', async () => {
     const workflowApi = api();
     workflowApi.installSkills.mockResolvedValue({
       units: [{ unitId: 'toolkit', status: 'failed' }],
     });
 
     await expect(repairSkillSource(request(), workflowApi as never)).resolves.toEqual({
-      status: 'partial',
-      response: { units: [{ unitId: 'toolkit', status: 'failed' }] },
+      status: 'failed',
+      stage: 'execution',
+      error: null,
+    });
+  });
+
+  it('preserves a recovery action from the single Skill mutation', async () => {
+    const workflowApi = api();
+    const recovery = { resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' } as const;
+    workflowApi.installSkills.mockResolvedValue({
+      units: [{ unitId: 'toolkit', status: 'recoveryRequired', recovery }],
+    });
+
+    await expect(repairSkillSource(request(), workflowApi as never)).resolves.toEqual({
+      status: 'recoveryRequired',
+      response: { units: [{ unitId: 'toolkit', status: 'recoveryRequired', recovery }] },
+      recovery: [recovery],
     });
   });
 

@@ -5,13 +5,19 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use specta::Type;
 use uuid::Uuid;
 
+use crate::application::mutation::plan::RuntimeRevisions;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{SkillPayload, SkillPayloadManifest};
-use crate::environment::types::{EnvironmentKey, EnvironmentRef};
+use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
+use crate::environment::runtime::ExecutionBackend;
+use crate::environment::types::{
+    same_environment_identity, ContextRef, ContextScope, EnvironmentKey, EnvironmentRef,
+};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +109,15 @@ pub struct AcquiredPayloadHandle {
     pub manifest_hash: String,
     pub source_fingerprint: String,
     pub expires_at_epoch_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopySourceSnapshot {
+    pub source_context: ContextRef,
+    pub skill_name: String,
+    pub revisions: RuntimeRevisions,
+    pub lock_entry: Option<Value>,
+    pub project_identity: ResolvedTargetFact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,13 +336,13 @@ pub trait PayloadSessionStorage: Send + Sync {
     ) -> PayloadStorageFuture<'a, Result<(), AppError>>;
 }
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 #[derive(Default)]
 pub struct InMemoryPayloadSessionStorage {
     payloads: Mutex<HashMap<PayloadStorageKey, Arc<SkillPayload>>>,
 }
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 impl PayloadSessionStorage for InMemoryPayloadSessionStorage {
     fn store<'a>(
         &'a self,
@@ -432,6 +447,7 @@ struct SessionRecord {
     busy_count: usize,
     pending_payloads: HashSet<String>,
     payloads: HashMap<String, PayloadRecord>,
+    copy_source_snapshots: HashMap<String, CopySourceSnapshot>,
     storage: Arc<dyn PayloadSessionStorage>,
     retained_source: Option<RetainedDiscoverySource>,
 }
@@ -500,7 +516,7 @@ impl PayloadSessionManager {
         }
     }
 
-    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+    #[cfg(test)]
     pub fn in_memory(
         limits: PayloadSessionLimits,
         now: impl Fn() -> u64 + Send + Sync + 'static,
@@ -579,6 +595,7 @@ impl PayloadSessionManager {
             busy_count: 0,
             pending_payloads: HashSet::new(),
             payloads: HashMap::new(),
+            copy_source_snapshots: HashMap::new(),
             storage: storage.clone(),
             retained_source,
         };
@@ -640,6 +657,54 @@ impl PayloadSessionManager {
                 source_fingerprint: discovery.source_fingerprint.clone(),
                 expires_at_epoch_ms: discovery.expires_at_epoch_ms,
             }))
+    }
+
+    pub fn bind_copy_source_snapshot(
+        &self,
+        handle: &AcquiredPayloadHandle,
+        snapshot: CopySourceSnapshot,
+    ) -> Result<(), AppError> {
+        let now = (self.inner.now)();
+        let mut sessions = lock(&self.inner.sessions)?;
+        validate_payload_handle(&sessions, handle, now)?;
+        let session = sessions
+            .get_mut(&handle.session_id)
+            .expect("validated session");
+        let payload = session
+            .payloads
+            .get(&handle.skill_path)
+            .expect("validated payload");
+        validate_copy_source_snapshot_binding(handle, payload, &snapshot)?;
+        match session.copy_source_snapshots.get(&handle.skill_path) {
+            Some(existing) if existing == &snapshot => Ok(()),
+            Some(_) => Err(AppError::StalePayload),
+            None => {
+                session
+                    .copy_source_snapshots
+                    .insert(handle.skill_path.clone(), snapshot);
+                Ok(())
+            }
+        }
+    }
+
+    pub fn copy_source_snapshot(
+        &self,
+        handle: &AcquiredPayloadHandle,
+    ) -> Result<CopySourceSnapshot, AppError> {
+        let now = (self.inner.now)();
+        let sessions = lock(&self.inner.sessions)?;
+        validate_payload_handle(&sessions, handle, now)?;
+        let session = sessions.get(&handle.session_id).expect("validated session");
+        let payload = session
+            .payloads
+            .get(&handle.skill_path)
+            .expect("validated payload");
+        let snapshot = session
+            .copy_source_snapshots
+            .get(&handle.skill_path)
+            .ok_or(AppError::StalePayload)?;
+        validate_copy_source_snapshot_binding(handle, payload, snapshot)?;
+        Ok(snapshot.clone())
     }
 
     pub fn protected_session_ids(
@@ -1225,6 +1290,32 @@ fn validate_payload_handle(
     Ok(())
 }
 
+fn validate_copy_source_snapshot_binding(
+    handle: &AcquiredPayloadHandle,
+    payload: &PayloadRecord,
+    snapshot: &CopySourceSnapshot,
+) -> Result<(), AppError> {
+    let valid_project = matches!(
+        &snapshot.source_context.scope,
+        ContextScope::Project { project_id } if !project_id.trim().is_empty()
+    );
+    let host_identity = matches!(
+        snapshot.project_identity.key.backend,
+        ExecutionBackend::NativeWindows | ExecutionBackend::NativeUnix
+    ) && matches!(
+        snapshot.project_identity.destination.environment,
+        EnvironmentRef::Host
+    ) && snapshot.project_identity.entry_kind == TargetEntryKind::Directory;
+    if !valid_project
+        || !same_environment_identity(&snapshot.source_context.environment, &handle.environment)
+        || snapshot.skill_name != payload.planning_metadata.skill_name
+        || !host_identity
+    {
+        return Err(AppError::StalePayload);
+    }
+    Ok(())
+}
+
 fn finish_payload_io(
     sessions: &Mutex<HashMap<String, SessionRecord>>,
     discovery: &DiscoverySessionHandle,
@@ -1296,7 +1387,10 @@ mod tests {
 
     use super::*;
     use crate::core::skill_payload::build_skill_payload;
-    use crate::environment::types::EnvironmentRef;
+    use crate::environment::runtime::{
+        ContextSnapshotRevision, EntryFingerprint, PhysicalParentIdentity, PhysicalTargetKey,
+    };
+    use crate::environment::types::{EnvironmentRef, ResourceLocator};
     use crate::error::AppError;
 
     fn payload() -> crate::core::skill_payload::SkillPayload {
@@ -1316,6 +1410,44 @@ mod tests {
             },
             move || now.load(Ordering::SeqCst),
         )
+    }
+
+    fn copy_source_snapshot(environment: EnvironmentRef) -> CopySourceSnapshot {
+        CopySourceSnapshot {
+            source_context: ContextRef {
+                environment,
+                scope: ContextScope::Project {
+                    project_id: "source-project".to_string(),
+                },
+            },
+            skill_name: "demo".to_string(),
+            revisions: RuntimeRevisions {
+                registry: "registry-1".to_string(),
+                environment: "environment-1".to_string(),
+                context: ContextSnapshotRevision::parse("context-source-1").unwrap(),
+            },
+            lock_entry: Some(serde_json::json!({
+                "source": "owner/repo",
+                "sourceType": "github"
+            })),
+            project_identity: ResolvedTargetFact {
+                key: PhysicalTargetKey {
+                    backend: ExecutionBackend::NativeUnix,
+                    physical_parent: PhysicalParentIdentity::Unix {
+                        device: 1,
+                        inode: 2,
+                    },
+                    normalized_final_child_name: "source".to_string(),
+                },
+                destination: ResourceLocator {
+                    environment: EnvironmentRef::Host,
+                    native_path: "/work/source".to_string(),
+                },
+                fingerprint: EntryFingerprint("entry-v1-source".to_string()),
+                entry_kind: TargetEntryKind::Directory,
+                link_target: None,
+            },
+        }
     }
 
     #[derive(Default)]
@@ -1559,6 +1691,75 @@ mod tests {
         assert!(matches!(
             manager.pin_verified(&handle).await,
             Err(AppError::PayloadSessionExpired { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn copy_source_snapshot_uses_the_payload_handle_lifetime() {
+        let now = Arc::new(AtomicU64::new(2_500));
+        let manager = manager(now.clone());
+        let discovery = manager
+            .discover(EnvironmentRef::Host, "source-v1")
+            .await
+            .expect("discovery");
+        let handle = manager
+            .acquire_payload(&discovery, "skills/demo", payload())
+            .await
+            .expect("payload handle");
+        let snapshot = copy_source_snapshot(EnvironmentRef::Host);
+
+        manager
+            .bind_copy_source_snapshot(&handle, snapshot.clone())
+            .expect("bind snapshot");
+        assert_eq!(
+            manager
+                .copy_source_snapshot(&handle)
+                .expect("read snapshot"),
+            snapshot
+        );
+
+        now.store(2_601, Ordering::SeqCst);
+        assert!(matches!(
+            manager.copy_source_snapshot(&handle),
+            Err(AppError::PayloadSessionExpired { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn copy_source_snapshot_rejects_conflicting_or_forged_bindings() {
+        let now = Arc::new(AtomicU64::new(3_000));
+        let manager = manager(now);
+        let discovery = manager
+            .discover(EnvironmentRef::Host, "source-v1")
+            .await
+            .expect("discovery");
+        let handle = manager
+            .acquire_payload(&discovery, "skills/demo", payload())
+            .await
+            .expect("payload handle");
+        let snapshot = copy_source_snapshot(EnvironmentRef::Host);
+
+        manager
+            .bind_copy_source_snapshot(&handle, snapshot.clone())
+            .expect("bind snapshot");
+        manager
+            .bind_copy_source_snapshot(&handle, snapshot.clone())
+            .expect("idempotent binding");
+
+        let mut conflicting = snapshot;
+        conflicting.lock_entry = None;
+        assert!(matches!(
+            manager.bind_copy_source_snapshot(&handle, conflicting),
+            Err(AppError::StalePayload)
+        ));
+
+        let mut forged = handle;
+        forged.environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        };
+        assert!(matches!(
+            manager.copy_source_snapshot(&forged),
+            Err(AppError::StalePayload)
         ));
     }
 

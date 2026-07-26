@@ -6,7 +6,14 @@ import { useMutationStore } from '@/stores/mutation';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { getSkillOperationAgents } from '@/stores/skills-utils';
 import { toAppError } from '@/utils/to-app-error';
-import type { AppError, CopyResponse, EnvironmentRef, MutationUnitResult } from '@/bindings';
+import type {
+  AppError,
+  CopySourceRepairReason,
+  CopyResponse,
+  EnvironmentRef,
+  MutationUnitResult,
+  RecoveryAction,
+} from '@/bindings';
 
 export interface SkillCopySelection {
   environment: EnvironmentRef;
@@ -15,19 +22,37 @@ export interface SkillCopySelection {
 
 export type CopyOutcome =
   | { status: 'blocked' }
+  | { status: 'sourceRepairRequired'; reason: CopySourceRepairReason }
   | { status: 'failed'; error: AppError }
   | { status: 'succeeded'; response: CopyResponse; succeededProjectIds: string[] }
+  | {
+    status: 'recoveryRequired';
+    response: CopyResponse;
+    succeededProjectIds: string[];
+    recovery: RecoveryAction[];
+  }
   | {
     status: 'partial';
     response: CopyResponse;
     succeededProjectIds: string[];
     failedProjectIds: string[];
     retryableProjectIds: string[];
+    recovery?: RecoveryAction[];
   };
 
 function projectIdOf(unit: MutationUnitResult): string | null {
   if (!unit.target) return null;
   return unit.target.scope.scope === 'project' ? unit.target.scope.project_id : null;
+}
+
+function recoveryActions(units: MutationUnitResult[]): RecoveryAction[] {
+  const seen = new Set<string>();
+  return units.flatMap((unit) => {
+    const recovery = unit.recovery;
+    if (!recovery || seen.has(recovery.resourceId)) return [];
+    seen.add(recovery.resourceId);
+    return [recovery];
+  });
 }
 
 export async function executeSkillCopy({
@@ -58,7 +83,11 @@ export async function executeSkillCopy({
       requestedMode: 'copy' as const,
       agentIntents,
     };
-    const preview = await previewCopySkillToProjects(request);
+    const previewOutcome = await previewCopySkillToProjects(request);
+    if (previewOutcome.status === 'sourceRepairRequired') {
+      return previewOutcome;
+    }
+    const preview = previewOutcome.preview;
     const response = await copySkillToProjects({
       request,
       token: preview.token,
@@ -73,19 +102,36 @@ export async function executeSkillCopy({
     if (failed.length === 0) {
       return { status: 'succeeded', response, succeededProjectIds };
     }
-    const failedProjectIds = failed
+    const recoveries = recoveryActions(failed);
+    const ordinaryFailed = failed.filter((unit) => unit.status !== 'recoveryRequired' || !unit.recovery);
+    if (targetProjectIds.length === 1 && ordinaryFailed.length === 0 && recoveries.length > 0) {
+      return {
+        status: 'recoveryRequired',
+        response,
+        succeededProjectIds,
+        recovery: recoveries,
+      };
+    }
+    const failedProjectIds = ordinaryFailed
       .map(projectIdOf)
       .filter((projectId): projectId is string => projectId !== null);
-    const retryableProjectIds = failed
+    const retryableProjectIds = ordinaryFailed
       .filter((unit) => unit.retryable)
       .map(projectIdOf)
       .filter((projectId): projectId is string => projectId !== null);
+    if (targetProjectIds.length === 1) {
+      return {
+        status: 'failed',
+        error: toAppError(ordinaryFailed[0]?.error ?? new Error('Copy mutation failed')),
+      };
+    }
     return {
       status: 'partial',
       response,
       succeededProjectIds,
       failedProjectIds,
       retryableProjectIds,
+      recovery: recoveries,
     };
   } catch (error) {
     return { status: 'failed', error: toAppError(error) };

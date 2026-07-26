@@ -24,6 +24,7 @@ const skill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => ({
   canonicalPath: '/project/.agents/skills/toolkit',
   scope: 'project',
   agents: ['claude-code'],
+  associatedAgents: ['claude-code'],
   source: 'owner/repo',
   sourceUrl: 'https://github.com/owner/repo',
   canRunUpdate: true,
@@ -286,6 +287,27 @@ describe('CopyToProjectDialog', () => {
     expect(note.querySelector('.text-warning')).toBeNull();
   });
 
+  it('does not add a copy-specific warning for a local source', async () => {
+    render(
+      <CopyToProjectDialog
+        skill={skill({
+          source: '/home/alice/skills',
+          sourceUrl: null,
+          canRunUpdate: false,
+          canCheckForUpdates: false,
+          updateReason: 'local-source',
+        })}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    await screen.findByText('/project-b');
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.copyToProject.repairSource' })).toBeNull();
+  });
+
   it('does not show the source note for temporary update check failures', async () => {
     render(
       <CopyToProjectDialog
@@ -304,7 +326,12 @@ describe('CopyToProjectDialog', () => {
     expect(screen.queryByText('skills.copyToProject.metadataWarning')).toBeNull();
   });
 
-  it('shows a lightweight source note when source information is missing', async () => {
+  it('asks Backend first and offers source repair only after Backend requires it', async () => {
+    const onRepairSource = vi.fn();
+    const onCopy = vi.fn(async () => ({
+      status: 'sourceRepairRequired' as const,
+      reason: 'missingMetadata' as const,
+    } satisfies CopyOutcome));
     render(
       <CopyToProjectDialog
         skill={skill({
@@ -316,14 +343,52 @@ describe('CopyToProjectDialog', () => {
         })}
         {...defaultCopyProps}
         onClose={vi.fn()}
-        onCopy={vi.fn()}
+        onCopy={onCopy}
+        onRepairSource={onRepairSource}
       />
     );
 
     await screen.findByText('/project-b');
+    fireEvent.click(screen.getByRole('checkbox'));
+    const copy = screen.getByRole('button', { name: 'skills.copyToProject.copy' });
+    expect((copy as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole('button', {
+      name: 'skills.copyToProject.repairSource',
+    })).toBeNull();
+
+    fireEvent.click(copy);
+
+    await waitFor(() => expect(onCopy).toHaveBeenCalledTimes(1));
     const note = screen.getByRole('note');
-    expect(note.textContent).toContain('skills.copyToProject.metadataWarning');
-    expect(note.querySelector('.text-warning')).toBeNull();
+    expect(note.textContent).toContain('skills.copyToProject.sourceRepairRequired');
+    const repair = screen.getByRole('button', { name: 'skills.copyToProject.repairSource' });
+    expect(repair).toBeDefined();
+    fireEvent.click(repair);
+    expect(onRepairSource).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps ordinary copy failures as retryable copy feedback', async () => {
+    const onCopy = vi.fn(async () => ({
+      status: 'failed' as const,
+      error: { kind: 'staleContext' as const },
+    } satisfies CopyOutcome));
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={onCopy}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('skills.copyToProject.copyError');
+    expect(screen.queryByRole('button', {
+      name: 'skills.copyToProject.repairSource',
+    })).toBeNull();
   });
 
   it('shows a recoverable error when target projects cannot be loaded', async () => {
