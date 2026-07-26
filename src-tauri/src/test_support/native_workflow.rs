@@ -6,7 +6,9 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::application::agent_intent::{AdapterTargetId, AgentWriteIntent, PrivateEntryIntent};
-use crate::application::copy::{CopyExecutionRequest, CopyRequest, CopyService};
+use crate::application::copy::{
+    CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
+};
 use crate::application::copy_runtime::RuntimeCopyProjectComparator;
 use crate::application::install::{
     InstallFuture, InstallPlanExecutor, InstallRequest, InstallService,
@@ -805,7 +807,14 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         requested_mode: InstallMode::Copy,
         agent_intents: both_agent_intents(),
     };
-    let copy_preview = copy.preview(&copy_request).await?;
+    let copy_preview = match copy.preview(&copy_request).await? {
+        CopyPreviewOutcome::Ready { preview } => preview,
+        CopyPreviewOutcome::SourceRepairRequired { reason } => {
+            return Err(AppError::Custom {
+                message: format!("native workflow source metadata required repair: {reason:?}"),
+            });
+        }
+    };
     let copied = copy
         .execute(
             &CopyExecutionRequest {

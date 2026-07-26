@@ -161,6 +161,8 @@ Manage Agents 调整哪些 Agent 可以读取当前已安装 Skill，不重新�
 
 复制使用完整 Skill payload，包括嵌套目录、脚本和 metadata，不只复制根目录文件。来源与目标 Environment 不同时，系统通过受控 payload bridge 传递已经固定的内容，最终受保护写入仍在目标 storage owner Environment 执行；payload 固定后来源 Environment 断开不影响本次 Execute。Transport 和 storage 边界见[系统架构](./architecture.md#source-acquisition)，payload safety 见[执行与恢复](./execution-and-recovery.md#payload)。
 
+复制资格由 Backend preview 统一判断。来源 lock entry 缺失或来源 metadata 无法解释时，preview 返回有限的来源修复结果；Environment、payload、目标 Project 和路径错误仍保留原有错误语义。Frontend 不根据 `updateReason`、来源展示字段或 Local 的更新能力提前阻止复制。来源修复弹窗打开时，复制会话继续保留目标 Environment、项目选择和局部结果；修复成功后只提示用户重新点击复制，由新的 Backend preview 重新确认当前事实，不自动继续执行。
+
 每个目标 Project 是独立 unit。目标读取失败、路径重叠、self-copy、storage capability 不足或覆盖冲突只影响相应目标，并产生明确结果。部分成功时只保留失败且可重试的 Project 作为下一次执行范围；全部成功才关闭复制弹窗。目标 Project lock 会继承能够安全解释的来源 metadata，同时保留 Skill Deck 用于远端更新检测的增强信息；目标目录和 lock 是独立 materialization，不依赖来源 Project 继续存在。Remote、Git 和 Well-known 来源保留可更新 lineage；Local 来源仍可复制当前快照，但只保留 provenance，明确没有自动更新能力，也不把本地 hash 当成远端版本证据。若某个目标 unit 返回 `RecoveryRequired`，单目标 Copy 直接显示该状态，多目标 Copy 才在批次摘要中聚合为 partial，并保留该 unit 的 Recovery 入口。
 
 ## 移除

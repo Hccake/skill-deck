@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::application::copy::{CopyExecutionRequest, CopyRequest, CopyService};
+use crate::application::copy::{
+    CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
+};
 use crate::application::copy_runtime::RuntimeCopyProjectComparator;
 use crate::application::install::{InstallRequest, InstallService};
 use crate::application::install_planner::ConcreteInstallPlanner;
@@ -937,7 +939,14 @@ pub async fn run_full_wsl_mutation_workflow(
         requested_mode: InstallMode::Copy,
         agent_intents: both_agent_intents(),
     };
-    let copy_preview = copy.preview(&copy_request).await?;
+    let copy_preview = match copy.preview(&copy_request).await? {
+        CopyPreviewOutcome::Ready { preview } => preview,
+        CopyPreviewOutcome::SourceRepairRequired { reason } => {
+            return Err(AppError::Custom {
+                message: format!("WSL workflow source metadata required repair: {reason:?}"),
+            });
+        }
+    };
     let copied = copy
         .execute(
             &CopyExecutionRequest {

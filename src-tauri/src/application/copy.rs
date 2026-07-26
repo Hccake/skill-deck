@@ -76,6 +76,22 @@ pub struct CopyPreview {
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "status", rename_all = "camelCase")]
+#[specta(tag = "status", rename_all = "camelCase")]
+pub enum CopyPreviewOutcome {
+    Ready { preview: CopyPreview },
+    SourceRepairRequired { reason: CopySourceRepairReason },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum CopySourceRepairReason {
+    MissingMetadata,
+    InvalidMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct CopyTargetPreview {
@@ -164,24 +180,28 @@ where
         }
     }
 
-    pub async fn preview(&self, request: &CopyRequest) -> Result<CopyPreview, AppError> {
+    pub async fn preview(&self, request: &CopyRequest) -> Result<CopyPreviewOutcome, AppError> {
         validate_copy_request(request)?;
         let source = self
             .observer
             .observe(&request.source, &request.skill_name)
             .await?;
-        let handle = self
-            .acquirer
-            .acquire(&request.source, &request.skill_name, &source.canonical)
-            .await?;
-        let payload = self.payloads.pin_verified(&handle).await?;
         let source_lock_entry = source
             .facts
             .lock_document
             .entry_snapshot(&request.skill_name)
             .value()
             .cloned();
-        normalize_copy_metadata(source_lock_entry.as_ref())?;
+        if let Err(error) = normalize_copy_metadata(source_lock_entry.as_ref()) {
+            return Ok(CopyPreviewOutcome::SourceRepairRequired {
+                reason: error.repair_reason(),
+            });
+        }
+        let handle = self
+            .acquirer
+            .acquire(&request.source, &request.skill_name, &source.canonical)
+            .await?;
+        let payload = self.payloads.pin_verified(&handle).await?;
         let source_snapshot = CopySourceSnapshot {
             source_context: request.source.clone(),
             skill_name: request.skill_name.clone(),
@@ -194,12 +214,14 @@ where
         let built = self
             .build(request, &source_snapshot, payload, false)
             .await?;
-        Ok(CopyPreview {
-            token: built.token,
-            payload: handle,
-            source: request.source.clone(),
-            target_environment: request.target_environment.clone(),
-            targets: built.previews,
+        Ok(CopyPreviewOutcome::Ready {
+            preview: CopyPreview {
+                token: built.token,
+                payload: handle,
+                source: request.source.clone(),
+                target_environment: request.target_environment.clone(),
+                targets: built.previews,
+            },
         })
     }
 
@@ -738,14 +760,41 @@ pub(crate) fn compare_resolved_projects(
     }
 }
 
-fn normalize_copy_metadata(source: Option<&Value>) -> Result<NormalizedCopyMetadata, AppError> {
-    let source = source.ok_or_else(|| AppError::InvalidSource {
-        value: "source Skill has no lock metadata; repair its source before copying".to_string(),
-    })?;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopyMetadataError {
+    Missing,
+    Invalid(&'static str),
+}
+
+impl CopyMetadataError {
+    fn repair_reason(self) -> CopySourceRepairReason {
+        match self {
+            Self::Missing => CopySourceRepairReason::MissingMetadata,
+            Self::Invalid(_) => CopySourceRepairReason::InvalidMetadata,
+        }
+    }
+
+    fn into_app_error(self) -> AppError {
+        match self {
+            Self::Missing => AppError::InvalidSource {
+                value: "source Skill has no lock metadata; repair its source before copying"
+                    .to_string(),
+            },
+            Self::Invalid(message) => AppError::ConfigurationCorrupted {
+                message: message.to_string(),
+            },
+        }
+    }
+}
+
+fn normalize_copy_metadata(
+    source: Option<&Value>,
+) -> Result<NormalizedCopyMetadata, CopyMetadataError> {
+    let source = source.ok_or(CopyMetadataError::Missing)?;
     if !source.is_object() {
-        return Err(AppError::ConfigurationCorrupted {
-            message: "source lock entry must be an object".to_string(),
-        });
+        return Err(CopyMetadataError::Invalid(
+            "source lock entry must be an object",
+        ));
     }
     let text = |field: &str| {
         source
@@ -754,12 +803,12 @@ fn normalize_copy_metadata(source: Option<&Value>) -> Result<NormalizedCopyMetad
             .filter(|value| !value.is_empty())
             .map(str::to_string)
     };
-    let source_value = text("source").ok_or_else(|| AppError::ConfigurationCorrupted {
-        message: "source lock entry is missing source identity".to_string(),
-    })?;
-    let source_type = text("sourceType").ok_or_else(|| AppError::ConfigurationCorrupted {
-        message: "source lock entry is missing source type".to_string(),
-    })?;
+    let source_value = text("source").ok_or(CopyMetadataError::Invalid(
+        "source lock entry is missing source identity",
+    ))?;
+    let source_type = text("sourceType").ok_or(CopyMetadataError::Invalid(
+        "source lock entry is missing source type",
+    ))?;
     Ok(NormalizedCopyMetadata {
         source: source_value,
         source_type,
@@ -782,7 +831,7 @@ fn project_lock_replacement(
     source: Option<&Value>,
     computed_hash: &str,
 ) -> Result<Value, AppError> {
-    let metadata = normalize_copy_metadata(source)?;
+    let metadata = normalize_copy_metadata(source).map_err(CopyMetadataError::into_app_error)?;
     let mut entry = Map::new();
     entry.insert("source".to_string(), Value::String(metadata.source));
     entry.insert(
@@ -1129,6 +1178,125 @@ mod tests {
         }
     }
 
+    async fn preview_with_source_lock(
+        source_lock: LosslessLockDocument,
+        target_project_ids: Vec<String>,
+    ) -> Result<CopyPreviewOutcome, AppError> {
+        let temp = tempdir().unwrap();
+        let source_root = temp.path().join("source");
+        let target_root = temp.path().join("target");
+        let source_skill = source_root.join(".agents/skills/demo");
+        fs::create_dir_all(&source_skill).unwrap();
+        fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        fs::create_dir_all(&target_root).unwrap();
+
+        let source = context(EnvironmentRef::Host, "source");
+        let target = context(EnvironmentRef::Host, "target");
+        let mut source_facts = planning_facts(source.clone(), &source_root, false);
+        source_facts.lock_document = source_lock;
+        let facts = Arc::new(Mutex::new(HashMap::from([
+            (source.clone(), source_facts),
+            (target.clone(), planning_facts(target, &target_root, false)),
+        ])));
+        let environments = Arc::new(EnvironmentRegistry::default());
+        let storage =
+            Arc::new(NativePayloadSessionStorage::new(temp.path().join("payloads")).unwrap());
+        let payloads = Arc::new(PayloadSessionManager::new(
+            storage,
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 8,
+                max_bytes: 1024 * 1024,
+            },
+            || 1_000,
+        ));
+        let service = CopyService::new(
+            Facts(facts),
+            crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone()),
+            payloads.clone(),
+            InstalledSkillPayloadAcquirer::new(payloads, environments),
+            CapturingExecutor(Arc::new(Mutex::new(None))),
+            DifferentProjects,
+        );
+        let request = CopyRequest {
+            skill_name: "demo".to_string(),
+            source,
+            target_environment: EnvironmentRef::Host,
+            target_project_ids,
+            requested_mode: InstallMode::Copy,
+            agent_intents: Vec::new(),
+        };
+
+        service.preview(&request).await
+    }
+
+    #[tokio::test]
+    async fn copy_preview_requests_source_repair_when_lock_entry_is_missing() {
+        let outcome = preview_with_source_lock(
+            LosslessLockDocument::empty(LockSchema::Project),
+            vec!["target".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            outcome,
+            CopyPreviewOutcome::SourceRepairRequired {
+                reason: CopySourceRepairReason::MissingMetadata
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn copy_preview_requests_source_repair_when_lock_entry_is_invalid() {
+        let outcome = preview_with_source_lock(
+            LosslessLockDocument::parse(
+                br#"{"version":1,"skills":{"demo":{"source":42,"sourceType":"github"}}}"#,
+            )
+            .unwrap(),
+            vec!["target".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            outcome,
+            CopyPreviewOutcome::SourceRepairRequired {
+                reason: CopySourceRepairReason::InvalidMetadata
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn copy_preview_keeps_non_source_failures_as_app_errors() {
+        let error = preview_with_source_lock(
+            LosslessLockDocument::parse(
+                br#"{"version":1,"skills":{"demo":{"source":"owner/repo","sourceType":"github"}}}"#,
+            )
+            .unwrap(),
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn copy_preview_allows_source_metadata_without_a_remote_hash() {
+        let outcome = preview_with_source_lock(
+            LosslessLockDocument::parse(
+                br#"{"version":1,"skills":{"demo":{"source":"owner/repo","sourceType":"github","skillPath":"skills/demo"}}}"#,
+            )
+            .unwrap(),
+            vec!["target".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, CopyPreviewOutcome::Ready { .. }));
+    }
+
     #[tokio::test]
     async fn copy_service_builds_two_atomic_units_from_one_complete_source_payload() {
         let temp = tempdir().unwrap();
@@ -1185,7 +1353,12 @@ mod tests {
             requested_mode: InstallMode::Symlink,
             agent_intents: Vec::new(),
         };
-        let preview = service.preview(&request).await.unwrap();
+        let preview = match service.preview(&request).await.unwrap() {
+            CopyPreviewOutcome::Ready { preview } => preview,
+            CopyPreviewOutcome::SourceRepairRequired { reason } => {
+                panic!("complete source metadata unexpectedly required repair: {reason:?}")
+            }
+        };
         assert_eq!(preview.targets.len(), 2);
         facts.lock().unwrap().remove(&request.source);
 

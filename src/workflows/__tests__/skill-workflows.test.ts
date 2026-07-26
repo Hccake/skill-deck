@@ -126,11 +126,14 @@ describe('skill workflows', () => {
     mocks.previewManageSkillAgents.mockResolvedValue(managePreview);
     mocks.manageSkillAgents.mockResolvedValue({ units: [{ status: 'succeeded', error: null }] });
     mocks.previewCopySkillToProjects.mockResolvedValue({
-      token,
-      payload: {},
-      source: context,
-      targetEnvironment: { kind: 'host' },
-      targets: [],
+      status: 'ready',
+      preview: {
+        token,
+        payload: {},
+        source: context,
+        targetEnvironment: { kind: 'host' },
+        targets: [],
+      },
     });
     mocks.copySkillToProjects.mockResolvedValue({ units: [{ status: 'succeeded' }] });
     mocks.cleanupDuplicateAgentCopies.mockResolvedValue([
@@ -424,6 +427,25 @@ describe('skill workflows', () => {
       targetProjectIds: ['host-target'],
     }));
     expect(mocks.copySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({ token }));
+  });
+
+  it('returns source repair guidance without starting copy execution', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.previewCopySkillToProjects.mockResolvedValue({
+      status: 'sourceRepairRequired',
+      reason: 'missingMetadata',
+    });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['host-target'],
+    });
+
+    expect(outcome).toEqual({
+      status: 'sourceRepairRequired',
+      reason: 'missingMetadata',
+    });
+    expect(mocks.copySkillToProjects).not.toHaveBeenCalled();
   });
 
   it('returns retryable project IDs for partial copy outcomes without closing the dialog', async () => {

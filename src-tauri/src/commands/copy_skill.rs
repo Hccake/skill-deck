@@ -1,6 +1,8 @@
 use tauri::State;
 
-use crate::application::copy::{CopyExecutionRequest, CopyPreview, CopyRequest, CopyResponse};
+use crate::application::copy::{
+    CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyResponse,
+};
 use crate::core::mutation::{MutationKind, MutationPhase};
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
@@ -10,7 +12,7 @@ use crate::runtime::RuntimeServiceGraph;
 pub async fn preview_copy_skill_to_projects(
     request: CopyRequest,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<CopyPreview, AppError> {
+) -> Result<CopyPreviewOutcome, AppError> {
     runtime.copy().preview(&request).await
 }
 

@@ -121,7 +121,8 @@
       "stopping": "Stopping…",
       "repairStopped": "Repair was stopped. Completed writes, if any, remain unchanged.",
       "stopFailed": "The stop request could not be sent. Repair is still running.",
-      "repairFailed": "Repair failed. Check the result and try again."
+      "repairFailed": "Repair failed. Check the result and try again.",
+      "copyRetry": "Source repaired. Click Copy again to continue."
     },
     "agent": {
       "enable": "Enable {{name}}",

@@ -325,8 +325,12 @@ describe('CopyToProjectDialog', () => {
     expect(screen.queryByText('skills.copyToProject.metadataWarning')).toBeNull();
   });
 
-  it('blocks copying and offers source repair when source information is missing', async () => {
+  it('asks Backend first and offers source repair only after Backend requires it', async () => {
     const onRepairSource = vi.fn();
+    const onCopy = vi.fn(async () => ({
+      status: 'sourceRepairRequired' as const,
+      reason: 'missingMetadata' as const,
+    } satisfies CopyOutcome));
     render(
       <CopyToProjectDialog
         skill={skill({
@@ -338,21 +342,52 @@ describe('CopyToProjectDialog', () => {
         })}
         {...defaultCopyProps}
         onClose={vi.fn()}
-        onCopy={vi.fn()}
+        onCopy={onCopy}
         onRepairSource={onRepairSource}
       />
     );
 
     await screen.findByText('/project-b');
+    fireEvent.click(screen.getByRole('checkbox'));
+    const copy = screen.getByRole('button', { name: 'skills.copyToProject.copy' });
+    expect((copy as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole('button', {
+      name: 'skills.copyToProject.repairSource',
+    })).toBeNull();
+
+    fireEvent.click(copy);
+
+    await waitFor(() => expect(onCopy).toHaveBeenCalledTimes(1));
     const note = screen.getByRole('note');
     expect(note.textContent).toContain('skills.copyToProject.sourceRepairRequired');
     const repair = screen.getByRole('button', { name: 'skills.copyToProject.repairSource' });
     expect(repair).toBeDefined();
-    expect((screen.getByRole('button', {
-      name: 'skills.copyToProject.copy',
-    }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(repair);
     expect(onRepairSource).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps ordinary copy failures as retryable copy feedback', async () => {
+    const onCopy = vi.fn(async () => ({
+      status: 'failed' as const,
+      error: { kind: 'staleContext' as const },
+    } satisfies CopyOutcome));
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={onCopy}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('skills.copyToProject.copyError');
+    expect(screen.queryByRole('button', {
+      name: 'skills.copyToProject.repairSource',
+    })).toBeNull();
   });
 
   it('shows a recoverable error when target projects cannot be loaded', async () => {

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMutationStore } from '@/stores/mutation';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { RepairSourceDialog } from '../RepairSourceDialog';
+import type { InstalledSkill } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   fetchAvailable: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   installSkills: vi.fn(),
   markSourceRepairSucceeded: vi.fn(),
   syncSkills: vi.fn(),
+  toastSuccess: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -39,7 +41,9 @@ vi.mock('@/components/recovery/RecoveryActions', () => ({
   ),
 }));
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: mocks.toastSuccess },
+}));
 vi.mock('@/utils/cross-storage-guidance', () => ({
   appendCrossStorageFailureGuidance: (message: string) => message,
 }));
@@ -85,7 +89,11 @@ describe('RepairSourceDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
-    useSkillDialogStore.setState({ repairSourceTarget: null });
+    useSkillDialogStore.setState({
+      copySkill: null,
+      copyContext: undefined,
+      repairSourceTarget: null,
+    });
     mocks.fetchAvailable.mockResolvedValue({
       discoverySession,
       sourceType: 'github',
@@ -131,6 +139,47 @@ describe('RepairSourceDialog', () => {
     });
     expect(mocks.installSkills).toHaveBeenCalledWith(request, token);
     expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith(context, 'toolkit');
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('opens source repair with an empty input when the source record is missing', () => {
+    useSkillDialogStore.getState().openRepairSource({
+      name: 'toolkit',
+      description: '',
+      path: '/skills/toolkit',
+      canonicalPath: '/skills/toolkit',
+      scope: 'global',
+      agents: ['claude-code'],
+      source: null,
+      sourceUrl: null,
+    } as InstalledSkill, context);
+
+    render(<RepairSourceDialog />);
+
+    expect((screen.getByRole('textbox', {
+      name: 'skills.repairSourceDialog.sourceLabel',
+    }) as HTMLInputElement).value).toBe('');
+  });
+
+  it('prompts the matching Copy session to retry after repair succeeds', async () => {
+    const copySkill = {
+      name: 'toolkit',
+      description: '',
+      path: '/skills/toolkit',
+      canonicalPath: '/skills/toolkit',
+      scope: 'global',
+      agents: ['claude-code'],
+    } as InstalledSkill;
+    useSkillDialogStore.setState({ copySkill, copyContext: context });
+    openDialog();
+
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+
+    await waitFor(() => expect(useSkillDialogStore.getState().repairSourceTarget).toBeNull());
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      'skills.repairSourceDialog.copyRetry',
+    );
+    expect(useSkillDialogStore.getState().copySkill).toBe(copySkill);
   });
 
   it('keeps the dialog open when a mutation unit fails', async () => {
@@ -145,6 +194,7 @@ describe('RepairSourceDialog', () => {
     expect(useSkillDialogStore.getState().repairSourceTarget).not.toBeNull();
     expect(screen.getByRole('alert').textContent)
       .toContain('skills.repairSourceDialog.repairFailed');
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });
 
   it('requires a fresh dialog after recovery is resolved', async () => {

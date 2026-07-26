@@ -86,6 +86,8 @@ sequenceDiagram
 
 Preview 是只读操作，不获取 mutation admission，也不缓存 prepared plan。Execute 获取全局 admission，重新解析 Backend authority 并重建计划；对于已经固定 payload 的请求，不重新读取原始来源。只有跨 Environment Copy 可以在来源 Environment 断开后继续，且目标 Environment 仍须在线；Install、Update 和 Repair 仍要求当前 Environment 可用。Manage Agents 不涉及来源 payload；Repair Source 如果尚未固定 payload，则按普通获取阶段处理。这样可以拒绝以下变化：
 
+Copy Preview 对来源 metadata 使用一个窄的 typed outcome：来源 lock entry 不存在时返回 `missingMetadata`，entry 存在但必需字段无法解释时返回 `invalidMetadata`；两者都要求用户先修复来源。其他请求校验、Environment、payload、Project 和路径失败继续返回 `AppError`，不能被统一降级成来源修复。修复完成后 Frontend 只恢复原复制会话并提示用户重新点击复制，不自动重放 Preview 或 Execute。
+
 - Agent Registry 已变化；
 - Environment session 或 capability 已变化；
 - 当前 Context、ProjectBinding 或 root identity 已变化；

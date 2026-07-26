@@ -147,7 +147,8 @@ Skill 工作流不会把 Built-in 与 Custom Agent 分成两套操作。
 - 一个批次可以选择该目标 Environment 中的多个项目，但不能同时混选不同 Environment。
 - 目标 Environment 必须拥有目标项目路径；来源 Environment 可以不同，应用通过受控内容传递完成跨 Environment copy。
 - 目标项目的读取失败会显示为错误，不会被当成“尚未安装”。
-- 应用在写入前检查同一物理项目、路径重叠、存储能力和覆盖风险。
+- 用户点击复制后，Backend preview 统一检查来源记录、同一物理项目、路径重叠、存储能力和覆盖风险；Frontend 不根据列表中的更新状态提前判断能否复制。
+- 来源记录缺失或无效时，复制弹窗保留当前 Environment 和项目选择，并提供修复来源入口。修复来源期间只暂时隐藏复制弹窗；修复成功后提示用户重新点击复制，不会自动继续预览或写入。
 - 多项目结果相互独立，可以出现部分成功。已成功的项目从下一次重试范围中排除，普通失败项目保留清晰的重试信息；`RecoveryRequired` 项目保留独立的 Recovery 入口，不加入普通 retry；只有全部成功时才自动关闭复制弹窗。单目标 Copy 不显示为 partial。
 - 项目位于其他 storage owner 时，当前 Environment 只能读取、提示并引导切换，不能直接执行受保护写入；切换到 owner Environment 后，目标项目才可进入 copy、install、update、remove 或 Manage Agents。
 - 复制成功后，Remote、Git 和 Well-known 来源的目标 Project 保留可解释的来源、ref、Skill path 和更新基线，但不依赖来源 Environment 或来源 Project 继续可用；后续更新直接在目标 storage owner Environment 按目标 Project 自己的 lock 重新获取来源。Local 来源只保留路径和内容基线作为 provenance，明确显示没有自动更新能力。

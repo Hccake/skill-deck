@@ -315,7 +315,7 @@ async manageSkillAgents(request: ManageAgentsRequest) : Promise<Result<ManageAge
     else return { status: "error", error: e  as any };
 }
 },
-async previewCopySkillToProjects(request: CopyRequest) : Promise<Result<CopyPreview, AppError>> {
+async previewCopySkillToProjects(request: CopyRequest) : Promise<Result<CopyPreviewOutcome, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_copy_skill_to_projects", { request }) };
 } catch (e) {
@@ -553,8 +553,10 @@ export type ContextScope = { scope: "global" } | { scope: "project"; project_id:
 export type ContextSnapshotRevision = string
 export type CopyExecutionRequest = { request: CopyRequest; token: PreviewToken; payload: AcquiredPayloadHandle }
 export type CopyPreview = { token: PreviewToken; payload: AcquiredPayloadHandle; source: ContextRef; targetEnvironment: EnvironmentRef; targets: CopyTargetPreview[] }
+export type CopyPreviewOutcome = { status: "ready"; preview: CopyPreview } | { status: "sourceRepairRequired"; reason: CopySourceRepairReason }
 export type CopyRequest = { skillName: string; source: ContextRef; targetEnvironment: EnvironmentRef; targetProjectIds: string[]; requestedMode: InstallMode; agentIntents: AgentWriteIntent[] }
 export type CopyResponse = { units: MutationUnitResult[] }
+export type CopySourceRepairReason = "missingMetadata" | "invalidMetadata"
 export type CopyTargetPreview = { projectId: string; displayName: string; storageAccess: StorageAccess; physicalIdentity: PhysicalIdentityComparison; agentTargets: AgentTargetPreview[]; fallbackForecasts: AgentTargetFallbackPreview[]; blockingReasons: OperationErrorCode[] }
 export type CustomAgentDefinition = { id: AgentId; displayName: string; global: CustomScopeDefinition; project: CustomScopeDefinition; detectionPaths: CustomPathSpec[] }
 export type CustomAgentDraftValidation = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; resolved: ResolvedAgent }

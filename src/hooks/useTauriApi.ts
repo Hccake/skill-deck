@@ -24,7 +24,7 @@ import type {
   UpdateCheckRequest, UpdateCheckResponse,
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
   ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
-  CopyRequest, CopyPreview, CopyExecutionRequest, CopyResponse,
+  CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   AgentConfigurationOutcome,
@@ -46,7 +46,7 @@ export type {
   UpdateCheckRequest, UpdateCheckResponse,
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
   ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
-  CopyRequest, CopyPreview, CopyExecutionRequest, CopyResponse,
+  CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   AgentConfigurationOutcome,
@@ -462,7 +462,7 @@ export async function cleanupDuplicateAgentCopies(
 /**
  * 复制项目级 skill 到其他项目
  */
-export async function previewCopySkillToProjects(request: CopyRequest): Promise<CopyPreview> {
+export async function previewCopySkillToProjects(request: CopyRequest): Promise<CopyPreviewOutcome> {
   return unwrap(await commands.previewCopySkillToProjects(request));
 }
 

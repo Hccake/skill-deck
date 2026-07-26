@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, RefreshCw, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -20,6 +21,7 @@ import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
 import type { FetchResult, RecoveryAction } from '@/bindings';
 import { repairSkillSource } from '@/workflows/skill-repair';
+import { sameContext } from '@/lib/context';
 
 type ValidateState = 'idle' | 'checking' | 'valid' | 'missing' | 'error';
 type RepairPhase = 'idle' | 'validating' | 'preparing' | 'installing' | 'stopping';
@@ -137,7 +139,16 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       if (outcome.status === 'succeeded') {
         markSourceRepairSucceeded(target.context, target.skillName);
         await syncSkills(target.context);
+        const { copySkill, copyContext } = useSkillDialogStore.getState();
+        const shouldReturnToCopy = Boolean(
+          copySkill?.name === target.skillName
+          && copyContext
+          && sameContext(copyContext, target.context)
+        );
         closeRepairSource();
+        if (shouldReturnToCopy) {
+          toast.success(t('skills.repairSourceDialog.copyRetry'));
+        }
         return;
       }
       if (outcome.status === 'missing') {
@@ -164,6 +175,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     isWorking,
     syncSkills,
     target,
+    t,
     writeBlocked,
   ]);
 

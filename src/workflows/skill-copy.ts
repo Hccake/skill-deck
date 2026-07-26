@@ -8,6 +8,7 @@ import { getSkillOperationAgents } from '@/stores/skills-utils';
 import { toAppError } from '@/utils/to-app-error';
 import type {
   AppError,
+  CopySourceRepairReason,
   CopyResponse,
   EnvironmentRef,
   MutationUnitResult,
@@ -21,6 +22,7 @@ export interface SkillCopySelection {
 
 export type CopyOutcome =
   | { status: 'blocked' }
+  | { status: 'sourceRepairRequired'; reason: CopySourceRepairReason }
   | { status: 'failed'; error: AppError }
   | { status: 'succeeded'; response: CopyResponse; succeededProjectIds: string[] }
   | {
@@ -81,7 +83,11 @@ export async function executeSkillCopy({
       requestedMode: 'copy' as const,
       agentIntents,
     };
-    const preview = await previewCopySkillToProjects(request);
+    const previewOutcome = await previewCopySkillToProjects(request);
+    if (previewOutcome.status === 'sourceRepairRequired') {
+      return previewOutcome;
+    }
+    const preview = previewOutcome.preview;
     const response = await copySkillToProjects({
       request,
       token: preview.token,

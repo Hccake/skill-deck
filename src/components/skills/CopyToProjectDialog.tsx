@@ -29,6 +29,7 @@ export interface CopyTargetSelection {
 }
 
 interface CopyToProjectDialogProps {
+  open?: boolean;
   skill: InstalledSkill | null;
   sourceContext: ContextRef;
   environments: EnvironmentInfo[];
@@ -51,6 +52,7 @@ type PresenceState = 'idle' | 'loading' | 'ready' | 'error';
 type ProjectPresence = 'installed' | 'absent' | 'unknown';
 
 export const CopyToProjectDialog = memo(function CopyToProjectDialog({
+  open = true,
   skill,
   sourceContext,
   ...sessionProps
@@ -65,6 +67,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   return (
     <CopyToProjectDialogSession
       key={sessionKey}
+      open={open}
       skill={skill}
       sourceContext={sourceContext}
       {...sessionProps}
@@ -73,6 +76,7 @@ export const CopyToProjectDialog = memo(function CopyToProjectDialog({
 });
 
 function CopyToProjectDialogSession({
+  open = true,
   skill,
   sourceContext,
   environments,
@@ -170,12 +174,7 @@ function CopyToProjectDialogSession({
     return count;
   }, [presenceByProject, selected]);
 
-  const sourceNeedsRepair = Boolean(
-    skill && (
-      skill.updateReason === 'missing-skill-path'
-      || (!skill.source && !skill.sourceUrl)
-    )
-  );
+  const sourceNeedsRepair = copyOutcome?.status === 'sourceRepairRequired';
   const showSourceInfoNote = useMemo(
     () => Boolean(
       skill && (sourceNeedsRepair || SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? ''))
@@ -197,6 +196,7 @@ function CopyToProjectDialogSession({
 
   const handleCopy = useCallback(async () => {
     setCopying(true);
+    setCopyOutcome(null);
     try {
       const outcome = await onCopy({ environment: targetEnvironment, projectIds: Array.from(selected) });
       if (!outcome || outcome.status === 'succeeded') {
@@ -219,7 +219,10 @@ function CopyToProjectDialogSession({
   }, [onClose, onCopy, selected, targetEnvironment]);
 
   return (
-    <Dialog open={!!skill} onOpenChange={(open) => !open && !copying && onClose()}>
+    <Dialog
+      open={open && !!skill}
+      onOpenChange={(nextOpen) => !nextOpen && open && !copying && onClose()}
+    >
       <DialogContent
         className="h-[min(32rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-md"
         dismissible={!copying}
@@ -424,7 +427,6 @@ function CopyToProjectDialogSession({
             disabled={
               writeBlocked
               || copying
-              || sourceNeedsRepair
               || projectLoadState !== 'ready'
               || selected.size === 0
             }

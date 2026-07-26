@@ -121,7 +121,8 @@
       "stopping": "正在停止…",
       "repairStopped": "修复已停止，已经完成的写入会保留当前结果。",
       "stopFailed": "无法发送停止请求，修复仍在继续。",
-      "repairFailed": "修复失败，请检查结果后重试。"
+      "repairFailed": "修复失败，请检查结果后重试。",
+      "copyRetry": "来源已修复，请重新点击「复制」继续。"
     },
     "agent": {
       "enable": "启用 {{name}}",
