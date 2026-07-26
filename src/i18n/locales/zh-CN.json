@@ -277,6 +277,7 @@
     "updateDone": "已更新",
     "updateFailed": "更新失败",
     "checkUpdates": "检查更新",
+    "checkCompleted": "检查完成",
     "checkUpdatesError": "检查更新失败：{{error}}",
     "updateEvidence": {
       "title": "更新检查详情",
@@ -301,6 +302,18 @@
         "network": "网络请求失败",
         "incompleteEvidence": "来源返回的检查依据不完整",
         "sourceUnavailable": "来源暂不可用"
+      },
+      "nextStep": {
+        "configureTokenOrWait": "可等待限制解除，或配置 GitHub Token 后再试。",
+        "configureToken": "请在 Git 设置中配置有效的 GitHub Token。",
+        "checkSource": "请确认仓库与 ref 是否仍然存在。",
+        "checkSourceOrToken": "请确认来源地址，或配置具有访问权限的 GitHub Token。",
+        "retry": "请在网络恢复后重新检查。"
+      },
+      "actions": {
+        "configureToken": "配置 GitHub Token",
+        "openSource": "打开来源",
+        "retry": "重新检查"
       }
     },
     "upToDate": "全部已是最新",
@@ -329,6 +342,7 @@
       "reinstallRequired": "需重新安装",
       "autoCheckUnavailable": "无法自动检查",
       "checkFailed": "检查失败",
+      "checkIncomplete": "检查未完成",
       "deletedUpstream": "上游已删除",
       "deleted-upstream": "上游已删除"
     },

@@ -27,17 +27,34 @@ pub struct RemoteSourceIdentity {
 }
 
 impl RemoteSourceIdentity {
+    pub(crate) fn from_parts(
+        provider: SourceProvider,
+        authority: impl Into<String>,
+        repository: impl Into<String>,
+    ) -> Result<Self, AppError> {
+        let authority = authority.into().trim().to_ascii_lowercase();
+        let repository = repository
+            .into()
+            .trim_matches('/')
+            .trim_end_matches(".git")
+            .to_string();
+        if authority.is_empty() || repository.is_empty() {
+            return Err(invalid_identity("remote repository identity is incomplete"));
+        }
+        Ok(Self {
+            provider,
+            authority,
+            repository,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn new(
         provider: SourceProvider,
         authority: impl Into<String>,
         repository: impl Into<String>,
     ) -> Self {
-        Self {
-            provider,
-            authority: authority.into(),
-            repository: repository.into(),
-        }
+        Self::from_parts(provider, authority, repository).expect("valid test remote identity")
     }
 
     pub fn provider(&self) -> &SourceProvider {

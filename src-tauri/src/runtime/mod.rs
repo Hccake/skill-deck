@@ -84,7 +84,7 @@ impl RuntimeServiceGraph {
             payloads.clone(),
             environments.clone(),
             source_snapshots.clone(),
-        );
+        )?;
         let update_check = build_runtime_update_check_service(
             environments.clone(),
             registry.clone(),

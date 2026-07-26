@@ -35,14 +35,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { AgentId, InstalledSkill, RiskLevel, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
+import type { AgentId, InstalledSkill, RiskLevel, SkillScope } from '@/bindings';
 import {
+  hasIncompleteUpdateCheck,
+  resolveEvidenceFailureNextStepI18nKey,
+  resolveEvidenceFailureReasonI18nKey,
   resolveUpdateHintI18nKey,
   resolveUpdateStatusLabelI18nKey,
   isSkillUpdateActive,
   resolveSkillUpdatePhaseI18nKey,
   resolveSkillMaintenanceAction,
   type SkillUpdateDisplayStatus,
+  type SkillListItem,
 } from '@/stores/skills-utils';
 import { RiskBadge } from './RiskBadge';
 
@@ -50,10 +54,7 @@ import { RiskBadge } from './RiskBadge';
 const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
 
 interface SkillCardProps {
-  skill: InstalledSkill & {
-    updateStatus?: SkillUpdateCheckStatus | null;
-    updateReason?: string | null;
-  };
+  skill: SkillListItem;
   /** 当前显示的 scope（用于决定图标） */
   displayScope: SkillScope;
   /** 是否存在冲突（同时在 project 和 global 安装） */
@@ -137,8 +138,17 @@ export const SkillCard = memo(function SkillCard({
     || canShowRepairAction;
   const updateStatusLabelKey = resolveUpdateStatusLabelI18nKey(skill);
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
+  const typedFailure = skill.updateEvidence?.lastAttempt?.failure ?? null;
   const updateHintKey = !skill.hasUpdate ? resolveUpdateHintI18nKey(skill.updateReason) : null;
-  const isUpdateCheckFailure = updateStatusLabelKey === 'skills.updateStatusLabel.checkFailed';
+  const isIncompleteCheck = hasIncompleteUpdateCheck(skill);
+  const isUpdateCheckFailure = isIncompleteCheck
+    || updateStatusLabelKey === 'skills.updateStatusLabel.checkFailed';
+  const failureReasonKey = typedFailure
+    ? resolveEvidenceFailureReasonI18nKey(typedFailure.reason)
+    : updateHintKey;
+  const failureNextStepKey = typedFailure
+    ? resolveEvidenceFailureNextStepI18nKey(typedFailure.reason)
+    : null;
   const isAttentionHint = skill.updateReason === 'missing-skill-path'
     || skill.updateReason === 'missingRemoteHash'
     || isDeletedUpstream;
@@ -187,7 +197,7 @@ export const SkillCard = memo(function SkillCard({
                 {riskLevel ? <RiskBadge risk={riskLevel} /> : null}
 
                 {updateStatusLabelKey ? (
-                  isUpdateCheckFailure && updateHintKey ? (
+                  isUpdateCheckFailure && failureReasonKey ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span
@@ -201,8 +211,14 @@ export const SkillCard = memo(function SkillCard({
                           {t(updateStatusLabelKey)}
                         </span>
                       </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{t(updateHintKey)}</p>
+                      <TooltipContent className="max-w-72 space-y-1 whitespace-normal">
+                        <p>{t(failureReasonKey)}</p>
+                        {failureNextStepKey ? <p>{t(failureNextStepKey)}</p> : null}
+                        {typedFailure?.retryAtEpochMs ? (
+                          <p>{t('skills.updateEvidence.retryAt', {
+                            time: new Date(typedFailure.retryAtEpochMs).toLocaleString(i18n.language),
+                          })}</p>
+                        ) : null}
                       </TooltipContent>
                     </Tooltip>
                   ) : (

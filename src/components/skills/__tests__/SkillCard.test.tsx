@@ -634,6 +634,54 @@ describe('SkillCard', () => {
     expect((await screen.findByRole('tooltip')).textContent).toContain('skills.updateHint.network-error');
   });
 
+  it('shows typed check diagnostics while keeping the last known update available', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({ hasUpdate: true, canRunUpdate: true, canCheckForUpdates: true }),
+            updateStatus: 'cannotCheck',
+            updateReason: 'upstreamUnavailable',
+            updateFreshness: 'backingOff',
+            updateEvidence: {
+              source: 'github.com/owner/repo',
+              requestedRef: 'main',
+              resolvedRef: 'main',
+              refRevision: 'tree-1',
+              checkedAtEpochMs: 100,
+              expiresAtEpochMs: 200,
+              freshness: 'backingOff',
+              lastAttempt: {
+                checkedAtEpochMs: 300,
+                failure: {
+                  reason: 'network',
+                  message: 'must not be shown',
+                  retryAtEpochMs: 500,
+                  providerCooldown: false,
+                },
+              },
+            },
+          } as never}
+          displayScope="global"
+          onUpdate={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    const status = screen.getByText('skills.updateStatusLabel.checkIncomplete');
+    expect(screen.getByTitle('skills.actions.update')).toBeTruthy();
+    fireEvent.focus(status);
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip.textContent).toContain('skills.updateEvidence.failure.network');
+    expect(tooltip.textContent).toContain('skills.updateEvidence.nextStep.retry');
+    expect(tooltip.textContent).not.toContain('must not be shown');
+  });
+
   it('shows repair source action for missing skill path metadata', () => {
     const onRepairSource = vi.fn();
 

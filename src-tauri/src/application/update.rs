@@ -125,10 +125,20 @@ pub struct SourceUpdateCheckInfo {
     pub last_attempt: Option<EvidenceAttempt>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum UpdateCheckOutcome {
+    Completed,
+    Partial,
+    NotCompleted,
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateCheckResponse {
+    pub outcome: UpdateCheckOutcome,
     pub sources: Vec<SourceUpdateCheckInfo>,
     pub skills: Vec<SkillUpdateInfo>,
 }

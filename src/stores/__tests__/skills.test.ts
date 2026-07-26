@@ -170,6 +170,7 @@ describe('skills data store', () => {
     });
 
     force.resolve({
+      outcome: 'completed',
       sources: [sourceInfo('github.com/force/repo')],
       skills: [updateInfo('toolkit', {
         source: 'owner/repo',
@@ -180,6 +181,7 @@ describe('skills data store', () => {
     });
     await forceRequest;
     automatic.resolve({
+      outcome: 'notCompleted',
       sources: [sourceInfo('github.com/automatic/repo', { freshness: 'stale' })],
       skills: [updateInfo('toolkit', {
         source: 'owner/repo',
@@ -210,11 +212,11 @@ describe('skills data store', () => {
     const forceRequest = useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
     expect(useSkillsDataStore.getState().checkingUpdateScopes.has(contextKey(context))).toBe(true);
 
-    automatic.resolve({ sources: [], skills: [] });
+    automatic.resolve({ outcome: 'completed', sources: [], skills: [] });
     await automaticRequest;
     expect(useSkillsDataStore.getState().checkingUpdateScopes.has(contextKey(context))).toBe(true);
 
-    force.resolve({ sources: [], skills: [] });
+    force.resolve({ outcome: 'completed', sources: [], skills: [] });
     await forceRequest;
     expect(useSkillsDataStore.getState().checkingUpdateScopes.has(contextKey(context))).toBe(false);
   });
@@ -276,6 +278,59 @@ describe('skills data store', () => {
         }),
       }),
     ]));
+  });
+
+  it('keeps the last available update when a later check does not complete', async () => {
+    setSkills([skill({ hasUpdate: true, updateStatus: 'updateAvailable' })]);
+    updateInfoCache.set(contextKey(context), {
+      results: [updateInfo('toolkit', { source: 'owner/repo', hasUpdate: true, status: 'updateAvailable' })],
+      sources: [sourceInfo('github.com/owner/repo')],
+      checkedAt: 100,
+      completeness: 'complete',
+      outcome: 'completed',
+    });
+    mocks.checkUpdates.mockResolvedValueOnce({
+      outcome: 'notCompleted',
+      sources: [sourceInfo('github.com/owner/repo', {
+        freshness: 'backingOff',
+        lastAttempt: {
+          checkedAtEpochMs: 300,
+          failure: {
+            reason: 'network',
+            message: 'must not be shown',
+            retryAtEpochMs: 500,
+            providerCooldown: false,
+          },
+        },
+      })],
+      skills: [updateInfo('toolkit', {
+        source: 'owner/repo',
+        hasUpdate: false,
+        status: 'cannotCheck',
+        reason: 'upstreamUnavailable',
+        freshness: 'backingOff',
+      })],
+    } satisfies UpdateCheckResponse);
+
+    const outcome = await useSkillsDataStore.getState().forceCheckUpdates(context, { kind: 'all' });
+
+    expect(outcome).toBe('notCompleted');
+    expect(useSkillsDataStore.getState().snapshots[contextKey(context)]).toMatchObject({
+      skills: [{
+        name: 'toolkit',
+        hasUpdate: true,
+        updateStatus: 'cannotCheck',
+        updateReason: 'upstreamUnavailable',
+        updateFreshness: 'backingOff',
+        updateEvidence: {
+          source: 'github.com/owner/repo',
+          lastAttempt: {
+            failure: { reason: 'network', retryAtEpochMs: 500 },
+          },
+        },
+      }],
+      updateCheck: { outcome: 'notCompleted' },
+    });
   });
 
   it('preserves unselected update state when applying and replaying a partial force check', async () => {

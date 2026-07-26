@@ -3,7 +3,7 @@ import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench, AlertTriangle } from 'lucide-react';
+import { Link2, Copy, Check, X, RefreshCw, Trash2, ArrowUpCircle, Pencil, FolderOutput, Wrench, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,8 +21,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTime } from '@/lib/utils';
-import type { InstalledSkill, SkillScope, SkillUpdateCheckStatus } from '@/bindings';
+import type { InstalledSkill, SkillScope, UpdateCheckOutcome } from '@/bindings';
 import {
+  hasIncompleteUpdateCheck,
+  resolveEvidenceFailureReasonI18nKey,
   resolveSkillMaintenanceAction,
   isSkillUpdateActive,
   resolveSkillUpdatePhaseI18nKey,
@@ -30,14 +32,12 @@ import {
   type SkillUpdateActivePhase,
   resolveUpdateReasonI18nKey,
   resolveUpdateStatusI18nKey,
+  type SkillListItem,
 } from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
 
 interface SkillDetailPanelProps {
-  skill: InstalledSkill & {
-    updateStatus?: SkillUpdateCheckStatus | null;
-    updateReason?: string | null;
-  };
+  skill: SkillListItem;
   content: string | null;
   loading: boolean;
   agentDisplayNames: Map<string, string>;
@@ -45,7 +45,7 @@ interface SkillDetailPanelProps {
   isCheckingUpdates?: boolean;
   projectPath?: string;
   onClose: () => void;
-  onCheckUpdates?: () => Promise<boolean>;
+  onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
   onUpdate: (name: string, scope: SkillScope) => void;
   onDelete: (skill: InstalledSkill) => void;
   onRetry: () => void;
@@ -128,10 +128,10 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   }, [onRepairSource, skill]);
 
   const handleCheckUpdates = useCallback(async () => {
-    if (!onCheckUpdates || isCheckingUpdates) return;
+    if (!onCheckUpdates) return;
 
-    const succeeded = await onCheckUpdates();
-    if (!succeeded) {
+    const outcome = await onCheckUpdates();
+    if (outcome !== 'completed') {
       return;
     }
 
@@ -143,11 +143,13 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
       setCheckDone(false);
       hideCheckDoneTimerRef.current = null;
     }, 800);
-  }, [isCheckingUpdates, onCheckUpdates]);
+  }, [onCheckUpdates]);
 
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
   const isUpdateInProgress = activeUpdatePhase !== null;
-  const showCheckDone = checkDone && !isCheckingUpdates && !skill.hasUpdate;
+  const showCheckDone = checkDone && !skill.hasUpdate;
+  const typedFailure = skill.updateEvidence?.lastAttempt?.failure ?? null;
+  const isIncompleteCheck = hasIncompleteUpdateCheck(skill);
   const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream';
   const showCannotCheckStatus = isDeletedUpstream
     || skill.updateStatus === 'cannotCheck'
@@ -243,8 +245,8 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                     showCheckDone ? (
                       <div
                         className="flex h-8 w-8 items-center justify-center text-success"
-                        aria-label={t('skills.updateDone')}
-                        title={t('skills.updateDone')}
+                        aria-label={t('skills.checkCompleted')}
+                        title={t('skills.checkCompleted')}
                       >
                         <Check className="h-4 w-4" />
                       </div>
@@ -254,7 +256,6 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                         size="icon"
                         className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
                         title={t('skills.checkUpdates')}
-                        disabled={isCheckingUpdates}
                         onClick={() => {
                           void handleCheckUpdates();
                         }}
@@ -328,16 +329,81 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
             {showCannotCheckStatus ? (
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="text-xs text-muted-foreground">
-                  {t(resolveUpdateStatusI18nKey(isDeletedUpstream ? 'deletedUpstream' : 'cannotCheck'))}
+                  {t(isIncompleteCheck
+                    ? 'skills.updateStatusLabel.checkIncomplete'
+                    : resolveUpdateStatusI18nKey(isDeletedUpstream ? 'deletedUpstream' : 'cannotCheck'))}
                 </Badge>
-                {(() => {
+                {!isIncompleteCheck ? (() => {
                   const reasonKey = resolveUpdateReasonI18nKey(skill.updateReason);
                   return reasonKey ? (
                     <span className="text-xs text-muted-foreground">
                       {t(reasonKey)}
                     </span>
                   ) : null;
-                })()}
+                })() : null}
+              </div>
+            ) : null}
+            {isIncompleteCheck && typedFailure ? (
+              <div
+                role="status"
+                className="space-y-2 border-y border-border/60 py-3 text-sm"
+              >
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-medium text-foreground">
+                    {t(resolveEvidenceFailureReasonI18nKey(typedFailure.reason))}
+                  </span>
+                  {skill.updateEvidence?.checkedAtEpochMs ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t('skills.updateEvidence.lastChecked', {
+                        time: new Date(skill.updateEvidence.checkedAtEpochMs).toLocaleString(i18n.language),
+                      })}
+                    </span>
+                  ) : null}
+                  <span className="text-xs text-muted-foreground">
+                    {t('skills.updateEvidence.lastAttempt', {
+                      time: new Date(skill.updateEvidence?.lastAttempt?.checkedAtEpochMs ?? 0)
+                        .toLocaleString(i18n.language),
+                    })}
+                  </span>
+                  {typedFailure.retryAtEpochMs ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t('skills.updateEvidence.retryAt', {
+                        time: new Date(typedFailure.retryAtEpochMs).toLocaleString(i18n.language),
+                      })}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {typedFailure.reason === 'rateLimited'
+                    || typedFailure.reason === 'authenticationRequired' ? (
+                    <Button asChild variant="outline" size="sm">
+                      <a href="/settings?section=git">
+                        <KeyRound className="h-3.5 w-3.5" />
+                        {t('skills.updateEvidence.actions.configureToken')}
+                      </a>
+                    </Button>
+                  ) : null}
+                  {['refNotFound', 'repositoryNotFound', 'notFoundOrUnauthorized'].includes(typedFailure.reason)
+                    && skill.sourceUrl ? (
+                    <Button asChild variant="outline" size="sm">
+                      <a href={skill.sourceUrl} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        {t('skills.updateEvidence.actions.openSource')}
+                      </a>
+                    </Button>
+                  ) : null}
+                  {!typedFailure.retryAtEpochMs && onCheckUpdates ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleCheckUpdates()}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {t('skills.updateEvidence.actions.retry')}
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 

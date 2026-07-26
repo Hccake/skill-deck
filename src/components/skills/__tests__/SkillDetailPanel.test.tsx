@@ -140,6 +140,92 @@ describe('SkillDetailPanel', () => {
     expect(onCheckUpdates).toHaveBeenCalledTimes(1);
   });
 
+  it('allows another explicit check while a previous request is still pending', async () => {
+    const onCheckUpdates = vi.fn(async () => 'completed' as const);
+
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({ hasUpdate: false })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+          onCheckUpdates={onCheckUpdates}
+          isCheckingUpdates
+        />
+      </TooltipProvider>
+    );
+
+    const check = screen.getByTitle('skills.checkUpdates');
+    expect((check as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(check);
+    fireEvent.click(check);
+    await waitFor(() => {
+      expect(onCheckUpdates).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('shows the latest typed failure, valid evidence time, retry time, and next action', () => {
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={{
+            ...makeSkill({
+              hasUpdate: true,
+              canRunUpdate: true,
+              source: 'owner/repo',
+              sourceUrl: 'https://github.com/owner/repo',
+            }),
+            updateStatus: 'cannotCheck',
+            updateReason: 'upstreamUnavailable',
+            updateFreshness: 'coolingDown',
+            updateEvidence: {
+              source: 'github.com/owner/repo',
+              requestedRef: 'main',
+              resolvedRef: 'main',
+              refRevision: 'tree-1',
+              checkedAtEpochMs: 1_700_000_000_000,
+              expiresAtEpochMs: 1_700_003_600_000,
+              freshness: 'coolingDown',
+              lastAttempt: {
+                checkedAtEpochMs: 1_700_000_100_000,
+                failure: {
+                  reason: 'rateLimited',
+                  message: 'must not be shown',
+                  retryAtEpochMs: 1_700_000_200_000,
+                  providerCooldown: true,
+                },
+              },
+            },
+          } as never}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+          onCheckUpdates={vi.fn(async () => 'notCompleted' as const)}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('skills.updateStatusLabel.checkIncomplete')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.failure.rateLimited')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.lastChecked')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.lastAttempt')).toBeTruthy();
+    expect(screen.getByText('skills.updateEvidence.retryAt')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'skills.updateEvidence.actions.configureToken' }).getAttribute('href'))
+      .toBe('/settings?section=git');
+    expect(screen.queryByText('must not be shown')).toBeNull();
+  });
+
   it('shows cannotCheck status and reason without exposing update action when no update is available', () => {
     render(
       <TooltipProvider>
@@ -385,7 +471,7 @@ describe('SkillDetailPanel', () => {
           onDelete={vi.fn()}
           onRetry={vi.fn()}
           onManageAgents={vi.fn()}
-          onCheckUpdates={vi.fn(async () => true) as never}
+          onCheckUpdates={vi.fn(async () => 'completed' as const)}
         />
       </TooltipProvider>
     );
@@ -524,7 +610,7 @@ describe('SkillDetailPanel', () => {
           content="# Brainstorming"
           loading={false}
           agentDisplayNames={new Map()}
-          onCheckUpdates={vi.fn(async () => true) as never}
+          onCheckUpdates={vi.fn(async () => 'completed' as const)}
           onClose={vi.fn()}
           onUpdate={vi.fn()}
           onDelete={vi.fn()}
@@ -538,7 +624,7 @@ describe('SkillDetailPanel', () => {
     fireEvent.click(screen.getByTitle('skills.checkUpdates'));
 
     await waitFor(() => {
-      expect(screen.getByTitle('skills.updateDone')).toBeTruthy();
+      expect(screen.getByTitle('skills.checkCompleted')).toBeTruthy();
     });
 
     rerender(
@@ -549,7 +635,7 @@ describe('SkillDetailPanel', () => {
           content="# Toolkit"
           loading={false}
           agentDisplayNames={new Map()}
-          onCheckUpdates={vi.fn(async () => true) as never}
+          onCheckUpdates={vi.fn(async () => 'completed' as const)}
           onClose={vi.fn()}
           onUpdate={vi.fn()}
           onDelete={vi.fn()}
@@ -560,7 +646,7 @@ describe('SkillDetailPanel', () => {
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.updateDone')).toBeNull();
+    expect(screen.queryByTitle('skills.checkCompleted')).toBeNull();
   });
 
   it('resets the updating phase when switching to a different skill identity', () => {
