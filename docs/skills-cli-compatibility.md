@@ -1,225 +1,228 @@
-# skills CLI 兼容
+# `skills` CLI 兼容
 
 ## 兼容目标
 
-Skill Deck 以 [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 的共享格式和基础安装语义为兼容基线，但不是 CLI 的图形包装层。已发布桌面应用不调用 `skills` binary，也不要求用户安装 Node.js。
+Skill Deck 以 [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 的共享目录、lock 格式和基础安装语义为兼容基线，但不是 CLI 的图形包装层。已经发布的桌面应用不调用 `skills` 可执行文件，也不要求用户安装 Node.js。
 
-兼容的含义是：
+这里的“兼容”表示：
 
-- CLI 和 Skill Deck 能够理解共同维护的通用 Skill 目录与 lock 字段；
-- 对同一 source、ref、`skillPath` 和 Agent 目标，安装或重新安装结果可以互相解释；
-- Skill Deck 写入时不破坏 CLI 已知字段，也不丢失自己不拥有的未知字段；
-- CLI 写入导致 Skill Deck 增强 metadata 缺失时，应用以可解释方式降级；
-- Skill Deck 可以在兼容基线之上提供 Custom Agent、Environment、批量操作、远端更新检测和 Recovery。
+- CLI 和 Skill Deck 能够理解共同维护的通用 Skill 目录和 lock 字段；
+- 对同一来源、`ref`、`skillPath` 和 Agent 目标，双方的安装结果能够互相解释；
+- Skill Deck 写入时不破坏 CLI 已知字段，也不丢失自己不负责的未知字段；
+- CLI 写入导致 Skill Deck 扩展元数据缺失时，应用按实际能力降级；
+- Skill Deck 可以在共享基线之外提供自定义 Agent、Environment、批量操作、远端更新检查和恢复资源。
 
-“兼容”不表示两个产品拥有完全相同的功能、状态或无损写回能力。
+兼容不表示两个产品拥有完全相同的功能、内部状态或未知字段保留能力。
 
 ## 当前基线
 
-仓库根目录中 gitignored 的 `vercel-skills/` 是上游核对来源。当前基线由该目录的 `package.json`、Git tag/commit 和真实源码共同确认，当前版本为 `1.5.13`。
+仓库中的 `vercel-skills/` 保存用于核对的固定版本上游 CLI 源码，但不纳入本项目版本控制。同步时需要同时确认该目录的 `package.json`、Git tag、commit 和实际源码。当前兼容基线是 `1.5.13`。
 
-根项目通过精确固定的开发依赖 `skills: 1.5.13` 运行真实 CLI 互操作测试；该依赖只服务开发验证，不进入桌面应用运行时。测试在临时 Eve Project 中离线覆盖 root、named、multiple、无 Eve target 和 update placement 重放。普通 Local 来源仍按 CLI 规则不可更新；重放场景使用同机 `file://` Git 仓库，只验证可更新来源的 placement 契约。
+根项目通过精确固定的开发依赖 `skills: 1.5.13` 运行 CLI 互操作测试。该依赖只用于开发验证，不进入桌面应用运行时。测试在临时 Eve 项目中离线覆盖 root、具名 subagent、多个 subagent、没有 Eve 目标和更新后重新落位。Local 来源按 CLI 规则不可更新；需要验证更新落位时，使用同机 `file://` Git 仓库提供可重新获取的来源。
 
-项目不维护版本化 Agent catalog fixture。同步上游时直接更新 vendored 源码，比较相关实现，再修改 Skill Deck 的 Built-in definitions 和兼容测试。文档只记录当前基线和稳定检查方法，不保存逐版本迁移流水账。
+项目不维护一份版本化的 Agent 清单快照。同步上游版本时，应直接比较固定版本源码，再更新 Skill Deck 的内置 Agent 定义和兼容测试。本文只记录当前基线与稳定兼容边界，不保存逐版本迁移过程。
 
 ## 共享与扩展边界
 
 | 领域 | 共享基线 | Skill Deck 扩展 |
 |---|---|---|
-| Source | shorthand、Git/URL/local/well-known 解析，ref 与 Skill 子路径 | Environment-aware acquisition、discovery session、风险展示 |
-| Agent | Built-in ID、路径、detection 和基础目标语义 | Custom Agent、开放 Registry、scope-aware defaults、目录检查和 physical ownership |
-| 安装 | 通用 Skill 目录、Agent 目录项、link/copy 和重新安装语义 | preview/execute、批量 unit、跨 Environment bridge、Recovery |
-| Global lock | CLI v3 共享字段与路径 | `defaultTargetAgents`、无损局部写回 |
-| Project lock | CLI v1 共享字段、排序和内容 hash | `sourceUrl`、`remoteHash`、`pluginName`、远端更新检测 |
-| 更新 | 根据保存来源和 `skillPath` 重新安装 | 更新能力建模、远端比较、批量计划、修复来源 |
+| 来源 | 简写、Git/URL/Local/Well-known 解析，`ref` 与 Skill 子路径 | 按 Environment 获取、发现会话和风险信息 |
+| Agent | 内置 Agent ID、路径、检测和基础目标语义 | 自定义 Agent、开放注册表、按 Context 选择默认目标、目录检查和物理归属 |
+| 安装 | 通用 Skill 目录、Agent 目录项、link/copy 和重新安装语义 | 预览与执行、批量执行单元、跨 Environment 内容传递和恢复资源 |
+| Global lock | CLI v3 共享字段与路径 | `defaultTargetAgents` 和无损局部写回 |
+| Project lock | CLI v1 共享字段、排序和内容哈希 | `sourceUrl`、`remoteHash`、`pluginName` 和远端更新检查 |
+| 更新 | 根据保存的来源与 `skillPath` 重新安装 | 更新能力判断、远端比较、批量计划和来源修复 |
 
-Environment session、payload handle、preview token、recovery marker 和 Custom Agent definition 不写入 CLI lock。它们属于 Skill Deck 本地运行时或产品配置。
+Environment 会话、内容快照引用、预览凭据、恢复标记和自定义 Agent 定义不写入 CLI lock，它们属于 Skill Deck 的运行时或产品配置。
 
 ## 通用 Skill 目录
 
-CLI 与 Skill Deck 共同使用以下 canonical Skill 目录：
+CLI 与 Skill Deck 共同使用以下目录：
 
-| Scope | 目录 |
+| 范围 | 目录 |
 |---|---|
 | Global | `~/.agents/skills` |
 | Project | `.agents/skills` |
 
-文档将它们统称为“通用 Skill 目录”。Agent 是否读取通用 Skill 目录、是否还需要自身的 Skill 目录，以及目录检查如何形成关联 Agent，由[Agent](./agents.md)定义。Environment 中的 Home、Project 与路径解析条件由[Environment 与 Context](./environments-and-contexts.md)定义。
+本文将它们统称为“通用 Skill 目录”。Agent 是否读取通用 Skill 目录、是否还需要自身目录，以及目录检查如何形成关联 Agent，由[Agent](./agents.md)定义。Environment 中的 Home、项目和路径解析由[Environment 与 Context](./environments-and-contexts.md)定义。
 
 ## Global lock
 
-Global lock 的 canonical 位置遵循 CLI 规则：
+Global lock 的标准位置遵循 CLI 规则：
 
 - 设置 `XDG_STATE_HOME` 时使用 `$XDG_STATE_HOME/skills/.skill-lock.json`；
 - 否则使用 `~/.agents/.skill-lock.json`。
 
-当前 schema version 为 `3`。每个 Skill entry 的共享字段包括：
+当前格式版本为 `3`。每个 Skill 记录的共享字段包括：
 
 | 字段 | 语义 |
 |---|---|
 | `source` | 规范化来源标识 |
-| `sourceType` | GitHub、GitLab、Git、local 或 well-known 等来源类别 |
+| `sourceType` | GitHub、GitLab、Git、Local 或 Well-known 等来源类别 |
 | `sourceUrl` | 能够保留原始定位信息的来源 URL |
 | `ref` | branch 或 tag |
-| `skillPath` | 仓库相对的 `SKILL.md` 文件路径，保留磁盘实际大小写 |
-| `skillFolderHash` | CLI 用于来源版本跟踪的可比较 hash；GitHub 为 Skill 目录的 Git tree object ID，GitLab 和 generic Git 为 CLI-compatible content hash |
+| `skillPath` | 仓库内指向 `SKILL.md` 的相对路径，保留磁盘实际大小写 |
+| `skillFolderHash` | CLI 用于来源版本跟踪的可比较哈希；GitHub 使用 Skill 目录的 Git tree object ID，GitLab 和普通 Git 使用与 CLI 一致的内容哈希 |
 | `installedAt` | 首次安装时间 |
 | `updatedAt` | 最近更新时间 |
-| `pluginName` | 可用时的 plugin 名称 |
+| `pluginName` | 能够识别时保存的 plugin 名称 |
 
-Global lock 还包含两个选择字段：
+Global lock 还包含两个 Agent 选择字段：
 
-- `lastSelectedAgents` 是 CLI 的最后选择记录。Skill Deck 只写当前 effective defaults 中能够被 CLI 理解的 Built-in projection，不写 Custom Agent ID。
-- `defaultTargetAgents` 是 Skill Deck 的扩展，分别保存 Global 与 Project 默认 Agent ID，可以包含 Built-in 和 Custom Agent。
+- `lastSelectedAgents` 是 CLI 最近一次选择记录。Skill Deck 只写当前有效默认目标中 CLI 能够理解的内置 Agent，不写自定义 Agent ID；
+- `defaultTargetAgents` 是 Skill Deck 扩展，分别保存 Global 与 Project 的默认 Agent ID，可以包含内置和自定义 Agent。
 
-缺少 `defaultTargetAgents` 时，应用按本次明确选择、当前 scope fallback 和 Built-in 初始推荐产生向导初值。不能从 `lastSelectedAgents` 推断不存在于 CLI 模型中的 Custom Agent 偏好。
+缺少 `defaultTargetAgents` 时，安装向导按本次明确选择、当前范围的回退规则和内置初始推荐生成默认值。不能从 `lastSelectedAgents` 推断 CLI 模型中不存在的自定义 Agent 偏好。
 
 ## Project lock
 
-Project lock 位于 `<project>/skills-lock.json`，当前 schema version 为 `1`。它适合提交到项目仓库，因此写入顺序和字段语义保持稳定。
+Project lock 位于 `<project>/skills-lock.json`，当前格式版本为 `1`。它适合提交到项目仓库，因此字段语义和写入顺序需要保持稳定。
 
 | 字段 | 归属 | 语义 |
 |---|---|---|
-| `source` | CLI/Skill Deck | 规范化来源标识 |
-| `ref` | CLI/Skill Deck | branch 或 tag |
-| `sourceType` | CLI/Skill Deck | 来源类别 |
-| `skillPath` | CLI/Skill Deck | 仓库相对的 `SKILL.md` 文件路径，更新时再规范化为目录 |
-| `computedHash` | CLI/Skill Deck | Project Skill 当前目录的递归内容 hash |
-| `subagents` | CLI/Skill Deck | Eve Project target；空字符串表示 root agent，其他值表示 subagent 目录名。已确认属于 Eve 的 legacy entry 缺少该字段时按 root 读取，但不自动补写；无法确认 Eve 身份时不猜测 placement |
-| `sourceUrl` | Skill Deck | 私有或原始来源保真 |
-| `remoteHash` | Skill Deck | provider 可比较的 upstream revision；GitHub 为 Skill 目录的 Git tree object ID |
-| `pluginName` | Skill Deck | 展示用 plugin metadata |
+| `source` | CLI / Skill Deck | 规范化来源标识 |
+| `ref` | CLI / Skill Deck | branch 或 tag |
+| `sourceType` | CLI / Skill Deck | 来源类别 |
+| `skillPath` | CLI / Skill Deck | 仓库内指向 `SKILL.md` 的相对路径，更新写回时规范化为目录 |
+| `computedHash` | CLI / Skill Deck | Project Skill 当前目录的递归内容哈希 |
+| `subagents` | CLI / Skill Deck | Eve 项目的落位信息；空字符串表示 root Agent，其他字符串表示 subagent 目录名 |
+| `sourceUrl` | Skill Deck | 私有来源或原始来源的保真信息 |
+| `remoteHash` | Skill Deck | 上游提供者可比较的修订号；GitHub 使用 Skill 目录的 tree object ID |
+| `pluginName` | Skill Deck | 用于展示的 plugin 元数据 |
 
-Eve root-only placement 遵循 CLI 的最小写入方式，可以省略 `subagents`；具名或 multiple placement 使用明确数组值。没有 Eve target 时不写 Eve placement，也不使用 `subagents: []` 发明新的共享语义。已存在的空数组按外部输入保留，并由已确认的 Eve Context 按兼容规则解释，不能在读取时静默迁移。字段不是数组或数组中包含非字符串值时，应用按 lock 损坏处理，不能把 malformed placement 当成字段缺失后回退到 root。
+Eve 兼容遵循上游 CLI 的现有落位规则：
 
-CLI 的 `computedHash` 由相对路径和文件内容以确定性顺序计算 SHA-256，并跳过 `.git`、`node_modules` 等非 Skill 内容。Skill Deck 从已经固定的 payload 计算兼容 hash，不能把 payload identity 或 `remoteHash` 写入这个字段。
+- 只安装到 Eve root 时采用 CLI 的最小写入形式，可以省略 `subagents`；
+- 安装到具名或多个 subagent 时，写入明确的字符串数组；
+- 没有 Eve 目标时不写 Eve 落位信息，也不使用 `subagents: []` 发明新的共享含义；
+- 已确认属于 Eve 的旧记录缺少 `subagents` 时按 root 读取，但不自动补写；无法确认 Eve 身份时不猜测目标；
+- 已存在的空数组按外部输入保留，并且只在已经确认的 Eve Context 中按兼容规则解释；
+- `subagents` 不是数组，或数组包含非字符串值时，按 lock 损坏处理，不能退回 root。
 
-Skill Deck 仍支持读取旧的 `<project>/.agents/.skill-lock.json`，并在受控写入时迁移到 canonical Project lock。Legacy 路径是 Skill Deck 的读取兼容，不要求上游 CLI 采用。
+CLI 的 `computedHash` 按确定性顺序组合相对路径和文件内容并计算 SHA-256，同时跳过 `.git`、`node_modules` 等不属于 Skill 的内容。Skill Deck 从已经固定的内容快照计算兼容哈希，不能把快照身份或 `remoteHash` 写入该字段。
 
-## Hash 的职责
+Skill Deck 仍能读取旧的 `<project>/.agents/.skill-lock.json`，并在受控写入时迁移到标准 Project lock。旧路径只属于 Skill Deck 的读取兼容，不要求上游 CLI 采用。
 
-不同 hash 解决不同问题，不能因为值的格式相同就互换：
+## 各类哈希的职责
 
-| Hash | 负责问题 |
+不同哈希解决不同问题，即使格式相同也不能互换：
+
+| 哈希 | 负责问题 |
 |---|---|
-| Global `skillFolderHash` | CLI Global 来源版本追踪 |
+| Global `skillFolderHash` | CLI 的 Global 来源版本跟踪 |
 | Project `computedHash` | 当前本地 Skill 目录内容是否变化 |
-| Skill Deck `remoteHash` | 对支持的 source type 保存 provider upstream revision；当前 GitHub 使用 Skill 目录 tree object ID |
-| Payload content hash | 固定一次 acquisition 后的完整目录快照 |
-| Preview/token fingerprint | 判断用户确认后所依赖的 runtime facts 是否变化 |
+| Skill Deck `remoteHash` | 保存受支持来源的上游修订号；GitHub 当前使用 Skill 目录的 tree object ID |
+| 内容快照哈希 | 标识一次来源获取后固定的完整目录内容 |
+| 预览指纹 | 判断用户确认所依赖的运行时事实是否已经变化 |
 
-Payload content hash 同时编码相对路径、entry kind、size、内容 hash 和 executable metadata，表示当前 Environment 能够实际保留的 payload identity。因此，同一文本内容在 Unix 与不提供 Unix executable bit 的 Native Windows 上可以形成不同的 payload hash。这个差异不进入 CLI `computedHash`；后者只按稳定相对路径和文件 bytes 计算，并通过仓库 `.gitattributes` 保持跨平台 fixture bytes 一致。
+内容快照哈希同时编码相对路径、目录项类型、大小、内容哈希和可执行权限，表示当前 Environment 实际能够保留的内容身份。因此，同样的文件内容在 Unix 与不提供 Unix 可执行位的 Native Windows 上可能得到不同的快照哈希。这个差异不进入 `computedHash`；后者只按稳定相对路径和文件字节计算，并通过仓库 `.gitattributes` 保持测试内容一致。
 
-更新检查必须根据 evidence 类型选择对应的已安装基线：
+更新检查根据来源证据选择比较基线：
 
-| Source evidence | Global 比较基线 | Project 比较基线 | Project `remoteHash` 写入 |
+| 来源证据 | Global 比较基线 | Project 比较基线 | Project `remoteHash` 写入 |
 |---|---|---|---|
 | GitHub Skill tree object ID | `skillFolderHash` | `remoteHash` | 写入 tree object ID |
-| GitLab/generic Git CLI-compatible content hash | `skillFolderHash` | `computedHash` | 不写入 |
+| GitLab 或普通 Git 的 CLI 兼容内容哈希 | `skillFolderHash` | `computedHash` | 不写入 |
 
-Project 缺少 `remoteHash` 时仍可根据完整 source 与 `skillPath` 主动重新安装。GitHub 缺少 tree revision 时不能声称远端存在或不存在更新；GitLab 和 generic Git 可以把远端 clone 得到的 CLI-compatible content hash 与 Project `computedHash` 比较，不需要把该 content hash 写入 `remoteHash`。缺少 `skillPath` 时不能按 Skill name 猜测上游位置，必须进入来源修复。
+Project 缺少 `remoteHash` 时，只要完整来源和 `skillPath` 仍然存在，就可以主动重新安装。GitHub 缺少 tree revision 时，不能声称远端有更新或没有更新；GitLab 和普通 Git 可以把远端克隆得到的兼容内容哈希与 `computedHash` 比较，不需要把该值写入 `remoteHash`。缺少 `skillPath` 时不能按 Skill 名称猜测上游位置，必须进入来源修复。
 
-`computedHash` 和 payload hash 不能作为 `remoteHash` 的 fallback。远端 CLI content hash 可以与 `computedHash` 比较，但二者的来源和字段职责保持独立。GitHub Source 使用选中 Skill 目录对应的 Git tree object ID，Host 与 WSL 都接受上游支持的 Git object ID 格式。Well-known 和缺少可靠 Git revision 的 GitHub Source 不伪造可比较版本。
+`computedHash` 和内容快照哈希不能充当 `remoteHash`。GitHub 来源使用选中 Skill 目录对应的 Git tree object ID；Host 与 WSL 都接受上游支持的 Git object ID 格式。Well-known 和缺少可靠 Git 修订号的 GitHub 来源不伪造可比较版本。
 
 ## 无损写回
 
-Skill Deck 使用 lossless JSON document 读取 Global 和 Project lock。写入时只替换当前 use case 拥有的 root field 或 Skill entry，并从最新 document 保留：
+Skill Deck 使用无损 JSON 文档读取 Global 和 Project lock。写入时只替换当前业务用例负责的根字段或 Skill 记录，并从最新文档保留：
 
-- 无关 Skill entries；
-- entry 中未知的未来字段；
-- root 中未知的未来字段；
-- 其他进程在 capture 后写入且不与 owned field 冲突的内容。
+- 无关 Skill 记录；
+- Skill 记录中的未知未来字段；
+- 根对象中的未知未来字段；
+- 其他进程在读取后写入、且不与本次负责字段冲突的内容。
 
-这项保证属于 Skill Deck。上游 CLI 当前的 typed entry replacement 不保证保留 Skill Deck 扩展字段或未来未知字段。因此 CLI 更新某个 Project Skill 后，`sourceUrl`、`remoteHash` 或 `pluginName` 可能缺失。Skill Deck 把它视为能力降级，不把 lock 判定为损坏，也不虚构丢失值。
+这项保证只属于 Skill Deck。上游 CLI 当前会按固定类型重建记录，不保证保留 Skill Deck 扩展字段或未来未知字段。CLI 更新某个 Project Skill 后，`sourceUrl`、`remoteHash` 或 `pluginName` 可能缺失。Skill Deck 将其视为能力降级，不把 lock 判定为损坏，也不虚构丢失值。
 
-CLI 新增已知字段后，未知字段保留机制只能避免数据丢失，不能替代模型同步。维护者仍需更新 Rust DTO、业务语义、generated bindings 和兼容测试。
+上游新增已知字段后，未知字段保留机制只能避免数据丢失，不能替代模型同步。维护者仍需要更新 Rust DTO、业务语义、生成的 bindings 和兼容测试。
 
-## Source、Discovery 与 Well-known
+## 来源发现与 Well-known
 
-Skill Deck 与 CLI 对可共享来源保持以下互操作约束：
+Skill Deck 与 CLI 对共享来源保持以下互操作约束：
 
-- `#ref` 在 URL parser 吞掉 fragment 之前提取；
-- Skill filter 与 ref 按同一顺序解析；
-- SSH/private Git 输入保留原始认证所需表达；
+- 在 URL 解析器吞掉 fragment 前提取 `#ref`；
+- Skill 筛选条件与 `ref` 按同一顺序解析；
+- SSH 和私有 Git 输入保留认证所需的原始表达；
 - `skillPath` 始终能够精确定位来源中的原 Skill；
-- discovery 对有效 root、priority directory、plugin manifest 和 recursive fallback 保持相同的选择语义；
-- root eligibility、Project lock filtering、父级 shadow、同名去重和稳定顺序在 Host 与 WSL 中保持一致；
-- `SKILL.md` 大小写识别与磁盘上的实际路径保真分开处理；
-- well-known endpoint、legacy index path safety 和 artifact digest 与上游协议保持一致；
-- 安装 payload 保留 dotfiles，只排除明确的 VCS、cache 或 metadata 内容。
+- 根目录、优先目录、plugin manifest 和递归回退保持相同的发现顺序；
+- 根目录资格、Project lock 筛选、父目录遮蔽、同名去重和稳定顺序在 Host 与 WSL 中保持一致；
+- `SKILL.md` 的大小写识别与磁盘实际路径保真分别处理；
+- Well-known endpoint、旧索引路径安全和制品摘要与上游协议保持一致；
+- 安装内容保留隐藏文件，只排除明确的版本控制、缓存或工具元数据。
 
-Skill Deck 可以增加 acquisition cache、progress、trust metadata 和安全审计展示，但不能借此放宽 CLI 共享协议的路径与内容校验。
+Skill Deck 可以增加获取缓存、进度、信任信息和安全审计展示，但不能因此放宽共享协议的路径与内容校验。
 
 ## Agent 兼容
 
-Built-in Agent definitions 以 vendored CLI 的 Agent registry、路径、detection、legacy behavior 和 adapter 为同步来源。Skill Deck 将这些定义投影到统一的开放 Registry，并用 Custom Agent 补充上游暂未覆盖的工具。
+内置 Agent 定义以上游固定版本源码中的注册表、路径、检测规则、旧行为和适配器为同步依据。Skill Deck 将这些定义放入统一的开放注册表，再通过自定义 Agent 补充上游尚未覆盖的工具。
 
-CLI 中的 `universal` 或静态列表是上游命令选择机制，不直接成为 Skill Deck 的读取能力。Skill Deck 根据当前 scope 的 definition 和目录检查结果判断 Agent 是否能够读取当前 Skill。
+CLI 中的 `universal` 或静态 Agent 列表服务于 CLI 自身的目标选择，不能直接证明某个 Agent 在 Skill Deck 当前 Context 中能够读取 Skill。Skill Deck 根据当前范围的 Agent 定义和实际目录检查判断关联 Agent。
 
-CLI 不理解 Custom Agent ID。Skill Deck 不把 Custom ID 伪装成 CLI Agent，也不要求 CLI 能管理其 Agent 目录项。二者的互操作点是通用 Skill 目录、Built-in projection 和共享 lock 字段。
+CLI 不理解 Skill Deck 的自定义 Agent ID。Skill Deck 不把自定义 ID 伪装成 CLI Agent，也不要求 CLI 管理其目录项。双方的互操作点仅限通用 Skill 目录、内置 Agent 投影和共享 lock 字段。
 
-Agent 模型的完整语义见[Agent](./agents.md)。
+Eve 不是独立于 CLI 兼容规则的特殊产品分支。Skill Deck 通过 Eve 适配目标表达 root 和 subagent 落位，并按照 Project lock 的 `subagents` 契约读写。完整 Agent 语义见[Agent](./agents.md)。
 
 ## 安装与更新语义
 
-两者共享“根据来源重新安装完整 Skill”的核心语义。Skill Deck 的批量预览、immutable payload、unit result 和 rollback 不改变最终来源与目录的可解释性。
+CLI 与 Skill Deck 都根据保存的来源重新安装完整 Skill。Skill Deck 的批量预览、不可变内容快照、逐项结果和还原机制，不改变最终目录与来源信息需要能够被 CLI 理解这一点。
 
-CLI 支持从 Local path 安装并把 `sourceType: "local"` 与内容 hash 写入 Project lock，但 `update` 会跳过 Local entry，不为它做远端版本检查或自动重装。Skill Deck 的跨 Environment copy 也沿用这条边界：Local copy 可保留 provenance，但不把它宣称为可更新 lineage；可重新获取来源的后续更新直接在目标 Environment 获取，不追踪原始来源 Environment。Copy 不改变 source capability。
+CLI 可以从 Local 路径安装，并把 `sourceType: "local"` 与内容哈希写入 Project lock，但更新命令会跳过 Local 记录，不做远端检查或自动重装。Skill Deck 的跨 Environment 复制沿用同一边界：复制后可以保留 Local 来源凭据，但不会获得更新能力。可重新获取的来源在目标 Environment 直接重新获取，不追踪原来的来源 Environment。复制不会改变来源本身的能力。
 
-CLI v1.5.13 的安装与 lock restore 已经按 source 和 ref 合并多个 Skill，一次获取来源后完成 discovery 与多个 Skill 的安装。Global 更新检测同样按 source 合并：GitHub 一次获取完整 repo tree，GitLab 和 generic Git 一次 clone 后计算多个 Skill 目录的 CLI-compatible content hash。这些行为是 Skill Deck 合并 acquisition 与 evidence 请求的兼容依据。
+CLI v1.5.13 会按来源和 `ref` 合并多个 Skill 的获取与发现。Skill Deck 同样可以合并同一来源的获取和比较证据，但不复制上游逐个 Skill 重新调用安装命令造成的重复获取过程。用户确认更新后，Skill Deck 按来源、`ref` 和执行 Environment 获取一次内容，再为各个 Skill 建立独立执行单元。
 
-CLI 的更新执行仍逐 Skill 重新调用 `add`。Global 更新在完成 grouped detection 后逐项获取来源；Project 更新先按 source clone 检查上游删除，再逐 Skill 调用 `add`，因此同仓库多 Skill 可能发生重复 clone。Skill Deck 不复制这一过程性限制：用户确认更新后按 source、ref 和执行 Environment 获取一次 snapshot，再为多个 Skill 生成独立 payload 和 mutation unit。
+Project 更新只要存在 `skillPath`，就可以直接定点重新安装，不要求先完成远端变化检查。远端比较元数据用于改善检查体验，不能成为重新安装的必要条件。
 
-CLI 源码中的 `HostProvider` interface 当前只覆盖远程 `SKILL.md` host 能力，vendored 基线仅由 well-known provider 实现；GitHub blob fast-path、Git clone 和 local acquisition 仍由独立能力路由。Skill Deck 因此采用组合式 acquisition 与 evidence strategy，不把所有 Source 类型收敛成承担完整生命周期的 Provider 继承体系。
+两者都会把安装结果物化为可独立使用的完整 Skill 目录。Skill Deck 在获取阶段固定安全内容，拒绝指向来源外部、目标不存在或形成循环的符号链接；安全边界见[执行与恢复](./execution-and-recovery.md#skill-内容快照)。
 
-CLI 与 Skill Deck 都将安装内容物化为可独立使用的完整 Skill 目录。Skill Deck 在 acquisition 阶段固定安全 payload，拒绝指向来源外部、dangling 或循环的 symlink；具体 payload safety 由[执行与恢复](./execution-and-recovery.md#payload)定义。
+不同平台可以使用不同落盘能力：Windows 使用适合目录的链接方式，macOS、Linux 和 WSL 使用 POSIX 符号链接语义。
 
-Project update 在有 `skillPath` 时可以直接定点重新安装，不要求先完成远端变化检测。Skill Deck 的远端比较 metadata 只用于改善检查体验，不能成为 reinstall 的必要条件。
-
-Materialization 的平台实现可以不同：Windows 使用适合目录的 link primitive，macOS/Linux 使用 POSIX symlink，WSL 使用 distro 内的 POSIX 语义。
-
-CLI v1.5.13 在 symlink 创建失败时会复制到 Agent 目录，并返回 `mode: "symlink"` 与 `symlinkFailed: true`。Skill Deck 当前 mutation pipeline 不自动 fallback；link 创建失败时 unit 失败，用户可以重新预览并选择 Copy。这是明确的产品差异，不能仅根据 CLI 的返回字段推断 Skill Deck 的实际 mode。
+CLI v1.5.13 在符号链接创建失败时会退回复制，但仍返回 `mode: "symlink"` 和 `symlinkFailed: true`。Skill Deck 当前不自动改变用户选择；链接创建失败时，本次执行单元返回失败，用户重新预览后可以选择复制。这是明确的产品差异，不能只根据 CLI 返回字段推断 Skill Deck 的实际落盘方式。
 
 完整业务流程见[Skill 生命周期](./skill-lifecycle.md)，原子写入和冲突处理见[执行与恢复](./execution-and-recovery.md)。
 
 ## 上游同步流程
 
-每次更新 vendored CLI 时，维护者按以下顺序处理：
+更新上游 CLI 基线时，维护者按以下顺序处理：
 
-1. 在 `vercel-skills/` 内确认 package version、目标 tag、commit 和工作区状态。
-2. 阅读真实 diff，按行为而不是文件名归类变化。
-3. 检查 Agent registry、source parser、well-known provider、discovery、installer、Global lock、Project lock 和 update command。
-4. 将共享变化同步到 Skill Deck；保留 Custom Agent、Environment、lossless lock、远端检测和 Recovery 等已有增强。
-5. 更新 Built-in behavior tests、lock fixtures/hash vectors、source/discovery tests 和受影响的 Frontend 状态。
-6. Rust command/type 变化时重新生成 bindings，并核对 window ACL。
-7. 更新本文的基线和稳定差异，不写逐版本实施记录。
-8. 运行[贡献指南](../CONTRIBUTING.md)规定的完整验证。
+1. 在 `vercel-skills/` 中确认 package version、目标 tag、commit 和工作区状态；
+2. 阅读真实源码差异，并按行为归类变化；
+3. 检查 Agent 注册表、来源解析、Well-known、发现、安装、Global lock、Project lock 和更新命令；
+4. 将共享变化同步到 Skill Deck，同时保留自定义 Agent、Environment、无损 lock、远端检查和恢复资源等扩展；
+5. 更新内置 Agent 行为测试、lock 测试夹具与哈希向量、来源与发现测试，以及受影响的前端状态；
+6. Rust 命令或类型变化时重新生成 bindings，并核对窗口 ACL；
+7. 更新本文的基线和稳定差异，不记录逐版本实施过程；
+8. 运行[贡献指南](../CONTRIBUTING.md)规定的相关验证。
 
-不使用固定 `agents.json` snapshot 代替源码比较。Agent 定义只是同步面之一，lock、source、discovery、install 和 update 变化同样可能影响互操作。
+不使用固定的 `agents.json` 快照代替源码比较。Agent 定义只是同步的一部分，lock、来源、发现、安装和更新变化同样可能影响互操作。
 
 ## 同步检查表
 
 | 检查面 | 需要确认的行为 |
 |---|---|
-| Agent registry | ID、alias、Global/Project path、detection、legacy、adapter |
-| Source parser | shorthand、URL、SSH、ref、filter、alias、subpath |
-| Discovery | root early-return 条件、priority/plugin path、fallback、目录深度、shadow、locked filtering、同名去重和 exact `skillPath` |
-| Well-known | endpoint 顺序、schema、digest、archive/path safety |
-| Installer | 通用 Skill 目录、Agent target、排除项、link/copy 与 link failure 行为 |
-| Global lock | version、路径、字段、defaults projection、unknown fields |
-| Project lock | version、字段、排序、hash、entry replacement |
-| Update | reinstall 定位、缺失 metadata、上游删除和结果语义 |
-| Skill Deck extensions | 降级仍可解释，CLI 写入后不误报损坏 |
-| Contracts | Rust DTO、bindings、ACL、i18n 和 tests 同步 |
+| Agent 注册表 | ID、alias、Global/Project 路径、检测、旧行为和适配器 |
+| 来源解析 | 简写、URL、SSH、`ref`、筛选条件、alias 和子路径 |
+| 发现 | 根目录提前返回条件、优先目录、plugin 路径、递归回退、目录深度、遮蔽、lock 筛选、同名去重和精确 `skillPath` |
+| Well-known | endpoint 顺序、格式、摘要、归档与路径安全 |
+| 安装 | 通用 Skill 目录、Agent 目标、排除项、link/copy 和链接失败行为 |
+| Global lock | 版本、路径、字段、默认目标投影和未知字段 |
+| Project lock | 版本、字段、排序、哈希和记录替换 |
+| 更新 | 重新安装定位、缺失元数据、上游删除和结果语义 |
+| Skill Deck 扩展 | 降级后仍可解释，CLI 写入后不误报损坏 |
+| 跨层契约 | Rust DTO、bindings、ACL、国际化和测试同步 |
 
 ## 必须保持的规则
 
-1. Vendored 源码和版本是同步证据，文档和 fixture 不能替代它。
+1. 固定版本的上游源码和版本信息是同步证据，文档与测试夹具不能代替它。
 2. CLI 是兼容基线，不是 Skill Deck 的功能上限。
 3. 共享字段保持 CLI 语义，Skill Deck 扩展字段保持可选。
-4. Skill Deck 写 lock 时保留不属于当前操作的字段和外部变化。
-5. 不宣称上游 CLI 的 typed write 具有同样的未知字段保留能力。
-6. `computedHash`、upstream revision、`remoteHash`、payload hash 和 preview fingerprint 不互换。
-7. 缺少更新检测 metadata 时降级能力，不伪造“无更新”。
-8. Custom Agent 不写入 CLI 不理解的 Agent 选择字段。
-9. 上游同步同时检查 Agent、source、discovery、install、lock 和 update。
+4. Skill Deck 写 lock 时保留不属于本次操作的字段和外部变化。
+5. 不宣称上游 CLI 具备与 Skill Deck 相同的未知字段保留能力。
+6. `computedHash`、上游修订号、`remoteHash`、内容快照哈希和预览指纹不能互换。
+7. 缺少更新检查元数据时降低能力，不能伪造“没有更新”。
+8. 自定义 Agent 不写入 CLI 无法理解的 Agent 选择字段。
+9. 上游同步必须同时检查 Agent、来源、发现、安装、lock 和更新。
