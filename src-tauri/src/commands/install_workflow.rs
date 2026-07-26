@@ -22,15 +22,12 @@ pub async fn install_skills(
     expected_token: PreviewToken,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallResponse, AppError> {
-    async {
-        let guard = runtime
-            .mutation()
-            .begin(MutationKind::Install, request.context.clone())?;
-        guard.transition(MutationPhase::Acquiring, None, true);
-        runtime
-            .install()
-            .execute(&request, expected_token, guard.cancellation())
-            .await
-    }
-    .await
+    let guard = runtime
+        .mutation()
+        .begin(MutationKind::Install, request.context.clone())?;
+    guard.transition(MutationPhase::Acquiring, None, true);
+    runtime
+        .install()
+        .execute(&request, expected_token, guard.cancellation())
+        .await
 }

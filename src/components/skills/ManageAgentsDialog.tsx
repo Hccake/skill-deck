@@ -324,6 +324,7 @@ function ManageAgentsDialogBody({
 
   const showMode = addAgents.length > 0 || addOptionalAgents.length > 0;
   const modeDisabled = saving;
+  const recoveryRequired = saveFeedback?.status === 'recoveryRequired';
 
   return (
     <>
@@ -348,7 +349,11 @@ function ManageAgentsDialogBody({
                     {t('skills.manageAgents.recoveryDescription')}
                   </span>
                   {recovery.map((action) => (
-                    <RecoveryActions key={action.resourceId} recovery={action} />
+                    <RecoveryActions
+                      key={action.resourceId}
+                      recovery={action}
+                      onResolved={onClose}
+                    />
                   ))}
                 </>
               ) : null}
@@ -433,23 +438,25 @@ function ManageAgentsDialogBody({
 
         <DialogFooter className="border-t px-6 py-4">
           <Button variant="outline" onClick={onClose} disabled={saving}>
-            {t('common.cancel')}
+            {t(recoveryRequired ? 'common.close' : 'common.cancel')}
           </Button>
-          <Button
-            onClick={handleSave}
-            disabled={writeBlocked || saving || !hasChanges}
-          >
-            {saving ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t('common.loading')}
-              </>
-            ) : (
-              t(saveFeedback?.status === 'failed'
-                ? 'skills.manageAgents.retrySave'
-                : 'skills.manageAgents.save')
-            )}
-          </Button>
+          {!recoveryRequired ? (
+            <Button
+              onClick={handleSave}
+              disabled={writeBlocked || saving || !hasChanges}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t('common.loading')}
+                </>
+              ) : (
+                t(saveFeedback?.status === 'failed'
+                  ? 'skills.manageAgents.retrySave'
+                  : 'skills.manageAgents.save')
+              )}
+            </Button>
+          ) : null}
         </DialogFooter>
     </>
   );

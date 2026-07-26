@@ -22,15 +22,12 @@ pub async fn manage_skill_agents(
     request: ManageAgentsRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<ManageAgentsResponse, AppError> {
-    async {
-        let guard = runtime
-            .mutation()
-            .begin(MutationKind::ManageAgents, request.context.clone())?;
-        guard.transition(MutationPhase::Preparing, None, false);
-        runtime
-            .manage_agents()
-            .execute(&request, guard.cancellation())
-            .await
-    }
-    .await
+    let guard = runtime
+        .mutation()
+        .begin(MutationKind::ManageAgents, request.context.clone())?;
+    guard.transition(MutationPhase::Preparing, None, false);
+    runtime
+        .manage_agents()
+        .execute(&request, guard.cancellation())
+        .await
 }

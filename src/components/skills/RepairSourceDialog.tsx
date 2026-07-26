@@ -69,9 +69,11 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const isManualChecking = isChecking && validationOwner === 'manual';
   const isRepairing = repairPhase !== 'idle';
   const isWorking = isChecking || isRepairing;
+  const recoveryRequired = repairFeedback === 'recoveryRequired';
   const canRepair =
     !writeBlocked
     && !isWorking
+    && !recoveryRequired
     && validateState !== 'missing'
     && (!requiresRiskConfirmation || riskAcknowledged);
 
@@ -222,7 +224,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           <Input
             aria-label={t('skills.repairSourceDialog.sourceLabel')}
             className="h-9 flex-1 font-mono text-[13px]"
-            disabled={isWorking}
+            disabled={isWorking || recoveryRequired}
             value={source}
             onChange={(event) => {
               setSource(event.target.value);
@@ -260,7 +262,11 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           </p>
         ) : null}
         {repairFeedback === 'recoveryRequired' ? recovery.map((action) => (
-          <RecoveryActions key={action.resourceId} recovery={action} />
+          <RecoveryActions
+            key={action.resourceId}
+            recovery={action}
+            onResolved={closeRepairSource}
+          />
         )) : null}
         
         <p className="text-xs leading-5 text-muted-foreground">
@@ -269,7 +275,11 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       </div>
 
       <DialogFooter className="border-t border-border px-6 py-4">
-        {isRepairing ? (
+        {recoveryRequired ? (
+          <Button variant="outline" onClick={closeRepairSource}>
+            {t('common.close')}
+          </Button>
+        ) : isRepairing ? (
           <Button
             variant="outline"
             onClick={() => void handleStop()}
@@ -292,18 +302,20 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
           )}
           </Button>
         )}
-        <Button onClick={() => void handleRepair()} disabled={!canRepair || isWorking}>
-          {isRepairing ? (
-            <>
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              {t(repairPhase === 'validating'
-                ? 'skills.repairSourceDialog.validating'
-                : 'skills.repairSourceDialog.repairing')}
-            </>
-          ) : (
-            t('skills.repairSourceDialog.repair')
-          )}
-        </Button>
+        {!recoveryRequired ? (
+          <Button onClick={() => void handleRepair()} disabled={!canRepair || isWorking}>
+            {isRepairing ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                {t(repairPhase === 'validating'
+                  ? 'skills.repairSourceDialog.validating'
+                  : 'skills.repairSourceDialog.repairing')}
+              </>
+            ) : (
+              t('skills.repairSourceDialog.repair')
+            )}
+          </Button>
+        ) : null}
       </DialogFooter>
     </DialogContent>
     </Dialog>

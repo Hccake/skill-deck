@@ -30,6 +30,15 @@ vi.mock('@/hooks/useTauriApi', () => ({
   installSkills: (...args: unknown[]) => mocks.installSkills(...args),
 }));
 
+vi.mock('@/components/recovery/RecoveryActions', () => ({
+  RecoveryActions: ({ recovery, onResolved }: {
+    recovery: { resourceId: string };
+    onResolved?: () => void;
+  }) => (
+    <button type="button" onClick={onResolved}>recovery-actions:{recovery.resourceId}</button>
+  ),
+}));
+
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 vi.mock('@/utils/cross-storage-guidance', () => ({
   appendCrossStorageFailureGuidance: (message: string) => message,
@@ -136,6 +145,25 @@ describe('RepairSourceDialog', () => {
     expect(useSkillDialogStore.getState().repairSourceTarget).not.toBeNull();
     expect(screen.getByRole('alert').textContent)
       .toContain('skills.repairSourceDialog.repairFailed');
+  });
+
+  it('requires a fresh dialog after recovery is resolved', async () => {
+    mocks.installSkills.mockResolvedValue({
+      units: [{
+        unitId: 'toolkit',
+        status: 'recoveryRequired',
+        recovery: { resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' },
+      }],
+    });
+    openDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
+
+    await screen.findByRole('button', { name: 'recovery-actions:recovery-1' });
+    expect(screen.queryByRole('button', { name: 'skills.repairSourceDialog.repair' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.repairSourceDialog.validate' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'recovery-actions:recovery-1' }));
+
+    expect(useSkillDialogStore.getState().repairSourceTarget).toBeNull();
   });
 
   it('prevents dismissal during repair and exposes an explicit stop action', async () => {

@@ -853,16 +853,30 @@ fn eve_adapter_roots(
     skill: &LockedUpdateSkill,
     environment: &EnvironmentRef,
 ) -> Result<Vec<(String, ResourceLocator, ObservedEntryOwner)>, AppError> {
+    let has_explicit_placement = skill
+        .subagents
+        .as_ref()
+        .is_some_and(|targets| !targets.is_empty());
     let Some((agent_id, agent)) = runtime.agents.iter().find(|(_, agent)| {
         agent.definition.adapter == AgentAdapter::Eve
             && agent.project.enabled
             && agent.detection == DetectionState::Detected
     }) else {
+        if has_explicit_placement {
+            return Err(AppError::Validation {
+                field: Some("subagents".to_string()),
+                message: format!(
+                    "Skill '{}' records Eve placement, but Eve is not detected in this Project",
+                    skill.name
+                ),
+            });
+        }
         return Ok(Vec::new());
     };
-    let Some(project) = runtime.project_path.as_deref() else {
-        return Ok(Vec::new());
-    };
+    let project = runtime
+        .project_path
+        .as_deref()
+        .ok_or(AppError::StaleContext)?;
     let target_ids = match &skill.subagents {
         None => vec!["eve:root".to_string()],
         Some(subagents) => subagents
@@ -1431,6 +1445,13 @@ mod tests {
         assert!(eve_adapter_roots(&runtime, &skill, &EnvironmentRef::Host)
             .unwrap()
             .is_empty());
+
+        let mut explicit = skill;
+        explicit.subagents = Some(vec!["research".to_string()]);
+        assert!(matches!(
+            eve_adapter_roots(&runtime, &explicit, &EnvironmentRef::Host),
+            Err(AppError::Validation { .. })
+        ));
     }
 
     #[test]

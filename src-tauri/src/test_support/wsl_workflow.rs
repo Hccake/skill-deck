@@ -731,14 +731,18 @@ async fn managed_acquisition_roots(session: &WslSession) -> Result<BTreeSet<Stri
         .collect())
 }
 
-pub async fn run_full_wsl_mutation_workflow(
+pub async fn run_reference_wsl_install_workflow(
     session: WslSession,
     root: String,
 ) -> Result<(), AppError> {
     let harness = WslWorkflowHarness::new(session, root).await?;
-    assert_wsl_update_contracts(&harness).await?;
-    let handle_v1 = harness.payload("v1", "computed-v1", "remote-v1").await?;
-    let (install, request, token) = harness.install_preview(handle_v1).await?;
+    run_wsl_install_workflow(&harness).await
+}
+
+async fn run_wsl_install_workflow(harness: &WslWorkflowHarness) -> Result<(), AppError> {
+    assert_wsl_update_contracts(harness).await?;
+    let handle = harness.payload("v1", "computed-v1", "remote-v1").await?;
+    let (install, request, token) = harness.install_preview(handle).await?;
     let installed = install
         .execute(&request, token, CancellationSignal::default())
         .await?;
@@ -767,6 +771,15 @@ pub async fn run_full_wsl_mutation_workflow(
             ))
             .await?
     );
+    Ok(())
+}
+
+pub async fn run_full_wsl_mutation_workflow(
+    session: WslSession,
+    root: String,
+) -> Result<(), AppError> {
+    let harness = WslWorkflowHarness::new(session, root).await?;
+    run_wsl_install_workflow(&harness).await?;
     run_wsl_script(
         &harness.session,
         r#"rm -rf -- "$1"; ln -s -- "$2" "$1""#,

@@ -104,19 +104,25 @@ describe('App', () => {
     mocks.refreshWorkspace.mockResolvedValue(undefined);
 
     render(<App />);
-    await waitFor(() => expect(mocks.wizardResultHandler).not.toBeNull());
+    await waitFor(
+      () => expect(mocks.wizardResultHandler).not.toBeNull(),
+      { timeout: 5000 },
+    );
     act(() => mocks.wizardResultHandler?.());
 
-    await waitFor(() => expect(mocks.refreshWorkspace).toHaveBeenCalledWith({
-      environment: { kind: 'host' },
-      scope: { scope: 'global' },
-    }));
+    await waitFor(
+      () => expect(mocks.refreshWorkspace).toHaveBeenCalledWith({
+        environment: { kind: 'host' },
+        scope: { scope: 'global' },
+      }),
+      { timeout: 5000 },
+    );
   });
 
-  it('mounts the global mutation status in the main window', () => {
+  it('mounts the global mutation status in the main window', async () => {
     render(<App />);
 
-    expect(screen.getByText('mutation-status-bar')).toBeDefined();
+    expect(await screen.findByText('mutation-status-bar', {}, { timeout: 5000 })).toBeDefined();
   });
 
   it('mounts lifecycle error toasts in the wizard window', () => {

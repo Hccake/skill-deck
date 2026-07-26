@@ -64,43 +64,35 @@ async fn execute_update(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<UpdateResponse, AppError> {
     let context = execution.request.context.clone();
-    async {
-        let guard = runtime
-            .mutation()
-            .begin(MutationKind::Update, context.clone())?;
-        guard.transition(MutationPhase::Acquiring, None, true);
-        let result = runtime
-            .update()
-            .execute_with_stage_observer(
-                &execution,
-                expected_token,
-                guard.cancellation(),
-                |event| {
-                    let UpdateExecutionProgress {
-                        stage,
-                        subject,
-                        current,
-                        total,
-                    } = event;
-                    guard.transition(
-                        match stage {
-                            UpdateExecutionStage::Validating => MutationPhase::Validating,
-                            UpdateExecutionStage::Updating => MutationPhase::Committing,
-                        },
-                        Some(MutationProgress {
-                            subject,
-                            current,
-                            total,
-                        }),
-                        matches!(stage, UpdateExecutionStage::Validating),
-                    );
+    let guard = runtime
+        .mutation()
+        .begin(MutationKind::Update, context.clone())?;
+    guard.transition(MutationPhase::Acquiring, None, true);
+    let result = runtime
+        .update()
+        .execute_with_stage_observer(&execution, expected_token, guard.cancellation(), |event| {
+            let UpdateExecutionProgress {
+                stage,
+                subject,
+                current,
+                total,
+            } = event;
+            guard.transition(
+                match stage {
+                    UpdateExecutionStage::Validating => MutationPhase::Validating,
+                    UpdateExecutionStage::Updating => MutationPhase::Committing,
                 },
-            )
-            .await;
-        guard.transition(MutationPhase::Finishing, None, false);
-        result
-    }
-    .await
+                Some(MutationProgress {
+                    subject,
+                    current,
+                    total,
+                }),
+                matches!(stage, UpdateExecutionStage::Validating),
+            );
+        })
+        .await;
+    guard.transition(MutationPhase::Finishing, None, false);
+    result
 }
 
 #[cfg(test)]

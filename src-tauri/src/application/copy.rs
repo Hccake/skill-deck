@@ -175,16 +175,18 @@ where
             .acquire(&request.source, &request.skill_name, &source.canonical)
             .await?;
         let payload = self.payloads.pin_verified(&handle).await?;
+        let source_lock_entry = source
+            .facts
+            .lock_document
+            .entry_snapshot(&request.skill_name)
+            .value()
+            .cloned();
+        normalize_copy_metadata(source_lock_entry.as_ref())?;
         let source_snapshot = CopySourceSnapshot {
             source_context: request.source.clone(),
             skill_name: request.skill_name.clone(),
             revisions: source.facts.revisions.clone(),
-            lock_entry: source
-                .facts
-                .lock_document
-                .entry_snapshot(&request.skill_name)
-                .value()
-                .cloned(),
+            lock_entry: source_lock_entry,
             project_identity: self.comparator.capture_source(&source.facts).await?,
         };
         self.payloads
@@ -736,17 +738,31 @@ pub(crate) fn compare_resolved_projects(
     }
 }
 
-fn normalize_copy_metadata(source: Option<&Value>) -> NormalizedCopyMetadata {
+fn normalize_copy_metadata(source: Option<&Value>) -> Result<NormalizedCopyMetadata, AppError> {
+    let source = source.ok_or_else(|| AppError::InvalidSource {
+        value: "source Skill has no lock metadata; repair its source before copying".to_string(),
+    })?;
+    if !source.is_object() {
+        return Err(AppError::ConfigurationCorrupted {
+            message: "source lock entry must be an object".to_string(),
+        });
+    }
     let text = |field: &str| {
         source
-            .and_then(|entry| entry.get(field))
+            .get(field)
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
     };
-    NormalizedCopyMetadata {
-        source: text("source").unwrap_or_else(|| "installed-canonical".to_string()),
-        source_type: text("sourceType").unwrap_or_else(|| "installed".to_string()),
+    let source_value = text("source").ok_or_else(|| AppError::ConfigurationCorrupted {
+        message: "source lock entry is missing source identity".to_string(),
+    })?;
+    let source_type = text("sourceType").ok_or_else(|| AppError::ConfigurationCorrupted {
+        message: "source lock entry is missing source type".to_string(),
+    })?;
+    Ok(NormalizedCopyMetadata {
+        source: source_value,
+        source_type,
         source_url: text("sourceUrl"),
         ref_name: text("ref"),
         skill_path: text("skillPath"),
@@ -759,19 +775,14 @@ fn normalize_copy_metadata(source: Option<&Value>) -> NormalizedCopyMetadata {
             .flatten()
         }),
         plugin_name: text("pluginName"),
-    }
+    })
 }
 
 fn project_lock_replacement(
     source: Option<&Value>,
     computed_hash: &str,
 ) -> Result<Value, AppError> {
-    if source.is_some_and(|entry| !entry.is_object()) {
-        return Err(AppError::ConfigurationCorrupted {
-            message: "source lock entry must be an object".to_string(),
-        });
-    }
-    let metadata = normalize_copy_metadata(source);
+    let metadata = normalize_copy_metadata(source)?;
     let mut entry = Map::new();
     entry.insert("source".to_string(), Value::String(metadata.source));
     entry.insert(
@@ -941,6 +952,14 @@ mod tests {
 
         assert_eq!(target["computedHash"], "target-computed");
         assert!(target.get("remoteHash").is_none());
+    }
+
+    #[test]
+    fn copying_without_source_lock_metadata_requires_source_repair() {
+        assert!(matches!(
+            project_lock_replacement(None, "target-computed"),
+            Err(AppError::InvalidSource { .. })
+        ));
     }
 
     #[derive(Clone)]

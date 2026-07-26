@@ -91,6 +91,13 @@ pub mod wsl_integration_support {
             .await
     }
 
+    pub async fn run_reference_wsl_install_workflow(
+        session: WslSession,
+        root: String,
+    ) -> Result<(), AppError> {
+        wsl_workflow::run_reference_wsl_install_workflow(session, root).await
+    }
+
     pub async fn run_full_wsl_mutation_workflow(
         session: WslSession,
         root: String,

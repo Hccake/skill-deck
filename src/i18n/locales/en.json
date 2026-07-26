@@ -965,7 +965,7 @@
         "externalLockChanged": "The Skill lock was changed by another process.",
         "mutationCancelled": "The operation was cancelled.",
         "executionFailed": "The operation could not be completed.",
-        "restoreFailed": "Automatic restore did not complete.",
+        "restoreFailed": "Skill Deck could not safely complete this operation. The related files need review.",
         "recoveryRequired": "Review the recovery data before continuing.",
         "configurationReadOnly": "The configuration is newer than this app and is read-only.",
         "configurationCorrupted": "The configuration could not be read safely."

@@ -12,7 +12,7 @@ use app_lib::wsl_integration_support::{
     connect_wsl_environment, decode_nul_records, discover_wsl_distributions,
     map_windows_path_with_wslpath,
     marker_before_batch_stage_failure_converges_after_reconnect as run_marker_before_stage_acceptance,
-    reconnect_reindexes_recovery_and_sweeps_payloads, run_full_wsl_mutation_workflow,
+    reconnect_reindexes_recovery_and_sweeps_payloads, run_reference_wsl_install_workflow,
     run_wsl_script, session_loss_invalidates_preview, wsl_unc_to_linux_path, AppError,
     CancellationSignal, EnvironmentLockIo, EnvironmentRef, ResourceLocator, WslExecutionFeature,
     WslOperationDescriptor, WslOperationExecutor, WslOperationRequest, WslSession,
@@ -300,16 +300,16 @@ async fn cancellation_reaps_wsl_child_and_stops_writes() {
 
 #[tokio::test]
 #[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
-async fn runs_full_wsl_mutation_workflow_with_complete_payloads() {
+async fn runs_reference_wsl_install_workflow_with_complete_payloads() {
     let session = connect_wsl_environment(&reference_distro())
         .await
         .expect("connect workflow distro");
     let root = format!("/tmp/skill-deck-workflow-{}", Uuid::new_v4());
     let _root = WslTempRoot::create(&session, root.clone()).await;
 
-    run_full_wsl_mutation_workflow(session, root)
+    run_reference_wsl_install_workflow(session, root)
         .await
-        .expect("complete WSL workflow");
+        .expect("reference WSL install workflow");
 }
 
 #[tokio::test]

@@ -22,15 +22,12 @@ pub async fn remove_skill(
     request: RemoveRequest,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<RemoveResponse, AppError> {
-    async {
-        let guard = runtime
-            .mutation()
-            .begin(MutationKind::Remove, request.context.clone())?;
-        guard.transition(MutationPhase::Preparing, None, false);
-        runtime
-            .remove()
-            .execute(&request, guard.cancellation())
-            .await
-    }
-    .await
+    let guard = runtime
+        .mutation()
+        .begin(MutationKind::Remove, request.context.clone())?;
+    guard.transition(MutationPhase::Preparing, None, false);
+    runtime
+        .remove()
+        .execute(&request, guard.cancellation())
+        .await
 }

@@ -965,7 +965,7 @@
         "externalLockChanged": "Skill lock 已被其他进程修改。",
         "mutationCancelled": "操作已取消。",
         "executionFailed": "操作未能完成。",
-        "restoreFailed": "自动恢复未能完成。",
+        "restoreFailed": "Skill Deck 未能妥善完成这次操作，相关文件需要检查。",
         "recoveryRequired": "继续前请先检查恢复数据。",
         "configurationReadOnly": "配置版本高于当前应用，现以只读方式打开。",
         "configurationCorrupted": "无法安全读取配置。"

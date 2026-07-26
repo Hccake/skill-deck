@@ -18,6 +18,15 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+vi.mock('@/components/recovery/RecoveryActions', () => ({
+  RecoveryActions: ({ recovery, onResolved }: {
+    recovery: { resourceId: string };
+    onResolved?: () => void;
+  }) => (
+    <button type="button" onClick={onResolved}>recovery-actions:{recovery.resourceId}</button>
+  ),
+}));
+
 function makeAgent(agent: {
   id: string;
   name: string;
@@ -371,6 +380,35 @@ describe('ManageAgentsDialog', () => {
     expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.failedDescription');
     expect(screen.getByRole('dialog')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'skills.manageAgents.retrySave' })).not.toBeNull();
+  });
+
+  it('exits ordinary save flow after recovery is required', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onSave = vi.fn().mockResolvedValue({
+      status: 'recoveryRequired',
+      response: { units: [] },
+      recovery: [{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }],
+    } satisfies ManageAgentsOutcome);
+
+    render(
+      <ManageAgentsDialog
+        skill={skill}
+        scope="project"
+        allAgents={allAgents}
+        onClose={onClose}
+        onSave={onSave}
+      />
+    );
+
+    await user.click(screen.getByText('Cursor'));
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
+
+    expect(screen.getByText('recovery-actions:recovery-1')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.manageAgents.save' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'common.close' }).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: 'recovery-actions:recovery-1' }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('groups shared owners into one checkbox and removes the whole physical group', async () => {
