@@ -77,8 +77,8 @@ export function DiscoverPage() {
 
   useEffect(() => {
     void Promise.all([
-      refreshContext(globalSkillContext, false),
-      ...projectContexts.map((context) => refreshContext(context, false)),
+      refreshContext(globalSkillContext),
+      ...projectContexts.map((context) => refreshContext(context)),
     ]);
   }, [globalSkillContext, projectContexts, refreshContext]);
 

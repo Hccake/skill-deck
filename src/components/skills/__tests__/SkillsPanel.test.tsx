@@ -2,9 +2,18 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SkillsPanel } from '../SkillsPanel';
-import type { AppError, ContextRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import { makeResolvedAgent } from '@/test-utils';
+import type {
+  AgentId,
+  AppError,
+  ContextRef,
+  InstalledSkill,
+  ProjectInfo,
+  ResolvedAgent,
+} from '@/bindings';
+import type { ReactNode } from 'react';
 
 const hostGlobal: ContextRef = {
   environment: { kind: 'host' },
@@ -27,6 +36,7 @@ function makeSkill(name: string, scope: 'global' | 'project' = 'global'): Instal
     canonicalPath: `/canonical/${name}`,
     scope,
     agents: [],
+    associatedAgents: [],
     hasUpdate: false,
     canRunUpdate: false,
     canCheckForUpdates: false,
@@ -40,7 +50,14 @@ function snapshot(
   skills: InstalledSkill[] = [],
   loading = false,
   error: AppError | null = null,
-) {
+): {
+  skills: InstalledSkill[];
+  agents: ResolvedAgent[];
+  pathExists: boolean;
+  loading: boolean;
+  error: AppError | null;
+  requestId: number;
+} {
   return {
     skills,
     agents: [],
@@ -133,11 +150,69 @@ vi.mock('@/workflows/skill-update', () => ({
 }));
 
 vi.mock('../SkillsToolbar', () => ({
-  SkillsToolbar: () => <div>skills-toolbar</div>,
+  SkillsToolbar: ({
+    compact,
+    searchQuery,
+    onSearchChange,
+    selectedAgent,
+    onAgentChange,
+    filterableAgents,
+  }: {
+    compact?: boolean;
+    searchQuery: string;
+    onSearchChange: (query: string) => void;
+    selectedAgent: AgentId | null;
+    onAgentChange: (agentId: AgentId | null) => void;
+    filterableAgents: ResolvedAgent[];
+  }) => (
+    <div>
+      <span data-testid="toolbar-mode">{compact ? 'compact' : 'full'}</span>
+      <span data-testid="search-query">{searchQuery}</span>
+      <span data-testid="selected-agent">{selectedAgent ?? 'no-agent'}</span>
+      <span data-testid="filterable-agents">
+        {filterableAgents.map((agent) => agent.definition.id).join(',')}
+      </span>
+      {filterableAgents.map((agent) => (
+        <button
+          key={agent.definition.id}
+          type="button"
+          data-testid={`filter-agent:${agent.definition.id}`}
+          onClick={() => onAgentChange(agent.definition.id)}
+        >
+          {agent.definition.displayName}
+        </button>
+      ))}
+      <button type="button" data-testid="clear-agent-filter" onClick={() => onAgentChange(null)}>
+        clear
+      </button>
+      <button type="button" data-testid="set-missing-search" onClick={() => onSearchChange('missing')}>
+        search missing
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('../CompactSkillList', () => ({
-  CompactSkillList: () => <div>compact-skill-list</div>,
+  CompactSkillList: ({
+    globalSkills,
+    projectSkills,
+    globalEmptyState,
+    projectEmptyState,
+  }: {
+    globalSkills: InstalledSkill[];
+    projectSkills: InstalledSkill[];
+    globalEmptyState?: ReactNode;
+    projectEmptyState?: ReactNode;
+  }) => (
+    <div>
+      compact-skill-list
+      <span data-testid="compact-skills">
+        {[...globalSkills, ...projectSkills].map((skill) => skill.name).join(',')}
+      </span>
+      {projectSkills.length === 0 ? projectEmptyState : null}
+      {globalSkills.length === 0 ? globalEmptyState : null}
+    </div>
+  ),
 }));
 
 vi.mock('../CrossStorageWarningBanner', () => ({
@@ -152,6 +227,7 @@ vi.mock('../SkillsSection', () => ({
     onCheckUpdates,
     onPrepareUpdate,
     scope,
+    emptyState,
   }: {
     skills: Array<{ name: string; scope: 'global' | 'project' }>;
     updatingSkills: Map<string, string>;
@@ -159,8 +235,9 @@ vi.mock('../SkillsSection', () => ({
     onCheckUpdates?: () => Promise<boolean>;
     onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
     scope: 'global' | 'project';
+    emptyState?: ReactNode;
   }) => (
-    <div>
+    <div data-testid={`skills-section:${scope}`}>
       skills-section
       {skills.map((skill) => (
         <div key={`${skill.scope}:${skill.name}`}>
@@ -193,6 +270,7 @@ vi.mock('../SkillsSection', () => ({
       >
         update all
       </button>
+      {skills.length === 0 ? emptyState : null}
     </div>
   ),
 }));
@@ -204,6 +282,7 @@ vi.mock('../DeleteSkillDialog', () => ({
 vi.mock('../EmptyStates', () => ({
   GlobalEmptyState: () => <div>global-empty-state</div>,
   ProjectEmptyState: () => <div>project-empty-state</div>,
+  SkillFilterEmptyState: () => <div>skill-filter-empty-state</div>,
 }));
 
 describe('SkillsPanel', () => {
@@ -409,6 +488,204 @@ describe('SkillsPanel', () => {
       ['project-skill'],
       true,
     );
+  });
+
+  it('filters Global and Project sections with their own associated Agent projections', async () => {
+    mocks.workspaceContextState.selectedContext = ubuntuProject;
+    const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
+    const cursor = makeResolvedAgent({ id: 'cursor', displayName: 'Cursor' });
+    const globalSnapshot = snapshot([
+      {
+        ...makeSkill('global-skill'),
+        agents: ['cursor'],
+        associatedAgents: ['codex'],
+      },
+    ]);
+    globalSnapshot.agents = [codex];
+    const projectSnapshot = snapshot([
+      {
+        ...makeSkill('project-skill', 'project'),
+        agents: ['codex'],
+        associatedAgents: ['cursor'],
+      },
+    ]);
+    projectSnapshot.agents = [cursor];
+    mocks.skillsDataState.snapshots = {
+      'wsl:ubuntu/global': globalSnapshot,
+      'wsl:ubuntu/project:project-a': projectSnapshot,
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    expect(screen.getByTestId('filterable-agents').textContent).toBe('codex,cursor');
+    fireEvent.click(screen.getByTestId('filter-agent:cursor'));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('repair:global:global-skill')).toBeNull();
+      expect(screen.getByTestId('repair:project:project-skill')).toBeDefined();
+    });
+  });
+
+  it('supports an Agent whose literal ID is all', async () => {
+    const allAgent = makeResolvedAgent({ id: 'all', displayName: 'All Tools' });
+    const hostSnapshot = snapshot([
+      { ...makeSkill('matched'), associatedAgents: ['all'] },
+      { ...makeSkill('unrelated'), associatedAgents: ['codex'] },
+    ]);
+    hostSnapshot.agents = [allAgent];
+    mocks.skillsDataState.snapshots = { 'host/global': hostSnapshot };
+
+    render(<SkillsPanel compact={false} />);
+    fireEvent.click(screen.getByTestId('filter-agent:all'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('selected-agent').textContent).toBe('all');
+      expect(screen.getByTestId('repair:global:matched')).toBeDefined();
+      expect(screen.queryByTestId('repair:global:unrelated')).toBeNull();
+    });
+  });
+
+  it('preserves a still-valid Agent across Context changes and clears an invalid one', async () => {
+    const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
+    const cursor = makeResolvedAgent({ id: 'cursor', displayName: 'Cursor' });
+    const hostSnapshot = snapshot([{ ...makeSkill('host-skill'), associatedAgents: ['codex'] }]);
+    hostSnapshot.agents = [codex];
+    const ubuntuSnapshot = snapshot([{ ...makeSkill('ubuntu-skill'), associatedAgents: ['codex'] }]);
+    ubuntuSnapshot.agents = [codex];
+    const cursorSnapshot = snapshot([{ ...makeSkill('cursor-skill'), associatedAgents: ['cursor'] }]);
+    cursorSnapshot.agents = [cursor];
+    mocks.skillsDataState.snapshots = {
+      'host/global': hostSnapshot,
+      'wsl:ubuntu/global': ubuntuSnapshot,
+    };
+
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    fireEvent.click(screen.getByTestId('filter-agent:codex'));
+
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    rerender(<SkillsPanel compact={false} />);
+    expect(screen.getByTestId('selected-agent').textContent).toBe('codex');
+
+    mocks.skillsDataState.snapshots['wsl:ubuntu/global'] = cursorSnapshot;
+    rerender(<SkillsPanel compact={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('selected-agent').textContent).toBe('no-agent');
+    });
+  });
+
+  it('keeps the Agent filter while a previously unseen Context loads', () => {
+    const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
+    const hostSnapshot = snapshot([{ ...makeSkill('host-skill'), associatedAgents: ['codex'] }]);
+    hostSnapshot.agents = [codex];
+    mocks.skillsDataState.snapshots = {
+      'host/global': hostSnapshot,
+    };
+
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    fireEvent.click(screen.getByTestId('filter-agent:codex'));
+
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    rerender(<SkillsPanel compact={false} />);
+
+    expect(screen.getByTestId('selected-agent').textContent).toBe('codex');
+
+    const ubuntuSnapshot = snapshot([{ ...makeSkill('ubuntu-skill'), associatedAgents: ['codex'] }]);
+    ubuntuSnapshot.agents = [codex];
+    mocks.skillsDataState.snapshots['wsl:ubuntu/global'] = ubuntuSnapshot;
+    rerender(<SkillsPanel compact={false} />);
+
+    expect(screen.getByTestId('selected-agent').textContent).toBe('codex');
+  });
+
+  it('keeps the selected Agent when the next Context has no Skills', () => {
+    const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
+    const hostSnapshot = snapshot([{ ...makeSkill('host-skill'), associatedAgents: ['codex'] }]);
+    hostSnapshot.agents = [codex];
+    const ubuntuSnapshot = snapshot();
+    ubuntuSnapshot.agents = [codex];
+    mocks.skillsDataState.snapshots = {
+      'host/global': hostSnapshot,
+      'wsl:ubuntu/global': ubuntuSnapshot,
+    };
+
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    fireEvent.click(screen.getByTestId('filter-agent:codex'));
+
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    rerender(<SkillsPanel compact={false} />);
+
+    expect(screen.getByTestId('selected-agent').textContent).toBe('codex');
+    expect(screen.getByText('global-empty-state')).toBeDefined();
+  });
+
+  it('uses the dedicated filtered-empty state in both full and compact layouts', async () => {
+    const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
+    const cursor = makeResolvedAgent({ id: 'cursor', displayName: 'Cursor' });
+    const hostSnapshot = snapshot([{ ...makeSkill('toolkit'), associatedAgents: ['codex'] }]);
+    hostSnapshot.agents = [codex, cursor];
+    mocks.skillsDataState.snapshots = { 'host/global': hostSnapshot };
+
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    fireEvent.click(screen.getByTestId('filter-agent:codex'));
+    expect(screen.queryByText('skill-filter-empty-state')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('set-missing-search'));
+    await waitFor(() => {
+      expect(screen.getByText('skill-filter-empty-state')).toBeDefined();
+      expect(screen.queryByText('global-empty-state')).toBeNull();
+    });
+
+    rerender(<SkillsPanel compact />);
+    expect(screen.getByTestId('toolbar-mode').textContent).toBe('compact');
+    expect(screen.getByText('skill-filter-empty-state')).toBeDefined();
+  });
+
+  it('keeps separate Project and Global filtered-empty states in compact mode', async () => {
+    mocks.workspaceContextState.selectedContext = ubuntuProject;
+    const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
+    const globalSnapshot = snapshot([
+      { ...makeSkill('global-skill'), associatedAgents: ['codex'] },
+    ]);
+    globalSnapshot.agents = [codex];
+    const projectSnapshot = snapshot([
+      { ...makeSkill('project-skill', 'project'), associatedAgents: ['codex'] },
+    ]);
+    projectSnapshot.agents = [codex];
+    mocks.skillsDataState.snapshots = {
+      'wsl:ubuntu/global': globalSnapshot,
+      'wsl:ubuntu/project:project-a': projectSnapshot,
+    };
+
+    render(<SkillsPanel compact />);
+    fireEvent.click(screen.getByTestId('set-missing-search'));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('skill-filter-empty-state')).toHaveLength(2);
+    });
+  });
+
+  it('checks updates only for the current filtered result', async () => {
+    const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
+    const cursor = makeResolvedAgent({ id: 'cursor', displayName: 'Cursor' });
+    const hostSnapshot = snapshot([
+      { ...makeSkill('codex-skill'), associatedAgents: ['codex'] },
+      { ...makeSkill('cursor-skill'), associatedAgents: ['cursor'] },
+    ]);
+    hostSnapshot.agents = [codex, cursor];
+    mocks.skillsDataState.snapshots = { 'host/global': hostSnapshot };
+
+    render(<SkillsPanel compact={false} />);
+    fireEvent.click(screen.getByTestId('filter-agent:codex'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('repair:global:cursor-skill')).toBeNull();
+    });
+    fireEvent.click(screen.getByTestId('check:global'));
+
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(hostGlobal, {
+      kind: 'skills',
+      skills: [{ context: hostGlobal, skillName: 'codex-skill' }],
+    });
   });
 
   it('debounces automatic checks and cancels unsent focus work on unmount', async () => {

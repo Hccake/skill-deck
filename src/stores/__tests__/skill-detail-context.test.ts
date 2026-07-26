@@ -30,6 +30,7 @@ const toolkit: InstalledSkill = {
   canonicalPath: '/canonical/toolkit',
   scope: 'project',
   agents: [],
+  associatedAgents: [],
   hasUpdate: false,
 };
 

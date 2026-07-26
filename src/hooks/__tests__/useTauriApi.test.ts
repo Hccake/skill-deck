@@ -112,7 +112,7 @@ describe('useTauriApi unwrap logic', () => {
   it('passes explicit context to listSkills', async () => {
     mockCommands.listSkills.mockResolvedValue({
       status: 'ok',
-      data: { skills: [], pathExists: true },
+      data: { skills: [], agents: [], pathExists: true },
     });
     await listSkills(context);
     expect(mockCommands.listSkills).toHaveBeenCalledWith(context);

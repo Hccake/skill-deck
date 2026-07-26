@@ -12,13 +12,11 @@ import {
 } from './skills-utils';
 import {
   listSkills,
-  listAgents,
   checkUpdates,
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
 import { toAppError } from '@/utils/to-app-error';
 import { contextKey, globalContext } from '@/lib/context';
-import { agentsForScope } from '@/lib/agents';
 import type {
   AppError,
   ContextRef,
@@ -161,7 +159,7 @@ interface SkillsDataState {
   checkingUpdateScopes: Set<string>;
 
   // Actions
-  refreshContext: (context: ContextRef, includeAgents?: boolean) => Promise<void>;
+  refreshContext: (context: ContextRef) => Promise<void>;
   refreshWorkspace: (context: ContextRef) => Promise<void>;
   invalidateContexts: (contexts: ContextRef[]) => void;
   invalidateAgentProjections: () => void;
@@ -208,7 +206,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
   isSyncing: false,
   checkingUpdateScopes: new Set(),
-  refreshContext: async (context, includeAgents = true) => {
+  refreshContext: async (context) => {
     const key = contextKey(context);
     const current = get().snapshots[key] ?? emptyContextSnapshot();
     const requestId = nextContextRequestGeneration(key);
@@ -225,15 +223,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     }));
 
     try {
-      const [result, agentRuntime] = await Promise.all([
-        listSkills(context),
-        includeAgents
-          ? listAgents(context)
-          : Promise.resolve(null),
-      ]);
-      const agents = agentRuntime
-        ? agentsForScope(agentRuntime, context.scope.scope)
-        : current.agents;
+      const result = await listSkills(context);
       const updateCache = updateInfoCache.get(key);
       const skills = sortSkills(
         updateCache
@@ -253,7 +243,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
               updateCheck: updateCache
                 ? toUpdateCheckDisplaySnapshot(updateCache.results, updateCache.sources)
                 : current.updateCheck,
-              agents,
+              agents: result.agents,
               pathExists: result.pathExists,
               loading: false,
               error: null,
@@ -281,12 +271,12 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
 
   refreshWorkspace: async (context) => {
     if (context.scope.scope === 'global') {
-      await get().refreshContext(context, true);
+      await get().refreshContext(context);
       return;
     }
     await Promise.all([
-      get().refreshContext(globalContext(context.environment), false),
-      get().refreshContext(context, true),
+      get().refreshContext(globalContext(context.environment)),
+      get().refreshContext(context),
     ]);
   },
 

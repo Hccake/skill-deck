@@ -21,6 +21,7 @@ function makeSkill(name: string): InstalledSkill {
     canonicalPath: `/tmp/.agents/${name}`,
     scope: 'global',
     agents: ['codex'],
+    associatedAgents: ['codex'],
     source: 'owner/repo',
     sourceUrl: 'https://github.com/owner/repo',
     installedAt: null,
@@ -90,5 +91,29 @@ describe('CompactSkillList', () => {
     expect(viewport?.className).toContain('[&>div]:!block');
     expect(viewport?.className).toContain('[&>div]:w-full');
     expect(viewport?.className).toContain('[&>div]:min-w-0');
+  });
+
+  it('keeps Global and Project sections with their own add actions when filters match nothing', () => {
+    render(
+      <CompactSkillList
+        globalSkills={[]}
+        projectSkills={[]}
+        selectedSkillRef={{ name: 'hidden', scope: 'project', projectPath: '/work/app' }}
+        isProjectSelected
+        projectTitle="Project Skills"
+        projectPath="/work/app"
+        onAddProject={vi.fn()}
+        onAddGlobal={vi.fn()}
+        onSkillClick={vi.fn()}
+        projectEmptyState={<div>project-filter-empty</div>}
+        globalEmptyState={<div>global-filter-empty</div>}
+      />
+    );
+
+    expect(screen.getByText('Project Skills')).toBeDefined();
+    expect(screen.getByText('skills.globalSkills')).toBeDefined();
+    expect(screen.getByText('project-filter-empty')).toBeDefined();
+    expect(screen.getByText('global-filter-empty')).toBeDefined();
+    expect(screen.getAllByRole('button', { name: 'skills.add' })).toHaveLength(2);
   });
 });

@@ -157,9 +157,9 @@ pub struct InstalledSkill {
     pub canonical_path: String,
     pub scope: SkillScope,
     pub agents: Vec<AgentId>,
-    /// Skill card Agents that are both effective for this skill and detected locally.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub card_agents: Option<Vec<AgentId>>,
+    /// 每次读取 Skill 时根据当前 runtime 和文件系统重新组装，不写入 skill-lock。
+    /// 只包含当前已检测到并且实际能够读取该 Skill 的关联 Agent。
+    pub associated_agents: Vec<AgentId>,
     // 来自 skill-lock.json 的元数据
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -305,7 +305,7 @@ fn apply_presence_summary(skill: &mut InstalledSkill, runtime: &AgentRuntimeSnap
         }
     }
 
-    let card_agents = effective_agents
+    let associated_agents = effective_agents
         .iter()
         .filter(|agent| {
             runtime
@@ -317,7 +317,7 @@ fn apply_presence_summary(skill: &mut InstalledSkill, runtime: &AgentRuntimeSnap
         .collect();
 
     skill.agents = effective_agents;
-    skill.card_agents = Some(card_agents);
+    skill.associated_agents = associated_agents;
     skill.default_available_agent_count = Some(default_available_count as u32);
     skill.private_adapted_agent_count = Some(private_adapted_count as u32);
     skill.duplicate_copy_count = Some(duplicate_copy_count as u32);
@@ -326,17 +326,6 @@ fn apply_presence_summary(skill: &mut InstalledSkill, runtime: &AgentRuntimeSnap
     skill.duplicate_copy_agents = Some(duplicate_copy_agents);
     skill.private_only_agents = Some(private_only_agents);
     skill.private_copy_agents = Some(private_copy_agents);
-}
-
-/// list_skills 返回结果
-/// 包含 skills 列表和路径存在性信息
-#[derive(Debug, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct ListSkillsResult {
-    pub skills: Vec<InstalledSkill>,
-    /// 项目目录是否存在（project scope 时有意义，global 始终为 true）
-    pub path_exists: bool,
 }
 
 /// 扫描目录信息
@@ -519,7 +508,7 @@ pub fn list_installed_skills(
                             SkillScope::Project
                         },
                         agents: scope_info.agent_ids.iter().cloned().collect(),
-                        card_agents: None,
+                        associated_agents: Vec::new(),
                         source: None,
                         source_url: None,
                         installed_at: None,
@@ -638,7 +627,7 @@ pub fn list_installed_skills(
                         SkillScope::Project
                     },
                     agents: installed_agents,
-                    card_agents: None,
+                    associated_agents: Vec::new(),
                     source: None,
                     source_url: None,
                     installed_at: None,
@@ -830,7 +819,30 @@ mod tests {
         assert_eq!(skill.agents, vec![custom.clone()]);
         assert_eq!(skill.private_only_agents, Some(vec![custom.clone()]));
         assert_eq!(skill.private_adapted_agents, Some(vec![custom]));
-        assert_eq!(skill.card_agents, Some(Vec::new()));
+        assert_eq!(skill.associated_agents, Vec::new());
+    }
+
+    #[test]
+    fn installed_skill_serializes_associated_agents_as_the_public_contract() {
+        let project = tempdir().unwrap();
+        let cwd = project.path().to_string_lossy().to_string();
+        let skill_dir = project.path().join(".my-custom/skills/demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+        let runtime = custom_runtime(&cwd, DetectionState::Detected);
+        let skill = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime)
+            .unwrap()
+            .into_iter()
+            .find(|skill| skill.name == "demo")
+            .unwrap();
+
+        let value = serde_json::to_value(skill).unwrap();
+        assert_eq!(value["associatedAgents"][0], "my-custom-agent");
+        assert!(value.get("cardAgents").is_none());
     }
 
     #[test]
@@ -872,7 +884,7 @@ mod tests {
             .expect("colliding Eve/Custom skill should be listed");
 
         assert_eq!(skill.agents, vec![eve.clone(), custom.clone()]);
-        assert_eq!(skill.card_agents, Some(vec![eve, custom]));
+        assert_eq!(skill.associated_agents, vec![eve, custom]);
     }
 
     #[test]
@@ -902,7 +914,7 @@ mod tests {
             .expect("shared Custom skill should be listed");
 
         assert_eq!(skill.agents, vec![first.clone(), second.clone()]);
-        assert_eq!(skill.card_agents, Some(vec![first, second]));
+        assert_eq!(skill.associated_agents, vec![first, second]);
     }
 
     #[test]
@@ -1053,17 +1065,13 @@ Content.
             "skill should be associated with the undetected agent directory"
         );
         assert!(
-            !ghost_skill
-                .card_agents
-                .as_ref()
-                .unwrap()
-                .contains(&undetected_id),
-            "skill card agents should exclude undetected agents"
+            !ghost_skill.associated_agents.contains(&undetected_id),
+            "associated agents should exclude undetected agents"
         );
     }
 
     #[test]
-    fn test_presence_summary_card_agents_exclude_undetected_agents() {
+    fn test_presence_summary_associated_agents_exclude_undetected_agents() {
         let project = tempdir().unwrap();
         let cwd = project.path().to_string_lossy().to_string();
 
@@ -1095,7 +1103,7 @@ Content.
             canonical_path: agent_dir.to_string_lossy().to_string(),
             scope: SkillScope::Project,
             agents: vec![undetected_id.clone()],
-            card_agents: None,
+            associated_agents: Vec::new(),
             source: None,
             source_url: None,
             installed_at: None,
@@ -1123,8 +1131,8 @@ Content.
             "presence summary should keep undetected private agent effective"
         );
         assert!(
-            !skill.card_agents.as_ref().unwrap().contains(&undetected_id),
-            "skill card agents should exclude undetected agents"
+            !skill.associated_agents.contains(&undetected_id),
+            "associated agents should exclude undetected agents"
         );
     }
 
@@ -1189,7 +1197,7 @@ Content.
         let eve = AgentId::parse("eve").unwrap();
         assert!(skill.agents.contains(&eve));
         assert!(
-            skill.card_agents.as_ref().unwrap().contains(&eve),
+            skill.associated_agents.contains(&eve),
             "project-aware Eve targets should be visible on skill cards"
         );
     }
@@ -1261,7 +1269,7 @@ Content.
             canonical_path: String::new(),
             scope: SkillScope::Project,
             agents: Vec::new(),
-            card_agents: None,
+            associated_agents: Vec::new(),
             source: None,
             source_url: None,
             installed_at: None,
@@ -1310,7 +1318,7 @@ Content.
             canonical_path: String::new(),
             scope: SkillScope::Project,
             agents: Vec::new(),
-            card_agents: None,
+            associated_agents: Vec::new(),
             source: None,
             source_url: None,
             installed_at: None,
@@ -1344,7 +1352,7 @@ Content.
             canonical_path: String::new(),
             scope: SkillScope::Global,
             agents: Vec::new(),
-            card_agents: None,
+            associated_agents: Vec::new(),
             source: None,
             source_url: None,
             installed_at: None,
