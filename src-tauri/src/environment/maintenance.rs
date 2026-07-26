@@ -28,10 +28,3 @@ pub struct RuntimeMaintenanceStatus {
     pub state: RuntimeMaintenanceState,
     pub issues: Vec<MaintenanceIssueCode>,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type, tauri_specta::Event)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct RuntimeMaintenanceChanged {
-    pub status: RuntimeMaintenanceStatus,
-}

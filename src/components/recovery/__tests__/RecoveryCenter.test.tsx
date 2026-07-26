@@ -3,37 +3,22 @@
 import '@/test-utils';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RecoveryResourceStatus } from '@/bindings';
+import type { AppError, RecoveryResourceStatus } from '@/bindings';
 import { RecoveryCenter } from '../RecoveryCenter';
 
 const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   resources: [] as RecoveryResourceStatus[],
-  maintenance: [] as Array<{ environment: { kind: 'host' } | { kind: 'wsl'; distro_name: string }; state: 'pending' | 'ready' | 'failed'; issues: string[] }>,
   actionStatuses: [] as RecoveryResourceStatus[],
+  recoveryError: null as AppError | null,
 }));
 
 vi.mock('@/stores/recovery', () => ({
   useRecoveryStore: (selector: (state: unknown) => unknown) => selector({
     resources: mocks.resources,
-    maintenance: mocks.maintenance,
     state: 'ready',
-    error: null,
+    error: mocks.recoveryError,
     load: mocks.load,
-    applyMaintenance: vi.fn(),
-    retryMaintenance: vi.fn().mockResolvedValue(undefined),
-  }),
-}));
-
-vi.mock('@/stores/environment', () => ({
-  useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
-    environments: [{
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      displayName: 'Ubuntu',
-      status: 'unavailable',
-      revision: 2,
-      error: null,
-    }],
   }),
 }));
 
@@ -51,9 +36,12 @@ vi.mock('@/components/recovery/RecoveryActions', () => ({
 }));
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string, values?: { count?: number }) => (
-    values?.count === undefined ? key : `${key}:${values.count}`
-  ) }),
+  useTranslation: () => ({
+    t: (key: string, values?: { count?: number; environment?: string }) => {
+      const value = values?.count ?? values?.environment;
+      return value === undefined ? key : `${key}:${value}`;
+    },
+  }),
 }));
 
 function resource(
@@ -75,48 +63,52 @@ describe('RecoveryCenter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.actionStatuses = [];
-    mocks.maintenance = [];
+    mocks.recoveryError = null;
     mocks.load.mockResolvedValue(undefined);
+    mocks.resources = [];
+  });
+
+  it('does not show an entry when there are no persistent resources or load errors', () => {
+    render(<RecoveryCenter />);
+
+    expect(screen.queryByRole('button', { name: 'recovery.center.open' })).toBeNull();
+  });
+
+  it('shows a persistent resource load error without inventing another issue source', () => {
+    mocks.recoveryError = {
+      kind: 'io',
+      data: { message: 'recovery index unavailable' },
+    };
+
+    render(<RecoveryCenter />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.open' }));
+    expect(screen.getByText('recovery.center.loadError')).toBeDefined();
+    expect(screen.getByText('recovery index unavailable')).toBeDefined();
+  });
+
+  it('keeps recovery resource actions available in the dialog', () => {
     mocks.resources = [
       resource('attention', 'needsAttention'),
       resource('offline', 'environmentUnavailable'),
     ];
-  });
 
-  it('surfaces restart recovery globally and keeps unavailable environments refresh-only', () => {
     render(<RecoveryCenter />);
 
-    expect(screen.getByText('recovery.center.count:2')).toBeDefined();
-    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.show' }));
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.open' }));
     expect(screen.getByText('actions:attention')).toBeDefined();
+    expect(screen.getByText('actions:offline')).toBeDefined();
     expect(mocks.actionStatuses).toEqual([
       expect.objectContaining({ resourceId: 'attention', state: 'needsAttention' }),
+      expect.objectContaining({ resourceId: 'offline', state: 'environmentUnavailable' }),
     ]);
-    expect(screen.getByText('recovery.state.environmentUnavailable')).toBeDefined();
-    expect(screen.queryByText('actions:offline')).toBeNull();
-    fireEvent.click(screen.getAllByRole('button', { name: 'recovery.refresh' })[1]);
-    expect(mocks.load).toHaveBeenCalled();
   });
 
-  it('keeps initial and focus recovery refresh without registering a second Environment listener', async () => {
+  it('refreshes on initial load and window focus', async () => {
     render(<RecoveryCenter />);
 
     await waitFor(() => expect(mocks.load).toHaveBeenCalled());
     act(() => window.dispatchEvent(new Event('focus')));
     await waitFor(() => expect(mocks.load).toHaveBeenCalledTimes(2));
-  });
-
-  it('keeps maintenance retry reachable when no recovery resource exists', () => {
-    mocks.resources = [];
-    mocks.maintenance = [{
-      environment: { kind: 'host' },
-      state: 'failed',
-      issues: ['payloadSweepFailed'],
-    }];
-
-    render(<RecoveryCenter />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.show' }));
-    expect(screen.getByRole('button', { name: 'recovery.retryMaintenance' })).toBeDefined();
   });
 });

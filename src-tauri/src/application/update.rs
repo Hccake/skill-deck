@@ -382,8 +382,7 @@ where
         preview_from_inspection(self.planner.inspect(request).await?)
     }
 
-    #[cfg(any(test, feature = "wsl-integration-tests"))]
-    #[allow(dead_code, reason = "used by the Windows-only WSL acceptance harness")]
+    #[cfg(test)]
     pub async fn execute(
         &self,
         execution: &UpdateExecutionRequest,
@@ -1138,7 +1137,7 @@ mod tests {
             remote_hash: Some("old".to_string()),
             computed_hash: None,
             installed_at: None,
-            subagents: Vec::new(),
+            subagents: None,
         }
     }
 
@@ -1160,7 +1159,7 @@ mod tests {
                         remote_hash: Some("old".to_string()),
                         computed_hash: None,
                         installed_at: None,
-                        subagents: Vec::new(),
+                        subagents: None,
                     }],
                     skills: vec![
                         crate::application::update_planner::LocalUpdateSkillInspection {
@@ -1722,6 +1721,39 @@ mod tests {
             update_coverage(Some(&failed), false, &context).0,
             UpdateCoverage::NotUpdated { .. }
         ));
+
+        let recovery = MutationUnitResult::recovery_required(
+            "demo",
+            "demo",
+            context.clone(),
+            ErrorReport::recovery_required(
+                crate::error::RecoveryResourceId::parse("recovery-update").unwrap(),
+                "check the controlled recovery resource",
+            ),
+        );
+        let (coverage, warnings, retryable) = update_coverage(Some(&recovery), false, &context);
+        assert!(warnings.is_empty());
+        assert!(!retryable);
+        let UpdateCoverage::NotUpdated { error } = coverage else {
+            panic!("RecoveryRequired must remain a not-updated coverage with its error")
+        };
+        assert_eq!(error.code, OperationErrorCode::RecoveryRequired);
+        assert_eq!(
+            error.recovery_resource_id,
+            Some(crate::error::RecoveryResourceId::parse("recovery-update").unwrap())
+        );
+        let result = UpdateSkillResult {
+            skill_identity: SkillIdentity {
+                context: context.clone(),
+                skill_name: "demo".to_string(),
+            },
+            source_result_id: "source-1".to_string(),
+            mutation: Some(recovery),
+            coverage: UpdateCoverage::NotUpdated { error },
+            warnings: Vec::new(),
+            retryable,
+        };
+        assert_eq!(update_outcome(&[result]), UpdateOutcome::Failed);
     }
 
     #[test]

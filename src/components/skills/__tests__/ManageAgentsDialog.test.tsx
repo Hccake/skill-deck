@@ -18,6 +18,15 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+vi.mock('@/components/recovery/RecoveryActions', () => ({
+  RecoveryActions: ({ recovery, onResolved }: {
+    recovery: { resourceId: string };
+    onResolved?: () => void;
+  }) => (
+    <button type="button" onClick={onResolved}>recovery-actions:{recovery.resourceId}</button>
+  ),
+}));
+
 function makeAgent(agent: {
   id: string;
   name: string;
@@ -67,6 +76,7 @@ const skill: InstalledSkill = {
   canonicalPath: '/canonical/agent-toolkit',
   scope: 'project',
   agents: ['claude-code'],
+  associatedAgents: ['claude-code'],
 };
 
 describe('ManageAgentsDialog', () => {
@@ -352,7 +362,6 @@ describe('ManageAgentsDialog', () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue({
       status: 'failed',
-      message: 'Agent update failed',
     } satisfies ManageAgentsOutcome);
 
     render(
@@ -368,17 +377,19 @@ describe('ManageAgentsDialog', () => {
     await user.click(screen.getByText('Cursor'));
     await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
 
-    expect(screen.getByRole('alert').textContent).toContain('Agent update failed');
+    expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.failed');
+    expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.failedDescription');
     expect(screen.getByRole('dialog')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'skills.manageAgents.retrySave' })).not.toBeNull();
   });
 
-  it('keeps the dialog open after a partial save and reports the completed operation', async () => {
+  it('exits ordinary save flow after recovery is required', async () => {
     const user = userEvent.setup();
+    const onClose = vi.fn();
     const onSave = vi.fn().mockResolvedValue({
-      status: 'partial',
+      status: 'recoveryRequired',
       response: { units: [] },
-      message: 'One Agent could not be updated',
+      recovery: [{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }],
     } satisfies ManageAgentsOutcome);
 
     render(
@@ -386,7 +397,7 @@ describe('ManageAgentsDialog', () => {
         skill={skill}
         scope="project"
         allAgents={allAgents}
-        onClose={vi.fn()}
+        onClose={onClose}
         onSave={onSave}
       />
     );
@@ -394,8 +405,11 @@ describe('ManageAgentsDialog', () => {
     await user.click(screen.getByText('Cursor'));
     await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
 
-    expect(screen.getByRole('alert').textContent).toContain('One Agent could not be updated');
-    expect(screen.getByRole('dialog')).not.toBeNull();
+    expect(screen.getByText('recovery-actions:recovery-1')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'skills.manageAgents.save' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'common.close' }).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: 'recovery-actions:recovery-1' }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('groups shared owners into one checkbox and removes the whole physical group', async () => {

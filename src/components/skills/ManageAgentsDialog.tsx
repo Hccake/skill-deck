@@ -17,6 +17,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { agentId } from '@/lib/agents';
 import { canCreatePrivateCopy, isPrivateRequiredAgent } from '@/lib/agentTargets';
 import { AgentSelector } from '@/components/agents/AgentSelector';
+import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import type {
   AgentId,
   AgentSelectionGroup,
@@ -27,6 +28,7 @@ import type {
   ManageAgentsPreview,
   ObservedEntryId,
   ObservedPhysicalEntry,
+  RecoveryAction,
 } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
 import type { ManageAgentsOutcome } from '@/workflows/skill-manage-agents';
@@ -260,9 +262,9 @@ function ManageAgentsDialogBody({
   const [optionalAgents, setOptionalAgents] = useState<AgentId[]>(normalizedInitialSelection.optional);
   const [optionalExpanded, setOptionalExpanded] = useState(normalizedInitialSelection.optional.length > 0);
   const [saveFeedback, setSaveFeedback] = useState<{
-    status: 'blocked' | 'failed' | 'partial' | 'stale';
-    message?: string;
+    status: 'blocked' | 'failed' | 'stale' | 'recoveryRequired';
   } | null>(null);
+  const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
   const { addAgents, addOptionalAgents, removeEntryIds, hasChanges } = useMemo(() => {
     const initialSet = new Set(normalizedInitialSelection.required);
     const initialOptionalSet = new Set(normalizedInitialSelection.optional);
@@ -305,11 +307,13 @@ function ManageAgentsDialogBody({
 
   const handleSave = useCallback(async () => {
     setSaveFeedback(null);
+    setRecovery([]);
     onSavingChange(true);
     try {
       const outcome = await onSave(addAgents, removeEntryIds, mode, addOptionalAgents);
       if (outcome.status !== 'succeeded') {
         setSaveFeedback(outcome);
+        setRecovery(outcome.status === 'recoveryRequired' ? outcome.recovery : []);
       }
     } catch {
       setSaveFeedback({ status: 'failed' });
@@ -320,6 +324,7 @@ function ManageAgentsDialogBody({
 
   const showMode = addAgents.length > 0 || addOptionalAgents.length > 0;
   const modeDisabled = saving;
+  const recoveryRequired = saveFeedback?.status === 'recoveryRequired';
 
   return (
     <>
@@ -330,9 +335,28 @@ function ManageAgentsDialogBody({
             className="mb-4 flex min-w-0 gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm"
           >
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-            <span className="min-w-0 break-words">
-              {t(`skills.manageAgents.${saveFeedback.status}`)}
-              {saveFeedback.message ? ` ${saveFeedback.message}` : null}
+            <span className="min-w-0 space-y-1 break-words">
+              <span className="block font-medium">
+                {t(`skills.manageAgents.${saveFeedback.status}`)}
+              </span>
+              {saveFeedback.status === 'failed' ? (
+                <span className="block text-muted-foreground">
+                  {t('skills.manageAgents.failedDescription')}
+                </span>
+              ) : saveFeedback.status === 'recoveryRequired' ? (
+                <>
+                  <span className="block text-muted-foreground">
+                    {t('skills.manageAgents.recoveryDescription')}
+                  </span>
+                  {recovery.map((action) => (
+                    <RecoveryActions
+                      key={action.resourceId}
+                      recovery={action}
+                      onResolved={onClose}
+                    />
+                  ))}
+                </>
+              ) : null}
             </span>
           </div>
         ) : null}
@@ -414,23 +438,25 @@ function ManageAgentsDialogBody({
 
         <DialogFooter className="border-t px-6 py-4">
           <Button variant="outline" onClick={onClose} disabled={saving}>
-            {t('common.cancel')}
+            {t(recoveryRequired ? 'common.close' : 'common.cancel')}
           </Button>
-          <Button
-            onClick={handleSave}
-            disabled={writeBlocked || saving || !hasChanges}
-          >
-            {saving ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t('common.loading')}
-              </>
-            ) : (
-              t(saveFeedback?.status === 'failed' || saveFeedback?.status === 'partial'
-                ? 'skills.manageAgents.retrySave'
-                : 'skills.manageAgents.save')
-            )}
-          </Button>
+          {!recoveryRequired ? (
+            <Button
+              onClick={handleSave}
+              disabled={writeBlocked || saving || !hasChanges}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {t('common.loading')}
+                </>
+              ) : (
+                t(saveFeedback?.status === 'failed'
+                  ? 'skills.manageAgents.retrySave'
+                  : 'skills.manageAgents.save')
+              )}
+            </Button>
+          ) : null}
         </DialogFooter>
     </>
   );

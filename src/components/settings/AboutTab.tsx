@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, RefreshCw, Check, Github, Bug, Terminal } from 'lucide-react';
+import {
+  ExternalLink,
+  RefreshCw,
+  Check,
+  Github,
+  Bug,
+  Terminal,
+} from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { Button } from '@/components/ui/button';
 import { useUpdaterStore } from '@/stores/updater';
@@ -177,6 +184,7 @@ export function AboutTab() {
         </div>
 
       </div>
+
       </div>
 
       <div className="mt-auto text-[10px] text-muted-foreground/50 text-center pt-8 pb-2 font-medium">
