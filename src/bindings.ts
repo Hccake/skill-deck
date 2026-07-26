@@ -185,7 +185,7 @@ async removeSkill(request: RemoveRequest) : Promise<Result<RemoveResponse, AppEr
     else return { status: "error", error: e  as any };
 }
 },
-async listRecoveryResources() : Promise<Result<RecoveryResourcesSnapshot, AppError>> {
+async listRecoveryResources() : Promise<Result<RecoveryResourceStatus[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_recovery_resources") };
 } catch (e) {
@@ -212,14 +212,6 @@ async confirmRecoveryResourceResolved(resourceId: RecoveryResourceId, expectedRe
 async openRecoveryResource(resourceId: RecoveryResourceId) : Promise<Result<null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_recovery_resource", { resourceId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async retryRuntimeMaintenance(environment: EnvironmentRef) : Promise<Result<RuntimeMaintenanceStatus, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("retry_runtime_maintenance", { environment }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -323,7 +315,7 @@ async manageSkillAgents(request: ManageAgentsRequest) : Promise<Result<ManageAge
     else return { status: "error", error: e  as any };
 }
 },
-async previewCopySkillToProjects(request: CopyRequest) : Promise<Result<CopyPreview, AppError>> {
+async previewCopySkillToProjects(request: CopyRequest) : Promise<Result<CopyPreviewOutcome, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_copy_skill_to_projects", { request }) };
 } catch (e) {
@@ -406,9 +398,6 @@ async retryHostProjectMigration() : Promise<Result<ProjectInfo[], AppError>> {
 async getActiveMutation() : Promise<MutationSnapshot> {
     return await TAURI_INVOKE("get_active_mutation");
 },
-async getBackendActivity() : Promise<BackendActivitySnapshot> {
-    return await TAURI_INVOKE("get_backend_activity");
-},
 async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("request_cancel_active_mutation") };
@@ -458,14 +447,12 @@ export const events = __makeEvents__<{
 agentConfigurationCompletedEvent: AgentConfigurationCompletedEvent,
 agentConfigurationRequestedEvent: AgentConfigurationRequestedEvent,
 environmentRuntimeEvent: EnvironmentRuntimeEvent,
-lifecycleActionRequestedEvent: LifecycleActionRequestedEvent,
-runtimeMaintenanceChanged: RuntimeMaintenanceChanged
+lifecycleActionRequestedEvent: LifecycleActionRequestedEvent
 }>({
 agentConfigurationCompletedEvent: "agent-configuration-completed-event",
 agentConfigurationRequestedEvent: "agent-configuration-requested-event",
 environmentRuntimeEvent: "environment-runtime-event",
-lifecycleActionRequestedEvent: "lifecycle-action-requested-event",
-runtimeMaintenanceChanged: "runtime-maintenance-changed"
+lifecycleActionRequestedEvent: "lifecycle-action-requested-event"
 })
 
 /** user-defined constants **/
@@ -566,8 +553,10 @@ export type ContextScope = { scope: "global" } | { scope: "project"; project_id:
 export type ContextSnapshotRevision = string
 export type CopyExecutionRequest = { request: CopyRequest; token: PreviewToken; payload: AcquiredPayloadHandle }
 export type CopyPreview = { token: PreviewToken; payload: AcquiredPayloadHandle; source: ContextRef; targetEnvironment: EnvironmentRef; targets: CopyTargetPreview[] }
+export type CopyPreviewOutcome = { status: "ready"; preview: CopyPreview } | { status: "sourceRepairRequired"; reason: CopySourceRepairReason }
 export type CopyRequest = { skillName: string; source: ContextRef; targetEnvironment: EnvironmentRef; targetProjectIds: string[]; requestedMode: InstallMode; agentIntents: AgentWriteIntent[] }
 export type CopyResponse = { units: MutationUnitResult[] }
+export type CopySourceRepairReason = "missingMetadata" | "invalidMetadata"
 export type CopyTargetPreview = { projectId: string; displayName: string; storageAccess: StorageAccess; physicalIdentity: PhysicalIdentityComparison; agentTargets: AgentTargetPreview[]; fallbackForecasts: AgentTargetFallbackPreview[]; blockingReasons: OperationErrorCode[] }
 export type CustomAgentDefinition = { id: AgentId; displayName: string; global: CustomScopeDefinition; project: CustomScopeDefinition; detectionPaths: CustomPathSpec[] }
 export type CustomAgentDraftValidation = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; resolved: ResolvedAgent }
@@ -655,9 +644,10 @@ export type InstallTargetInfo = { targetId: string; agent: AgentId; displayName:
  */
 export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentId[];
 /**
- * Skill card Agents that are both effective for this skill and detected locally.
+ * 每次读取 Skill 时根据当前 runtime 和文件系统重新组装，不写入 skill-lock。
+ * 只包含当前已检测到并且实际能够读取该 Skill 的关联 Agent。
  */
-cardAgents?: AgentId[] | null; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
+associatedAgents: AgentId[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
 /**
  * 是否可直接执行更新
  */
@@ -720,16 +710,15 @@ export type LifecycleActionOutcome = { status: "performed" } | { status: "delega
 export type LifecycleActionRequestedEvent = { action: LifecycleAction }
 export type LifecycleLeaseKind = "applicationUpdate" | "runtimeMaintenance"
 /**
- * list_skills 返回结果
- * 包含 skills 列表和路径存在性信息
+ * `list_skills` 的运行时读取结果。
+ * Skill 与 scope Agents 来自同一次 Agent runtime snapshot，避免 Frontend 拼接不同 revision。
  */
-export type ListSkillsResult = { skills: InstalledSkill[];
+export type ListSkillsResult = { skills: InstalledSkill[]; agents: ResolvedAgent[];
 /**
  * 项目目录是否存在（project scope 时有意义，global 始终为 true）
  */
 pathExists: boolean }
 export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
-export type MaintenanceIssueCode = "payloadSweepFailed" | "recoveryReindexFailed"
 export type ManageAgentsPreview = { token: PreviewToken; context: ContextRef; skillName: string; availableAgents: ResolvedAgent[]; selectionGroups: AgentSelectionGroups; observedEntries: ObservedPhysicalEntry[]; canonicalPayload: AcquiredPayloadHandle | null; addTargets: ResourceLocator[] }
 export type ManageAgentsPreviewRequest = { context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode }
 export type ManageAgentsRequest = { token: PreviewToken; context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode; confirmEntityDirectories: boolean; canonicalPayload: AcquiredPayloadHandle | null }
@@ -762,7 +751,6 @@ export type RecoveryAction = { resourceId: RecoveryResourceId; suggestedActionCo
 export type RecoveryResourceId = string
 export type RecoveryResourceState = "needsAttention" | "consistentCanCleanup" | "environmentUnavailable" | "invalid" | "missing"
 export type RecoveryResourceStatus = { resourceId: RecoveryResourceId; state: RecoveryResourceState; revision: string; environment: EnvironmentRef | null; createdAtEpochMs: number; displayPaths: ResourceLocator[]; diagnostic: ErrorReport | null }
-export type RecoveryResourcesSnapshot = { maintenance: RuntimeMaintenanceStatus[]; resources: RecoveryResourceStatus[] }
 export type RemoveIntent = { kind: "fullSkill" } | { kind: "agentEntries"; entryIds: ObservedEntryId[] }
 export type RemovePreview = { token: PreviewToken; context: ContextRef; skillName: string; canonical: ObservedEntryKind; physicalEntries: ObservedPhysicalEntry[] }
 export type RemoveRequest = { token: PreviewToken; context: ContextRef; skillName: string; intent: RemoveIntent }
@@ -775,9 +763,6 @@ export type ResourceLocator = { environment: EnvironmentRef; nativePath: string 
  * 风险等级
  */
 export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical" | "unknown"
-export type RuntimeMaintenanceChanged = { status: RuntimeMaintenanceStatus }
-export type RuntimeMaintenanceState = "pending" | "ready" | "failed"
-export type RuntimeMaintenanceStatus = { environment: EnvironmentRef; state: RuntimeMaintenanceState; issues: MaintenanceIssueCode[] }
 /**
  * 安装范围
  */
@@ -829,7 +814,7 @@ export type UpdateSkillResult = { skillIdentity: SkillIdentity; sourceResultId: 
 export type UpdateSourceResult = { id: string; source: string; status: UpdateSourceStatus; error: ErrorReport | null }
 export type UpdateSourceStatus = "acquired" | "failed"
 export type UpdateWarningCode = "preservedConflictingCopy"
-export type WslSession = { distroName: string; user: string; uid: number; home: string; xdgStateHome: string | null; configHome: string; environment: Partial<{ [key in string]: string }>; gitAvailable: boolean }
+export type WslSession = { distroName: string; user: string; uid: number; home: string; xdgStateHome: string | null; configHome: string; environment: Partial<{ [key in string]: string }> }
 
 /** tauri-specta globals **/
 

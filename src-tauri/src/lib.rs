@@ -1,15 +1,16 @@
 #[cfg(debug_assertions)]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri::{Emitter, Manager};
+use tauri_plugin_log::{Target, TargetKind};
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
 use commands::lifecycle::LifecycleActionRequestedEvent;
 use commands::ManagedAgentRegistry;
-use environment::maintenance::RuntimeMaintenanceChanged;
 use environment::types::EnvironmentRuntimeEvent;
 use runtime::RuntimeServiceGraph;
 
 mod application;
+mod background_process;
 mod commands;
 mod core;
 mod environment;
@@ -18,123 +19,12 @@ mod models;
 mod runtime;
 mod storage;
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 #[path = "test_support/git_fixture.rs"]
 mod git_fixture;
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 #[path = "test_support/native_workflow.rs"]
 mod native_workflow_integration_support;
-#[cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]
-#[path = "test_support/wsl_workflow.rs"]
-mod wsl_workflow_integration_support;
-
-#[cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]
-#[doc(hidden)]
-pub mod wsl_integration_support {
-    pub use crate::core::mutation::CancellationSignal;
-    pub use crate::environment::lock_io::EnvironmentLockIo;
-    pub use crate::environment::path_mapping::{
-        map_windows_path_with_wslpath, wsl_unc_to_linux_path,
-    };
-    pub use crate::environment::types::{EnvironmentRef, ProjectBinding, ResourceLocator};
-    pub use crate::environment::wsl::{
-        connect_wsl_environment, discover_wsl_distributions, WslSession,
-    };
-    pub use crate::environment::wsl_protocol::{
-        decode_nul_records, WslExecutionFeature, WslOperationDescriptor, WslOperationExecutor,
-        WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
-    };
-    pub use crate::error::AppError;
-
-    pub fn build_wsl_exec_args(
-        distro_name: &str,
-        user: &str,
-        script: &str,
-        positional_args: &[String],
-    ) -> Vec<String> {
-        crate::environment::wsl_protocol::build_wsl_exec_args(
-            distro_name,
-            user,
-            script,
-            positional_args,
-        )
-    }
-
-    pub async fn run_wsl_script(
-        session: &WslSession,
-        script: &'static str,
-        positional_args: &[String],
-        stdin_payload: Vec<u8>,
-        timeout: tokio::time::Duration,
-    ) -> Result<Vec<u8>, AppError> {
-        crate::environment::wsl_protocol::run_wsl_script(
-            session,
-            script,
-            positional_args,
-            stdin_payload,
-            timeout,
-        )
-        .await
-    }
-
-    pub async fn read_wsl_projects(session: &WslSession) -> Result<Vec<ProjectBinding>, AppError> {
-        crate::environment::project_service::read_wsl_projects(session).await
-    }
-
-    pub async fn write_wsl_projects(
-        session: &WslSession,
-        projects: Vec<ProjectBinding>,
-    ) -> Result<Vec<ProjectBinding>, AppError> {
-        crate::environment::project_service::write_wsl_projects_for_integration(session, projects)
-            .await
-    }
-
-    pub async fn run_full_wsl_mutation_workflow(
-        session: WslSession,
-        root: String,
-    ) -> Result<(), AppError> {
-        crate::wsl_workflow_integration_support::run_full_wsl_mutation_workflow(session, root).await
-    }
-
-    pub async fn session_loss_invalidates_preview(
-        session: WslSession,
-        root: String,
-    ) -> Result<(), AppError> {
-        crate::wsl_workflow_integration_support::session_loss_invalidates_preview(session, root)
-            .await
-    }
-
-    pub async fn cli_lock_conflict_preserves_external_change(
-        session: WslSession,
-        root: String,
-    ) -> Result<(), AppError> {
-        crate::wsl_workflow_integration_support::cli_lock_conflict_preserves_external_change(
-            session, root,
-        )
-        .await
-    }
-
-    pub async fn reconnect_reindexes_recovery_and_sweeps_payloads(
-        session: WslSession,
-        root: String,
-    ) -> Result<(), AppError> {
-        crate::wsl_workflow_integration_support::reconnect_reindexes_recovery_and_sweeps_payloads(
-            session, root,
-        )
-        .await
-    }
-
-    pub async fn marker_before_batch_stage_failure_converges_after_reconnect(
-        session: WslSession,
-        root: String,
-    ) -> Result<(), AppError> {
-        crate::wsl_workflow_integration_support::marker_before_batch_stage_failure_converges_after_reconnect(
-            session,
-            root,
-        )
-        .await
-    }
-}
 
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
@@ -166,7 +56,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::recovery::get_recovery_resource_status,
             commands::recovery::confirm_recovery_resource_resolved,
             commands::recovery::open_recovery_resource,
-            commands::recovery::retry_runtime_maintenance,
             commands::resources::open_skill_resource,
             commands::resources::open_config_resource,
             commands::duplicate_copies::cleanup_duplicate_agent_copies,
@@ -189,7 +78,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::environments::set_environment_project_cross_storage_warning,
             commands::environments::retry_host_project_migration,
             commands::mutations::get_active_mutation,
-            commands::mutations::get_backend_activity,
             commands::mutations::request_cancel_active_mutation,
             commands::agent_configuration::request_agent_configuration,
             commands::agent_configuration::complete_agent_configuration,
@@ -198,7 +86,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
         ])
         .events(collect_events![
             EnvironmentRuntimeEvent,
-            RuntimeMaintenanceChanged,
             LifecycleActionRequestedEvent,
             commands::agent_configuration::AgentConfigurationRequestedEvent,
             commands::agent_configuration::AgentConfigurationCompletedEvent,
@@ -260,6 +147,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::LogDir { file_name: None }),
+                ])
+                .build(),
+        )
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             let payload_cache_root = app.path().app_cache_dir()?.join("payload-sessions");
@@ -271,15 +167,6 @@ pub fn run() {
             )?;
             let environments = runtime.environments_arc();
             let maintenance = runtime.maintenance().clone();
-
-            let maintenance_app_handle = app.handle().clone();
-            maintenance.set_listener(move |status| {
-                if let Err(error) =
-                    (RuntimeMaintenanceChanged { status }).emit(&maintenance_app_handle)
-                {
-                    log::warn!("Failed to emit runtime maintenance state: {error}");
-                }
-            })?;
 
             let environment_app_handle = app.handle().clone();
             let maintenance_for_environments = maintenance.clone();
@@ -294,13 +181,14 @@ pub fn run() {
                     )
                 {
                     let environment = event.environment;
+                    let revision = event.revision;
                     if let Err(error) = maintenance_for_environments.register(environment.clone()) {
                         log::warn!("Failed to register WSL runtime maintenance: {error}");
                         return;
                     }
                     let maintenance = maintenance_for_environments.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(error) = maintenance.start(environment).await {
+                        if let Err(error) = maintenance.start(environment, revision).await {
                             log::warn!("Failed to run WSL runtime maintenance: {error}");
                         }
                     });
@@ -320,7 +208,7 @@ pub fn run() {
             maintenance.register(host_environment.clone())?;
             let host_maintenance = maintenance.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = host_maintenance.start(host_environment).await {
+                if let Err(error) = host_maintenance.start(host_environment, 0).await {
                     log::warn!("Failed to run Host runtime maintenance: {error}");
                 }
             });
@@ -328,12 +216,6 @@ pub fn run() {
             app.manage(runtime);
             builder.mount_events(app);
 
-            #[cfg(debug_assertions)]
-            app.handle().plugin(
-                tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .build(),
-            )?;
             Ok(())
         })
         .run(tauri::generate_context!())

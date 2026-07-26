@@ -20,11 +20,11 @@
   "recovery": {
     "title": "Recovery required",
     "center": {
-      "count": "{{count}} recovery item(s) need attention",
-      "maintenanceCount": "{{count}} environment(s) need a local data check",
+      "title": "Issues requiring attention",
+      "description": "Review recovery data that needs attention.",
+      "open": "View issues requiring attention",
       "loadError": "Recovery items could not be loaded",
-      "show": "Show recovery items",
-      "hide": "Hide recovery items"
+      "show": "Show recovery items"
     },
     "loading": "Checking recovery state...",
     "open": "Open recovery data",
@@ -32,13 +32,6 @@
     "cleanup": "Remove recovery data",
     "refreshError": "Recovery state could not be refreshed. The recovery data has been preserved.",
     "openError": "The recovery directory could not be opened. Try again later.",
-    "retryMaintenance": "Check again",
-    "maintenance": {
-      "title": "{{environment}} local data check",
-      "pending": "Temporary files and recovery data are being checked. Skill changes are paused until this completes.",
-      "failed": "The local data check did not complete. Skill changes are paused in this environment.",
-      "ready": "The local data check is complete."
-    },
     "cleanupTitle": "Remove recovery data?",
     "cleanupDescription": "Only recovery data is removed. This is available after Skill Deck verifies that the target is consistent.",
     "confirmCleanup": "Remove recovery data",
@@ -127,9 +120,9 @@
       "stop": "Stop repair",
       "stopping": "Stopping…",
       "repairStopped": "Repair was stopped. Completed writes, if any, remain unchanged.",
-      "repairPartial": "Repair did not finish for every target. Review recovery details if shown, then retry.",
       "stopFailed": "The stop request could not be sent. Repair is still running.",
-      "repairFailed": "Repair failed. Check the result and try again."
+      "repairFailed": "Repair failed. Check the result and try again.",
+      "copyRetry": "Source repaired. Click Copy again to continue."
     },
     "agent": {
       "enable": "Enable {{name}}",
@@ -145,11 +138,17 @@
       "select": "Select Project",
       "clear": "Clear"
     },
-    "search": "Search skills...",
+    "search": "Search skills…",
     "sync": "Refresh",
     "filter": {
-      "allAgents": "All agents",
-      "noResults": "No skills found for {{name}}"
+      "allAgents": "All Agents",
+      "agentLabel": "Filter Skills by Agent",
+      "searchAgents": "Find Agent…",
+      "noMatchingAgents": "No matching Agents",
+      "emptyAgent": "No Skills available to {{name}}",
+      "emptySearch": "No Skills match “{{query}}”",
+      "emptyCombined": "No Skills match the current filters",
+      "clear": "Clear filters"
     },
     "scopeIcon": {
       "project": "Project skill",
@@ -159,10 +158,12 @@
       "alsoInGlobal": "Also installed globally",
       "alsoInProject": "Also installed in this project"
     },
-    "projectNotFound": "Project path not found: {{path}}",
+    "projectUnavailableTitle": "Project skills unavailable",
+    "projectUnavailableDescription": "This Environment cannot access the project. Check its location, or switch to an Environment where the project has been added.",
+    "updateCheckFailureCount": "{{count}} checks failed",
     "card": {
       "extraCopies": "Extra setup items",
-      "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage Agents\" to adjust them."
+      "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" to adjust them."
     },
     "detail": {
       "title": "Skill Details",
@@ -185,10 +186,10 @@
       "emptyContent": "This skill has no content",
       "retry": "Retry",
       "duplicateCopiesTitle": "Extra setup items found",
-      "extraCopiesHint": "These Agents can already use this Skill through the shared Skill directory, but their own directories still keep a link or copy. Copied files may not update with the shared Skill. Use \"Manage Agents\" in the top right to adjust them.",
-      "extraCopiesNamedHint": "still keep a link or copy for this Skill in their own directory. Copied files may not update with the shared Skill. Use \"Manage Agents\" in the top right to adjust it.",
+      "extraCopiesHint": "These Agents can already use this Skill through the shared Skill directory, but their own directories still keep a link or copy. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to adjust them.",
+      "extraCopiesNamedHint": "still keep a link or copy for this Skill in their own directory. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to adjust it.",
       "extraCopiesAgentSummaryMore": "{{agents}} and {{count}} Agents total",
-      "extraCopiesCountHint": "{{count}} extra setup items found. Copied files may not update with the shared Skill. Use \"Manage Agents\" in the top right to review and adjust them.",
+      "extraCopiesCountHint": "{{count}} extra setup items found. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to review and adjust them.",
       "duplicateCopiesHint": "These links or copies in Agent directories may no longer be needed. Keep the shared Skill directory version when possible.",
       "manageDuplicates": "View setup items"
     },
@@ -203,26 +204,30 @@
       "copyWarning": "Copies exist in Agent directories and will also be deleted.",
       "previewError": "The current deletion scope could not be loaded. Try again.",
       "executionError": "Deletion did not finish. The current scope is still available to retry.",
+      "recoveryRequired": "Deletion did not finish. Some files need to be checked before continuing.",
       "stale": "The deletion scope changed. Review the refreshed scope and confirm again.",
       "retryPreview": "Reload Scope",
       "retryDelete": "Retry Delete",
       "confirm": "Delete Skill"
     },
     "manageAgents": {
-      "title": "Manage Agents",
-      "description": "Review which Agents can use \"{{name}}\" and add setup for Agents that need it.",
+      "action": "Manage linked Agents",
+      "title": "Linked Agents",
+      "description": "Choose which Agents can use \"{{name}}\".",
       "modeTitle": "Skill install method",
       "symlinkHint": "Link to the shared Skill directory so future updates use one source",
       "copyHint": "Copy files into the agent directory for environments without link support",
       "save": "Save Changes",
       "retrySave": "Retry Save",
-      "previewError": "Agent access could not be loaded. Try again.",
+      "previewError": "Linked Agents are temporarily unavailable. Try again.",
       "retryPreview": "Retry",
       "blocked": "Another operation is running. Try again when it finishes.",
-      "failed": "Agent access could not be updated. Your current selection is preserved.",
-      "partial": "Some Agent access could not be updated. Completed changes were preserved.",
-      "stale": "Agent access changed. Review the refreshed state before saving again.",
-      "success": "Agent access updated",
+      "failed": "Linked Agent settings could not be saved",
+      "failedDescription": "The change could not be completed. Your current selection is still available, so you can retry or continue viewing the Skill content.",
+      "recoveryRequired": "This operation did not finish",
+      "recoveryDescription": "Some files need to be checked. Review the recovery items below before saving again.",
+      "stale": "Linked Agents changed. Review the latest settings before saving again.",
+      "success": "Linked Agents updated",
       "cleanupSuccess": "Extra copies removed"
     },
     "copyToProject": {
@@ -236,11 +241,14 @@
       "presenceUnknown": "Could not verify whether this Skill is already installed. Existing files may be overwritten.",
       "copy": "Copy to {{count}} project(s)",
       "overwriteWarning": "{{count}} selected project(s) already have this skill — they will be overwritten",
-      "metadataWarning": "This Skill is missing the source details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically.",
+      "metadataWarning": "This Skill is missing version details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically.",
+      "sourceRepairRequired": "This Skill's source record is incomplete and cannot be copied yet. Repair the source first.",
+      "repairSource": "Repair source",
       "success": "Copied to {{count}} project(s) successfully",
       "skippedAgents": "Copied to the shared Skill directory. Some Agents were not connected separately because their project directory was not found: {{agents}}",
       "partialError": "{{success}} project(s) copied. {{fail}} project(s) still need attention.",
       "copyError": "Copy could not be completed. The selected projects are still available to retry.",
+      "recoveryDescription": "This operation did not finish. Some files need to be checked before retrying.",
       "retryFailed": "Retry failed projects"
     },
     "deleteSuccess": "\"{{name}}\" has been deleted",
@@ -888,7 +896,7 @@
       "update": "Updating",
       "remove": "Removing",
       "copy": "Copying",
-      "manageAgents": "Updating agents",
+      "manageAgents": "Updating linked Agents",
       "duplicateCleanup": "Cleaning duplicates",
       "repair": "Repairing source",
       "saveAgentDefaults": "Saving agent defaults",
@@ -966,7 +974,7 @@
         "externalLockChanged": "The Skill lock was changed by another process.",
         "mutationCancelled": "The operation was cancelled.",
         "executionFailed": "The operation could not be completed.",
-        "restoreFailed": "Automatic restore did not complete.",
+        "restoreFailed": "Skill Deck could not safely complete this operation. The related files need review.",
         "recoveryRequired": "Review the recovery data before continuing.",
         "configurationReadOnly": "The configuration is newer than this app and is read-only.",
         "configurationCorrupted": "The configuration could not be read safely."

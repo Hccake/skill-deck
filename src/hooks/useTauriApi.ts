@@ -16,7 +16,7 @@ import type {
   CustomAgentDefinition,
   CustomAgentDraftValidation,
   AddProjectResult, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo, EnvironmentRef,
-  BackendActivitySnapshot, MutationSnapshot,
+  MutationSnapshot,
   ProjectBinding, ProjectInfo, WslSession, ActiveMutation,
   SkillIdentity,
   InstallRequest, InstallPreview, InstallResponse, PreviewToken,
@@ -24,12 +24,11 @@ import type {
   UpdateCheckRequest, UpdateCheckResponse,
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
   ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
-  CopyRequest, CopyPreview, CopyExecutionRequest, CopyResponse,
+  CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   AgentConfigurationOutcome,
-  RecoveryResourceId, RecoveryResourceStatus, RecoveryResourcesSnapshot,
-  RuntimeMaintenanceStatus,
+  RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
 } from '@/bindings';
 
@@ -39,7 +38,7 @@ export type {
   SkillAuditData, DuplicateCleanupResult,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
   InstallTargetInfo, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
-  EnvironmentRef, AddProjectResult, BackendActivitySnapshot, MutationSnapshot, ProjectBinding, ProjectInfo, WslSession,
+  EnvironmentRef, AddProjectResult, MutationSnapshot, ProjectBinding, ProjectInfo, WslSession,
   ActiveMutation, AgentDeleteImpact, AgentDeleteResult, AgentOperationWarning,
   AgentSettingsSnapshot, CustomAgentDefinition, CustomAgentDraftValidation,
   SkillIdentity, InstallRequest, InstallPreview, InstallResponse, PreviewToken,
@@ -47,11 +46,11 @@ export type {
   UpdateCheckRequest, UpdateCheckResponse,
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
   ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
-  CopyRequest, CopyPreview, CopyExecutionRequest, CopyResponse,
+  CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   AgentConfigurationOutcome,
-  RecoveryResourceId, RecoveryResourceStatus, RecoveryResourcesSnapshot, RuntimeMaintenanceStatus,
+  RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
 };
 
@@ -144,14 +143,8 @@ export async function getRecoveryResourceStatus(
   return unwrap(await commands.getRecoveryResourceStatus(resourceId));
 }
 
-export async function listRecoveryResources(): Promise<RecoveryResourcesSnapshot> {
+export async function listRecoveryResources(): Promise<RecoveryResourceStatus[]> {
   return unwrap(await commands.listRecoveryResources());
-}
-
-export async function retryRuntimeMaintenance(
-  environment: EnvironmentRef,
-): Promise<RuntimeMaintenanceStatus> {
-  return unwrap(await commands.retryRuntimeMaintenance(environment));
 }
 
 export async function confirmRecoveryResourceResolved(
@@ -359,10 +352,6 @@ export async function retryHostProjectMigration(): Promise<ProjectInfo[]> {
   return unwrap(await commands.retryHostProjectMigration());
 }
 
-export async function getBackendActivity(): Promise<BackendActivitySnapshot> {
-  return await commands.getBackendActivity();
-}
-
 export async function getActiveMutation(): Promise<MutationSnapshot> {
   return await commands.getActiveMutation();
 }
@@ -473,7 +462,7 @@ export async function cleanupDuplicateAgentCopies(
 /**
  * 复制项目级 skill 到其他项目
  */
-export async function previewCopySkillToProjects(request: CopyRequest): Promise<CopyPreview> {
+export async function previewCopySkillToProjects(request: CopyRequest): Promise<CopyPreviewOutcome> {
   return unwrap(await commands.previewCopySkillToProjects(request));
 }
 
