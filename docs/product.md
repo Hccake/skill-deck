@@ -24,7 +24,7 @@ flowchart LR
 - **Context** 表示当前管理范围。Global 面向当前 Environment 的用户级目录，Project 面向已登记项目。
 - **Skill** 是包含 `SKILL.md` 以及可选脚本、参考资料、资源和其他文件的完整目录。
 - **Agent** 是读取或接收 Skill 的 AI 编程助手。内置和自定义 Agent 在 Skill 工作流中使用相同行为。
-- **Source** 是获取 Skill 的位置。一次来源解析可以发现一个或多个可安装 Skill。
+- **来源**是获取 Skill 的位置。一次来源解析可以发现一个或多个可安装 Skill。
 
 Agent 规则见[Agent](./agents.md)，Environment 与 Context 规则见[Environment 与 Context](./environments-and-contexts.md)，Skill 的状态变化见[Skill 生命周期](./skill-lifecycle.md)。
 
@@ -152,8 +152,6 @@ Skill 工作流不会把内置和自定义 Agent 分成两套操作。
 - 项目位于其他存储归属环境时，当前 Environment 只能读取、提示并引导切换，不能直接执行受保护写入；切换到归属环境后，目标项目才可进入复制、安装、更新、移除或管理 Agent。
 - 复制成功后，远端（`Remote`）、Git 和 Well-known 来源的目标 Project 保留可解释的来源、版本、Skill 路径和更新基线，但不依赖来源 Environment 或来源 Project 继续可用。本地（`Local`）来源只保留路径和内容基线作为来源凭据，明确显示没有自动更新能力。
 - 复制不改变源 Skill 原有的更新能力；Local 来源复制后不可更新是预期行为，不增加复制专用提示或确认步骤。
-
-<a id="移除与-recovery-resource"></a>
 
 ## 移除与恢复
 

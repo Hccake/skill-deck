@@ -2,6 +2,18 @@
 status: accepted
 ---
 
-# WSL 以最小用户态契约作为正式支持边界
+# WSL 采用最小用户态支持基线
 
-Skill Deck 正式支持常见 Ubuntu/Debian 等 GNU/Linux 用户态，以及 Git、POSIX shell 和当前操作所需的 GNU coreutils；连接时只执行一次满足或不满足该基线的二元 preflight，失败时返回缺失条件。具体操作可以保留自己的窄 preflight，但项目不把 WSL 发行版兼容性扩展成五项 capability matrix、复杂 shell fallback 或多 distro 的完整 acceptance 契约，因为 Skill Deck 的职责是管理 Skill，而不是维护一层通用 WSL 兼容运行时。
+## 背景
+
+WSL 发行版和用户态工具组合很多。为每项操作维护发行版名单、完整能力矩阵、复杂脚本回退和多发行版发布验收，会让 Skill 管理软件承担通用 WSL 兼容层的成本。
+
+## 决定
+
+WSL 连接只检查完成 Skill 操作所需的最小用户态基线：Git、POSIX shell 和当前操作依赖的 GNU 工具行为。基线按满足或不满足处理，具体操作可以保留窄范围预检，但不建立面向用户的通用能力档案。
+
+## 理由与重新讨论条件
+
+二元基线足以覆盖常见 GNU/Linux 用户态，并能在缺少条件时给出明确失败。真实 WSL 不作为三平台常规构建和发布的强制门禁。只有持续用户证据表明目标发行版普遍无法满足这条基线，或者产品明确扩展支持范围时，才重新讨论更细的兼容模型。
+
+当前行为由[Environment 与 Context](../environments-and-contexts.md#wsl-environment-边界)和[测试与验证规范](../testing.md#unix-shell-与-wsl)负责说明。

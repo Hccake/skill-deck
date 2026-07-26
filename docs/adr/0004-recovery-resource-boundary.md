@@ -2,6 +2,18 @@
 status: accepted
 ---
 
-# Recovery Resource 只保护受保护写入的一致性证据
+# 恢复资源只保护受保护写入的一致性
 
-Skill Deck 只为已经进入可能改变 Skill 目录、Agent 目录项或关联 lock 的受保护写入建立持久化 Recovery Resource；Source 获取、Environment 连接、Runtime Maintenance、普通配置保存和临时 Payload 清理使用各自的失败或 warning 语义。Recovery Resource 归属于产生它的 Environment 和 storage owner，产品只保证保留受控证据、重新评估以及在用户确认且状态一致后清理，不承诺自动或手动恢复一定成功，也不续跑旧操作。这样可以保护 destructive write 的数据安全，同时避免把所有异常扩展成 Recovery 产品和全局阻断。
+## 背景
+
+来源获取、Environment 连接、运行维护、配置保存和 Skill 写入都可能失败。如果所有失败都持久化为恢复资源，恢复入口会退化成错误历史，并迫使产品承担自动续跑、长期重试和全局阻断等额外职责。
+
+## 决定
+
+只有已经进入受保护写入、且系统无法确认 Skill 目录、Agent 目录项和相关 lock 已经一致时，才保留恢复资源。其他失败使用各自工作流的即时错误或警告，不进入恢复入口。
+
+## 理由与重新讨论条件
+
+恢复资源的价值是保留数据一致性证据，而不是记录所有错误。这个边界能够保护文件安全，同时避免建设没有明确用户价值的通用恢复系统。只有产品未来提供可验证的自动事务恢复，或者形成需要持久错误记录的正式支持流程时，才重新讨论扩大范围。
+
+当前行为由[执行与恢复](../execution-and-recovery.md#恢复资源)和[产品设计](../product.md#移除与恢复)负责说明。

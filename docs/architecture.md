@@ -86,7 +86,7 @@ Skill 工作台的一次读取由后端在同一份 Agent 运行时快照上完�
 - 当前范围可供筛选的 Agent；
 - Project 路径是否可用等路径状态。
 
-前端按 Context 保存整份结果，不再额外请求 Agent 列表并拼接不同版本的数据。旧请求只能写回它启动时对应的 Context，也不能覆盖用户已经切换到的新 Context。`associatedAgents` 由同一次读取中的目录事实计算，筛选候选和 Skill 关联因此共享一致的 Agent 版本。
+前端按 Context 保存整份结果，不再额外请求 Agent 列表并拼接不同版本的数据。旧请求只能写回它启动时对应的 Context，也不能覆盖用户已经切换到的新 Context。筛选候选与 Skill 的关联 Agent 都由同一次读取中的目录事实计算，因此共享一致的 Agent 版本。
 
 这一约束只适用于 Skill 工作台的读取一致性；Agent 设置、安装向导等独立用例仍可以按自己的 Context 获取 Agent 信息，但不能把不同请求的结果拼成同一份 Skill 快照。
 

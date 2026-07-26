@@ -2,6 +2,18 @@
 status: accepted
 ---
 
-# Window ACL 是 defense-in-depth，不是业务信任域
+# 窗口 ACL 只用于纵深防御
 
-Main 与 Install Wizard 属于同一应用的 UI 分区，不建立两套独立的业务 command trust domain；二者共享应用级 command capability，仍由 Tauri default-deny、CSP、sanitizer 和实际使用的 plugin resource scope 提供外围约束。只有确实依赖窗口身份的 lifecycle/request command 保留 caller-window 校验，业务 authorization、typed identity、revision、路径和 ownership 始终由 Backend 负责。这样保留 ACL 对 WebView blast radius 的防御价值，同时避免维护容易漂移的窗口业务权限矩阵。
+## 背景
+
+主窗口和安装向导拥有不同交互范围，但都属于同一个本地桌面应用、共享同一 Rust 进程和用户权限。把两个窗口当作独立业务信任域，会要求长期维护两套容易漂移的命令权限矩阵，却不能阻止已经进入后端的恶意业务参数。
+
+## 决定
+
+窗口 ACL 用于默认拒绝、缩小误调用面和限制 WebView 能力。业务授权、路径安全、Environment/Context 修订号和资源归属仍由后端统一校验。只有关闭、重启和跨窗口通知等确实依赖窗口身份的操作，才额外校验调用窗口。
+
+## 理由与重新讨论条件
+
+这保留了 Tauri `permission`、`capability` 和 CSP 的纵深防御价值，同时避免维护没有独立信任边界支撑的业务权限模型。只有未来窗口加载不受信任的远端内容、运行第三方扩展，或者拥有不同操作系统身份时，才重新讨论把窗口提升为独立信任域。
+
+当前行为由[系统架构](../architecture.md#窗口命令权限)负责说明，变更同步要求见[贡献指南](../../CONTRIBUTING.md)。

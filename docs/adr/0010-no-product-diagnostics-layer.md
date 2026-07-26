@@ -2,6 +2,18 @@
 status: accepted
 ---
 
-# 不建设独立的 Diagnostics 产品层
+# 不建设独立的产品诊断层
 
-Skill Deck 删除自建的持久化 diagnostics recorder、Settings 复制或打开入口、专用 command、bindings 和 ACL，只保留标准本地日志以及业务结果中的 stable error code、parameters、Environment、operation 和 recovery identity。没有真实 support intake 流程时，维护自由文本脱敏、滚动存储和导出协议的成本高于产品价值；technical details 不成为 Frontend 或用户可见契约。
+## 背景
+
+独立诊断层需要长期处理自由文本脱敏、滚动存储、导出格式、用户入口和支持流程。如果没有真实的支持受理闭环，这些成本不会转化为明确的用户价值。
+
+## 决定
+
+Skill Deck 只保留标准本地日志，以及业务结果中稳定的错误代码、参数和受控标识；不建设产品级诊断存储、导出协议或专用窗口入口。内部技术细节不成为前端或用户可见契约，也不自动上传。
+
+## 理由与重新讨论条件
+
+当前信息已经足够支持界面反馈和本机开发排查，继续扩张只会形成另一套需要兼容和脱敏的数据模型。只有建立正式支持渠道，并明确用户授权、数据保留和诊断交付流程时，才重新讨论产品诊断能力。
+
+当前行为由[系统架构](../architecture.md#后端职责)负责说明。

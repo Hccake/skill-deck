@@ -96,8 +96,6 @@ Global 与 Project 分别声明是否支持以及如何读取；`Both` 只描述
 
 尚未建立单独接入、检测为 `Not detected` 或 `Indeterminate`、不支持当前范围，或者相关目录不可读取的 Agent，不属于当前 Skill 的关联 Agent。专用适配目标也根据实际目标是否存在有效 Skill 判断，并继续使用所属 Agent ID 表达关系。
 
-实现中传给前端的 `associatedAgents` 是公共字段名，不是新的产品状态；长期文档只使用“关联 Agent”这一领域含义。
-
 ### 可供筛选的 Agent
 
 可供筛选的 Agent 与关联 Agent 不是同一个集合。筛选候选来自当前范围的运行时 Agent 集合，只要 Agent 在当前范围可用，就可以出现在筛选器中，即使当前没有任何 Skill 与它关联。
