@@ -1209,6 +1209,88 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bundled_session_script_rejects_incompatible_baseline_behavior() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let incompatible_commands = [
+            (
+                "xargs",
+                r#"#!/bin/sh
+for argument in "$@"; do
+  [ "$argument" = "-r" ] && exit 64
+done
+printf 'a\nb\n'
+"#,
+            ),
+            (
+                "sort",
+                r#"#!/bin/sh
+printf 'a\0b\0'
+"#,
+            ),
+            (
+                "sha256sum",
+                r#"#!/bin/sh
+[ "$#" -eq 0 ] || exit 64
+printf '%s  -\n' 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+"#,
+            ),
+            (
+                "readlink",
+                r#"#!/bin/sh
+for argument in "$@"; do
+  [ "$argument" = "--" ] && exit 64
+done
+printf '/\n'
+"#,
+            ),
+        ];
+        let mut unexpected_successes = Vec::new();
+
+        for (command, script) in incompatible_commands {
+            let temp = tempfile::tempdir().expect("temporary command directory");
+            let command_path = temp.path().join(command);
+            std::fs::write(&command_path, script).expect("write incompatible command");
+            std::fs::set_permissions(&command_path, std::fs::Permissions::from_mode(0o755))
+                .expect("make incompatible command executable");
+            let path = format!(
+                "{}:{}",
+                temp.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            );
+
+            let output = command_output_with_timeout(
+                Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg(include_str!("wsl/scripts/session.sh"))
+                    .arg("--")
+                    .arg("session")
+                    .env("PATH", path),
+                std::time::Duration::from_secs(10),
+            )
+            .expect("session script");
+
+            if output.status.success() {
+                unexpected_successes.push(command);
+                continue;
+            }
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .to_ascii_lowercase()
+                    .contains(command),
+                "{command} incompatibility returned stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        assert!(
+            unexpected_successes.is_empty(),
+            "incompatible commands passed the WSL session baseline: {unexpected_successes:?}"
+        );
+    }
+
     #[test]
     fn session_script_cleans_the_probe_root_only_after_owning_its_creation() {
         let script = include_str!("wsl/scripts/session.sh");

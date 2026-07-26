@@ -204,7 +204,7 @@ Recovery opener 不接受任意 backup path。Skill content read 和 resource op
 
 ### WSL execution
 
-WSL 连接以二元基线判断是否可用。应用先通过 `wsl.exe` 启动 bundled POSIX `sh`，再由 session script 一次性验证 Git、`xargs -0`、`sort -z`、`sha256sum`、`readlink -f` 和稳定的 `stat` 行为；任一条件不满足时连接失败，并返回缺失条件，不建立部分可用的 session。Session script 与 Rust parser 随同一应用版本发布，只接受当前协议形状，不维护旧版本或逐操作 capability profile。
+WSL 连接以二元基线判断是否可用。应用先通过 `wsl.exe` 启动 bundled POSIX `sh`，再由 session script 一次性验证 Git，以及 operation 实际依赖的 `xargs -0/-r`、`sort -z/-f`、`sha256sum --`、`readlink -f --` 和稳定 `stat` 行为；任一条件不满足时连接失败，并返回缺失条件，不建立部分可用的 session。Session script 与 Rust parser 随同一应用版本发布，只接受当前协议形状，不维护旧版本或逐操作 capability profile。
 
 WSL transport 使用 bundled、versioned 的固定 script asset。业务参数通过 positional arguments 或结构化 stdin 传入，不拼接进 script source。每项 typed operation 负责自己的 request/response、协议解析和 error mapping；共享 runner 只处理 `wsl.exe` process、timeout、cancellation 和有界输出。
 

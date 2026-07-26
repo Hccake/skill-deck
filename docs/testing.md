@@ -52,7 +52,7 @@ Windows manifest、Common Controls、资源文件、DLL 或 plugin 依赖必须�
 
 ### Unix shell 与 WSL
 
-直接执行 `/bin/sh`、依赖 Unix mode bit 或 POSIX syscall 的测试使用 `#[cfg(unix)]`。WSL operation 的 parser/protocol 测试在所有平台运行；shell asset 的 [ShellCheck](https://www.shellcheck.net/) 和真实执行在 Linux CI 运行。Bundled session script 需要分别覆盖完整基线成功，以及 Git、`xargs -0`、`sort -z`、`sha256sum`、`readlink -f`、稳定 `stat` 任一不可用时连接失败。三平台 Rust matrix 不启动真实 WSL 发行版，也不把发行版差异描述为已验证。
+直接执行通用 `/bin/sh`、依赖 Unix mode bit 或 POSIX syscall 的测试使用 `#[cfg(unix)]`；依赖 WSL guest 所需 GNU-compatible userland 的 bundled script 行为测试只在 `#[cfg(target_os = "linux")]` 下运行。WSL operation 的 parser/protocol 测试在所有平台运行；shell asset 的 [ShellCheck](https://www.shellcheck.net/) 和 bundled script contract test 在 Linux CI 运行，不要求 runner 安装 WSL。Session script 需要分别覆盖完整基线成功、工具不可用，以及工具存在但不满足 operation 实际依赖的 `xargs -0/-r`、`sort -z/-f`、`sha256sum --`、`readlink -f --` 或稳定 `stat` 行为。三平台 Rust matrix 不启动真实 WSL 发行版，也不把 Linux shell contract test 描述为真实 WSL integration 或发行版兼容性证据。
 
 Shell 测试必须捕获 stdout、stderr 和 exit status，设置 timeout，并保证子进程和临时目录清理。用户值只能通过 positional arguments 或结构化 stdin 传入，不能拼接 shell source。ShellCheck 报告（包括 [SC2016](https://www.shellcheck.net/wiki/SC2016)）按错误处理，除非有带理由的局部 suppress。
 

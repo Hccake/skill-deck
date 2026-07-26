@@ -151,6 +151,21 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D w
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
 
+### WSL shell 额外验证
+
+只有修改 bundled WSL shell asset 或 WSL transport contract 时，才需要额外运行 CI 同款 ShellCheck：
+
+```bash
+docker run --rm \
+  --volume "$PWD:/work" \
+  --workdir /work \
+  --entrypoint shellcheck \
+  koalaman/shellcheck:v0.10.0 \
+  -s sh src-tauri/src/environment/wsl/scripts/*.sh
+```
+
+该命令只静态检查随 Windows 应用发布的 guest script，不要求本机安装 WSL，也不作为普通 Host、Linux 或 macOS 改动的额外前置条件。实际执行 contract 由 Linux-only Rust tests 覆盖；Windows 和 macOS CI 只验证各自会编译、运行的 platform branch。
+
 根据改动范围先运行最小目标测试，再在完成前运行上述完整集合。只有最新命令输出为 exit 0 才能声称验证通过；已有 baseline failure 需要记录命令、失败项和与本次改动的关系。
 选择目标测试、platform acceptance 和 desktop E2E 的规则见[测试与验证规范](./docs/testing.md)。
 
