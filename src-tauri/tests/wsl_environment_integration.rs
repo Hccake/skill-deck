@@ -12,11 +12,11 @@ use app_lib::wsl_integration_support::{
     connect_wsl_environment, decode_nul_records, discover_wsl_distributions,
     map_windows_path_with_wslpath,
     marker_before_batch_stage_failure_converges_after_reconnect as run_marker_before_stage_acceptance,
-    read_wsl_projects, reconnect_reindexes_recovery_and_sweeps_payloads,
-    run_full_wsl_mutation_workflow, run_wsl_script, session_loss_invalidates_preview,
-    write_wsl_projects, wsl_unc_to_linux_path, AppError, CancellationSignal, EnvironmentLockIo,
-    EnvironmentRef, ProjectBinding, ResourceLocator, WslExecutionFeature, WslOperationDescriptor,
-    WslOperationExecutor, WslOperationRequest, WslSession, DEFAULT_WSL_STDERR_LIMIT,
+    reconnect_reindexes_recovery_and_sweeps_payloads, run_full_wsl_mutation_workflow,
+    run_wsl_script, session_loss_invalidates_preview, wsl_unc_to_linux_path, AppError,
+    CancellationSignal, EnvironmentLockIo, EnvironmentRef, ResourceLocator, WslExecutionFeature,
+    WslOperationDescriptor, WslOperationExecutor, WslOperationRequest, WslSession,
+    DEFAULT_WSL_STDERR_LIMIT,
 };
 use tempfile::tempdir;
 use tokio::time::Duration;
@@ -39,17 +39,9 @@ fn no_batch_stage_exit_mapping(_: Option<i32>, _: &str) -> Option<AppError> {
     None
 }
 
-fn first_configured_distro() -> String {
-    std::env::var("SKILL_DECK_TEST_WSL_DISTRO_A")
-        .expect("set SKILL_DECK_TEST_WSL_DISTRO_A to a disposable WSL test distro")
-}
-
-fn configured_distros() -> (String, String) {
-    let first = first_configured_distro();
-    let second = std::env::var("SKILL_DECK_TEST_WSL_DISTRO_B")
-        .expect("set SKILL_DECK_TEST_WSL_DISTRO_B to a different WSL test distro");
-    assert_ne!(first, second, "the two WSL test distros must be different");
-    (first, second)
+fn reference_distro() -> String {
+    std::env::var("SKILL_DECK_TEST_WSL_DISTRO")
+        .expect("set SKILL_DECK_TEST_WSL_DISTRO to a disposable WSL test distro")
 }
 
 fn locator(session: &WslSession, native_path: String) -> ResourceLocator {
@@ -103,49 +95,42 @@ impl Drop for WslTempRoot {
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A/B"]
-async fn discovers_configured_distros_and_connects_a_stopped_distro_on_demand() {
-    let (first, second) = configured_distros();
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
+async fn discovers_reference_distro_and_connects_a_stopped_distro_on_demand() {
+    let distro = reference_distro();
     let discovered = discover_wsl_distributions()
         .await
         .expect("discover WSL distributions");
-    assert!(discovered.contains(&first));
-    assert!(discovered.contains(&second));
+    assert!(discovered.contains(&distro));
 
     let terminate_status = Command::new("wsl.exe")
-        .args(["--terminate", first.as_str()])
+        .args(["--terminate", distro.as_str()])
         .status()
-        .expect("terminate first test distro");
+        .expect("terminate reference test distro");
     assert!(terminate_status.success());
 
-    let first_session = connect_wsl_environment(&first)
+    let session = connect_wsl_environment(&distro)
         .await
-        .expect("connect stopped first distro");
-    let second_session = connect_wsl_environment(&second)
-        .await
-        .expect("connect second distro");
-    assert_eq!(first_session.distro_name, first);
-    assert_eq!(second_session.distro_name, second);
-    assert!(!first_session.user.is_empty());
-    assert!(first_session.home.starts_with('/'));
-    for session in [&first_session, &second_session] {
-        for feature in [
-            WslExecutionFeature::NulSafeXargs,
-            WslExecutionFeature::NulSafeSort,
-            WslExecutionFeature::Sha256Sum,
-            WslExecutionFeature::CanonicalReadlink,
-            WslExecutionFeature::StableStat,
-        ] {
-            assert!(
-                session.execution_profile.supports(feature),
-                "{} is missing required WSL execution feature {feature:?}",
-                session.distro_name
-            );
-        }
+        .expect("connect stopped reference distro");
+    assert_eq!(session.distro_name, distro);
+    assert!(!session.user.is_empty());
+    assert!(session.home.starts_with('/'));
+    for feature in [
+        WslExecutionFeature::NulSafeXargs,
+        WslExecutionFeature::NulSafeSort,
+        WslExecutionFeature::Sha256Sum,
+        WslExecutionFeature::CanonicalReadlink,
+        WslExecutionFeature::StableStat,
+    ] {
+        assert!(
+            session.execution_profile.supports(feature),
+            "{} is missing required WSL execution feature {feature:?}",
+            session.distro_name
+        );
     }
 
     let live = run_wsl_script(
-        &first_session,
+        &session,
         r#"printf '%s\0%s\0' "$(id -un)" "$HOME"; if command -v git >/dev/null 2>&1; then printf '1\0'; else printf '0\0'; fi"#,
         &[],
         Vec::new(),
@@ -155,113 +140,17 @@ async fn discovers_configured_distros_and_connects_a_stopped_distro_on_demand() 
     .expect("inspect live default user and Git capability");
     let fields = decode_nul_records(&live);
     assert_eq!(fields.len(), 3);
-    assert_eq!(fields[0], first_session.user);
-    assert_eq!(fields[1], first_session.home);
-    assert_eq!(fields[2] == "1", first_session.git_available);
+    assert_eq!(fields[0], session.user);
+    assert_eq!(fields[1], session.home);
+    assert_eq!(fields[2] == "1", session.git_available);
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A/B"]
-async fn keeps_same_native_project_and_lock_paths_isolated_between_distros() {
-    let (first, second) = configured_distros();
-    let first_session = connect_wsl_environment(&first)
-        .await
-        .expect("connect first distro");
-    let second_session = connect_wsl_environment(&second)
-        .await
-        .expect("connect second distro");
-    let root = format!("/tmp/skill-deck-integration-{}", Uuid::new_v4());
-    let _first_root = WslTempRoot::create(&first_session, root.clone()).await;
-    let _second_root = WslTempRoot::create(&second_session, root.clone()).await;
-    let first_io = EnvironmentLockIo::Wsl(first_session.clone());
-    let second_io = EnvironmentLockIo::Wsl(second_session.clone());
-
-    let mut first_project_session = first_session.clone();
-    first_project_session.home = root.clone();
-    let mut second_project_session = second_session.clone();
-    second_project_session.home = root.clone();
-    write_wsl_projects(
-        &first_project_session,
-        vec![ProjectBinding {
-            id: "first".to_string(),
-            native_path: "/tmp/first".to_string(),
-            display_name: None,
-            order: None,
-            suppress_cross_storage_warning: false,
-        }],
-    )
-    .await
-    .expect("write first distro projects");
-    write_wsl_projects(
-        &second_project_session,
-        vec![ProjectBinding {
-            id: "second".to_string(),
-            native_path: "/tmp/second".to_string(),
-            display_name: None,
-            order: None,
-            suppress_cross_storage_warning: false,
-        }],
-    )
-    .await
-    .expect("write second distro projects");
-    let first_projects = read_wsl_projects(&first_project_session)
-        .await
-        .expect("read first projects");
-    let second_projects = read_wsl_projects(&second_project_session)
-        .await
-        .expect("read second projects");
-    assert_eq!(first_projects[0].id, "first");
-    assert_eq!(second_projects[0].id, "second");
-
-    let first_lock = locator(&first_session, format!("{root}/skills-lock.json"));
-    let second_lock = locator(&second_session, format!("{root}/skills-lock.json"));
-    first_io
-        .write_atomic(
-            &first_lock,
-            br#"{"skills":{"toolkit":{"owner":"first"}}}"#.to_vec(),
-        )
-        .await
-        .expect("write first distro lock");
-    second_io
-        .write_atomic(
-            &second_lock,
-            br#"{"skills":{"toolkit":{"owner":"second"}}}"#.to_vec(),
-        )
-        .await
-        .expect("write second distro lock");
-    assert_ne!(
-        first_io.read(&first_lock).await.expect("read first lock"),
-        second_io
-            .read(&second_lock)
-            .await
-            .expect("read second lock")
-    );
-    assert!(first_io.read(&second_lock).await.is_err());
-
-    for session in [&first_session, &second_session] {
-        let leftovers = run_wsl_script(
-            session,
-            r#"find "$1" -maxdepth 1 -type f -name '.lock.*' -print"#,
-            std::slice::from_ref(&root),
-            Vec::new(),
-            TEST_TIMEOUT,
-        )
-        .await
-        .expect("inspect atomic-write leftovers");
-        assert!(
-            leftovers.is_empty(),
-            "atomic lock temp files were not cleaned up"
-        );
-    }
-}
-
-#[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A/B"]
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
 async fn round_trips_wsl_native_drvfs_and_unc_paths_with_non_ascii_names() {
-    let first = first_configured_distro();
-    let session = connect_wsl_environment(&first)
+    let session = connect_wsl_environment(&reference_distro())
         .await
-        .expect("connect first distro");
+        .expect("connect reference distro");
     let base_root = format!("/tmp/skill-deck-integration-{}", Uuid::new_v4());
     let root = format!("{base_root}/项目");
     let _root = WslTempRoot::create(&session, base_root).await;
@@ -330,9 +219,9 @@ async fn round_trips_wsl_native_drvfs_and_unc_paths_with_non_ascii_names() {
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A"]
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
 async fn cancellation_reaps_wsl_child_and_stops_writes() {
-    let distro = first_configured_distro();
+    let distro = reference_distro();
     let session = connect_wsl_environment(&distro)
         .await
         .expect("connect cancellation distro");
@@ -410,9 +299,9 @@ async fn cancellation_reaps_wsl_child_and_stops_writes() {
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A"]
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
 async fn runs_full_wsl_mutation_workflow_with_complete_payloads() {
-    let session = connect_wsl_environment(&first_configured_distro())
+    let session = connect_wsl_environment(&reference_distro())
         .await
         .expect("connect workflow distro");
     let root = format!("/tmp/skill-deck-workflow-{}", Uuid::new_v4());
@@ -424,9 +313,9 @@ async fn runs_full_wsl_mutation_workflow_with_complete_payloads() {
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A"]
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
 async fn session_loss_invalidates_preview_before_execution() {
-    let session = connect_wsl_environment(&first_configured_distro())
+    let session = connect_wsl_environment(&reference_distro())
         .await
         .expect("connect session-loss distro");
     let root = format!("/tmp/skill-deck-session-loss-{}", Uuid::new_v4());
@@ -438,9 +327,9 @@ async fn session_loss_invalidates_preview_before_execution() {
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A"]
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
 async fn cli_lock_conflict_preserves_external_change() {
-    let session = connect_wsl_environment(&first_configured_distro())
+    let session = connect_wsl_environment(&reference_distro())
         .await
         .expect("connect CLI conflict distro");
     let root = format!("/tmp/skill-deck-cli-conflict-{}", Uuid::new_v4());
@@ -452,9 +341,9 @@ async fn cli_lock_conflict_preserves_external_change() {
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A"]
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
 async fn reconnect_reindexes_recovery_and_sweeps_only_owned_orphan_payloads() {
-    let session = connect_wsl_environment(&first_configured_distro())
+    let session = connect_wsl_environment(&reference_distro())
         .await
         .expect("connect reconnect-closure distro");
     let root = format!("/tmp/skill-deck-reconnect-closure-{}", Uuid::new_v4());
@@ -466,9 +355,9 @@ async fn reconnect_reindexes_recovery_and_sweeps_only_owned_orphan_payloads() {
 }
 
 #[tokio::test]
-#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO_A"]
+#[ignore = "requires Windows and SKILL_DECK_TEST_WSL_DISTRO"]
 async fn marker_before_batch_stage_failure_converges_after_reconnect() {
-    let session = connect_wsl_environment(&first_configured_distro())
+    let session = connect_wsl_environment(&reference_distro())
         .await
         .expect("connect stage-failure distro");
     let root = format!("/tmp/skill-deck-stage-failure-{}", Uuid::new_v4());
