@@ -387,7 +387,7 @@ pub enum CustomPathSpec {
 }
 
 impl CustomPathSpec {
-    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+    #[cfg(test)]
     pub fn based(base: CustomPathBase, relative_path: impl Into<String>) -> Self {
         Self::Based {
             base,

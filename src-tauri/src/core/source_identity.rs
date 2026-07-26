@@ -137,8 +137,7 @@ pub struct SourceIdentity {
 }
 
 impl SourceIdentity {
-    #[cfg(any(test, feature = "wsl-integration-tests"))]
-    #[allow(dead_code, reason = "used by the Windows-only WSL acceptance harness")]
+    #[cfg(test)]
     pub fn from_parsed(parsed: &ParsedSource) -> Result<Self, AppError> {
         Self::build(
             parsed.source_type.clone(),

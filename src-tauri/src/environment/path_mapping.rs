@@ -78,7 +78,7 @@ fn normalize_posix_path(path: &str) -> String {
     }
 }
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 pub fn wsl_unc_to_linux_path(path: &str, distro_name: &str) -> Result<String, AppError> {
     let (distro, linux_path) = parse_wsl_unc_path(path).ok_or_else(|| AppError::Path {
         message: format!("not a WSL UNC path: {path}"),

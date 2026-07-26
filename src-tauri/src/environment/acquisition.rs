@@ -138,7 +138,6 @@ impl Drop for WslNativeSource {
                 let descriptor = WslOperationDescriptor {
                     subcommand: "cleanup",
                     script: WSL_SOURCE_ACQUISITION_SCRIPT,
-                    required_features: &[],
                     map_exit: no_wsl_exit_mapping,
                 };
                 let _ = WslOperationExecutor::execute(
@@ -175,7 +174,6 @@ pub async fn acquire_wsl_source_native(
                 let descriptor = WslOperationDescriptor {
                     subcommand,
                     script,
-                    required_features: &[],
                     map_exit: no_wsl_exit_mapping,
                 };
                 WslOperationExecutor::execute(
@@ -229,6 +227,10 @@ fn acquisition_protocol_error() -> AppError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "acquisition 流程测试需要直接调用真实 Git 并运行 shell 测试脚本"
+)]
 mod tests {
     use std::collections::BTreeMap;
     #[cfg(unix)]
@@ -329,7 +331,7 @@ mod tests {
         fs::remove_dir_all(managed_root).expect("cleanup managed source");
     }
 
-    fn session(git_available: bool) -> WslSession {
+    fn session() -> WslSession {
         WslSession {
             distro_name: "Ubuntu-24.04".to_string(),
             user: "alice".to_string(),
@@ -338,16 +340,13 @@ mod tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available,
-            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
-            ),
             runtime_generation: 0,
         }
     }
 
-    fn git_operation(git_available: bool) -> WslAcquisitionPlan {
+    fn git_operation() -> WslAcquisitionPlan {
         build_wsl_native_source_plan(
-            &session(git_available),
+            &session(),
             WslAcquisitionSource::Git {
                 url: "https://github.com/example/repo".to_string(),
                 git_ref: None,
@@ -362,7 +361,7 @@ mod tests {
     #[test]
     fn wsl_git_plan_keeps_source_and_ref_as_positional_arguments() {
         let plan = build_wsl_native_source_plan(
-            &session(true),
+            &session(),
             WslAcquisitionSource::Git {
                 url: "$(touch /tmp/not-shell-source)".to_string(),
                 git_ref: Some("feature; echo unsafe".to_string()),
@@ -383,16 +382,16 @@ mod tests {
     }
 
     #[test]
-    fn wsl_git_plan_rechecks_git_at_operation_time_instead_of_using_cached_flag() {
+    fn wsl_git_plan_keeps_a_narrow_operation_time_git_preflight() {
         let plan = build_wsl_native_source_plan(
-            &session(false),
+            &session(),
             WslAcquisitionSource::Git {
                 url: "https://github.com/example/repo".to_string(),
                 git_ref: None,
             },
             "/mnt/c/Temp/sd-1/repo",
         )
-        .expect("build plan despite stale cached capability");
+        .expect("build Git source plan");
 
         let operation = plan.operation.expect("Git Source requires acquisition");
         assert!(operation.script.contains("command -v git"));
@@ -403,7 +402,7 @@ mod tests {
     #[test]
     fn wsl_local_source_is_read_directly_without_a_managed_copy() {
         let plan = build_wsl_native_source_plan(
-            &session(true),
+            &session(),
             WslAcquisitionSource::Local {
                 native_path: "/home/alice/code/skills".to_string(),
             },
@@ -419,7 +418,7 @@ mod tests {
     #[test]
     fn wsl_local_source_requires_an_absolute_posix_path() {
         let error = build_wsl_native_source_plan(
-            &session(true),
+            &session(),
             WslAcquisitionSource::Local {
                 native_path: "relative/skills".to_string(),
             },
@@ -481,14 +480,14 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_acquisition_does_not_start_wsl_command() {
-        let plan = git_operation(true);
+        let plan = git_operation();
         let cancellation = CancellationSignal::default();
         cancellation.cancel();
         let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let ran_by_command = ran.clone();
 
         let error = run_wsl_acquisition_plan_with(
-            session(true),
+            session(),
             plan,
             cancellation,
             move |_, _, _, _, _, _| async move {
@@ -505,11 +504,11 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_stops_waiting_for_running_wsl_command() {
-        let plan = git_operation(true);
+        let plan = git_operation();
         let cancellation = CancellationSignal::default();
         let cancellation_request = cancellation.clone();
         let run = run_wsl_acquisition_plan_with(
-            session(true),
+            session(),
             plan,
             cancellation,
             |_, _, _, _, _, cancellation| async move {
@@ -534,13 +533,13 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_waits_for_runner_cleanup_before_returning() {
-        let plan = git_operation(true);
+        let plan = git_operation();
         let cancellation = CancellationSignal::default();
         let cancellation_request = cancellation.clone();
         let cleanup_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cleanup_from_runner = cleanup_finished.clone();
         let run = run_wsl_acquisition_plan_with(
-            session(true),
+            session(),
             plan,
             cancellation,
             move |_, _, _, _, _, cancellation| async move {

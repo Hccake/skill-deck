@@ -5,22 +5,15 @@ use crate::core::mutation::CancellationSignal;
 use crate::environment::runtime::EntryFingerprint;
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{
-    wsl_operation_with_features, WslExecutionFeature, WslOperationDescriptor, WslOperationExecutor,
-    WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
+    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+    DEFAULT_WSL_STDERR_LIMIT,
 };
 use crate::error::AppError;
 
 const PROTOCOL_VERSION: &str = "1";
 pub(crate) const ENTRY_STATE_SCRIPT: &str = include_str!("../scripts/entry.sh");
-const ENTRY_STATE_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "entry-state",
-    "inspect",
-    ENTRY_STATE_SCRIPT,
-    &[
-        WslExecutionFeature::Sha256Sum,
-        WslExecutionFeature::StableStat,
-    ],
-);
+const ENTRY_STATE_OPERATION: WslOperationDescriptor =
+    wsl_operation("entry-state", "inspect", ENTRY_STATE_SCRIPT);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PosixEntryKind {
@@ -160,6 +153,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "目录项协议测试需要直接运行待验证的 shell 测试脚本"
+)]
 mod tests {
     use std::fs;
     use std::os::unix::fs::symlink;

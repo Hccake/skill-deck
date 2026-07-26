@@ -66,7 +66,7 @@ impl RuntimePlanningFactSource {
         }
     }
 
-    #[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+    #[cfg(test)]
     pub fn with_host_snapshot(
         registry: Arc<dyn AgentRegistrySnapshotSource>,
         environments: Arc<EnvironmentRegistry>,
@@ -195,10 +195,10 @@ impl HostRuntimeSource for SystemHostRuntimeSource {
     }
 }
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 struct StaticHostRuntimeSource(HostRuntimeSnapshot);
 
-#[cfg(any(test, all(target_os = "windows", feature = "wsl-integration-tests")))]
+#[cfg(test)]
 impl HostRuntimeSource for StaticHostRuntimeSource {
     fn snapshot(&self) -> Result<HostRuntimeSnapshot, AppError> {
         Ok(self.0.clone())
@@ -711,9 +711,6 @@ mod tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available: true,
-            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
-            ),
             runtime_generation: 0,
         };
 

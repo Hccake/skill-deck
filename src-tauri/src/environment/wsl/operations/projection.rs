@@ -3,19 +3,15 @@ use tokio::time::Duration;
 use crate::core::mutation::CancellationSignal;
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{
-    wsl_operation_with_features, WslExecutionFeature, WslOperationDescriptor, WslOperationExecutor,
-    WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
+    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+    DEFAULT_WSL_STDERR_LIMIT,
 };
 use crate::error::AppError;
 
 const PROTOCOL_VERSION: &str = "2";
 pub(crate) const PROJECT_TARGETS_SCRIPT: &str = include_str!("../scripts/projection.sh");
-const PROJECT_TARGETS_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "projection",
-    "project-targets",
-    PROJECT_TARGETS_SCRIPT,
-    &[WslExecutionFeature::StableStat],
-);
+const PROJECT_TARGETS_OPERATION: WslOperationDescriptor =
+    wsl_operation("projection", "project-targets", PROJECT_TARGETS_SCRIPT);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectedPosixTarget {
@@ -120,6 +116,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "路径投影协议测试需要直接调用 wslpath 并运行 shell 测试脚本"
+)]
 mod tests {
     #[cfg(target_os = "linux")]
     use std::fs;

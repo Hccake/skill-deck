@@ -26,44 +26,20 @@ use crate::environment::wsl::operations::entry::inspect_entries;
 use crate::environment::wsl::operations::recovery::WslRecoveryMarkerStore;
 use crate::environment::wsl::WslSession;
 use crate::environment::wsl_protocol::{
-    wsl_operation, wsl_operation_with_features, WslExecutionFeature, WslOperationDescriptor,
-    WslOperationExecutor, WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
+    wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
+    DEFAULT_WSL_STDERR_LIMIT,
 };
 use crate::error::{AppError, RecoveryResourceId};
 
 const MATERIALIZE_SCRIPT: &str = include_str!("../scripts/materialize.sh");
-const STAGE_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "materialize",
-    "stage",
-    MATERIALIZE_SCRIPT,
-    &[
-        WslExecutionFeature::NulSafeXargs,
-        WslExecutionFeature::Sha256Sum,
-        WslExecutionFeature::StableStat,
-    ],
-);
-const MATERIALIZE_MUTATION_FEATURES: &[WslExecutionFeature] = &[
-    WslExecutionFeature::Sha256Sum,
-    WslExecutionFeature::StableStat,
-];
-const SWAP_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "materialize",
-    "swap",
-    MATERIALIZE_SCRIPT,
-    MATERIALIZE_MUTATION_FEATURES,
-);
-const VERIFY_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "materialize",
-    "verify",
-    MATERIALIZE_SCRIPT,
-    MATERIALIZE_MUTATION_FEATURES,
-);
-const RESTORE_OPERATION: WslOperationDescriptor = wsl_operation_with_features(
-    "materialize",
-    "restore",
-    MATERIALIZE_SCRIPT,
-    MATERIALIZE_MUTATION_FEATURES,
-);
+const STAGE_OPERATION: WslOperationDescriptor =
+    wsl_operation("materialize", "stage", MATERIALIZE_SCRIPT);
+const SWAP_OPERATION: WslOperationDescriptor =
+    wsl_operation("materialize", "swap", MATERIALIZE_SCRIPT);
+const VERIFY_OPERATION: WslOperationDescriptor =
+    wsl_operation("materialize", "verify", MATERIALIZE_SCRIPT);
+const RESTORE_OPERATION: WslOperationDescriptor =
+    wsl_operation("materialize", "restore", MATERIALIZE_SCRIPT);
 const CLEANUP_OPERATION: WslOperationDescriptor =
     wsl_operation("materialize", "cleanup", MATERIALIZE_SCRIPT);
 const MAX_MATERIALIZE_ENTRY_COUNT: usize = 100_000;
@@ -767,6 +743,10 @@ fn now_epoch_ms() -> u64 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "内容落盘协议测试需要直接运行待验证的 shell 测试脚本"
+)]
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
@@ -794,7 +774,6 @@ mod tests {
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
     #[cfg(target_os = "linux")]
     use crate::environment::wsl::operations::entry::{parse_entry_states, ENTRY_STATE_SCRIPT};
-    use crate::environment::wsl_protocol::WslExecutionProfile;
     use crate::models::InstallMode;
 
     fn payload_fixture(root: &std::path::Path) -> (SkillPayload, std::path::PathBuf) {
@@ -1486,8 +1465,6 @@ mod tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available: true,
-            execution_profile: WslExecutionProfile::all_supported(),
             runtime_generation: 0,
         }
     }

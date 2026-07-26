@@ -1,18 +1,17 @@
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
-use std::collections::BTreeSet;
 use std::future::pending;
 #[cfg(target_os = "windows")]
 use std::process::Stdio;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
-#[cfg(target_os = "windows")]
-use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, Instant};
 
+#[cfg(target_os = "windows")]
+use crate::background_process::tokio_command;
 use crate::core::mutation::CancellationSignal;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::WslSession;
@@ -35,61 +34,6 @@ struct WslCommandRequest {
     pub cancellation: Option<CancellationSignal>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum WslExecutionFeature {
-    NulSafeXargs,
-    NulSafeSort,
-    Sha256Sum,
-    CanonicalReadlink,
-    StableStat,
-}
-
-impl WslExecutionFeature {
-    fn capability_name(self) -> &'static str {
-        match self {
-            Self::NulSafeXargs => "wslExecutionFeature.nulSafeXargs",
-            Self::NulSafeSort => "wslExecutionFeature.nulSafeSort",
-            Self::Sha256Sum => "wslExecutionFeature.sha256Sum",
-            Self::CanonicalReadlink => "wslExecutionFeature.canonicalReadlink",
-            Self::StableStat => "wslExecutionFeature.stableStat",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WslExecutionProfile {
-    supported: BTreeSet<WslExecutionFeature>,
-}
-
-impl WslExecutionProfile {
-    pub fn from_supported(features: impl IntoIterator<Item = WslExecutionFeature>) -> Self {
-        Self {
-            supported: features.into_iter().collect(),
-        }
-    }
-
-    pub fn all_supported() -> Self {
-        Self::from_supported([
-            WslExecutionFeature::NulSafeXargs,
-            WslExecutionFeature::NulSafeSort,
-            WslExecutionFeature::Sha256Sum,
-            WslExecutionFeature::CanonicalReadlink,
-            WslExecutionFeature::StableStat,
-        ])
-    }
-
-    pub fn supports(&self, feature: WslExecutionFeature) -> bool {
-        self.supported.contains(&feature)
-    }
-
-    fn missing(&self, required: &[WslExecutionFeature]) -> Option<WslExecutionFeature> {
-        required
-            .iter()
-            .copied()
-            .find(|feature| !self.supports(*feature))
-    }
-}
-
 pub type WslExitMapper = fn(Option<i32>, &str) -> Option<AppError>;
 
 pub fn no_wsl_exit_mapping(_: Option<i32>, _: &str) -> Option<AppError> {
@@ -99,7 +43,6 @@ pub fn no_wsl_exit_mapping(_: Option<i32>, _: &str) -> Option<AppError> {
 pub struct WslOperationDescriptor {
     pub subcommand: &'static str,
     pub script: &'static str,
-    pub required_features: &'static [WslExecutionFeature],
     pub map_exit: WslExitMapper,
 }
 
@@ -108,19 +51,9 @@ pub const fn wsl_operation(
     subcommand: &'static str,
     script: &'static str,
 ) -> WslOperationDescriptor {
-    wsl_operation_with_features(_name, subcommand, script, &[])
-}
-
-pub const fn wsl_operation_with_features(
-    _name: &'static str,
-    subcommand: &'static str,
-    script: &'static str,
-    required_features: &'static [WslExecutionFeature],
-) -> WslOperationDescriptor {
     WslOperationDescriptor {
         subcommand,
         script,
-        required_features,
         map_exit: no_wsl_exit_mapping,
     }
 }
@@ -441,7 +374,7 @@ impl WslCommandRunner {
     #[cfg(target_os = "windows")]
     pub async fn run(request: WslCommandRequest) -> Result<WslCommandOutput, AppError> {
         let args = build_wsl_runner_exec_args(&request);
-        let mut command = Command::new("wsl.exe");
+        let mut command = tokio_command("wsl.exe");
         command
             .args(args)
             .stdin(Stdio::piped())
@@ -485,52 +418,16 @@ impl WslOperationExecutor {
         descriptor: &WslOperationDescriptor,
         request: WslOperationRequest,
     ) -> Result<WslCommandOutput, AppError> {
-        if let Some(feature) = request
-            .session
-            .execution_profile
-            .missing(descriptor.required_features)
-        {
-            return Err(AppError::CapabilityUnavailable {
-                capability: feature.capability_name().to_string(),
-                path: None,
-            });
-        }
         let output = WslCommandRunner::run(operation_command_request(descriptor, request)).await?;
         interpret_wsl_operation_output(output, descriptor.map_exit)
     }
 }
 
-#[cfg(all(target_os = "windows", feature = "wsl-integration-tests"))]
-pub(crate) async fn run_wsl_script(
-    session: &WslSession,
-    script: &'static str,
-    positional_args: &[String],
-    stdin_payload: Vec<u8>,
-    timeout_duration: Duration,
-) -> Result<Vec<u8>, AppError> {
-    let descriptor = WslOperationDescriptor {
-        subcommand: "",
-        script,
-        required_features: &[],
-        map_exit: no_wsl_exit_mapping,
-    };
-    let output = WslOperationExecutor::execute(
-        &descriptor,
-        WslOperationRequest {
-            session: session.clone(),
-            args: positional_args.to_vec(),
-            stdin: stdin_payload,
-            timeout: timeout_duration,
-            stdout_limit: DEFAULT_WSL_STDOUT_LIMIT,
-            stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-            cancellation: None,
-        },
-    )
-    .await?;
-    Ok(output.stdout)
-}
-
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "WSL 子进程监督器测试需要直接启动受控的 shell 子进程"
+)]
 mod tests {
     use std::collections::BTreeMap;
 
@@ -539,9 +436,9 @@ mod tests {
     use super::{
         build_wsl_exec_args, decode_nul_records, interpret_wsl_command_output,
         interpret_wsl_operation_output, interpret_wsl_transport_output, operation_command_request,
-        WslCommandOutput, WslCommandRequest, WslCommandRunner, WslExecutionFeature,
-        WslExecutionProfile, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
-        DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT, WSL_SHELL_STARTED_MARKER,
+        WslCommandOutput, WslCommandRequest, WslCommandRunner, WslOperationDescriptor,
+        WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
+        WSL_SHELL_STARTED_MARKER,
     };
     use crate::core::mutation::CancellationSignal;
     use crate::environment::types::EnvironmentRef;
@@ -702,8 +599,6 @@ mod tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available: true,
-            execution_profile: WslExecutionProfile::default(),
             runtime_generation: 0,
         }
     }
@@ -871,7 +766,6 @@ mod tests {
         static DESCRIPTOR: WslOperationDescriptor = WslOperationDescriptor {
             subcommand: "stage",
             script: "printf ok",
-            required_features: &[WslExecutionFeature::NulSafeXargs],
             map_exit: no_mapping,
         };
         let operation = WslOperationRequest {
@@ -889,37 +783,6 @@ mod tests {
         assert_eq!(command.script, "printf ok");
         assert_eq!(command.args, vec!["stage", "root"]);
         assert_eq!(command.stdin, b"request");
-    }
-
-    #[tokio::test]
-    async fn operation_rejects_missing_execution_feature_before_transport() {
-        let descriptor = WslOperationDescriptor {
-            subcommand: "run",
-            script: "exit 0",
-            required_features: &[WslExecutionFeature::Sha256Sum],
-            map_exit: |_, _| None,
-        };
-
-        let error = WslOperationExecutor::execute(
-            &descriptor,
-            WslOperationRequest {
-                session: test_session(),
-                args: Vec::new(),
-                stdin: Vec::new(),
-                timeout: Duration::from_secs(1),
-                stdout_limit: DEFAULT_WSL_STDOUT_LIMIT,
-                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                cancellation: None,
-            },
-        )
-        .await
-        .expect_err("missing feature must fail before starting WSL transport");
-
-        assert!(matches!(
-            error,
-            AppError::CapabilityUnavailable { capability, path: None }
-                if capability == "wslExecutionFeature.sha256Sum"
-        ));
     }
 
     #[test]

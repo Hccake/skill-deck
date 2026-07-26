@@ -335,9 +335,6 @@ mod tests {
             xdg_state_home: None,
             config_home: "/home/alice/.config".to_string(),
             environment: BTreeMap::new(),
-            git_available: true,
-            execution_profile: crate::environment::wsl_protocol::WslExecutionProfile::all_supported(
-            ),
             runtime_generation: 0,
         }
     }

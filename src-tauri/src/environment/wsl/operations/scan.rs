@@ -260,6 +260,10 @@ fn protocol_error(message: &str) -> AppError {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "扫描协议测试需要直接运行待验证的 shell 测试脚本"
+)]
 mod tests {
     use std::fs;
     use std::process::Command;

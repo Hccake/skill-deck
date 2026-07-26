@@ -100,6 +100,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "路径映射协议测试需要直接运行待验证的 shell 测试脚本"
+)]
 mod tests {
     #[cfg(target_os = "linux")]
     use std::fs;

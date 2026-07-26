@@ -107,6 +107,10 @@ fn protocol_error() -> AppError {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "目录计数协议测试需要直接运行待验证的 shell 测试脚本"
+)]
 mod tests {
     use std::process::Command;
 
