@@ -18,6 +18,8 @@ Skill Deck 以 [`vercel-labs/skills`](https://github.com/vercel-labs/skills) 的
 
 仓库根目录中 gitignored 的 `vercel-skills/` 是上游核对来源。当前基线由该目录的 `package.json`、Git tag/commit 和真实源码共同确认，当前版本为 `1.5.13`。
 
+根项目通过精确固定的开发依赖 `skills: 1.5.13` 运行真实 CLI 互操作测试；该依赖只服务开发验证，不进入桌面应用运行时。测试在临时 Eve Project 中离线覆盖 root、named、multiple、无 Eve target 和 update placement 重放。普通 Local 来源仍按 CLI 规则不可更新；重放场景使用同机 `file://` Git 仓库，只验证可更新来源的 placement 契约。
+
 项目不维护版本化 Agent catalog fixture。同步上游时直接更新 vendored 源码，比较相关实现，再修改 Skill Deck 的 Built-in definitions 和兼容测试。文档只记录当前基线和稳定检查方法，不保存逐版本迁移流水账。
 
 ## 共享与扩展边界
