@@ -387,7 +387,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               projectPath={projectPath}
               updatingSkills={updatingSkills}
               isCheckingUpdates={isCheckingProject}
-              updateCheck={projectSnapshot.updateCheck}
               agentDisplayNames={agentDisplayNames}
               auditCache={auditCache}
               onSkillClick={selectSkill}
@@ -410,7 +409,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             conflictSkillNames={conflictSkillNames}
             updatingSkills={updatingSkills}
             isCheckingUpdates={isCheckingGlobal}
-            updateCheck={globalSnapshot.updateCheck}
             agentDisplayNames={agentDisplayNames}
             auditCache={auditCache}
             onSkillClick={selectSkill}

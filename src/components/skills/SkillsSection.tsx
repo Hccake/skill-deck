@@ -3,7 +3,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Check, ArrowUpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SkillCard } from './SkillCard';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
@@ -16,7 +15,6 @@ import {
   resolveUpdateStatusLabelI18nKey,
   type SkillUpdateDisplayStatus,
   type SkillListItem,
-  type UpdateCheckDisplaySnapshot,
   type UpdatePlan,
 } from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
@@ -39,8 +37,6 @@ interface SkillsSectionProps {
   updatingSkills: Map<string, SkillUpdateDisplayStatus>;
   /** 是否正在检查更新 */
   isCheckingUpdates?: boolean;
-  /** Backend 返回的当前 Context 更新检测展示事实 */
-  updateCheck?: UpdateCheckDisplaySnapshot;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentId, string>;
   /** 审计数据缓存（skillName → SkillAuditData） */
@@ -65,7 +61,6 @@ export const SkillsSection = memo(function SkillsSection({
   projectPath,
   updatingSkills,
   isCheckingUpdates = false,
-  updateCheck,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
   auditCache = EMPTY_AUDIT_CACHE,
   onSkillClick,
@@ -78,7 +73,7 @@ export const SkillsSection = memo(function SkillsSection({
   onCheckUpdates,
   emptyState,
 }: SkillsSectionProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
 
   // 单次遍历派生所有更新相关状态（js-combine-iterations）— 仅统计当前 section 的 skills
@@ -112,29 +107,6 @@ export const SkillsSection = memo(function SkillsSection({
   );
   const updatesCount = updatePlanPreview.updatableCount;
   const checkableCount = skills.filter((skill) => skill.canCheckForUpdates === true).length;
-  const [cooldownClock, setCooldownClock] = useState(() => Date.now());
-  const cooldownRetryAt = useMemo(() => {
-    const checkableSkills = skills.filter((skill) => skill.canCheckForUpdates === true);
-    if (
-      checkableSkills.length === 0
-      || checkableSkills.some((skill) => updateCheck?.skillFreshness[skill.name] !== 'coolingDown')
-    ) {
-      return null;
-    }
-
-    const retryTimes = (updateCheck?.sources ?? []).flatMap((source) => {
-      const retryAt = source.lastAttempt?.failure?.retryAtEpochMs;
-      return retryAt != null && retryAt > cooldownClock ? [retryAt] : [];
-    });
-    return retryTimes.length > 0 ? Math.min(...retryTimes) : null;
-  }, [cooldownClock, skills, updateCheck]);
-  const cooldownRetryTime = cooldownRetryAt == null
-    ? null
-    : new Intl.DateTimeFormat(i18n.language, {
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(new Date(cooldownRetryAt));
-
   // 检测 isCheckingUpdates true → false 转换，短暂显示完成态
   const [checkDone, setCheckDone] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -146,15 +118,6 @@ export const SkillsSection = memo(function SkillsSection({
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (cooldownRetryAt == null) return;
-    const timer = setTimeout(
-      () => setCooldownClock(Date.now()),
-      Math.max(0, cooldownRetryAt - Date.now()) + 50,
-    );
-    return () => clearTimeout(timer);
-  }, [cooldownRetryAt]);
 
   const showCheckDone = useCallback(() => {
     if (hideCheckDoneTimerRef.current) {
@@ -168,11 +131,11 @@ export const SkillsSection = memo(function SkillsSection({
   }, []);
 
   const handleCheckUpdates = useCallback(async () => {
-    if (!onCheckUpdates || isCheckingUpdates || cooldownRetryAt != null) return;
+    if (!onCheckUpdates || isCheckingUpdates) return;
     const succeeded = await onCheckUpdates();
     if (!succeeded) return;
     showCheckDone();
-  }, [cooldownRetryAt, isCheckingUpdates, onCheckUpdates, showCheckDone]);
+  }, [isCheckingUpdates, onCheckUpdates, showCheckDone]);
 
   const openPreparedUpdatePlan = useCallback(async (nextPlan: UpdatePlan, batch: boolean) => {
     if (nextPlan.updatableCount === 0) return;
@@ -279,35 +242,14 @@ export const SkillsSection = memo(function SkillsSection({
                     {t('skills.updateDone')}
                   </span>
                 ) : (
-                  cooldownRetryAt != null ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid="update-check-cooldown"
-                          aria-disabled="true"
-                          className="h-7 cursor-not-allowed gap-1.5 px-2 text-xs font-medium text-muted-foreground opacity-50"
-                        >
-                          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                          {t('skills.checkUpdates')}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{t('skills.updateCheckRetryAt', { time: cooldownRetryTime })}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
-                      disabled={isCheckingUpdates}
-                      onClick={() => {
-                        void handleCheckUpdates();
-                      }}>
-                      <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                      {t('skills.checkUpdates')}
-                    </Button>
-                  )
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+                    disabled={isCheckingUpdates}
+                    onClick={() => {
+                      void handleCheckUpdates();
+                    }}>
+                    <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    {t('skills.checkUpdates')}
+                  </Button>
                 )
               )}
             </div>

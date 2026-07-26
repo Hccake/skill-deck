@@ -154,7 +154,6 @@
     "projectUnavailableTitle": "Project skills unavailable",
     "projectUnavailableDescription": "This Environment cannot access the project. Check its location, or switch to an Environment where the project has been added.",
     "updateCheckFailureCount": "{{count}} checks failed",
-    "updateCheckRetryAt": "Check again after {{time}}",
     "card": {
       "extraCopies": "Extra setup items",
       "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" to adjust them."

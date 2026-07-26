@@ -154,7 +154,6 @@
     "projectUnavailableTitle": "无法读取项目 Skill",
     "projectUnavailableDescription": "当前 Environment 无法访问该项目。请检查项目位置，或切换到已添加该项目的 Environment。",
     "updateCheckFailureCount": "{{count}} 个检查失败",
-    "updateCheckRetryAt": "{{time}} 后可重新检查",
     "card": {
       "extraCopies": "有额外接入项",
       "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理关联 Agent”调整。"
