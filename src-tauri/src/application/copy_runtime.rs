@@ -12,11 +12,10 @@ use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlan
 use crate::application::skill_entries::InstalledSkillPayloadAcquirer;
 use crate::environment::path_mapping::{windows_storage_owner, WindowsStorageOwner};
 use crate::environment::planning::{
-    resolve_native_targets, resolve_wsl_targets, RuntimeTargetFactResolver,
+    resolve_native_targets, ResolvedTargetFact, RuntimeTargetFactResolver,
 };
-use crate::environment::runtime::PhysicalIdentityComparison;
 use crate::environment::types::{EnvironmentRef, ResourceLocator, StorageAccess};
-use crate::environment::wsl::operations::path::{map_host_bridge_path, map_storage_path_to_host};
+use crate::environment::wsl::operations::path::map_storage_path_to_host;
 use crate::environment::wsl::EnvironmentRegistry;
 use crate::error::AppError;
 
@@ -30,93 +29,41 @@ impl RuntimeCopyProjectComparator {
         Self { environments }
     }
 
-    async fn compare_runtime(
+    async fn resolve_project_to_host(
         &self,
-        source: &InstallPlanningFacts,
-        target: &InstallPlanningFacts,
-    ) -> Result<ProjectComparison, AppError> {
-        let source_project = source
+        facts: &InstallPlanningFacts,
+    ) -> Result<ResolvedTargetFact, AppError> {
+        let project = facts
             .resolved_context
             .project
             .as_ref()
             .ok_or(AppError::StaleContext)?;
+        let host_path = match &facts.resolved_context.context.environment {
+            EnvironmentRef::Host => project.native_path.clone(),
+            EnvironmentRef::Wsl { distro_name } => {
+                self.map_wsl_project_to_host(distro_name, &project.native_path)
+                    .await?
+            }
+        };
+        let mut resolved = resolve_native_targets(&[ResourceLocator {
+            environment: EnvironmentRef::Host,
+            native_path: host_path,
+        }])?;
+        resolved.pop().ok_or(AppError::StaleTarget)
+    }
+
+    async fn compare_runtime(
+        &self,
+        source: &ResolvedTargetFact,
+        target: &InstallPlanningFacts,
+    ) -> Result<ProjectComparison, AppError> {
         let target_project = target
             .resolved_context
             .project
             .as_ref()
             .ok_or(AppError::StaleContext)?;
-        let physical_identity = match (
-            &source.resolved_context.context.environment,
-            &target.resolved_context.context.environment,
-        ) {
-            (EnvironmentRef::Host, EnvironmentRef::Host) => {
-                compare_native_paths(&source_project.native_path, &target_project.native_path)?
-            }
-            (
-                EnvironmentRef::Wsl {
-                    distro_name: source_distro,
-                },
-                EnvironmentRef::Wsl {
-                    distro_name: target_distro,
-                },
-            ) if crate::environment::types::EnvironmentKey::wsl(source_distro)
-                == crate::environment::types::EnvironmentKey::wsl(target_distro) =>
-            {
-                let source_path = source_project.native_path.clone();
-                let target_path = target_project.native_path.clone();
-                self.environments
-                    .with_session_retry(source_distro, move |session| {
-                        let source_path = source_path.clone();
-                        let target_path = target_path.clone();
-                        async move { compare_wsl_paths(&session, &source_path, &target_path).await }
-                    })
-                    .await?
-            }
-            (EnvironmentRef::Host, EnvironmentRef::Wsl { distro_name }) => {
-                let host_path = source_project.native_path.clone();
-                let wsl_path = target_project.native_path.clone();
-                self.environments
-                    .with_session_retry(distro_name, move |session| {
-                        let host_path = host_path.clone();
-                        let wsl_path = wsl_path.clone();
-                        async move {
-                            let mapped = map_host_bridge_path(&session, &host_path, None).await?;
-                            compare_wsl_paths(&session, &mapped, &wsl_path).await
-                        }
-                    })
-                    .await?
-            }
-            (EnvironmentRef::Wsl { distro_name }, EnvironmentRef::Host) => {
-                let wsl_path = source_project.native_path.clone();
-                let host_path = target_project.native_path.clone();
-                self.environments
-                    .with_session_retry(distro_name, move |session| {
-                        let wsl_path = wsl_path.clone();
-                        let host_path = host_path.clone();
-                        async move {
-                            let mapped = map_host_bridge_path(&session, &host_path, None).await?;
-                            compare_wsl_paths(&session, &wsl_path, &mapped).await
-                        }
-                    })
-                    .await?
-            }
-            (
-                EnvironmentRef::Wsl {
-                    distro_name: source_distro,
-                },
-                EnvironmentRef::Wsl {
-                    distro_name: target_distro,
-                },
-            ) => {
-                let source_host = self
-                    .map_wsl_project_to_host(source_distro, &source_project.native_path)
-                    .await?;
-                let target_host = self
-                    .map_wsl_project_to_host(target_distro, &target_project.native_path)
-                    .await?;
-                compare_native_paths(&source_host, &target_host)?
-            }
-        };
+        let target_identity = self.resolve_project_to_host(target).await?;
+        let physical_identity = compare_resolved_projects(source, &target_identity)?;
         Ok(ProjectComparison {
             physical_identity,
             target_storage_access: self
@@ -158,36 +105,20 @@ impl RuntimeCopyProjectComparator {
 }
 
 impl CopyProjectComparator for RuntimeCopyProjectComparator {
-    fn compare<'a>(
+    fn capture_source<'a>(
         &'a self,
         source: &'a InstallPlanningFacts,
+    ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>> {
+        Box::pin(async move { self.resolve_project_to_host(source).await })
+    }
+
+    fn compare<'a>(
+        &'a self,
+        source: &'a ResolvedTargetFact,
         target: &'a InstallPlanningFacts,
     ) -> CopyFuture<'a, Result<ProjectComparison, AppError>> {
         Box::pin(async move { self.compare_runtime(source, target).await })
     }
-}
-
-fn compare_native_paths(left: &str, right: &str) -> Result<PhysicalIdentityComparison, AppError> {
-    let facts = resolve_native_targets(&[
-        ResourceLocator {
-            environment: EnvironmentRef::Host,
-            native_path: left.to_string(),
-        },
-        ResourceLocator {
-            environment: EnvironmentRef::Host,
-            native_path: right.to_string(),
-        },
-    ])?;
-    compare_resolved_projects(&facts[0], &facts[1])
-}
-
-async fn compare_wsl_paths(
-    session: &crate::environment::wsl::WslSession,
-    left: &str,
-    right: &str,
-) -> Result<PhysicalIdentityComparison, AppError> {
-    let facts = resolve_wsl_targets(session, &[left.to_string(), right.to_string()], None).await?;
-    compare_resolved_projects(&facts[0], &facts[1])
 }
 
 fn host_storage_access(path: &str) -> StorageAccess {

@@ -19,7 +19,7 @@ use crate::application::mutation::plan::{
 };
 use crate::application::mutation::result::{MutationUnitResult, OperationErrorCode};
 use crate::application::payload_session::{
-    AcquiredPayloadHandle, PayloadSessionManager, PinnedPayloadLease,
+    AcquiredPayloadHandle, CopySourceSnapshot, PayloadSessionManager, PinnedPayloadLease,
 };
 use crate::application::skill_entries::{
     join_entry, InstalledSkillPayloadAcquirer, SkillEntryObserver,
@@ -116,9 +116,14 @@ pub struct ProjectComparison {
 pub type CopyFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait CopyProjectComparator: Send + Sync {
-    fn compare<'a>(
+    fn capture_source<'a>(
         &'a self,
         source: &'a InstallPlanningFacts,
+    ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>>;
+
+    fn compare<'a>(
+        &'a self,
+        source: &'a ResolvedTargetFact,
         target: &'a InstallPlanningFacts,
     ) -> CopyFuture<'a, Result<ProjectComparison, AppError>>;
 }
@@ -170,7 +175,23 @@ where
             .acquire(&request.source, &request.skill_name, &source.canonical)
             .await?;
         let payload = self.payloads.pin_verified(&handle).await?;
-        let built = self.build(request, source.facts, payload, false).await?;
+        let source_snapshot = CopySourceSnapshot {
+            source_context: request.source.clone(),
+            skill_name: request.skill_name.clone(),
+            revisions: source.facts.revisions.clone(),
+            lock_entry: source
+                .facts
+                .lock_document
+                .entry_snapshot(&request.skill_name)
+                .value()
+                .cloned(),
+            project_identity: self.comparator.capture_source(&source.facts).await?,
+        };
+        self.payloads
+            .bind_copy_source_snapshot(&handle, source_snapshot.clone())?;
+        let built = self
+            .build(request, &source_snapshot, payload, false)
+            .await?;
         Ok(CopyPreview {
             token: built.token,
             payload: handle,
@@ -186,19 +207,11 @@ where
         cancellation: CancellationSignal,
     ) -> Result<CopyResponse, AppError> {
         validate_copy_request(&execution.request)?;
-        if !same_environment_identity(
-            &execution.payload.environment,
-            &execution.request.source.environment,
-        ) {
-            return Err(AppError::StalePayload);
-        }
-        let source = self
-            .observer
-            .observe(&execution.request.source, &execution.request.skill_name)
-            .await?;
         let payload = self.payloads.pin_verified(&execution.payload).await?;
+        let source_snapshot = self.payloads.copy_source_snapshot(&execution.payload)?;
+        validate_copy_source_snapshot(&source_snapshot, &execution.request)?;
         let built = self
-            .build(&execution.request, source.facts, payload, true)
+            .build(&execution.request, &source_snapshot, payload, true)
             .await?;
         validate_copy_token(&execution.token, &built.token)?;
         if built.previews.iter().any(|target| {
@@ -219,15 +232,11 @@ where
     async fn build(
         &self,
         request: &CopyRequest,
-        source_facts: InstallPlanningFacts,
+        source: &CopySourceSnapshot,
         canonical_payload: PinnedPayloadLease,
         include_plan: bool,
     ) -> Result<BuiltCopy, AppError> {
-        let source_lock_entry = source_facts
-            .lock_document
-            .entry_snapshot(&request.skill_name)
-            .value()
-            .cloned();
+        let source_lock_entry = source.lock_entry.as_ref();
         let mut targets = Vec::with_capacity(request.target_project_ids.len());
         let canonical = canonical_payload.load_payload().await?;
         let mut needs_eve = false;
@@ -255,7 +264,10 @@ where
             if target_facts.len() != destinations.len() {
                 return Err(AppError::StaleTarget);
             }
-            let comparison = self.comparator.compare(&source_facts, &facts).await?;
+            let comparison = self
+                .comparator
+                .compare(&source.project_identity, &facts)
+                .await?;
             targets.push(BuiltCopyTarget {
                 context,
                 facts,
@@ -283,12 +295,16 @@ where
             )
             .await?;
         }
-        let revisions = aggregate_copy_revisions(&source_facts, &targets)?;
+        let revisions = aggregate_copy_revisions(&source.revisions, &targets)?;
         let observed_state_digest = stable_digest(&(
             &request.skill_name,
             &canonical_payload.manifest().payload_id(),
             &canonical_payload.manifest().payload_root_hash,
-            source_lock_entry.as_ref(),
+            source_lock_entry,
+            (
+                &source.project_identity.key,
+                &source.project_identity.fingerprint,
+            ),
             targets
                 .iter()
                 .map(|target| {
@@ -325,7 +341,7 @@ where
                         target,
                         &canonical_payload,
                         eve_payload.as_ref(),
-                        source_lock_entry.as_ref(),
+                        source_lock_entry,
                         &computed_hash,
                     )
                 })
@@ -409,10 +425,10 @@ fn project_context(environment: &EnvironmentRef, project_id: &str) -> ContextRef
 }
 
 fn aggregate_copy_revisions(
-    source: &InstallPlanningFacts,
+    source: &RuntimeRevisions,
     targets: &[BuiltCopyTarget],
 ) -> Result<RuntimeRevisions, AppError> {
-    let all = std::iter::once(&source.revisions)
+    let all = std::iter::once(source)
         .chain(targets.iter().map(|target| &target.facts.revisions))
         .collect::<Vec<_>>();
     let registry = stable_digest(
@@ -438,6 +454,22 @@ fn aggregate_copy_revisions(
             context_digest.trim_start_matches("digest-v1-")
         ))?,
     })
+}
+
+fn validate_copy_source_snapshot(
+    snapshot: &CopySourceSnapshot,
+    request: &CopyRequest,
+) -> Result<(), AppError> {
+    if snapshot.skill_name != request.skill_name
+        || snapshot.source_context.scope != request.source.scope
+        || !same_environment_identity(
+            &snapshot.source_context.environment,
+            &request.source.environment,
+        )
+    {
+        return Err(AppError::StalePayload);
+    }
+    Ok(())
 }
 
 fn validate_copy_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
@@ -912,23 +944,44 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct Facts(Arc<HashMap<ContextRef, InstallPlanningFacts>>);
+    struct Facts(Arc<Mutex<HashMap<ContextRef, InstallPlanningFacts>>>);
 
     impl InstallPlanningFactSource for Facts {
         fn current<'a>(
             &'a self,
             context: &'a ContextRef,
         ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
-            Box::pin(async move { self.0.get(context).cloned().ok_or(AppError::StaleContext) })
+            Box::pin(async move {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .get(context)
+                    .cloned()
+                    .ok_or(AppError::StaleContext)
+            })
         }
     }
 
     struct DifferentProjects;
 
     impl CopyProjectComparator for DifferentProjects {
+        fn capture_source<'a>(
+            &'a self,
+            source: &'a InstallPlanningFacts,
+        ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>> {
+            Box::pin(async move {
+                let project = source
+                    .resolved_context
+                    .project
+                    .as_ref()
+                    .ok_or(AppError::StaleContext)?;
+                Ok(project_fact(&project.native_path, 1, "source"))
+            })
+        }
+
         fn compare<'a>(
             &'a self,
-            _source: &'a InstallPlanningFacts,
+            _source: &'a ResolvedTargetFact,
             _target: &'a InstallPlanningFacts,
         ) -> CopyFuture<'a, Result<ProjectComparison, AppError>> {
             Box::pin(async {
@@ -1073,7 +1126,7 @@ mod tests {
         let source = context(EnvironmentRef::Host, "source");
         let first = context(EnvironmentRef::Host, "first");
         let second = context(EnvironmentRef::Host, "second");
-        let facts = Facts(Arc::new(HashMap::from([
+        let facts = Arc::new(Mutex::new(HashMap::from([
             (
                 source.clone(),
                 planning_facts(source.clone(), &source_root, true),
@@ -1095,7 +1148,7 @@ mod tests {
         ));
         let captured = Arc::new(Mutex::new(None));
         let service = CopyService::new(
-            facts,
+            Facts(facts.clone()),
             crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone()),
             payloads.clone(),
             InstalledSkillPayloadAcquirer::new(payloads, environments),
@@ -1112,6 +1165,7 @@ mod tests {
         };
         let preview = service.preview(&request).await.unwrap();
         assert_eq!(preview.targets.len(), 2);
+        facts.lock().unwrap().remove(&request.source);
 
         service
             .execute(
