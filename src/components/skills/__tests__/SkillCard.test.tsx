@@ -35,6 +35,7 @@ const makeSkill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => (
   canonicalPath: '/canonical/toolkit',
   scope: 'global',
   agents: [],
+  associatedAgents: [],
   hasUpdate: true,
   ...overrides,
 });
@@ -154,6 +155,7 @@ describe('SkillCard', () => {
         <SkillCard
           skill={makeSkill({
             agents: ['claude-code'],
+            associatedAgents: ['claude-code'],
           })}
           displayScope="global"
           agentDisplayNames={new Map([['claude-code', 'Claude Code']])}
@@ -187,7 +189,7 @@ describe('SkillCard', () => {
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
-            cardAgents: ['claude-code', 'codex'],
+            associatedAgents: ['claude-code', 'codex'],
             defaultAvailableAgents: ['claude-code'],
             privateAdaptedAgents: ['codex'],
             privateCopyAgents: ['gemini-cli'],
@@ -212,7 +214,7 @@ describe('SkillCard', () => {
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
-            cardAgents: ['claude-code', 'codex'],
+            associatedAgents: ['claude-code', 'codex'],
             defaultAvailableAgents: ['claude-code'],
             privateAdaptedAgents: ['codex'],
             privateCopyAgents: ['gemini-cli'],
@@ -237,7 +239,7 @@ describe('SkillCard', () => {
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
-            cardAgents: ['claude-code'],
+            associatedAgents: ['claude-code'],
             privateCopyAgents: ['codex'],
             duplicateCopyCount: 0,
           })}
@@ -257,7 +259,7 @@ describe('SkillCard', () => {
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
-            cardAgents: ['claude-code'],
+            associatedAgents: ['claude-code'],
             privateCopyAgents: [],
             duplicateCopyCount: 2,
           })}
@@ -286,7 +288,7 @@ describe('SkillCard', () => {
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
-            cardAgents: ['claude-code', 'codex', 'gemini-cli', 'cursor', 'qwen-code'],
+            associatedAgents: ['claude-code', 'codex', 'gemini-cli', 'cursor', 'qwen-code'],
           })}
           displayScope="global"
           agentDisplayNames={new Map([
@@ -308,11 +310,12 @@ describe('SkillCard', () => {
     expect(screen.queryByText('skills.card.moreAgents')).toBeNull();
   });
 
-  it('falls back to deduped summary agents when card agents are absent', () => {
+  it('renders the explicit associated Agent projection and ignores summary-only fields', () => {
     render(
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
+            associatedAgents: ['claude-code', 'codex', 'gemini-cli'],
             defaultAvailableAgents: ['claude-code', 'codex'],
             privateAdaptedAgents: ['codex', 'gemini-cli'],
             privateCopyAgents: ['claude-code'],
@@ -359,7 +362,7 @@ describe('SkillCard', () => {
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
-            cardAgents: ['claude-code', 'claude-code', 'codex'],
+            associatedAgents: ['claude-code', 'claude-code', 'codex'],
           })}
           displayScope="global"
           agentDisplayNames={new Map([
@@ -374,12 +377,12 @@ describe('SkillCard', () => {
     expect(screen.getByText('Codex')).toBeTruthy();
   });
 
-  it('falls back to skill agents when card and summary agents are absent', () => {
+  it('does not infer associated Agents when the Backend projection is empty', () => {
     render(
       <TooltipProvider>
         <SkillCard
           skill={makeSkill({
-            cardAgents: null,
+            associatedAgents: [],
             agents: ['claude-code', 'codex'],
           })}
           displayScope="global"
@@ -391,8 +394,8 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect(screen.getByText('Claude Code')).toBeTruthy();
-    expect(screen.getByText('Codex')).toBeTruthy();
+    expect(screen.queryByText('Claude Code')).toBeNull();
+    expect(screen.queryByText('Codex')).toBeNull();
   });
 
   it('uses the card content flex gap between metadata, diagnostics, and agent chips', () => {
@@ -545,6 +548,7 @@ describe('SkillCard', () => {
               canCheckForUpdates: false,
               updateReason: 'missingRemoteHash',
               agents: ['claude-code', 'codex'],
+              associatedAgents: ['claude-code', 'codex'],
             }),
             updateStatus: 'cannotCheck',
           } as InstalledSkill & { updateStatus?: 'cannotCheck' }}
@@ -606,6 +610,7 @@ describe('SkillCard', () => {
               canCheckForUpdates: false,
               updateReason: 'network-error',
               agents: ['claude-code'],
+              associatedAgents: ['claude-code'],
             }),
             updateStatus: 'cannotCheck',
           } as InstalledSkill & { updateStatus?: 'cannotCheck' }}

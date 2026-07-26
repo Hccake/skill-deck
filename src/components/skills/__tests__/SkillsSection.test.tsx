@@ -49,6 +49,7 @@ const makeSkill = (
   canonicalPath: `/canonical/${scope}/toolkit`,
   scope,
   agents: [],
+  associatedAgents: [],
   hasUpdate: true,
   canCheckForUpdates: true,
   ...overrides,
@@ -209,6 +210,26 @@ describe('SkillsSection', () => {
     expect(unavailable.className).not.toContain('border-l-');
     expect(unavailable.className).not.toContain('warning');
     expect(unavailable.className).not.toContain('amber');
+  });
+
+  it('does not report the filtered result as up to date', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[]}
+        scope="global"
+        filterActive
+        updatingSkills={new Map()}
+        emptyState={<div>filtered-empty</div>}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('filtered-empty')).toBeDefined();
+    expect(screen.queryByText('skills.upToDate')).toBeNull();
   });
 
   it('summarizes failed Skill checks without exposing source diagnostics', () => {

@@ -105,6 +105,7 @@ function makeSkill(name: string, overrides: Partial<InstalledSkill> = {}): Insta
     canonicalPath: `/canonical/${name}`,
     scope: 'global',
     agents: [],
+    associatedAgents: [],
     hasUpdate: false,
     ...overrides,
   };
@@ -234,7 +235,7 @@ describe('SkillsPage', () => {
     mocks.environmentState.connect.mockReset();
     mocks.environmentState.connect.mockResolvedValue(undefined);
     mocks.tauriApi.listSkills.mockReset();
-    mocks.tauriApi.listSkills.mockResolvedValue({ skills: [] });
+    mocks.tauriApi.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
     mocks.skillsDataState.snapshots = { 'host/global': snapshot() };
     mocks.skillsDataState.checkingUpdateScopes = new Set();
     mocks.skillsDataState.forceCheckUpdates.mockReset();

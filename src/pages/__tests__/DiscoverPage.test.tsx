@@ -155,10 +155,10 @@ describe('DiscoverPage', () => {
     expect(mocks.skillsDataState.refreshContext).toHaveBeenCalledWith({
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
-    }, false);
+    });
     expect(mocks.skillsDataState.refreshContext).toHaveBeenCalledWith({
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'project', project_id: 'project-1' },
-    }, false);
+    });
   });
 });

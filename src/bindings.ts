@@ -644,9 +644,10 @@ export type InstallTargetInfo = { targetId: string; agent: AgentId; displayName:
  */
 export type InstalledSkill = { name: string; description: string; path: string; canonicalPath: string; scope: SkillScope; agents: AgentId[];
 /**
- * Skill card Agents that are both effective for this skill and detected locally.
+ * 每次读取 Skill 时根据当前 runtime 和文件系统重新组装，不写入 skill-lock。
+ * 只包含当前已检测到并且实际能够读取该 Skill 的关联 Agent。
  */
-cardAgents?: AgentId[] | null; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
+associatedAgents: AgentId[]; source?: string | null; sourceUrl?: string | null; installedAt?: string | null; updatedAt?: string | null; hasUpdate?: boolean | null;
 /**
  * 是否可直接执行更新
  */
@@ -709,10 +710,10 @@ export type LifecycleActionOutcome = { status: "performed" } | { status: "delega
 export type LifecycleActionRequestedEvent = { action: LifecycleAction }
 export type LifecycleLeaseKind = "applicationUpdate" | "runtimeMaintenance"
 /**
- * list_skills 返回结果
- * 包含 skills 列表和路径存在性信息
+ * `list_skills` 的运行时读取结果。
+ * Skill 与 scope Agents 来自同一次 Agent runtime snapshot，避免 Frontend 拼接不同 revision。
  */
-export type ListSkillsResult = { skills: InstalledSkill[];
+export type ListSkillsResult = { skills: InstalledSkill[]; agents: ResolvedAgent[];
 /**
  * 项目目录是否存在（project scope 时有意义，global 始终为 true）
  */

@@ -49,12 +49,13 @@ function skill(name: string, scope: 'global' | 'project' = 'global'): InstalledS
     canonicalPath: `/canonical/${name}`,
     scope,
     agents: [],
+    associatedAgents: [],
     hasUpdate: false,
   };
 }
 
 function result(name: string, scope: 'global' | 'project' = 'global'): ListSkillsResult {
-  return { skills: [skill(name, scope)], pathExists: true };
+  return { skills: [skill(name, scope)], agents: [], pathExists: true };
 }
 
 function deferred<T>() {
@@ -70,7 +71,7 @@ describe('context-keyed Skill snapshots', () => {
     vi.clearAllMocks();
     useSkillsDataStore.setState({ snapshots: {} });
     mocks.listAgents.mockResolvedValue(makeAgentRuntimeSnapshot([]));
-    mocks.listSkills.mockResolvedValue({ skills: [], pathExists: true });
+    mocks.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
     mocks.checkUpdates.mockResolvedValue({ sources: [], skills: [] });
     mocks.previewUpdate.mockResolvedValue({
       token: previewToken,
@@ -121,8 +122,8 @@ describe('context-keyed Skill snapshots', () => {
         : debian.promise
     ));
 
-    const ubuntuLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal, false);
-    const debianLoad = useSkillsDataStore.getState().refreshContext(debianGlobal, false);
+    const ubuntuLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal);
+    const debianLoad = useSkillsDataStore.getState().refreshContext(debianGlobal);
     debian.resolve(result('debian-skill'));
     await debianLoad;
     ubuntu.resolve(result('ubuntu-skill'));
@@ -141,7 +142,7 @@ describe('context-keyed Skill snapshots', () => {
     } as const;
     mocks.listSkills.mockRejectedValue(error);
 
-    await useSkillsDataStore.getState().refreshContext(ubuntuGlobal, false);
+    await useSkillsDataStore.getState().refreshContext(ubuntuGlobal);
 
     expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuGlobal)].error)
       .toEqual(error);
@@ -154,8 +155,8 @@ describe('context-keyed Skill snapshots', () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
 
-    const firstLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal, false);
-    const secondLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal, false);
+    const firstLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal);
+    const secondLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal);
     second.resolve(result('new'));
     await secondLoad;
     first.resolve(result('old'));
@@ -172,9 +173,9 @@ describe('context-keyed Skill snapshots', () => {
       .mockReturnValueOnce(oldRequest.promise)
       .mockReturnValueOnce(newRequest.promise);
 
-    const oldLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal, false);
+    const oldLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal);
     useSkillsDataStore.getState().invalidateContexts([ubuntuGlobal]);
-    const newLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal, false);
+    const newLoad = useSkillsDataStore.getState().refreshContext(ubuntuGlobal);
 
     newRequest.resolve(result('new'));
     await newLoad;
@@ -186,26 +187,45 @@ describe('context-keyed Skill snapshots', () => {
   });
 
   it('loads project and same-environment Global snapshots in parallel', async () => {
-    mocks.listAgents.mockResolvedValue(makeAgentRuntimeSnapshot([
-      makeResolvedAgent({ id: 'both' }),
-      makeResolvedAgent({
-        id: 'global-only',
-        project: { enabled: false },
-      }),
-    ]));
-    mocks.listSkills.mockImplementation(async (context: ContextRef) => (
-      context.scope.scope === 'global' ? result('global') : result('project', 'project')
-    ));
+    const both = makeResolvedAgent({ id: 'both' });
+    const globalOnly = makeResolvedAgent({
+      id: 'global-only',
+      project: { enabled: false },
+    });
+    mocks.listSkills.mockImplementation(async (context: ContextRef) => ({
+      ...(context.scope.scope === 'global' ? result('global') : result('project', 'project')),
+      agents: context.scope.scope === 'global' ? [both, globalOnly] : [both],
+    }));
 
     await useSkillsDataStore.getState().refreshWorkspace(ubuntuProject);
 
     expect(mocks.listSkills).toHaveBeenCalledWith(globalContext(ubuntuGlobal.environment));
     expect(mocks.listSkills).toHaveBeenCalledWith(ubuntuProject);
-    expect(mocks.listAgents).toHaveBeenCalledWith(ubuntuProject);
+    expect(mocks.listAgents).not.toHaveBeenCalled();
     expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuProject)].skills[0].name)
       .toBe('project');
     expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuProject)].agents
       .map((agent) => agent.definition.id)).toEqual(['both']);
+  });
+
+  it('uses the scope Agents returned with listSkills without a second runtime request', async () => {
+    const globalAgent = makeResolvedAgent({ id: 'global-agent' });
+    const projectAgent = makeResolvedAgent({ id: 'project-agent' });
+    mocks.listSkills.mockImplementation(async (context: ContextRef) => ({
+      ...result(context.scope.scope === 'global' ? 'global' : 'project', context.scope.scope),
+      agents: context.scope.scope === 'global' ? [globalAgent] : [projectAgent],
+    } as ListSkillsResult));
+    mocks.listAgents.mockResolvedValue(makeAgentRuntimeSnapshot([
+      makeResolvedAgent({ id: 'stale-agent' }),
+    ]));
+
+    await useSkillsDataStore.getState().refreshWorkspace(ubuntuProject);
+
+    expect(mocks.listAgents).not.toHaveBeenCalled();
+    expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuGlobal)].agents
+      .map((agent) => agent.definition.id)).toEqual(['global-agent']);
+    expect(useSkillsDataStore.getState().snapshots[contextKey(ubuntuProject)].agents
+      .map((agent) => agent.definition.id)).toEqual(['project-agent']);
   });
 
   it('checks updates for the captured context and mutates only its snapshot', async () => {

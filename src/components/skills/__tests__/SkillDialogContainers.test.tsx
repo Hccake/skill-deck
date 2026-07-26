@@ -81,6 +81,7 @@ const skill: InstalledSkill = {
   canonicalPath: '/project/.agents/skills/toolkit',
   scope: 'project',
   agents: [],
+  associatedAgents: [],
   source: 'owner/repo',
 };
 

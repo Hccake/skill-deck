@@ -36,7 +36,7 @@ const context: ContextRef = {
 function skill(overrides: Partial<SkillListItem> = {}): SkillListItem {
   return {
     name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit',
-    scope: 'global', agents: ['codex'], source: 'owner/repo', hasUpdate: true,
+    scope: 'global', agents: ['codex'], associatedAgents: ['codex'], source: 'owner/repo', hasUpdate: true,
     canRunUpdate: true, canCheckForUpdates: true, updateStatus: 'updateAvailable',
     updateReason: null, ...overrides,
   };
@@ -113,7 +113,7 @@ describe('skills data store', () => {
     vi.clearAllMocks();
     updateInfoCache.clear();
     useSkillsDataStore.setState({ snapshots: {}, auditCache: {}, isSyncing: false, checkingUpdateScopes: new Set() });
-    mocks.listSkills.mockResolvedValue({ skills: [], pathExists: true });
+    mocks.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
     mocks.listAgents.mockResolvedValue({ agents: [] });
     mocks.checkUpdates.mockResolvedValue({ sources: [], skills: [] });
   });
@@ -314,9 +314,10 @@ describe('skills data store', () => {
         skill({ name: 'toolkit', hasUpdate: false, updateStatus: null, updateReason: null }),
         skill({ name: 'reviewer', path: '/skills/reviewer', canonicalPath: '/canonical/reviewer', hasUpdate: false, updateStatus: null, updateReason: null }),
       ],
+      agents: [],
       pathExists: true,
     });
-    await useSkillsDataStore.getState().refreshContext(context, false);
+    await useSkillsDataStore.getState().refreshContext(context);
 
     expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills.find((item) => item.name === 'reviewer')).toMatchObject({
       hasUpdate: true,

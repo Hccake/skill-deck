@@ -138,11 +138,17 @@
       "select": "选择项目",
       "clear": "清除"
     },
-    "search": "搜索 Skills...",
+    "search": "搜索 Skills…",
     "sync": "刷新",
     "filter": {
       "allAgents": "全部 Agents",
-      "noResults": "未找到 {{name}} 的 Skills"
+      "agentLabel": "按 Agent 筛选 Skill",
+      "searchAgents": "查找 Agent…",
+      "noMatchingAgents": "没有匹配的 Agent",
+      "emptyAgent": "没有可供 {{name}} 使用的 Skill",
+      "emptySearch": "没有匹配“{{query}}”的 Skill",
+      "emptyCombined": "没有符合当前条件的 Skill",
+      "clear": "清除筛选"
     },
     "scopeIcon": {
       "project": "项目 Skill",

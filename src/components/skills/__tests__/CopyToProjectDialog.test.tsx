@@ -24,6 +24,7 @@ const skill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => ({
   canonicalPath: '/project/.agents/skills/toolkit',
   scope: 'project',
   agents: ['claude-code'],
+  associatedAgents: ['claude-code'],
   source: 'owner/repo',
   sourceUrl: 'https://github.com/owner/repo',
   canRunUpdate: true,

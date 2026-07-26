@@ -24,7 +24,7 @@ describe('UpdatePlanDialog', () => {
     useSkillUpdateWorkflow.getState().reset();
     useSkillsDataStore.setState({ snapshots: {
       [contextKey(context)]: {
-        skills: [{ name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit', scope: 'global', agents: [], source: 'owner/repo', hasUpdate: true, canRunUpdate: true, canCheckForUpdates: true, updateStatus: 'updateAvailable', updateReason: null }],
+        skills: [{ name: 'toolkit', description: '', path: '/skills/toolkit', canonicalPath: '/canonical/toolkit', scope: 'global', agents: [], associatedAgents: [], source: 'owner/repo', hasUpdate: true, canRunUpdate: true, canCheckForUpdates: true, updateStatus: 'updateAvailable', updateReason: null }],
         agents: [], pathExists: true, loading: false, error: null, requestId: 1,
       },
     } });

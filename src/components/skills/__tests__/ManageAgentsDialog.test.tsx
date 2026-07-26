@@ -76,6 +76,7 @@ const skill: InstalledSkill = {
   canonicalPath: '/canonical/agent-toolkit',
   scope: 'project',
   agents: ['claude-code'],
+  associatedAgents: ['claude-code'],
 };
 
 describe('ManageAgentsDialog', () => {

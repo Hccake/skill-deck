@@ -138,11 +138,17 @@
       "select": "Select Project",
       "clear": "Clear"
     },
-    "search": "Search skills...",
+    "search": "Search skills…",
     "sync": "Refresh",
     "filter": {
-      "allAgents": "All agents",
-      "noResults": "No skills found for {{name}}"
+      "allAgents": "All Agents",
+      "agentLabel": "Filter Skills by Agent",
+      "searchAgents": "Find Agent…",
+      "noMatchingAgents": "No matching Agents",
+      "emptyAgent": "No Skills available to {{name}}",
+      "emptySearch": "No Skills match “{{query}}”",
+      "emptyCombined": "No Skills match the current filters",
+      "clear": "Clear filters"
     },
     "scopeIcon": {
       "project": "Project skill",

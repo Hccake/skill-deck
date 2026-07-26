@@ -71,7 +71,8 @@ Skills 工作台由 Context 侧栏、Skill 列表和详情区组成。
 
 ### Skill 列表与详情
 
-- 列表按当前 Context 展示已安装 Skill，并提供搜索、刷新、更新检查和新增入口。
+- 列表以已安装 Skill 为主体，并提供关键词搜索、按 Agent 筛选、刷新、更新检查和新增入口。未选择 Agent 时展示全部 Skill；选择 Agent 后，只展示当前 Context 中可供该 Agent 使用的 Skill。搜索与 Agent 条件可以同时生效，工具栏只保留一个统一的清除筛选入口。
+- 同时展示 Global 与当前 Project 时，两种 scope 保持独立区域，并分别保留对应的新增入口。某个区域没有筛选结果时，只在该区域的 Skill 列表位置显示紧凑提示，不隐藏区域标题和新增入口，也不影响另一个区域继续展示结果。
 - 当前 Environment 无法读取 Project Context 时，列表使用独立的中性不可用状态，不同时展示更新结论或管理命令。用户可以检查项目位置，或自行切换到已经添加该项目的 Environment。
 - 选中 Skill 后，界面切换为列表与详情分栏。详情展示 Skill metadata、`SKILL.md` 内容、安装位置、关联 Agent 和更新状态。
 - Skill card 和详情只展示已检测到并且能够实际读取当前 Skill 的关联 Agent。读取通用 Skill 目录的 Agent 要求该目录中存在当前 Skill；其他 Agent 要求其自身的 Skill 目录中已经存在有效链接或文件。

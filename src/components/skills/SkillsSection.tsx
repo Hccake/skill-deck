@@ -37,6 +37,8 @@ interface SkillsSectionProps {
   updatingSkills: Map<string, SkillUpdateDisplayStatus>;
   /** 是否正在检查更新 */
   isCheckingUpdates?: boolean;
+  /** 当前列表是否处于搜索或 Agent 筛选状态 */
+  filterActive?: boolean;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentId, string>;
   /** 审计数据缓存（skillName → SkillAuditData） */
@@ -61,6 +63,7 @@ export const SkillsSection = memo(function SkillsSection({
   projectPath,
   updatingSkills,
   isCheckingUpdates = false,
+  filterActive = false,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
   auditCache = EMPTY_AUDIT_CACHE,
   onSkillClick,
@@ -209,7 +212,7 @@ export const SkillsSection = memo(function SkillsSection({
               </span>
             </div>
           ) : null}
-          {pathExists && !isAnyUpdating && updatesCount === 0 && updateCheckFailureCount === 0 && maintenanceCount === 0 && !isCheckingUpdates ? (
+          {pathExists && (!filterActive || skills.length > 0) && !isAnyUpdating && updatesCount === 0 && updateCheckFailureCount === 0 && maintenanceCount === 0 && !isCheckingUpdates ? (
             <div className="flex items-center gap-1 text-xs">
               <span className="text-border mr-0.5">·</span>
               <span className="font-medium text-muted-foreground/80">

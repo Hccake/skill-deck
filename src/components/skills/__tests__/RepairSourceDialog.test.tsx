@@ -150,6 +150,7 @@ describe('RepairSourceDialog', () => {
       canonicalPath: '/skills/toolkit',
       scope: 'global',
       agents: ['claude-code'],
+      associatedAgents: ['claude-code'],
       source: null,
       sourceUrl: null,
     } as InstalledSkill, context);
@@ -169,6 +170,7 @@ describe('RepairSourceDialog', () => {
       canonicalPath: '/skills/toolkit',
       scope: 'global',
       agents: ['claude-code'],
+      associatedAgents: ['claude-code'],
     } as InstalledSkill;
     useSkillDialogStore.setState({ copySkill, copyContext: context });
     openDialog();

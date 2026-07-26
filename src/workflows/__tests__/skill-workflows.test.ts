@@ -55,6 +55,7 @@ const skill = {
   canonicalPath: '/canonical/toolkit',
   scope: 'project',
   agents: ['codex'],
+  associatedAgents: ['codex'],
   hasUpdate: false,
 } as InstalledSkill;
 

@@ -93,17 +93,7 @@ export const SkillCard = memo(function SkillCard({
   onRepairSource,
 }: SkillCardProps) {
   const { t, i18n } = useTranslation();
-  const summaryAgents = [
-    ...(skill.defaultAvailableAgents ?? []),
-    ...(skill.privateAdaptedAgents ?? []),
-    ...(skill.privateCopyAgents ?? []),
-  ];
-  const hasAgentSummary = Boolean(
-    skill.defaultAvailableAgents || skill.privateAdaptedAgents || skill.privateCopyAgents
-  );
-  const rawEffectiveAgents = skill.cardAgents
-    ?? (hasAgentSummary ? summaryAgents : skill.agents);
-  const effectiveAgents = Array.from(new Set(rawEffectiveAgents));
+  const effectiveAgents = Array.from(new Set(skill.associatedAgents));
   const duplicateCopyCount = skill.duplicateCopyCount ?? 0;
 
   const progressBarRef = useRef<HTMLDivElement>(null);

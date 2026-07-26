@@ -72,6 +72,36 @@ export function ProjectEmptyState({ onAdd }: ProjectEmptyStateProps) {
   );
 }
 
+interface SkillFilterEmptyStateProps {
+  agentName?: string;
+  searchQuery?: string;
+}
+
+export function SkillFilterEmptyState({
+  agentName,
+  searchQuery,
+}: SkillFilterEmptyStateProps) {
+  const { t } = useTranslation();
+  const query = searchQuery?.trim();
+  const message = agentName && query
+    ? t('skills.filter.emptyCombined')
+    : agentName
+      ? t('skills.filter.emptyAgent', { name: agentName })
+      : query
+        ? t('skills.filter.emptySearch', { query })
+        : t('skills.filter.emptyCombined');
+
+  return (
+    <div
+      role="status"
+      data-testid="skill-filter-empty-state"
+      className="flex min-h-20 items-center justify-center px-3 py-5 text-center"
+    >
+      <p className="text-xs leading-relaxed text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
 export function ProjectUnavailableState() {
   const { t } = useTranslation();
 
