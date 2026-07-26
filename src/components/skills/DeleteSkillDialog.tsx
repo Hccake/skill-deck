@@ -86,7 +86,11 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
                     : t(`skills.deleteConfirm.${feedback}`)}
                 </p>
                 {recovery.map((action) => (
-                  <RecoveryActions key={action.resourceId} recovery={action} />
+                  <RecoveryActions
+                    key={action.resourceId}
+                    recovery={action}
+                    onResolved={close}
+                  />
                 ))}
               </div>
             </div>

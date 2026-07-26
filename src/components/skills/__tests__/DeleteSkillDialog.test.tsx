@@ -18,8 +18,11 @@ vi.mock('@/workflows/skill-remove', () => ({
 }));
 
 vi.mock('@/components/recovery/RecoveryActions', () => ({
-  RecoveryActions: ({ recovery }: { recovery: { resourceId: string } }) => (
-    <div>recovery-actions:{recovery.resourceId}</div>
+  RecoveryActions: ({ recovery, onResolved }: {
+    recovery: { resourceId: string };
+    onResolved?: () => void;
+  }) => (
+    <button type="button" onClick={onResolved}>recovery-actions:{recovery.resourceId}</button>
   ),
 }));
 
@@ -140,6 +143,21 @@ describe('DeleteSkillDialog', () => {
     expect(screen.getByText('recovery-actions:recovery-1')).not.toBeNull();
     expect(screen.queryByRole('button', { name: 'skills.deleteConfirm.confirm' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'skills.deleteConfirm.retryDelete' })).toBeNull();
+  });
+
+  it('closes the dialog after Backend confirms that recovery is resolved', async () => {
+    mocks.executeSkillRemoval.mockResolvedValueOnce({
+      status: 'recoveryRequired',
+      recovery: [{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }],
+    });
+    render(<DeleteSkillDialog />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'skills.deleteConfirm.confirm' }));
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'recovery-actions:recovery-1' }));
+
+    expect(useSkillDialogStore.getState().deleteTarget).toBeNull();
   });
 
   it('blocks confirmation during another mutation', () => {
