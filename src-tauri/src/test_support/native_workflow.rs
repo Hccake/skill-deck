@@ -690,9 +690,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert!(!source_project
         .join("agent/subagents/research/skills/demo")
         .exists());
-    assert_eq!(
-        read_json(&source_project.join("skills-lock.json"))?["skills"]["demo"]["subagents"],
-        json!([""])
+    assert!(
+        read_json(&source_project.join("skills-lock.json"))?["skills"]["demo"]
+            .get("subagents")
+            .is_none()
     );
 
     let remaining_entries = observer

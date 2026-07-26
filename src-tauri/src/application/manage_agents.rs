@@ -474,20 +474,27 @@ fn manage_lock_mutation(
         .iter()
         .filter_map(|target| target.strip_prefix("eve:"))
         .map(|target| {
-            serde_json::Value::String(if target == "root" {
+            if target == "root" {
                 String::new()
             } else {
                 target.to_string()
-            })
+            }
         })
-        .collect::<Vec<_>>();
+        .collect::<BTreeSet<_>>();
     let mut replacement = raw;
-    replacement
-        .as_object_mut()
-        .ok_or_else(|| AppError::ConfigurationCorrupted {
-            message: "project lock entry must be an object".to_string(),
-        })?
-        .insert("subagents".to_string(), serde_json::Value::Array(subagents));
+    {
+        let replacement =
+            replacement
+                .as_object_mut()
+                .ok_or_else(|| AppError::ConfigurationCorrupted {
+                    message: "project lock entry must be an object".to_string(),
+                })?;
+        if subagents.len() == 1 && subagents.contains("") {
+            replacement.remove("subagents");
+        } else {
+            replacement.insert("subagents".to_string(), serde_json::json!(subagents));
+        }
+    }
     Ok(Some(PreparedLockMutation {
         target: snapshot.facts.resolved_context.lock.clone(),
         legacy_target: None,
