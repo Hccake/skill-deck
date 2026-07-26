@@ -135,7 +135,7 @@ GitHub Actions 使用矩阵覆盖 Ubuntu、Windows 和 macOS，并保留 `fail-f
 - 每个 `cfg` 同时覆盖相关实现、导入和测试夹具，`cargo clippy ... --all-targets -- -D warnings` 没有警告；
 - Windows、macOS 和 Linux 的相关结果都已观察，未运行的真实环境不能描述为已经验证；
 - CI 输出能够区分编译失败、测试进程启动失败、断言失败、进程超时和外部依赖失败；
-- 修改共享测试辅助代码或生产符号前已完成 GitNexus 影响分析，提交前运行 `detect_changes` 并确认影响范围符合预期。
+- 修改共享测试辅助代码或生产符号前，已经确认直接调用方和受影响流程；提交前核对实际差异与预期范围一致。
 
 ## 权威参考
 
