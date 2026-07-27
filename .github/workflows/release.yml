@@ -62,8 +62,14 @@ jobs:
             echo "prerelease=$PRERELEASE"
           } >> "$GITHUB_OUTPUT"
 
-  build-artifacts:
+  quality:
     needs: validate
+    uses: ./.github/workflows/quality.yml
+    with:
+      target_sha: ${{ needs.validate.outputs.commit_sha }}
+
+  build-artifacts:
+    needs: [validate, quality]
     strategy:
       fail-fast: false
       matrix:
@@ -108,14 +114,6 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
       - run: pnpm install --frozen-lockfile
-      - name: Verify frontend contract and product build
-        run: |
-          pnpm bindings:check
-          pnpm lint
-          pnpm test
-          pnpm build
-      - name: Run Backend tests
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Build signed updater artifact
         id: tauri-build
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1

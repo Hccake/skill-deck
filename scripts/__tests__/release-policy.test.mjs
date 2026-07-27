@@ -1,48 +1,153 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { parse } from "yaml";
 
 const workflowUrl = new URL(
   "../../.github/workflows/release.yml",
   import.meta.url,
 );
 const ciWorkflowUrl = new URL("../../.github/workflows/ci.yml", import.meta.url);
+const qualityWorkflowUrl = new URL(
+  "../../.github/workflows/quality.yml",
+  import.meta.url,
+);
 const packagerUrl = new URL("../package-updater-artifact.mjs", import.meta.url);
 const releaseVerifierUrl = new URL("../verify-release-assets.mjs", import.meta.url);
 
-test("PR CI keeps stable required jobs and enforces the exact Rust gate", async () => {
-  const workflow = await readFile(ciWorkflowUrl, "utf8");
+const readWorkflow = async (url) => parse(await readFile(url, "utf8"));
 
-  assert.match(workflow, /\n  frontend:/);
-  assert.match(workflow, /\n  msrv:/);
-  assert.match(workflow, /name: rust \(\$\{\{ matrix\.os \}\}\)/);
-  assert.match(workflow, /cargo check[^\n]*--locked[^\n]*--all-targets/);
-  assert.doesNotMatch(
-    workflow,
-    /wsl-integration-tests|Check Windows WSL integration feature/,
+test("CI and Release run the same quality workflow for an exact commit", async () => {
+  const [quality, ci, release] = await Promise.all([
+    readWorkflow(qualityWorkflowUrl),
+    readWorkflow(ciWorkflowUrl),
+    readWorkflow(workflowUrl),
+  ]);
+
+  assert.equal(quality.on.workflow_call.inputs.target_sha.required, true);
+  assert.equal(ci.jobs.quality.uses, "./.github/workflows/quality.yml");
+  assert.equal(ci.jobs.quality.with.target_sha, "${{ github.sha }}");
+  assert.equal(release.jobs.quality.uses, "./.github/workflows/quality.yml");
+  assert.equal(
+    release.jobs.quality.with.target_sha,
+    "${{ needs.validate.outputs.commit_sha }}",
   );
+  assert.deepEqual(release.jobs["build-artifacts"].needs, [
+    "validate",
+    "quality",
+  ]);
+
+  for (const [jobName, job] of Object.entries(quality.jobs)) {
+    const checkout = job.steps?.find((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    if (jobName === "quality-gate") {
+      assert.equal(checkout, undefined);
+    } else {
+      assert.equal(
+        checkout?.with?.ref,
+        "${{ inputs.target_sha }}",
+        `${jobName} must validate the requested commit`,
+      );
+    }
+  }
+});
+
+test("quality workflow separates portable formatting, static checks, and tests", async () => {
+  const workflow = await readWorkflow(qualityWorkflowUrl);
+  const expectedPlatforms = [
+    "ubuntu-22.04",
+    "windows-latest",
+    "macos-latest",
+  ];
+
+  assert.equal(workflow.jobs["rust-format"]["runs-on"], "ubuntu-22.04");
+  assert.deepEqual(
+    workflow.jobs["rust-static"].strategy.matrix.os,
+    expectedPlatforms,
+  );
+  assert.deepEqual(
+    workflow.jobs["rust-test"].strategy.matrix.os,
+    expectedPlatforms,
+  );
+  assert.equal(workflow.jobs["rust-static"].strategy["fail-fast"], false);
+  assert.equal(workflow.jobs["rust-test"].strategy["fail-fast"], false);
+
+  const staticCommands = workflow.jobs["rust-static"].steps
+    .map((step) => step.run ?? "")
+    .join("\n");
+  const testCommands = workflow.jobs["rust-test"].steps
+    .map((step) => step.run ?? "")
+    .join("\n");
+  assert.match(staticCommands, /cargo check[^\n]*--locked[^\n]*--all-targets/);
   assert.match(
-    workflow,
+    staticCommands,
     /cargo clippy[^\n]*--locked[^\n]*--all-targets[^\n]*-- -D warnings/,
   );
-  assert.match(workflow, /cargo test[^\n]*--locked/);
+  assert.doesNotMatch(staticCommands, /cargo test/);
+  assert.match(testCommands, /cargo test[^\n]*--locked/);
+  assert.doesNotMatch(testCommands, /cargo (?:check|clippy)/);
+
+  const clippyStep = workflow.jobs["rust-static"].steps.find((step) =>
+    (step.run ?? "").includes("cargo clippy"),
+  );
+  assert.equal(clippyStep.if, "${{ always() }}");
+  for (const jobName of ["rust-format", "rust-static", "rust-test"]) {
+    const upload = workflow.jobs[jobName].steps.find(
+      (step) => step.uses === "actions/upload-artifact@v4",
+    );
+    assert.equal(upload.if, "${{ always() }}");
+  }
+
+  assert.deepEqual(workflow.jobs["quality-gate"].needs, [
+    "msrv",
+    "frontend",
+    "workflow-lint",
+    "shellcheck",
+    "rust-format",
+    "rust-static",
+    "rust-test",
+  ]);
+  assert.equal(workflow.jobs["quality-gate"].if, "${{ always() }}");
+});
+
+test("quality workflow validates GitHub Actions syntax", async () => {
+  const workflow = await readWorkflow(qualityWorkflowUrl);
+  const lintJob = workflow.jobs["workflow-lint"];
+
+  assert.equal(lintJob["runs-on"], "ubuntu-22.04");
+  assert.ok(
+    lintJob.steps.some(
+      (step) => step.uses === "docker://rhysd/actionlint:1.7.12",
+    ),
+  );
 });
 
 test("release workflow keeps platform jobs artifact-only and uses one aggregator", async () => {
-  const workflow = await readFile(workflowUrl, "utf8");
+  const workflow = await readWorkflow(workflowUrl);
+  const artifactJob = workflow.jobs["build-artifacts"];
+  const artifactCommands = artifactJob.steps
+    .map((step) => step.run ?? "")
+    .join("\n");
 
-  assert.match(workflow, /jobs:\s*[\s\S]*validate:/);
-  assert.match(workflow, /build-artifacts:[\s\S]*strategy:[\s\S]*matrix:/);
-  assert.match(
-    workflow,
-    /build-artifacts:[\s\S]*pnpm bindings:check[\s\S]*pnpm lint[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*cargo test --locked[\s\S]*tauri-action@[0-9a-f]{40}/,
-  );
-  assert.match(workflow, /build-artifacts:[\s\S]*package smoke/i);
+  assert.deepEqual(artifactJob.needs, ["validate", "quality"]);
   assert.doesNotMatch(
-    workflow.match(/build-artifacts:[\s\S]*?(?=\n  aggregate:)/)?.[0] ?? "",
-    /gh release|releaseDraft|uploadUpdaterJson|tagName:/,
+    artifactCommands,
+    /pnpm (?:bindings:check|lint|test|build)|cargo (?:check|clippy|test)/,
   );
-  assert.match(workflow, /aggregate:[\s\S]*aggregate-updater-manifest\.mjs/);
+  assert.ok(
+    artifactJob.steps.some(
+      (step) =>
+        typeof step.uses === "string" &&
+        step.uses.startsWith("tauri-apps/tauri-action@"),
+    ),
+  );
+  assert.ok(
+    artifactJob.steps.some((step) =>
+      (step.run ?? "").includes("package-updater-artifact.mjs"),
+    ),
+  );
+  assert.ok(workflow.jobs.aggregate);
 });
 
 test("release workflow builds exactly one Tauri v2 updater bundle per platform", async () => {

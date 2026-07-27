@@ -1,0 +1,243 @@
+name: Quality
+
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Exact application commit to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  msrv:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets
+
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:scripts
+      - run: pnpm bindings:check
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  workflow-lint:
+    name: GitHub Actions syntax
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Validate workflow syntax
+        uses: docker://rhysd/actionlint:1.7.12
+
+  shellcheck:
+    name: ShellCheck bundled WSL assets
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Check bundled WSL operation scripts
+        run: >-
+          docker run --rm
+          --volume "$PWD:/work"
+          --workdir /work
+          --entrypoint shellcheck
+          koalaman/shellcheck:v0.10.0
+          -s sh src-tauri/src/environment/wsl/scripts/*.sh
+
+  rust-format:
+    name: Rust formatting
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check Rust formatting
+        shell: bash
+        run: |
+          mkdir -p ci-diagnostics
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check 2>&1 | tee ci-diagnostics/fmt.log
+      - name: Upload Rust formatting diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-format-diagnostics
+          path: ci-diagnostics
+          if-no-files-found: error
+          retention-days: 7
+
+  rust-static:
+    name: Rust static (${{ matrix.os }})
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: Capture runner diagnostics
+        shell: bash
+        run: |
+          mkdir -p ci-diagnostics
+          {
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "image_os=${ImageOS:-unknown}"
+            echo "image_version=${ImageVersion:-unknown}"
+            rustc -Vv
+            cargo -V
+            git --version
+            git config --show-origin --get-regexp '^protocol\..*\.allow$' || true
+          } | tee ci-diagnostics/toolchain.txt
+      - name: Check all Rust targets
+        shell: bash
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --all-targets 2>&1 | tee ci-diagnostics/check.log
+      - name: Lint all Rust targets
+        if: ${{ always() }}
+        shell: bash
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings 2>&1 | tee ci-diagnostics/clippy.log
+      - name: Upload Rust static diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-static-diagnostics-${{ matrix.os }}
+          path: ci-diagnostics
+          if-no-files-found: error
+          retention-days: 7
+
+  rust-test:
+    name: Rust tests (${{ matrix.os }})
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: Capture runner diagnostics
+        shell: bash
+        run: |
+          mkdir -p ci-diagnostics
+          {
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "image_os=${ImageOS:-unknown}"
+            echo "image_version=${ImageVersion:-unknown}"
+            rustc -Vv
+            cargo -V
+            git --version
+            git config --show-origin --get-regexp '^protocol\..*\.allow$' || true
+          } | tee ci-diagnostics/toolchain.txt
+      - name: Run Rust tests
+        shell: bash
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml 2>&1 | tee ci-diagnostics/test.log
+      - name: Upload Rust test diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-diagnostics-${{ matrix.os }}
+          path: ci-diagnostics
+          if-no-files-found: error
+          retention-days: 7
+
+  quality-gate:
+    name: Quality gate
+    if: ${{ always() }}
+    needs:
+      - msrv
+      - frontend
+      - workflow-lint
+      - shellcheck
+      - rust-format
+      - rust-static
+      - rust-test
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require every quality job to pass
+        env:
+          MSRV_RESULT: ${{ needs.msrv.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          WORKFLOW_LINT_RESULT: ${{ needs.workflow-lint.result }}
+          SHELLCHECK_RESULT: ${{ needs.shellcheck.result }}
+          RUST_FORMAT_RESULT: ${{ needs.rust-format.result }}
+          RUST_STATIC_RESULT: ${{ needs.rust-static.result }}
+          RUST_TEST_RESULT: ${{ needs.rust-test.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in \
+            "$MSRV_RESULT" \
+            "$FRONTEND_RESULT" \
+            "$WORKFLOW_LINT_RESULT" \
+            "$SHELLCHECK_RESULT" \
+            "$RUST_FORMAT_RESULT" \
+            "$RUST_STATIC_RESULT" \
+            "$RUST_TEST_RESULT"
+          do
+            test "$result" = "success"
+          done
