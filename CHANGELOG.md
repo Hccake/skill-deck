@@ -5,6 +5,25 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0-beta.2] - 2026-07-27
+
+### Added
+
+- **GitHub 访问凭据** — Git 设置支持验证并保存 Token，用于提高更新检查额度和访问授权仓库。
+
+### Changed
+
+- **Agent 筛选体验** — 支持搜索 Agent、查看匹配数量，并改进组合筛选和空状态。
+- **更新检查反馈** — 保留最近一次有效结果，并提供更明确的失败原因和处理入口。
+- **未完成操作反馈** — 统一写操作未完成时的提示、重试和文件检查入口。
+
+### Fixed
+
+- **Environment 稳定性** — 刷新或重连失败时保留当前列表和 Context；Windows 后台任务不再弹出终端窗口。
+- **跨 Environment 复制** — Skill 准备完成后不再依赖来源 Environment。
+- **Eve 目标一致性** — 安装和更新会保持原先选择的 root 或 subagent。
+- **安装向导操作** — 修复部分检查、安装和停止操作被错误拒绝的问题。
+
 ## [1.7.0-beta.1] - 2026-07-24
 
 ### Added
