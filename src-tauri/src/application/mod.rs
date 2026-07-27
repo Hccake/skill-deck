@@ -27,6 +27,7 @@ pub mod source_acquisition;
 pub mod source_clone_gate;
 pub mod source_evidence;
 pub mod source_evidence_provider;
+pub(crate) mod source_evidence_state;
 pub mod source_snapshot_reuse;
 pub mod update;
 pub mod update_check;

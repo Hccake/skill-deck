@@ -82,7 +82,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
@@ -120,7 +120,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
@@ -135,7 +135,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
@@ -150,7 +150,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
@@ -159,7 +159,7 @@ describe('SkillsSection', () => {
     });
   });
 
-  it('shows a completed check state only after an explicit successful check action', async () => {
+  it('shows a completed check state without describing the Skill as updated', async () => {
     render(
       <SkillsSection
         title="Global"
@@ -171,14 +171,37 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
     fireEvent.click(screen.getByText('skills.checkUpdates'));
 
     await waitFor(() => {
-      expect(screen.getByText('skills.updateDone')).toBeTruthy();
+      expect(screen.getByText('skills.checkCompleted')).toBeTruthy();
+      expect(screen.queryByText('skills.updateDone')).toBeNull();
+    });
+  });
+
+  it('does not show a completed state when an explicit check is partial', async () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', { hasUpdate: false, updateStatus: 'cannotCheck', updateReason: 'upstreamUnavailable' })]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={vi.fn(async () => 'partial' as const)}
+      />
+    );
+
+    fireEvent.click(screen.getByText('skills.checkUpdates'));
+
+    await waitFor(() => {
+      expect(screen.queryByText('skills.checkCompleted')).toBeNull();
     });
   });
 
@@ -258,7 +281,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
@@ -271,7 +294,7 @@ describe('SkillsSection', () => {
   });
 
   it('keeps the update check action available when the backend reports a cooling state', async () => {
-    const onCheckUpdates = vi.fn(async () => true);
+    const onCheckUpdates = vi.fn(async () => 'completed' as const);
     render(
       <SkillsSection
         title="Global"
@@ -316,7 +339,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
@@ -335,7 +358,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 
@@ -443,7 +466,7 @@ describe('SkillsSection', () => {
         onPrepareUpdate={vi.fn(async () => true)}
         onDelete={vi.fn()}
         onAdd={vi.fn()}
-        onCheckUpdates={vi.fn(async () => true)}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
       />
     );
 

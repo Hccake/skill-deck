@@ -346,13 +346,20 @@ pub fn build_runtime_source_evidence_coordinator(
     payloads: Arc<PayloadSessionManager>,
     environments: Arc<EnvironmentRegistry>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
-) -> SourceEvidenceCoordinator {
+) -> Result<SourceEvidenceCoordinator, AppError> {
     let detector = Arc::new(RuntimeSourceEvidenceDetector::new(
         payloads,
         environments,
         snapshots.clone(),
     ));
-    SourceEvidenceCoordinator::with_snapshot_reuse(detector, snapshots)
+    let home = dirs::home_dir().ok_or_else(|| AppError::Path {
+        message: "无法确定用户主目录，不能初始化更新检查状态".to_string(),
+    })?;
+    SourceEvidenceCoordinator::with_snapshot_reuse_and_state_path(
+        detector,
+        snapshots,
+        home.join(".skill-deck/state/update-check.json"),
+    )
 }
 
 pub fn build_runtime_update_check_service(

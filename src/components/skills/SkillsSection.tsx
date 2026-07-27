@@ -1,13 +1,13 @@
 // src/components/skills/SkillsSection.tsx
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Check, ArrowUpCircle } from 'lucide-react';
+import { Plus, Check, ArrowUpCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SkillCard } from './SkillCard';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
-import type { AgentId, InstalledSkill, SkillAuditData, SkillScope } from '@/bindings';
+import type { AgentId, InstalledSkill, SkillAuditData, SkillScope, UpdateCheckOutcome } from '@/bindings';
 import {
   buildUpdatePlan,
   isSkillUpdateActive,
@@ -50,7 +50,7 @@ interface SkillsSectionProps {
   onManageAgents?: (skill: InstalledSkill) => void;
   onRepairSource?: (skill: InstalledSkill) => void;
   onAdd: () => void;
-  onCheckUpdates?: () => Promise<boolean>;
+  onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
   emptyState?: React.ReactNode;
 }
 
@@ -134,11 +134,11 @@ export const SkillsSection = memo(function SkillsSection({
   }, []);
 
   const handleCheckUpdates = useCallback(async () => {
-    if (!onCheckUpdates || isCheckingUpdates) return;
-    const succeeded = await onCheckUpdates();
-    if (!succeeded) return;
+    if (!onCheckUpdates) return;
+    const outcome = await onCheckUpdates();
+    if (outcome !== 'completed') return;
     showCheckDone();
-  }, [isCheckingUpdates, onCheckUpdates, showCheckDone]);
+  }, [onCheckUpdates, showCheckDone]);
 
   const openPreparedUpdatePlan = useCallback(async (nextPlan: UpdatePlan, batch: boolean) => {
     if (nextPlan.updatableCount === 0) return;
@@ -242,15 +242,14 @@ export const SkillsSection = memo(function SkillsSection({
                 checkDone && updatesCount === 0 ? (
                   <span className="inline-flex items-center justify-center h-7 px-2 text-xs text-success font-medium gap-1.5">
                     <Check className="h-3.5 w-3.5" />
-                    {t('skills.updateDone')}
+                    {t('skills.checkCompleted')}
                   </span>
                 ) : (
                   <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
-                    disabled={isCheckingUpdates}
                     onClick={() => {
                       void handleCheckUpdates();
                     }}>
-                    <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <RefreshCw className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")} />
                     {t('skills.checkUpdates')}
                   </Button>
                 )

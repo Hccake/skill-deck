@@ -27,6 +27,7 @@ import type {
   SourceUpdateCheckInfo,
   UpdateCheckSelection,
   UpdateCheckResponse,
+  UpdateCheckOutcome,
   UpdateResponse,
 } from '@/bindings';
 
@@ -96,13 +97,30 @@ function mergeSourceUpdateInfo(
 function toUpdateCheckDisplaySnapshot(
   results: SkillUpdateInfo[],
   sources: SourceUpdateCheckInfo[],
+  outcome: UpdateCheckOutcome,
+  checkedAt: number,
 ): UpdateCheckDisplaySnapshot {
   return {
+    outcome,
     sources,
     skillFreshness: Object.fromEntries(
       results.map((result) => [result.name, result.freshness]),
     ),
+    checkedAt,
   };
+}
+
+function preserveLastConfirmedUpdates(
+  previous: SkillUpdateInfo[],
+  next: SkillUpdateInfo[],
+): SkillUpdateInfo[] {
+  const previousByName = new Map(previous.map((result) => [result.name, result]));
+  return next.map((result) => {
+    const last = previousByName.get(result.name);
+    return result.status === 'cannotCheck' && last?.hasUpdate === true
+      ? { ...result, hasUpdate: true }
+      : result;
+  });
 }
 
 function clearLocalUpdateFlags(
@@ -165,7 +183,10 @@ interface SkillsDataState {
   invalidateAgentProjections: () => void;
   syncSkills: (context: ContextRef) => Promise<void>;
   syncUpdates: (context: ContextRef) => Promise<void>;
-  forceCheckUpdates: (context: ContextRef, selection: UpdateCheckSelection) => Promise<boolean>;
+  forceCheckUpdates: (
+    context: ContextRef,
+    selection: UpdateCheckSelection,
+  ) => Promise<UpdateCheckOutcome | null>;
   applyUpdateResult: (context: ContextRef, response: UpdateResponse) => Promise<void>;
   fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
   markSourceRepairSucceeded: (context: ContextRef, skillName: string) => void;
@@ -230,6 +251,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
           ? mergeUpdateInfo(result.skills, updateCache.results, {
               preserveUnmatched: updateCache.completeness === 'partial',
               previousSkills: current.skills,
+              sources: updateCache.sources,
             })
           : result.skills,
       );
@@ -241,7 +263,12 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             [key]: {
               skills,
               updateCheck: updateCache
-                ? toUpdateCheckDisplaySnapshot(updateCache.results, updateCache.sources)
+                ? toUpdateCheckDisplaySnapshot(
+                    updateCache.results,
+                    updateCache.sources,
+                    updateCache.outcome,
+                    updateCache.checkedAt,
+                  )
                 : current.updateCheck,
               agents: result.agents,
               pathExists: result.pathExists,
@@ -319,11 +346,13 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     try {
       const result = await checkUpdatesSafely(context);
       if (!result.ok || !isAdmittedUpdateCheckRequest(ticket)) return;
+      const previous = updateInfoCache.get(key);
       const cacheEntry = {
-        results: result.response.skills,
+        results: preserveLastConfirmedUpdates(previous?.results ?? [], result.response.skills),
         sources: result.response.sources,
         checkedAt: Date.now(),
         completeness: 'complete' as const,
+        outcome: result.response.outcome,
       };
       updateInfoCache.set(key, cacheEntry);
 
@@ -334,8 +363,15 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             ...state.snapshots,
             [key]: {
               ...current,
-              skills: sortSkills(mergeUpdateInfo(current.skills, cacheEntry.results)),
-              updateCheck: toUpdateCheckDisplaySnapshot(cacheEntry.results, cacheEntry.sources),
+              skills: sortSkills(mergeUpdateInfo(current.skills, cacheEntry.results, {
+                sources: cacheEntry.sources,
+              })),
+              updateCheck: toUpdateCheckDisplaySnapshot(
+                cacheEntry.results,
+                cacheEntry.sources,
+                cacheEntry.outcome,
+                cacheEntry.checkedAt,
+              ),
             },
           },
         };
@@ -369,10 +405,10 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         mode: 'force',
         selection,
       });
-      if (!isAdmittedUpdateCheckRequest(ticket)) return true;
-      const updates = response.skills;
+      if (!isAdmittedUpdateCheckRequest(ticket)) return response.outcome;
       const now = Date.now();
       const previous = updateInfoCache.get(cacheKey);
+      const updates = preserveLastConfirmedUpdates(previous?.results ?? [], response.skills);
       const results = selection.kind === 'skills'
         ? [
             ...(previous?.results ?? []).filter((item) => (
@@ -385,7 +421,13 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         ? mergeSourceUpdateInfo(previous?.sources ?? [], response.sources)
         : response.sources;
       const completeness = selection.kind === 'skills' ? 'partial' : 'complete';
-      updateInfoCache.set(cacheKey, { results, sources, checkedAt: now, completeness });
+      updateInfoCache.set(cacheKey, {
+        results,
+        sources,
+        checkedAt: now,
+        completeness,
+        outcome: response.outcome,
+      });
       set((state) => {
         const current = state.snapshots[cacheKey] ?? emptyContextSnapshot();
         return {
@@ -395,18 +437,19 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
               ...current,
               skills: sortSkills(mergeUpdateInfo(current.skills, results, {
                 preserveUnmatched: completeness === 'partial',
+                sources,
               })),
-              updateCheck: toUpdateCheckDisplaySnapshot(results, sources),
+              updateCheck: toUpdateCheckDisplaySnapshot(results, sources, response.outcome, now),
             },
           },
         };
       });
-      return true;
+      return response.outcome;
     } catch (e) {
       toast.error(t('skills.checkUpdatesError', {
         error: e instanceof Error ? e.message : String(e),
       }));
-      return false;
+      return null;
     } finally {
       const stillPending = finishUpdateCheckRequest(ticket);
       set((state) => {

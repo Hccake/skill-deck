@@ -277,6 +277,7 @@
     "updateDone": "Updated",
     "updateFailed": "Failed",
     "checkUpdates": "Check Updates",
+    "checkCompleted": "Check complete",
     "checkUpdatesError": "Failed to check updates: {{error}}",
     "updateEvidence": {
       "title": "Update check details",
@@ -301,6 +302,18 @@
         "network": "The network request failed",
         "incompleteEvidence": "The source returned incomplete evidence",
         "sourceUnavailable": "The source is unavailable"
+      },
+      "nextStep": {
+        "configureTokenOrWait": "Wait for the limit to reset, or configure a GitHub Token and try again.",
+        "configureToken": "Configure a valid GitHub Token in Git settings.",
+        "checkSource": "Confirm that the repository and ref still exist.",
+        "checkSourceOrToken": "Check the source address, or configure a GitHub Token with access.",
+        "retry": "Check again after the network connection recovers."
+      },
+      "actions": {
+        "configureToken": "Configure GitHub Token",
+        "openSource": "Open source",
+        "retry": "Check again"
       }
     },
     "upToDate": "Everything is up to date",
@@ -329,6 +342,7 @@
       "reinstallRequired": "Reinstall required",
       "autoCheckUnavailable": "Auto-check unavailable",
       "checkFailed": "Check failed",
+      "checkIncomplete": "Check incomplete",
       "deletedUpstream": "Deleted upstream",
       "deleted-upstream": "Deleted upstream"
     },

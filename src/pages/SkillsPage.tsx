@@ -137,7 +137,7 @@ export function SkillsPage() {
   }, [selectedContext, selectedGlobalContext, selectedProjectPath]);
 
   const handleDetailCheckUpdates = useCallback(() => {
-    if (!selectedSkill) return Promise.resolve(false);
+    if (!selectedSkill) return Promise.resolve(null);
     return forceCheckUpdates(
       selectedSkill.scope === 'project' ? selectedContext : selectedGlobalContext,
       {

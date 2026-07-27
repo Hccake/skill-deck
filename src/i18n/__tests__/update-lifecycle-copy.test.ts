@@ -50,7 +50,11 @@ describe('update lifecycle copy', () => {
         updateEvidence: {
           freshness: Record<string, string>;
           failure: Record<string, string>;
+          nextStep: Record<string, string>;
+          actions: Record<string, string>;
         };
+        updateStatusLabel: Record<string, string>;
+        checkCompleted: string;
       };
       for (const status of updateStatuses) {
         expect(skills.updateStatus[status], status).toEqual(expect.any(String));
@@ -65,6 +69,16 @@ describe('update lifecycle copy', () => {
       for (const failure of evidenceFailures) {
         expect(skills.updateEvidence.failure[failure], failure).toEqual(expect.any(String));
       }
+      for (const nextStep of [
+        'configureTokenOrWait', 'configureToken', 'checkSource', 'checkSourceOrToken', 'retry',
+      ]) {
+        expect(skills.updateEvidence.nextStep[nextStep], nextStep).toEqual(expect.any(String));
+      }
+      for (const action of ['configureToken', 'openSource', 'retry']) {
+        expect(skills.updateEvidence.actions[action], action).toEqual(expect.any(String));
+      }
+      expect(skills.updateStatusLabel.checkIncomplete).toEqual(expect.any(String));
+      expect(skills.checkCompleted).toEqual(expect.any(String));
     }
   });
 });

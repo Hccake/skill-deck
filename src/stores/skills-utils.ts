@@ -11,6 +11,7 @@ import type {
   SkillUpdateCheckStatus,
   SkillUpdateInfo,
   SourceUpdateCheckInfo,
+  UpdateCheckOutcome,
   UpdateCheckReasonCode,
 } from '@/bindings';
 
@@ -18,12 +19,15 @@ export type SkillListItem = InstalledSkill & {
   updateStatus?: SkillUpdateCheckStatus | null;
   updateReason?: string | null;
   updateFreshness?: EvidenceFreshness | null;
+  updateEvidence?: SourceUpdateCheckInfo | null;
   skillPath?: string | null;
 };
 
 export interface UpdateCheckDisplaySnapshot {
+  outcome: UpdateCheckOutcome;
   sources: SourceUpdateCheckInfo[];
   skillFreshness: Record<string, EvidenceFreshness>;
+  checkedAt: number;
 }
 
 export type SkillUpdateDisplayStatus =
@@ -46,6 +50,7 @@ export function sortSkills(skills: SkillListItem[]): SkillListItem[] {
 interface MergeUpdateInfoOptions {
   preserveUnmatched?: boolean;
   previousSkills?: SkillListItem[];
+  sources?: SourceUpdateCheckInfo[];
 }
 
 /** 将 check_updates 结果合并到 skills 列表 */
@@ -75,6 +80,9 @@ export function mergeUpdateInfo(
     const previous = options.preserveUnmatched
       ? previousSkillMap.get(updateIdentityKey(s))
       : undefined;
+    const updateEvidence = update
+      ? findSourceUpdateInfo(update, options.sources ?? [])
+      : undefined;
     return {
       ...s,
       skillPath: update?.skillPath ?? s.skillPath ?? null,
@@ -82,6 +90,7 @@ export function mergeUpdateInfo(
       updateStatus: update?.status ?? previous?.updateStatus ?? s.updateStatus ?? null,
       updateReason: update?.reason ?? previous?.updateReason ?? s.updateReason ?? null,
       updateFreshness: update?.freshness ?? previous?.updateFreshness ?? s.updateFreshness ?? null,
+      updateEvidence: updateEvidence ?? previous?.updateEvidence ?? s.updateEvidence ?? null,
     };
   });
 }
@@ -92,6 +101,7 @@ export const updateInfoCache = new Map<string, {
   sources: SourceUpdateCheckInfo[];
   checkedAt: number;
   completeness: 'complete' | 'partial';
+  outcome: UpdateCheckOutcome;
 }>();
 
 /** 清除缓存中指定 skill 的 hasUpdate 标记 — 更新成功后调用，防止 syncSkills 恢复旧标记 */
@@ -241,6 +251,29 @@ export function resolveEvidenceFailureReasonI18nKey(reason: EvidenceFailureReaso
   return EVIDENCE_FAILURE_I18N_KEYS[reason];
 }
 
+const EVIDENCE_FAILURE_NEXT_STEP_I18N_KEYS = {
+  rateLimited: 'skills.updateEvidence.nextStep.configureTokenOrWait',
+  authenticationRequired: 'skills.updateEvidence.nextStep.configureToken',
+  refNotFound: 'skills.updateEvidence.nextStep.checkSource',
+  repositoryNotFound: 'skills.updateEvidence.nextStep.checkSource',
+  notFoundOrUnauthorized: 'skills.updateEvidence.nextStep.checkSourceOrToken',
+  network: 'skills.updateEvidence.nextStep.retry',
+  incompleteEvidence: 'skills.updateEvidence.nextStep.retry',
+  sourceUnavailable: 'skills.updateEvidence.nextStep.retry',
+} satisfies Record<EvidenceFailureReason, string>;
+
+export function resolveEvidenceFailureNextStepI18nKey(reason: EvidenceFailureReason): string {
+  return EVIDENCE_FAILURE_NEXT_STEP_I18N_KEYS[reason];
+}
+
+export function hasIncompleteUpdateCheck(
+  skill: Pick<SkillListItem, 'updateStatus' | 'updateReason' | 'updateEvidence'>,
+): boolean {
+  return skill.updateStatus === 'cannotCheck'
+    && skill.updateReason === 'upstreamUnavailable'
+    && skill.updateEvidence?.lastAttempt?.failure != null;
+}
+
 export function isSkillUpdateActive(
   status: SkillUpdateDisplayStatus | undefined,
 ): status is SkillUpdateActivePhase {
@@ -255,8 +288,12 @@ export function resolveUpdateStatusLabelI18nKey(
   skill: Pick<InstalledSkill, 'hasUpdate' | 'canRunUpdate' | 'canCheckForUpdates'> & {
     updateStatus?: SkillUpdateCheckStatus | null;
     updateReason?: string | null;
+    updateEvidence?: SourceUpdateCheckInfo | null;
   }
 ): string | null {
+  if (hasIncompleteUpdateCheck(skill)) {
+    return 'skills.updateStatusLabel.checkIncomplete';
+  }
   if (skill.hasUpdate === true && skill.canRunUpdate !== false) {
     return 'skills.updateStatusLabel.available';
   }
@@ -585,4 +622,37 @@ function findUpdateForSkill(
   }
 
   return undefined;
+}
+
+function normalizeSourceIdentity(source: string | null | undefined): string | null {
+  const value = source?.trim();
+  if (!value) return null;
+  if (/^[^\s/:]+\/[^\s/]+$/.test(value)) {
+    return `github.com/${value.replace(/\.git$/i, '')}`.toLocaleLowerCase('en-US');
+  }
+  if (!value.includes('://') && value.includes('@') && value.includes(':')) {
+    const [, hostAndPath = value] = value.split('@');
+    return hostAndPath.replace(':', '/').replace(/\.git$/i, '').toLocaleLowerCase('en-US');
+  }
+  try {
+    const url = new URL(value);
+    return `${url.host}${url.pathname}`
+      .replace(/^\/+|\/+$/g, '')
+      .replace(/\.git$/i, '')
+      .toLocaleLowerCase('en-US');
+  } catch {
+    return value.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').toLocaleLowerCase('en-US');
+  }
+}
+
+function findSourceUpdateInfo(
+  update: SkillUpdateInfo,
+  sources: SourceUpdateCheckInfo[],
+): SourceUpdateCheckInfo | null {
+  const identity = normalizeSourceIdentity(update.sourceUrl ?? update.source);
+  if (!identity) return null;
+  return sources.find((source) => (
+    normalizeSourceIdentity(source.source) === identity
+    && (!update.gitRef || source.requestedRef === update.gitRef)
+  )) ?? null;
 }

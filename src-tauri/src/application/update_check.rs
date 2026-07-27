@@ -9,7 +9,8 @@ use crate::application::source_evidence::{
 use crate::application::update::{
     derive_update_capability_from_metadata, CheckUpdateCapability, SkillUpdateCheckStatus,
     SkillUpdateInfo, SourceUpdateCheckInfo, UpdateCapabilityReasonCode, UpdateCheckMode,
-    UpdateCheckReasonCode, UpdateCheckRequest, UpdateCheckResponse, UpdateCheckSelection,
+    UpdateCheckOutcome, UpdateCheckReasonCode, UpdateCheckRequest, UpdateCheckResponse,
+    UpdateCheckSelection,
 };
 use crate::core::local_lock::LocalSkillLockEntry;
 use crate::core::lossless_lock::LockSchema;
@@ -70,10 +71,12 @@ where
             let group = group.clone();
             let evidence = self.evidence.clone();
             let mode = request.mode;
+            let environment = request.context.environment.clone();
             detections.spawn(async move {
                 let result = evidence
                     .check(
                         EvidenceCheckRequest {
+                            environment,
                             key: key.clone(),
                             throttle_key: ProviderThrottleKey::from_identity(
                                 group.identity.as_ref(),
@@ -133,7 +136,39 @@ where
         }
         skills.sort_by(|left, right| left.name.cmp(&right.name));
         sources.sort_by(|left, right| left.source.cmp(&right.source));
-        Ok(UpdateCheckResponse { sources, skills })
+        let outcome = update_check_outcome(&sources, &skills);
+        Ok(UpdateCheckResponse {
+            outcome,
+            sources,
+            skills,
+        })
+    }
+}
+
+fn update_check_outcome(
+    sources: &[SourceUpdateCheckInfo],
+    skills: &[SkillUpdateInfo],
+) -> UpdateCheckOutcome {
+    let source_completed = |source: &&SourceUpdateCheckInfo| {
+        matches!(
+            source.freshness,
+            EvidenceFreshness::Fresh | EvidenceFreshness::Cached
+        ) && source
+            .last_attempt
+            .as_ref()
+            .is_none_or(|attempt| attempt.failure.is_none())
+    };
+    let completed = sources.iter().filter(source_completed).count()
+        + skills
+            .iter()
+            .filter(|skill| skill.status != SkillUpdateCheckStatus::CannotCheck)
+            .count();
+    let incomplete = sources.len() + skills.len() - completed;
+
+    match (completed, incomplete) {
+        (_, 0) => UpdateCheckOutcome::Completed,
+        (0, _) => UpdateCheckOutcome::NotCompleted,
+        _ => UpdateCheckOutcome::Partial,
     }
 }
 
@@ -368,8 +403,8 @@ mod tests {
     use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
     use crate::application::mutation::plan::RuntimeRevisions;
     use crate::application::source_evidence::{
-        EvidenceDetectionOutcome, EvidenceDetectionRequest, EvidenceFuture,
-        RemoteEvidenceObservation, SourceEvidenceDetector,
+        EvidenceDetectionFailure, EvidenceDetectionOutcome, EvidenceDetectionRequest,
+        EvidenceFuture, RemoteEvidenceObservation, SourceEvidenceDetector,
     };
     use crate::core::lossless_lock::LosslessLockDocument;
     use crate::core::NormalizedUpdateMetadata;
@@ -530,6 +565,22 @@ mod tests {
         })
     }
 
+    fn source_result(
+        freshness: EvidenceFreshness,
+        last_attempt: Option<crate::application::source_evidence::EvidenceAttempt>,
+    ) -> SourceUpdateCheckInfo {
+        SourceUpdateCheckInfo {
+            source: "owner/repo".to_string(),
+            requested_ref: Some("main".to_string()),
+            resolved_ref: Some("refs/heads/main".to_string()),
+            ref_revision: Some("revision-1".to_string()),
+            checked_at_epoch_ms: Some(1_000),
+            expires_at_epoch_ms: Some(3_601_000),
+            freshness,
+            last_attempt,
+        }
+    }
+
     fn service(
         values: Vec<InstallPlanningFacts>,
         detector: Arc<RecordingDetector>,
@@ -606,6 +657,82 @@ mod tests {
             ])]
         );
         assert_eq!(response.skills.len(), 2);
+        assert_eq!(
+            response.outcome,
+            crate::application::update::UpdateCheckOutcome::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_and_uncheckable_skills_produce_partial_outcome() {
+        let lock = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-skills/alpha"},"legacy":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/legacy"}}}"#;
+        let detector = Arc::new(RecordingDetector {
+            requested: Mutex::new(Vec::new()),
+            outcome: observation(&["skills/alpha"]),
+        });
+
+        let response = service(vec![facts(lock), facts(lock)], detector)
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: UpdateCheckSelection::All,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.outcome,
+            crate::application::update::UpdateCheckOutcome::Partial
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_sources_produce_not_completed_outcome() {
+        let lock = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-skills/alpha"}}}"#;
+        let detector = Arc::new(RecordingDetector {
+            requested: Mutex::new(Vec::new()),
+            outcome: EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("offline")),
+        });
+
+        let response = service(vec![facts(lock), facts(lock)], detector)
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: UpdateCheckSelection::All,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.outcome,
+            crate::application::update::UpdateCheckOutcome::NotCompleted
+        );
+    }
+
+    #[test]
+    fn cached_source_without_current_environment_attempt_is_completed() {
+        let sources = [source_result(EvidenceFreshness::Cached, None)];
+
+        assert_eq!(
+            update_check_outcome(&sources, &[]),
+            crate::application::update::UpdateCheckOutcome::Completed
+        );
+    }
+
+    #[test]
+    fn cached_source_with_failed_refresh_is_not_completed() {
+        let sources = [source_result(
+            EvidenceFreshness::Cached,
+            Some(crate::application::source_evidence::EvidenceAttempt {
+                checked_at_epoch_ms: 2_000,
+                failure: Some(EvidenceDetectionFailure::network("offline")),
+            }),
+        )];
+
+        assert_eq!(
+            update_check_outcome(&sources, &[]),
+            crate::application::update::UpdateCheckOutcome::NotCompleted
+        );
     }
 
     #[tokio::test]

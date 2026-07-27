@@ -513,6 +513,7 @@ mod tests {
         )
         .unwrap();
         EvidenceDetectionRequest {
+            environment: EnvironmentRef::Host,
             key: RemoteEvidenceKey::from_identity(&identity),
             requested_skill_paths: BTreeSet::from([skill_path.to_string()]),
             acquisition: Arc::new(identity.acquisition().clone()),
@@ -757,6 +758,7 @@ mod tests {
         let outcome = detector
             .detect(
                 EvidenceDetectionRequest {
+                    environment: EnvironmentRef::Host,
                     key: RemoteEvidenceKey::from_identity(&identity),
                     requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
                     acquisition: Arc::new(identity.acquisition().clone()),
@@ -816,6 +818,7 @@ mod tests {
         ));
         let coordinator = SourceEvidenceCoordinator::with_snapshot_reuse(detector, snapshots);
         let request = |path: &str| EvidenceCheckRequest {
+            environment: EnvironmentRef::Host,
             key: RemoteEvidenceKey::from_identity(&identity),
             throttle_key: ProviderThrottleKey::from_identity(&identity),
             mode: EvidenceCheckMode::Force,
@@ -863,6 +866,7 @@ mod tests {
             git_transport.clone(),
         );
         let request = || EvidenceDetectionRequest {
+            environment: EnvironmentRef::Host,
             key: RemoteEvidenceKey::from_identity(&identity),
             requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
             acquisition: Arc::new(identity.acquisition().clone()),
@@ -911,6 +915,7 @@ mod tests {
             git_transport.clone(),
         );
         let request = || EvidenceDetectionRequest {
+            environment: EnvironmentRef::Host,
             key: RemoteEvidenceKey::from_identity(&identity),
             requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
             acquisition: Arc::new(identity.acquisition().clone()),
