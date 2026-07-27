@@ -216,10 +216,6 @@ pub struct EvidenceCheckRequest {
 
 #[derive(Clone)]
 pub struct EvidenceDetectionRequest {
-    #[expect(
-        dead_code,
-        reason = "the request carries Environment identity for provider-specific execution"
-    )]
     pub environment: EnvironmentRef,
     pub key: RemoteEvidenceKey,
     pub requested_skill_paths: BTreeSet<String>,

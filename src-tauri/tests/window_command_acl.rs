@@ -108,6 +108,21 @@ fn complete_agent_configuration() -> &'static str {
     "complete-agent-configuration"
 }
 
+#[tauri::command]
+fn get_github_credential_status() -> &'static str {
+    "get-github-credential-status"
+}
+
+#[tauri::command]
+fn save_github_credential() -> &'static str {
+    "save-github-credential"
+}
+
+#[tauri::command]
+fn clear_github_credential() -> &'static str {
+    "clear-github-credential"
+}
+
 fn test_app() -> App<MockRuntime> {
     mock_builder()
         .invoke_handler(tauri::generate_handler![
@@ -132,6 +147,9 @@ fn test_app() -> App<MockRuntime> {
             check_application_update,
             request_agent_configuration,
             complete_agent_configuration,
+            get_github_credential_status,
+            save_github_credential,
+            clear_github_credential,
         ])
         .build(tauri::generate_context!())
         .expect("mock Tauri app")
@@ -205,6 +223,18 @@ fn main_window_allows_skill_repair_commands() {
     assert_eq!(
         invoke(&main, "complete_agent_configuration"),
         Ok(Value::from("complete-agent-configuration"))
+    );
+    assert_eq!(
+        invoke(&main, "get_github_credential_status"),
+        Ok(Value::from("get-github-credential-status"))
+    );
+    assert_eq!(
+        invoke(&main, "save_github_credential"),
+        Ok(Value::from("save-github-credential"))
+    );
+    assert_eq!(
+        invoke(&main, "clear_github_credential"),
+        Ok(Value::from("clear-github-credential"))
     );
     assert_denied(
         invoke(&main, "request_agent_configuration"),
@@ -293,6 +323,18 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "check_application_update"),
         "check_application_update",
+    );
+    assert_denied(
+        invoke(&wizard, "get_github_credential_status"),
+        "get_github_credential_status",
+    );
+    assert_denied(
+        invoke(&wizard, "save_github_credential"),
+        "save_github_credential",
+    );
+    assert_denied(
+        invoke(&wizard, "clear_github_credential"),
+        "clear_github_credential",
     );
 }
 

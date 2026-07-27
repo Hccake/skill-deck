@@ -137,6 +137,30 @@ async saveDefaultTargetAgents(context: ContextRef, defaults: DefaultTargetAgents
     else return { status: "error", error: e  as any };
 }
 },
+async getGithubCredentialStatus() : Promise<Result<GithubCredentialStatus, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_github_credential_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveGithubCredential(token: string) : Promise<Result<GithubCredentialSaveResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_github_credential", { token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async clearGithubCredential() : Promise<Result<GithubCredentialClearResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_github_credential") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async fetchAvailable(context: ContextRef, source: string, operationId: string) : Promise<Result<FetchResult, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("fetch_available", { context, source, operationId }) };
@@ -618,6 +642,12 @@ riskPolicy: InstallRiskPolicy;
  * 可用的 skills 列表
  */
 skills: AvailableSkill[] }
+export type GithubCredentialClearResult = { cleared: boolean; status: GithubCredentialStatus }
+export type GithubCredentialSaveResult = { saved: boolean; status: GithubCredentialStatus }
+export type GithubCredentialSource = "keyring" | "githubTokenEnv" | "ghTokenEnv" | "none"
+export type GithubCredentialStatus = { source: GithubCredentialSource; storage: GithubCredentialStorageStatus; validation: GithubCredentialValidationStatus; account: string | null; rateLimitRemaining: number | null; rateLimitLimit: number | null; rateLimitResetAtEpochMs: number | null; retryAtEpochMs: number | null }
+export type GithubCredentialStorageStatus = "available" | "unavailable"
+export type GithubCredentialValidationStatus = "unconfigured" | "verified" | "invalid" | "rateLimited" | "unavailable"
 /**
  * 安装模式
  */

@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { GitCloneTimeoutSection } from './GitCloneTimeoutSection';
+import { GithubCredentialSection } from './GithubCredentialSection';
 
 export function GitSettingsPage() {
   const { t } = useTranslation();
@@ -14,6 +15,10 @@ export function GitSettingsPage() {
           {t('settings.git.description')}
         </p>
       </header>
+
+      <div className="rounded-lg border border-border/60 bg-background px-4 py-4">
+        <GithubCredentialSection />
+      </div>
 
       <div className="rounded-lg border border-border/60 bg-background px-4 py-4">
         <GitCloneTimeoutSection />

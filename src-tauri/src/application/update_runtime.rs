@@ -22,9 +22,9 @@ use crate::application::update::{
 };
 use crate::application::update_check::UpdateCheckService;
 use crate::application::update_planner::ConcreteUpdatePlanner;
-use crate::core::compute_local_ref_revision;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::source_identity::{NormalizedRef, SourceProvider};
+use crate::core::{compute_local_ref_revision, GithubTokenProvider};
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::EnvironmentRegistry;
@@ -346,11 +346,13 @@ pub fn build_runtime_source_evidence_coordinator(
     payloads: Arc<PayloadSessionManager>,
     environments: Arc<EnvironmentRegistry>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
+    github_token_provider: Arc<dyn GithubTokenProvider>,
 ) -> Result<SourceEvidenceCoordinator, AppError> {
     let detector = Arc::new(RuntimeSourceEvidenceDetector::new(
         payloads,
         environments,
         snapshots.clone(),
+        github_token_provider,
     ));
     let home = dirs::home_dir().ok_or_else(|| AppError::Path {
         message: "无法确定用户主目录，不能初始化更新检查状态".to_string(),

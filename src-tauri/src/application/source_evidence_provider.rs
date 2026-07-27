@@ -15,7 +15,9 @@ use crate::application::source_snapshot_reuse::{PayloadAcquisitionKey, SourceSna
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::source_identity::{NormalizedRef, SourceProvider};
-use crate::core::{GithubApiClient, GithubTreeFailure, GithubTreeFetchOutcome};
+use crate::core::{
+    GithubApiClient, GithubTokenProvider, GithubTreeFailure, GithubTreeFetchOutcome,
+};
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::environment::wsl::EnvironmentRegistry;
 use crate::error::AppError;
@@ -35,12 +37,13 @@ impl RuntimeSourceEvidenceDetector {
         payloads: Arc<PayloadSessionManager>,
         environments: Arc<EnvironmentRegistry>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
+        github_token_provider: Arc<dyn GithubTokenProvider>,
     ) -> Self {
         Self {
             payloads,
             environments,
             snapshots,
-            github: GithubApiClient::new(),
+            github: GithubApiClient::with_token_provider(github_token_provider),
             git_transport: Arc::new(ProcessGitTransport),
         }
     }
@@ -193,15 +196,15 @@ impl RuntimeSourceEvidenceDetector {
         cancellation: CancellationSignal,
     ) -> Result<EvidenceDetectionOutcome, AppError> {
         let source = request.acquisition.source().to_string();
-        let parsed = request
-            .acquisition
-            .parsed_source(request.key.remote.provider());
+        let provider = request.key.remote.provider().clone();
+        let parsed = request.acquisition.parsed_source(&provider);
+        let environment = request.environment.clone();
         let acquisition_key = PayloadAcquisitionKey::new(
             request.acquisition_transport_identity.clone(),
             request.key.normalized_ref.clone(),
-            &EnvironmentRef::Host,
+            &environment,
         );
-        let reusable = if previous.is_some() {
+        let reusable = if previous.is_some() && matches!(&environment, EnvironmentRef::Host) {
             let probe_source = source.clone();
             let probe_ref = request.acquisition.git_ref().map(ToString::to_string);
             let probe_cancellation = cancellation.clone();
@@ -240,7 +243,7 @@ impl RuntimeSourceEvidenceDetector {
                 )
                 .discover_parsed_with_cancellation(
                     ContextRef {
-                        environment: EnvironmentRef::Host,
+                        environment: environment.clone(),
                         scope: ContextScope::Global,
                     },
                     parsed,
@@ -256,13 +259,12 @@ impl RuntimeSourceEvidenceDetector {
                 let snapshot = self
                     .payloads
                     .source_snapshot(&discovery.discovery_session)?;
-                let ref_revision = match snapshot.location() {
-                    DiscoverySourceLocation::Native { ref_revision, .. } => ref_revision.clone(),
-                    DiscoverySourceLocation::WslNative { .. } => None,
-                }
-                .ok_or_else(|| AppError::GitCloneFailed {
-                    message: "cloned source has no resolvable HEAD revision".to_string(),
-                })?;
+                let ref_revision =
+                    discovery_ref_revision(snapshot.location()).ok_or_else(|| {
+                        AppError::GitCloneFailed {
+                            message: "cloned source has no resolvable HEAD revision".to_string(),
+                        }
+                    })?;
                 (discovery.discovery_session, ref_revision)
             }
         };
@@ -296,10 +298,14 @@ impl RuntimeSourceEvidenceDetector {
         let mut skill_revisions = BTreeMap::new();
         for ((skill_path, _), handle) in selected_paths.into_iter().zip(handles) {
             let lease = self.payloads.pin_verified(&handle).await?;
-            skill_revisions.insert(
-                skill_path,
-                SkillRevision::CliContentHash(lease.planning_metadata().computed_hash.clone()),
-            );
+            let metadata = lease.planning_metadata();
+            if let Some(revision) = clone_skill_revision(
+                provider.clone(),
+                metadata.computed_hash.clone(),
+                metadata.upstream_revision.clone(),
+            ) {
+                skill_revisions.insert(skill_path, revision);
+            }
         }
 
         let requested_ref = request.key.normalized_ref;
@@ -321,6 +327,26 @@ impl RuntimeSourceEvidenceDetector {
     }
 }
 
+fn discovery_ref_revision(location: &DiscoverySourceLocation) -> Option<String> {
+    match location {
+        DiscoverySourceLocation::Native { ref_revision, .. }
+        | DiscoverySourceLocation::WslNative { ref_revision, .. } => ref_revision.clone(),
+    }
+}
+
+fn clone_skill_revision(
+    provider: SourceProvider,
+    computed_hash: String,
+    upstream_revision: Option<String>,
+) -> Option<SkillRevision> {
+    match provider {
+        SourceProvider::Github => upstream_revision.map(SkillRevision::GitTreeOid),
+        SourceProvider::Gitlab | SourceProvider::Git => {
+            Some(SkillRevision::CliContentHash(computed_hash))
+        }
+    }
+}
+
 impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
     fn detect<'a>(
         &'a self,
@@ -329,11 +355,13 @@ impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
         cancellation: CancellationSignal,
     ) -> EvidenceFuture<'a> {
         Box::pin(async move {
-            match request.key.remote.provider() {
-                SourceProvider::Gitlab | SourceProvider::Git => {
+            match (&request.environment, request.key.remote.provider()) {
+                (EnvironmentRef::Host, SourceProvider::Github) => {
+                    self.detect_github(request, _previous).await
+                }
+                (_, SourceProvider::Github | SourceProvider::Gitlab | SourceProvider::Git) => {
                     self.detect_by_clone(request, _previous, cancellation).await
                 }
-                SourceProvider::Github => self.detect_github(request, _previous).await,
             }
         })
     }
@@ -593,6 +621,46 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn github_wsl_refresh_does_not_use_the_host_api_client() {
+        let fixture = HttpFixture::new(vec![HttpResponse {
+            status: "200 OK",
+            headers: vec![("Content-Type", "application/json")],
+            body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[]}"#,
+        }]);
+        let mut request = github_request("skills/alpha");
+        request.environment = EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        };
+
+        let _ = github_detector(&fixture)
+            .detect(request, None, CancellationSignal::default())
+            .await
+            .unwrap();
+
+        assert!(fixture.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn clone_revision_keeps_github_tree_oid_and_generic_git_content_hash_distinct() {
+        assert_eq!(
+            clone_skill_revision(
+                SourceProvider::Github,
+                "content-hash".to_string(),
+                Some("tree-oid".to_string()),
+            ),
+            Some(SkillRevision::GitTreeOid("tree-oid".to_string()))
+        );
+        assert_eq!(
+            clone_skill_revision(
+                SourceProvider::Git,
+                "content-hash".to_string(),
+                Some("tree-oid".to_string()),
+            ),
+            Some(SkillRevision::CliContentHash("content-hash".to_string()))
+        );
+    }
+
     fn previous_github_evidence() -> RemoteEvidenceEntry {
         RemoteEvidenceEntry {
             checked_at_epoch_ms: 1,
@@ -793,6 +861,60 @@ mod tests {
             1
         );
         assert_eq!(git_transport.clone_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn clone_detector_routes_wsl_refresh_away_from_host_git_transport() {
+        let remote = SkillTreeFixture::new(&["skills/alpha"]);
+        let parsed = ParsedSource {
+            source_type: SourceType::Git,
+            url: remote.source(),
+            subpath: None,
+            local_path: None,
+            git_ref: Some("main".to_string()),
+            skill_filter: None,
+        };
+        let identity = SourceIdentity::from_parsed(&parsed).unwrap();
+        let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
+        let detector = RuntimeSourceEvidenceDetector::with_git_transport(
+            payloads(),
+            Arc::new(EnvironmentRegistry::default()),
+            Arc::new(SourceSnapshotReuseIndex::default()),
+            git_transport.clone(),
+        );
+
+        let _ = detector
+            .detect(
+                EvidenceDetectionRequest {
+                    environment: EnvironmentRef::Wsl {
+                        distro_name: "Ubuntu".to_string(),
+                    },
+                    key: RemoteEvidenceKey::from_identity(&identity),
+                    requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
+                    acquisition: Arc::new(identity.acquisition().clone()),
+                    acquisition_transport_identity: identity.acquisition_transport().clone(),
+                },
+                None,
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(git_transport.clone_count(), 0);
+    }
+
+    #[test]
+    fn wsl_native_snapshot_exposes_its_git_revision() {
+        let location = DiscoverySourceLocation::WslNative {
+            distro_name: "Ubuntu".to_string(),
+            linux_root: "/tmp/skill-deck-source".to_string(),
+            ref_revision: Some("wsl-revision-1".to_string()),
+        };
+
+        assert_eq!(
+            discovery_ref_revision(&location).as_deref(),
+            Some("wsl-revision-1")
+        );
     }
 
     #[tokio::test]
