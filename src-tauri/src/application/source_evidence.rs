@@ -16,7 +16,7 @@ use crate::core::source_identity::{
 };
 use crate::error::AppError;
 
-pub const EVIDENCE_TTL_MS: u64 = 15 * 60 * 1_000;
+pub const EVIDENCE_TTL_MS: u64 = 60 * 60 * 1_000;
 pub const DETECTOR_CONCURRENCY_LIMIT: usize = 4;
 const NETWORK_BACKOFF_BASE_MS: u64 = 30_000;
 const NETWORK_BACKOFF_MAX_MS: u64 = 5 * 60 * 1_000;
@@ -1035,11 +1035,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn automatic_reuses_successful_evidence_for_fifteen_minutes() {
-        let detector = Arc::new(ScriptedDetector::new([modified(
-            "revision-1",
-            [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
-        )]));
+    async fn automatic_reuses_successful_evidence_for_one_hour() {
+        let detector = Arc::new(ScriptedDetector::new([
+            modified(
+                "revision-1",
+                [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
+            ),
+            modified(
+                "revision-2",
+                [("skills/alpha", SkillRevision::GitTreeOid("tree-b".into()))],
+            ),
+        ]));
         let now = Arc::new(AtomicU64::new(1_000));
         let coordinator = coordinator(detector.clone(), now.clone());
 
@@ -1050,8 +1056,16 @@ mod tests {
             )
             .await
             .unwrap();
-        now.store(1_000 + EVIDENCE_TTL_MS - 1, Ordering::SeqCst);
+        now.store(1_000 + 59 * 60 * 1_000, Ordering::SeqCst);
         let cached = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        now.store(1_000 + 60 * 60 * 1_000 + 1, Ordering::SeqCst);
+        let refreshed = coordinator
             .check(
                 request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
@@ -1061,7 +1075,12 @@ mod tests {
 
         assert_eq!(first.freshness, EvidenceFreshness::Fresh);
         assert_eq!(cached.freshness, EvidenceFreshness::Cached);
-        assert_eq!(detector.calls(), 1);
+        assert_eq!(refreshed.freshness, EvidenceFreshness::Fresh);
+        assert_eq!(
+            refreshed.evidence.unwrap().snapshot_id.commit_revision,
+            "revision-2"
+        );
+        assert_eq!(detector.calls(), 2);
     }
 
     #[tokio::test]

@@ -91,7 +91,7 @@ impl RuntimeSourceEvidenceDetector {
             .github
             .fetch_tree(request.key.remote.repository(), &requested_ref, validation)
             .await;
-        if matches!(outcome, GithubTreeFetchOutcome::NotModified { .. }) && previous.is_none() {
+        if matches!(outcome, GithubTreeFetchOutcome::NotModified) && previous.is_none() {
             outcome = self
                 .github
                 .fetch_tree(request.key.remote.repository(), &requested_ref, None)
@@ -147,21 +147,8 @@ impl RuntimeSourceEvidenceDetector {
                     snapshot_facts: None,
                 })
             }
-            GithubTreeFetchOutcome::NotModified { ref_revision } => match previous {
-                Some(previous) if previous.snapshot_id.commit_revision == ref_revision => {
-                    EvidenceDetectionOutcome::NotModified
-                }
-                Some(previous) => EvidenceDetectionOutcome::Modified(RemoteEvidenceObservation {
-                    snapshot_id: RemoteSnapshotId::new(
-                        request.key.normalized_ref,
-                        requested_ref,
-                        ref_revision,
-                    ),
-                    provider_validation: previous.provider_validation,
-                    complete_skill_path_catalog: previous.complete_skill_path_catalog,
-                    skill_revisions: previous.skill_revisions,
-                    snapshot_facts: None,
-                }),
+            GithubTreeFetchOutcome::NotModified => match previous {
+                Some(_) => EvidenceDetectionOutcome::NotModified,
                 None => failure(
                     EvidenceFailureReason::IncompleteEvidence,
                     "incomplete GitHub tree",
@@ -543,19 +530,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn github_tree_uses_the_resolved_commit_for_the_following_tree_request() {
-        let fixture = HttpFixture::new(vec![
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json")],
-                body: r#"{"sha":"commit-v1"}"#,
-            },
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json"), ("ETag", "tree-v1")],
-                body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"tree-alpha"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"},{"path":"skills/beta","type":"tree","sha":"tree-beta"},{"path":"skills/beta/SKILL.md","type":"blob","sha":"blob-beta"}]}"#,
-            },
-        ]);
+    async fn github_tree_uses_one_request_and_tree_sha_as_source_revision() {
+        let fixture = HttpFixture::new(vec![HttpResponse {
+            status: "200 OK",
+            headers: vec![("Content-Type", "application/json"), ("ETag", "tree-v1")],
+            body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"tree-alpha"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"},{"path":"skills/beta","type":"tree","sha":"tree-beta"},{"path":"skills/beta/SKILL.md","type":"blob","sha":"blob-beta"}]}"#,
+        }]);
 
         let outcome = github_detector(&fixture)
             .detect(
@@ -573,7 +553,7 @@ mod tests {
             facts.snapshot_id.requested_ref,
             NormalizedRef::Named("main".into())
         );
-        assert_eq!(facts.snapshot_id.commit_revision, "commit-v1");
+        assert_eq!(facts.snapshot_id.commit_revision, "root-tree-v1");
         assert_eq!(facts.complete_skill_path_catalog.len(), 2);
         assert_eq!(
             facts.skill_revisions.get("skills/alpha"),
@@ -581,25 +561,18 @@ mod tests {
         );
         assert!(!facts.skill_revisions.contains_key("skills/beta"));
         let requests = fixture.requests.lock().unwrap();
-        assert!(requests[0].contains("/repos/acme/tools/commits/main"));
-        assert!(requests[1].contains("/repos/acme/tools/git/trees/commit-v1?recursive=1"));
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains("/repos/acme/tools/git/trees/main?recursive=1"));
         assert!(!requests[0].to_ascii_lowercase().contains("if-none-match"));
     }
 
     #[tokio::test]
     async fn github_repo_root_skill_uses_root_tree_revision() {
-        let fixture = HttpFixture::new(vec![
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json")],
-                body: r#"{"sha":"commit-v1"}"#,
-            },
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json")],
-                body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"SKILL.md","type":"blob","sha":"blob-root"}]}"#,
-            },
-        ]);
+        let fixture = HttpFixture::new(vec![HttpResponse {
+            status: "200 OK",
+            headers: vec![("Content-Type", "application/json")],
+            body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"SKILL.md","type":"blob","sha":"blob-root"}]}"#,
+        }]);
 
         let outcome = github_detector(&fixture)
             .detect(github_request(""), None, CancellationSignal::default())
@@ -639,18 +612,11 @@ mod tests {
 
     #[tokio::test]
     async fn github_304_with_unchanged_commit_reuses_previous_facts() {
-        let fixture = HttpFixture::new(vec![
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json")],
-                body: r#"{"sha":"commit-v1"}"#,
-            },
-            HttpResponse {
-                status: "304 Not Modified",
-                headers: vec![],
-                body: "",
-            },
-        ]);
+        let fixture = HttpFixture::new(vec![HttpResponse {
+            status: "304 Not Modified",
+            headers: vec![],
+            body: "",
+        }]);
 
         let outcome = github_detector(&fixture)
             .detect(
@@ -663,26 +629,19 @@ mod tests {
 
         assert_eq!(outcome, EvidenceDetectionOutcome::NotModified);
         let requests = fixture.requests.lock().unwrap();
-        assert!(!requests[0].to_ascii_lowercase().contains("if-none-match"));
-        assert!(requests[1]
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0]
             .to_ascii_lowercase()
             .contains("if-none-match: tree-v1"));
     }
 
     #[tokio::test]
     async fn github_skips_conditional_validation_when_cached_evidence_lacks_path_coverage() {
-        let fixture = HttpFixture::new(vec![
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json")],
-                body: r#"{"sha":"commit-v1"}"#,
-            },
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json"), ("ETag", "tree-v1")],
-                body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"tree-alpha"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"},{"path":"skills/beta","type":"tree","sha":"tree-beta"},{"path":"skills/beta/SKILL.md","type":"blob","sha":"blob-beta"}]}"#,
-            },
-        ]);
+        let fixture = HttpFixture::new(vec![HttpResponse {
+            status: "200 OK",
+            headers: vec![("Content-Type", "application/json"), ("ETag", "tree-v1")],
+            body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"tree-alpha"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"},{"path":"skills/beta","type":"tree","sha":"tree-beta"},{"path":"skills/beta/SKILL.md","type":"blob","sha":"blob-beta"}]}"#,
+        }]);
         let mut previous = previous_github_evidence();
         previous
             .complete_skill_path_catalog
@@ -705,23 +664,17 @@ mod tests {
             Some(&SkillRevision::GitTreeOid("tree-beta".into()))
         );
         let requests = fixture.requests.lock().unwrap();
-        assert!(!requests[1].to_ascii_lowercase().contains("if-none-match"));
+        assert_eq!(requests.len(), 1);
+        assert!(!requests[0].to_ascii_lowercase().contains("if-none-match"));
     }
 
     #[tokio::test]
-    async fn github_304_with_advanced_commit_publishes_new_ref_revision() {
-        let fixture = HttpFixture::new(vec![
-            HttpResponse {
-                status: "200 OK",
-                headers: vec![("Content-Type", "application/json")],
-                body: r#"{"sha":"commit-v2"}"#,
-            },
-            HttpResponse {
-                status: "304 Not Modified",
-                headers: vec![],
-                body: "",
-            },
-        ]);
+    async fn github_304_reuses_the_previous_tree_revision() {
+        let fixture = HttpFixture::new(vec![HttpResponse {
+            status: "304 Not Modified",
+            headers: vec![],
+            body: "",
+        }]);
 
         let outcome = github_detector(&fixture)
             .detect(
@@ -731,48 +684,26 @@ mod tests {
             )
             .await
             .unwrap();
-        let EvidenceDetectionOutcome::Modified(facts) = outcome else {
-            panic!("expected modified identity, got {outcome:?}");
-        };
-
-        assert_eq!(facts.snapshot_id.commit_revision, "commit-v2");
-        assert_eq!(
-            facts.skill_revisions.get("skills/alpha"),
-            Some(&SkillRevision::GitTreeOid("tree-alpha".into()))
-        );
+        assert_eq!(outcome, EvidenceDetectionOutcome::NotModified);
     }
 
     #[tokio::test]
     async fn github_truncated_rate_limit_and_ambiguous_404_are_typed_failures() {
         let cases = [
             (
-                vec![
-                    HttpResponse {
-                        status: "200 OK",
-                        headers: vec![("Content-Type", "application/json")],
-                        body: r#"{"sha":"commit-v1"}"#,
-                    },
-                    HttpResponse {
-                        status: "200 OK",
-                        headers: vec![("Content-Type", "application/json")],
-                        body: r#"{"sha":"root-tree-v1","truncated":true,"tree":[]}"#,
-                    },
-                ],
+                vec![HttpResponse {
+                    status: "200 OK",
+                    headers: vec![("Content-Type", "application/json")],
+                    body: r#"{"sha":"root-tree-v1","truncated":true,"tree":[]}"#,
+                }],
                 EvidenceFailureReason::IncompleteEvidence,
             ),
             (
-                vec![
-                    HttpResponse {
-                        status: "200 OK",
-                        headers: vec![("Content-Type", "application/json")],
-                        body: r#"{"sha":"commit-v1"}"#,
-                    },
-                    HttpResponse {
-                        status: "403 Forbidden",
-                        headers: vec![("X-RateLimit-Remaining", "0"), ("Retry-After", "30")],
-                        body: "",
-                    },
-                ],
+                vec![HttpResponse {
+                    status: "403 Forbidden",
+                    headers: vec![("X-RateLimit-Remaining", "0"), ("Retry-After", "30")],
+                    body: "",
+                }],
                 EvidenceFailureReason::RateLimited,
             ),
             (
