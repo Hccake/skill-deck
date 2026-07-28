@@ -85,6 +85,7 @@ function MutationDiagnosticDetails({
 export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
   const { t } = useTranslation();
   const units = state.installResults?.units ?? EMPTY_MUTATION_UNITS;
+  const warnings = state.installResults?.warnings ?? [];
   const environments = useEnvironmentStore((store) => store.environments);
   const projectsByEnvironment = useProjectStore((store) => store.projectsByEnvironment);
   const presentations = useMemo(
@@ -120,6 +121,12 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
           {failureGuidance}
         </div>
       ) : null}
+
+      {warnings.map((warning) => (
+        <p key={warning} className="text-sm text-warning" role="status">
+          {t(`addSkill.complete.warnings.${warning}`)}
+        </p>
+      ))}
 
       <div className="space-y-2">
         {units.map((unit) => {

@@ -21,13 +21,39 @@ export type SkillListItem = InstalledSkill & {
   updateFreshness?: EvidenceFreshness | null;
   updateEvidence?: SourceUpdateCheckInfo | null;
   skillPath?: string | null;
+  /** 最近一次检查尝试的结果；失败时不覆盖上次已确认的比较结论。 */
+  updateAttempt?: {
+    outcome: UpdateCheckOutcome;
+    reason?: string | null;
+    attemptedAt?: number;
+  } | null;
 };
+
+export function hasCommittedUpdateComparison(
+  skill: Pick<SkillListItem, 'updateStatus'>,
+): boolean {
+  return skill.updateStatus === 'upToDate'
+    || skill.updateStatus === 'updateAvailable'
+    || skill.updateStatus === 'deletedUpstream';
+}
 
 export interface UpdateCheckDisplaySnapshot {
   outcome: UpdateCheckOutcome;
   sources: SourceUpdateCheckInfo[];
   skillFreshness: Record<string, EvidenceFreshness>;
   checkedAt: number;
+}
+
+export function providerCooldownDeadline(
+  sources: readonly SourceUpdateCheckInfo[],
+): number | null {
+  return sources.reduce<number | null>((latest, source) => {
+    const failure = source.lastAttempt?.failure;
+    if (!failure?.providerCooldown || !failure.retryAtEpochMs) return latest;
+    return latest == null
+      ? failure.retryAtEpochMs
+      : Math.max(latest, failure.retryAtEpochMs);
+  }, null);
 }
 
 export type SkillUpdateDisplayStatus =
@@ -83,14 +109,35 @@ export function mergeUpdateInfo(
     const updateEvidence = update
       ? findSourceUpdateInfo(update, options.sources ?? [])
       : undefined;
+    const incompleteAttempt = update
+      && updateEvidence?.lastAttempt?.failure != null
+      && (
+        (update.status === 'cannotCheck' && update.reason === 'upstreamUnavailable')
+        || update.freshness === 'backingOff'
+        || update.freshness === 'coolingDown'
+        || update.freshness === 'unavailable'
+      );
+    const lastConfirmed = previous ?? s;
+    const hasConfirmedComparison = hasCommittedUpdateComparison(lastConfirmed);
     return {
       ...s,
       skillPath: update?.skillPath ?? s.skillPath ?? null,
-      hasUpdate: update?.hasUpdate ?? previous?.hasUpdate ?? (options.preserveUnmatched ? s.hasUpdate : false),
-      updateStatus: update?.status ?? previous?.updateStatus ?? s.updateStatus ?? null,
-      updateReason: update?.reason ?? previous?.updateReason ?? s.updateReason ?? null,
+      hasUpdate: incompleteAttempt && hasConfirmedComparison
+        ? lastConfirmed.hasUpdate
+        : update?.hasUpdate ?? previous?.hasUpdate ?? (options.preserveUnmatched ? s.hasUpdate : false),
+      updateStatus: incompleteAttempt && hasConfirmedComparison
+        ? lastConfirmed.updateStatus
+        : update?.status ?? previous?.updateStatus ?? s.updateStatus ?? null,
+      updateReason: incompleteAttempt && hasConfirmedComparison
+        ? lastConfirmed.updateReason ?? null
+        : update?.reason ?? previous?.updateReason ?? s.updateReason ?? null,
       updateFreshness: update?.freshness ?? previous?.updateFreshness ?? s.updateFreshness ?? null,
       updateEvidence: updateEvidence ?? previous?.updateEvidence ?? s.updateEvidence ?? null,
+      updateAttempt: incompleteAttempt
+        ? { outcome: 'notCompleted', reason: 'upstreamUnavailable', attemptedAt: Date.now() }
+        : update
+          ? { outcome: 'completed', reason: null, attemptedAt: Date.now() }
+          : previous?.updateAttempt ?? s.updateAttempt ?? null,
     };
   });
 }
@@ -267,11 +314,12 @@ export function resolveEvidenceFailureNextStepI18nKey(reason: EvidenceFailureRea
 }
 
 export function hasIncompleteUpdateCheck(
-  skill: Pick<SkillListItem, 'updateStatus' | 'updateReason' | 'updateEvidence'>,
+  skill: Pick<SkillListItem, 'updateStatus' | 'updateReason' | 'updateEvidence' | 'updateAttempt'>,
 ): boolean {
-  return skill.updateStatus === 'cannotCheck'
+  return skill.updateAttempt?.outcome === 'notCompleted'
+    || (skill.updateStatus === 'cannotCheck'
     && skill.updateReason === 'upstreamUnavailable'
-    && skill.updateEvidence?.lastAttempt?.failure != null;
+    && skill.updateEvidence?.lastAttempt?.failure != null);
 }
 
 export function isSkillUpdateActive(
@@ -289,6 +337,7 @@ export function resolveUpdateStatusLabelI18nKey(
     updateStatus?: SkillUpdateCheckStatus | null;
     updateReason?: string | null;
     updateEvidence?: SourceUpdateCheckInfo | null;
+    updateAttempt?: SkillListItem['updateAttempt'];
   }
 ): string | null {
   if (hasIncompleteUpdateCheck(skill)) {
@@ -303,7 +352,7 @@ export function resolveUpdateStatusLabelI18nKey(
   if (skill.updateReason === 'missing-skill-path') {
     return 'skills.updateStatusLabel.needsSourceInfo';
   }
-  if (skill.updateReason === 'missingRemoteHash') {
+  if (skill.updateReason === 'missingRemoteHash' || skill.updateReason === 'missing-remote-hash') {
     return 'skills.updateStatusLabel.reinstallRequired';
   }
   if (skill.updateReason === 'unsupported-source-type' || skill.updateReason === 'local-source') {
@@ -394,7 +443,10 @@ export function resolveSkillMaintenanceAction(
     gitRef?: string | null;
   }
 ): SkillMaintenanceAction {
-  if (skill.updateReason === 'missingRemoteHash' && skill.canRunUpdate !== false) {
+  if (
+    (skill.updateReason === 'missingRemoteHash' || skill.updateReason === 'missing-remote-hash')
+    && skill.canRunUpdate !== false
+  ) {
     return 'direct-reinstall';
   }
   if (canRepairMissingSkillPath(skill)) {
@@ -624,7 +676,7 @@ function findUpdateForSkill(
   return undefined;
 }
 
-function normalizeSourceIdentity(source: string | null | undefined): string | null {
+export function normalizeSourceIdentity(source: string | null | undefined): string | null {
   const value = source?.trim();
   if (!value) return null;
   if (/^[^\s/:]+\/[^\s/]+$/.test(value)) {
@@ -653,6 +705,6 @@ function findSourceUpdateInfo(
   if (!identity) return null;
   return sources.find((source) => (
     normalizeSourceIdentity(source.source) === identity
-    && (!update.gitRef || source.requestedRef === update.gitRef)
+    && (source.requestedRef ?? 'HEAD') === (update.gitRef ?? 'HEAD')
   )) ?? null;
 }

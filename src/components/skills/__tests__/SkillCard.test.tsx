@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -680,6 +680,106 @@ describe('SkillCard', () => {
     expect(tooltip.textContent).toContain('skills.updateEvidence.failure.network');
     expect(tooltip.textContent).toContain('skills.updateEvidence.nextStep.retry');
     expect(tooltip.textContent).not.toContain('must not be shown');
+  });
+
+  it('keeps the committed update badge and adds a separate warning after a failed refresh', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    render(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({ hasUpdate: true, canRunUpdate: true, canCheckForUpdates: true }),
+            updateStatus: 'updateAvailable',
+            updateReason: null,
+            updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
+            updateEvidence: {
+              source: 'github.com/owner/repo',
+              requestedRef: 'main',
+              resolvedRef: 'main',
+              refRevision: 'tree-1',
+              checkedAtEpochMs: 100,
+              expiresAtEpochMs: 200,
+              freshness: 'backingOff',
+              lastAttempt: {
+                checkedAtEpochMs: 300,
+                failure: {
+                  reason: 'network',
+                  message: 'must not be shown',
+                  retryAtEpochMs: 500,
+                  providerCooldown: false,
+                },
+              },
+            },
+          } as never}
+          displayScope="global"
+          onUpdate={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    const committedBadge = screen.getByText('skills.updateStatusLabel.available');
+    const warning = screen.getByTestId('skill-update-warning');
+    for (const element of [committedBadge, warning]) {
+      const current = element.closest('[data-crossfade-state="current"]');
+      expect(current?.className).toContain('fade-in');
+      expect(current?.className).toContain('duration-[160ms]');
+      expect(current?.className).toContain('motion-reduce:animate-none');
+    }
+  });
+
+  it('crossfades a changed card update status for 160ms', async () => {
+    vi.useFakeTimers();
+    const { rerender } = render(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({
+              hasUpdate: false,
+              canRunUpdate: true,
+              canCheckForUpdates: false,
+              updateReason: 'missing-remote-hash',
+            }),
+            updateStatus: 'cannotCheck',
+          } as never}
+          displayScope="global"
+        />
+      </TooltipProvider>
+    );
+
+    rerender(
+      <TooltipProvider>
+        <SkillCard
+          skill={{
+            ...makeSkill({
+              hasUpdate: true,
+              canRunUpdate: true,
+              canCheckForUpdates: true,
+              updateReason: null,
+            }),
+            updateStatus: 'updateAvailable',
+          } as never}
+          displayScope="global"
+        />
+      </TooltipProvider>
+    );
+
+    const outgoing = screen.getByText('skills.updateStatusLabel.reinstallRequired')
+      .closest('[data-crossfade-state="outgoing"]');
+    const current = screen.getByText('skills.updateStatusLabel.available')
+      .closest('[data-crossfade-state="current"]');
+
+    expect(outgoing?.className).toContain('fade-out');
+    expect(outgoing?.className).toContain('duration-[160ms]');
+    expect(current?.className).toContain('fade-in');
+    expect(current?.className).toContain('duration-[160ms]');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(160); });
+    expect(screen.queryByText('skills.updateStatusLabel.reinstallRequired')).toBeNull();
+    vi.useRealTimers();
   });
 
   it('shows repair source action for missing skill path metadata', () => {

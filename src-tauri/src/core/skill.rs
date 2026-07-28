@@ -186,6 +186,9 @@ pub struct InstalledSkill {
     /// Git ref（branch/tag）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+    /// 来源仓库内的 Skill 相对路径，用于更新检查会话身份指纹
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_path: Option<String>,
     /// 默认可用 Agent 数量
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_available_agent_count: Option<u32>,
@@ -222,6 +225,7 @@ impl InstalledSkill {
             self.updated_at = Some(e.updated_at.clone());
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
+            self.skill_path = e.skill_path.clone();
 
             let capability = derive_update_capability(&normalize_global_lock_entry(e));
             self.can_run_update = Some(capability.can_run_update);
@@ -239,6 +243,7 @@ impl InstalledSkill {
             self.source_url = metadata.source_url.clone();
             self.plugin_name = e.plugin_name.clone();
             self.git_ref = e.ref_name.clone();
+            self.skill_path = e.skill_path.clone();
 
             let capability = derive_update_capability(&metadata);
             self.can_run_update = Some(capability.can_run_update);
@@ -519,6 +524,7 @@ pub fn list_installed_skills(
                         update_reason: None,
                         plugin_name: None,
                         git_ref: None,
+                        skill_path: None,
                         default_available_agent_count: None,
                         private_adapted_agent_count: None,
                         duplicate_copy_count: None,
@@ -638,6 +644,7 @@ pub fn list_installed_skills(
                     update_reason: None,
                     plugin_name: None,
                     git_ref: None,
+                    skill_path: None,
                     default_available_agent_count: None,
                     private_adapted_agent_count: None,
                     duplicate_copy_count: None,
@@ -1114,6 +1121,7 @@ Content.
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            skill_path: None,
             default_available_agent_count: None,
             private_adapted_agent_count: None,
             duplicate_copy_count: None,
@@ -1280,6 +1288,7 @@ Content.
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            skill_path: None,
             default_available_agent_count: None,
             private_adapted_agent_count: None,
             duplicate_copy_count: None,
@@ -1329,6 +1338,7 @@ Content.
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            skill_path: None,
             default_available_agent_count: None,
             private_adapted_agent_count: None,
             duplicate_copy_count: None,
@@ -1341,6 +1351,7 @@ Content.
         .with_local_lock_entry(Some(&entry));
 
         assert_eq!(skill.source_url, None);
+        assert_eq!(skill.skill_path.as_deref(), Some("skills/demo/SKILL.md"));
     }
 
     #[test]
@@ -1363,6 +1374,7 @@ Content.
             update_reason: Some("missing-skill-path".to_string()),
             plugin_name: None,
             git_ref: None,
+            skill_path: None,
             default_available_agent_count: None,
             private_adapted_agent_count: None,
             duplicate_copy_count: None,

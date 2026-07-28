@@ -4,7 +4,11 @@ import { useTranslation } from 'react-i18next';
 import { RefreshCw } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useProjectStore } from '@/stores/projects';
-import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
+import {
+  sourceDiagnosticsForEnvironment,
+  useSkillsDataStore,
+  type ContextSkillSnapshot,
+} from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { SkillsToolbar } from './SkillsToolbar';
@@ -28,7 +32,10 @@ import {
   filterSkills,
   getAgentFilterOptions,
 } from '@/lib/skills/filter';
-import type { SkillUpdateDisplayStatus } from '@/stores/skills-utils';
+import {
+  hasCommittedUpdateComparison,
+  type SkillUpdateDisplayStatus,
+} from '@/stores/skills-utils';
 import type { AgentId, InstalledSkill, ResolvedAgent } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
@@ -41,6 +48,10 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
 };
 const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 const EMPTY_SKILL_NAMES: string[] = [];
+
+function hasCommittedComparison(snapshot: ContextSkillSnapshot): boolean {
+  return snapshot.skills.some(hasCommittedUpdateComparison);
+}
 
 interface SkillsPanelProps {
   /** 紧凑模式 — 选中 skill 后由 SkillsPage 传入 */
@@ -65,12 +76,15 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const projectPath = selectedProject?.binding.nativePath;
 
   // ① Store — 细粒度 selector 订阅
-  const globalSnapshot = useSkillsDataStore((state) => (
-    state.snapshots[globalContextKey] ?? EMPTY_SNAPSHOT
-  ));
-  const projectSnapshot = useSkillsDataStore((state) => (
-    projectContextKey ? state.snapshots[projectContextKey] ?? EMPTY_SNAPSHOT : EMPTY_SNAPSHOT
-  ));
+  const snapshots = useSkillsDataStore((state) => state.snapshots);
+  const globalSnapshot = snapshots[globalContextKey] ?? EMPTY_SNAPSHOT;
+  const projectSnapshot = projectContextKey
+    ? snapshots[projectContextKey] ?? EMPTY_SNAPSHOT
+    : EMPTY_SNAPSHOT;
+  const environmentSourceDiagnostics = useMemo(
+    () => sourceDiagnosticsForEnvironment(snapshots, selectedContext.environment),
+    [selectedContext.environment, snapshots],
+  );
   const globalSkills = globalSnapshot.skills;
   const projectSkills = isProjectSelected ? projectSnapshot.skills : EMPTY_SNAPSHOT.skills;
   const projectPathExists = projectSnapshot.pathExists;
@@ -78,11 +92,20 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     || (isProjectSelected && projectSnapshot.loading && projectSkills.length === 0);
   const error = projectSnapshot.error ?? globalSnapshot.error;
   const isSyncing = useSkillsDataStore((s) => s.isSyncing);
-  const isCheckingGlobal = useSkillsDataStore((s) => s.checkingUpdateScopes.has(globalContextKey));
-  const isCheckingProject = useSkillsDataStore((s) => (
-    projectContextKey ? s.checkingUpdateScopes.has(projectContextKey) : false
+  const isAutomaticCheckingGlobal = useSkillsDataStore((s) => (
+    s.automaticUpdateScopes?.has(globalContextKey)
+      ?? s.checkingUpdateScopes.has(globalContextKey)
   ));
-  const syncUpdates = useSkillsDataStore((s) => s.syncUpdates);
+  const isAutomaticCheckingProject = useSkillsDataStore((s) => (
+    projectContextKey
+      ? (s.automaticUpdateScopes?.has(projectContextKey) ?? s.checkingUpdateScopes.has(projectContextKey))
+      : false
+  ));
+  const isForceCheckingGlobal = useSkillsDataStore((s) => s.forceUpdateScopes?.has(globalContextKey) ?? false);
+  const isForceCheckingProject = useSkillsDataStore((s) => (
+    projectContextKey ? s.forceUpdateScopes?.has(projectContextKey) ?? false : false
+  ));
+  const activateAutomaticChecks = useSkillsDataStore((s) => s.activateAutomaticChecks ?? s.syncUpdates);
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const activeUpdatePhase = useSkillUpdateWorkflow((s) => (
     s.phase === 'executing' ? 'updating' : null
@@ -112,19 +135,15 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
   const deferredQuery = useDeferredValue(searchQuery);
 
-  // A single timer owns automatic checks. Focus reuses this path instead of adding listeners per section.
+  // 长生命周期 store 会在 Context snapshot 加载后统一决定是否准入 Automatic。
+  // 组件不监听 focus，也不在重新挂载时安排 timer；同一应用会话返回页面不得新增 IPC 请求。
   useEffect(() => {
     let ignore = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const schedule = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { if (!ignore) void syncUpdates(selectedContext); }, 500);
-    };
-    schedule();
-    void refreshWorkspace(selectedContext);
-    window.addEventListener('focus', schedule);
-    return () => { ignore = true; if (timer) clearTimeout(timer); window.removeEventListener('focus', schedule); };
-  }, [selectedContext, selectedContextKey, refreshWorkspace, syncUpdates]);
+    void refreshWorkspace(selectedContext).then(() => {
+      if (!ignore) void activateAutomaticChecks(selectedContext);
+    });
+    return () => { ignore = true; };
+  }, [selectedContext, selectedContextKey, refreshWorkspace, activateAutomaticChecks]);
 
   // ③a 仅在 context 真正切换时关闭详情面板
   const previousContextRef = useRef(selectedContextKey);
@@ -295,7 +314,10 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     openCopyToProject(skill, selectedContext);
   }, [openCopyToProject, selectedContext]);
 
-  const handleSync = useCallback(() => syncSkills(selectedContext), [selectedContext, syncSkills]);
+  const handleSync = useCallback(
+    () => syncSkills(selectedContext, { origin: 'passive' }),
+    [selectedContext, syncSkills],
+  );
   const handlePrepareGlobalUpdate = useCallback(
     (skillNames: string[], batch: boolean) => openUpdate(
       selectedGlobalContext,
@@ -400,7 +422,9 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             variant="outline"
             size="sm"
             className="mt-4"
-            onClick={() => void refreshWorkspace(selectedContext)}
+            onClick={() => {
+              void refreshWorkspace(selectedContext).then(() => activateAutomaticChecks(selectedContext));
+            }}
           >
             <RefreshCw className="size-4" aria-hidden="true" />
             {t('skills.retry')}
@@ -457,13 +481,16 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             <SkillsSection
               title={t('skills.projectSkills')}
               skills={filteredProjectSkills}
+              sourceDiagnostics={environmentSourceDiagnostics}
               scope="project"
               filterActive={hasActiveFilters}
               conflictSkillNames={conflictSkillNames}
               pathExists={projectPathExists}
               projectPath={projectPath}
               updatingSkills={updatingSkills}
-              isCheckingUpdates={isCheckingProject}
+              isCheckingUpdates={isForceCheckingProject}
+              isAutomaticCheckingUpdates={isAutomaticCheckingProject}
+              hasCommittedComparison={hasCommittedComparison(projectSnapshot)}
               agentDisplayNames={agentDisplayNames}
               auditCache={auditCache}
               onSkillClick={selectSkill}
@@ -482,11 +509,14 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           <SkillsSection
             title={t('skills.globalSkills')}
             skills={filteredGlobalSkills}
+            sourceDiagnostics={environmentSourceDiagnostics}
             scope="global"
             filterActive={hasActiveFilters}
             conflictSkillNames={conflictSkillNames}
             updatingSkills={updatingSkills}
-            isCheckingUpdates={isCheckingGlobal}
+            isCheckingUpdates={isForceCheckingGlobal}
+            isAutomaticCheckingUpdates={isAutomaticCheckingGlobal}
+            hasCommittedComparison={hasCommittedComparison(globalSnapshot)}
             agentDisplayNames={agentDisplayNames}
             auditCache={auditCache}
             onSkillClick={selectSkill}

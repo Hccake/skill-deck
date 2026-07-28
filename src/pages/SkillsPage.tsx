@@ -4,7 +4,11 @@ import { useGroupRef } from 'react-resizable-panels';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import { useProjectStore } from '@/stores/projects';
-import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
+import {
+  sourceDiagnosticsForEnvironment,
+  useSkillsDataStore,
+  type ContextSkillSnapshot,
+} from '@/stores/skills-data';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { findSkillByIdentity, getSkillIdentityKey } from '@/lib/skills/identity';
@@ -29,6 +33,7 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
 };
 const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 const EMPTY_SKILL_NAMES: string[] = [];
+const EMPTY_SCOPE_KEYS = new Set<string>();
 
 const SPLIT_VIEW_LAYOUT = {
   'skills-list-panel': 22,
@@ -55,12 +60,15 @@ export function SkillsPage() {
     ? projects.find((project) => project.binding.id === selectedScope.project_id)
     : null;
   const selectedProjectPath = selectedProject?.binding.nativePath;
-  const globalSnapshot = useSkillsDataStore((state) => (
-    state.snapshots[globalContextKey] ?? EMPTY_SNAPSHOT
-  ));
-  const projectSnapshot = useSkillsDataStore((state) => (
-    projectContextKey ? state.snapshots[projectContextKey] ?? EMPTY_SNAPSHOT : EMPTY_SNAPSHOT
-  ));
+  const snapshots = useSkillsDataStore((state) => state.snapshots);
+  const globalSnapshot = snapshots[globalContextKey] ?? EMPTY_SNAPSHOT;
+  const projectSnapshot = projectContextKey
+    ? snapshots[projectContextKey] ?? EMPTY_SNAPSHOT
+    : EMPTY_SNAPSHOT;
+  const environmentSourceDiagnostics = useMemo(
+    () => sourceDiagnosticsForEnvironment(snapshots, selectedContext.environment),
+    [selectedContext.environment, snapshots],
+  );
   const globalSkills = globalSnapshot.skills;
   const projectSkills = projectSnapshot.skills;
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
@@ -68,7 +76,9 @@ export function SkillsPage() {
   const loadingContent = useSkillDetailStore((s) => s.loadingContent);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const reloadContent = useSkillDetailStore((s) => s.reloadContent);
-  const checkingUpdateScopes = useSkillsDataStore((s) => s.checkingUpdateScopes);
+  const forceUpdateScopes = useSkillsDataStore((s) => (
+    s.forceUpdateScopes ?? s.checkingUpdateScopes ?? EMPTY_SCOPE_KEYS
+  ));
   const forceCheckUpdates = useSkillsDataStore((s) => s.forceCheckUpdates);
   const updatingContext = useSkillUpdateWorkflow((s) => (
     s.phase === 'executing' ? s.context : null
@@ -107,7 +117,7 @@ export function SkillsPage() {
     ? selectedContextKey
     : globalContextKey;
   const isCheckingSelectedSkillUpdates = selectedSkill
-    ? checkingUpdateScopes.has(selectedSkillCheckScope)
+    ? forceUpdateScopes.has(selectedSkillCheckScope)
     : false;
 
   useEffect(() => {
@@ -233,6 +243,7 @@ export function SkillsPage() {
                 <SkillDetailPanel
                   key={selectedSkillRef ? getSkillIdentityKey(selectedSkillRef) : `${selectedSkill.scope}:${selectedSkill.name}`}
                   skill={selectedSkill}
+                  sourceDiagnostics={environmentSourceDiagnostics}
                   content={skillContent}
                   loading={loadingContent}
                   agentDisplayNames={agentDisplayNames}

@@ -6,6 +6,7 @@ use crate::application::mutation::coordinator::RuntimeRevisionSource;
 use crate::application::payload_session::PayloadSessionManager;
 use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
+use crate::application::source_evidence::SourceEvidenceCoordinator;
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::wsl::EnvironmentRegistry;
 
@@ -19,6 +20,7 @@ pub fn build_runtime_install_service(
     environments: Arc<EnvironmentRegistry>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
+    update_evidence: SourceEvidenceCoordinator,
 ) -> RuntimeInstallService {
     let facts = RuntimePlanningFactSource::for_current_user(registry, environments.clone());
     let planner = ConcreteInstallPlanner::new(
@@ -33,5 +35,7 @@ pub fn build_runtime_install_service(
     );
     let revisions: Arc<dyn RuntimeRevisionSource> = Arc::new(facts);
     let executor = execution.executor(environments, revisions);
-    InstallService::new(payloads, planner, executor)
+    InstallService::new(payloads, planner, executor).with_source_suppression_clearer(Arc::new(
+        move |environment, key| update_evidence.clear_source_suppression(environment, key),
+    ))
 }

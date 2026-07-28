@@ -1,6 +1,11 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use tempfile::NamedTempFile;
 use uuid::Uuid;
@@ -10,11 +15,17 @@ use crate::error::AppError;
 #[derive(Clone)]
 pub(crate) struct SourceEvidenceStateFile {
     path: PathBuf,
+    #[cfg(test)]
+    fail_writes: Arc<AtomicBool>,
 }
 
 impl SourceEvidenceStateFile {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            #[cfg(test)]
+            fail_writes: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     pub(crate) fn read_optional(&self) -> Result<Option<Vec<u8>>, AppError> {
@@ -26,6 +37,11 @@ impl SourceEvidenceStateFile {
     }
 
     pub(crate) fn write_atomic(&self, bytes: &[u8]) -> Result<(), AppError> {
+        #[cfg(test)]
+        if self.fail_writes.load(Ordering::SeqCst) {
+            return Err(std::io::Error::other("forced update-check state write failure").into());
+        }
+
         let parent = self.parent()?;
         fs::create_dir_all(parent)?;
         let mut temporary = NamedTempFile::new_in(parent)?;
@@ -34,6 +50,11 @@ impl SourceEvidenceStateFile {
         temporary.as_file_mut().sync_all()?;
         temporary.persist(&self.path).map_err(|error| error.error)?;
         sync_parent(parent)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_write_failure(&self, fail: bool) {
+        self.fail_writes.store(fail, Ordering::SeqCst);
     }
 
     pub(crate) fn quarantine(&self, now_epoch_ms: u64) -> Result<PathBuf, AppError> {

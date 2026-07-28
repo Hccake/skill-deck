@@ -7,7 +7,7 @@ import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
 import { AgentConfigurationRequestRouter } from '@/components/settings/AgentConfigurationRequestRouter';
 import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
 import { useSkillsDataStore } from '@/stores/skills-data';
-import { useWorkspaceContextStore } from '@/stores/workspace-context';
+import type { ContextRef } from '@/bindings';
 
 function ContentFallback() {
   const { t } = useTranslation();
@@ -23,9 +23,11 @@ export default function MainLayout() {
   useEnvironmentRuntimeMonitor();
 
   useEffect(() => {
-    const unlisten = listen('wizard-result', () => {
-      const committedContext = useWorkspaceContextStore.getState().selectedContext;
-      void refreshWorkspace(committedContext);
+    const unlisten = listen<{ context: ContextRef; mutatedSkillNames: string[] }>('wizard-result', (event) => {
+      void refreshWorkspace(event.payload.context, {
+        origin: 'selfMutation',
+        mutatedSkillNames: event.payload.mutatedSkillNames,
+      });
     });
     return () => {
       void unlisten.then((stop) => stop());

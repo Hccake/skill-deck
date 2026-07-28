@@ -82,6 +82,7 @@ describe('GithubCredentialSection', () => {
     mockClearGithubCredential.mockResolvedValue({
       cleared: true,
       status: { ...verified, source: 'none', validation: 'unconfigured', account: null },
+      warnings: [],
     });
   });
 
@@ -113,6 +114,26 @@ describe('GithubCredentialSection', () => {
     expect(await screen.findByText('This token is invalid. Check its value and permissions.'))
       .toBeTruthy();
     expect(screen.getByText('octocat')).toBeTruthy();
+  });
+
+  it('reports suppression cleanup degradation without changing a successful save', async () => {
+    mockSaveGithubCredential.mockResolvedValue({
+      saved: true,
+      status: verified,
+      warnings: ['suppressionCleanupFailed'],
+    });
+    render(<GithubCredentialSection />);
+
+    await screen.findByText('octocat');
+    fireEvent.change(screen.getByLabelText('GitHub token'), {
+      target: { value: 'secret-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and save' }));
+
+    expect(await screen.findByText(
+      'The credential change succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed.',
+    ))
+      .toBeTruthy();
   });
 
   it('explains the environment-variable fallback when secure storage is unavailable', async () => {

@@ -15,11 +15,15 @@ use crate::application::mutation::result::{MutationUnitResult, OperationErrorCod
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, PayloadSessionManager, PinnedPayloadLease,
 };
+use crate::application::source_evidence::{RemoteEvidenceKey, SourceSuppressionWarningCode};
 use crate::core::mutation::CancellationSignal;
-use crate::core::{ensure_install_risk_acknowledged, parse_source, source_risk_policy};
-use crate::environment::types::{same_environment_identity, ContextRef};
+use crate::core::{
+    ensure_install_risk_acknowledged, parse_source, source_risk_policy, NormalizedUpdateMetadata,
+    SourceIdentity,
+};
+use crate::environment::types::{same_environment_identity, ContextRef, EnvironmentRef};
 use crate::error::AppError;
-use crate::models::InstallMode;
+use crate::models::{InstallMode, SourceType};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +63,7 @@ pub struct InstallSkillPreview {
 #[specta(rename_all = "camelCase")]
 pub struct InstallResponse {
     pub units: Vec<MutationUnitResult>,
+    pub warnings: Vec<SourceSuppressionWarningCode>,
 }
 
 pub type InstallFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -94,10 +99,14 @@ pub trait InstallPlanExecutor: Send + Sync {
     }
 }
 
+type SourceSuppressionClearer =
+    dyn Fn(&EnvironmentRef, &RemoteEvidenceKey) -> Result<(), AppError> + Send + Sync;
+
 pub struct InstallService<P, E> {
     payloads: Arc<PayloadSessionManager>,
     planner: P,
     executor: E,
+    source_suppression_clearer: Option<Arc<SourceSuppressionClearer>>,
 }
 
 impl<P, E> InstallService<P, E>
@@ -110,7 +119,16 @@ where
             payloads,
             planner,
             executor,
+            source_suppression_clearer: None,
         }
+    }
+
+    pub fn with_source_suppression_clearer(
+        mut self,
+        clearer: Arc<SourceSuppressionClearer>,
+    ) -> Self {
+        self.source_suppression_clearer = Some(clearer);
+        self
     }
 
     pub async fn preview(&self, request: &InstallRequest) -> Result<InstallPreview, AppError> {
@@ -131,9 +149,36 @@ where
             .await?;
         let (actual_token, plan) = self.planner.rebuild(request, payloads).await?;
         validate_preview_token(&expected_token, &actual_token)?;
-        Ok(InstallResponse {
+        let mut response = InstallResponse {
             units: self.executor.execute(plan, cancellation).await,
-        })
+            warnings: Vec::new(),
+        };
+        if self.clear_source_suppression_after_success(request, &response) {
+            response
+                .warnings
+                .push(SourceSuppressionWarningCode::SuppressionCleanupFailed);
+        }
+        Ok(response)
+    }
+
+    fn clear_source_suppression_after_success(
+        &self,
+        request: &InstallRequest,
+        response: &InstallResponse,
+    ) -> bool {
+        if response.units.is_empty()
+            || response.units.iter().any(|unit| {
+                unit.status != crate::application::mutation::result::MutationUnitStatus::Succeeded
+            })
+        {
+            return false;
+        }
+        let Some(clearer) = &self.source_suppression_clearer else {
+            return false;
+        };
+        let result = source_evidence_key(&request.source)
+            .and_then(|key| key.map_or(Ok(()), |key| clearer(&request.context.environment, &key)));
+        result.is_err()
     }
 
     async fn pin_request_payloads(
@@ -155,6 +200,27 @@ where
         }
         Ok(payloads)
     }
+}
+
+fn source_evidence_key(source: &str) -> Result<Option<RemoteEvidenceKey>, AppError> {
+    let parsed = parse_source(source)?;
+    if matches!(
+        parsed.source_type,
+        SourceType::Local | SourceType::WellKnown
+    ) {
+        return Ok(None);
+    }
+    let metadata = NormalizedUpdateMetadata {
+        source: parsed.url.clone(),
+        source_type: parsed.source_type.to_string(),
+        source_url: Some(parsed.url),
+        ref_name: parsed.git_ref,
+        skill_path: None,
+        remote_hash: None,
+        computed_hash: None,
+    };
+    let identity = SourceIdentity::from_metadata(&metadata)?;
+    Ok(Some(RemoteEvidenceKey::from_identity(&identity)))
 }
 
 fn validate_handles(request: &InstallRequest) -> Result<(), AppError> {
@@ -231,6 +297,7 @@ mod tests {
     };
     use crate::core::mutation::CancellationSignal;
     use crate::core::skill_payload::build_skill_payload;
+    use crate::core::{NormalizedRef, SourceProvider};
     use crate::environment::runtime::ContextSnapshotRevision;
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
     use crate::models::InstallMode;
@@ -343,8 +410,43 @@ mod tests {
         ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
             assert_eq!(plan.payloads.len(), 1);
             self.0.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Vec::new() })
+            Box::pin(async {
+                vec![MutationUnitResult {
+                    unit_id: "demo".to_string(),
+                    skill_name: "demo".to_string(),
+                    source: None,
+                    target: ContextRef {
+                        environment: EnvironmentRef::Host,
+                        scope: ContextScope::Global,
+                    },
+                    status: crate::application::mutation::result::MutationUnitStatus::Succeeded,
+                    retryable: false,
+                    lock_committed: true,
+                    actual_mode: Some(InstallMode::Copy),
+                    fallback_reason: None,
+                    agent_targets: Vec::new(),
+                    warnings: Vec::new(),
+                    error: None,
+                    recovery: None,
+                }]
+            })
         }
+    }
+
+    #[test]
+    fn source_evidence_key_matches_remote_sources_and_ignores_local_sources() {
+        let key = source_evidence_key("owner/repo#release")
+            .unwrap()
+            .expect("remote source");
+
+        assert_eq!(key.remote.provider(), &SourceProvider::Github);
+        assert_eq!(key.remote.authority(), "github.com");
+        assert_eq!(key.remote.repository(), "owner/repo");
+        assert_eq!(key.normalized_ref, NormalizedRef::Named("release".into()));
+        assert!(source_evidence_key("/tmp/local-skill").unwrap().is_none());
+        assert!(source_evidence_key("https://skills.example.com")
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -391,6 +493,8 @@ mod tests {
         };
         let rebuilds = Arc::new(AtomicUsize::new(0));
         let executions = Arc::new(AtomicUsize::new(0));
+        let suppression_attempts = Arc::new(AtomicUsize::new(0));
+        let suppression_attempts_for_clearer = Arc::clone(&suppression_attempts);
         let service = InstallService::new(
             Arc::clone(&manager),
             Planner {
@@ -407,7 +511,13 @@ mod tests {
                 rebuilds: Arc::clone(&rebuilds),
             },
             Executor(Arc::clone(&executions)),
-        );
+        )
+        .with_source_suppression_clearer(Arc::new(move |_, _| {
+            suppression_attempts_for_clearer.fetch_add(1, Ordering::SeqCst);
+            Err(AppError::Io {
+                message: "update-check state is read-only".to_string(),
+            })
+        }));
 
         assert_eq!(service.preview(&request).await.unwrap().token, token);
         let response = service
@@ -415,8 +525,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(response.units.is_empty());
+        assert_eq!(response.units.len(), 1);
+        assert_eq!(
+            response.warnings,
+            vec![SourceSuppressionWarningCode::SuppressionCleanupFailed]
+        );
+        assert_eq!(
+            response.units[0].status,
+            crate::application::mutation::result::MutationUnitStatus::Succeeded,
+        );
         assert_eq!(rebuilds.load(Ordering::SeqCst), 1);
         assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(suppression_attempts.load(Ordering::SeqCst), 1);
     }
 }

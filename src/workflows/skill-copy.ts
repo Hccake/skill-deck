@@ -98,6 +98,14 @@ export async function executeSkillCopy({
       .filter((unit) => unit.status === 'succeeded')
       .map(projectIdOf)
       .filter((projectId): projectId is string => projectId !== null);
+    if (succeededProjectIds.length > 0) {
+      const { useSkillsDataStore } = await import('@/stores/skills-data');
+      const { refreshContext } = useSkillsDataStore.getState();
+      await Promise.all(succeededProjectIds.map((projectId) => refreshContext({
+        environment: targetEnvironment,
+        scope: { scope: 'project', project_id: projectId },
+      }, { origin: 'selfMutation', mutatedSkillNames: [copySkill.name] })));
+    }
     const failed = response.units.filter((unit) => unit.status !== 'succeeded');
     if (failed.length === 0) {
       return { status: 'succeeded', response, succeededProjectIds };

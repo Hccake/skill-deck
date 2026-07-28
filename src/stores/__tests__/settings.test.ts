@@ -37,6 +37,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
 import { useSettingsStore } from '../settings';
 import { useAgentRegistryStore } from '../agent-registry';
 import { useMutationStore } from '../mutation';
+import { useSkillsDataStore } from '../skills-data';
 import { contextKey } from '@/lib/context';
 
 const host: EnvironmentRef = { kind: 'host' };
@@ -120,6 +121,7 @@ describe('useSettingsStore', () => {
     mockClearGithubCredential.mockResolvedValue({
       cleared: true,
       status: { ...verifiedCredential, source: 'none', validation: 'unconfigured' },
+      warnings: [],
     });
     useSettingsStore.setState({
       agentDefaultsByEnvironment: {},
@@ -368,6 +370,7 @@ describe('useSettingsStore', () => {
         validation: 'invalid',
         account: null,
       },
+      warnings: [],
     });
     useSettingsStore.setState((state) => ({
       githubCredential: {
@@ -382,5 +385,22 @@ describe('useSettingsStore', () => {
     expect(result?.saved).toBe(false);
     expect(useSettingsStore.getState().githubCredential.status).toEqual(verifiedCredential);
     expect(JSON.stringify(useSettingsStore.getState())).not.toContain('secret-token');
+  });
+
+  it('clears stale Host GitHub cooldown UI only after credential maintenance succeeds', async () => {
+    const clearCooldown = vi.fn();
+    useSkillsDataStore.setState({ clearHostGithubProviderCooldown: clearCooldown });
+    mockSaveGithubCredential
+      .mockResolvedValueOnce({ saved: true, status: verifiedCredential, warnings: [] })
+      .mockResolvedValueOnce({
+        saved: true,
+        status: verifiedCredential,
+        warnings: ['suppressionCleanupFailed'],
+      });
+
+    await useSettingsStore.getState().saveGithubCredential('first-token');
+    await useSettingsStore.getState().saveGithubCredential('second-token');
+
+    expect(clearCooldown).toHaveBeenCalledTimes(1);
   });
 });

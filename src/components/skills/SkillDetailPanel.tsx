@@ -21,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTime } from '@/lib/utils';
-import type { InstalledSkill, SkillScope, UpdateCheckOutcome } from '@/bindings';
+import type { InstalledSkill, SkillScope, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
 import {
   hasIncompleteUpdateCheck,
   resolveEvidenceFailureReasonI18nKey,
@@ -32,12 +32,15 @@ import {
   type SkillUpdateActivePhase,
   resolveUpdateReasonI18nKey,
   resolveUpdateStatusI18nKey,
+  providerCooldownDeadline,
   type SkillListItem,
 } from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
 
 interface SkillDetailPanelProps {
   skill: SkillListItem;
+  /** 当前 Environment 的完整来源诊断，用于 provider 级 cooldown。 */
+  sourceDiagnostics?: SourceUpdateCheckInfo[];
   content: string | null;
   loading: boolean;
   agentDisplayNames: Map<string, string>;
@@ -56,6 +59,7 @@ interface SkillDetailPanelProps {
 
 export const SkillDetailPanel = memo(function SkillDetailPanel({
   skill,
+  sourceDiagnostics = [],
   content,
   loading,
   agentDisplayNames,
@@ -149,6 +153,20 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   const isUpdateInProgress = activeUpdatePhase !== null;
   const showCheckDone = checkDone && !skill.hasUpdate;
   const typedFailure = skill.updateEvidence?.lastAttempt?.failure ?? null;
+  const cooldownDeadline = providerCooldownDeadline([
+    ...sourceDiagnostics,
+    ...(skill.updateEvidence ? [skill.updateEvidence] : []),
+  ]);
+  const [cooldownNow, setCooldownNow] = useState(() => Date.now());
+  const cooldownActive = cooldownDeadline != null && cooldownDeadline > cooldownNow;
+  useEffect(() => {
+    if (cooldownDeadline == null) return undefined;
+    const timer = setTimeout(
+      () => setCooldownNow(Date.now()),
+      Math.max(0, cooldownDeadline - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [cooldownDeadline]);
   const isIncompleteCheck = hasIncompleteUpdateCheck(skill);
   const isDeletedUpstream = skill.updateStatus === 'deletedUpstream' || skill.updateReason === 'deletedUpstream';
   const showCannotCheckStatus = isDeletedUpstream
@@ -255,12 +273,17 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 cursor-pointer"
-                        title={t('skills.checkUpdates')}
+                        title={cooldownActive && cooldownDeadline
+                          ? t('skills.updateEvidence.retryAt', {
+                              time: new Date(cooldownDeadline).toLocaleString(i18n.language),
+                            })
+                          : t('skills.checkUpdates')}
+                        disabled={isCheckingUpdates || cooldownActive}
                         onClick={() => {
                           void handleCheckUpdates();
                         }}
                       >
-                        <RefreshCw className={`h-4 w-4 ${isCheckingUpdates ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`h-4 w-4 ${isCheckingUpdates ? 'animate-spin motion-reduce:animate-none' : ''}`} />
                       </Button>
                     )
                   ) : null}
@@ -392,14 +415,15 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                       </a>
                     </Button>
                   ) : null}
-                  {!typedFailure.retryAtEpochMs && onCheckUpdates ? (
+                  {!cooldownActive && onCheckUpdates ? (
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
+                      disabled={isCheckingUpdates}
                       onClick={() => void handleCheckUpdates()}
                     >
-                      <RefreshCw className="h-3.5 w-3.5" />
+                      <RefreshCw className={`h-3.5 w-3.5 ${isCheckingUpdates ? 'animate-spin motion-reduce:animate-none' : ''}`} />
                       {t('skills.updateEvidence.actions.retry')}
                     </Button>
                   ) : null}

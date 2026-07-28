@@ -5,7 +5,9 @@ use std::sync::Arc;
 use serde::Serialize;
 use specta::Type;
 
+use crate::application::source_evidence::SourceSuppressionWarningCode;
 use crate::core::{GithubApiClient, GithubTokenProvider, GithubTokenValidation};
+use crate::error::AppError;
 
 pub type GithubCredentialFuture<'a> =
     Pin<Box<dyn Future<Output = GithubTokenValidation> + Send + 'a>>;
@@ -80,6 +82,7 @@ pub struct GithubCredentialStatus {
 pub struct GithubCredentialSaveResult {
     pub saved: bool,
     pub status: GithubCredentialStatus,
+    pub warnings: Vec<SourceSuppressionWarningCode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -88,6 +91,7 @@ pub struct GithubCredentialSaveResult {
 pub struct GithubCredentialClearResult {
     pub cleared: bool,
     pub status: GithubCredentialStatus,
+    pub warnings: Vec<SourceSuppressionWarningCode>,
 }
 
 type EnvironmentTokenResolver = dyn Fn() -> Option<(GithubCredentialSource, String)> + Send + Sync;
@@ -148,6 +152,7 @@ impl GithubCredentialService {
                     self.storage_status(),
                     GithubCredentialValidationStatus::Invalid,
                 ),
+                warnings: Vec::new(),
             };
         }
 
@@ -161,6 +166,7 @@ impl GithubCredentialService {
             return GithubCredentialSaveResult {
                 saved: false,
                 status,
+                warnings: Vec::new(),
             };
         }
         if self.store.write(token).is_err() {
@@ -168,6 +174,7 @@ impl GithubCredentialService {
             return GithubCredentialSaveResult {
                 saved: false,
                 status,
+                warnings: Vec::new(),
             };
         }
         status.source = GithubCredentialSource::Keyring;
@@ -175,6 +182,7 @@ impl GithubCredentialService {
         GithubCredentialSaveResult {
             saved: true,
             status,
+            warnings: Vec::new(),
         }
     }
 
@@ -183,6 +191,7 @@ impl GithubCredentialService {
         GithubCredentialClearResult {
             cleared,
             status: self.status().await,
+            warnings: Vec::new(),
         }
     }
 
@@ -232,6 +241,53 @@ impl GithubCredentialService {
         } else {
             GithubCredentialStorageStatus::Unavailable
         }
+    }
+}
+
+type GithubSuppressionClearer = dyn Fn() -> Result<(), AppError> + Send + Sync;
+
+pub struct GithubCredentialWorkflowService {
+    credentials: Arc<GithubCredentialService>,
+    clear_suppression: Arc<GithubSuppressionClearer>,
+}
+
+impl GithubCredentialWorkflowService {
+    pub fn new(
+        credentials: Arc<GithubCredentialService>,
+        clear_suppression: Arc<GithubSuppressionClearer>,
+    ) -> Self {
+        Self {
+            credentials,
+            clear_suppression,
+        }
+    }
+
+    pub async fn status(&self) -> GithubCredentialStatus {
+        self.credentials.status().await
+    }
+
+    pub async fn save(&self, token: &str) -> GithubCredentialSaveResult {
+        let mut result = self.credentials.save(token).await;
+        if result.saved && self.clear_suppression_after_success() {
+            result
+                .warnings
+                .push(SourceSuppressionWarningCode::SuppressionCleanupFailed);
+        }
+        result
+    }
+
+    pub async fn clear(&self) -> GithubCredentialClearResult {
+        let mut result = self.credentials.clear().await;
+        if result.cleared && self.clear_suppression_after_success() {
+            result
+                .warnings
+                .push(SourceSuppressionWarningCode::SuppressionCleanupFailed);
+        }
+        result
+    }
+
+    fn clear_suppression_after_success(&self) -> bool {
+        (self.clear_suppression)().is_err()
     }
 }
 
@@ -301,6 +357,7 @@ fn status_from_validation(
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -491,5 +548,40 @@ mod tests {
             result.status.validation,
             GithubCredentialValidationStatus::Verified
         );
+    }
+
+    #[tokio::test]
+    async fn suppression_cleanup_failure_does_not_override_saved_or_cleared_results() {
+        let credentials = Arc::new(GithubCredentialService::new(
+            Arc::new(MemoryStore::default()),
+            validator(vec![valid("octocat")]),
+            Arc::new(|| None),
+        ));
+        let suppression_attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_for_clearer = Arc::clone(&suppression_attempts);
+        let workflow = GithubCredentialWorkflowService::new(
+            credentials,
+            Arc::new(move || {
+                attempts_for_clearer.fetch_add(1, Ordering::SeqCst);
+                Err(AppError::Io {
+                    message: "update-check state is read-only".to_string(),
+                })
+            }),
+        );
+
+        let saved = workflow.save("valid-token").await;
+        let cleared = workflow.clear().await;
+
+        assert!(saved.saved);
+        assert!(cleared.cleared);
+        assert_eq!(
+            saved.warnings,
+            vec![SourceSuppressionWarningCode::SuppressionCleanupFailed]
+        );
+        assert_eq!(
+            cleared.warnings,
+            vec![SourceSuppressionWarningCode::SuppressionCleanupFailed]
+        );
+        assert_eq!(suppression_attempts.load(Ordering::SeqCst), 2);
     }
 }

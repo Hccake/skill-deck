@@ -6,6 +6,7 @@ import {
   mergeUpdateInfo,
   updateInfoCache,
   clearUpdateCacheForContextSkill,
+  normalizeSourceIdentity,
   type SkillListItem,
   type UpdateCheckDisplaySnapshot,
   t,
@@ -16,7 +17,7 @@ import {
   checkSkillAudit,
 } from '@/hooks/useTauriApi';
 import { toAppError } from '@/utils/to-app-error';
-import { contextKey, globalContext } from '@/lib/context';
+import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import type {
   AppError,
   ContextRef,
@@ -36,6 +37,20 @@ type UpdateCheckResult =
   | { ok: false };
 
 type UpdateCheckPriority = 0 | 1;
+
+export type RefreshOrigin = 'initial' | 'passive' | 'selfMutation';
+
+export type RefreshOptions =
+  | { origin?: Exclude<RefreshOrigin, 'selfMutation'>; mutatedSkillNames?: never }
+  | { origin: 'selfMutation'; mutatedSkillNames: string[] };
+
+export interface UpdateCheckSession {
+  active: boolean;
+  initialAttempted: boolean;
+  observedSkills: Record<string, string>;
+  automaticPending: boolean;
+  forcePending: boolean;
+}
 
 interface UpdateCheckRequestTicket {
   key: string;
@@ -80,16 +95,70 @@ function finishUpdateCheckRequest(ticket: UpdateCheckRequestTicket): boolean {
 }
 
 function sourceUpdateIdentity(source: SourceUpdateCheckInfo): string {
-  return `${source.source}\u0000${source.requestedRef ?? ''}`;
+  return `${normalizeSourceIdentity(source.source)}\u0000${source.requestedRef ?? 'HEAD'}`;
+}
+
+function sourceMatchesSkillUpdate(
+  source: SourceUpdateCheckInfo,
+  update: SkillUpdateInfo,
+): boolean {
+  return normalizeSourceIdentity(source.source)
+      === normalizeSourceIdentity(update.sourceUrl ?? update.source)
+    && (source.requestedRef ?? 'HEAD') === (update.gitRef ?? 'HEAD');
+}
+
+function emptyUpdateCheckSession(): UpdateCheckSession {
+  return {
+    active: false,
+    initialAttempted: false,
+    observedSkills: {},
+    automaticPending: false,
+    forcePending: false,
+  };
+}
+
+function skillCheckFingerprint(context: ContextRef, skill: SkillListItem): string {
+  return [
+    contextKey(context),
+    skill.name,
+    skill.source ?? '',
+    skill.gitRef ?? '',
+    skill.skillPath ?? '',
+  ].join('\u0000');
+}
+
+function eligibleSkills(snapshot: ContextSkillSnapshot): SkillListItem[] {
+  return snapshot.skills.filter((skill) => skill.canCheckForUpdates === true);
+}
+
+function pendingScopes(sessions: Record<string, UpdateCheckSession>): {
+  checking: Set<string>;
+  automatic: Set<string>;
+  force: Set<string>;
+} {
+  const checking = new Set<string>();
+  const automatic = new Set<string>();
+  const force = new Set<string>();
+  for (const [key, session] of Object.entries(sessions)) {
+    if (session.automaticPending) automatic.add(key);
+    if (session.forcePending) force.add(key);
+    if (session.automaticPending || session.forcePending) checking.add(key);
+  }
+  return { checking, automatic, force };
 }
 
 function mergeSourceUpdateInfo(
   previous: SourceUpdateCheckInfo[],
   next: SourceUpdateCheckInfo[],
+  retainedResults: SkillUpdateInfo[],
 ): SourceUpdateCheckInfo[] {
   const nextKeys = new Set(next.map(sourceUpdateIdentity));
   return [
-    ...previous.filter((source) => !nextKeys.has(sourceUpdateIdentity(source))),
+    ...previous.filter((source) => {
+      const identity = sourceUpdateIdentity(source);
+      return retainedResults.some((update) => sourceMatchesSkillUpdate(source, update))
+        && !nextKeys.has(identity);
+    }),
     ...next,
   ];
 }
@@ -114,11 +183,27 @@ function preserveLastConfirmedUpdates(
   previous: SkillUpdateInfo[],
   next: SkillUpdateInfo[],
 ): SkillUpdateInfo[] {
-  const previousByName = new Map(previous.map((result) => [result.name, result]));
+  const identityKey = (result: SkillUpdateInfo) => [
+    result.name,
+    result.sourceUrl ?? result.source ?? '',
+    result.gitRef ?? '',
+    result.skillPath ?? '',
+  ].join('\u0000');
+  const previousByIdentity = new Map(previous.map((result) => [identityKey(result), result]));
   return next.map((result) => {
-    const last = previousByName.get(result.name);
-    return result.status === 'cannotCheck' && last?.hasUpdate === true
-      ? { ...result, hasUpdate: true }
+    const last = previousByIdentity.get(identityKey(result));
+    const hasCommittedComparison = last?.status === 'upToDate'
+      || last?.status === 'updateAvailable'
+      || last?.status === 'deletedUpstream';
+    return result.status === 'cannotCheck'
+      && result.reason === 'upstreamUnavailable'
+      && hasCommittedComparison
+      ? {
+          ...result,
+          hasUpdate: last.hasUpdate,
+          status: last.status,
+          reason: last.reason,
+        }
       : result;
   });
 }
@@ -152,37 +237,25 @@ function clearLocalUpdateFlags(
   return changed ? nextSkills : skills;
 }
 
-async function checkUpdatesSafely(
-  context: ContextRef,
-): Promise<UpdateCheckResult> {
-  try {
-    return {
-      ok: true,
-      response: await checkUpdates({
-        context,
-        mode: 'automatic',
-        selection: { kind: 'all' },
-      }),
-    };
-  } catch {
-    return { ok: false };
-  }
-}
-
 interface SkillsDataState {
   snapshots: Record<string, ContextSkillSnapshot>;
   auditCache: Record<string, SkillAuditData>;
+  updateCheckSessions: Record<string, UpdateCheckSession>;
 
   isSyncing: boolean;
   checkingUpdateScopes: Set<string>;
+  automaticUpdateScopes: Set<string>;
+  forceUpdateScopes: Set<string>;
 
   // Actions
-  refreshContext: (context: ContextRef) => Promise<void>;
-  refreshWorkspace: (context: ContextRef) => Promise<void>;
+  refreshContext: (context: ContextRef, options?: RefreshOptions) => Promise<void>;
+  refreshWorkspace: (context: ContextRef, options?: RefreshOptions) => Promise<void>;
   invalidateContexts: (contexts: ContextRef[]) => void;
   invalidateAgentProjections: () => void;
-  syncSkills: (context: ContextRef) => Promise<void>;
+  syncSkills: (context: ContextRef, options?: RefreshOptions) => Promise<void>;
   syncUpdates: (context: ContextRef) => Promise<void>;
+  activateAutomaticChecks: (context: ContextRef) => Promise<void>;
+  reconcileAutomaticChecks: (context: ContextRef) => Promise<void>;
   forceCheckUpdates: (
     context: ContextRef,
     selection: UpdateCheckSelection,
@@ -190,6 +263,7 @@ interface SkillsDataState {
   applyUpdateResult: (context: ContextRef, response: UpdateResponse) => Promise<void>;
   fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
   markSourceRepairSucceeded: (context: ContextRef, skillName: string) => void;
+  clearHostGithubProviderCooldown: () => void;
 }
 
 export interface ContextSkillSnapshot {
@@ -213,6 +287,40 @@ function emptyContextSnapshot(): ContextSkillSnapshot {
   };
 }
 
+export function sourceDiagnosticsForEnvironment(
+  snapshots: Record<string, ContextSkillSnapshot>,
+  environment: ContextRef['environment'],
+): SourceUpdateCheckInfo[] {
+  const prefix = `${environmentKey(environment)}/`;
+  return Object.entries(snapshots).flatMap(([key, snapshot]) => (
+    key.startsWith(prefix) ? snapshot.updateCheck?.sources ?? [] : []
+  ));
+}
+
+function clearHostGithubProviderCooldown(
+  source: SourceUpdateCheckInfo,
+): SourceUpdateCheckInfo {
+  const failure = source.lastAttempt?.failure;
+  const identity = normalizeSourceIdentity(source.source);
+  if (
+    !failure?.providerCooldown
+    || !(identity === 'github.com' || identity?.startsWith('github.com/'))
+  ) {
+    return source;
+  }
+  return {
+    ...source,
+    lastAttempt: {
+      ...source.lastAttempt!,
+      failure: {
+        ...failure,
+        retryAtEpochMs: null,
+        providerCooldown: false,
+      },
+    },
+  };
+}
+
 const contextRequestGenerations = new Map<string, number>();
 
 function nextContextRequestGeneration(key: string): number {
@@ -224,10 +332,43 @@ function nextContextRequestGeneration(key: string): number {
 export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   snapshots: {},
   auditCache: {},
+  updateCheckSessions: {},
 
   isSyncing: false,
   checkingUpdateScopes: new Set(),
-  refreshContext: async (context) => {
+  automaticUpdateScopes: new Set(),
+  forceUpdateScopes: new Set(),
+  clearHostGithubProviderCooldown: () => {
+    for (const [key, cacheEntry] of updateInfoCache) {
+      if (!key.startsWith('host/')) continue;
+      updateInfoCache.set(key, {
+        ...cacheEntry,
+        sources: cacheEntry.sources.map(clearHostGithubProviderCooldown),
+      });
+    }
+    set((state) => ({
+      snapshots: Object.fromEntries(Object.entries(state.snapshots).map(([key, snapshot]) => {
+        if (!key.startsWith('host/')) return [key, snapshot];
+        return [key, {
+          ...snapshot,
+          skills: snapshot.skills.map((skill) => ({
+            ...skill,
+            updateEvidence: skill.updateEvidence
+              ? clearHostGithubProviderCooldown(skill.updateEvidence)
+              : skill.updateEvidence,
+          })),
+          updateCheck: snapshot.updateCheck
+            ? {
+                ...snapshot.updateCheck,
+                sources: snapshot.updateCheck.sources.map(clearHostGithubProviderCooldown),
+              }
+            : snapshot.updateCheck,
+        }];
+      })),
+    }));
+  },
+  refreshContext: async (context, options = {}) => {
+    const origin = options.origin ?? 'passive';
     const key = contextKey(context);
     const current = get().snapshots[key] ?? emptyContextSnapshot();
     const requestId = nextContextRequestGeneration(key);
@@ -255,30 +396,63 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             })
           : result.skills,
       );
+      let committed = false;
       set((state) => {
         if (state.snapshots[key]?.requestId !== requestId) return {};
+        committed = true;
+        const nextSnapshot = {
+          skills,
+          updateCheck: updateCache
+            ? toUpdateCheckDisplaySnapshot(
+                updateCache.results,
+                updateCache.sources,
+                updateCache.outcome,
+                updateCache.checkedAt,
+              )
+            : current.updateCheck,
+          agents: result.agents,
+          pathExists: result.pathExists,
+          loading: false,
+          error: null,
+          requestId,
+        };
         return {
           snapshots: {
             ...state.snapshots,
-            [key]: {
-              skills,
-              updateCheck: updateCache
-                ? toUpdateCheckDisplaySnapshot(
-                    updateCache.results,
-                    updateCache.sources,
-                    updateCache.outcome,
-                    updateCache.checkedAt,
-                  )
-                : current.updateCheck,
-              agents: result.agents,
-              pathExists: result.pathExists,
-              loading: false,
-              error: null,
-              requestId,
-            },
+            [key]: nextSnapshot,
           },
         };
       });
+      if (!committed) return;
+      if (origin === 'selfMutation') {
+        set((state) => {
+          const eligible = eligibleSkills({ ...current, skills });
+          const existingSession = state.updateCheckSessions[key];
+          const session = existingSession ?? emptyUpdateCheckSession();
+          const mutatedNames = new Set(options.mutatedSkillNames);
+          const observedSkills = { ...session.observedSkills };
+          for (const skillName of mutatedNames) delete observedSkills[skillName];
+          for (const skill of eligible) {
+            if (mutatedNames.has(skill.name)) {
+              observedSkills[skill.name] = skillCheckFingerprint(context, skill);
+            }
+          }
+          const ownsEligibleResult = eligible.some((skill) => mutatedNames.has(skill.name));
+          return {
+            updateCheckSessions: {
+              ...state.updateCheckSessions,
+              [key]: {
+                ...session,
+                initialAttempted: session.initialAttempted || ownsEligibleResult,
+                observedSkills,
+              },
+            },
+          };
+        });
+        await get().reconcileAutomaticChecks(context);
+      } else {
+        await get().reconcileAutomaticChecks(context);
+      }
     } catch (error) {
       set((state) => {
         if (state.snapshots[key]?.requestId !== requestId) return {};
@@ -296,14 +470,17 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     }
   },
 
-  refreshWorkspace: async (context) => {
+  refreshWorkspace: async (context, options = { origin: 'initial' }) => {
     if (context.scope.scope === 'global') {
-      await get().refreshContext(context);
+      await get().refreshContext(context, options);
       return;
     }
     await Promise.all([
-      get().refreshContext(globalContext(context.environment)),
-      get().refreshContext(context),
+      get().refreshContext(
+        globalContext(context.environment),
+        options.origin === 'selfMutation' ? { origin: 'passive' } : options,
+      ),
+      get().refreshContext(context, options),
     ]);
   },
 
@@ -326,32 +503,150 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     });
   },
 
-  syncSkills: async (context) => {
+  syncSkills: async (context, options = { origin: 'passive' }) => {
     set({ isSyncing: true });
     try {
-      await get().refreshWorkspace(context);
+      await get().refreshWorkspace(context, options);
     } finally {
       set({ isSyncing: false });
     }
   },
 
   syncUpdates: async (context) => {
+    await get().activateAutomaticChecks(context);
+  },
+
+  activateAutomaticChecks: async (context) => {
     const key = contextKey(context);
-    const ticket = beginUpdateCheckRequest(key, 0);
+    set((state) => ({
+      updateCheckSessions: {
+        ...state.updateCheckSessions,
+        [key]: {
+          ...(state.updateCheckSessions[key] ?? emptyUpdateCheckSession()),
+          active: true,
+        },
+      },
+    }));
+    await get().reconcileAutomaticChecks(context);
+  },
+
+  reconcileAutomaticChecks: async (context) => {
+    const key = contextKey(context);
+    let selection: UpdateCheckSelection | null = null;
     set((state) => {
-      const next = new Set(state.checkingUpdateScopes);
-      next.add(key);
-      return { checkingUpdateScopes: next };
+      const session = state.updateCheckSessions[key] ?? emptyUpdateCheckSession();
+      const snapshot = state.snapshots[key];
+      if (
+        !session.active
+        || session.automaticPending
+        || session.forcePending
+        || !snapshot
+        || snapshot.loading
+        || snapshot.error
+      ) {
+        return {};
+      }
+      const eligible = eligibleSkills(snapshot);
+      if (eligible.length === 0) {
+        if (session.initialAttempted && Object.keys(session.observedSkills).length > 0) {
+          return {
+            updateCheckSessions: {
+              ...state.updateCheckSessions,
+              [key]: { ...session, observedSkills: {} },
+            },
+          };
+        }
+        return {};
+      }
+      const nextObserved = Object.fromEntries(
+        eligible.map((skill) => [
+          skill.name,
+          skillCheckFingerprint(context, skill),
+        ]),
+      );
+      if (!session.initialAttempted) {
+        selection = { kind: 'all' };
+      } else {
+        const changed = eligible.filter((skill) => (
+          state.updateCheckSessions[key]?.observedSkills[skill.name]
+            !== nextObserved[skill.name]
+        ));
+        const observedChanged = Object.keys(session.observedSkills).length
+          !== Object.keys(nextObserved).length
+          || Object.entries(nextObserved).some(([name, fingerprint]) => (
+            session.observedSkills[name] !== fingerprint
+          ));
+        if (changed.length === 0) {
+          if (!observedChanged) return {};
+          return {
+            updateCheckSessions: {
+              ...state.updateCheckSessions,
+              [key]: { ...session, observedSkills: nextObserved },
+            },
+          };
+        }
+        selection = {
+          kind: 'skills',
+          skills: changed.map((skill) => ({ context, skillName: skill.name })),
+        };
+      }
+      const nextSessions = {
+        ...state.updateCheckSessions,
+        [key]: {
+          ...session,
+          initialAttempted: true,
+          observedSkills: nextObserved,
+          automaticPending: true,
+        },
+      };
+      const scopes = pendingScopes(nextSessions);
+      return {
+        updateCheckSessions: nextSessions,
+        checkingUpdateScopes: scopes.checking,
+        automaticUpdateScopes: scopes.automatic,
+        forceUpdateScopes: scopes.force,
+      };
     });
+    const admittedSelection = selection as UpdateCheckSelection | null;
+    if (!admittedSelection) return;
+    const ticket = beginUpdateCheckRequest(key, 0);
     try {
-      const result = await checkUpdatesSafely(context);
+      let result: UpdateCheckResult;
+      try {
+        result = {
+          ok: true,
+          response: await checkUpdates({ context, mode: 'automatic', selection: admittedSelection }),
+        };
+      } catch (error) {
+        toast.error(t('skills.checkUpdatesError', {
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        result = { ok: false };
+      }
       if (!result.ok || !isAdmittedUpdateCheckRequest(ticket)) return;
       const previous = updateInfoCache.get(key);
+      const retainedResults = admittedSelection.kind === 'skills'
+        ? (previous?.results ?? []).filter((item) => (
+            !admittedSelection.skills.some((selected) => selected.skillName === item.name)
+          ))
+        : [];
+      const results = admittedSelection.kind === 'skills'
+        ? [
+            ...retainedResults,
+            ...preserveLastConfirmedUpdates(previous?.results ?? [], result.response.skills),
+          ]
+        : preserveLastConfirmedUpdates(previous?.results ?? [], result.response.skills);
+      const sources = admittedSelection.kind === 'skills'
+        ? mergeSourceUpdateInfo(previous?.sources ?? [], result.response.sources, retainedResults)
+        : result.response.sources;
+      const completeness: 'partial' | 'complete' = admittedSelection.kind === 'skills'
+        ? 'partial'
+        : 'complete';
       const cacheEntry = {
-        results: preserveLastConfirmedUpdates(previous?.results ?? [], result.response.skills),
-        sources: result.response.sources,
+        results,
+        sources,
         checkedAt: Date.now(),
-        completeness: 'complete' as const,
+        completeness,
         outcome: result.response.outcome,
       };
       updateInfoCache.set(key, cacheEntry);
@@ -364,6 +659,7 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
             [key]: {
               ...current,
               skills: sortSkills(mergeUpdateInfo(current.skills, cacheEntry.results, {
+                preserveUnmatched: completeness === 'partial',
                 sources: cacheEntry.sources,
               })),
               updateCheck: toUpdateCheckDisplaySnapshot(
@@ -379,25 +675,50 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     } catch {
       // 静默失败 — 更新检测是非关键路径
     } finally {
-      const stillPending = finishUpdateCheckRequest(ticket);
       set((state) => {
-        if (stillPending) return {};
-        const next = new Set(state.checkingUpdateScopes);
-        next.delete(key);
-        return { checkingUpdateScopes: next };
+        const session = state.updateCheckSessions[key];
+        if (!session) return {};
+        const nextSessions = {
+          ...state.updateCheckSessions,
+          [key]: { ...session, automaticPending: false },
+        };
+        const scopes = pendingScopes(nextSessions);
+        return {
+          updateCheckSessions: nextSessions,
+          checkingUpdateScopes: scopes.checking,
+          automaticUpdateScopes: scopes.automatic,
+          forceUpdateScopes: scopes.force,
+        };
       });
+      finishUpdateCheckRequest(ticket);
+      void get().reconcileAutomaticChecks(context);
     }
   },
 
   forceCheckUpdates: async (context, selection) => {
     const cacheKey = contextKey(context);
+    const admitted = (() => {
+      let result = false;
+      set((state) => {
+        const session = state.updateCheckSessions[cacheKey] ?? emptyUpdateCheckSession();
+        if (session.forcePending) return {};
+        const nextSessions = {
+          ...state.updateCheckSessions,
+          [cacheKey]: { ...session, forcePending: true },
+        };
+        const scopes = pendingScopes(nextSessions);
+        result = true;
+        return {
+          updateCheckSessions: nextSessions,
+          checkingUpdateScopes: scopes.checking,
+          automaticUpdateScopes: scopes.automatic,
+          forceUpdateScopes: scopes.force,
+        };
+      });
+      return result;
+    })();
+    if (!admitted) return null;
     const ticket = beginUpdateCheckRequest(cacheKey, 1);
-
-    set((state) => {
-      const next = new Set(state.checkingUpdateScopes);
-      next.add(cacheKey);
-      return { checkingUpdateScopes: next };
-    });
 
     try {
       const response = await checkUpdates({
@@ -409,16 +730,19 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       const now = Date.now();
       const previous = updateInfoCache.get(cacheKey);
       const updates = preserveLastConfirmedUpdates(previous?.results ?? [], response.skills);
+      const retainedResults = selection.kind === 'skills'
+        ? (previous?.results ?? []).filter((item) => (
+            !selection.skills.some((selected) => selected.skillName === item.name)
+          ))
+        : [];
       const results = selection.kind === 'skills'
         ? [
-            ...(previous?.results ?? []).filter((item) => (
-              !selection.skills.some((selected) => selected.skillName === item.name)
-            )),
+            ...retainedResults,
             ...updates,
           ]
         : updates;
       const sources = selection.kind === 'skills'
-        ? mergeSourceUpdateInfo(previous?.sources ?? [], response.sources)
+        ? mergeSourceUpdateInfo(previous?.sources ?? [], response.sources, retainedResults)
         : response.sources;
       const completeness = selection.kind === 'skills' ? 'partial' : 'complete';
       updateInfoCache.set(cacheKey, {
@@ -451,13 +775,23 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       }));
       return null;
     } finally {
-      const stillPending = finishUpdateCheckRequest(ticket);
       set((state) => {
-        if (stillPending) return {};
-        const next = new Set(state.checkingUpdateScopes);
-        next.delete(cacheKey);
-        return { checkingUpdateScopes: next };
+        const session = state.updateCheckSessions[cacheKey];
+        if (!session) return {};
+        const nextSessions = {
+          ...state.updateCheckSessions,
+          [cacheKey]: { ...session, forcePending: false },
+        };
+        const scopes = pendingScopes(nextSessions);
+        return {
+          updateCheckSessions: nextSessions,
+          checkingUpdateScopes: scopes.checking,
+          automaticUpdateScopes: scopes.automatic,
+          forceUpdateScopes: scopes.force,
+        };
       });
+      finishUpdateCheckRequest(ticket);
+      void get().reconcileAutomaticChecks(context);
     }
   },
 
@@ -472,7 +806,8 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
     );
     const clearCannotCheckNames = new Set(
       current.skills
-        .filter((skill) => successfulSkillNames.has(skill.name) && skill.updateReason === 'missingRemoteHash')
+        .filter((skill) => successfulSkillNames.has(skill.name)
+          && (skill.updateReason === 'missingRemoteHash' || skill.updateReason === 'missing-remote-hash'))
         .map((skill) => skill.name),
     );
     for (const skill of current.skills) {
@@ -501,7 +836,10 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
         };
       });
     }
-    await get().refreshContext(context);
+    await get().refreshContext(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: Array.from(successfulSkillNames),
+    });
   },
 
   fetchAuditForSkills: async (skills) => {

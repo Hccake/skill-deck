@@ -150,14 +150,20 @@ export async function executeManageAgentChanges(
 
     if (failedUnits.length > 0) {
       const { useSkillsDataStore } = await import('@/stores/skills-data');
-      await useSkillsDataStore.getState().syncSkills(context);
+      const hasSucceededUnit = result.units.some((unit) => unit.status === 'succeeded');
+      await useSkillsDataStore.getState().syncSkills(context, hasSucceededUnit
+        ? { origin: 'selfMutation', mutatedSkillNames: [manageAgentsSkill.name] }
+        : { origin: 'passive' });
       return { status: 'failed' };
     }
 
     toast.success(t('skills.manageAgents.success'));
     useSkillDialogStore.getState().closeManageAgents();
     const { useSkillsDataStore } = await import('@/stores/skills-data');
-    await useSkillsDataStore.getState().syncSkills(context);
+    await useSkillsDataStore.getState().syncSkills(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: [manageAgentsSkill.name],
+    });
     return { status: 'succeeded', response: result };
   } catch (error) {
     if (isStaleManageAgentError(error)) {

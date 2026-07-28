@@ -19,6 +19,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,6 +39,7 @@ import {
 import type { AgentId, InstalledSkill, RiskLevel, SkillScope } from '@/bindings';
 import {
   hasIncompleteUpdateCheck,
+  hasCommittedUpdateComparison,
   resolveEvidenceFailureNextStepI18nKey,
   resolveEvidenceFailureReasonI18nKey,
   resolveUpdateHintI18nKey,
@@ -136,12 +138,15 @@ export const SkillCard = memo(function SkillCard({
   const hasStatusDrivenAction = (canShowUpdateAction && !updateStatus)
     || canShowDirectReinstallAction
     || canShowRepairAction;
-  const updateStatusLabelKey = resolveUpdateStatusLabelI18nKey(skill);
+  const hasCommittedUpdateConclusion = hasCommittedUpdateComparison(skill);
+  const updateStatusLabelKey = resolveUpdateStatusLabelI18nKey(
+    hasCommittedUpdateConclusion ? { ...skill, updateAttempt: null } : skill,
+  );
   const activeUpdatePhase = isSkillUpdateActive(updateStatus) ? updateStatus : null;
   const typedFailure = skill.updateEvidence?.lastAttempt?.failure ?? null;
   const updateHintKey = !skill.hasUpdate ? resolveUpdateHintI18nKey(skill.updateReason) : null;
   const isIncompleteCheck = hasIncompleteUpdateCheck(skill);
-  const isUpdateCheckFailure = isIncompleteCheck
+  const isUpdateCheckFailure = (!hasCommittedUpdateConclusion && isIncompleteCheck)
     || updateStatusLabelKey === 'skills.updateStatusLabel.checkFailed';
   const failureReasonKey = typedFailure
     ? resolveEvidenceFailureReasonI18nKey(typedFailure.reason)
@@ -160,6 +165,9 @@ export const SkillCard = memo(function SkillCard({
         : isUpdateCheckFailure
           ? 'gap-1 text-warning'
           : 'bg-warning/10 text-warning';
+  const warningTransitionKey = hasCommittedUpdateConclusion && isIncompleteCheck && failureReasonKey
+    ? `${failureReasonKey}:${typedFailure?.retryAtEpochMs ?? ''}`
+    : 'none';
 
   return (
     <Card
@@ -196,22 +204,58 @@ export const SkillCard = memo(function SkillCard({
                 {/* Risk Badge */}
                 {riskLevel ? <RiskBadge risk={riskLevel} /> : null}
 
-                {updateStatusLabelKey ? (
-                  isUpdateCheckFailure && failureReasonKey ? (
+                <CrossfadeSwap transitionKey={updateStatusLabelKey ?? 'none'}>
+                  {updateStatusLabelKey ? (
+                    isUpdateCheckFailure && failureReasonKey ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            tabIndex={0}
+                            className={cn(
+                              "inline-flex h-[20px] items-center rounded-sm px-1.5 text-[11px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                              updateStatusLabelClassName
+                            )}
+                          >
+                            <CircleAlert className="h-3 w-3 shrink-0" />
+                            {t(updateStatusLabelKey)}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-72 space-y-1 whitespace-normal">
+                          <p>{t(failureReasonKey)}</p>
+                          {failureNextStepKey ? <p>{t(failureNextStepKey)}</p> : null}
+                          {typedFailure?.retryAtEpochMs ? (
+                            <p>{t('skills.updateEvidence.retryAt', {
+                              time: new Date(typedFailure.retryAtEpochMs).toLocaleString(i18n.language),
+                            })}</p>
+                          ) : null}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span className={cn(
+                        "inline-flex h-[20px] items-center rounded-sm px-1.5 text-[11px] font-medium",
+                        updateStatusLabelClassName
+                      )}>
+                        {t(updateStatusLabelKey)}
+                      </span>
+                    )
+                  ) : null}
+                </CrossfadeSwap>
+
+                <CrossfadeSwap transitionKey={warningTransitionKey}>
+                  {hasCommittedUpdateConclusion && isIncompleteCheck && failureReasonKey ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span
+                          data-testid="skill-update-warning"
                           tabIndex={0}
-                          className={cn(
-                            "inline-flex h-[20px] items-center rounded-sm px-1.5 text-[11px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                            updateStatusLabelClassName
-                          )}
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-warning outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                          aria-label={t('skills.updateStatusLabel.checkIncomplete')}
                         >
-                          <CircleAlert className="h-3 w-3 shrink-0" />
-                          {t(updateStatusLabelKey)}
+                          <CircleAlert className="h-3.5 w-3.5" />
                         </span>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-72 space-y-1 whitespace-normal">
+                        <p>{t('skills.updateStatusLabel.checkIncomplete')}</p>
                         <p>{t(failureReasonKey)}</p>
                         {failureNextStepKey ? <p>{t(failureNextStepKey)}</p> : null}
                         {typedFailure?.retryAtEpochMs ? (
@@ -221,15 +265,8 @@ export const SkillCard = memo(function SkillCard({
                         ) : null}
                       </TooltipContent>
                     </Tooltip>
-                  ) : (
-                    <span className={cn(
-                      "inline-flex h-[20px] items-center rounded-sm px-1.5 text-[11px] font-medium",
-                      updateStatusLabelClassName
-                    )}>
-                      {t(updateStatusLabelKey)}
-                    </span>
-                  )
-                ) : null}
+                  ) : null}
+                </CrossfadeSwap>
 
                 {/* Conflict Icon */}
                 {hasConflict ? (

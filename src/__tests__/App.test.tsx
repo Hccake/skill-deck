@@ -13,11 +13,13 @@ const mocks = vi.hoisted(() => ({
   recoveryCenter: vi.fn(),
   checkForUpdate: vi.fn(),
   shouldAutoCheck: vi.fn(() => false),
-  wizardResultHandler: null as null | (() => void),
+  wizardResultHandler: null as null | ((event: {
+    payload: { context: { environment: { kind: 'wsl'; distro_name: string }; scope: { scope: 'project'; project_id: string } }; mutatedSkillNames?: string[] };
+  }) => void),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: (event: string, handler: () => void) => {
+  listen: (event: string, handler: (event: Parameters<NonNullable<typeof mocks.wizardResultHandler>>[0]) => void) => {
     if (event === 'wizard-result') mocks.wizardResultHandler = handler;
     return mocks.listen(event, handler);
   },
@@ -108,13 +110,21 @@ describe('App', () => {
       () => expect(mocks.wizardResultHandler).not.toBeNull(),
       { timeout: 5000 },
     );
-    act(() => mocks.wizardResultHandler?.());
+    act(() => mocks.wizardResultHandler?.({
+      payload: {
+        context: {
+          environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+          scope: { scope: 'project', project_id: 'project-a' },
+        },
+        mutatedSkillNames: ['toolkit'],
+      },
+    }));
 
     await waitFor(
       () => expect(mocks.refreshWorkspace).toHaveBeenCalledWith({
-        environment: { kind: 'host' },
-        scope: { scope: 'global' },
-      }),
+        environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+        scope: { scope: 'project', project_id: 'project-a' },
+      }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] }),
       { timeout: 5000 },
     );
   });

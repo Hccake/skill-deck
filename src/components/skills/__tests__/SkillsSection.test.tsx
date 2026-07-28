@@ -1,8 +1,8 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SkillsSection } from '../SkillsSection';
 import type { InstalledSkill } from '@/bindings';
 import type { SkillListItem } from '@/stores/skills-utils';
@@ -58,6 +58,439 @@ const makeSkill = (
 describe('SkillsSection', () => {
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps the summary blank until a comparison has been committed', () => {
+    const props = {
+      title: 'Global',
+      skills: [makeSkill('global', { hasUpdate: false, updateStatus: 'upToDate' })],
+      scope: 'global' as const,
+      updatingSkills: new Map<string, never>(),
+      onSkillClick: vi.fn(),
+      onPrepareUpdate: vi.fn(async () => true),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+    };
+    const { rerender } = render(<SkillsSection {...props} />);
+    expect(screen.queryByText('skills.upToDate')).toBeNull();
+
+    rerender(<SkillsSection {...props} hasCommittedComparison />);
+    expect(screen.getByText('skills.upToDate')).toBeTruthy();
+  });
+
+  it('does not borrow a hidden Skill comparison for an unknown filtered result', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', {
+          name: 'unknown',
+          hasUpdate: false,
+          updateStatus: null,
+          updateReason: null,
+        })]}
+        scope="global"
+        updatingSkills={new Map()}
+        hasCommittedComparison
+        filterActive
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText('skills.upToDate')).toBeNull();
+  });
+
+  it('keeps the last committed summary visible while Automatic is pending', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', { hasUpdate: false, updateStatus: 'upToDate' })]}
+        scope="global"
+        updatingSkills={new Map()}
+        isAutomaticCheckingUpdates
+        hasCommittedComparison
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.upToDate')).toBeTruthy();
+    expect(screen.queryByText('skills.checking')).toBeNull();
+  });
+
+  it('keeps the committed summary and adds a warning after a failed refresh', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', {
+          hasUpdate: false,
+          updateStatus: 'upToDate',
+          updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
+          updateEvidence: {
+            source: 'github.com/owner/repo',
+            requestedRef: 'main',
+            resolvedRef: 'main',
+            refRevision: 'revision-1',
+            checkedAtEpochMs: 100,
+            expiresAtEpochMs: 200,
+            freshness: 'backingOff',
+            lastAttempt: {
+              checkedAtEpochMs: 300,
+              failure: {
+                reason: 'network',
+                message: 'offline',
+                retryAtEpochMs: 500,
+                providerCooldown: false,
+              },
+            },
+          },
+        })]}
+        scope="global"
+        updatingSkills={new Map()}
+        hasCommittedComparison
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.upToDate')).toBeTruthy();
+    expect(screen.queryByText('skills.updateCheckIncompleteCount')).toBeNull();
+    expect(screen.getByLabelText('skills.updateStatusLabel.checkIncomplete')).toBeTruthy();
+  });
+
+  it('shows the Automatic spinner only after 200ms without inserting checking copy', async () => {
+    vi.useFakeTimers();
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global')]}
+        scope="global"
+        updatingSkills={new Map()}
+        isAutomaticCheckingUpdates
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeNull();
+    expect(screen.queryByText('skills.checking')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(199); });
+    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it('never shows the Automatic spinner when the request finishes before 200ms', async () => {
+    vi.useFakeTimers();
+    const props = {
+      title: 'Global',
+      skills: [makeSkill('global')],
+      scope: 'global' as const,
+      updatingSkills: new Map<string, never>(),
+      onSkillClick: vi.fn(),
+      onPrepareUpdate: vi.fn(async () => true),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+    };
+    const { rerender } = render(<SkillsSection {...props} />);
+
+    rerender(<SkillsSection {...props} isAutomaticCheckingUpdates />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+    rerender(<SkillsSection {...props} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('keeps static maintenance summary stable before, during, and after Automatic checking', () => {
+    const props = {
+      title: 'Global',
+      skills: [
+        makeSkill('global', {
+          name: 'legacy',
+          hasUpdate: false,
+          canRunUpdate: true,
+          canCheckForUpdates: false,
+          updateStatus: 'cannotCheck',
+          updateReason: 'missing-remote-hash',
+        }),
+        makeSkill('global', {
+          name: 'eligible',
+          hasUpdate: false,
+          updateStatus: 'upToDate',
+        }),
+      ],
+      scope: 'global' as const,
+      updatingSkills: new Map<string, never>(),
+      hasCommittedComparison: true,
+      onSkillClick: vi.fn(),
+      onPrepareUpdate: vi.fn(async () => true),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+    };
+    const { rerender } = render(<SkillsSection {...props} />);
+    const summary = screen.getByText('skills.uncheckableUpdateCount');
+
+    rerender(<SkillsSection {...props} isAutomaticCheckingUpdates />);
+    expect(screen.getByText('skills.uncheckableUpdateCount')).toBe(summary);
+    expect(screen.queryByText('skills.checking')).toBeNull();
+
+    rerender(<SkillsSection {...props} />);
+    expect(screen.getByText('skills.uncheckableUpdateCount')).toBe(summary);
+  });
+
+  it('crossfades changed polite live-region content and removes the outgoing summary after 160ms', async () => {
+    vi.useFakeTimers();
+    const props = {
+      title: 'Global',
+      scope: 'global' as const,
+      updatingSkills: new Map<string, never>(),
+      hasCommittedComparison: true,
+      onSkillClick: vi.fn(),
+      onPrepareUpdate: vi.fn(async () => true),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+    };
+    const upToDateSkill = makeSkill('global', { hasUpdate: false, updateStatus: 'upToDate' });
+    const { rerender } = render(<SkillsSection {...props} skills={[upToDateSkill]} />);
+    const liveRegion = screen.getByTestId('update-summary-slot');
+    const initialSummary = screen.getByText('skills.upToDate');
+
+    expect(liveRegion.getAttribute('aria-live')).toBe('polite');
+    expect(initialSummary.closest('[data-crossfade-state="current"]')?.className).toContain('fade-in');
+
+    rerender(
+      <SkillsSection
+        {...props}
+        skills={[upToDateSkill]}
+        isAutomaticCheckingUpdates
+      />
+    );
+    expect(screen.getByText('skills.upToDate')).toBe(initialSummary);
+
+    rerender(
+      <SkillsSection
+        {...props}
+        skills={[makeSkill('global', {
+          hasUpdate: true,
+          canRunUpdate: true,
+          updateStatus: 'updateAvailable',
+        })]}
+      />
+    );
+    const nextSummary = screen.getByText('1 skills.update');
+    const outgoing = screen.getByText('skills.upToDate').closest('[data-crossfade-state="outgoing"]');
+    const current = nextSummary.closest('[data-crossfade-state="current"]');
+
+    expect(outgoing?.className).toContain('fade-out');
+    expect(outgoing?.className).toContain('duration-[160ms]');
+    expect(outgoing?.className).toContain('motion-reduce:hidden');
+    expect(current?.className).toContain('fade-in');
+    expect(current?.className).toContain('duration-[160ms]');
+    expect(current?.className).toContain('motion-reduce:animate-none');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(160); });
+    expect(screen.queryByText('skills.upToDate')).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('reports dynamic incomplete checks and static uncheckable Skills separately', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[
+          makeSkill('global', {
+            name: 'offline',
+            hasUpdate: false,
+            canCheckForUpdates: true,
+            updateStatus: 'cannotCheck',
+            updateReason: 'network-error',
+          }),
+          makeSkill('global', {
+            name: 'legacy',
+            hasUpdate: false,
+            canRunUpdate: true,
+            canCheckForUpdates: false,
+            updateStatus: 'cannotCheck',
+            updateReason: 'missing-remote-hash',
+          }),
+        ]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.updateCheckIncompleteCount')).toBeTruthy();
+    expect(screen.getByText('skills.uncheckableUpdateCount')).toBeTruthy();
+    expect(screen.getByTestId('update-summary-slot').className).toContain('h-10');
+    expect(screen.getByTestId('update-summary-slot').className).toContain('w-72');
+  });
+
+  it('disables Force during provider cooldown and exposes the retry time', () => {
+    const retryAtEpochMs = Date.now() + 60_000;
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', {
+          hasUpdate: false,
+          updateStatus: 'cannotCheck',
+          updateReason: 'upstreamUnavailable',
+          updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
+          updateEvidence: {
+            source: 'github.com/owner/repo',
+            requestedRef: 'main',
+            resolvedRef: null,
+            refRevision: null,
+            checkedAtEpochMs: null,
+            expiresAtEpochMs: null,
+            freshness: 'coolingDown',
+            lastAttempt: {
+              checkedAtEpochMs: Date.now(),
+              failure: {
+                reason: 'rateLimited',
+                message: 'rate limited',
+                retryAtEpochMs,
+                providerCooldown: true,
+              },
+            },
+          },
+        })]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={async () => 'notCompleted' as const}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toContain('skills.updateEvidence.retryAt');
+    expect(screen.getByText('skills.updateCheckIncompleteCount')).toBeTruthy();
+  });
+
+  it('keeps Force disabled when filtering hides the source that established provider cooldown', () => {
+    const retryAtEpochMs = Date.now() + 60_000;
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', { source: 'other/repo', hasUpdate: false })]}
+        sourceDiagnostics={[{
+          source: 'github.com/owner/rate-limited',
+          requestedRef: 'HEAD',
+          resolvedRef: null,
+          refRevision: null,
+          checkedAtEpochMs: null,
+          expiresAtEpochMs: null,
+          freshness: 'coolingDown',
+          lastAttempt: {
+            checkedAtEpochMs: Date.now(),
+            failure: {
+              reason: 'rateLimited',
+              message: 'rate limited',
+              retryAtEpochMs,
+              providerCooldown: true,
+            },
+          },
+        }]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={async () => 'notCompleted' as const}
+      />
+    );
+
+    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+  });
+
+  it('re-enables Force when the observed provider cooldown is already expired', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const retryAtEpochMs = 1_060_000;
+    const skill = makeSkill('global', {
+      hasUpdate: false,
+      updateStatus: 'cannotCheck',
+      updateReason: 'upstreamUnavailable',
+      updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
+      updateEvidence: {
+        source: 'github.com/owner/repo',
+        requestedRef: 'main',
+        resolvedRef: null,
+        refRevision: null,
+        checkedAtEpochMs: null,
+        expiresAtEpochMs: null,
+        freshness: 'coolingDown',
+        lastAttempt: {
+          checkedAtEpochMs: 1_000_000,
+          failure: {
+            reason: 'rateLimited',
+            message: 'rate limited',
+            retryAtEpochMs,
+            providerCooldown: true,
+          },
+        },
+      },
+    });
+    const props = {
+      title: 'Global',
+      skills: [skill],
+      scope: 'global' as const,
+      updatingSkills: new Map<string, never>(),
+      onSkillClick: vi.fn(),
+      onPrepareUpdate: vi.fn(async () => true),
+      onDelete: vi.fn(),
+      onAdd: vi.fn(),
+      onCheckUpdates: vi.fn(async () => 'notCompleted' as const),
+    };
+    const { rerender } = render(<SkillsSection {...props} />);
+
+    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(true);
+
+    vi.setSystemTime(1_120_000);
+    rerender(<SkillsSection
+      {...props}
+      skills={[{
+        ...skill,
+        updateEvidence: {
+          ...skill.updateEvidence!,
+          lastAttempt: {
+            ...skill.updateEvidence!.lastAttempt!,
+            failure: {
+              ...skill.updateEvidence!.lastAttempt!.failure!,
+              retryAtEpochMs: 1_050_000,
+            },
+          },
+        },
+      }]}
+    />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect((screen.getByRole('button', { name: 'skills.checkUpdates' }) as HTMLButtonElement).disabled).toBe(false);
+    vi.useRealTimers();
   });
 
   it('disables write actions but keeps update checks available during another mutation', () => {
@@ -285,7 +718,7 @@ describe('SkillsSection', () => {
       />
     );
 
-    expect(screen.getByText('skills.updateCheckFailureCount')).toBeTruthy();
+    expect(screen.getByText('skills.updateCheckIncompleteCount')).toBeTruthy();
     expect(screen.queryByText('skills.uncheckableUpdateCount')).toBeNull();
     expect(screen.queryByText('skills.upToDate')).toBeNull();
     expect(screen.queryByText('github.com/owner/stale')).toBeNull();
@@ -441,6 +874,37 @@ describe('SkillsSection', () => {
       />
     );
 
+    fireEvent.click(screen.getByTestId('update:global:toolkit'));
+
+    await waitFor(() => {
+      expect(onPrepareUpdate).toHaveBeenCalledWith(['toolkit'], false);
+    });
+  });
+
+  it('treats the legacy missing-remote-hash lock reason as static reinstall maintenance', async () => {
+    const onPrepareUpdate = vi.fn(async () => true);
+
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global', {
+          hasUpdate: false,
+          canRunUpdate: true,
+          canCheckForUpdates: false,
+          updateStatus: 'cannotCheck',
+          updateReason: 'missing-remote-hash',
+        } as Partial<InstalledSkill>)]}
+        scope="global"
+        updatingSkills={new Map()}
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={onPrepareUpdate}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('skills.uncheckableUpdateCount')).toBeTruthy();
+    expect(screen.queryByText('skills.updateCheckIncompleteCount')).toBeNull();
     fireEvent.click(screen.getByTestId('update:global:toolkit'));
 
     await waitFor(() => {

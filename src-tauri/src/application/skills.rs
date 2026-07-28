@@ -140,6 +140,7 @@ mod environment_tests {
             update_reason: None,
             plugin_name: None,
             git_ref: None,
+            skill_path: None,
         }
     }
 
@@ -201,6 +202,7 @@ mod environment_tests {
         );
         assert_eq!(skill.installed_at.as_deref(), Some("2026-07-01T00:00:00Z"));
         assert_eq!(skill.can_run_update, Some(true));
+        assert_eq!(skill.skill_path.as_deref(), Some("skills/toolkit/SKILL.md"));
         assert_eq!(skill.agents, vec![AgentId::parse("codex").unwrap()]);
     }
 

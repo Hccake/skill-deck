@@ -189,9 +189,20 @@ export function WizardPage() {
 
   // 完成安装 — 通知主窗口刷新 skills 列表，然后关闭窗口
   const handleDone = useCallback(async () => {
-    try { await emit('wizard-result', { action: 'refresh' }); } catch { /* ignore */ }
+    const mutatedSkillNames = Array.from(new Set(
+      (state.installResults?.units ?? [])
+        .filter((unit) => unit.status === 'succeeded')
+        .map((unit) => unit.skillName),
+    ));
+    try {
+      await emit('wizard-result', {
+        action: 'refresh',
+        context: state.context,
+        mutatedSkillNames,
+      });
+    } catch { /* ignore */ }
     await closeWizard();
-  }, [closeWizard]);
+  }, [closeWizard, state.context, state.installResults]);
 
   // 验证是否可以进入下一步
   const canProceed = useMemo(

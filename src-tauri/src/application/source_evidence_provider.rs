@@ -421,7 +421,7 @@ fn evidence_covers_requested_paths(
 mod tests {
     use std::collections::VecDeque;
     use std::net::SocketAddr;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -429,8 +429,8 @@ mod tests {
     use crate::application::payload_session::{PayloadSessionLimits, PayloadSessionManager};
     use crate::application::source_evidence::{
         EvidenceCheckMode, EvidenceCheckRequest, EvidenceDetectionOutcome,
-        EvidenceDetectionRequest, ProviderThrottleKey, RemoteEvidenceKey, SkillRevision,
-        SourceEvidenceCoordinator, SourceEvidenceDetector,
+        EvidenceDetectionRequest, EvidenceFreshness, ProviderThrottleKey, RemoteEvidenceKey,
+        SkillRevision, SourceEvidenceCoordinator, SourceEvidenceDetector,
     };
     use crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex;
     use crate::core::mutation::CancellationSignal;
@@ -556,6 +556,60 @@ mod tests {
             Arc::new(SourceSnapshotReuseIndex::default()),
             GithubApiClient::with_base_url(fixture.base_url()),
         )
+    }
+
+    struct CountingDetector {
+        inner: RuntimeSourceEvidenceDetector,
+        calls: AtomicUsize,
+    }
+
+    impl CountingDetector {
+        fn new(inner: RuntimeSourceEvidenceDetector) -> Self {
+            Self {
+                inner,
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl SourceEvidenceDetector for CountingDetector {
+        fn detect<'a>(
+            &'a self,
+            request: EvidenceDetectionRequest,
+            previous: Option<RemoteEvidenceEntry>,
+            cancellation: CancellationSignal,
+        ) -> EvidenceFuture<'a> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.detect(request, previous, cancellation)
+        }
+    }
+
+    fn github_check_request(mode: EvidenceCheckMode) -> EvidenceCheckRequest {
+        let identity = SourceIdentity::from_parsed(
+            &parse_source("https://github.com/acme/tools#main").unwrap(),
+        )
+        .unwrap();
+        EvidenceCheckRequest {
+            environment: EnvironmentRef::Host,
+            key: RemoteEvidenceKey::from_identity(&identity),
+            throttle_key: ProviderThrottleKey::from_identity(&identity),
+            mode,
+            requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
+            acquisition: Arc::new(identity.acquisition().clone()),
+            acquisition_transport_identity: identity.acquisition_transport().clone(),
+        }
+    }
+
+    fn successful_github_response() -> HttpResponse {
+        HttpResponse {
+            status: "200 OK",
+            headers: vec![("Content-Type", "application/json"), ("ETag", "tree-v1")],
+            body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"tree-alpha"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"}]}"#,
+        }
     }
 
     #[tokio::test]
@@ -800,6 +854,139 @@ mod tests {
             };
             assert_eq!(failure.reason, expected_reason);
         }
+    }
+
+    #[tokio::test]
+    async fn coordinator_reuses_fresh_github_evidence_without_detector_or_http_requests() {
+        let fixture = HttpFixture::new(vec![
+            successful_github_response(),
+            successful_github_response(),
+        ]);
+        let detector = Arc::new(CountingDetector::new(github_detector(&fixture)));
+        let now = Arc::new(AtomicU64::new(1_000));
+        let coordinator = SourceEvidenceCoordinator::with_clock(detector.clone(), {
+            let now = now.clone();
+            move || now.load(Ordering::SeqCst)
+        });
+        let request = github_check_request(EvidenceCheckMode::Automatic);
+
+        let first = coordinator
+            .check(request.clone(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let cached = coordinator
+            .check(request, CancellationSignal::default())
+            .await
+            .unwrap();
+
+        assert_eq!(first.freshness, EvidenceFreshness::Fresh);
+        assert_eq!(cached.freshness, EvidenceFreshness::Cached);
+        assert_eq!(detector.calls(), 1);
+        assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn coordinator_backoff_blocks_http_until_one_concurrent_batch_after_deadline() {
+        let fixture = HttpFixture::new(vec![
+            HttpResponse {
+                status: "500 Internal Server Error",
+                headers: vec![],
+                body: "",
+            },
+            successful_github_response(),
+            successful_github_response(),
+        ]);
+        let detector = Arc::new(CountingDetector::new(github_detector(&fixture)));
+        let now = Arc::new(AtomicU64::new(1_000));
+        let coordinator = SourceEvidenceCoordinator::with_clock(detector.clone(), {
+            let now = now.clone();
+            move || now.load(Ordering::SeqCst)
+        });
+        let request = github_check_request(EvidenceCheckMode::Automatic);
+
+        let failed = coordinator
+            .check(request.clone(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let failure = failed.last_attempt.unwrap().failure.unwrap();
+        assert_eq!(failure.reason, EvidenceFailureReason::SourceUnavailable);
+        let retry_at = failure.retry_at_epoch_ms.expect("transient retry deadline");
+
+        now.store(retry_at - 1, Ordering::SeqCst);
+        let backed_off = coordinator
+            .check(request.clone(), CancellationSignal::default())
+            .await
+            .unwrap();
+        assert_eq!(backed_off.freshness, EvidenceFreshness::BackingOff);
+        assert_eq!(detector.calls(), 1);
+        assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+
+        now.store(retry_at, Ordering::SeqCst);
+        let (left, right) = tokio::join!(
+            coordinator.check(request.clone(), CancellationSignal::default()),
+            coordinator.check(request, CancellationSignal::default()),
+        );
+
+        assert!(left.unwrap().evidence.is_some());
+        assert!(right.unwrap().evidence.is_some());
+        assert_eq!(detector.calls(), 2);
+        assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn coordinator_cooldown_blocks_automatic_and_force_until_one_batch_after_deadline() {
+        let fixture = HttpFixture::new(vec![
+            HttpResponse {
+                status: "429 Too Many Requests",
+                headers: vec![("Retry-After", "30")],
+                body: "",
+            },
+            successful_github_response(),
+            successful_github_response(),
+        ]);
+        let detector = Arc::new(CountingDetector::new(github_detector(&fixture)));
+        let now = Arc::new(AtomicU64::new(1_000));
+        let coordinator = SourceEvidenceCoordinator::with_clock(detector.clone(), {
+            let now = now.clone();
+            move || now.load(Ordering::SeqCst)
+        });
+        let automatic = github_check_request(EvidenceCheckMode::Automatic);
+
+        let limited = coordinator
+            .check(automatic.clone(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let failure = limited.last_attempt.unwrap().failure.unwrap();
+        assert_eq!(failure.reason, EvidenceFailureReason::RateLimited);
+        assert!(failure.provider_cooldown);
+        let retry_at = failure.retry_at_epoch_ms.expect("provider retry deadline");
+
+        let before_automatic = coordinator
+            .check(automatic.clone(), CancellationSignal::default())
+            .await
+            .unwrap();
+        let before_force = coordinator
+            .check(
+                github_check_request(EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(before_automatic.freshness, EvidenceFreshness::CoolingDown);
+        assert_eq!(before_force.freshness, EvidenceFreshness::CoolingDown);
+        assert_eq!(detector.calls(), 1);
+        assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+
+        now.store(retry_at, Ordering::SeqCst);
+        let (left, right) = tokio::join!(
+            coordinator.check(automatic.clone(), CancellationSignal::default()),
+            coordinator.check(automatic, CancellationSignal::default()),
+        );
+
+        assert!(left.unwrap().evidence.is_some());
+        assert!(right.unwrap().evidence.is_some());
+        assert_eq!(detector.calls(), 2);
+        assert_eq!(fixture.requests.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

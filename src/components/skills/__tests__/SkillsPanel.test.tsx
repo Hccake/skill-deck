@@ -82,8 +82,11 @@ const mocks = vi.hoisted(() => ({
     snapshots: {} as Record<string, ReturnType<typeof snapshot>>,
     isSyncing: false,
     checkingUpdateScopes: new Set<string>(),
+    automaticUpdateScopes: new Set<string>(),
+    forceUpdateScopes: new Set<string>(),
     refreshWorkspace: vi.fn().mockResolvedValue(undefined),
     syncUpdates: vi.fn().mockResolvedValue(undefined),
+    activateAutomaticChecks: vi.fn().mockResolvedValue(undefined),
     forceCheckUpdates: vi.fn().mockResolvedValue(true),
     syncSkills: vi.fn().mockResolvedValue(undefined),
     auditCache: {},
@@ -128,6 +131,11 @@ vi.mock('@/stores/projects', () => ({
 }));
 
 vi.mock('@/stores/skills-data', () => ({
+  sourceDiagnosticsForEnvironment: (snapshots: typeof mocks.skillsDataState.snapshots) => (
+    Object.values(snapshots).flatMap((item) => (
+      (item as typeof item & { updateCheck?: { sources: unknown[] } }).updateCheck?.sources ?? []
+    ))
+  ),
   useSkillsDataStore: (selector?: (state: typeof mocks.skillsDataState) => unknown) =>
     selector ? selector(mocks.skillsDataState) : mocks.skillsDataState,
 }));
@@ -157,6 +165,7 @@ vi.mock('../SkillsToolbar', () => ({
     selectedAgent,
     onAgentChange,
     filterableAgents,
+    onSync,
   }: {
     compact?: boolean;
     searchQuery: string;
@@ -164,6 +173,7 @@ vi.mock('../SkillsToolbar', () => ({
     selectedAgent: AgentId | null;
     onAgentChange: (agentId: AgentId | null) => void;
     filterableAgents: ResolvedAgent[];
+    onSync: () => void;
   }) => (
     <div>
       <span data-testid="toolbar-mode">{compact ? 'compact' : 'full'}</span>
@@ -187,6 +197,9 @@ vi.mock('../SkillsToolbar', () => ({
       </button>
       <button type="button" data-testid="set-missing-search" onClick={() => onSearchChange('missing')}>
         search missing
+      </button>
+      <button type="button" data-testid="toolbar-sync" onClick={onSync}>
+        sync
       </button>
     </div>
   ),
@@ -296,6 +309,7 @@ describe('SkillsPanel', () => {
     mocks.skillsDataState.checkingUpdateScopes = new Set();
     mocks.skillsDataState.refreshWorkspace.mockClear();
     mocks.skillsDataState.syncUpdates.mockClear();
+    mocks.skillsDataState.activateAutomaticChecks.mockClear();
     mocks.skillsDataState.forceCheckUpdates.mockClear();
     mocks.updateWorkflowState.open.mockClear();
     mocks.updateWorkflowState.phase = 'closed';
@@ -424,6 +438,9 @@ describe('SkillsPanel', () => {
     screen.getByRole('button', { name: 'skills.retry' }).click();
 
     expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(ubuntuGlobal);
+    await waitFor(() => {
+      expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(ubuntuGlobal);
+    });
   });
 
   it('refreshes and clears details when the committed context changes', async () => {
@@ -688,73 +705,60 @@ describe('SkillsPanel', () => {
     });
   });
 
-  it('debounces automatic checks and cancels unsent focus work on unmount', async () => {
-    vi.useFakeTimers();
-    const { unmount } = render(<SkillsPanel compact={false} />);
-    await act(async () => { await Promise.resolve(); });
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(499); });
-    expect(mocks.skillsDataState.syncUpdates).not.toHaveBeenCalled();
-    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
-
-    mocks.skillsDataState.syncUpdates.mockClear();
-    window.dispatchEvent(new Event('focus'));
-    window.dispatchEvent(new Event('focus'));
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
-
-    mocks.skillsDataState.syncUpdates.mockClear();
-    window.dispatchEvent(new Event('focus'));
-    unmount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(mocks.skillsDataState.syncUpdates).not.toHaveBeenCalled();
-    vi.useRealTimers();
-  });
-
-  it('sends the automatic check at 500ms even while workspace refresh is unresolved', async () => {
-    vi.useFakeTimers();
-    mocks.skillsDataState.refreshWorkspace.mockImplementationOnce(() => new Promise<void>(() => undefined));
+  it('runs toolbar refresh as a passive sync so discovered source changes can be targeted', async () => {
     render(<SkillsPanel compact={false} />);
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    fireEvent.click(screen.getByTestId('toolbar-sync'));
 
-    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledWith(hostGlobal);
-    vi.useRealTimers();
+    expect(mocks.skillsDataState.syncSkills).toHaveBeenCalledWith(hostGlobal, { origin: 'passive' });
   });
 
-  it('cancels a pending automatic check when the selected context changes', async () => {
-    vi.useFakeTimers();
-    const { rerender } = render(<SkillsPanel compact={false} />);
-    await act(async () => { await Promise.resolve(); });
+  it('does not recheck on focus, remount, or unmount timer activity', async () => {
+    const { unmount } = render(<SkillsPanel compact={false} />);
+    await waitFor(() => {
+      expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal);
+    });
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(1);
 
-    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
-    rerender(<SkillsPanel compact={false} />);
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-
-    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
-    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledWith(ubuntuGlobal);
-    vi.useRealTimers();
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('focus'));
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(1);
+    unmount();
   });
 
-  it('does not cancel a check that was already sent before a context switch', async () => {
-    vi.useFakeTimers();
-    let resolveSync: (() => void) | undefined;
-    mocks.skillsDataState.syncUpdates.mockImplementationOnce(() => new Promise<void>((resolve) => {
-      resolveSync = resolve;
+  it('waits for workspace refresh before activating the selected Context', async () => {
+    let resolveRefresh!: () => void;
+    mocks.skillsDataState.refreshWorkspace.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
     }));
-    const { rerender } = render(<SkillsPanel compact={false} />);
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    render(<SkillsPanel compact={false} />);
 
-    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledWith(hostGlobal);
+    expect(mocks.skillsDataState.activateAutomaticChecks).not.toHaveBeenCalled();
+    resolveRefresh();
+    await waitFor(() => {
+      expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal);
+    });
+  });
+
+  it('activates each newly selected Context once without a focus timer', async () => {
+    const { rerender } = render(<SkillsPanel compact={false} />);
+    await waitFor(() => expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal));
+
     mocks.workspaceContextState.selectedContext = ubuntuGlobal;
     rerender(<SkillsPanel compact={false} />);
-    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(ubuntuGlobal));
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(2);
 
-    expect(mocks.skillsDataState.syncUpdates).toHaveBeenCalledTimes(1);
-    resolveSync?.();
-    vi.useRealTimers();
+    rerender(<SkillsPanel compact={false} />);
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not start another check when the same Context is remounted', async () => {
+    const first = render(<SkillsPanel compact={false} />);
+    await waitFor(() => expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal));
+    first.unmount();
+    render(<SkillsPanel compact={false} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(2);
   });
 });

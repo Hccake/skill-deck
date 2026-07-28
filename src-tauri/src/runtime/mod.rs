@@ -5,7 +5,7 @@ use crate::application::agents::ManagedAgentRegistry;
 use crate::application::copy_runtime::{build_runtime_copy_service, RuntimeCopyService};
 use crate::application::duplicate_cleanup::DuplicateCleanupService;
 use crate::application::github_credentials::{
-    resolve_environment_github_token, GithubCredentialService,
+    resolve_environment_github_token, GithubCredentialService, GithubCredentialWorkflowService,
 };
 use crate::application::install_runtime::{build_runtime_install_service, RuntimeInstallService};
 use crate::application::manage_agents_runtime::{
@@ -50,7 +50,7 @@ pub struct RuntimeServiceGraph {
     manage_agents: RuntimeManageAgentsService,
     copy: RuntimeCopyService,
     resources: RuntimeResourceService,
-    github_credentials: Arc<GithubCredentialService>,
+    github_credentials: GithubCredentialWorkflowService,
 }
 
 impl RuntimeServiceGraph {
@@ -86,30 +86,32 @@ impl RuntimeServiceGraph {
             payloads.clone(),
             maintenance_backend,
         ));
-        let install = build_runtime_install_service(
-            payloads.clone(),
-            environments.clone(),
-            registry.clone(),
-            execution.clone(),
-        );
         let update_evidence = build_runtime_source_evidence_coordinator(
             payloads.clone(),
             environments.clone(),
             source_snapshots.clone(),
             github_token_provider,
         )?;
+        let install = build_runtime_install_service(
+            payloads.clone(),
+            environments.clone(),
+            registry.clone(),
+            execution.clone(),
+            update_evidence.clone(),
+        );
         let update_check = build_runtime_update_check_service(
             environments.clone(),
             registry.clone(),
             update_evidence.clone(),
         );
+        let update_evidence_for_update = update_evidence.clone();
         let update = build_runtime_update_service(
             payloads.clone(),
             environments.clone(),
             registry.clone(),
             execution.clone(),
             source_snapshots,
-            update_evidence,
+            update_evidence_for_update,
         );
         let remove =
             build_runtime_remove_service(environments.clone(), registry.clone(), execution.clone());
@@ -125,6 +127,11 @@ impl RuntimeServiceGraph {
             environments.clone(),
             registry,
             execution.clone(),
+        );
+        let update_evidence_for_credentials = update_evidence.clone();
+        let github_credentials = GithubCredentialWorkflowService::new(
+            github_credentials,
+            Arc::new(move || update_evidence_for_credentials.clear_host_github_auth_suppression()),
         );
         Ok(Self {
             environments,
@@ -210,8 +217,8 @@ impl RuntimeServiceGraph {
         &self.resources
     }
 
-    pub fn github_credentials(&self) -> &GithubCredentialService {
-        self.github_credentials.as_ref()
+    pub fn github_credentials(&self) -> &GithubCredentialWorkflowService {
+        &self.github_credentials
     }
 }
 

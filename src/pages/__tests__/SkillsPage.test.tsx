@@ -135,6 +135,11 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 vi.mock('@/stores/skills-data', () => ({
+  sourceDiagnosticsForEnvironment: (snapshots: typeof mocks.skillsDataState.snapshots) => (
+    Object.values(snapshots).flatMap((item) => (
+      (item as typeof item & { updateCheck?: { sources: unknown[] } }).updateCheck?.sources ?? []
+    ))
+  ),
   useSkillsDataStore: (selector: (state: typeof mocks.skillsDataState) => unknown) => selector(mocks.skillsDataState),
 }));
 

@@ -44,7 +44,9 @@ export async function executeDuplicateCleanup(agents: AgentId[]): Promise<void> 
         requestedMode: 'copy',
       }),
       import('@/stores/skills-data').then(({ useSkillsDataStore }) => (
-        useSkillsDataStore.getState().syncSkills(context)
+        useSkillsDataStore.getState().syncSkills(context, results.some((result) => result.success)
+          ? { origin: 'selfMutation', mutatedSkillNames: [manageAgentsSkill.name] }
+          : { origin: 'passive' })
       )),
     ]);
     useSkillDialogStore.setState({ manageAgentDetails: details });

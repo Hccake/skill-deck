@@ -509,6 +509,7 @@ fn project_candidate(
         update_reason: None,
         plugin_name: None,
         git_ref: None,
+        skill_path: None,
         default_available_agent_count: Some(default_available_agents.len() as u32),
         private_adapted_agent_count: Some(private_adapted_agents.len() as u32),
         duplicate_copy_count: Some(duplicate_copy_agents.len() as u32),

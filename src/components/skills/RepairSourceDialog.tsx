@@ -138,7 +138,10 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       if (operationIdRef.current !== operationId) return;
       if (outcome.status === 'succeeded') {
         markSourceRepairSucceeded(target.context, target.skillName);
-        await syncSkills(target.context);
+        await syncSkills(target.context, {
+          origin: 'selfMutation',
+          mutatedSkillNames: [target.skillName],
+        });
         const { copySkill, copyContext } = useSkillDialogStore.getState();
         const shouldReturnToCopy = Boolean(
           copySkill?.name === target.skillName

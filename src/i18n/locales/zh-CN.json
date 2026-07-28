@@ -160,7 +160,7 @@
     },
     "projectUnavailableTitle": "无法读取项目 Skill",
     "projectUnavailableDescription": "当前 Environment 无法访问该项目。请检查项目位置，或切换到已添加该项目的 Environment。",
-    "updateCheckFailureCount": "{{count}} 个检查失败",
+    "updateCheckIncompleteCount": "{{count}} 个检查未完成",
     "card": {
       "extraCopies": "有额外接入项",
       "extraCopiesHint": "部分 Agent 的目录中仍保留此 Skill 的链接或副本；选择复制时，副本可能不会随通用 Skill 一起更新。可通过“管理关联 Agent”调整。"
@@ -830,7 +830,8 @@
         "unavailable": "暂时无法连接 GitHub 完成验证。",
         "unconfigured": "请输入有效的 Token。",
         "verified": "Token 已通过验证，但未能保存。",
-        "clearFailed": "无法清除系统安全存储中的 Token。"
+        "clearFailed": "无法清除系统安全存储中的 Token。",
+        "suppressionCleanupFailed": "凭据变更已完成，但未能清除已保存的更新检查抑制；后续检查可能仍被抑制。"
       }
     },
     "cloneTimeout": {
@@ -1250,6 +1251,9 @@
       "symlinkFailedHint": "已改为复制文件。在 Windows 上，启用开发者模式可支持符号链接。",
       "recoveryRequired": "需要恢复处理",
       "errorDetails": "错误详情",
+      "warnings": {
+        "suppressionCleanupFailed": "安装已完成，但未能清除已保存的更新检查抑制；后续检查可能仍被抑制。"
+      },
       "status": {
         "succeeded": "成功",
         "failed": "失败",

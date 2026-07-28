@@ -21,11 +21,25 @@ use crate::error::AppError;
 
 pub const EVIDENCE_TTL_MS: u64 = 60 * 60 * 1_000;
 pub const DETECTOR_CONCURRENCY_LIMIT: usize = 4;
-const NETWORK_BACKOFF_BASE_MS: u64 = 30_000;
-const NETWORK_BACKOFF_MAX_MS: u64 = 5 * 60 * 1_000;
+const TRANSIENT_BACKOFF_DELAYS_MS: [u64; 6] = [
+    30_000,
+    60_000,
+    2 * 60_000,
+    5 * 60_000,
+    10 * 60_000,
+    30 * 60_000,
+];
+const PROVIDER_COOLDOWN_FALLBACK_MS: u64 = 5 * 60_000;
 const DIAGNOSTIC_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const SOURCE_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const PERSISTED_STATE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum SourceSuppressionWarningCode {
+    SuppressionCleanupFailed,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RemoteEvidenceKey {
@@ -281,7 +295,7 @@ struct SourceEvidenceCoordinatorInner {
 type DetectionCompletion = Result<(), AppError>;
 type SealedDetectionBatch = (BTreeSet<String>, Option<RemoteEvidenceEntry>);
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct CoordinatorState {
     evidence: HashMap<RemoteEvidenceKey, RemoteEvidenceEntry>,
     last_referenced: HashMap<RemoteEvidenceKey, u64>,
@@ -825,6 +839,7 @@ fn invalid_persisted_state(message: &str) -> AppError {
     }
 }
 
+#[derive(Clone)]
 struct InFlightDetection {
     batch_id: u64,
     receiver: watch::Receiver<Option<DetectionCompletion>>,
@@ -943,6 +958,46 @@ impl SourceEvidenceCoordinator {
         }
     }
 
+    /// 凭据成功变更后，只解除 Host GitHub 的认证类失败和服务商限流冷却期。
+    /// 成功的远端证据、其他 Environment 以及非认证失败保持不变。
+    pub fn clear_host_github_auth_suppression(&self) -> Result<(), AppError> {
+        let host = EnvironmentKey::from_ref(&EnvironmentRef::Host);
+        update_persisted_state(&self.inner, |state| {
+            state.attempts.retain(|key, attempt| {
+                if key.environment != host
+                    || key.evidence.remote.provider() != &SourceProvider::Github
+                {
+                    return true;
+                }
+                !attempt.failure.as_ref().is_some_and(|failure| {
+                    is_user_action_required(failure.reason)
+                        && matches!(
+                            failure.reason,
+                            EvidenceFailureReason::AuthenticationRequired
+                                | EvidenceFailureReason::NotFoundOrUnauthorized
+                        )
+                })
+            });
+            state.provider_cooldowns.retain(|key, _| {
+                key.environment != host || key.throttle.provider != SourceProvider::Github
+            });
+        })
+    }
+
+    /// 来源修复成功后只解除目标来源的失败抑制，不影响其他来源或远端证据。
+    pub fn clear_source_suppression(
+        &self,
+        environment: &EnvironmentRef,
+        key: &RemoteEvidenceKey,
+    ) -> Result<(), AppError> {
+        let operation_key = EnvironmentEvidenceKey::new(environment, key);
+        update_persisted_state(&self.inner, |state| {
+            state.attempts.remove(&operation_key);
+            state.network_backoff.remove(&operation_key);
+            state.network_failure_counts.remove(&operation_key);
+        })
+    }
+
     pub fn record_acquisition(
         &self,
         key: RemoteEvidenceKey,
@@ -1029,17 +1084,31 @@ impl SourceEvidenceCoordinator {
                     .retain(|_, deadline| *deadline > now);
                 state.network_backoff.retain(|_, deadline| *deadline > now);
 
-                if state.provider_cooldowns.contains_key(&throttle_key) {
-                    return Ok(result_from_state(
+                if let Some(deadline) = state.provider_cooldowns.get(&throttle_key).copied() {
+                    return Ok(result_from_provider_cooldown(
                         &state,
                         &request.key,
                         &operation_key,
-                        EvidenceFreshness::CoolingDown,
+                        deadline,
                         now,
                     ));
                 }
 
                 if request.mode == EvidenceCheckMode::Automatic {
+                    if state
+                        .attempts
+                        .get(&operation_key)
+                        .and_then(|attempt| attempt.failure.as_ref())
+                        .is_some_and(|failure| is_user_action_required(failure.reason))
+                    {
+                        return Ok(result_from_state(
+                            &state,
+                            &request.key,
+                            &operation_key,
+                            EvidenceFreshness::Unavailable,
+                            now,
+                        ));
+                    }
                     if let Some(evidence) = state.evidence.get(&request.key) {
                         if evidence.expires_at_epoch_ms >= now
                             && evidence_covers_requested_paths(evidence, &requested_skill_paths)
@@ -1054,7 +1123,9 @@ impl SourceEvidenceCoordinator {
                         }
                     }
                 }
-                if state.network_backoff.contains_key(&operation_key) {
+                if request.mode == EvidenceCheckMode::Automatic
+                    && state.network_backoff.contains_key(&operation_key)
+                {
                     return Ok(result_from_state(
                         &state,
                         &request.key,
@@ -1223,20 +1294,31 @@ async fn run_detection(
     let completion = match inner.detector_permits.clone().acquire_owned().await {
         Ok(_permit) => match seal_detection_batch(&inner, &key, &operation_key, batch_id) {
             Ok(Some((requested_skill_paths, previous))) => {
-                let outcome = inner
-                    .detector
-                    .detect(
-                        EvidenceDetectionRequest {
-                            environment: request.environment,
-                            key: key.clone(),
-                            requested_skill_paths,
-                            acquisition: request.acquisition,
-                            acquisition_transport_identity: request.acquisition_transport_identity,
-                        },
-                        previous,
-                        CancellationSignal::default(),
-                    )
-                    .await;
+                let outcome =
+                    if let Some(deadline) = provider_cooldown_deadline(&inner, &throttle_key) {
+                        Ok(EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
+                            reason: EvidenceFailureReason::RateLimited,
+                            message: "The provider rate limit is still active.".to_string(),
+                            retry_at_epoch_ms: Some(deadline),
+                            provider_cooldown: true,
+                        }))
+                    } else {
+                        inner
+                            .detector
+                            .detect(
+                                EvidenceDetectionRequest {
+                                    environment: request.environment,
+                                    key: key.clone(),
+                                    requested_skill_paths,
+                                    acquisition: request.acquisition,
+                                    acquisition_transport_identity: request
+                                        .acquisition_transport_identity,
+                                },
+                                previous,
+                                CancellationSignal::default(),
+                            )
+                            .await
+                    };
                 finish_detection(
                     &inner,
                     &throttle_key,
@@ -1254,6 +1336,19 @@ async fn run_detection(
         }),
     };
     let _ = sender.send(Some(completion));
+}
+
+fn provider_cooldown_deadline(
+    inner: &SourceEvidenceCoordinatorInner,
+    throttle_key: &EnvironmentThrottleKey,
+) -> Option<u64> {
+    let now = (inner.now)();
+    state(inner).ok().and_then(|mut state| {
+        state
+            .provider_cooldowns
+            .retain(|_, deadline| *deadline > now);
+        state.provider_cooldowns.get(throttle_key).copied()
+    })
 }
 
 fn seal_detection_batch(
@@ -1432,31 +1527,28 @@ fn record_failure(
     checked_at: u64,
     mut failure: EvidenceDetectionFailure,
 ) {
-    if failure.reason == EvidenceFailureReason::Network {
+    if is_transient_failure(failure.reason) {
         let failures = state
             .network_failure_counts
             .entry(key.clone())
             .and_modify(|failures| *failures = failures.saturating_add(1))
             .or_insert(1);
-        let multiplier = 1_u64
-            .checked_shl(failures.saturating_sub(1).min(31))
-            .unwrap_or(u64::MAX);
-        let delay = NETWORK_BACKOFF_BASE_MS
-            .saturating_mul(multiplier)
-            .min(NETWORK_BACKOFF_MAX_MS);
+        let index = (failures.saturating_sub(1) as usize)
+            .min(TRANSIENT_BACKOFF_DELAYS_MS.len().saturating_sub(1));
+        let delay = TRANSIENT_BACKOFF_DELAYS_MS[index];
         let deadline = checked_at.saturating_add(delay);
         failure.retry_at_epoch_ms = Some(deadline);
         state.network_backoff.insert(key.clone(), deadline);
-    } else if let Some(deadline) = failure.retry_at_epoch_ms {
-        if failure.provider_cooldown {
-            state
-                .provider_cooldowns
-                .entry(throttle_key.clone())
-                .and_modify(|existing| *existing = (*existing).max(deadline))
-                .or_insert(deadline);
-        } else {
-            state.network_backoff.insert(key.clone(), deadline);
-        }
+    } else if failure.provider_cooldown {
+        let deadline = failure
+            .retry_at_epoch_ms
+            .unwrap_or_else(|| checked_at.saturating_add(PROVIDER_COOLDOWN_FALLBACK_MS));
+        failure.retry_at_epoch_ms = Some(deadline);
+        state
+            .provider_cooldowns
+            .entry(throttle_key.clone())
+            .and_modify(|existing| *existing = (*existing).max(deadline))
+            .or_insert(deadline);
     }
     state.attempts.insert(
         key.clone(),
@@ -1493,6 +1585,42 @@ fn result_from_state(
     }
 }
 
+fn result_from_provider_cooldown(
+    state: &CoordinatorState,
+    evidence_key: &RemoteEvidenceKey,
+    operation_key: &EnvironmentEvidenceKey,
+    deadline: u64,
+    now: u64,
+) -> EvidenceCheckResult {
+    let mut result = result_from_state(
+        state,
+        evidence_key,
+        operation_key,
+        EvidenceFreshness::CoolingDown,
+        now,
+    );
+    let needs_cooldown_attempt = result.last_attempt.as_ref().is_none_or(|attempt| {
+        attempt.failure.as_ref().is_none_or(|failure| {
+            !failure.provider_cooldown
+                || failure
+                    .retry_at_epoch_ms
+                    .is_none_or(|retry_at| retry_at < deadline)
+        })
+    });
+    if needs_cooldown_attempt {
+        result.last_attempt = Some(EvidenceAttempt {
+            checked_at_epoch_ms: now,
+            failure: Some(EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::RateLimited,
+                message: "The provider rate limit is still active.".to_string(),
+                retry_at_epoch_ms: Some(deadline),
+                provider_cooldown: true,
+            }),
+        });
+    }
+    result
+}
+
 fn freshness_after_attempt(
     state: &CoordinatorState,
     evidence_key: &RemoteEvidenceKey,
@@ -1507,6 +1635,25 @@ fn freshness_after_attempt(
             None => EvidenceFreshness::Unavailable,
         },
     }
+}
+
+fn is_user_action_required(reason: EvidenceFailureReason) -> bool {
+    matches!(
+        reason,
+        EvidenceFailureReason::AuthenticationRequired
+            | EvidenceFailureReason::RefNotFound
+            | EvidenceFailureReason::RepositoryNotFound
+            | EvidenceFailureReason::NotFoundOrUnauthorized
+    )
+}
+
+fn is_transient_failure(reason: EvidenceFailureReason) -> bool {
+    matches!(
+        reason,
+        EvidenceFailureReason::Network
+            | EvidenceFailureReason::IncompleteEvidence
+            | EvidenceFailureReason::SourceUnavailable
+    )
 }
 
 fn load_persisted_state(
@@ -1549,12 +1696,40 @@ fn persist_current_state(inner: &SourceEvidenceCoordinatorInner) -> Result<(), A
     state_file.write_atomic(&serde_json::to_vec_pretty(&persisted)?)
 }
 
+fn update_persisted_state(
+    inner: &SourceEvidenceCoordinatorInner,
+    mutate: impl FnOnce(&mut CoordinatorState),
+) -> Result<(), AppError> {
+    let Some(state_file) = &inner.state_file else {
+        let mut state = state(inner)?;
+        mutate(&mut state);
+        return Ok(());
+    };
+    let _persistence_guard = inner
+        .persistence_lock
+        .lock()
+        .map_err(|_| coordinator_unavailable())?;
+    let now = (inner.now)();
+    let mut state = state(inner)?;
+    let mut next = state.clone();
+    mutate(&mut next);
+    prune_persisted_state(&mut next, now);
+    let persisted = PersistedCoordinatorState::from_coordinator(&next, now);
+    state_file.write_atomic(&serde_json::to_vec_pretty(&persisted)?)?;
+    *state = next;
+    Ok(())
+}
+
 fn prune_persisted_state(state: &mut CoordinatorState, now: u64) {
     state.attempts.retain(|_, attempt| {
         attempt
-            .checked_at_epoch_ms
-            .saturating_add(DIAGNOSTIC_RETENTION_MS)
-            >= now
+            .failure
+            .as_ref()
+            .is_some_and(|failure| is_user_action_required(failure.reason))
+            || attempt
+                .checked_at_epoch_ms
+                .saturating_add(DIAGNOSTIC_RETENTION_MS)
+                >= now
     });
     state.network_backoff.retain(|_, deadline| *deadline > now);
     state
@@ -1882,6 +2057,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provider_cooldown_is_the_latest_failure_exposed_to_the_caller() {
+        let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Failed(
+            EvidenceDetectionFailure::network("offline"),
+        )]));
+        let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
+        coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 5_000);
+
+        let result = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let failure = result.last_attempt.unwrap().failure.unwrap();
+
+        assert_eq!(result.freshness, EvidenceFreshness::CoolingDown);
+        assert_eq!(failure.reason, EvidenceFailureReason::RateLimited);
+        assert_eq!(failure.retry_at_epoch_ms, Some(5_000));
+        assert!(failure.provider_cooldown);
+        assert_eq!(detector.calls(), 1);
+    }
+
+    #[tokio::test]
     async fn provider_cooldown_is_isolated_by_environment() {
         let detector = Arc::new(ScriptedDetector::new([modified(
             "revision-1",
@@ -1939,7 +2145,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn force_respects_network_backoff() {
+    async fn automatic_respects_network_backoff() {
         let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Failed(
             EvidenceDetectionFailure {
                 reason: EvidenceFailureReason::Network,
@@ -1951,7 +2157,7 @@ mod tests {
         let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
         coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -1959,7 +2165,7 @@ mod tests {
 
         let backed_off = coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -1967,6 +2173,532 @@ mod tests {
 
         assert_eq!(backed_off.freshness, EvidenceFreshness::BackingOff);
         assert_eq!(detector.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn automatic_does_not_repeat_user_action_failures_but_force_can_retry() {
+        let detector = Arc::new(ScriptedDetector::new([
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::AuthenticationRequired,
+                message: "token required".to_string(),
+                retry_at_epoch_ms: None,
+                provider_cooldown: false,
+            }),
+            modified(
+                "revision-1",
+                [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
+            ),
+        ]));
+        let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
+
+        coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let automatic = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            automatic.last_attempt.unwrap().failure.unwrap().reason,
+            EvidenceFailureReason::AuthenticationRequired
+        );
+        assert_eq!(detector.calls(), 1);
+
+        let forced = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forced.freshness, EvidenceFreshness::Fresh);
+        assert_eq!(detector.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn every_user_action_failure_suppresses_automatic_and_allows_force_retry() {
+        for reason in [
+            EvidenceFailureReason::AuthenticationRequired,
+            EvidenceFailureReason::RefNotFound,
+            EvidenceFailureReason::RepositoryNotFound,
+            EvidenceFailureReason::NotFoundOrUnauthorized,
+        ] {
+            let detector = Arc::new(ScriptedDetector::new([
+                EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
+                    reason,
+                    message: "user action required".to_string(),
+                    retry_at_epoch_ms: None,
+                    provider_cooldown: false,
+                }),
+                modified(
+                    "revision-1",
+                    [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
+                ),
+            ]));
+            let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
+
+            coordinator
+                .check(
+                    request("acme/tools", EvidenceCheckMode::Automatic),
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            let suppressed = coordinator
+                .check(
+                    request("acme/tools", EvidenceCheckMode::Automatic),
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                suppressed.last_attempt.unwrap().failure.unwrap().reason,
+                reason
+            );
+            assert_eq!(detector.calls(), 1);
+
+            let forced = coordinator
+                .check(
+                    request("acme/tools", EvidenceCheckMode::Force),
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(forced.freshness, EvidenceFreshness::Fresh);
+            assert_eq!(detector.calls(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn credential_change_clears_only_host_github_auth_suppression_and_cooldown() {
+        let detector = Arc::new(ScriptedDetector::new([
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::AuthenticationRequired,
+                message: "token required".to_string(),
+                retry_at_epoch_ms: None,
+                provider_cooldown: false,
+            }),
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("offline")),
+        ]));
+        let coordinator = coordinator(detector, Arc::new(AtomicU64::new(1_000)));
+        coordinator
+            .check(
+                request("acme/private", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator
+            .check(
+                request("acme/network", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 60_000);
+
+        coordinator.clear_host_github_auth_suppression().unwrap();
+
+        let auth_key = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/private"));
+        let network_key = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/network"));
+        let throttle = EnvironmentThrottleKey::new(&EnvironmentRef::Host, &throttle_key());
+        let state = state(&coordinator.inner).unwrap();
+        assert!(!state.attempts.contains_key(&auth_key));
+        assert!(state.attempts.contains_key(&network_key));
+        assert!(state.network_backoff.contains_key(&network_key));
+        assert!(state.network_failure_counts.contains_key(&network_key));
+        assert!(!state.provider_cooldowns.contains_key(&throttle));
+    }
+
+    #[tokio::test]
+    async fn credential_cleanup_write_failure_keeps_memory_and_disk_suppression() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("state/update-check.json");
+        let now = Arc::new(AtomicU64::new(1_000));
+        let detector = Arc::new(ScriptedDetector::new([
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::AuthenticationRequired,
+                message: "token required".to_string(),
+                retry_at_epoch_ms: None,
+                provider_cooldown: false,
+            }),
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::RateLimited,
+                message: "rate limited".to_string(),
+                retry_at_epoch_ms: Some(60_000),
+                provider_cooldown: true,
+            }),
+            modified(
+                "unexpected-revision",
+                [(
+                    "skills/alpha",
+                    SkillRevision::GitTreeOid("unexpected-tree".into()),
+                )],
+            ),
+        ]));
+        let coordinator = persistent_coordinator(detector.clone(), now.clone(), &path);
+        coordinator
+            .check(
+                request("acme/private", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator
+            .check(
+                request("acme/limited", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let persisted_before = std::fs::read(&path).expect("persisted state before cleanup");
+        coordinator
+            .inner
+            .state_file
+            .as_ref()
+            .expect("state file")
+            .set_write_failure(true);
+
+        assert!(coordinator.clear_host_github_auth_suppression().is_err());
+        coordinator
+            .inner
+            .state_file
+            .as_ref()
+            .expect("state file")
+            .set_write_failure(false);
+        assert_eq!(
+            std::fs::read(&path).expect("persisted state after cleanup"),
+            persisted_before
+        );
+
+        let cooling_down = coordinator
+            .check(
+                request("acme/private", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cooling_down.freshness, EvidenceFreshness::CoolingDown);
+        assert_eq!(detector.calls(), 2);
+
+        let restarted_now = Arc::new(AtomicU64::new(1_000));
+        let restarted_detector = Arc::new(ScriptedDetector::new([modified(
+            "unexpected-restart-revision",
+            [(
+                "skills/alpha",
+                SkillRevision::GitTreeOid("unexpected-restart-tree".into()),
+            )],
+        )]));
+        let restarted =
+            persistent_coordinator(restarted_detector.clone(), restarted_now.clone(), &path);
+        let restarted_cooldown = restarted
+            .check(
+                request("acme/private", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(restarted_cooldown.freshness, EvidenceFreshness::CoolingDown);
+        assert_eq!(restarted_detector.calls(), 0);
+        restarted_now.store(60_001, Ordering::SeqCst);
+        let restarted_suppression = restarted
+            .check(
+                request("acme/private", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            restarted_suppression.freshness,
+            EvidenceFreshness::Unavailable
+        );
+        assert_eq!(restarted_detector.calls(), 0);
+
+        now.store(60_001, Ordering::SeqCst);
+        let still_suppressed = coordinator
+            .check(
+                request("acme/private", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(still_suppressed.freshness, EvidenceFreshness::Unavailable);
+        assert_eq!(detector.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn source_repair_clears_only_the_exact_environment_and_source() {
+        let detector = Arc::new(ScriptedDetector::new([
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("first")),
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("second")),
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("wsl-first")),
+        ]));
+        let coordinator = coordinator(detector, Arc::new(AtomicU64::new(1_000)));
+        coordinator
+            .check(
+                request("acme/first", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator
+            .check(
+                request("acme/second", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator
+            .check(
+                request_in_environment(
+                    "acme/first",
+                    EvidenceCheckMode::Force,
+                    EnvironmentRef::Wsl {
+                        distro_name: "Ubuntu".to_string(),
+                    },
+                ),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 60_000);
+
+        coordinator
+            .clear_source_suppression(&EnvironmentRef::Host, &key("acme/first"))
+            .unwrap();
+
+        let first = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/first"));
+        let second = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/second"));
+        let wsl_first = EnvironmentEvidenceKey::new(
+            &EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            },
+            &key("acme/first"),
+        );
+        let throttle = EnvironmentThrottleKey::new(&EnvironmentRef::Host, &throttle_key());
+        let state = state(&coordinator.inner).unwrap();
+        assert!(!state.attempts.contains_key(&first));
+        assert!(!state.network_backoff.contains_key(&first));
+        assert!(!state.network_failure_counts.contains_key(&first));
+        assert!(state.attempts.contains_key(&second));
+        assert!(state.network_backoff.contains_key(&second));
+        assert!(state.network_failure_counts.contains_key(&second));
+        assert!(state.attempts.contains_key(&wsl_first));
+        assert!(state.network_backoff.contains_key(&wsl_first));
+        assert!(state.network_failure_counts.contains_key(&wsl_first));
+        assert!(state.provider_cooldowns.contains_key(&throttle));
+    }
+
+    #[tokio::test]
+    async fn source_cleanup_write_failure_keeps_memory_and_disk_backoff() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("state/update-check.json");
+        let now = Arc::new(AtomicU64::new(1_000));
+        let detector = Arc::new(ScriptedDetector::new([
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("offline")),
+            modified(
+                "unexpected-revision",
+                [(
+                    "skills/alpha",
+                    SkillRevision::GitTreeOid("unexpected-tree".into()),
+                )],
+            ),
+        ]));
+        let coordinator = persistent_coordinator(detector.clone(), now.clone(), &path);
+        coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let persisted_before = std::fs::read(&path).expect("persisted state before cleanup");
+        coordinator
+            .inner
+            .state_file
+            .as_ref()
+            .expect("state file")
+            .set_write_failure(true);
+
+        assert!(coordinator
+            .clear_source_suppression(&EnvironmentRef::Host, &key("acme/tools"))
+            .is_err());
+        coordinator
+            .inner
+            .state_file
+            .as_ref()
+            .expect("state file")
+            .set_write_failure(false);
+        assert_eq!(
+            std::fs::read(&path).expect("persisted state after cleanup"),
+            persisted_before
+        );
+
+        let backed_off = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(backed_off.freshness, EvidenceFreshness::BackingOff);
+        assert_eq!(detector.calls(), 1);
+
+        let restarted_detector = Arc::new(ScriptedDetector::new([modified(
+            "unexpected-restart-revision",
+            [(
+                "skills/alpha",
+                SkillRevision::GitTreeOid("unexpected-restart-tree".into()),
+            )],
+        )]));
+        let restarted = persistent_coordinator(restarted_detector.clone(), now, &path);
+        let restarted_backoff = restarted
+            .check(
+                request("acme/tools", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(restarted_backoff.freshness, EvidenceFreshness::BackingOff);
+        assert_eq!(restarted_detector.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn force_bypasses_transient_backoff_and_all_transient_failures_share_the_schedule() {
+        let detector = Arc::new(ScriptedDetector::new([
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::network("offline")),
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure::incomplete("truncated")),
+            EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::SourceUnavailable,
+                message: "unavailable".to_string(),
+                retry_at_epoch_ms: None,
+                provider_cooldown: false,
+            }),
+        ]));
+        let now = Arc::new(AtomicU64::new(1_000));
+        let coordinator = coordinator(detector.clone(), now.clone());
+
+        coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        now.store(31_000, Ordering::SeqCst);
+        let automatic = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(automatic.freshness, EvidenceFreshness::Unavailable);
+        assert_eq!(
+            automatic.last_attempt.unwrap().failure.unwrap().reason,
+            EvidenceFailureReason::IncompleteEvidence
+        );
+
+        let blocked = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(blocked.freshness, EvidenceFreshness::BackingOff);
+        assert_eq!(detector.calls(), 2);
+
+        let forced = coordinator
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            forced.last_attempt.unwrap().failure.unwrap().reason,
+            EvidenceFailureReason::SourceUnavailable
+        );
+        assert_eq!(detector.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn transient_backoff_follows_the_full_schedule_and_survives_restart() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("state/update-check.json");
+        let now = Arc::new(AtomicU64::new(1_000));
+        let cases = [
+            (EvidenceFailureReason::Network, 30_000),
+            (EvidenceFailureReason::IncompleteEvidence, 60_000),
+            (EvidenceFailureReason::SourceUnavailable, 2 * 60_000),
+            (EvidenceFailureReason::Network, 5 * 60_000),
+            (EvidenceFailureReason::IncompleteEvidence, 10 * 60_000),
+            (EvidenceFailureReason::SourceUnavailable, 30 * 60_000),
+            (EvidenceFailureReason::Network, 30 * 60_000),
+        ];
+        let mut previous_deadline = None;
+
+        for (reason, expected_delay) in cases {
+            if let Some(deadline) = previous_deadline {
+                now.store(deadline - 1, Ordering::SeqCst);
+            }
+            let failure = match reason {
+                EvidenceFailureReason::Network => EvidenceDetectionFailure::network("offline"),
+                EvidenceFailureReason::IncompleteEvidence => {
+                    EvidenceDetectionFailure::incomplete("incomplete")
+                }
+                EvidenceFailureReason::SourceUnavailable => EvidenceDetectionFailure {
+                    reason,
+                    message: "unavailable".to_string(),
+                    retry_at_epoch_ms: None,
+                    provider_cooldown: false,
+                },
+                _ => unreachable!("only transient failures belong in this schedule"),
+            };
+            let detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Failed(
+                failure,
+            )]));
+            let coordinator = persistent_coordinator(detector.clone(), now.clone(), &path);
+
+            if let Some(deadline) = previous_deadline {
+                let blocked = coordinator
+                    .check(
+                        request("acme/tools", EvidenceCheckMode::Automatic),
+                        CancellationSignal::default(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(blocked.freshness, EvidenceFreshness::BackingOff);
+                assert_eq!(detector.calls(), 0);
+                now.store(deadline, Ordering::SeqCst);
+            }
+
+            let checked_at = now.load(Ordering::SeqCst);
+            let result = coordinator
+                .check(
+                    request("acme/tools", EvidenceCheckMode::Automatic),
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+            let failure = result.last_attempt.unwrap().failure.unwrap();
+            let deadline = checked_at + expected_delay;
+
+            assert_eq!(failure.reason, reason);
+            assert_eq!(failure.retry_at_epoch_ms, Some(deadline));
+            assert_eq!(detector.calls(), 1);
+            previous_deadline = Some(deadline);
+            drop(coordinator);
+        }
     }
 
     #[tokio::test]
@@ -2130,6 +2862,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn user_action_failure_remains_suppressed_after_restart_but_force_can_retry() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("state/update-check.json");
+        let now = Arc::new(AtomicU64::new(1_000));
+        let first_detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Failed(
+            EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::AuthenticationRequired,
+                message: "token required".to_string(),
+                retry_at_epoch_ms: None,
+                provider_cooldown: false,
+            },
+        )]));
+        let first = persistent_coordinator(first_detector.clone(), now.clone(), &path);
+        first
+            .check(
+                request("acme/private", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first_detector.calls(), 1);
+        drop(first);
+
+        now.store(2_000, Ordering::SeqCst);
+        let second_detector = Arc::new(ScriptedDetector::new([modified(
+            "revision-1",
+            [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
+        )]));
+        let second = persistent_coordinator(second_detector.clone(), now, &path);
+        let automatic = second
+            .check(
+                request("acme/private", EvidenceCheckMode::Automatic),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(automatic.freshness, EvidenceFreshness::Unavailable);
+        assert_eq!(
+            automatic.last_attempt.unwrap().failure.unwrap().reason,
+            EvidenceFailureReason::AuthenticationRequired,
+        );
+        assert_eq!(second_detector.calls(), 0);
+
+        let forced = second
+            .check(
+                request("acme/private", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forced.freshness, EvidenceFreshness::Fresh);
+        assert_eq!(second_detector.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn provider_cooldown_remains_effective_after_restart_until_its_deadline() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("state/update-check.json");
+        let now = Arc::new(AtomicU64::new(1_000));
+        let first_detector = Arc::new(ScriptedDetector::new([EvidenceDetectionOutcome::Failed(
+            EvidenceDetectionFailure {
+                reason: EvidenceFailureReason::RateLimited,
+                message: "rate limited".to_string(),
+                retry_at_epoch_ms: Some(5_000),
+                provider_cooldown: true,
+            },
+        )]));
+        let first = persistent_coordinator(first_detector.clone(), now.clone(), &path);
+        first
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first_detector.calls(), 1);
+        drop(first);
+
+        now.store(2_000, Ordering::SeqCst);
+        let second_detector = Arc::new(ScriptedDetector::new([modified(
+            "revision-1",
+            [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
+        )]));
+        let second = persistent_coordinator(second_detector.clone(), now.clone(), &path);
+        let blocked = second
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        let failure = blocked.last_attempt.unwrap().failure.unwrap();
+
+        assert_eq!(blocked.freshness, EvidenceFreshness::CoolingDown);
+        assert_eq!(failure.retry_at_epoch_ms, Some(5_000));
+        assert_eq!(second_detector.calls(), 0);
+
+        now.store(5_000, Ordering::SeqCst);
+        let refreshed = second
+            .check(
+                request("acme/tools", EvidenceCheckMode::Force),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refreshed.freshness, EvidenceFreshness::Fresh);
+        assert_eq!(second_detector.calls(), 1);
+    }
+
+    #[tokio::test]
     async fn corrupt_persisted_state_is_quarantined_before_rebuilding() {
         let temp = tempdir().expect("tempdir");
         let state_dir = temp.path().join("state");
@@ -2173,7 +3016,7 @@ mod tests {
 
         coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -2207,7 +3050,7 @@ mod tests {
         now.store(2_000, Ordering::SeqCst);
         coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -2270,7 +3113,7 @@ mod tests {
 
         let first = coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -2281,7 +3124,7 @@ mod tests {
         now.store(30_999, Ordering::SeqCst);
         let backing_off = coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -2292,7 +3135,7 @@ mod tests {
         now.store(31_000, Ordering::SeqCst);
         coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -2302,7 +3145,7 @@ mod tests {
         now.store(90_999, Ordering::SeqCst);
         let backing_off = coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -2313,7 +3156,7 @@ mod tests {
         now.store(91_000, Ordering::SeqCst);
         coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
@@ -2329,16 +3172,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(detector.calls(), 4);
+        let operation_key = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/tools"));
+        assert_eq!(
+            state(&coordinator.inner)
+                .unwrap()
+                .network_backoff
+                .get(&operation_key),
+            Some(&121_001),
+        );
 
-        now.store(121_000, Ordering::SeqCst);
-        let backing_off = coordinator
+        now.store(120_999, Ordering::SeqCst);
+        let cached = coordinator
             .check(
-                request("acme/tools", EvidenceCheckMode::Force),
+                request("acme/tools", EvidenceCheckMode::Automatic),
                 CancellationSignal::default(),
             )
             .await
             .unwrap();
-        assert_eq!(backing_off.freshness, EvidenceFreshness::BackingOff);
+        assert_eq!(cached.freshness, EvidenceFreshness::Cached);
         assert_eq!(detector.calls(), 4);
     }
 

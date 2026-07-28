@@ -123,7 +123,10 @@ export async function executeSkillRemoval(): Promise<SkillRemovalOutcome> {
 
     useSkillDialogStore.getState().closeDelete();
     const { useSkillsDataStore } = await import('@/stores/skills-data');
-    await useSkillsDataStore.getState().syncSkills(context);
+    await useSkillsDataStore.getState().syncSkills(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: [deleteTarget.skill.name],
+    });
     return { status: 'succeeded' };
   } catch (error) {
     if (isStaleRemovalError(error)) {

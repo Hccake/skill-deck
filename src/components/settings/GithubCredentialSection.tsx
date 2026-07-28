@@ -22,7 +22,7 @@ function sourceKey(status: GithubCredentialStatus): string {
 }
 
 interface CredentialFeedback {
-  kind: GithubCredentialValidationStatus | 'saved' | 'clearFailed';
+  kind: GithubCredentialValidationStatus | 'saved' | 'clearFailed' | 'suppressionCleanupFailed';
   retryAtEpochMs?: number | null;
 }
 
@@ -52,7 +52,11 @@ export function GithubCredentialSection() {
     if (!result) return;
     if (result.saved) {
       setToken('');
-      setFeedback({ kind: 'saved' });
+      setFeedback({
+        kind: result.warnings.includes('suppressionCleanupFailed')
+          ? 'suppressionCleanupFailed'
+          : 'saved',
+      });
       return;
     }
     setFeedback({
@@ -64,7 +68,12 @@ export function GithubCredentialSection() {
   async function handleClear() {
     setFeedback(null);
     const result = await clearCredential();
-    if (result && !result.cleared) setFeedback({ kind: 'clearFailed' });
+    if (!result) return;
+    if (!result.cleared) {
+      setFeedback({ kind: 'clearFailed' });
+    } else if (result.warnings.includes('suppressionCleanupFailed')) {
+      setFeedback({ kind: 'suppressionCleanupFailed' });
+    }
   }
 
   if (loadState === 'loading' && !status) {
@@ -186,7 +195,11 @@ export function GithubCredentialSection() {
       {feedback ? (
         <div
           role="status"
-          className={feedback.kind === 'saved' ? 'space-y-1 text-xs text-success' : 'space-y-1 text-xs text-destructive'}
+          className={feedback.kind === 'saved'
+            ? 'space-y-1 text-xs text-success'
+            : feedback.kind === 'suppressionCleanupFailed'
+              ? 'space-y-1 text-xs text-warning'
+              : 'space-y-1 text-xs text-destructive'}
         >
           <p>{t(`settings.githubCredential.feedback.${feedback.kind}`)}</p>
           {feedback.kind === 'rateLimited' && feedback.retryAtEpochMs ? (

@@ -10,6 +10,7 @@ import {
   saveDefaultTargetAgents,
 } from '@/hooks/useTauriApi';
 import { useAgentRegistryStore } from './agent-registry';
+import { useSkillsDataStore } from './skills-data';
 import { isMutationWriteBlocked } from './mutation';
 import type { DefaultTargetAgents } from '@/hooks/useTauriApi';
 import type {
@@ -352,6 +353,9 @@ export const useSettingsStore = create<SettingsState>()(
               error: null,
             },
           } : state);
+          if (result.saved && !result.warnings.includes('suppressionCleanupFailed')) {
+            useSkillsDataStore.getState().clearHostGithubProviderCooldown();
+          }
           return result;
         } catch (error) {
           set((state) => state.githubCredential.requestId === requestId ? {
@@ -389,6 +393,9 @@ export const useSettingsStore = create<SettingsState>()(
               error: null,
             },
           } : state);
+          if (result.cleared && !result.warnings.includes('suppressionCleanupFailed')) {
+            useSkillsDataStore.getState().clearHostGithubProviderCooldown();
+          }
           return result;
         } catch (error) {
           set((state) => state.githubCredential.requestId === requestId ? {

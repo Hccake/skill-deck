@@ -9,6 +9,8 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 
+const RATE_LIMIT_FALLBACK_MS: u64 = 5 * 60 * 1_000;
+
 /// GitHub Trees API 响应
 #[derive(Debug, Deserialize)]
 struct TreesResponse {
@@ -303,19 +305,30 @@ fn response_failure(response: &reqwest::Response) -> Option<GithubTreeFetchOutco
 }
 
 fn is_rate_limited(response: &reqwest::Response) -> bool {
-    response.status() == reqwest::StatusCode::FORBIDDEN
-        && response_header_u64(response, "X-RateLimit-Remaining") == Some(0)
+    response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (response.status() == reqwest::StatusCode::FORBIDDEN
+            && (response_header_u64(response, "X-RateLimit-Remaining") == Some(0)
+                || response.headers().contains_key(RETRY_AFTER)))
 }
 
 fn retry_at_epoch_ms(response: &reqwest::Response) -> Option<u64> {
-    response_header_u64(response, RETRY_AFTER.as_str())
-        .map(|seconds| {
-            chrono::Utc::now().timestamp_millis().max(0) as u64 + seconds.saturating_mul(1_000)
-        })
-        .or_else(|| {
-            response_header_u64(response, "X-RateLimit-Reset")
-                .map(|seconds| seconds.saturating_mul(1_000))
-        })
+    let now_epoch_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    Some(rate_limit_retry_deadline(
+        now_epoch_ms,
+        response_header_u64(response, RETRY_AFTER.as_str()),
+        response_header_u64(response, "X-RateLimit-Reset"),
+    ))
+}
+
+fn rate_limit_retry_deadline(
+    now_epoch_ms: u64,
+    retry_after_seconds: Option<u64>,
+    rate_limit_reset_seconds: Option<u64>,
+) -> u64 {
+    retry_after_seconds
+        .map(|seconds| now_epoch_ms.saturating_add(seconds.saturating_mul(1_000)))
+        .or_else(|| rate_limit_reset_seconds.map(|seconds| seconds.saturating_mul(1_000)))
+        .unwrap_or_else(|| now_epoch_ms.saturating_add(RATE_LIMIT_FALLBACK_MS))
 }
 
 fn response_header_u64(response: &reqwest::Response, name: &str) -> Option<u64> {
@@ -489,6 +502,76 @@ mod tests {
             }
         );
         assert!(!format!("{validation:?}").contains("secret-token"));
+    }
+
+    #[tokio::test]
+    async fn recognizes_429_and_secondary_403_as_rate_limited() {
+        for status in [429, 403] {
+            let headers = if status == 403 {
+                vec![("Retry-After", "2")]
+            } else {
+                vec![]
+            };
+            let fixture = HttpFixture::new(vec![HttpResponse {
+                status,
+                headers,
+                body: "{}",
+            }]);
+            let client = GithubApiClient::with_base_url(fixture.base_url());
+            let outcome = client.fetch_tree("owner/repo", "main", None).await;
+            assert!(matches!(
+                outcome,
+                GithubTreeFetchOutcome::RateLimited {
+                    retry_at_epoch_ms: Some(_)
+                }
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn primary_rate_limit_uses_the_reset_deadline() {
+        let fixture = HttpFixture::new(vec![HttpResponse {
+            status: 403,
+            headers: vec![
+                ("X-RateLimit-Remaining", "0"),
+                ("X-RateLimit-Reset", "4102444800"),
+            ],
+            body: "{}",
+        }]);
+        let client = GithubApiClient::with_base_url(fixture.base_url());
+
+        let outcome = client.fetch_tree("owner/repo", "main", None).await;
+
+        assert_eq!(
+            outcome,
+            GithubTreeFetchOutcome::RateLimited {
+                retry_at_epoch_ms: Some(4_102_444_800_000),
+            }
+        );
+    }
+
+    #[test]
+    fn rate_limit_without_deadline_uses_exactly_five_minutes_from_detection() {
+        assert_eq!(
+            rate_limit_retry_deadline(1_000_000, None, None),
+            1_000_000 + RATE_LIMIT_FALLBACK_MS,
+        );
+    }
+
+    #[test]
+    fn rate_limit_retry_after_wins_over_reset_deadline() {
+        assert_eq!(
+            rate_limit_retry_deadline(1_000_000, Some(2), Some(4_102_444_800)),
+            1_002_000,
+        );
+    }
+
+    #[test]
+    fn retry_after_overflow_saturates_instead_of_panicking() {
+        assert_eq!(
+            rate_limit_retry_deadline(1_000_000, Some(u64::MAX), None),
+            u64::MAX,
+        );
     }
 
     fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {

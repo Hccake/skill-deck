@@ -642,8 +642,8 @@ riskPolicy: InstallRiskPolicy;
  * 可用的 skills 列表
  */
 skills: AvailableSkill[] }
-export type GithubCredentialClearResult = { cleared: boolean; status: GithubCredentialStatus }
-export type GithubCredentialSaveResult = { saved: boolean; status: GithubCredentialStatus }
+export type GithubCredentialClearResult = { cleared: boolean; status: GithubCredentialStatus; warnings: SourceSuppressionWarningCode[] }
+export type GithubCredentialSaveResult = { saved: boolean; status: GithubCredentialStatus; warnings: SourceSuppressionWarningCode[] }
 export type GithubCredentialSource = "keyring" | "githubTokenEnv" | "ghTokenEnv" | "none"
 export type GithubCredentialStatus = { source: GithubCredentialSource; storage: GithubCredentialStorageStatus; validation: GithubCredentialValidationStatus; account: string | null; rateLimitRemaining: number | null; rateLimitLimit: number | null; rateLimitResetAtEpochMs: number | null; retryAtEpochMs: number | null }
 export type GithubCredentialStorageStatus = "available" | "unavailable"
@@ -654,7 +654,7 @@ export type GithubCredentialValidationStatus = "unconfigured" | "verified" | "in
 export type InstallMode = "symlink" | "copy"
 export type InstallPreview = { token: PreviewToken; skills: InstallSkillPreview[] }
 export type InstallRequest = { context: ContextRef; source: string; discoverySession: DiscoverySessionHandle; payloads: AcquiredPayloadHandle[]; skills: string[]; agentIntents: AgentWriteIntent[]; requestedMode: InstallMode; acknowledgeRisk: boolean }
-export type InstallResponse = { units: MutationUnitResult[] }
+export type InstallResponse = { units: MutationUnitResult[]; warnings: SourceSuppressionWarningCode[] }
 /**
  * 风险策略种类
  */
@@ -698,6 +698,10 @@ pluginName?: string | null;
  * Git ref（branch/tag）
  */
 gitRef?: string | null;
+/**
+ * 来源仓库内的 Skill 相对路径，用于更新检查会话身份指纹
+ */
+skillPath?: string | null;
 /**
  * 默认可用 Agent 数量
  */
@@ -823,6 +827,7 @@ export type SkillIdentity = { context: ContextRef; skillName: string }
 export type SkillScope = "global" | "project"
 export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
 export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness }
+export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
 export type SourceUpdateCheckInfo = { source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"
 export type SuggestedActionCode = "reviewChanges" | "refresh" | "openRecoveryResource" | "saveDefaultsLater"

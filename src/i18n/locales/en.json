@@ -160,7 +160,7 @@
     },
     "projectUnavailableTitle": "Project skills unavailable",
     "projectUnavailableDescription": "This Environment cannot access the project. Check its location, or switch to an Environment where the project has been added.",
-    "updateCheckFailureCount": "{{count}} checks failed",
+    "updateCheckIncompleteCount": "{{count}} checks incomplete",
     "card": {
       "extraCopies": "Extra setup items",
       "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" to adjust them."
@@ -830,7 +830,8 @@
         "unavailable": "Skill Deck could not reach GitHub to verify this token.",
         "unconfigured": "Enter a valid token.",
         "verified": "The token was verified but could not be saved.",
-        "clearFailed": "The token could not be removed from system secure storage."
+        "clearFailed": "The token could not be removed from system secure storage.",
+        "suppressionCleanupFailed": "The credential change succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed."
       }
     },
     "cloneTimeout": {
@@ -1250,6 +1251,9 @@
       "symlinkFailedHint": "Files were copied instead. On Windows, enable Developer Mode for symlink support.",
       "recoveryRequired": "Recovery required",
       "errorDetails": "Error details",
+      "warnings": {
+        "suppressionCleanupFailed": "Installation succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed."
+      },
       "status": {
         "succeeded": "Succeeded",
         "failed": "Failed",

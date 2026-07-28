@@ -1,11 +1,12 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SkillDetailPanel } from '../SkillDetailPanel';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { InstalledSkill } from '@/bindings';
+import type { SkillListItem } from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
 
 const eventMocks = vi.hoisted(() => ({
@@ -46,6 +47,10 @@ describe('SkillDetailPanel', () => {
     vi.clearAllMocks();
     eventMocks.callback = null;
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('disables detail write actions while keeping close available', () => {
@@ -140,7 +145,7 @@ describe('SkillDetailPanel', () => {
     expect(onCheckUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it('allows another explicit check while a previous request is still pending', async () => {
+  it('disables another explicit check while a previous Force request is still pending', () => {
     const onCheckUpdates = vi.fn(async () => 'completed' as const);
 
     render(
@@ -162,12 +167,171 @@ describe('SkillDetailPanel', () => {
     );
 
     const check = screen.getByTitle('skills.checkUpdates');
-    expect((check as HTMLButtonElement).disabled).toBe(false);
+    expect((check as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(check);
-    fireEvent.click(check);
-    await waitFor(() => {
-      expect(onCheckUpdates).toHaveBeenCalledTimes(2);
-    });
+    expect(onCheckUpdates).not.toHaveBeenCalled();
+  });
+
+  it('disables Force during provider cooldown and exposes the retry time', () => {
+    const retryAtEpochMs = Date.now() + 60_000;
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={{
+            ...makeSkill({ hasUpdate: false }),
+            updateStatus: 'cannotCheck',
+            updateReason: 'upstreamUnavailable',
+            updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
+            updateEvidence: {
+              source: 'github.com/owner/repo',
+              requestedRef: 'main',
+              resolvedRef: null,
+              refRevision: null,
+              checkedAtEpochMs: null,
+              expiresAtEpochMs: null,
+              freshness: 'coolingDown',
+              lastAttempt: {
+                checkedAtEpochMs: Date.now(),
+                failure: {
+                  reason: 'rateLimited',
+                  message: 'rate limited',
+                  retryAtEpochMs,
+                  providerCooldown: true,
+                },
+              },
+            },
+          } as never}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+          onCheckUpdates={vi.fn(async () => 'notCompleted' as const)}
+        />
+      </TooltipProvider>
+    );
+
+    const check = screen.getByTitle('skills.updateEvidence.retryAt') as HTMLButtonElement;
+    expect(check.disabled).toBe(true);
+  });
+
+  it('keeps Force disabled when another source in the Context established provider cooldown', () => {
+    const retryAtEpochMs = Date.now() + 60_000;
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({ source: 'other/repo', hasUpdate: false }) as never}
+          sourceDiagnostics={[{
+            source: 'github.com/owner/rate-limited',
+            requestedRef: 'HEAD',
+            resolvedRef: null,
+            refRevision: null,
+            checkedAtEpochMs: null,
+            expiresAtEpochMs: null,
+            freshness: 'coolingDown',
+            lastAttempt: {
+              checkedAtEpochMs: Date.now(),
+              failure: {
+                reason: 'rateLimited',
+                message: 'rate limited',
+                retryAtEpochMs,
+                providerCooldown: true,
+              },
+            },
+          }]}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+          onCheckUpdates={vi.fn(async () => 'notCompleted' as const)}
+        />
+      </TooltipProvider>
+    );
+
+    expect((screen.getByTitle('skills.updateEvidence.retryAt') as HTMLButtonElement).disabled)
+      .toBe(true);
+  });
+
+  it('re-enables Force when the observed provider cooldown is already expired', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const retryAtEpochMs = 1_060_000;
+    const skill: SkillListItem = {
+      ...makeSkill({ hasUpdate: false }),
+      updateStatus: 'cannotCheck',
+      updateReason: 'upstreamUnavailable',
+      updateAttempt: { outcome: 'notCompleted', reason: 'upstreamUnavailable' },
+      updateEvidence: {
+        source: 'github.com/owner/repo',
+        requestedRef: 'main',
+        resolvedRef: null,
+        refRevision: null,
+        checkedAtEpochMs: null,
+        expiresAtEpochMs: null,
+        freshness: 'coolingDown',
+        lastAttempt: {
+          checkedAtEpochMs: 1_000_000,
+          failure: {
+            reason: 'rateLimited',
+            message: 'rate limited',
+            retryAtEpochMs,
+            providerCooldown: true,
+          },
+        },
+      },
+    };
+    const props = {
+      skill,
+      content: '# Brainstorming',
+      loading: false,
+      agentDisplayNames: new Map<string, string>(),
+      onClose: vi.fn(),
+      onUpdate: vi.fn(),
+      onDelete: vi.fn(),
+      onRetry: vi.fn(),
+      onManageAgents: vi.fn(),
+      onCheckUpdates: vi.fn(async () => 'notCompleted' as const),
+    };
+    const { rerender } = render(
+      <TooltipProvider>
+        <SkillDetailPanel {...props} />
+      </TooltipProvider>
+    );
+
+    expect((screen.getByTitle('skills.updateEvidence.retryAt') as HTMLButtonElement).disabled).toBe(true);
+
+    vi.setSystemTime(1_120_000);
+    rerender(
+      <TooltipProvider>
+        <SkillDetailPanel
+          {...props}
+          skill={{
+            ...skill,
+            updateEvidence: {
+              ...skill.updateEvidence!,
+              lastAttempt: {
+                ...skill.updateEvidence!.lastAttempt!,
+                failure: {
+                  ...skill.updateEvidence!.lastAttempt!.failure!,
+                  retryAtEpochMs: 1_050_000,
+                },
+              },
+            },
+          }}
+        />
+      </TooltipProvider>
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect((screen.getByTitle('skills.checkUpdates') as HTMLButtonElement).disabled).toBe(false);
+    vi.useRealTimers();
   });
 
   it('shows the latest typed failure, valid evidence time, retry time, and next action', () => {

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   copySkillToProjects: vi.fn(),
   cleanupDuplicateAgentCopies: vi.fn(),
   syncSkills: vi.fn(),
+  refreshContext: vi.fn(),
   deselectSkill: vi.fn(),
 }));
 
@@ -30,7 +31,12 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 vi.mock('@/stores/skills-data', () => ({
-  useSkillsDataStore: { getState: () => ({ syncSkills: mocks.syncSkills }) },
+  useSkillsDataStore: {
+    getState: () => ({
+      syncSkills: mocks.syncSkills,
+      refreshContext: mocks.refreshContext,
+    }),
+  },
 }));
 
 vi.mock('@/stores/skill-detail', () => ({
@@ -305,7 +311,7 @@ describe('skill workflows', () => {
     expect(outcome).toEqual({ status: 'failed' });
     expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
     expect(useSkillDialogStore.getState().manageAgentDetails).toBe(managePreview);
-    expect(mocks.syncSkills).toHaveBeenCalledWith(context);
+    expect(mocks.syncSkills).toHaveBeenCalledWith(context, { origin: 'passive' });
   });
 
   it('keeps a management recovery action separate from an ordinary failure', async () => {
@@ -345,7 +351,10 @@ describe('skill workflows', () => {
 
     expect(outcome).toEqual({ status: 'failed' });
     expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
-    expect(mocks.syncSkills).toHaveBeenCalledWith(context);
+    expect(mocks.syncSkills).toHaveBeenCalledWith(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: ['toolkit'],
+    });
   });
 
   it('refreshes the management preview when execution reports a stale scope', async () => {
@@ -418,6 +427,12 @@ describe('skill workflows', () => {
 
   it('copies to project IDs in one explicitly selected target Environment', async () => {
     useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.copySkillToProjects.mockResolvedValueOnce({
+      units: [{
+        status: 'succeeded',
+        target: { scope: { scope: 'project', project_id: 'host-target' } },
+      }],
+    });
 
     const outcome = await executeSkillCopy({ environment: { kind: 'host' }, projectIds: ['host-target'] });
 
@@ -428,6 +443,10 @@ describe('skill workflows', () => {
       targetProjectIds: ['host-target'],
     }));
     expect(mocks.copySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({ token }));
+    expect(mocks.refreshContext).toHaveBeenCalledWith({
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'host-target' },
+    }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] });
   });
 
   it('returns source repair guidance without starting copy execution', async () => {
@@ -468,6 +487,11 @@ describe('skill workflows', () => {
       succeededProjectIds: ['project-b'],
       retryableProjectIds: ['project-c'],
     });
+    expect(mocks.refreshContext).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshContext).toHaveBeenCalledWith({
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'project-b' },
+    }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] });
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);
   });
 
@@ -536,6 +560,9 @@ describe('skill workflows', () => {
       agents: ['codex'],
     });
     expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(managePreview);
-    expect(mocks.syncSkills).toHaveBeenCalledWith(context);
+    expect(mocks.syncSkills).toHaveBeenCalledWith(context, {
+      origin: 'selfMutation',
+      mutatedSkillNames: ['toolkit'],
+    });
   });
 });

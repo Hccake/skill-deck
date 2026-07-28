@@ -106,6 +106,7 @@ export function InstallingStep({ state, prepared, updateState }: InstallingStepP
         updateStateRef.current({
           installResults: {
             units: [],
+            warnings: [],
           },
           retrySkillName: undefined,
           retryAgents: undefined,

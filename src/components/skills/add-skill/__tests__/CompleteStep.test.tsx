@@ -89,7 +89,7 @@ describe('CompleteStep', () => {
   it('renders authoritative succeeded and failed mutation units', () => {
     render(
       <CompleteStep
-        state={state({ units: [
+        state={state({ warnings: [], units: [
           unit('succeeded'),
           unit('failed', { unitId: 'install:broken', skillName: 'Broken' }),
         ] })}
@@ -103,11 +103,25 @@ describe('CompleteStep', () => {
     expect(screen.getByText('addSkill.complete.partial')).toBeDefined();
   });
 
+  it('shows a structured warning when suppression cleanup fails after installation', () => {
+    render(
+      <CompleteStep
+        state={state({
+          units: [unit('succeeded')],
+          warnings: ['suppressionCleanupFailed'],
+        } as unknown as InstallResponse)}
+        onDone={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('addSkill.complete.warnings.suppressionCleanupFailed')).toBeDefined();
+  });
+
   it('offers one fresh-preview retry when any unit is retryable', () => {
     const retry = vi.fn();
     render(
       <CompleteStep
-        state={state({ units: [unit('failed')] })}
+        state={state({ warnings: [], units: [unit('failed')] })}
         onDone={() => undefined}
         onRetry={retry}
       />,
@@ -120,7 +134,7 @@ describe('CompleteStep', () => {
   it('shows recovery-required units distinctly', () => {
     render(
       <CompleteStep
-        state={state({ units: [unit('recoveryRequired', {
+        state={state({ warnings: [], units: [unit('recoveryRequired', {
           recovery: { resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' },
         })] })}
         onDone={() => undefined}
@@ -134,7 +148,7 @@ describe('CompleteStep', () => {
   it('keeps technical diagnostics behind disclosure and omits ordinary recovery retry', () => {
     render(
       <CompleteStep
-        state={state({ units: [unit('recoveryRequired', {
+        state={state({ warnings: [], units: [unit('recoveryRequired', {
           retryable: true,
           recovery: { resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' },
         })] })}
