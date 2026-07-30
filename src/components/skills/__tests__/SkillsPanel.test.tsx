@@ -467,6 +467,32 @@ describe('SkillsPanel', () => {
     expect(mocks.skillDetailState.deselectSkill).toHaveBeenCalledTimes(1);
   });
 
+  it('resets the main list scroll only when the selected Context changes', () => {
+    mocks.workspaceContextState.selectedContext = ubuntuProject;
+    mocks.skillsDataState.snapshots = {
+      'wsl:ubuntu/global': snapshot([makeSkill('global-skill')]),
+      'wsl:ubuntu/project:project-a': snapshot([makeSkill('project-skill', 'project')]),
+    };
+
+    const { container, rerender } = render(<SkillsPanel compact={false} />);
+    const listScroll = container.querySelector<HTMLDivElement>('.flex-1.overflow-auto');
+    expect(listScroll).not.toBeNull();
+    listScroll!.scrollTop = 320;
+
+    mocks.skillsDataState.snapshots = {
+      ...mocks.skillsDataState.snapshots,
+      'wsl:ubuntu/project:project-a': snapshot([makeSkill('refreshed-project-skill', 'project')]),
+    };
+    rerender(<SkillsPanel compact={false} />);
+    expect(listScroll!.scrollTop).toBe(320);
+
+    mocks.workspaceContextState.selectedContext = ubuntuGlobal;
+    rerender(<SkillsPanel compact={false} />);
+
+    expect(container.querySelector<HTMLDivElement>('.flex-1.overflow-auto')).toBe(listScroll);
+    expect(listScroll!.scrollTop).toBe(0);
+  });
+
   it('passes the exact section context to check and update actions', () => {
     mocks.workspaceContextState.selectedContext = ubuntuProject;
     mocks.projectState.projectsByEnvironment = {

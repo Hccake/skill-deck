@@ -1,5 +1,5 @@
 // src/components/skills/SkillsPanel.tsx
-import { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
@@ -131,9 +131,14 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   // ② UI 状态 — 仅 2 个 useState
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgentFilter, setSelectedAgentFilter] = useState<AgentId | null>(null);
+  const listScrollRef = useRef<HTMLDivElement>(null);
 
   // 搜索优化：列表过滤作为低优先级更新 (rerender-transitions)
   const deferredQuery = useDeferredValue(searchQuery);
+
+  useLayoutEffect(() => {
+    if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
+  }, [selectedContextKey]);
 
   // 长生命周期 store 会在 Context snapshot 加载后统一决定是否准入 Automatic。
   // 组件不监听 focus，也不在重新挂载时安排 timer；同一应用会话返回页面不得新增 IPC 请求。
@@ -475,7 +480,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
         />
       ) : (
         /* 卡片列表 — 未选中时 */
-        <div className="flex-1 overflow-auto px-4 sm:px-6 pb-4 sm:pb-5">
+        <div ref={listScrollRef} className="flex-1 overflow-auto px-4 sm:px-6 pb-4 sm:pb-5">
           {/* Project Skills Section (only when project is selected) */}
           {isProjectSelected && (
             <SkillsSection
