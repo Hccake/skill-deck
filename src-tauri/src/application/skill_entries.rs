@@ -335,7 +335,7 @@ pub fn group_observed_entries(
                 public: ObservedPhysicalEntry {
                     entry_id: observed_entry_id(&candidate.fact.key, &candidate.fact.fingerprint)
                         .expect("validated physical facts produce observed IDs"),
-                    display_path: candidate.fact.destination.clone(),
+                    display_path: display_locator(&candidate.fact.destination),
                     kind,
                     physical_target_key: stable_digest(&candidate.fact.key)
                         .expect("validated physical keys are serializable"),
@@ -363,6 +363,24 @@ pub fn group_observed_entries(
             .dedup_by(|left, right| left.agent_id == right.agent_id);
     }
     Ok(grouped.into_values().collect())
+}
+
+fn display_locator(locator: &ResourceLocator) -> ResourceLocator {
+    let native_path = if let Some(suffix) = locator.native_path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{suffix}")
+    } else if let Some(suffix) = locator
+        .native_path
+        .strip_prefix(r"\\?\")
+        .or_else(|| locator.native_path.strip_prefix(r"\??\"))
+    {
+        suffix.to_string()
+    } else {
+        locator.native_path.clone()
+    };
+    ResourceLocator {
+        environment: locator.environment.clone(),
+        native_path,
+    }
 }
 
 pub fn observed_entry_kind(kind: TargetEntryKind) -> ObservedEntryKind {
@@ -485,6 +503,47 @@ mod tests {
         assert_eq!(entries[0].public.kind, ObservedEntryKind::Directory);
         assert_eq!(entries[1].public.kind, ObservedEntryKind::Symlink);
         assert!(entries[1].public.will_break_if_canonical_removed);
+    }
+
+    #[test]
+    fn physical_entries_hide_windows_verbatim_prefixes_from_display_paths() {
+        let canonical = fact(
+            "canonical",
+            r"D:\Code\skills\.agents\skills\demo",
+            TargetEntryKind::Directory,
+            None,
+        );
+        let drive_link = fact(
+            "drive-link",
+            r"\\?\D:\Code\skills\.kiro\skills\demo",
+            TargetEntryKind::Symlink,
+            Some(r"D:\Code\skills\.agents\skills\demo"),
+        );
+        let unc_link = fact(
+            "unc-link",
+            r"\\?\UNC\server\share\.junie\skills\demo",
+            TargetEntryKind::Symlink,
+            Some(r"D:\Code\skills\.agents\skills\demo"),
+        );
+
+        let entries = group_observed_entries(
+            &canonical,
+            vec![candidate(drive_link, "kiro"), candidate(unc_link, "junie")],
+        )
+        .unwrap();
+
+        assert_eq!(
+            entries[0].public.display_path.native_path,
+            r"D:\Code\skills\.kiro\skills\demo"
+        );
+        assert_eq!(
+            entries[1].public.display_path.native_path,
+            r"\\server\share\.junie\skills\demo"
+        );
+        assert_eq!(
+            entries[0].fact.destination.native_path,
+            r"\\?\D:\Code\skills\.kiro\skills\demo"
+        );
     }
 
     #[tokio::test]

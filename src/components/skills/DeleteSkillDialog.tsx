@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Copy, Folder, Link2, Loader2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +18,57 @@ import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillRemoval, openSkillRemoval } from '@/workflows/skill-remove';
 import type { RecoveryAction } from '@/bindings';
 
+function getSkillBasePath(canonicalPath: string): string | null {
+  const trimmedPath = canonicalPath.replace(/[\\/]+$/, '');
+  const normalizedPath = trimmedPath.replace(/\\/g, '/');
+  const windowsPath = /^[A-Za-z]:\//.test(normalizedPath) || normalizedPath.startsWith('//');
+  const comparablePath = windowsPath ? normalizedPath.toLowerCase() : normalizedPath;
+  const sharedDirectoryMarker = '/.agents/skills/';
+  const markerIndex = comparablePath.lastIndexOf(sharedDirectoryMarker);
+
+  if (markerIndex < 0 || comparablePath.slice(markerIndex + sharedDirectoryMarker.length).includes('/')) {
+    return null;
+  }
+
+  const basePath = trimmedPath.slice(0, markerIndex);
+  if (basePath) return /^[A-Za-z]:$/.test(basePath) ? `${basePath}\\` : basePath;
+  return normalizedPath.startsWith('/') ? '/' : null;
+}
+
+function relativeToBase(path: string, basePath: string | null): string {
+  if (!basePath) return path;
+
+  const normalizedPath = path.replace(/\\/g, '/');
+  const normalizedBase = basePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const prefix = normalizedBase ? `${normalizedBase}/` : '/';
+  const windowsPath = /^[A-Za-z]:\//.test(normalizedPath) || normalizedPath.startsWith('//');
+  const comparablePath = windowsPath ? normalizedPath.toLowerCase() : normalizedPath;
+  const comparablePrefix = windowsPath ? prefix.toLowerCase() : prefix;
+
+  return comparablePath.startsWith(comparablePrefix) ? path.slice(prefix.length) : path;
+}
+
+function PathModeButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`h-7 rounded-[6px] px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${active ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const { t } = useTranslation();
   const target = useSkillDialogStore((state) => state.deleteTarget);
@@ -28,9 +79,12 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const [removing, setRemoving] = useState(false);
   const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
+  const [showFullPaths, setShowFullPaths] = useState(false);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setRecovery([]);
+    setShowFullPaths(false);
   }, [preview, target]);
 
   const confirm = useCallback(async () => {
@@ -53,20 +107,36 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const retryingPreview = feedback === 'previewError' && !preview;
   const recoveryRequired = recovery.length > 0;
   const hasCopies = preview?.physicalEntries.some((entry) => entry.kind === 'directory') ?? false;
+  const canonicalPath = target?.skill.canonicalPath ?? '';
+  const basePath = target ? getSkillBasePath(canonicalPath) : null;
+  const relativeSharedPath = relativeToBase(canonicalPath, basePath);
+  const sharedDisplayPath = showFullPaths ? canonicalPath : relativeSharedPath;
+  const canToggleFullPaths = Boolean(basePath && relativeSharedPath !== canonicalPath);
 
   return (
     <Dialog open={Boolean(target)} onOpenChange={(open) => !open && !removing && close()}>
       <DialogContent
-        className="h-[min(30rem,calc(100dvh-2rem))] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-lg"
+        className="max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[580px]"
         dismissible={!removing}
         closeLabel={t('common.close')}
         aria-busy={loading || removing}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          cancelButtonRef.current?.focus();
+        }}
       >
-        <DialogHeader className="min-w-0 px-6 pt-6 pb-4">
-          <DialogTitle>{t('skills.deleteConfirm.title')}</DialogTitle>
-          <DialogDescription className="min-w-0 break-words pr-6">
-            {t('skills.deleteConfirm.description', { name: target?.skill.name })}
-          </DialogDescription>
+        <DialogHeader className="min-w-0 px-6 pt-6 pb-5">
+          <div className="flex min-w-0 items-start gap-3 pr-6 text-left">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
+              <Trash2 className="size-4" aria-hidden="true" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <DialogTitle>{t('skills.deleteConfirm.title')}</DialogTitle>
+              <DialogDescription className="mt-1 min-w-0 break-words">
+                {t('skills.deleteConfirm.description', { name: target?.skill.name })}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         <div
@@ -103,53 +173,117 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
             </div>
           ) : (
             <>
-              <section className="min-w-0 space-y-2">
-                <h3 className="text-sm font-medium">{t('skills.deleteConfirm.sharedDirSection')}</h3>
-                <code
-                  className="block min-w-0 max-w-full text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]"
-                  translate="no"
-                >
-                  {target?.skill.canonicalPath}
-                </code>
-              </section>
-
               {preview ? (
-                <section className="min-w-0 space-y-2">
-                  <h3 className="text-sm font-medium">
-                    {t('skills.deleteConfirm.agentEntriesSection')}
-                  </h3>
-                  {preview.physicalEntries.length > 0 ? (
-                    <div className="min-w-0 space-y-2">
-                      {preview.physicalEntries.map((entry) => {
-                        const mode = entry.kind === 'directory' ? 'copyMode' : 'linkMode';
-                        return (
-                          <div
-                            key={entry.entryId}
-                            className="min-w-0 max-w-full space-y-1.5 rounded-md border border-border/60 p-3"
-                          >
+                <section
+                  className="min-w-0"
+                  aria-label={t('skills.deleteConfirm.scopeLabel')}
+                >
+                  <div
+                    data-testid="delete-skill-scope-summary"
+                    className="mb-3 flex flex-wrap items-center justify-between gap-3"
+                  >
+                    <div className="flex items-baseline gap-2">
+                      <h3 className="text-sm font-semibold">
+                        {t('skills.deleteConfirm.scopeLabel')}
+                      </h3>
+                      <span className="text-xs text-muted-foreground">
+                        {t('skills.deleteConfirm.scopeCount', {
+                          count: preview.physicalEntries.length + 1,
+                        })}
+                      </span>
+                    </div>
+
+                    {canToggleFullPaths ? (
+                      <div
+                        role="group"
+                        aria-label={t('skills.deleteConfirm.pathDisplayMode')}
+                        className="inline-flex rounded-md bg-secondary p-0.5"
+                      >
+                        <PathModeButton
+                          active={!showFullPaths}
+                          onClick={() => setShowFullPaths(false)}
+                        >
+                          {t('skills.deleteConfirm.relativePaths')}
+                        </PathModeButton>
+                        <PathModeButton
+                          active={showFullPaths}
+                          onClick={() => setShowFullPaths(true)}
+                        >
+                          {t('skills.deleteConfirm.fullPaths')}
+                        </PathModeButton>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div
+                    data-testid="delete-skill-entry-list"
+                    className="min-w-0 divide-y divide-border/60 border-y border-border/60"
+                  >
+                    <div
+                      data-testid="delete-skill-entry"
+                      className="flex min-w-0 items-start gap-3 py-3"
+                    >
+                      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
+                        <Folder className="size-3.5" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <span className="min-w-0 flex-1 break-words text-sm font-medium">
+                            {t('skills.deleteConfirm.sharedDirSection')}
+                          </span>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {t('skills.deleteConfirm.mainDirectory')}
+                          </span>
+                        </div>
+                        <code
+                          className="mt-1 block min-w-0 max-w-full text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]"
+                          translate="no"
+                        >
+                          {sharedDisplayPath}
+                        </code>
+                      </div>
+                    </div>
+
+                    {preview.physicalEntries.map((entry) => {
+                      const copy = entry.kind === 'directory';
+                      const mode = copy ? 'copyMode' : 'linkMode';
+                      const EntryIcon = copy ? Copy : Link2;
+                      const displayPath = showFullPaths
+                        ? entry.displayPath.nativePath
+                        : relativeToBase(entry.displayPath.nativePath, basePath);
+                      return (
+                        <div
+                          key={entry.entryId}
+                          data-testid="delete-skill-entry"
+                          className="flex min-w-0 max-w-full items-start gap-3 py-3"
+                        >
+                          <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
+                            <EntryIcon className="size-3.5" aria-hidden="true" />
+                          </div>
+                          <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 max-w-full items-start gap-3">
                               <span className="min-w-0 flex-1 break-words text-sm font-medium">
                                 {entry.owners.map((owner) => owner.displayName).join(', ')}
                               </span>
-                              <Badge variant="secondary" className="shrink-0">
+                              <Badge
+                                variant="secondary"
+                                className={`shrink-0 ${copy ? 'bg-warning/12 text-warning' : ''}`}
+                              >
                                 {t(`skills.deleteConfirm.${mode}`)}
                               </Badge>
                             </div>
                             <code
-                              className="block min-w-0 max-w-full text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]"
+                              className="mt-1 block min-w-0 max-w-full text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]"
                               translate="no"
                             >
-                              {entry.displayPath.nativePath}
+                              {displayPath}
                             </code>
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      {t('skills.deleteConfirm.noAgentEntries')}
-                    </p>
-                  )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
                 </section>
               ) : null}
 
@@ -165,8 +299,8 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
           )}
         </div>
 
-        <DialogFooter className="min-w-0 border-t px-6 py-4">
-          <Button variant="outline" onClick={close} disabled={removing}>
+        <DialogFooter className="min-w-0 flex-row justify-end border-t px-6 py-4">
+          <Button ref={cancelButtonRef} variant="outline" onClick={close} disabled={removing}>
             {t(recoveryRequired ? 'common.close' : 'common.cancel')}
           </Button>
           {!recoveryRequired ? (

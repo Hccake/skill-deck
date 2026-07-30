@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMutationStore } from '@/stores/mutation';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
@@ -31,8 +31,9 @@ vi.mock('react-i18next', () => ({
 }));
 
 const context = { environment: { kind: 'host' }, scope: { scope: 'global' } } as const;
-const canonicalPath = 'C:\\Users\\example\\.agents\\skills\\a-very-long-skill-name';
-const agentPath = '/home/example/.custom-agent/skills/a-very-long-skill-name';
+const basePath = 'D:\\Code\\temp\\skills';
+const canonicalPath = `${basePath}\\.agents\\skills\\a-very-long-skill-name`;
+const agentPath = `${basePath}\\.custom-agent\\skills\\a-very-long-skill-name`;
 
 describe('DeleteSkillDialog', () => {
   beforeEach(() => {
@@ -82,12 +83,30 @@ describe('DeleteSkillDialog', () => {
     render(<DeleteSkillDialog />);
 
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
-    expect(screen.getByText(canonicalPath)).not.toBeNull();
-    expect(screen.getByText(agentPath)).not.toBeNull();
+    expect(screen.queryByText(basePath)).toBeNull();
+    expect(screen.getByText('.agents\\skills\\a-very-long-skill-name')).not.toBeNull();
+    expect(screen.getByText('.custom-agent\\skills\\a-very-long-skill-name')).not.toBeNull();
+    expect(screen.queryByText(canonicalPath)).toBeNull();
+    expect(screen.queryByText(agentPath)).toBeNull();
     expect(screen.getByText('skills.deleteConfirm.copyMode')).not.toBeNull();
     expect(screen.getByText('skills.deleteConfirm.linkMode')).not.toBeNull();
     expect(screen.queryByText('directory')).toBeNull();
     expect(screen.queryByText('symlink')).toBeNull();
+
+    const relativePaths = screen.getByRole('button', {
+      name: 'skills.deleteConfirm.relativePaths',
+    });
+    const fullPaths = screen.getByRole('button', {
+      name: 'skills.deleteConfirm.fullPaths',
+    });
+    expect(relativePaths.getAttribute('aria-pressed')).toBe('true');
+    expect(fullPaths.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(fullPaths);
+    expect(screen.getByText(canonicalPath)).not.toBeNull();
+    expect(screen.getByText(agentPath)).not.toBeNull();
+    expect(relativePaths.getAttribute('aria-pressed')).toBe('false');
+    expect(fullPaths.getAttribute('aria-pressed')).toBe('true');
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'skills.deleteConfirm.confirm' }));
@@ -101,13 +120,56 @@ describe('DeleteSkillDialog', () => {
     const dialog = screen.getByRole('dialog');
     const body = screen.getByTestId('delete-skill-dialog-body');
     expect(dialog.className).toContain('min-w-0');
-    expect(dialog.className).toContain('h-[min(30rem,calc(100dvh-2rem))]');
+    expect(dialog.className).toContain('max-h-[calc(100dvh-2rem)]');
     expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
     expect(dialog.className).toContain('overflow-hidden');
     expect(body.className).toContain('min-w-0');
     expect(body.className).toContain('overflow-y-auto');
     expect(body.className).toContain('overflow-x-hidden');
     expect(body.className).toContain('overscroll-contain');
+  });
+
+  it('uses one compact divided list instead of a card for each Agent entry', () => {
+    render(<DeleteSkillDialog />);
+
+    const list = screen.getByTestId('delete-skill-entry-list');
+    expect(list.className).toContain('divide-y');
+    const entries = screen.getAllByTestId('delete-skill-entry');
+    expect(entries).toHaveLength(3);
+    expect(entries[0].querySelector('.lucide-folder')).not.toBeNull();
+    expect(entries[1].querySelector('.lucide-copy')).not.toBeNull();
+    expect(entries[2].querySelector('.lucide-link-2')).not.toBeNull();
+  });
+
+  it('keeps the deletion heading, count, and path mode controls in one summary row', () => {
+    render(<DeleteSkillDialog />);
+
+    const summary = screen.getByTestId('delete-skill-scope-summary');
+    expect(summary.contains(screen.getByText('skills.deleteConfirm.scopeLabel'))).toBe(true);
+    expect(summary.contains(screen.getByText('skills.deleteConfirm.scopeCount'))).toBe(true);
+    expect(summary.contains(screen.getByRole('group', {
+      name: 'skills.deleteConfirm.pathDisplayMode',
+    }))).toBe(true);
+  });
+
+  it('does not add a redundant message when there are no Agent Skill directories', () => {
+    const preview = useSkillDialogStore.getState().deletePreview!;
+    useSkillDialogStore.setState({
+      deletePreview: { ...preview, physicalEntries: [] },
+    });
+
+    render(<DeleteSkillDialog />);
+
+    expect(screen.queryByText('skills.deleteConfirm.noAgentEntries')).toBeNull();
+    expect(screen.getAllByTestId('delete-skill-entry')).toHaveLength(1);
+  });
+
+  it('focuses the safe action when the destructive dialog opens', async () => {
+    render(<DeleteSkillDialog />);
+
+    const cancel = screen.getByRole('button', { name: 'common.cancel' });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    expect(cancel.parentElement?.className.split(/\s+/)).toContain('flex-row');
   });
 
   it('offers preview retry without closing the dialog', async () => {
