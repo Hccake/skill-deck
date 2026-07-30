@@ -17,6 +17,28 @@ vi.mock('react-i18next', () => ({
 }));
 
 describe('AgentFilterCombobox', () => {
+  it('keeps the compact trigger and popup within the full toolbar width', () => {
+    render(
+      <AgentFilterCombobox
+        agents={[makeResolvedAgent({ id: 'codex', displayName: 'Codex' })]}
+        selectedAgent={null}
+        onChange={vi.fn()}
+        matchCounts={new Map([['codex', 1]])}
+        totalSkillCount={1}
+        compact
+      />,
+    );
+
+    const trigger = screen.getByRole('button', { name: '按 Agent 筛选 Skill' });
+    expect(trigger.parentElement?.className).toContain('w-full');
+    expect(trigger.className).toContain('w-full');
+
+    fireEvent.click(trigger);
+    const popup = screen.getByRole('listbox').parentElement;
+    expect(popup?.className).toContain('inset-x-0');
+    expect(popup?.className).not.toContain('w-64');
+  });
+
   it('shows 全部 Agents before selection and only the Agent name after selection', async () => {
     const onChange = vi.fn();
     const agents = [

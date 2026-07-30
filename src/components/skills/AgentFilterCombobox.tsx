@@ -136,7 +136,10 @@ export function AgentFilterCombobox({
   };
 
   return (
-    <div ref={rootRef} className="relative flex shrink-0 items-center">
+    <div
+      ref={rootRef}
+      className={cn('relative flex shrink-0 items-center', compact && 'w-full')}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -147,7 +150,7 @@ export function AgentFilterCombobox({
         className={cn(
           'flex h-8 min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-muted px-2.5 text-sm text-foreground shadow-none outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50',
           selectedAgent !== null && 'bg-primary/10 text-primary hover:bg-primary/15',
-          compact ? 'max-w-40' : 'min-w-[140px] max-w-56',
+          compact ? 'w-full' : 'min-w-[140px] max-w-56',
         )}
         onClick={() => open ? closeList() : openList()}
       >
@@ -159,7 +162,10 @@ export function AgentFilterCombobox({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md">
+        <div className={cn(
+          'absolute top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md',
+          compact ? 'inset-x-0' : 'right-0 w-64',
+        )}>
           <div className="relative border-b border-border p-2">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <Input
