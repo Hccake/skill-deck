@@ -127,7 +127,7 @@ vi.mock('@/components/skills/add-skill/InstallingStep', () => ({
           installResults: {
             units: [
               { status: 'succeeded', skillName: 'demo' },
-              { status: 'failed', skillName: 'broken' },
+              { status: 'failed', skillName: 'broken', retryable: true },
             ],
             warnings: [],
           } as never,
@@ -136,18 +136,25 @@ vi.mock('@/components/skills/add-skill/InstallingStep', () => ({
       >
         finish-partial-install
       </button>
+      <button
+        type="button"
+        onClick={() => updateState({
+          installError: { message: 'install failed' },
+          step: 'error',
+        })}
+      >
+        finish-failed-install
+      </button>
     </>
   ),
 }));
 
 vi.mock('@/components/skills/add-skill/CompleteStep', () => ({
-  CompleteStep: ({ onDone }: { onDone: () => void }) => (
-    <button type="button" onClick={onDone}>complete-step</button>
-  ),
+  CompleteStep: () => <div data-testid="complete-step">complete-step</div>,
 }));
 
 vi.mock('@/components/skills/add-skill/ErrorStep', () => ({
-  ErrorStep: () => <div>error-step</div>,
+  ErrorStep: () => <div data-testid="error-step">error-step</div>,
 }));
 
 function createState(overrides: Partial<WizardState> = {}): WizardState {
@@ -205,6 +212,10 @@ function startInstallationFromSkillsEntry() {
     fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.next' }));
   }
   fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.install' }));
+}
+
+function expectFixedAction(button: HTMLElement) {
+  expect(button.parentElement?.className).toContain('flex-shrink-0');
 }
 
 describe('canProceedForStep', () => {
@@ -329,7 +340,7 @@ describe('WizardPage mutation guard', () => {
     startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
 
-    await screen.findByRole('button', { name: 'complete-step' });
+    await screen.findByTestId('complete-step');
     await waitFor(() => {
       expect(mocks.emit).toHaveBeenCalledWith('wizard-result', {
         action: 'refresh',
@@ -346,7 +357,8 @@ describe('WizardPage mutation guard', () => {
     startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
 
-    const done = await screen.findByRole('button', { name: 'complete-step' });
+    const done = await screen.findByRole('button', { name: 'addSkill.actions.done' });
+    expectFixedAction(done);
     await waitFor(() => expect(mocks.emit).toHaveBeenCalledTimes(1));
     fireEvent.click(done);
 
@@ -362,7 +374,7 @@ describe('WizardPage mutation guard', () => {
     startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
 
-    const done = await screen.findByRole('button', { name: 'complete-step' });
+    const done = await screen.findByRole('button', { name: 'addSkill.actions.done' });
     await waitFor(() => expect(mocks.emit).toHaveBeenCalledTimes(1));
     fireEvent.click(done);
 
@@ -377,7 +389,7 @@ describe('WizardPage mutation guard', () => {
     startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-partial-install' }));
 
-    await screen.findByRole('button', { name: 'complete-step' });
+    await screen.findByTestId('complete-step');
     await waitFor(() => {
       expect(mocks.emit).toHaveBeenCalledWith('wizard-result', {
         action: 'refresh',
@@ -388,5 +400,34 @@ describe('WizardPage mutation guard', () => {
         mutatedSkillNames: ['demo'],
       });
     });
+  });
+
+  it('keeps result actions in the fixed footer while result content scrolls', async () => {
+    startInstallationFromSkillsEntry();
+
+    expect(screen.queryByRole('button', { name: 'addSkill.actions.done' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'finish-partial-install' }));
+
+    const retry = await screen.findByRole('button', { name: 'addSkill.actions.retry' });
+    const done = screen.getByRole('button', { name: 'addSkill.actions.done' });
+    expectFixedAction(retry);
+    expectFixedAction(done);
+    expect(screen.getByTestId('complete-step').contains(retry)).toBe(false);
+
+    fireEvent.click(retry);
+    expect(await screen.findByText('confirm-step')).toBeDefined();
+  });
+
+  it('keeps fatal error actions in the fixed footer', async () => {
+    startInstallationFromSkillsEntry();
+    fireEvent.click(screen.getByRole('button', { name: 'finish-failed-install' }));
+
+    await screen.findByTestId('error-step');
+    const close = screen.getByRole('button', { name: 'addSkill.error.actions.close' });
+    const back = screen.getByRole('button', { name: 'addSkill.error.actions.backToSource' });
+    const retry = screen.getByRole('button', { name: 'addSkill.error.actions.retry' });
+    expectFixedAction(close);
+    expectFixedAction(back);
+    expectFixedAction(retry);
   });
 });

@@ -93,7 +93,6 @@ describe('CompleteStep', () => {
           unit('succeeded'),
           unit('failed', { unitId: 'install:broken', skillName: 'Broken' }),
         ] })}
-        onDone={() => undefined}
       />,
     );
 
@@ -110,25 +109,21 @@ describe('CompleteStep', () => {
           units: [unit('succeeded')],
           warnings: ['suppressionCleanupFailed'],
         } as unknown as InstallResponse)}
-        onDone={() => undefined}
       />,
     );
 
     expect(screen.getByText('addSkill.complete.warnings.suppressionCleanupFailed')).toBeDefined();
   });
 
-  it('offers one fresh-preview retry when any unit is retryable', () => {
-    const retry = vi.fn();
+  it('leaves wizard actions to the page footer', () => {
     render(
       <CompleteStep
         state={state({ warnings: [], units: [unit('failed')] })}
-        onDone={() => undefined}
-        onRetry={retry}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.retry' }));
-    expect(retry).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'addSkill.actions.retry' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'addSkill.actions.done' })).toBeNull();
   });
 
   it('shows recovery-required units distinctly', () => {
@@ -137,7 +132,6 @@ describe('CompleteStep', () => {
         state={state({ warnings: [], units: [unit('recoveryRequired', {
           recovery: { resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' },
         })] })}
-        onDone={() => undefined}
       />,
     );
 
@@ -152,8 +146,6 @@ describe('CompleteStep', () => {
           retryable: true,
           recovery: { resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' },
         })] })}
-        onDone={() => undefined}
-        onRetry={vi.fn()}
       />,
     );
 

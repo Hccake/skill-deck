@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { RotateCw } from 'lucide-react';
 import { useProjectStore } from '@/stores/projects';
 import { emit } from '@tauri-apps/api/event';
 import { Button } from '@/components/ui/button';
@@ -22,6 +23,7 @@ import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { useMutationStore } from '@/stores/mutation';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
 import { useInstallTargetOptions } from '@/hooks/useInstallTargetOptions';
+import { isRetryableMutationUnit } from '@/lib/mutation-results';
 import type {
   EntryPoint,
   CoreStep,
@@ -250,6 +252,8 @@ export function WizardPage() {
 
   // 是否为结果态
   const isResultState = state.step === 'installing' || state.step === 'complete' || state.step === 'error';
+  const showActionBar = state.step !== 'installing';
+  const hasRetryableResult = state.installResults?.units.some(isRetryableMutationUnit) ?? false;
   // 是否显示 Scope badge（从 step 2 Source 开始显示）
   const showScopeBadge = currentStepIndex >= 1 || isResultState;
   const hasOverwrites = useMemo(
@@ -320,43 +324,12 @@ export function WizardPage() {
           />
         );
       case 'complete':
-        return (
-          <CompleteStep
-            state={state}
-            onDone={handleDone}
-            onRetry={() => {
-              updateState({
-                installResults: null,
-                preparation: { status: 'idle' },
-              });
-              goToStep('confirm');
-            }}
-          />
-        );
+        return <CompleteStep state={state} />;
       case 'error':
         if (state.installError) {
-          return (
-            <ErrorStep
-              error={state.installError}
-              onRetry={handleRetryInstall}
-              onBack={() => goToStep(steps[0])}
-              onClose={closeWizard}
-            />
-          );
+          return <ErrorStep error={state.installError} />;
         }
-        return (
-          <CompleteStep
-            state={state}
-            onDone={handleDone}
-            onRetry={() => {
-              updateState({
-                installResults: null,
-                preparation: { status: 'idle' },
-              });
-              goToStep('confirm');
-            }}
-          />
-        );
+        return <CompleteStep state={state} />;
       default:
         return null;
     }
@@ -403,32 +376,58 @@ export function WizardPage() {
         </div>
 
         {/* 底部操作栏 */}
-        {!isResultState && (
+        {showActionBar && (
           <div className="flex-shrink-0 h-[72px] border-t bg-background/80 backdrop-blur-sm px-8 flex items-center justify-end gap-3 z-10 shadow-[0_-4px_12px_rgba(0,0,0,0.02)]">
-            <Button variant="outline" onClick={closeWizard}>
-              {t('addSkill.actions.cancel')}
-            </Button>
-            {currentStepIndex > 0 && (
-              <Button variant="outline" onClick={goBack}>
-                {t('addSkill.actions.back')}
-              </Button>
-            )}
-            {state.step === 'confirm' ? (
-              <Button
-                onClick={() => goToStep('installing')}
-                disabled={!canProceed || writeBlocked}
-                className="min-w-[100px]"
-              >
-                {hasOverwrites ? (
-                  t('addSkill.actions.installWithOverwrite')
-                ) : (
-                  t('addSkill.actions.install')
-                )}
-              </Button>
+            {state.step === 'error' && state.installError ? (
+              <>
+                <Button variant="outline" onClick={closeWizard}>
+                  {t('addSkill.error.actions.close')}
+                </Button>
+                <Button variant="outline" onClick={() => goToStep(steps[0])}>
+                  {t('addSkill.error.actions.backToSource')}
+                </Button>
+                <Button onClick={handleRetryInstall}>
+                  <RotateCw className="h-4 w-4 mr-1.5" />
+                  {t('addSkill.error.actions.retry')}
+                </Button>
+              </>
+            ) : isResultState ? (
+              <>
+                {hasRetryableResult ? (
+                  <Button variant="outline" onClick={handleRetryInstall}>
+                    {t('addSkill.actions.retry')}
+                  </Button>
+                ) : null}
+                <Button onClick={handleDone}>{t('addSkill.actions.done')}</Button>
+              </>
             ) : (
-              <Button onClick={goNext} disabled={!canProceed} className="min-w-[100px]">
-                {t('addSkill.actions.next')}
-              </Button>
+              <>
+                <Button variant="outline" onClick={closeWizard}>
+                  {t('addSkill.actions.cancel')}
+                </Button>
+                {currentStepIndex > 0 && (
+                  <Button variant="outline" onClick={goBack}>
+                    {t('addSkill.actions.back')}
+                  </Button>
+                )}
+                {state.step === 'confirm' ? (
+                  <Button
+                    onClick={() => goToStep('installing')}
+                    disabled={!canProceed || writeBlocked}
+                    className="min-w-[100px]"
+                  >
+                    {hasOverwrites ? (
+                      t('addSkill.actions.installWithOverwrite')
+                    ) : (
+                      t('addSkill.actions.install')
+                    )}
+                  </Button>
+                ) : (
+                  <Button onClick={goNext} disabled={!canProceed} className="min-w-[100px]">
+                    {t('addSkill.actions.next')}
+                  </Button>
+                )}
+              </>
             )}
           </div>
         )}

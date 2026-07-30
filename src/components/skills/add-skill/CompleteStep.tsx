@@ -20,13 +20,10 @@ import {
   formatFallbackReason,
   formatMutationError,
   formatMutationWarning,
-  isRetryableMutationUnit,
 } from '@/lib/mutation-results';
 
 interface CompleteStepProps {
   state: WizardState;
-  onDone: () => void;
-  onRetry?: () => void;
 }
 
 const EMPTY_MUTATION_UNITS: MutationUnitResult[] = [];
@@ -82,7 +79,7 @@ function MutationDiagnosticDetails({
   );
 }
 
-export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
+export function CompleteStep({ state }: CompleteStepProps) {
   const { t } = useTranslation();
   const units = state.installResults?.units ?? EMPTY_MUTATION_UNITS;
   const warnings = state.installResults?.warnings ?? [];
@@ -96,7 +93,6 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
     [environments, projectsByEnvironment, t, units],
   );
   const hasFailures = units.some((unit) => unit.status !== 'succeeded');
-  const hasRetryable = units.some(isRetryableMutationUnit);
   const failureGuidance = hasFailures
     ? getCrossStorageFailureGuidance(state.context, 'install', t)
     : null;
@@ -175,15 +171,6 @@ export function CompleteStep({ state, onDone, onRetry }: CompleteStepProps) {
             </div>
           );
         })}
-      </div>
-
-      <div className="flex justify-end gap-2 pt-2">
-        {hasRetryable && onRetry ? (
-          <Button variant="outline" onClick={onRetry}>
-            {t('addSkill.actions.retry')}
-          </Button>
-        ) : null}
-        <Button onClick={onDone}>{t('addSkill.actions.done')}</Button>
       </div>
     </div>
   );

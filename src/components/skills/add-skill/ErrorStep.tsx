@@ -1,17 +1,13 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { XCircle, ChevronDown, ChevronUp, Lightbulb, RotateCw } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { XCircle, ChevronDown, ChevronUp, Lightbulb } from 'lucide-react';
 import type { InstallError } from './types';
 
 interface ErrorStepProps {
   error: InstallError;
-  onRetry: () => void;
-  onBack: () => void;
-  onClose: () => void;
 }
 
-export function ErrorStep({ error, onRetry, onBack, onClose }: ErrorStepProps) {
+export function ErrorStep({ error }: ErrorStepProps) {
   const { t } = useTranslation();
   const [detailsExpanded, setDetailsExpanded] = useState(true);
 
@@ -67,20 +63,6 @@ export function ErrorStep({ error, onRetry, onBack, onClose }: ErrorStepProps) {
           </ul>
         </div>
       )}
-
-      {/* Actions */}
-      <div className="flex justify-end gap-2 pt-2">
-        <Button variant="outline" onClick={onClose}>
-          {t('addSkill.error.actions.close')}
-        </Button>
-        <Button variant="outline" onClick={onBack}>
-          {t('addSkill.error.actions.backToSource')}
-        </Button>
-        <Button onClick={onRetry}>
-          <RotateCw className="h-4 w-4 mr-1.5" />
-          {t('addSkill.error.actions.retry')}
-        </Button>
-      </div>
     </div>
   );
 }
