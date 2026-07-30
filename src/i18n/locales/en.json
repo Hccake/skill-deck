@@ -801,20 +801,33 @@
     },
     "git": {
       "title": "Git",
-      "description": "Adjust how Skill Deck installs and updates skills from Git sources."
+      "description": "Configure the GitHub Token and remote fetch behavior."
     },
     "githubCredential": {
-      "title": "GitHub Access Credential",
+      "title": "GitHub Token",
       "description": "Provides a higher request quota for GitHub update checks and access to repositories that require authorization.",
+      "configure": "Configure",
+      "recheck": "Recheck",
+      "checking": "Checking…",
+      "configureTitle": "Configure GitHub Token",
+      "replace": "Replace",
+      "replaceTitle": "Replace GitHub Token",
+      "removeTitle": "Remove GitHub Token?",
+      "removeDescription": "The token will be removed from system secure storage and will no longer be used for GitHub requests.",
+      "dialogDescription": "After verification, the token will be stored in the system secure storage.",
+      "savedTokenHidden": "The complete token will not be shown again after it is saved.",
+      "environmentHelpLabel": "Other ways to provide a GitHub Token",
+      "environmentHelp": "You can also use the GH_TOKEN or GITHUB_TOKEN environment variable. A saved token takes precedence.",
       "tokenLabel": "GitHub token",
-      "tokenPlaceholder": "Enter a fine-grained PAT",
+      "tokenPlaceholder": "github_pat_…",
       "verifyAndSave": "Verify and save",
-      "clear": "Clear",
-      "refresh": "Refresh credential status",
+      "clear": "Remove token",
+      "refresh": "Refresh token status",
       "rateLimit": "Remaining quota: {{remaining}} / {{limit}}",
-      "storageUnavailable": "Secure storage is unavailable on this system, so the token will not be saved.",
-      "environmentFallback": "You can still provide a credential through GITHUB_TOKEN or GH_TOKEN.",
-      "requestFailed": "GitHub credential status is temporarily unavailable. Try again later.",
+      "storageUnavailable": "No system secure storage was detected.",
+      "storageUnavailableWithEnvironment": "No system secure storage was detected · Using {{source}}",
+      "environmentFallback": "You can still provide a token through GITHUB_TOKEN or GH_TOKEN.",
+      "requestFailed": "GitHub token status is temporarily unavailable. Try again later.",
       "status": {
         "unconfigured": "Not configured",
         "verified": "Verified",
@@ -826,7 +839,7 @@
         "keyring": "System secure storage",
         "githubTokenEnv": "GITHUB_TOKEN environment variable",
         "ghTokenEnv": "GH_TOKEN environment variable",
-        "none": "No credential in use"
+        "none": "No token in use"
       },
       "feedback": {
         "saved": "The token was verified and saved.",
@@ -837,7 +850,7 @@
         "unconfigured": "Enter a valid token.",
         "verified": "The token was verified but could not be saved.",
         "clearFailed": "The token could not be removed from system secure storage.",
-        "suppressionCleanupFailed": "The credential change succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed."
+        "suppressionCleanupFailed": "The token change succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed."
       }
     },
     "cloneTimeout": {

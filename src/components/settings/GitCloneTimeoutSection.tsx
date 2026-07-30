@@ -173,25 +173,16 @@ export function GitCloneTimeoutSection() {
 
   if (loading) {
     return (
-      <section>
-        <div className="flex items-center justify-between gap-4 mb-3">
-          <div className="flex items-center gap-2 sm:gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent shrink-0">
-              <Clock3 className="h-4 w-4 text-accent-foreground" />
-            </div>
+      <section className="px-4 py-4 sm:px-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="size-8 rounded-md" />
             <div className="space-y-1.5">
               <Skeleton className="h-4 w-32" />
               <Skeleton className="h-3 w-64 max-w-[200px] sm:max-w-none" />
             </div>
           </div>
-        </div>
-        <div className="space-y-3 animate-in fade-in duration-300">
-          <div className="flex flex-wrap gap-2">
-            {PRESETS.map((seconds) => (
-              <Skeleton key={seconds} className="h-8 w-16 rounded-md" />
-            ))}
-            <Skeleton className="h-8 w-20 rounded-md" />
-          </div>
+          <Skeleton className="h-8 w-[110px] rounded-md" />
         </div>
       </section>
     );
@@ -200,14 +191,14 @@ export function GitCloneTimeoutSection() {
   const statusMessage = saveError ?? validationError ?? (saved ? t('settings.cloneTimeout.saved') : null);
 
   return (
-    <section>
+    <section className="px-4 py-4 sm:px-5">
       <div className="flex items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent shrink-0">
-            <Clock3 className="h-4 w-4 text-accent-foreground" />
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/70">
+            <Clock3 className="size-4 text-muted-foreground" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-heading font-bold text-foreground">
+            <h2 className="text-sm font-medium text-foreground">
               {t('settings.cloneTimeout.title')}
             </h2>
             <p className="text-xs text-muted-foreground">

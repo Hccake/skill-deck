@@ -801,20 +801,33 @@
     },
     "git": {
       "title": "Git",
-      "description": "调整从 Git 来源安装和更新 Skill 时的行为。"
+      "description": "配置 GitHub Token 和远程拉取行为。"
     },
     "githubCredential": {
-      "title": "GitHub 访问凭据",
+      "title": "GitHub Token",
       "description": "为 GitHub 更新检查提供更高的请求额度，并支持需要授权的仓库。",
+      "configure": "配置",
+      "recheck": "重新检测",
+      "checking": "检测中…",
+      "configureTitle": "配置 GitHub Token",
+      "replace": "更换",
+      "replaceTitle": "更换 GitHub Token",
+      "removeTitle": "移除 GitHub Token？",
+      "removeDescription": "系统安全存储中的 Token 将被删除，之后的 GitHub 请求将不再使用此 Token。",
+      "dialogDescription": "验证成功后，Token 将保存在系统安全存储中。",
+      "savedTokenHidden": "保存后不会再次显示完整 Token。",
+      "environmentHelpLabel": "GitHub Token 的其他提供方式",
+      "environmentHelp": "也可通过 GH_TOKEN 或 GITHUB_TOKEN 环境变量提供；已保存的 Token 优先。",
       "tokenLabel": "GitHub Token",
-      "tokenPlaceholder": "输入 fine-grained PAT",
+      "tokenPlaceholder": "github_pat_…",
       "verifyAndSave": "验证并保存",
-      "clear": "清除",
-      "refresh": "刷新凭据状态",
+      "clear": "移除 Token",
+      "refresh": "刷新 Token 状态",
       "rateLimit": "剩余额度：{{remaining}} / {{limit}}",
-      "storageUnavailable": "当前系统的安全存储不可用，Token 不会保存。",
-      "environmentFallback": "仍可通过 GITHUB_TOKEN 或 GH_TOKEN 环境变量提供凭据。",
-      "requestFailed": "暂时无法获取 GitHub 凭据状态，请稍后重试。",
+      "storageUnavailable": "未检测到可用的系统安全存储。",
+      "storageUnavailableWithEnvironment": "未检测到可用的系统安全存储 · 正在使用 {{source}}",
+      "environmentFallback": "仍可通过 GITHUB_TOKEN 或 GH_TOKEN 环境变量提供 Token。",
+      "requestFailed": "暂时无法获取 GitHub Token 状态，请稍后重试。",
       "status": {
         "unconfigured": "未配置",
         "verified": "已验证",
@@ -826,7 +839,7 @@
         "keyring": "系统安全存储",
         "githubTokenEnv": "GITHUB_TOKEN 环境变量",
         "ghTokenEnv": "GH_TOKEN 环境变量",
-        "none": "未使用凭据"
+        "none": "未使用 Token"
       },
       "feedback": {
         "saved": "Token 已验证并保存。",
@@ -837,7 +850,7 @@
         "unconfigured": "请输入有效的 Token。",
         "verified": "Token 已通过验证，但未能保存。",
         "clearFailed": "无法清除系统安全存储中的 Token。",
-        "suppressionCleanupFailed": "凭据变更已完成，但未能清除已保存的更新检查抑制；后续检查可能仍被抑制。"
+        "suppressionCleanupFailed": "Token 变更已完成，但未能清除已保存的更新检查抑制；后续检查可能仍被抑制。"
       }
     },
     "cloneTimeout": {

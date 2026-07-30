@@ -2,8 +2,10 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { GithubCredentialStatus } from '@/bindings';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { useSettingsStore } from '@/stores/settings';
 import { GithubCredentialSection } from '../GithubCredentialSection';
 
@@ -60,6 +62,16 @@ const verified: GithubCredentialStatus = {
   retryAtEpochMs: null,
 };
 
+const unconfigured: GithubCredentialStatus = {
+  ...verified,
+  source: 'none',
+  validation: 'unconfigured',
+  account: null,
+  rateLimitRemaining: null,
+  rateLimitLimit: null,
+  rateLimitResetAtEpochMs: null,
+};
+
 function resetStore() {
   useSettingsStore.setState((state) => ({
     ...state,
@@ -74,9 +86,22 @@ function resetStore() {
   }));
 }
 
+function renderCredential() {
+  return render(
+    <TooltipProvider>
+      <GithubCredentialSection />
+    </TooltipProvider>,
+  );
+}
+
 describe('GithubCredentialSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
     resetStore();
     mockGetGithubCredentialStatus.mockResolvedValue(verified);
     mockClearGithubCredential.mockResolvedValue({
@@ -86,16 +111,49 @@ describe('GithubCredentialSection', () => {
     });
   });
 
-  it('shows verified keyring metadata without echoing the token and can clear it', async () => {
-    render(<GithubCredentialSection />);
+  it('configures an unconfigured token from a dialog', async () => {
+    mockGetGithubCredentialStatus.mockResolvedValue(unconfigured);
+    mockSaveGithubCredential.mockResolvedValue({
+      saved: true,
+      status: verified,
+      warnings: [],
+    });
+    renderCredential();
 
-    expect(await screen.findByText('octocat')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Configure GitHub Token' });
     const input = screen.getByLabelText('GitHub token') as HTMLInputElement;
-    expect(input.type).toBe('password');
-    expect(input.value).toBe('');
+    expect(dialog.contains(input)).toBe(true);
+    fireEvent.change(input, { target: { value: 'secret-token' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and save' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(mockSaveGithubCredential).toHaveBeenCalledWith('secret-token'));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Configure GitHub Token' })).toBeNull();
+    });
+    expect(screen.getByText(/octocat/)).toBeTruthy();
+  });
+
+  it('replaces or removes a saved token through explicit actions', async () => {
+    renderCredential();
+
+    expect(await screen.findByRole('heading', { name: 'GitHub Token' })).toBeTruthy();
+    expect(await screen.findByText(/octocat/)).toBeTruthy();
+    expect(screen.queryByLabelText('GitHub token')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    const replaceDialog = await screen.findByRole('dialog', { name: 'Replace GitHub Token' });
+    expect(replaceDialog.contains(screen.getByLabelText('GitHub token'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove token' }));
+    const removeDialog = await screen.findByRole('alertdialog', { name: 'Remove GitHub Token?' });
+    expect(mockClearGithubCredential).not.toHaveBeenCalled();
+    fireEvent.click(within(removeDialog).getByRole('button', { name: 'Remove token' }));
     await waitFor(() => expect(mockClearGithubCredential).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Configure' })).toBeTruthy();
   });
 
   it('keeps the active status and reports an invalid replacement token', async () => {
@@ -103,17 +161,19 @@ describe('GithubCredentialSection', () => {
       saved: false,
       status: { ...verified, source: 'none', validation: 'invalid', account: null },
     });
-    render(<GithubCredentialSection />);
+    renderCredential();
 
-    expect(await screen.findByText('octocat')).toBeTruthy();
+    expect(await screen.findByText(/octocat/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
     fireEvent.change(screen.getByLabelText('GitHub token'), {
       target: { value: 'secret-token' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Verify and save' }));
 
-    expect(await screen.findByText('This token is invalid. Check its value and permissions.'))
-      .toBeTruthy();
-    expect(screen.getByText('octocat')).toBeTruthy();
+    const dialog = await screen.findByRole('dialog', { name: 'Replace GitHub Token' });
+    expect(within(dialog).getByText('This token is invalid. Check its value and permissions.')).toBeTruthy();
+    expect(screen.getByLabelText('GitHub token').getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText(/octocat/)).toBeTruthy();
   });
 
   it('reports suppression cleanup degradation without changing a successful save', async () => {
@@ -122,32 +182,43 @@ describe('GithubCredentialSection', () => {
       status: verified,
       warnings: ['suppressionCleanupFailed'],
     });
-    render(<GithubCredentialSection />);
+    renderCredential();
 
-    await screen.findByText('octocat');
+    await screen.findByText(/octocat/);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
     fireEvent.change(screen.getByLabelText('GitHub token'), {
       target: { value: 'secret-token' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Verify and save' }));
 
     expect(await screen.findByText(
-      'The credential change succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed.',
+      'The token change succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed.',
     ))
       .toBeTruthy();
   });
 
-  it('explains the environment-variable fallback when secure storage is unavailable', async () => {
+  it('keeps the unavailable state compact while exposing the environment fallback from title help', async () => {
     mockGetGithubCredentialStatus.mockResolvedValue({
       ...verified,
-      source: 'githubTokenEnv',
+      source: 'none',
       storage: 'unavailable',
-      account: 'env-user',
+      validation: 'unconfigured',
+      account: null,
     });
-    render(<GithubCredentialSection />);
+    renderCredential();
 
-    expect(await screen.findByText('env-user')).toBeTruthy();
-    expect(screen.getAllByText(/GITHUB_TOKEN/).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull();
+    expect(await screen.findByText('No system secure storage was detected.')).toBeTruthy();
+    expect(screen.queryByText(/GITHUB_TOKEN/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Configure' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove token' })).toBeNull();
+
+    await userEvent.hover(screen.getByRole('button', { name: 'Other ways to provide a GitHub Token' }));
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'You can also use the GH_TOKEN or GITHUB_TOKEN environment variable. A saved token takes precedence.',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck' }));
+    await waitFor(() => expect(mockGetGithubCredentialStatus).toHaveBeenCalledTimes(2));
   });
 
   it('shows when a rate-limited token validation can be retried', async () => {
@@ -162,14 +233,17 @@ describe('GithubCredentialSection', () => {
         retryAtEpochMs: 3_000,
       },
     });
-    render(<GithubCredentialSection />);
+    renderCredential();
 
-    await screen.findByText('octocat');
+    await screen.findByText(/octocat/);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
     fireEvent.change(screen.getByLabelText('GitHub token'), {
       target: { value: 'rate-limited-token' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Verify and save' }));
 
-    expect(await screen.findByText('Try again after retry-time.')).toBeTruthy();
+    const dialog = await screen.findByRole('dialog', { name: 'Replace GitHub Token' });
+    expect(within(dialog).getByText('Try again after retry-time.')).toBeTruthy();
+    expect(screen.getByLabelText('GitHub token').getAttribute('aria-invalid')).toBe('false');
   });
 });

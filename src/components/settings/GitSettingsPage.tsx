@@ -16,12 +16,11 @@ export function GitSettingsPage() {
         </p>
       </header>
 
-      <div className="rounded-lg border border-border/60 bg-background px-4 py-4">
+      <div className="max-w-3xl overflow-hidden rounded-md border border-border/70 bg-background">
         <GithubCredentialSection />
-      </div>
-
-      <div className="rounded-lg border border-border/60 bg-background px-4 py-4">
-        <GitCloneTimeoutSection />
+        <div className="border-t border-border/70">
+          <GitCloneTimeoutSection />
+        </div>
       </div>
     </div>
   );
