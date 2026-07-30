@@ -226,6 +226,12 @@ describe('AgentSettingsPage', () => {
     });
   });
 
+  it('leaves Environment switching to the main-window header', () => {
+    render(<AgentSettingsPage context={context} />);
+
+    expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
+  });
+
   it('uses a Custom-first shared toolbar above a card grid without an Inspector', async () => {
     render(<AgentSettingsPage context={context} />);
 

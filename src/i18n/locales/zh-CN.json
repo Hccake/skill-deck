@@ -54,6 +54,8 @@
     "sectionProjects": "项目",
     "noProjects": "暂无项目",
     "environmentLabel": "环境",
+    "environmentMenuLabel": "环境：{{environment}}",
+    "environmentWslName": "WSL · {{environment}}",
     "environmentConnecting": "正在连接",
     "environmentUnavailable": "不可用",
     "environmentRetry": "重试",

@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { FolderOpen, Trash2, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
-import { EnvironmentSelect } from '@/components/environments/EnvironmentSelect';
 import { RemoveProjectDialog } from '@/components/projects/RemoveProjectDialog';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useProjectStore } from '@/stores/projects';
@@ -62,7 +61,6 @@ export function ProjectsTab() {
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
-  const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
   const loadStateByEnvironment = useProjectStore((state) => state.loadStateByEnvironment);
   const errorsByEnvironment = useProjectStore((state) => state.errorsByEnvironment);
@@ -119,17 +117,6 @@ export function ProjectsTab() {
           {t('settings.addProject')}
         </Button>
       </header>
-
-      <EnvironmentSelect
-        environments={environments}
-        value={environment}
-        onChange={(target) => void switchEnvironment(target).catch((error) => {
-          console.error('Failed to switch environment:', error);
-        })}
-        disabled={pendingEnvironment !== null}
-        pendingEnvironment={pendingEnvironment}
-        className="h-9 w-full max-w-xs rounded-md border border-border/60 bg-background px-3 text-sm text-foreground"
-      />
 
       <section className="overflow-hidden rounded-lg border border-border/60 bg-background">
         {loadError ? (

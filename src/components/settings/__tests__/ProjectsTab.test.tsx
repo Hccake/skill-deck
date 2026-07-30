@@ -121,12 +121,10 @@ describe('ProjectsTab', () => {
     expect(screen.getByTestId('remove-project-dialog').textContent).toBe('project-1');
   });
 
-  it('disables every environment selector while a switch is pending', () => {
+  it('leaves Environment switching to the main-window header', () => {
     mocks.workspace.pendingEnvironment = { kind: 'host' };
     render(<ProjectsTab />);
 
-    expect((screen.getByRole('combobox', {
-      name: 'context.environmentLabel',
-    }) as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
   });
 });

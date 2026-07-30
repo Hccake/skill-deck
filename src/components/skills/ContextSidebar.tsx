@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,7 +10,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
-import { EnvironmentSelect } from '@/components/environments/EnvironmentSelect';
 import { RemoveProjectDialog } from '@/components/projects/RemoveProjectDialog';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useEnvironmentStore } from '@/stores/environment';
@@ -25,8 +23,6 @@ import { openConfigResource } from '@/hooks/useTauriApi';
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
 import { cn } from '@/lib/utils';
 import { useMutationStore } from '@/stores/mutation';
-import { formatAppError } from '@/utils/format-app-error';
-import { toAppError } from '@/utils/to-app-error';
 
 const EMPTY_PROJECTS: ProjectInfo[] = [];
 
@@ -192,11 +188,9 @@ export function ContextSidebar() {
   const { t } = useTranslation();
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const environments = useEnvironmentStore((state) => state.environments);
-  const discoveryError = useEnvironmentStore((state) => state.discoveryError);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
-  const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
   const selectGlobal = useWorkspaceContextStore((state) => state.selectGlobal);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
   const loadStateByEnvironment = useProjectStore((state) => state.loadStateByEnvironment);
@@ -265,20 +259,7 @@ export function ContextSidebar() {
 
   return (
     <aside className="skills-context-sidebar flex flex-col h-full bg-canvas flex-shrink-0 border-r border-border/50">
-      <div className="flex-shrink-0 space-y-4 pt-5">
-        <div className="px-4">
-          <EnvironmentSelect
-            environments={environments}
-            value={environment}
-            onChange={(target) => void switchEnvironment(target).catch((error) => {
-              toast.error(formatAppError(toAppError(error), t));
-            })}
-            disabled={pendingEnvironment !== null}
-            pendingEnvironment={pendingEnvironment}
-            discoveryError={discoveryError}
-          />
-        </div>
-
+      <div className="flex-shrink-0 pt-5">
         <div>
           <h3 className="px-4 mb-2 text-xs font-semibold text-muted-foreground/80">
             {t('context.sectionGlobal')}

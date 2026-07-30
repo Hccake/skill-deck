@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import type { Locale } from '@/stores/settings';
 import logoUrl from '@/assets/logo.png';
 import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
+import { GlobalEnvironmentSwitcher } from './GlobalEnvironmentSwitcher';
 
 // Hoisted outside component to avoid recreation on each render
 const getNavLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -73,6 +74,7 @@ export function Header() {
 
       {/* Right: Tool Buttons */}
       <div className="flex items-center gap-0.5 sm:gap-1 flex-1 min-w-0 justify-end">
+        <GlobalEnvironmentSwitcher />
         <RecoveryCenter />
         {/* Language Selector */}
         <DropdownMenu>

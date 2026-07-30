@@ -3,7 +3,6 @@ import { Copy, Plus, Search, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { AgentIcon } from '@/components/agents/AgentIcon';
-import { EnvironmentSelect } from '@/components/environments/EnvironmentSelect';
 import { AgentCardGrid, SharedDirectoriesReference } from './AgentCardGrid';
 import {
   AgentDefinitionDialog,
@@ -37,8 +36,6 @@ import {
   useRegisterUnsavedChanges,
 } from '@/lifecycle/unsaved-changes-context';
 import { useAgentRegistryStore } from '@/stores/agent-registry';
-import { useEnvironmentStore } from '@/stores/environment';
-import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { agentDefinitionWorkflow } from '@/workflows/agent-definitions';
 import { completeAgentConfiguration, listAgents } from '@/hooks/useTauriApi';
 import type {
@@ -132,9 +129,6 @@ export function AgentSettingsPage({
   const validateDraft = useAgentRegistryStore((state) => state.validateDraft);
   const duplicateDraft = useAgentRegistryStore((state) => state.duplicateDraft);
   const loadDeleteImpact = useAgentRegistryStore((state) => state.loadDeleteImpact);
-  const environments = useEnvironmentStore((state) => state.environments);
-  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
-  const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
 
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<AgentSource>('custom');
@@ -670,16 +664,6 @@ export function AgentSettingsPage({
         <div className="max-w-2xl space-y-1">
           <h2 className="text-lg font-semibold text-foreground">{t('settings.agents.title')}</h2>
           <p className="text-sm leading-6 text-muted-foreground">{t('settings.agents.description')}</p>
-        </div>
-        <div className="flex flex-wrap items-start justify-end gap-2">
-          <EnvironmentSelect
-            environments={environments}
-            value={context.environment}
-            onChange={(environment) => void switchEnvironment(environment).catch(() => undefined)}
-            disabled={pendingEnvironment !== null}
-            pendingEnvironment={pendingEnvironment}
-            className="h-8 min-w-48 rounded-md border border-border/60 bg-background px-3 text-xs"
-          />
         </div>
       </div>
 

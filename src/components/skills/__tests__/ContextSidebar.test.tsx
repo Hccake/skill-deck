@@ -4,7 +4,6 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type {
-  AppError,
   ContextRef,
   EnvironmentInfo,
   EnvironmentRef,
@@ -17,14 +16,11 @@ import { ContextSidebar } from '../ContextSidebar';
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   openConfigResource: vi.fn(),
-  switchEnvironment: vi.fn(),
   selectGlobal: vi.fn(),
   selectProject: vi.fn(),
   refresh: vi.fn(),
   add: vi.fn(),
   captureProjectRemoval: vi.fn(),
-  toastError: vi.fn(),
-  discoveryError: null as AppError | null,
   environments: [{
     environment: { kind: 'host' as const },
     displayName: 'Windows',
@@ -49,20 +45,13 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open }));
-vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }));
 vi.mock('@/hooks/useTauriApi', () => ({ openConfigResource: mocks.openConfigResource }));
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: EnvironmentRef) => (
     environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
   ),
-  useEnvironmentStore: (selector: (state: {
-    environments: EnvironmentInfo[];
-    discoveryError: AppError | null;
-  }) => unknown) => (
-    selector({
-      environments: mocks.environments,
-      discoveryError: mocks.discoveryError,
-    })
+  useEnvironmentStore: (selector: (state: { environments: EnvironmentInfo[] }) => unknown) => (
+    selector({ environments: mocks.environments })
   ),
 }));
 vi.mock('@/stores/projects', () => ({
@@ -75,7 +64,6 @@ vi.mock('@/stores/projects', () => ({
 vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
     ...mocks.workspace,
-    switchEnvironment: mocks.switchEnvironment,
     selectGlobal: mocks.selectGlobal,
     selectProject: mocks.selectProject,
   }),
@@ -119,7 +107,6 @@ describe('ContextSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Element.prototype.scrollIntoView = vi.fn();
-    mocks.switchEnvironment.mockResolvedValue(undefined);
     mocks.environments = [{
       environment: { kind: 'host' },
       displayName: 'Windows',
@@ -133,7 +120,6 @@ describe('ContextSidebar', () => {
     };
     mocks.workspace.pendingEnvironment = null;
     mocks.workspace.contextRevision = 0;
-    mocks.discoveryError = null;
     mocks.projects.projectsByEnvironment = { host: [] };
     mocks.projects.loadStateByEnvironment = { host: 'ready' };
     mocks.projects.errorsByEnvironment = {};
@@ -155,45 +141,11 @@ describe('ContextSidebar', () => {
     });
   });
 
-  it('hides environment switching when only Host exists', () => {
+  it('leaves Environment switching to the main-window header', () => {
+    mocks.environments = [mocks.environments[0], ubuntu];
     render(<ContextSidebar />);
+
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
-  });
-
-  it('switches environments through the workspace transaction', async () => {
-    mocks.environments = [mocks.environments[0], ubuntu];
-    render(<ContextSidebar />);
-
-    fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Ubuntu' }));
-
-    expect(mocks.switchEnvironment).toHaveBeenCalledWith(ubuntu.environment);
-  });
-
-  it('shows one toast when an environment switch fails', async () => {
-    const error: AppError = {
-      kind: 'environmentUnavailable',
-      data: { environment: ubuntu.environment, message: 'distribution stopped' },
-    };
-    mocks.environments = [mocks.environments[0], ubuntu];
-    mocks.switchEnvironment.mockRejectedValue(error);
-    render(<ContextSidebar />);
-
-    fireEvent.click(screen.getByRole('combobox', { name: 'context.environmentLabel' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Ubuntu' }));
-
-    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledTimes(1));
-    expect(mocks.toastError).toHaveBeenCalledWith('addSkill.error.environmentUnavailable');
-  });
-
-  it('disables environment selection during a pending switch', () => {
-    mocks.environments = [mocks.environments[0], ubuntu];
-    mocks.workspace.pendingEnvironment = ubuntu.environment;
-    render(<ContextSidebar />);
-
-    expect((screen.getByRole('combobox', {
-      name: 'context.environmentLabel',
-    }) as HTMLSelectElement).disabled).toBe(true);
   });
 
   it('returns to Global only after a ready project snapshot confirms the project is gone', async () => {
@@ -239,16 +191,14 @@ describe('ContextSidebar', () => {
       .toContain('overflow-y-auto');
   });
 
-  it('keeps environment and Global fixed while only projects scroll', () => {
+  it('keeps Global fixed while only projects scroll', () => {
     mocks.environments = [mocks.environments[0], ubuntu];
     mocks.projects.projectsByEnvironment = { host: [project('a')] };
     const { container } = render(<ContextSidebar />);
 
     const projectScroll = screen.getByTestId('context-sidebar-scroll');
-    const environmentSelect = screen.getByRole('combobox', { name: 'context.environmentLabel' });
     const globalButton = screen.getByRole('button', { name: /context.global/ });
 
-    expect(projectScroll.contains(environmentSelect)).toBe(false);
     expect(projectScroll.contains(globalButton)).toBe(false);
     expect(container.querySelectorAll('[data-testid="context-sidebar-scroll"]')).toHaveLength(1);
   });
@@ -324,7 +274,7 @@ describe('ContextSidebar', () => {
     await waitFor(() => expect(mocks.add).toHaveBeenCalledWith(ubuntu.environment, rawPath));
   });
 
-  it('disables project writes without blocking environment browsing', () => {
+  it('disables project writes while the global Environment control owns switching', () => {
     mocks.environments = [mocks.environments[0], ubuntu];
     useMutationStore.setState({
       activeMutation: {
@@ -340,7 +290,6 @@ describe('ContextSidebar', () => {
 
     expect((screen.getByRole('button', { name: 'context.addProject' }) as HTMLButtonElement).disabled)
       .toBe(true);
-    expect((screen.getByRole('combobox', { name: 'context.environmentLabel' }) as HTMLSelectElement).disabled)
-      .toBe(false);
+    expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
   });
 });

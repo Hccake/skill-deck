@@ -54,6 +54,8 @@
     "sectionProjects": "Projects",
     "noProjects": "No projects",
     "environmentLabel": "Environment",
+    "environmentMenuLabel": "Environment: {{environment}}",
+    "environmentWslName": "WSL · {{environment}}",
     "environmentConnecting": "Connecting",
     "environmentUnavailable": "Unavailable",
     "environmentRetry": "Retry",
