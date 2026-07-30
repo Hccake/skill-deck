@@ -149,8 +149,7 @@
       "noMatchingAgents": "没有匹配的 Agent",
       "emptyAgent": "没有可供 {{name}} 使用的 Skill",
       "emptySearch": "没有匹配“{{query}}”的 Skill",
-      "emptyCombined": "没有符合当前条件的 Skill",
-      "clear": "清除筛选"
+      "emptyCombined": "没有符合当前条件的 Skill"
     },
     "scopeIcon": {
       "project": "项目 Skill",

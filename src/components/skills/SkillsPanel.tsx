@@ -263,11 +263,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const totalSkillCount = globalSkills.length + projectSkills.length;
   const hasActiveFilters = Boolean(deferredQuery.trim()) || activeAgentFilter !== null;
 
-  const clearFilters = useCallback(() => {
-    setSearchQuery('');
-    setSelectedAgentFilter(null);
-  }, []);
-
   const selectedAgentName = activeAgentFilter
     ? agentDisplayNames.get(activeAgentFilter) ?? activeAgentFilter
     : undefined;
@@ -452,8 +447,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
           filterableAgents={filterableAgents}
           agentMatchCounts={agentMatchCounts}
           totalSkillCount={totalSkillCount}
-          hasActiveFilters={hasActiveFilters}
-          onClearFilters={clearFilters}
           onSync={handleSync}
           isSyncing={isSyncing}
         />

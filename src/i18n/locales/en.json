@@ -149,8 +149,7 @@
       "noMatchingAgents": "No matching Agents",
       "emptyAgent": "No Skills available to {{name}}",
       "emptySearch": "No Skills match “{{query}}”",
-      "emptyCombined": "No Skills match the current filters",
-      "clear": "Clear filters"
+      "emptyCombined": "No Skills match the current filters"
     },
     "scopeIcon": {
       "project": "Project skill",

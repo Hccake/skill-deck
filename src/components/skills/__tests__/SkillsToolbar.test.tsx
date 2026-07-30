@@ -21,8 +21,6 @@ function renderToolbar(compact = false) {
       filterableAgents={[makeResolvedAgent({ id: 'codex', displayName: 'Codex' })]}
       agentMatchCounts={new Map([['codex', 2]])}
       totalSkillCount={3}
-      hasActiveFilters={false}
-      onClearFilters={vi.fn()}
       onSync={vi.fn()}
     />,
   );
@@ -37,8 +35,7 @@ describe('SkillsToolbar', () => {
     expect(screen.queryByRole('button', { name: 'skills.sync' })).toBeNull();
   });
 
-  it('keeps one clear-all action without reserving space for a result counter', () => {
-    const onClearFilters = vi.fn();
+  it('does not add a third clear action when search and Agent filters are active', () => {
     render(
       <SkillsToolbar
         searchQuery="writer"
@@ -48,15 +45,14 @@ describe('SkillsToolbar', () => {
         filterableAgents={[makeResolvedAgent({ id: 'codex', displayName: 'Codex' })]}
         agentMatchCounts={new Map([['codex', 1]])}
         totalSkillCount={4}
-        hasActiveFilters
-        onClearFilters={onClearFilters}
         onSync={vi.fn()}
       />,
     );
 
     expect(screen.queryByRole('status')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'skills.filter.clear' }));
-    expect(onClearFilters).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'skills.filter.clear' })).toBeNull();
+    expect(screen.getByRole('searchbox', { name: 'skills.search' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'skills.filter.agentLabel' })).toBeDefined();
   });
 
   it('clears search on Escape without closing the parent surface', () => {
@@ -72,8 +68,6 @@ describe('SkillsToolbar', () => {
           filterableAgents={[]}
           agentMatchCounts={new Map()}
           totalSkillCount={4}
-          hasActiveFilters
-          onClearFilters={vi.fn()}
           onSync={vi.fn()}
         />
       </div>,

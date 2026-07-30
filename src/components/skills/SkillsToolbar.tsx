@@ -1,7 +1,7 @@
 // src/components/skills/SkillsToolbar.tsx
 import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Search, RefreshCw, Check, X } from 'lucide-react';
+import { Search, RefreshCw, Check } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -25,10 +25,6 @@ interface SkillsToolbarProps {
   agentMatchCounts: ReadonlyMap<AgentId, number>;
   /** 当前 Context 中的 Skill 总数 */
   totalSkillCount: number;
-  /** 是否存在搜索或 Agent 筛选 */
-  hasActiveFilters: boolean;
-  /** 清除所有筛选条件 */
-  onClearFilters: () => void;
   /** 同步按钮回调 */
   onSync: () => void | Promise<void>;
   /** 是否正在同步 */
@@ -44,8 +40,6 @@ export function SkillsToolbar({
   filterableAgents,
   agentMatchCounts,
   totalSkillCount,
-  hasActiveFilters,
-  onClearFilters,
   onSync,
   isSyncing = false,
 }: SkillsToolbarProps) {
@@ -103,20 +97,6 @@ export function SkillsToolbar({
           totalSkillCount={totalSkillCount}
           compact={compact}
         />
-      )}
-
-      {hasActiveFilters && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="size-8 p-0 text-muted-foreground"
-          aria-label={t('skills.filter.clear')}
-          title={t('skills.filter.clear')}
-          onClick={onClearFilters}
-        >
-          <X className="size-3.5" aria-hidden="true" />
-        </Button>
       )}
 
       {/* Sync Button */}
