@@ -105,11 +105,45 @@ vi.mock('@/components/skills/add-skill/ConfirmStep', () => ({
 }));
 
 vi.mock('@/components/skills/add-skill/InstallingStep', () => ({
-  InstallingStep: () => <div>installing-step</div>,
+  InstallingStep: ({ updateState }: {
+    updateState: (updates: Partial<WizardState>) => void;
+  }) => (
+    <>
+      <button
+        type="button"
+        onClick={() => updateState({
+          installResults: {
+            units: [{ status: 'succeeded', skillName: 'demo' }],
+            warnings: [],
+          } as never,
+          step: 'complete',
+        })}
+      >
+        finish-successful-install
+      </button>
+      <button
+        type="button"
+        onClick={() => updateState({
+          installResults: {
+            units: [
+              { status: 'succeeded', skillName: 'demo' },
+              { status: 'failed', skillName: 'broken' },
+            ],
+            warnings: [],
+          } as never,
+          step: 'error',
+        })}
+      >
+        finish-partial-install
+      </button>
+    </>
+  ),
 }));
 
 vi.mock('@/components/skills/add-skill/CompleteStep', () => ({
-  CompleteStep: () => <div>complete-step</div>,
+  CompleteStep: ({ onDone }: { onDone: () => void }) => (
+    <button type="button" onClick={onDone}>complete-step</button>
+  ),
 }));
 
 vi.mock('@/components/skills/add-skill/ErrorStep', () => ({
@@ -158,6 +192,19 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     availableAgentTargets: overrides.availableAgentTargets ?? [],
     selectedAgentTargets: overrides.selectedAgentTargets ?? [],
   };
+}
+
+function startInstallationFromSkillsEntry() {
+  render(
+    <MemoryRouter initialEntries={['/wizard?entryPoint=skills-panel']}>
+      <WizardPage />
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'prepare-source' }));
+  for (let step = 0; step < 3; step += 1) {
+    fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.next' }));
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.install' }));
 }
 
 describe('canProceedForStep', () => {
@@ -275,6 +322,71 @@ describe('WizardPage mutation guard', () => {
 
     await waitFor(() => {
       expect(mocks.requestAction).toHaveBeenCalledWith('closeCurrentWindow');
+    });
+  });
+
+  it('notifies the main window as soon as an installation succeeds', async () => {
+    startInstallationFromSkillsEntry();
+    fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
+
+    await screen.findByRole('button', { name: 'complete-step' });
+    await waitFor(() => {
+      expect(mocks.emit).toHaveBeenCalledWith('wizard-result', {
+        action: 'refresh',
+        context: {
+          environment: { kind: 'host' },
+          scope: { scope: 'global' },
+        },
+        mutatedSkillNames: ['demo'],
+      });
+    });
+  });
+
+  it('does not notify the main window again when the completed wizard closes', async () => {
+    startInstallationFromSkillsEntry();
+    fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
+
+    const done = await screen.findByRole('button', { name: 'complete-step' });
+    await waitFor(() => expect(mocks.emit).toHaveBeenCalledTimes(1));
+    fireEvent.click(done);
+
+    await waitFor(() => {
+      expect(mocks.requestAction).toHaveBeenCalledWith('closeCurrentWindow');
+    });
+    expect(mocks.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed main-window notification before closing the completed wizard', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mocks.emit.mockRejectedValueOnce(new Error('event unavailable'));
+    startInstallationFromSkillsEntry();
+    fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
+
+    const done = await screen.findByRole('button', { name: 'complete-step' });
+    await waitFor(() => expect(mocks.emit).toHaveBeenCalledTimes(1));
+    fireEvent.click(done);
+
+    await waitFor(() => {
+      expect(mocks.emit).toHaveBeenCalledTimes(2);
+      expect(mocks.requestAction).toHaveBeenCalledWith('closeCurrentWindow');
+    });
+    errorLog.mockRestore();
+  });
+
+  it('notifies the main window about successful skills in a partial installation', async () => {
+    startInstallationFromSkillsEntry();
+    fireEvent.click(screen.getByRole('button', { name: 'finish-partial-install' }));
+
+    await screen.findByRole('button', { name: 'complete-step' });
+    await waitFor(() => {
+      expect(mocks.emit).toHaveBeenCalledWith('wizard-result', {
+        action: 'refresh',
+        context: {
+          environment: { kind: 'host' },
+          scope: { scope: 'global' },
+        },
+        mutatedSkillNames: ['demo'],
+      });
     });
   });
 });

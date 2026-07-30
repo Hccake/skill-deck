@@ -1,5 +1,5 @@
 // src/pages/WizardPage.tsx
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useProjectStore } from '@/stores/projects';
@@ -29,6 +29,8 @@ import type {
   WizardState,
 } from '@/components/skills/add-skill/types';
 import type { ContextRef } from '@/bindings';
+
+type InstallResults = NonNullable<WizardState['installResults']>;
 
 function createInitialState(params: {
   entryPoint: EntryPoint;
@@ -119,6 +121,11 @@ export function WizardPage() {
   const [state, setState] = useState<WizardState>(() =>
     createInitialState(wizardParams)
   );
+  const notifiedInstallResultsRef = useRef<InstallResults | null>(null);
+  const notificationInFlightRef = useRef<{
+    results: InstallResults;
+    promise: Promise<boolean>;
+  } | null>(null);
 
   // 用于强制 InstallingStep 重新挂载（重试安装时递增）
   const [installKey, setInstallKey] = useState(0);
@@ -187,22 +194,52 @@ export function WizardPage() {
     setInstallKey((k) => k + 1);
   }, [updateState]);
 
-  // 完成安装 — 通知主窗口刷新 skills 列表，然后关闭窗口
-  const handleDone = useCallback(async () => {
+  const notifyMainWindow = useCallback((results: InstallResults | null): Promise<boolean> => {
+    if (!results || notifiedInstallResultsRef.current === results) {
+      return Promise.resolve(true);
+    }
+    if (notificationInFlightRef.current?.results === results) {
+      return notificationInFlightRef.current.promise;
+    }
     const mutatedSkillNames = Array.from(new Set(
-      (state.installResults?.units ?? [])
+      results.units
         .filter((unit) => unit.status === 'succeeded')
         .map((unit) => unit.skillName),
     ));
-    try {
-      await emit('wizard-result', {
-        action: 'refresh',
-        context: state.context,
-        mutatedSkillNames,
-      });
-    } catch { /* ignore */ }
+    if (mutatedSkillNames.length === 0) {
+      notifiedInstallResultsRef.current = results;
+      return Promise.resolve(true);
+    }
+
+    const promise = emit('wizard-result', {
+      action: 'refresh',
+      context: state.context,
+      mutatedSkillNames,
+    }).then(() => {
+      notifiedInstallResultsRef.current = results;
+      return true;
+    }).catch((error) => {
+      console.error('Failed to notify the main window about installed skills:', error);
+      return false;
+    }).finally(() => {
+      if (notificationInFlightRef.current?.results === results) {
+        notificationInFlightRef.current = null;
+      }
+    });
+    notificationInFlightRef.current = { results, promise };
+    return promise;
+  }, [state.context]);
+
+  useEffect(() => {
+    void notifyMainWindow(state.installResults);
+  }, [notifyMainWindow, state.installResults]);
+
+  // 等待即时通知；若首次发送失败，关闭前再重试一次。
+  const handleDone = useCallback(async () => {
+    const notified = await notifyMainWindow(state.installResults);
+    if (!notified) await notifyMainWindow(state.installResults);
     await closeWizard();
-  }, [closeWizard, state.context, state.installResults]);
+  }, [closeWizard, notifyMainWindow, state.installResults]);
 
   // 验证是否可以进入下一步
   const canProceed = useMemo(
