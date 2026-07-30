@@ -387,6 +387,32 @@ describe('useSettingsStore', () => {
     expect(JSON.stringify(useSettingsStore.getState())).not.toContain('secret-token');
   });
 
+  it('publishes secure-storage unavailability returned by a failed save', async () => {
+    const unavailableCredential = {
+      ...verifiedCredential,
+      source: 'none' as const,
+      storage: 'unavailable' as const,
+      validation: 'unavailable' as const,
+      account: null,
+    };
+    mockSaveGithubCredential.mockResolvedValue({
+      saved: false,
+      status: unavailableCredential,
+      warnings: [],
+    });
+    useSettingsStore.setState((state) => ({
+      githubCredential: {
+        ...state.githubCredential,
+        status: verifiedCredential,
+        loadState: 'ready',
+      },
+    }));
+
+    await useSettingsStore.getState().saveGithubCredential('secret-token');
+
+    expect(useSettingsStore.getState().githubCredential.status).toEqual(unavailableCredential);
+  });
+
   it('clears stale Host GitHub cooldown UI only after credential maintenance succeeds', async () => {
     const clearCooldown = vi.fn();
     useSkillsDataStore.setState({ clearHostGithubProviderCooldown: clearCooldown });

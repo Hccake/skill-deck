@@ -55,6 +55,8 @@ interface CredentialFeedback {
   retryAtEpochMs?: number | null;
 }
 
+type CredentialViewMode = 'pending' | 'configured' | 'unconfigured' | 'unavailable';
+
 function isValidationFeedback(
   kind: CredentialFeedback['kind'],
 ): kind is GithubCredentialValidationStatus {
@@ -63,6 +65,13 @@ function isValidationFeedback(
 
 function isInvalidTokenFeedback(kind: CredentialFeedback['kind']): boolean {
   return kind === 'unconfigured' || kind === 'invalid';
+}
+
+function getCredentialViewMode(status: GithubCredentialStatus | null): CredentialViewMode {
+  if (!status) return 'pending';
+  if (status.storage === 'unavailable') return 'unavailable';
+  if (status.source === 'keyring') return 'configured';
+  return 'unconfigured';
 }
 
 export function GithubCredentialSection() {
@@ -116,11 +125,19 @@ export function GithubCredentialSection() {
       });
       return;
     }
+    if (result.status.storage === 'unavailable') {
+      setToken('');
+      setConfigureOpen(false);
+      setFeedback(null);
+      return;
+    }
     setFeedback({
       kind: result.status.validation,
       retryAtEpochMs: result.status.retryAtEpochMs,
     });
   }
+
+  const viewMode = getCredentialViewMode(status);
 
   async function handleClear() {
     setFeedback(null);
@@ -205,7 +222,26 @@ export function GithubCredentialSection() {
             </p>
           </div>
         </div>
-        {status?.source === 'keyring' ? (
+        {loadState === 'error' || viewMode === 'unavailable' ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="w-24"
+            disabled={busy || loadState === 'loading'}
+            onClick={() => void loadCredential()}
+          >
+            <RefreshCw
+              className={loadState === 'loading' ? 'animate-spin motion-reduce:animate-none' : undefined}
+              aria-hidden="true"
+            />
+            <span aria-live="polite">
+              {t(loadState === 'loading'
+                ? 'settings.githubCredential.checking'
+                : 'settings.githubCredential.recheck')}
+            </span>
+          </Button>
+        ) : viewMode === 'configured' ? (
           <div className="flex shrink-0 items-center gap-2">
             <Button
               type="button"
@@ -226,30 +262,11 @@ export function GithubCredentialSection() {
               onClick={() => setRemoveOpen(true)}
             >
               <Trash2 aria-hidden="true" />
-              {t('settings.githubCredential.clear')}
+              {t('settings.githubCredential.remove')}
             </Button>
           </div>
-        ) : status?.storage === 'unavailable' ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="w-24"
-            disabled={busy || loadState === 'loading'}
-            onClick={() => void loadCredential()}
-          >
-            <RefreshCw
-              className={loadState === 'loading' ? 'animate-spin motion-reduce:animate-none' : undefined}
-              aria-hidden="true"
-            />
-            <span aria-live="polite">
-              {t(loadState === 'loading'
-                ? 'settings.githubCredential.checking'
-                : 'settings.githubCredential.recheck')}
-            </span>
-          </Button>
-        ) : status ? (
-          <Button type="button" size="sm" onClick={openConfigureDialog}>
+        ) : viewMode === 'unconfigured' ? (
+          <Button type="button" size="sm" variant="outline" onClick={openConfigureDialog}>
             {t('settings.githubCredential.configure')}
           </Button>
         ) : null}
@@ -272,7 +289,7 @@ export function GithubCredentialSection() {
                   <GithubMark large />
                   <div className="min-w-0 space-y-1">
                     <DialogTitle className="text-pretty text-base leading-6">
-                      {t(status?.source === 'keyring'
+                      {t(viewMode === 'configured'
                         ? 'settings.githubCredential.replaceTitle'
                         : 'settings.githubCredential.configureTitle')}
                     </DialogTitle>
@@ -394,7 +411,7 @@ export function GithubCredentialSection() {
               {clearing
                 ? <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 : <Trash2 aria-hidden="true" />}
-              {t('settings.githubCredential.clear')}
+              {t('settings.githubCredential.confirmRemove')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -120,7 +120,9 @@ describe('GithubCredentialSection', () => {
     });
     renderCredential();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Configure' }));
+    const configureButton = await screen.findByRole('button', { name: 'Configure' });
+    expect(configureButton.getAttribute('data-variant')).toBe('outline');
+    fireEvent.click(configureButton);
 
     const dialog = await screen.findByRole('dialog', { name: 'Configure GitHub Token' });
     const input = screen.getByLabelText('GitHub token') as HTMLInputElement;
@@ -147,7 +149,7 @@ describe('GithubCredentialSection', () => {
     expect(replaceDialog.contains(screen.getByLabelText('GitHub token'))).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove token' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     const removeDialog = await screen.findByRole('alertdialog', { name: 'Remove GitHub Token?' });
     expect(mockClearGithubCredential).not.toHaveBeenCalled();
     fireEvent.click(within(removeDialog).getByRole('button', { name: 'Remove token' }));
@@ -174,6 +176,30 @@ describe('GithubCredentialSection', () => {
     expect(within(dialog).getByText('This token is invalid. Check its value and permissions.')).toBeTruthy();
     expect(screen.getByLabelText('GitHub token').getAttribute('aria-invalid')).toBe('true');
     expect(screen.getByText(/octocat/)).toBeTruthy();
+  });
+
+  it('switches to unavailable state when secure storage fails after validation', async () => {
+    mockGetGithubCredentialStatus.mockResolvedValue(unconfigured);
+    mockSaveGithubCredential.mockResolvedValue({
+      saved: false,
+      status: {
+        ...unconfigured,
+        storage: 'unavailable',
+        validation: 'unavailable',
+      },
+      warnings: [],
+    });
+    renderCredential();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure' }));
+    fireEvent.change(screen.getByLabelText('GitHub token'), {
+      target: { value: 'secret-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and save' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByText('No system secure storage was detected.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Recheck' })).toBeTruthy();
   });
 
   it('reports suppression cleanup degradation without changing a successful save', async () => {
@@ -219,6 +245,53 @@ describe('GithubCredentialSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Recheck' }));
     await waitFor(() => expect(mockGetGithubCredentialStatus).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows environment source, account, quota, and an outlined configure action', async () => {
+    mockGetGithubCredentialStatus.mockResolvedValue({
+      ...verified,
+      source: 'githubTokenEnv',
+      account: 'env-user',
+    });
+    renderCredential();
+
+    expect(await screen.findByText(/env-user/)).toBeTruthy();
+    expect(screen.getByText(/GITHUB_TOKEN environment variable/)).toBeTruthy();
+    expect(screen.getByText(/4,999 \/ 5,000/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Configure' }).getAttribute('data-variant'))
+      .toBe('outline');
+  });
+
+  it('offers recheck when the initial status request fails', async () => {
+    mockGetGithubCredentialStatus
+      .mockRejectedValueOnce(new Error('load failed'))
+      .mockResolvedValueOnce(unconfigured);
+    renderCredential();
+
+    expect(await screen.findByText('GitHub token status is temporarily unavailable. Try again later.'))
+      .toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck' }));
+
+    expect(await screen.findByRole('button', { name: 'Configure' })).toBeTruthy();
+    expect(mockGetGithubCredentialStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers recheck when refreshing a cached status fails', async () => {
+    const firstRender = renderCredential();
+    expect(await screen.findByText(/octocat/)).toBeTruthy();
+    firstRender.unmount();
+
+    mockGetGithubCredentialStatus
+      .mockRejectedValueOnce(new Error('refresh failed'))
+      .mockResolvedValueOnce(verified);
+    renderCredential();
+
+    expect(await screen.findByText('GitHub token status is temporarily unavailable. Try again later.'))
+      .toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck' }));
+
+    expect(await screen.findByRole('button', { name: 'Replace' })).toBeTruthy();
+    expect(mockGetGithubCredentialStatus).toHaveBeenCalledTimes(3);
   });
 
   it('shows when a rate-limited token validation can be retried', async () => {

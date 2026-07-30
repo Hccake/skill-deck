@@ -348,7 +348,9 @@ export const useSettingsStore = create<SettingsState>()(
           set((state) => state.githubCredential.requestId === requestId ? {
             githubCredential: {
               ...state.githubCredential,
-              status: result.saved ? result.status : state.githubCredential.status,
+              status: result.saved || result.status.storage === 'unavailable'
+                ? result.status
+                : state.githubCredential.status,
               loadState: 'ready',
               error: null,
             },
