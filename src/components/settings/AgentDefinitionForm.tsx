@@ -1,20 +1,21 @@
-import { Plus, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { ArrowLeft, Loader2, LockKeyhole, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
 import type {
   AgentFieldError,
   CustomAgentDefinition,
-  CustomPathBase,
   CustomPathSpec,
   CustomScopeDefinition,
   ScopeLocation,
 } from '@/bindings';
+import { cn } from '@/lib/utils';
+import { AgentPathRuleField } from './AgentPathRuleField';
 
 function firstError(errors: AgentFieldError[], field: string): AgentFieldError | undefined {
   return errors.find((error) => error.field === field || error.field.startsWith(`${field}.`));
@@ -29,6 +30,15 @@ function FieldError({ error, id }: { error?: AgentFieldError; id: string }) {
   ) : null;
 }
 
+function RequiredLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
+  return (
+    <Label htmlFor={htmlFor}>
+      {children}
+      <span aria-hidden="true" className="text-destructive">*</span>
+    </Label>
+  );
+}
+
 function defaultPrivatePath(scope: 'global' | 'project', agentId: string): CustomPathSpec {
   return {
     kind: 'based',
@@ -40,8 +50,6 @@ function defaultPrivatePath(scope: 'global' | 'project', agentId: string): Custo
 function scopeReadsPrivate(location: ScopeLocation): boolean {
   return location === 'private' || location === 'both';
 }
-
-type GlobalDirectoryLocation = Exclude<CustomPathBase, 'project'> | 'absolute';
 
 function ScopeEditor({
   id,
@@ -61,7 +69,9 @@ function ScopeEditor({
   const { t } = useTranslation();
   const privatePath = value.privatePath ?? defaultPrivatePath(id, agentId);
   const privatePathError = firstError(errors, `${id}.privatePath`);
-  const scopeError = firstError(errors, 'scopes');
+  const titleId = `${id}-reading-title`;
+  const readRuleId = `${id}-read-rule-label`;
+  const privatePathHintId = privatePath.kind === 'absolute' ? `${id}-path-hint` : null;
   const setLocation = (location: ScopeLocation) => {
     onChange({
       ...value,
@@ -69,29 +79,15 @@ function ScopeEditor({
       privatePath: location === 'shared' ? null : value.privatePath ?? defaultPrivatePath(id, agentId),
     });
   };
-  const setGlobalDirectoryLocation = (location: GlobalDirectoryLocation) => {
-    onChange({
-      ...value,
-      privatePath: location === 'absolute'
-        ? { kind: 'absolute', path: privatePath.kind === 'absolute' ? privatePath.path : '' }
-        : {
-            kind: 'based',
-            base: location,
-            relativePath: privatePath.kind === 'based' ? privatePath.relativePath : '',
-          },
-    });
-  };
-  const globalDirectoryLocation: GlobalDirectoryLocation = privatePath.kind === 'absolute'
-    ? 'absolute'
-    : privatePath.base === 'configHome' ? 'configHome' : 'home';
-
   return (
-    <section className="space-y-3 border-t border-border/60 py-4 first:border-0 first:pt-0">
-      <div className="flex items-start justify-between gap-4">
-        <Label htmlFor={`${id}-enabled`} className="min-w-0 flex-1 cursor-pointer space-y-1">
-          <span className="block text-sm font-medium">{t(`settings.agents.${id}.title`)}</span>
-          <span className="block text-xs font-normal leading-5 text-muted-foreground">
-            {t(`settings.agents.${id}.description`)}
+    <section
+      className="space-y-4 border-t border-border/60 py-6 first:border-0 first:pt-0"
+      aria-labelledby={titleId}
+    >
+      <div className="flex items-center justify-between gap-5">
+        <Label htmlFor={`${id}-enabled`} className="min-w-0 flex-1 cursor-pointer">
+          <span id={titleId} role="heading" aria-level={4} className="block text-sm font-semibold">
+            {t(`settings.agents.${id}.readTitle`)}
           </span>
         </Label>
         <Switch
@@ -104,31 +100,36 @@ function ScopeEditor({
       </div>
 
       {value.enabled ? (
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor={`${id}-location`}>
+        <div className="ml-1 space-y-5 border-l-2 border-border/70 pl-4 sm:pl-5">
+          <fieldset className="space-y-2">
+            <legend id={readRuleId} className="mb-2 text-sm font-medium text-foreground">
               {t('settings.agents.skillReading.readMethod')}
-            </Label>
-            <Select
+            </legend>
+            <RadioGroup
               value={value.location}
               disabled={disabled}
+              className="grid w-full max-w-lg gap-1 rounded-md bg-muted/60 p-1 sm:grid-cols-3"
+              aria-labelledby={readRuleId}
               onValueChange={(location) => setLocation(location as ScopeLocation)}
             >
-              <SelectTrigger
-                id={`${id}-location`}
-                aria-label={t(`settings.agents.${id}.location`)}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(['shared', 'private', 'both'] as const).map((location) => (
-                  <SelectItem key={location} value={location}>
-                    {t(`settings.agents.locations.${location}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+              {(['shared', 'private', 'both'] as const).map((location) => {
+                const locationId = `${id}-location-${location}`;
+                return (
+                  <Label
+                    key={location}
+                    htmlFor={locationId}
+                    className={cn(
+                      'flex min-h-10 min-w-0 cursor-pointer items-center justify-center rounded-md px-2 py-1.5 text-center text-xs font-medium leading-4 text-muted-foreground transition-colors focus-within:ring-[3px] focus-within:ring-ring/50 sm:min-h-9 sm:text-sm',
+                      value.location === location && 'bg-background text-foreground shadow-xs',
+                    )}
+                  >
+                    <RadioGroupItem id={locationId} value={location} className="sr-only" />
+                    <span className="min-w-0">{t(`settings.agents.locations.${location}`)}</span>
+                  </Label>
+                );
+              })}
+            </RadioGroup>
+          </fieldset>
 
           {value.location !== 'private' ? (
             <div className="flex min-w-0 items-baseline gap-3 rounded-md bg-muted/35 px-3 py-2 text-xs">
@@ -143,78 +144,31 @@ function ScopeEditor({
 
           {scopeReadsPrivate(value.location) ? (
             <div className="space-y-2">
-              <div className={id === 'global'
-                ? 'grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]'
-                : 'space-y-1.5'}
-              >
-                {id === 'global' ? (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="global-directory-location">
-                      {t('settings.agents.fields.directoryLocation')}
-                    </Label>
-                    <Select
-                      value={globalDirectoryLocation}
-                      disabled={disabled}
-                      onValueChange={(location) => setGlobalDirectoryLocation(location as GlobalDirectoryLocation)}
-                    >
-                      <SelectTrigger
-                        id="global-directory-location"
-                        aria-label={t('settings.agents.global.directoryLocation')}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="home">{t('settings.agents.pathBases.homeCompact')}</SelectItem>
-                        <SelectItem value="configHome">{t('settings.agents.pathBases.configHome')}</SelectItem>
-                        <SelectItem value="absolute">{t('settings.agents.pathKinds.absolute')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-                <div className="space-y-1.5">
-                  <Label htmlFor={`${id}-path`}>
-                    {id === 'project'
-                      ? t('settings.agents.project.relativePath')
-                      : privatePath.kind === 'absolute'
-                        ? t('settings.agents.fields.absolutePath')
-                        : t('settings.agents.fields.relativePath')}
-                  </Label>
-                  <div className={id === 'project'
-                    ? 'flex min-w-0 rounded-md shadow-xs'
-                    : undefined}
-                  >
-                    {id === 'project' ? (
-                      <span className="inline-flex shrink-0 items-center rounded-l-md border border-r-0 border-input bg-muted/50 px-3 text-sm text-muted-foreground">
-                        {t('settings.agents.project.pathPrefix')}
-                      </span>
-                    ) : null}
-                    <Input
-                      id={`${id}-path`}
-                      name={`${id}-agent-skill-path`}
-                      autoComplete="off"
-                      spellCheck={false}
-                      value={privatePath.kind === 'absolute' ? privatePath.path : privatePath.relativePath}
-                      disabled={disabled}
-                      className={id === 'project' ? 'rounded-l-none shadow-none' : undefined}
-                      aria-invalid={Boolean(privatePathError)}
-                      aria-describedby={privatePathError ? `${id}-path-error` : undefined}
-                      onChange={(event) => onChange({
-                        ...value,
-                        privatePath: id === 'project'
-                          ? { kind: 'based', base: 'project', relativePath: event.target.value }
-                          : privatePath.kind === 'absolute'
-                            ? { ...privatePath, path: event.target.value }
-                            : { ...privatePath, relativePath: event.target.value },
-                      })}
-                    />
-                  </div>
-                </div>
-              </div>
-              {id === 'project' ? (
-                <p className="text-xs text-muted-foreground">{t('settings.agents.project.relativeHint')}</p>
-              ) : null}
+              <RequiredLabel htmlFor={`${id}-path`}>
+                {t('settings.agents.directoryKind.private')}
+              </RequiredLabel>
+              <AgentPathRuleField
+                id={`${id}-path`}
+                name={`${id}-agent-skill-path`}
+                value={privatePath}
+                allowedLocations={id === 'global'
+                  ? ['home', 'configHome', 'absolute']
+                  : ['project']}
+                locationAriaLabel={t(`settings.agents.${id}.directoryLocation`)}
+                pathAriaLabel={t('settings.agents.directoryKind.private')}
+                describedBy={[
+                  privatePathHintId,
+                  privatePathError ? `${id}-path-error` : null,
+                ].filter(Boolean).join(' ') || undefined}
+                invalid={Boolean(privatePathError)}
+                disabled={disabled}
+                required
+                onChange={(privatePath) => onChange({ ...value, privatePath })}
+              />
               {privatePath.kind === 'absolute' ? (
-                <p className="text-xs text-muted-foreground">{t('settings.agents.absolutePathHint')}</p>
+                <p id={`${id}-path-hint`} className="text-xs text-muted-foreground">
+                  {t('settings.agents.absolutePathHint')}
+                </p>
               ) : null}
               <FieldError id={`${id}-path-error`} error={privatePathError} />
             </div>
@@ -225,12 +179,9 @@ function ScopeEditor({
           {t(`settings.agents.readMode.${id}Unsupported`)}
         </p>
       )}
-      <FieldError id={`${id}-scope-error`} error={scopeError} />
     </section>
   );
 }
-
-type DetectionDirectoryLocation = CustomPathBase | 'absolute';
 
 function DetectionPathsEditor({
   value,
@@ -244,10 +195,56 @@ function DetectionPathsEditor({
   onChange: (value: CustomPathSpec[]) => void;
 }) {
   const { t } = useTranslation();
+  const [announcement, setAnnouncement] = useState({ sequence: 0, message: '' });
+  const pendingFocusIndex = useRef<number | null>(null);
+  const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const nextRowId = useRef(value.length);
+  const [rowIds, setRowIds] = useState(() => (
+    value.map((_, index) => `detection-row-${index}`)
+  ));
   const collectionError = errors.find((error) => error.field === 'detectionPaths');
   const update = (index: number, path: CustomPathSpec) => {
     onChange(value.map((current, currentIndex) => currentIndex === index ? path : current));
   };
+  const addPath = () => {
+    const nextIndex = value.length;
+    setRowIds((current) => [...current, `detection-row-${nextRowId.current++}`]);
+    pendingFocusIndex.current = nextIndex;
+    setAnnouncement((current) => ({
+      sequence: current.sequence + 1,
+      message: `${t('settings.agents.detection.added')} ${nextIndex + 1}`,
+    }));
+    onChange([...value, { kind: 'based', base: 'home', relativePath: '' }]);
+  };
+  const removePath = (index: number) => {
+    const nextFocusIndex = Math.min(index, value.length - 2);
+    pendingFocusIndex.current = nextFocusIndex >= 0 ? nextFocusIndex : null;
+    setAnnouncement((current) => ({
+      sequence: current.sequence + 1,
+      message: `${t('settings.agents.detection.removed')} ${index + 1}`,
+    }));
+    setRowIds((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    onChange(value.filter((_, currentIndex) => currentIndex !== index));
+  };
+
+  useEffect(() => {
+    const index = pendingFocusIndex.current;
+    if (index === null) return;
+    pendingFocusIndex.current = null;
+    inputRefs.current[index]?.focus();
+  }, [value.length]);
+
+  useEffect(() => {
+    setRowIds((current) => {
+      if (current.length === value.length) return current;
+      if (current.length > value.length) return current.slice(0, value.length);
+      const next = [...current];
+      while (next.length < value.length) {
+        next.push(`detection-row-${nextRowId.current++}`);
+      }
+      return next;
+    });
+  }, [value.length]);
 
   return (
     <section className="space-y-3 border-t border-border/60 pt-5">
@@ -255,72 +252,62 @@ function DetectionPathsEditor({
         <h3 className="text-sm font-semibold">{t('settings.agents.installDetection.title')}</h3>
         <p className="text-xs leading-5 text-muted-foreground">{t('settings.agents.installDetection.hint')}</p>
       </div>
-      {value.map((path, index) => {
-        const pathError = firstError(errors, `detectionPaths[${index}]`);
-        const location: DetectionDirectoryLocation = path.kind === 'absolute' ? 'absolute' : path.base;
-        return (
-          <div key={index} className="space-y-1.5">
-            <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)_auto]">
-              <Select
-                value={location}
-                disabled={disabled}
-                onValueChange={(nextLocation) => update(index, nextLocation === 'absolute'
-                  ? { kind: 'absolute', path: path.kind === 'absolute' ? path.path : '' }
-                  : {
-                      kind: 'based',
-                      base: nextLocation as CustomPathBase,
-                      relativePath: path.kind === 'based' ? path.relativePath : '',
-                    })}
-              >
-                <SelectTrigger aria-label={t('settings.agents.detection.directoryLocation')}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="home">{t('settings.agents.pathBases.homeCompact')}</SelectItem>
-                  <SelectItem value="configHome">{t('settings.agents.pathBases.configHome')}</SelectItem>
-                  <SelectItem value="project">{t('settings.agents.pathBases.project')}</SelectItem>
-                  <SelectItem value="absolute">{t('settings.agents.pathKinds.absolute')}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                id={`detection-path-${index}`}
-                name={`agent-detection-path-${index}`}
-                autoComplete="off"
-                spellCheck={false}
-                aria-label={t('settings.agents.detection.path')}
-                value={path.kind === 'absolute' ? path.path : path.relativePath}
-                disabled={disabled}
-                aria-invalid={Boolean(pathError)}
-                aria-describedby={pathError ? `detection-path-${index}-error` : undefined}
-                placeholder={path.kind === 'absolute'
-                  ? t('settings.agents.detection.absolutePlaceholder')
-                  : t('settings.agents.fields.relativePath')}
-                onChange={(event) => update(index, path.kind === 'absolute'
-                  ? { ...path, path: event.target.value }
-                  : { ...path, relativePath: event.target.value })}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                disabled={disabled || value.length === 1}
-                aria-label={t('settings.agents.detection.remove')}
-                onClick={() => onChange(value.filter((_, currentIndex) => currentIndex !== index))}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-            <FieldError id={`detection-path-${index}-error`} error={pathError} />
-          </div>
-        );
-      })}
+      <div className="divide-y divide-border/60">
+        {value.map((path, index) => {
+          const pathError = firstError(errors, `detectionPaths[${index}]`);
+          const pathLabel = `${t('settings.agents.detection.pathLabel')} ${index + 1}`;
+          return (
+            <fieldset
+              key={rowIds[index] ?? `detection-row-pending-${index}`}
+              className="space-y-2 py-4 first:pt-1 last:pb-1"
+            >
+              <legend className="mb-2 text-xs font-medium text-muted-foreground">
+                {pathLabel}
+                <span aria-hidden="true" className="ml-1 text-destructive">*</span>
+              </legend>
+              <div className="grid grid-cols-[minmax(0,1fr)_2.5rem] items-end gap-2">
+                <AgentPathRuleField
+                  id={`detection-path-${index}`}
+                  name={`agent-detection-path-${index}`}
+                  value={path}
+                  allowedLocations={['home', 'configHome', 'project', 'absolute']}
+                  locationAriaLabel={`${t('settings.agents.detection.directoryLocation')} ${index + 1}`}
+                  pathAriaLabel={`${t('settings.agents.detection.pathInput')} ${index + 1}`}
+                  describedBy={pathError ? `detection-path-${index}-error` : undefined}
+                  invalid={Boolean(pathError)}
+                  disabled={disabled}
+                  required
+                  inputRef={(element) => { inputRefs.current[index] = element; }}
+                  onChange={(nextPath) => update(index, nextPath)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10"
+                  disabled={disabled || value.length === 1}
+                  aria-label={`${t('settings.agents.detection.remove')} ${index + 1}`}
+                  onClick={() => removePath(index)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+              <FieldError id={`detection-path-${index}-error`} error={pathError} />
+            </fieldset>
+          );
+        })}
+      </div>
       <FieldError id="detection-paths-error" error={collectionError} />
+      <p className="sr-only" role="status" aria-live="polite">
+        <span key={announcement.sequence}>{announcement.message}</span>
+      </p>
       <Button
         type="button"
         variant="outline"
         size="sm"
         disabled={disabled}
-        onClick={() => onChange([...value, { kind: 'based', base: 'home', relativePath: '' }])}
+        id="detection-path-add"
+        onClick={addPath}
       >
         <Plus className="h-3.5 w-3.5" />
         {t('settings.agents.detection.add')}
@@ -355,6 +342,8 @@ export function AgentDefinitionForm({
   const { t } = useTranslation();
   const idError = firstError(errors, 'id');
   const nameError = firstError(errors, 'displayName');
+  const scopeError = firstError(errors, 'scopes');
+  const idLocked = Boolean(originalId) || idReadOnly;
   const displayNameComposition = useRef(false);
   const [composingDisplayName, setComposingDisplayName] = useState<string | null>(null);
 
@@ -381,13 +370,17 @@ export function AgentDefinitionForm({
         <h3 className="text-sm font-semibold">{t('settings.agents.basicInfo.title')}</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="agent-name">{t('settings.agents.fields.displayName')}</Label>
+            <div className="flex min-h-5 items-center">
+              <RequiredLabel htmlFor="agent-name">{t('settings.agents.fields.displayName')}</RequiredLabel>
+            </div>
             <Input
               id="agent-name"
               name="agent-display-name"
               autoComplete="off"
               value={composingDisplayName ?? draft.displayName}
               disabled={disabled}
+              required
+              aria-label={t('settings.agents.fields.displayName')}
               aria-invalid={Boolean(nameError)}
               aria-describedby={nameError ? 'agent-name-error' : undefined}
               onCompositionStart={(event) => {
@@ -411,7 +404,13 @@ export function AgentDefinitionForm({
             <FieldError id="agent-name-error" error={nameError} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="agent-id">{t('settings.agents.fields.id')}</Label>
+            <div className="flex min-h-5 items-center justify-between gap-3">
+              <RequiredLabel htmlFor="agent-id">{t('settings.agents.fields.id')}</RequiredLabel>
+              <span id="agent-id-hint" className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                {idLocked ? <LockKeyhole className="h-3 w-3" aria-hidden="true" /> : null}
+                {t(`settings.agents.fields.idHint.${idLocked ? 'locked' : 'generated'}`)}
+              </span>
+            </div>
             <Input
               id="agent-id"
               name="agent-id"
@@ -419,9 +418,11 @@ export function AgentDefinitionForm({
               spellCheck={false}
               value={draft.id}
               disabled={disabled}
-              readOnly={Boolean(originalId) || idReadOnly}
+              readOnly={idLocked}
+              required
+              aria-label={t('settings.agents.fields.id')}
               aria-invalid={Boolean(idError)}
-              aria-describedby={idError ? 'agent-id-error' : undefined}
+              aria-describedby={idError ? 'agent-id-hint agent-id-error' : 'agent-id-hint'}
               onChange={(event) => onChange({ ...draft, id: event.target.value })}
             />
             <FieldError id="agent-id-error" error={idError} />
@@ -429,8 +430,10 @@ export function AgentDefinitionForm({
         </div>
       </section>
 
-      <section>
-        <h3 className="pb-3 text-sm font-semibold">{t('settings.agents.skillReading.title')}</h3>
+      <section aria-labelledby="agent-skill-reading-title" aria-describedby={scopeError ? 'agent-scopes-error' : undefined}>
+        <h3 id="agent-skill-reading-title" className="pb-3 text-sm font-semibold">
+          {t('settings.agents.skillReading.title')}
+        </h3>
         <ScopeEditor
           id="global"
           agentId={draft.id}
@@ -447,6 +450,7 @@ export function AgentDefinitionForm({
           disabled={disabled}
           onChange={(project) => onChange({ ...draft, project })}
         />
+        <FieldError id="agent-scopes-error" error={scopeError} />
       </section>
       <DetectionPathsEditor
         value={draft.detectionPaths}
@@ -455,5 +459,102 @@ export function AgentDefinitionForm({
         onChange={(detectionPaths) => onChange({ ...draft, detectionPaths })}
       />
     </div>
+  );
+}
+
+export type AgentDefinitionFormMode = 'create' | 'edit' | 'duplicate' | 'configure';
+
+interface AgentDefinitionFormPageProps extends Omit<AgentDefinitionFormProps, 'disabled' | 'idReadOnly'> {
+  mode: AgentDefinitionFormMode;
+  readOnly: boolean;
+  saving: boolean;
+  configurationPersisted: boolean;
+  onBack: () => void;
+  onSave: () => void;
+}
+
+export function AgentDefinitionFormPage({
+  draft,
+  mode,
+  originalId,
+  errors,
+  readOnly,
+  saving,
+  stale,
+  deleted = false,
+  configurationPersisted,
+  onChange,
+  onBack,
+  onSave,
+  onReload,
+}: AgentDefinitionFormPageProps) {
+  const { t } = useTranslation();
+  const disabled = readOnly || saving || configurationPersisted || deleted;
+
+  return (
+    <form
+      className="mx-auto flex min-h-full w-full max-w-3xl flex-col"
+      aria-labelledby="agent-form-title"
+      aria-busy={saving}
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
+    >
+      <header className="mb-6 flex items-center gap-3 border-b border-border/60 pb-5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-10 w-10 shrink-0 text-muted-foreground"
+          disabled={saving}
+          aria-label={t('settings.agents.backToList')}
+          onClick={onBack}
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <div className="min-w-0">
+          <h2 id="agent-form-title" className="text-xl font-semibold text-foreground">
+            {t(`settings.agents.form.title.${mode}`)}
+          </h2>
+        </div>
+      </header>
+
+      {configurationPersisted ? (
+        <Alert className="mb-5">
+          <AlertTitle>{t('settings.agents.configurationPending.title')}</AlertTitle>
+          <AlertDescription>{t('settings.agents.configurationPending.description')}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <AgentDefinitionForm
+        draft={draft}
+        originalId={originalId}
+        idReadOnly={mode === 'configure'}
+        errors={errors}
+        disabled={disabled}
+        stale={stale}
+        deleted={deleted}
+        onChange={onChange}
+        onReload={onReload}
+      />
+
+      <footer className="sticky bottom-0 z-10 mt-6 flex flex-wrap justify-end gap-2 border-t border-border/60 bg-background/95 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur supports-[backdrop-filter]:bg-background/85">
+        {!configurationPersisted ? (
+          <Button type="button" variant="outline" disabled={saving} onClick={onBack}>
+            {mode === 'configure'
+              ? t('settings.agents.form.cancel.configure')
+              : t('common.cancel')}
+          </Button>
+        ) : null}
+        <Button type="submit" disabled={readOnly || saving || stale || deleted}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> : null}
+          {t(configurationPersisted
+            ? 'settings.agents.form.action.completeConfiguration'
+            : `settings.agents.form.action.${mode}`)}
+        </Button>
+      </footer>
+    </form>
   );
 }

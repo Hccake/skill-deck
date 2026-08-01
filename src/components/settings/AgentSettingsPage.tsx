@@ -5,9 +5,9 @@ import { toast } from 'sonner';
 import { AgentIcon } from '@/components/agents/AgentIcon';
 import { AgentCardGrid, SharedDirectoriesReference } from './AgentCardGrid';
 import {
-  AgentDefinitionDialog,
-  type AgentDefinitionDialogMode,
-} from './AgentDefinitionDialog';
+  AgentDefinitionFormPage,
+  type AgentDefinitionFormMode,
+} from './AgentDefinitionForm';
 import {
   createAgentDraft,
   retargetDefaultAgentPaths,
@@ -135,12 +135,15 @@ export function AgentSettingsPage({
   const [draft, setDraft] = useState<CustomAgentDefinition | null>(null);
   const [initialDraftJson, setInitialDraftJson] = useState<string | null>(null);
   const [originalId, setOriginalId] = useState<string | null>(null);
-  const [dialogMode, setDialogMode] = useState<AgentDefinitionDialogMode>('create');
+  const [formMode, setFormMode] = useState<AgentDefinitionFormMode>('create');
   const [activeConfigurationAgentId, setActiveConfigurationAgentId] = useState<string | null>(null);
   const [pendingConfigurationAgentId, setPendingConfigurationAgentId] = useState<string | null>(null);
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<AgentFieldError[]>([]);
+  const [validationAttempted, setValidationAttempted] = useState(false);
+  const [formInteracted, setFormInteracted] = useState(false);
+  const [formSession, setFormSession] = useState(0);
   const [staleRevision, setStaleRevision] = useState(false);
   const [staleDeleted, setStaleDeleted] = useState(false);
   const [configurationPersisted, setConfigurationPersisted] = useState(false);
@@ -175,6 +178,7 @@ export function AgentSettingsPage({
     scope: { scope: 'global' },
   }), [context.environment]);
   const dirty = draft !== null && initialDraftJson !== JSON.stringify(draft);
+  const draftOpen = draft !== null;
   const routeDraftKey = configurationAgentId
     ? null
     : view === 'new'
@@ -199,11 +203,14 @@ export function AgentSettingsPage({
     setSource('custom');
     setQuery('');
     setDraft(nextDraft);
+    setFormSession((current) => current + 1);
     setInitialDraftJson(JSON.stringify(nextDraft));
     setOriginalId(null);
-    setDialogMode('configure');
+    setFormMode('configure');
     setActiveConfigurationAgentId(configurationAgentId);
     setFieldErrors([]);
+    setValidationAttempted(false);
+    setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
     setConfigurationPersisted(false);
@@ -236,10 +243,26 @@ export function AgentSettingsPage({
 
   useEffect(() => {
     if (!routeDraftKey) {
-      if (!draft) handledRouteDraftKey.current = null;
+      if (!draft) {
+        handledRouteDraftKey.current = null;
+        return;
+      }
+      if (!onNavigate || configurationAgentId || activeConfigurationAgentId || dirty) return;
+      staleReloadRevision.current = null;
+      detachedDraftFields.current.clear();
+      handledRouteDraftKey.current = null;
+      setDraft(null);
+      setInitialDraftJson(null);
+      setOriginalId(null);
+      setFieldErrors([]);
+      setValidationAttempted(false);
+      setFormInteracted(false);
+      setStaleRevision(false);
+      setStaleDeleted(false);
+      setConfigurationPersisted(false);
       return;
     }
-    if (handledRouteDraftKey.current === routeDraftKey || draft) return;
+    if (handledRouteDraftKey.current === routeDraftKey || dirty) return;
     if (view === 'new') {
       handledRouteDraftKey.current = routeDraftKey;
       const nextDraft = createAgentDraft();
@@ -247,10 +270,13 @@ export function AgentSettingsPage({
       setSource('custom');
       setQuery('');
       setDraft(nextDraft);
+      setFormSession((current) => current + 1);
       setInitialDraftJson(JSON.stringify(nextDraft));
       setOriginalId(null);
-      setDialogMode('create');
+      setFormMode('create');
       setFieldErrors([]);
+      setValidationAttempted(false);
+      setFormInteracted(false);
       setStaleRevision(false);
       setStaleDeleted(false);
       setConfigurationPersisted(false);
@@ -263,16 +289,49 @@ export function AgentSettingsPage({
         const nextDraft = structuredClone(definition);
         detachedDraftFields.current.clear();
         setDraft(nextDraft);
+        setFormSession((current) => current + 1);
         setInitialDraftJson(JSON.stringify(nextDraft));
         setOriginalId(definition.id);
-        setDialogMode('edit');
+        setFormMode('edit');
         setFieldErrors([]);
+        setValidationAttempted(false);
+        setFormInteracted(false);
         setStaleRevision(false);
         setStaleDeleted(false);
         setConfigurationPersisted(false);
+      } else {
+        handledRouteDraftKey.current = routeDraftKey;
+        staleReloadRevision.current = null;
+        detachedDraftFields.current.clear();
+        setDraft(null);
+        setInitialDraftJson(null);
+        setOriginalId(null);
+        setActiveConfigurationAgentId(null);
+        setFieldErrors([]);
+        setValidationAttempted(false);
+        setFormInteracted(false);
+        setStaleRevision(false);
+        setStaleDeleted(false);
+        setConfigurationPersisted(false);
+        onNavigate?.('list');
       }
     }
-  }, [agentId, draft, routeDraftKey, snapshot?.data, view]);
+  }, [
+    activeConfigurationAgentId,
+    agentId,
+    configurationAgentId,
+    dirty,
+    draft,
+    onNavigate,
+    routeDraftKey,
+    snapshot?.data,
+    view,
+  ]);
+
+  useEffect(() => {
+    if (!draftOpen) return;
+    document.getElementById('agent-name')?.focus();
+  }, [draftOpen, formSession]);
 
   useEffect(() => {
     if (!draft || readOnly || staleRevision || staleDeleted || configurationPersisted) return;
@@ -304,6 +363,8 @@ export function AgentSettingsPage({
       if (!latest) {
         staleReloadRevision.current = null;
         setFieldErrors([]);
+        setValidationAttempted(false);
+        setFormInteracted(false);
         setStaleRevision(false);
         setStaleDeleted(true);
         return;
@@ -311,10 +372,13 @@ export function AgentSettingsPage({
       const nextDraft = structuredClone(latest);
       detachedDraftFields.current.clear();
       setDraft(nextDraft);
+      setFormSession((current) => current + 1);
       setInitialDraftJson(JSON.stringify(nextDraft));
     }
     staleReloadRevision.current = null;
     setFieldErrors([]);
+    setValidationAttempted(false);
+    setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
   }, [data?.activeCustom, originalId, registryRevision]);
@@ -351,11 +415,14 @@ export function AgentSettingsPage({
     handledRouteDraftKey.current = `edit:${definition.id}`;
     detachedDraftFields.current.clear();
     setDraft(nextDraft);
+    setFormSession((current) => current + 1);
     setInitialDraftJson(JSON.stringify(nextDraft));
     setOriginalId(definition.id);
-    setDialogMode('edit');
+    setFormMode('edit');
     setActiveConfigurationAgentId(null);
     setFieldErrors([]);
+    setValidationAttempted(false);
+    setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
     setConfigurationPersisted(false);
@@ -369,11 +436,14 @@ export function AgentSettingsPage({
     setSource('custom');
     setQuery('');
     setDraft(nextDraft);
+    setFormSession((current) => current + 1);
     setInitialDraftJson(JSON.stringify(nextDraft));
     setOriginalId(null);
-    setDialogMode('create');
+    setFormMode('create');
     setActiveConfigurationAgentId(null);
     setFieldErrors([]);
+    setValidationAttempted(false);
+    setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
     setConfigurationPersisted(false);
@@ -388,6 +458,8 @@ export function AgentSettingsPage({
     setOriginalId(null);
     setActiveConfigurationAgentId(null);
     setFieldErrors([]);
+    setValidationAttempted(false);
+    setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
     setConfigurationPersisted(false);
@@ -433,6 +505,7 @@ export function AgentSettingsPage({
 
   const save = async () => {
     if (!draft || !data || readOnly) return;
+    setValidationAttempted(true);
     setSaving(true);
     validationRequestId.current += 1;
     if (activeConfigurationAgentId && configurationPersisted) {
@@ -496,11 +569,14 @@ export function AgentSettingsPage({
       setSource('custom');
       setQuery('');
       setDraft(nextDraft);
+      setFormSession((current) => current + 1);
       setInitialDraftJson(JSON.stringify(nextDraft));
       setOriginalId(null);
-      setDialogMode('duplicate');
+      setFormMode('duplicate');
       setActiveConfigurationAgentId(null);
       setFieldErrors([]);
+      setValidationAttempted(false);
+      setFormInteracted(false);
       setStaleRevision(false);
       setStaleDeleted(false);
       setConfigurationPersisted(false);
@@ -530,12 +606,15 @@ export function AgentSettingsPage({
     setSource('custom');
     setQuery('');
     setDraft(nextDraft);
+    setFormSession((current) => current + 1);
     setInitialDraftJson(JSON.stringify(nextDraft));
     setOriginalId(null);
-    setDialogMode('configure');
+    setFormMode('configure');
     setActiveConfigurationAgentId(pendingConfigurationAgentId);
     setPendingConfigurationAgentId(null);
     setFieldErrors([]);
+    setValidationAttempted(false);
+    setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
     setConfigurationPersisted(false);
@@ -659,7 +738,33 @@ export function AgentSettingsPage({
   }
 
   return (
-    <div className="space-y-5">
+    <div className={draft ? 'min-h-full' : 'space-y-5'}>
+      {draft ? (
+        <AgentDefinitionFormPage
+          key={formSession}
+          draft={draft}
+          mode={formMode}
+          originalId={originalId}
+          errors={formInteracted || validationAttempted ? fieldErrors : []}
+          readOnly={readOnly}
+          saving={saving}
+          stale={staleRevision}
+          deleted={staleDeleted}
+          configurationPersisted={configurationPersisted}
+          onChange={(nextDraft) => {
+            setFormInteracted(true);
+            setDraft((current) => (
+              current && !originalId
+                ? updateAgentDraft(current, nextDraft, detachedDraftFields.current)
+                : nextDraft
+            ));
+          }}
+          onBack={requestCloseDraft}
+          onSave={() => void save()}
+          onReload={() => void reloadStaleDraft()}
+        />
+      ) : (
+        <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl space-y-1">
           <h2 className="text-lg font-semibold text-foreground">{t('settings.agents.title')}</h2>
@@ -838,26 +943,8 @@ export function AgentSettingsPage({
           </TabsContent>
         ))}
       </Tabs>
-
-      <AgentDefinitionDialog
-        draft={draft}
-        mode={dialogMode}
-        originalId={originalId}
-        errors={fieldErrors}
-        readOnly={readOnly}
-        saving={saving}
-        stale={staleRevision}
-        deleted={staleDeleted}
-        configurationPersisted={configurationPersisted}
-        onChange={(nextDraft) => setDraft((current) => (
-          current && !originalId
-            ? updateAgentDraft(current, nextDraft, detachedDraftFields.current)
-            : nextDraft
-        ))}
-        onRequestClose={requestCloseDraft}
-        onSave={() => void save()}
-        onReload={() => void reloadStaleDraft()}
-      />
+        </>
+      )}
 
       <AlertDialog open={discardConfirmationOpen} onOpenChange={setDiscardConfirmationOpen}>
         <AlertDialogContent>

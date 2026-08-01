@@ -538,7 +538,7 @@
     "agents": {
       "title": "Agents",
       "description": "Review the Skill directories and installation detection rules for built-in Agents, and manage Custom Agents.",
-      "add": "Add Custom Agent",
+      "add": "Create Custom Agent",
       "backToList": "Back to Agent list",
       "edit": "Edit Agent",
       "editNamed": "Edit {{name}}",
@@ -554,23 +554,19 @@
       "pathUnavailable": "Unavailable in this Environment",
       "pathLoading": "Resolving…",
       "pathFallback": "fallback",
-      "dialog": {
+      "form": {
         "title": {
-          "create": "Add Custom Agent",
+          "create": "Create Custom Agent",
           "edit": "Edit Custom Agent",
           "duplicate": "Duplicate Custom Agent",
           "configure": "Configure Custom Agent"
         },
         "action": {
-          "create": "Add Agent",
+          "create": "Create Agent",
           "edit": "Save",
-          "duplicate": "Add Copy",
+          "duplicate": "Create Copy",
           "configure": "Save and Return to Install",
           "completeConfiguration": "Retry Return to Install"
-        },
-        "description": {
-          "default": "Configure Global and Project Skill read directories and the paths used to detect whether the Agent is installed.",
-          "configure": "Configure this Agent's Skill read directories and detection paths, then return to the install flow."
         },
         "cancel": {
           "configure": "Cancel Configuration and Return"
@@ -648,7 +644,11 @@
       },
       "fields": {
         "id": "Agent ID",
-        "displayName": "Display name",
+        "displayName": "Agent name",
+        "idHint": {
+          "generated": "Generated from the name",
+          "locked": "Cannot be changed after saving"
+        },
         "directoryLocation": "Directory location",
         "pathKind": "Path type",
         "pathBase": "Path base",
@@ -659,21 +659,21 @@
         "title": "Basic information"
       },
       "skillReading": {
-        "title": "Skill read directories",
-        "readMethod": "Read location"
+        "title": "Skill reading",
+        "readMethod": "Read rule"
       },
       "installDetection": {
-        "title": "Agent installation detection",
-        "hint": "Skill Deck considers this Agent installed when any configured path exists."
+        "title": "Installation detection",
+        "hint": "The Agent is considered installed when any detection path exists."
       },
       "pathKinds": {
         "based": "Based path",
         "absolute": "Absolute path"
       },
-      "absolutePathHint": "Absolute paths are resolved as written in each Environment. Verify that Host and WSL paths both match your intent.",
+      "absolutePathHint": "Absolute paths are resolved as written in the Environment where the Agent runs.",
       "locations": {
         "shared": "Shared directory only",
-        "private": "Agent directory only",
+        "private": "Agent-specific directory only",
         "both": "Both directories"
       },
       "detectionReasons": {
@@ -689,7 +689,7 @@
       },
       "directoryKind": {
         "shared": "Shared directory",
-        "private": "Agent directory"
+        "private": "Agent-specific Skill directory"
       },
       "sharedDirectories": {
         "title": "Shared Skill directories",
@@ -705,28 +705,28 @@
         "project": "Project"
       },
       "pathLocations": {
-        "home": "Home directory",
-        "configHome": "Configuration directory",
+        "home": "User home directory",
+        "configHome": "User config directory",
         "project": "Project directory",
         "absolute": "Absolute path"
       },
       "global": {
         "title": "Global",
-        "readTitle": "Global",
+        "readTitle": "Global Skill reading",
         "description": "Choose which Skill locations this Agent reads in Global scope.",
-        "enabled": "Enable Global",
+        "enabled": "Enable Global Skill reading",
         "location": "Global read location",
-        "directoryLocation": "Global directory location",
+        "directoryLocation": "Agent-specific Skill directory location",
         "pathKind": "Global path type"
       },
       "project": {
         "title": "Project",
-        "readTitle": "Project",
+        "readTitle": "Project Skill reading",
         "description": "Choose which Skill locations this Agent reads in Project scope.",
-        "enabled": "Enable Project",
+        "enabled": "Enable Project Skill reading",
         "location": "Project read location",
         "relativePath": "Project-relative path",
-        "pathPrefix": "In project /",
+        "pathPrefix": "Project directory /",
         "relativeHint": "The path is relative to the current project root."
       },
       "detection": {
@@ -738,10 +738,14 @@
         "based": "Based path",
         "absolute": "Absolute path",
         "path": "Detection path",
+        "pathLabel": "Detection path",
+        "pathInput": "Detection path",
         "add": "Add detection path",
+        "added": "Detection path added",
         "remove": "Remove detection path",
+        "removed": "Detection path removed",
         "morePaths": "{{count}} more detection paths",
-        "absolutePlaceholder": "Absolute path checked in the current environment",
+        "absolutePlaceholder": "Enter a complete path in the current Environment",
         "hint": "The Agent is detected when any configured path exists. Absolute paths are resolved inside the selected environment.",
         "anyPathExists": "The Agent is detected when any configured path exists.",
         "eve": "Detection uses the Eve package and Agent configuration in the current Project."
@@ -780,7 +784,7 @@
         "description": "Reload the latest definitions and review this draft. Skill Deck will not overwrite external changes automatically.",
         "reload": "Reload and review",
         "deletedTitle": "This Agent definition was deleted",
-        "deletedDescription": "The definition being edited was not found after reloading. This draft will not overwrite the external deletion; close the dialog and add it again if needed."
+        "deletedDescription": "The definition being edited was not found after reloading. This draft will not overwrite the external deletion; return to the Agent list and add it again if needed."
       },
       "warnings": {
         "defaultCleanupFailed": "The Agent was deleted, but old default references could not be cleaned up. They will be removed the next time defaults are saved."

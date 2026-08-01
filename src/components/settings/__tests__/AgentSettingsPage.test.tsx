@@ -2,6 +2,7 @@
 
 import '@/test-utils';
 import {
+  act,
   fireEvent,
   render as testingRender,
   screen,
@@ -701,50 +702,152 @@ describe('AgentSettingsPage', () => {
     expect(actions.loadSettings).toHaveBeenCalledTimes(1);
   });
 
-  it('opens a modal form while keeping the Agent cards visible behind it', async () => {
+  it('opens the Agent form as an independent page without keeping the list behind it', async () => {
     render(<AgentSettingsPage context={context} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
 
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
-    expect(dialog.className).toContain('h-[min(52rem,calc(100vh-2rem))]');
-    expect(document.querySelector('article')).not.toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'settings.agents.form.title.create' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'settings.agents.backToList' })).toBeDefined();
+    expect(screen.queryByRole('list', { name: 'settings.agents.listLabel' })).toBeNull();
     expect(screen.getByLabelText('settings.agents.fields.id')).toBeDefined();
-    expect(screen.getByLabelText('settings.agents.global.location')).toBeDefined();
-    expect(screen.getByLabelText('settings.agents.project.location')).toBeDefined();
-    expect(screen.getAllByLabelText('settings.agents.detection.path')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'settings.agents.backToList' })).toBeNull();
+    expect(screen.getAllByRole('radiogroup', {
+      name: 'settings.agents.skillReading.readMethod',
+    })).toHaveLength(2);
+    expect(screen.getByRole('textbox', {
+      name: 'settings.agents.detection.pathInput 1',
+    })).toBeDefined();
     await waitFor(() => expect(document.activeElement).toBe(
       screen.getByLabelText('settings.agents.fields.displayName'),
     ));
   });
 
-  it('closes a pristine routed create dialog without reopening it', async () => {
+  it('closes a pristine routed create page without reopening it', async () => {
     const router = renderRoutedAgentSettings();
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
-    expect(await screen.findByRole('dialog')).toBeDefined();
+    expect(await screen.findByRole('heading', { name: 'settings.agents.form.title.create' })).toBeDefined();
     await waitFor(() => expect(router.state.location.search).toContain('view=new'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.backToList' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText('settings.agents.fields.id')).toBeNull());
     expect(router.state.location.search).not.toContain('view=');
   });
 
-  it('closes a routed edit dialog restored from the URL without reopening it', async () => {
+  it('returns a pristine routed form to the Agent list on browser back', async () => {
+    const router = renderRoutedAgentSettings();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
+    await waitFor(() => expect(router.state.location.search).toContain('view=new'));
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    await waitFor(() => expect(screen.queryByRole('form', {
+      name: 'settings.agents.form.title.create',
+    })).toBeNull());
+    expect(screen.getByRole('list', { name: 'settings.agents.listLabel' })).toBeDefined();
+  });
+
+  it('loads a different pristine Agent when the edit URL changes', async () => {
+    registryState.snapshot = {
+      ...structuredClone(snapshot),
+      activeCustom: [
+        ...structuredClone(snapshot.activeCustom),
+        {
+          definition: {
+            ...structuredClone(snapshot.activeCustom[0].definition),
+            id: 'second-agent',
+            displayName: 'Second Agent',
+          },
+          raw: {},
+        },
+      ],
+    };
     const router = renderRoutedAgentSettings('/settings?section=agents&view=edit&id=my-agent');
+    expect(await screen.findByDisplayValue('My Agent')).toBeDefined();
 
-    expect(await screen.findByRole('dialog')).toBeDefined();
-    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    await act(async () => {
+      await router.navigate('/settings?section=agents&view=edit&id=second-agent');
+    });
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const secondName = await screen.findByDisplayValue('Second Agent');
+    await waitFor(() => expect(document.activeElement).toBe(secondName));
+    expect(screen.queryByDisplayValue('My Agent')).toBeNull();
+  });
+
+  it('does not carry an alternate path draft into another routed Agent', async () => {
+    registryState.snapshot = {
+      ...structuredClone(snapshot),
+      activeCustom: [
+        ...structuredClone(snapshot.activeCustom),
+        {
+          definition: {
+            ...structuredClone(snapshot.activeCustom[0].definition),
+            id: 'second-agent',
+            displayName: 'Second Agent',
+            detectionPaths: [
+              { kind: 'based', base: 'home', relativePath: '.second-agent' },
+            ],
+          },
+          raw: {},
+        },
+      ],
+    };
+    const router = renderRoutedAgentSettings('/settings?section=agents&view=edit&id=my-agent');
+    const firstGroup = await screen.findByRole('group', {
+      name: 'settings.agents.detection.pathLabel 1',
+    });
+    fireEvent.click(within(firstGroup).getByRole('combobox'));
+    fireEvent.click(screen.getByRole('option', { name: 'settings.agents.pathLocations.absolute' }));
+    fireEvent.change(within(firstGroup).getByRole('textbox'), {
+      target: { value: '/discarded-agent' },
+    });
+    fireEvent.click(within(firstGroup).getByRole('combobox'));
+    fireEvent.click(screen.getByRole('option', { name: 'settings.agents.pathLocations.home' }));
+
+    await act(async () => {
+      await router.navigate('/settings?section=agents&view=edit&id=second-agent');
+    });
+    const secondGroup = await screen.findByRole('group', {
+      name: 'settings.agents.detection.pathLabel 1',
+    });
+    expect((within(secondGroup).getByRole('textbox') as HTMLInputElement).value)
+      .toBe('.second-agent');
+    fireEvent.click(within(secondGroup).getByRole('combobox'));
+    fireEvent.click(screen.getByRole('option', { name: 'settings.agents.pathLocations.absolute' }));
+
+    expect((within(secondGroup).getByRole('textbox') as HTMLInputElement).value).toBe('');
+  });
+
+  it('returns to the list when a routed edit target does not exist', async () => {
+    const router = renderRoutedAgentSettings('/settings?section=agents&view=edit&id=my-agent');
+    expect(await screen.findByDisplayValue('My Agent')).toBeDefined();
+
+    await act(async () => {
+      await router.navigate('/settings?section=agents&view=edit&id=missing-agent');
+    });
+
+    await waitFor(() => expect(screen.queryByDisplayValue('My Agent')).toBeNull());
+    expect(screen.getByRole('list', { name: 'settings.agents.listLabel' })).toBeDefined();
     expect(router.state.location.search).not.toContain('view=');
     expect(router.state.location.search).not.toContain('id=');
   });
 
-  it('closes a dirty routed dialog after one discard confirmation', async () => {
+  it('closes a routed edit page restored from the URL without reopening it', async () => {
+    const router = renderRoutedAgentSettings('/settings?section=agents&view=edit&id=my-agent');
+
+    expect(await screen.findByRole('heading', { name: 'settings.agents.form.title.edit' })).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+
+    await waitFor(() => expect(screen.queryByLabelText('settings.agents.fields.id')).toBeNull());
+    expect(router.state.location.search).not.toContain('view=');
+    expect(router.state.location.search).not.toContain('id=');
+  });
+
+  it('closes a dirty routed page after one discard confirmation', async () => {
     const router = renderRoutedAgentSettings();
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
@@ -756,11 +859,11 @@ describe('AgentSettingsPage', () => {
       name: 'settings.agents.dirtyNavigation.discard',
     }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText('settings.agents.fields.id')).toBeNull());
     expect(router.state.location.search).not.toContain('view=');
   });
 
-  it('uses read-only Agent IDs in edit and configure dialogs so they remain focusable', async () => {
+  it('uses read-only Agent IDs in edit and configure pages so they remain focusable', async () => {
     render(<AgentSettingsPage context={context} />);
     openCustomEditor();
 
@@ -779,12 +882,17 @@ describe('AgentSettingsPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: /settings\.agents\.tabs\.builtin/ }));
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
 
+    expect(screen.queryByRole('tab')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
     expect(document.querySelector('[role="tab"][data-state="active"]')?.textContent)
       .toContain('settings.agents.tabs.custom');
-    fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
+    expect((screen.getByLabelText('settings.agents.search.custom') as HTMLInputElement).value).toBe('');
 
     rerender(<AgentSettingsPage context={context} configurationAgentId="wizard-agent" />);
     expect(await screen.findByDisplayValue('wizard-agent')).toBeDefined();
+    expect(screen.queryByRole('tab')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
+    await waitFor(() => expect(completeRequest).toHaveBeenCalledWith('wizard-agent', 'cancelled'));
     expect(document.querySelector('[role="tab"][data-state="active"]')?.textContent)
       .toContain('settings.agents.tabs.custom');
   });
@@ -801,13 +909,17 @@ describe('AgentSettingsPage', () => {
       .toBe('foo-code');
     expect(screen.getAllByDisplayValue('.foo-code/skills')).toHaveLength(2);
     expect(screen.getByDisplayValue('.foo-code')).toBeDefined();
-    expect(screen.getByRole('combobox', { name: 'settings.agents.global.location' }).textContent)
-      .toContain('settings.agents.locations.private');
-    expect(screen.getByRole('combobox', { name: 'settings.agents.project.location' }).textContent)
-      .toContain('settings.agents.locations.private');
+    const globalSection = screen.getByRole('region', { name: 'settings.agents.global.readTitle' });
+    const projectSection = screen.getByRole('region', { name: 'settings.agents.project.readTitle' });
+    expect(within(globalSection).getByRole('radio', {
+      name: 'settings.agents.locations.private',
+    }).getAttribute('data-state')).toBe('checked');
+    expect(within(projectSection).getByRole('radio', {
+      name: 'settings.agents.locations.private',
+    }).getAttribute('data-state')).toBe('checked');
   });
 
-  it('keeps the create dialog editable while typing a display name character by character', async () => {
+  it('keeps the create page editable while typing a display name character by character', async () => {
     const user = userEvent.setup();
     render(<AgentSettingsPage context={context} />);
 
@@ -846,7 +958,8 @@ describe('AgentSettingsPage', () => {
     openCustomEditor();
 
     expect(screen.queryByRole('combobox', { name: 'settings.agents.projectPreview.label' })).toBeNull();
-    expect((screen.getByLabelText('settings.agents.project.relativePath') as HTMLInputElement).value)
+    const projectSection = screen.getByRole('region', { name: 'settings.agents.project.readTitle' });
+    expect((within(projectSection).getByLabelText('settings.agents.directoryKind.private') as HTMLInputElement).value)
       .toBe('.my-agent/skills');
   });
 
@@ -890,12 +1003,16 @@ describe('AgentSettingsPage', () => {
 
     openCustomEditor();
 
-    expect(screen.getAllByLabelText('settings.agents.detection.path')).toHaveLength(2);
+    expect(screen.getAllByRole('textbox', {
+      name: /settings\.agents\.detection\.pathInput/,
+    })).toHaveLength(2);
     expect(screen.getByDisplayValue('.my-agent')).toBeDefined();
     expect(screen.getByDisplayValue('/opt/my-agent')).toBeDefined();
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.detection.add' }));
-    expect(screen.getAllByLabelText('settings.agents.detection.path')).toHaveLength(3);
+    expect(screen.getAllByRole('textbox', {
+      name: /settings\.agents\.detection\.pathInput/,
+    })).toHaveLength(3);
   });
 
   it('previews definition-only deletion before confirming', async () => {
@@ -1002,8 +1119,10 @@ describe('AgentSettingsPage', () => {
     );
 
     expect((await screen.findByLabelText('settings.agents.fields.id') as HTMLInputElement).value).toBe('new-agent');
-    expect(screen.getByText('settings.agents.dialog.description.configure')).toBeDefined();
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.cancel.configure' }));
+    expect(screen.getByRole('heading', { name: 'settings.agents.form.title.configure' })).toBeDefined();
+    expect(screen.queryByRole('list', { name: 'settings.agents.listLabel' })).toBeNull();
+    expect(screen.queryByText('settings.agents.form.description.configure')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
 
     await waitFor(() => expect(completeRequest).toHaveBeenCalledWith('new-agent', 'cancelled'));
     expect(finished).toHaveBeenCalled();
@@ -1026,16 +1145,16 @@ describe('AgentSettingsPage', () => {
     fireEvent.change(await screen.findByLabelText('settings.agents.fields.displayName'), {
       target: { value: 'New Agent' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.action.configure' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.configure' }));
 
     await waitFor(() => expect(actions.saveDraft).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(1));
     expect(toasts.error).toHaveBeenCalledWith('settings.agents.configurationCompletionError');
     expect(screen.getByText('settings.agents.configurationPending.description')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'settings.agents.dialog.cancel.configure' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'settings.agents.form.cancel.configure' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', {
-      name: 'settings.agents.dialog.action.completeConfiguration',
+      name: 'settings.agents.form.action.completeConfiguration',
     }));
     await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(2));
     expect(actions.saveDraft).toHaveBeenCalledTimes(1);
@@ -1064,7 +1183,7 @@ describe('AgentSettingsPage', () => {
     fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
       target: { value: 'Configured Agent' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.cancel.configure' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
     fireEvent.click(await screen.findByRole('button', {
       name: 'settings.agents.dirtyNavigation.discard',
     }));
@@ -1087,7 +1206,7 @@ describe('AgentSettingsPage', () => {
     );
 
     await screen.findByLabelText('settings.agents.fields.id');
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.cancel.configure' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
 
     await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(1));
     expect(screen.getByLabelText('settings.agents.fields.id')).toBeDefined();
@@ -1171,10 +1290,73 @@ describe('AgentSettingsPage', () => {
     fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
       target: { value: 'Invalid Agent' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.action.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.create' }));
 
     expect(await screen.findByText('settings.agents.validation.invalidAgentId')).toBeDefined();
     expect(document.activeElement).toBe(idInput);
+  });
+
+  it('keeps background validation errors hidden until the draft changes or save is attempted', async () => {
+    actions.validateDraft.mockRejectedValue({
+      kind: 'invalidDraft',
+      errors: [{ field: 'displayName', code: 'required' }],
+    });
+    render(<AgentSettingsPage context={context} />);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
+
+    await waitFor(() => expect(actions.validateDraft).toHaveBeenCalled());
+    expect(screen.queryByText('settings.agents.validation.required')).toBeNull();
+
+    fireEvent.submit(screen.getByRole('form', {
+      name: 'settings.agents.form.title.create',
+    }));
+    expect(await screen.findByText('settings.agents.validation.required')).toBeDefined();
+  });
+
+  it('keeps validation visible after an edited field returns to its initial value', async () => {
+    actions.validateDraft.mockRejectedValue({
+      kind: 'invalidDraft',
+      errors: [{ field: 'displayName', code: 'required' }],
+    });
+    render(<AgentSettingsPage context={context} />);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
+    await waitFor(() => expect(actions.validateDraft).toHaveBeenCalled());
+
+    const name = screen.getByLabelText('settings.agents.fields.displayName');
+    fireEvent.change(name, { target: { value: 'Temporary' } });
+    fireEvent.change(name, { target: { value: '' } });
+
+    expect(await screen.findByText('settings.agents.validation.required')).toBeDefined();
+  });
+
+  it('runs Backend validation when required fields are empty', async () => {
+    actions.validateDraft.mockRejectedValue({
+      kind: 'invalidDraft',
+      errors: [{ field: 'displayName', code: 'required' }],
+    });
+    render(<AgentSettingsPage context={context} />);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
+    await waitFor(() => expect(actions.validateDraft).toHaveBeenCalled());
+    actions.validateDraft.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.create' }));
+
+    await waitFor(() => expect(actions.validateDraft).toHaveBeenCalled());
+  });
+
+  it('focuses the add-path control when detection paths fail collection validation', async () => {
+    actions.validateDraft.mockRejectedValue({
+      kind: 'invalidDraft',
+      errors: [{ field: 'detectionPaths', code: 'required' }],
+    });
+    render(<AgentSettingsPage context={context} />);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
+
+    const form = screen.getByRole('form', { name: 'settings.agents.form.title.create' });
+    fireEvent.submit(form);
+
+    const addPath = screen.getByRole('button', { name: 'settings.agents.detection.add' });
+    await waitFor(() => expect(document.activeElement).toBe(addPath));
   });
 
   it('does not render resolved validation output inside the editor', async () => {
@@ -1300,17 +1482,17 @@ describe('AgentSettingsPage', () => {
     fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
       target: { value: 'My Reviewed Agent' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.action.edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.edit' }));
 
     expect(await screen.findByText('settings.agents.stale.title')).toBeDefined();
     expect(screen.getByDisplayValue('My Reviewed Agent')).toBeDefined();
     expect((screen.getByRole('button', {
-      name: 'settings.agents.dialog.action.edit',
+      name: 'settings.agents.form.action.edit',
     }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.stale.reload' }));
     await waitFor(() => expect(actions.loadSettings).toHaveBeenCalledWith(context));
     expect((screen.getByRole('button', {
-      name: 'settings.agents.dialog.action.edit',
+      name: 'settings.agents.form.action.edit',
     }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -1324,7 +1506,7 @@ describe('AgentSettingsPage', () => {
     fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
       target: { value: 'First change' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.action.edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.edit' }));
     expect(await screen.findByText('settings.agents.stale.title')).toBeDefined();
 
     fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
@@ -1334,7 +1516,7 @@ describe('AgentSettingsPage', () => {
 
     expect(screen.getByText('settings.agents.stale.title')).toBeDefined();
     expect((screen.getByRole('button', {
-      name: 'settings.agents.dialog.action.edit',
+      name: 'settings.agents.form.action.edit',
     }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -1348,7 +1530,7 @@ describe('AgentSettingsPage', () => {
     fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
       target: { value: 'Edited name' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dialog.action.edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.edit' }));
     fireEvent.click(await screen.findByRole('button', { name: 'settings.agents.stale.reload' }));
 
     registryState.snapshot = {
@@ -1433,6 +1615,8 @@ describe('AgentSettingsPage', () => {
     expect(screen.getByText('settings.agents.validation.required')).toBeDefined();
     fireEvent.click(screen.getAllByLabelText('settings.agents.duplicate')[0]);
     await waitFor(() => expect(actions.duplicateDraft).toHaveBeenCalledWith('my-agent', 'my-agent-copy'));
+    expect(screen.getByRole('heading', { name: 'settings.agents.form.title.duplicate' })).toBeDefined();
+    expect(screen.queryByRole('list', { name: 'settings.agents.listLabel' })).toBeNull();
   });
 
   it('reports duplicate failures and keeps delete-preview failures retryable', async () => {

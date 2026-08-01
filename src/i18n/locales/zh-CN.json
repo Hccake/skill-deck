@@ -538,7 +538,7 @@
     "agents": {
       "title": "Agents",
       "description": "查看内置 Agent 的 Skill 读取目录与安装检测规则，并管理自定义 Agent。",
-      "add": "添加自定义 Agent",
+      "add": "创建自定义 Agent",
       "backToList": "返回 Agent 列表",
       "edit": "编辑 Agent",
       "editNamed": "编辑 {{name}}",
@@ -554,23 +554,19 @@
       "pathUnavailable": "当前 Environment 无法确定",
       "pathLoading": "正在解析…",
       "pathFallback": "回退到",
-      "dialog": {
+      "form": {
         "title": {
-          "create": "添加自定义 Agent",
+          "create": "创建自定义 Agent",
           "edit": "编辑自定义 Agent",
           "duplicate": "复制自定义 Agent",
           "configure": "配置自定义 Agent"
         },
         "action": {
-          "create": "添加 Agent",
+          "create": "创建 Agent",
           "edit": "保存",
-          "duplicate": "添加副本",
+          "duplicate": "创建副本",
           "configure": "保存并返回安装",
           "completeConfiguration": "重试返回安装"
-        },
-        "description": {
-          "default": "设置 Global、Project 的 Skill 读取目录和用于判断 Agent 是否安装的检测路径。",
-          "configure": "设置此 Agent 的 Skill 读取目录和检测路径，保存后返回安装流程。"
         },
         "cancel": {
           "configure": "取消配置并返回"
@@ -648,7 +644,11 @@
       },
       "fields": {
         "id": "Agent ID",
-        "displayName": "显示名称",
+        "displayName": "Agent 名称",
+        "idHint": {
+          "generated": "根据名称自动生成",
+          "locked": "保存后不可修改"
+        },
         "directoryLocation": "目录位置",
         "pathKind": "路径类型",
         "pathBase": "路径基准",
@@ -659,22 +659,22 @@
         "title": "基本信息"
       },
       "skillReading": {
-        "title": "Skill 读取目录",
-        "readMethod": "读取位置"
+        "title": "Skill 读取",
+        "readMethod": "读取规则"
       },
       "installDetection": {
-        "title": "Agent 安装检测",
-        "hint": "任一路径存在时，Skill Deck 会认为当前 Environment 已安装此 Agent。"
+        "title": "安装检测",
+        "hint": "任一检测路径存在，即视为已安装。"
       },
       "pathKinds": {
         "based": "相对路径",
         "absolute": "绝对路径"
       },
-      "absolutePathHint": "绝对路径由每个环境按原样解析；请确认在本机与 WSL 中均符合预期。",
+      "absolutePathHint": "绝对路径由 Agent 所在 Environment 按原样解析。",
       "locations": {
         "shared": "仅读取通用 Skill 目录",
-        "private": "仅读取此 Agent 的 Skill 目录",
-        "both": "同时读取两个目录"
+        "private": "仅读取 Agent 专用目录",
+        "both": "两者都读取"
       },
       "detectionReasons": {
         "projectContextRequired": "需要在具体 Project 中判断",
@@ -689,7 +689,7 @@
       },
       "directoryKind": {
         "shared": "通用 Skill 目录",
-        "private": "此 Agent 的 Skill 目录"
+        "private": "Agent 专用 Skill 目录"
       },
       "sharedDirectories": {
         "title": "通用 Skill 目录",
@@ -705,28 +705,28 @@
         "project": "项目目录"
       },
       "pathLocations": {
-        "home": "用户目录",
-        "configHome": "配置目录",
+        "home": "用户主目录",
+        "configHome": "用户配置目录",
         "project": "项目目录",
         "absolute": "绝对路径"
       },
       "global": {
         "title": "Global",
-        "readTitle": "Global",
+        "readTitle": "Global Skill 读取",
         "description": "设置此 Agent 在 Global 下读取哪些 Skill 目录。",
-        "enabled": "启用 Global",
+        "enabled": "启用 Global Skill 读取",
         "location": "Global 读取位置",
-        "directoryLocation": "Global 目录位置",
+        "directoryLocation": "Agent 专用 Skill 目录的位置",
         "pathKind": "Global 路径类型"
       },
       "project": {
         "title": "Project",
-        "readTitle": "Project",
+        "readTitle": "Project Skill 读取",
         "description": "设置此 Agent 在 Project 下读取哪些 Skill 目录。",
-        "enabled": "启用 Project",
+        "enabled": "启用 Project Skill 读取",
         "location": "Project 读取位置",
         "relativePath": "项目内相对路径",
-        "pathPrefix": "项目内 /",
+        "pathPrefix": "项目目录 /",
         "relativeHint": "路径相对于当前项目根目录。"
       },
       "detection": {
@@ -738,10 +738,14 @@
         "based": "基于目录",
         "absolute": "绝对路径",
         "path": "检测路径",
+        "pathLabel": "检测路径",
+        "pathInput": "检测路径",
         "add": "添加检测路径",
+        "added": "已添加检测路径",
         "remove": "删除检测路径",
+        "removed": "已删除检测路径",
         "morePaths": "另外 {{count}} 条检测路径",
-        "absolutePlaceholder": "在当前环境中检测的绝对路径",
+        "absolutePlaceholder": "输入当前 Environment 中的完整路径",
         "hint": "任意检测路径存在时即视为已检测到；绝对路径始终在当前选择的 Environment 内解析。",
         "anyPathExists": "任意一个检测路径存在时即视为已检测到。",
         "eve": "根据当前 Project 中的 Eve package 与 Agent 配置判断是否已检测到。"
@@ -780,7 +784,7 @@
         "description": "请重新加载最新定义并检查当前草稿，程序不会自动覆盖外部更改。",
         "reload": "重新加载并检查",
         "deletedTitle": "此 Agent 定义已被删除",
-        "deletedDescription": "重新加载时未找到正在编辑的定义。当前草稿不会覆盖外部删除；请关闭弹窗后重新添加。"
+        "deletedDescription": "重新加载时未找到正在编辑的定义。当前草稿不会覆盖外部删除；请返回 Agent 列表后重新添加。"
       },
       "warnings": {
         "defaultCleanupFailed": "Agent 已删除，但旧的默认引用暂未清理；下次保存默认设置时会自动清理。"

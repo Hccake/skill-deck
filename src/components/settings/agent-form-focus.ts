@@ -12,6 +12,8 @@ export function focusFirstAgentFieldError(errors: AgentFieldError[]) {
           ? 'project-path'
           : field?.startsWith('detectionPaths[')
             ? `detection-path-${field.match(/\[(\d+)\]/)?.[1] ?? '0'}`
+            : field === 'detectionPaths'
+              ? 'detection-path-add'
             : field === 'scopes'
               ? 'global-enabled'
               : null;
