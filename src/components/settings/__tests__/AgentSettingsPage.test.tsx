@@ -29,7 +29,7 @@ function render(ui: React.ReactElement) {
 }
 
 function selectCustomTab() {
-  fireEvent.click(screen.getByRole('tab', { name: /settings\.agents\.tabs\.custom/ }));
+  fireEvent.click(screen.getByRole('button', { name: /settings\.agents\.sourceFilter\.custom/ }));
 }
 
 function openCustomEditor() {
@@ -233,32 +233,121 @@ describe('AgentSettingsPage', () => {
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
   });
 
-  it('uses a Custom-first shared toolbar above a card grid without an Inspector', async () => {
+  it('shows all Agent sources first and filters the shared card grid by source', async () => {
     render(<AgentSettingsPage context={context} />);
 
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs[0].textContent).toContain('settings.agents.tabs.custom');
-    expect(tabs[0].parentElement?.className).toContain('grid-cols-2');
-    expect(document.getElementById(tabs[0].getAttribute('aria-controls') ?? '')?.getAttribute('role'))
-      .toBe('tabpanel');
-    expect(screen.getByLabelText('settings.agents.search.custom')).toBeDefined();
-    expect(screen.getAllByRole('article')).toHaveLength(1);
-    expect(screen.getByRole('article').textContent).toContain('My Agent');
-    expect(screen.queryByLabelText('settings.agents.inspectorLabel')).toBeNull();
-    expect(screen.queryByText('Codex')).toBeNull();
-
-    fireEvent.mouseDown(screen.getByRole('tab', { name: /settings\.agents\.tabs\.builtin/ }), {
-      button: 0,
-      ctrlKey: false,
+    const sourceFilter = screen.getByRole('group', {
+      name: 'settings.agents.sourceFilter.label',
     });
-    expect(screen.getAllByText('Codex').length).toBeGreaterThan(0);
-    expect(screen.queryByText('My Agent')).toBeNull();
+    const allFilter = within(sourceFilter).getByRole('button', {
+      name: 'settings.agents.sourceFilter.all',
+    });
+    expect(allFilter.getAttribute('aria-pressed')).toBe('true');
+    const countDescriptionId = allFilter.getAttribute('aria-describedby');
+    expect(countDescriptionId).not.toBeNull();
+    expect(document.getElementById(countDescriptionId ?? '')?.textContent)
+      .toBe('settings.agents.sourceFilter.count');
+    expect(within(sourceFilter).getByRole('button', {
+      name: 'settings.agents.sourceFilter.all',
+      description: 'settings.agents.sourceFilter.count',
+    })).toBe(allFilter);
+    expect(screen.getByLabelText('settings.agents.search.all')).toBeDefined();
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    expect(screen.getByText('My Agent')).toBeDefined();
+    expect(screen.getByText('Codex')).toBeDefined();
+    expect(screen.queryByLabelText('settings.agents.inspectorLabel')).toBeNull();
+
+    fireEvent.click(within(sourceFilter).getByRole('button', {
+      name: 'settings.agents.sourceFilter.custom',
+    }));
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByText('My Agent')).toBeDefined();
+    expect(screen.queryByText('Codex')).toBeNull();
     await waitFor(() => expect(actions.loadSettings).not.toHaveBeenCalled());
+  });
+
+  it('moves source-filter focus and selection with horizontal arrow keys', () => {
+    render(<AgentSettingsPage context={context} />);
+
+    const sourceFilter = screen.getByRole('group', {
+      name: 'settings.agents.sourceFilter.label',
+    });
+    const allFilter = within(sourceFilter).getByRole('button', {
+      name: 'settings.agents.sourceFilter.all',
+    });
+    const builtinFilter = within(sourceFilter).getByRole('button', {
+      name: 'settings.agents.sourceFilter.builtin',
+    });
+    const customFilter = within(sourceFilter).getByRole('button', {
+      name: 'settings.agents.sourceFilter.custom',
+    });
+
+    allFilter.focus();
+    fireEvent.keyDown(allFilter, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(builtinFilter);
+    expect(builtinFilter.getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.keyDown(builtinFilter, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(allFilter);
+    expect(allFilter.getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.keyDown(allFilter, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(customFilter);
+    expect(customFilter.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('puts the primary action and Agent summary before the directory reference', async () => {
+    listRuntimeAgents.mockResolvedValue({
+      registryRevision: 'registry-1',
+      environmentRevision: 'environment-1',
+      environment: context.environment,
+      availability: 'available',
+      projectPath: null,
+      agents: {
+        'my-agent': {
+          definition: snapshot.activeBuiltin[0],
+          detection: 'detected',
+          detectionReason: null,
+          global: {
+            enabled: true, readsShared: true, sharedPath: '/home/me/.agents/skills',
+            privatePath: '/home/me/.my-agent/skills', readPaths: [],
+            sharedPresence: 'present', privatePresence: 'present', legacyPaths: [],
+          },
+          project: {
+            enabled: true, readsShared: false, sharedPath: null, privatePath: null,
+            readPaths: [], sharedPresence: 'projectNotSelected',
+            privatePresence: 'projectNotSelected', legacyPaths: [],
+          },
+        },
+      },
+    });
+    render(<AgentSettingsPage context={context} />);
+
+    const pageHeader = document.querySelector('[data-slot="agent-settings-header"]');
+    expect(pageHeader).not.toBeNull();
+    expect(within(pageHeader as HTMLElement).getByRole('button', {
+      name: 'settings.agents.add',
+    })).toBeDefined();
+    const summary = await screen.findByRole('group', {
+      name: 'settings.agents.summary.label',
+    });
+    expect(within(summary).getByText('settings.agents.summary.total')).toBeDefined();
+    expect(summary.querySelector('[data-slot="agent-total-count"]')?.textContent).toBe('2');
+    expect(within(summary).getByText('settings.agents.summary.detected')).toBeDefined();
+    expect(summary.querySelector('[data-slot="agent-detected-count"]')?.textContent).toBe('1');
+    const toolbar = screen.getByRole('toolbar', { name: 'settings.agents.registryToolbar' });
+    expect(within(toolbar).queryByRole('button', { name: 'settings.agents.add' })).toBeNull();
+    const reference = screen.getByRole('group', {
+      name: 'settings.agents.sharedDirectories.title',
+    });
+    expect(summary.compareDocumentPosition(reference) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
   });
 
   it('shows only the search empty state when no card matches', () => {
     render(<AgentSettingsPage context={context} />);
 
+    selectCustomTab();
     fireEvent.change(screen.getByLabelText('settings.agents.search.custom'), {
       target: { value: 'missing-agent' },
     });
@@ -283,6 +372,7 @@ describe('AgentSettingsPage', () => {
 
     render(<AgentSettingsPage context={context} />);
 
+    selectCustomTab();
     expect(screen.getByRole('article').textContent).toContain('My Agent');
     expect(screen.getByRole('status').textContent).toContain('settings.agents.refreshing');
   });
@@ -293,7 +383,9 @@ describe('AgentSettingsPage', () => {
     const reference = screen.getByRole('group', {
       name: 'settings.agents.sharedDirectories.title',
     });
-    expect(reference.compareDocumentPosition(screen.getByRole('tablist'))
+    expect(reference.compareDocumentPosition(screen.getByRole('group', {
+      name: 'settings.agents.sourceFilter.label',
+    }))
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(reference).getByText('settings.agents.sharedDirectories.title')).toBeDefined();
     expect(within(reference).getByText('settings.agents.global.title')).toBeDefined();
@@ -313,7 +405,7 @@ describe('AgentSettingsPage', () => {
       .toContain('settings.agents.pathLoading');
   });
 
-  it('uses one compact property grid for Skill directories and detection paths', async () => {
+  it('separates Skill reading from installation detection inside each Agent card', async () => {
     listRuntimeAgents.mockResolvedValue({
       registryRevision: 'registry-1',
       environmentRevision: 'environment-1',
@@ -350,45 +442,67 @@ describe('AgentSettingsPage', () => {
     expect((await screen.findAllByLabelText('settings.agents.preview.detection.detected')).length)
       .toBeGreaterThan(0);
     const card = screen.getByRole('article');
-    expect(card.textContent).not.toContain('settings.agents.skillReading.title');
-    expect(card.textContent).not.toContain('settings.agents.installDetection.title');
+    expect(card.textContent).toContain('settings.agents.source.custom');
+    const detectionStatus = within(card).getByLabelText(
+      'settings.agents.preview.detection.detected',
+    );
+    expect(detectionStatus.textContent).toContain('settings.agents.preview.detection.detected');
+    const identity = within(card).getByText('My Agent')
+      .closest('[data-slot="agent-card-identity"]');
+    expect(identity).not.toBeNull();
+    expect(within(identity as HTMLElement).queryByLabelText(
+      'settings.agents.preview.detection.detected',
+    )).toBeNull();
+    expect(detectionStatus.closest('header')).not.toBeNull();
+    const skillReading = within(card).getByRole('group', {
+      name: 'settings.agents.skillReading.title',
+    });
+    const installationDetection = within(card).getByRole('group', {
+      name: 'settings.agents.installDetection.title',
+    });
+    expect(within(skillReading).getByText('settings.agents.skillReading.title')).toBeDefined();
+    expect(within(installationDetection).getByText(
+      'settings.agents.installDetection.title',
+    )).toBeDefined();
+    const installationTitle = within(installationDetection).getByText(
+      'settings.agents.installDetection.title',
+    );
+    const installationHint = within(installationDetection).getByText(
+      'settings.agents.installDetection.cardHint',
+    );
+    expect(installationTitle.parentElement).toBe(installationHint.parentElement);
+    expect(installationTitle.parentElement?.className).toContain('justify-between');
     expect(card.textContent).not.toContain('settings.agents.directoryQualifier.shared');
     expect(card.textContent).not.toContain('settings.agents.directoryQualifier.agent');
     expect(within(card).queryByRole('img', { name: 'settings.agents.directoryKind.shared' }))
       .toBeNull();
     expect(within(card).queryByRole('img', { name: 'settings.agents.directoryKind.private' }))
       .toBeNull();
-    const globalRow = within(card).getByRole('group', {
+    const globalRow = within(skillReading).getByRole('group', {
       name: 'settings.agents.sharedDirectories.bothAriaLabel',
     });
-    const projectRow = within(card).getByRole('group', {
+    const projectRow = within(skillReading).getByRole('group', {
       name: 'settings.agents.sharedDirectories.privateAriaLabel',
-    });
-    const detectionRow = within(card).getByRole('group', {
-      name: 'settings.agents.detection.cardTooltip',
     });
     expect(globalRow.className).toContain('h-12');
     expect(projectRow.className).toContain('h-12');
-    expect(detectionRow.className).toContain('h-12');
-    const propertyRows = within(card).getAllByRole('group');
-    expect(propertyRows).toHaveLength(3);
+    const propertyRows = [globalRow, projectRow];
     expect(propertyRows.every((row) => (
       row.className.includes('grid-cols-[5rem_minmax(0,1fr)]')
     ))).toBe(true);
     const propertyLabels = card.querySelectorAll('[data-slot="agent-property-label"]');
-    expect(propertyLabels).toHaveLength(3);
+    expect(propertyLabels).toHaveLength(2);
     expect(propertyLabels[0].className).toContain('bg-muted/20');
     expect([...propertyLabels].every((label) => label.className.includes('whitespace-nowrap')))
       .toBe(true);
-    expect(within(card).getByText('settings.agents.detection.cardLabel')).toBeDefined();
     expect(within(globalRow).getByText('settings.agents.sharedDirectories.cardLabel')).toBeDefined();
     expect(within(globalRow).getByText('+').getAttribute('aria-hidden')).toBe('true');
     expect(globalRow.textContent).not.toContain('~/.agents/skills');
     expect(card.textContent).toContain('~/.my-agent/skills');
     expect(card.textContent).toContain('.my-agent/skills');
     expect(card.textContent).toContain('~/.my-agent');
-    expect(card.textContent).toContain('/opt/my-agent');
-    expect(card.textContent).not.toContain('+1');
+    expect(card.textContent).not.toContain('/opt/my-agent');
+    expect(within(installationDetection).getByText('+1')).toBeDefined();
     expect(card.textContent).not.toContain('settings.agents.directoryKind.shared');
     expect(card.textContent).not.toContain('settings.agents.directoryKind.private');
     const reference = screen.getByRole('group', {
@@ -400,9 +514,8 @@ describe('AgentSettingsPage', () => {
     expect(privatePath.className).toContain('inline-block');
     expect(privatePath.className).toContain('w-fit');
     expect(privatePath.className).toContain('max-w-full');
-    expect(detectionRow.querySelector('svg')).toBeNull();
     expect([...card.querySelectorAll('[data-slot="agent-property-value"]')])
-      .toHaveLength(3);
+      .toHaveLength(2);
 
     fireEvent.focus(sharedPath);
     const tooltip = await screen.findByRole('tooltip');
@@ -430,6 +543,7 @@ describe('AgentSettingsPage', () => {
       }],
     };
     render(<AgentSettingsPage context={context} />);
+    selectCustomTab();
 
     const unsupportedCard = screen.getByRole('article');
     expect(within(unsupportedCard).getByRole('group', {
@@ -439,10 +553,9 @@ describe('AgentSettingsPage', () => {
       name: 'settings.agents.readMode.projectUnsupported',
     })).toBeDefined();
 
-    fireEvent.mouseDown(screen.getByRole('tab', { name: /settings\.agents\.tabs\.builtin/ }), {
-      button: 0,
-      ctrlKey: false,
-    });
+    fireEvent.click(screen.getByRole('button', {
+      name: 'settings.agents.sourceFilter.builtin',
+    }));
     const sharedCard = screen.getByRole('article');
     const sharedRows = within(sharedCard).getAllByRole('group', {
       name: 'settings.agents.sharedDirectories.sharedAriaLabel',
@@ -457,6 +570,7 @@ describe('AgentSettingsPage', () => {
 
   it('uses the Agent icon height for a two-line identity and a fixed-height card skeleton', () => {
     render(<AgentSettingsPage context={context} />);
+    selectCustomTab();
 
     const card = screen.getByRole('article');
     const header = card.querySelector('header');
@@ -464,14 +578,20 @@ describe('AgentSettingsPage', () => {
     const listItem = card.closest('[role="listitem"]');
     const name = within(card).getByText('My Agent');
     const id = within(card).getByText('my-agent');
+    const source = within(card).getByText('settings.agents.source.custom');
+    const identity = name.closest('[data-slot="agent-card-identity"]');
 
     expect(header?.className).toContain('items-center');
     expect(header?.className).not.toContain('items-start');
-    expect(name.parentElement).toBe(id.parentElement);
-    expect(name.parentElement?.className).toContain('flex-col');
+    expect(identity).not.toBeNull();
+    expect(name.parentElement).toBe(source.parentElement);
+    expect(id.parentElement).toBe(identity);
+    expect(identity?.children).toHaveLength(2);
     expect(name.className).not.toContain('max-w-40');
     expect(card.className).toContain('h-full');
-    expect(card.className).toContain('grid-rows-[3.5rem_repeat(3,3rem)]');
+    expect(card.className).toContain('grid-rows-[4rem_auto_auto]');
+    expect(card.className).not.toContain('minmax(5.5rem,1fr)');
+    expect(card.className).not.toContain('grid-rows-[3.5rem_repeat(3,3rem)]');
     expect(card.className).not.toContain('grid-rows-[auto_1fr_auto]');
     expect(list?.className).toContain('items-stretch');
     expect(list?.className).toContain('min(100%,18rem)');
@@ -496,6 +616,7 @@ describe('AgentSettingsPage', () => {
       }],
     };
     render(<AgentSettingsPage context={context} />);
+    selectCustomTab();
 
     const card = screen.getByRole('article');
     expect(card.textContent).toContain('~/.my-agent');
@@ -506,8 +627,32 @@ describe('AgentSettingsPage', () => {
 
     fireEvent.focus(overflow);
     const tooltip = await screen.findByRole('tooltip');
+    expect(within(tooltip).queryByText('~/.my-agent')).toBeNull();
     expect(tooltip.textContent).toContain('/opt/my-agent');
     expect(tooltip.textContent).toContain('.my-agent-marker');
+  });
+
+  it('describes Eve installation detection without applying the path-exists rule', () => {
+    registryState.snapshot = {
+      ...structuredClone(snapshot),
+      activeBuiltin: [{
+        ...structuredClone(snapshot.activeBuiltin[0]),
+        detection: { kind: 'eve' },
+      }],
+    };
+    render(<AgentSettingsPage context={context} />);
+    fireEvent.click(screen.getByRole('button', {
+      name: 'settings.agents.sourceFilter.builtin',
+    }));
+
+    const card = screen.getByRole('article');
+    const installationDetection = within(card).getByRole('group', {
+      name: 'settings.agents.installDetection.title',
+    });
+    expect(within(installationDetection).getByText('settings.agents.detection.eve'))
+      .toBeDefined();
+    expect(within(installationDetection).queryByText('settings.agents.installDetection.cardHint'))
+      .toBeNull();
   });
 
   it('exposes the reason when detection is indeterminate', async () => {
@@ -537,12 +682,13 @@ describe('AgentSettingsPage', () => {
     });
 
     render(<AgentSettingsPage context={context} />);
+    selectCustomTab();
 
     const status = await screen.findByLabelText('settings.agents.preview.detection.indeterminate');
-    expect(status.textContent).toBe('');
+    expect(status.textContent).toContain('settings.agents.preview.detection.indeterminate');
     expect(status.getAttribute('title')).toBeNull();
     expect(status.getAttribute('tabindex')).toBe('0');
-    expect(status.className).toContain('size-6');
+    expect(status.className).toContain('inline-flex');
     expect(status.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     fireEvent.focus(status);
     expect((await screen.findByRole('tooltip')).textContent).toContain(
@@ -675,6 +821,7 @@ describe('AgentSettingsPage', () => {
       });
 
     render(<AgentSettingsPage context={context} />);
+    selectCustomTab();
 
     expect(await screen.findByText('settings.agents.runtimeError')).toBeDefined();
     expect(screen.getByRole('article').textContent).toContain('My Agent');
@@ -876,25 +1023,34 @@ describe('AgentSettingsPage', () => {
 
   it('clears search and returns to Custom when opening create or Wizard configuration', async () => {
     const { rerender } = render(<AgentSettingsPage context={context} />);
+    selectCustomTab();
     fireEvent.change(screen.getByLabelText('settings.agents.search.custom'), {
       target: { value: 'hidden' },
     });
-    fireEvent.click(screen.getByRole('tab', { name: /settings\.agents\.tabs\.builtin/ }));
+    fireEvent.click(screen.getByRole('button', {
+      name: 'settings.agents.sourceFilter.builtin',
+    }));
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
 
-    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByRole('group', {
+      name: 'settings.agents.sourceFilter.label',
+    })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
-    expect(document.querySelector('[role="tab"][data-state="active"]')?.textContent)
-      .toContain('settings.agents.tabs.custom');
+    expect(screen.getByRole('button', {
+      name: 'settings.agents.sourceFilter.custom',
+    }).getAttribute('aria-pressed')).toBe('true');
     expect((screen.getByLabelText('settings.agents.search.custom') as HTMLInputElement).value).toBe('');
 
     rerender(<AgentSettingsPage context={context} configurationAgentId="wizard-agent" />);
     expect(await screen.findByDisplayValue('wizard-agent')).toBeDefined();
-    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByRole('group', {
+      name: 'settings.agents.sourceFilter.label',
+    })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
     await waitFor(() => expect(completeRequest).toHaveBeenCalledWith('wizard-agent', 'cancelled'));
-    expect(document.querySelector('[role="tab"][data-state="active"]')?.textContent)
-      .toContain('settings.agents.tabs.custom');
+    expect(screen.getByRole('button', {
+      name: 'settings.agents.sourceFilter.custom',
+    }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('derives private Global, Project and Detection paths from a generated Agent ID', () => {
@@ -1546,11 +1702,13 @@ describe('AgentSettingsPage', () => {
 
   it('makes card details keyboard reachable and labels actions with the Agent name', async () => {
     render(<AgentSettingsPage context={context} />);
+    selectCustomTab();
 
     expect(screen.getByRole('button', { name: 'settings.agents.editNamed' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'settings.agents.moreActionsNamed' })).toBeDefined();
     expect(screen.getByLabelText('settings.agents.preview.detection.loading').getAttribute('tabindex')).toBe('0');
-    expect(screen.getByText('/opt/my-agent').getAttribute('tabindex')).toBe('0');
+    expect(screen.getByText('~/.my-agent').getAttribute('tabindex')).toBe('0');
+    expect(screen.getByText('+1').getAttribute('tabindex')).toBe('0');
     expect(screen.getByText('.my-agent/skills').getAttribute('tabindex')).toBe('0');
   });
 
@@ -1575,10 +1733,9 @@ describe('AgentSettingsPage', () => {
       }],
     };
     render(<AgentSettingsPage context={context} />);
-    fireEvent.mouseDown(screen.getByRole('tab', { name: /settings\.agents\.tabs\.builtin/ }), {
-      button: 0,
-      ctrlKey: false,
-    });
+    fireEvent.click(screen.getByRole('button', {
+      name: 'settings.agents.sourceFilter.builtin',
+    }));
 
     expect(screen.getByRole('article').textContent).toContain('/etc/codex');
     expect(screen.getByRole('article').textContent).not.toContain('absolute / /etc/codex');
@@ -1609,7 +1766,9 @@ describe('AgentSettingsPage', () => {
     render(<AgentSettingsPage context={context} />);
 
     const needsAttention = screen.getByText('settings.agents.needsAttentionTitle');
-    const customTitle = screen.getByRole('tab', { name: /settings\.agents\.tabs\.custom/ });
+    const customTitle = screen.getByRole('group', {
+      name: 'settings.agents.sourceFilter.label',
+    });
     expect(needsAttention.compareDocumentPosition(customTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('broken-agent')).toBeDefined();
     expect(screen.getByText('settings.agents.validation.required')).toBeDefined();

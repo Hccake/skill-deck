@@ -572,16 +572,31 @@
           "configure": "Cancel Configuration and Return"
         }
       },
-      "tabs": {
+      "sourceFilter": {
+        "label": "Filter Agents by source",
+        "all": "All",
+        "builtin": "Built-in",
+        "custom": "Custom",
+        "count": "Agent count: {{count}}"
+      },
+      "source": {
         "builtin": "Built-in",
         "custom": "Custom"
       },
+      "summary": {
+        "label": "Agent summary",
+        "total": "Agent definitions",
+        "detected": "Detected"
+      },
       "search": {
+        "all": "Search Agents…",
         "builtin": "Search built-in Agents…",
         "custom": "Search custom Agents…",
         "clear": "Clear search"
       },
       "empty": {
+        "allTitle": "No Agents",
+        "allDescription": "This version has no Agent definitions to show.",
         "builtinTitle": "No built-in Agents",
         "builtinDescription": "This version has no built-in Agent definitions to show.",
         "customTitle": "No Custom Agents yet",
@@ -664,6 +679,7 @@
       },
       "installDetection": {
         "title": "Installation detection",
+        "cardHint": "Any location exists",
         "hint": "The Agent is considered installed when any detection path exists."
       },
       "pathKinds": {

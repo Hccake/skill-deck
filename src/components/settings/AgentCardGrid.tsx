@@ -38,7 +38,7 @@ import {
 
 interface AgentCardGridProps {
   items: AgentListItem[];
-  source: AgentSource;
+  source: 'all' | AgentSource;
   query: string;
   actionsDisabled: boolean;
   runtimeState: 'loading' | 'ready' | 'unavailable';
@@ -170,7 +170,7 @@ export function SharedDirectoriesReference({
     <section
       role="group"
       aria-label={t('settings.agents.sharedDirectories.title')}
-      className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-xs"
+      className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 border-y border-border/60 py-3 text-xs"
     >
       <h3 className="shrink-0 font-medium text-foreground">
         {t('settings.agents.sharedDirectories.title')}
@@ -201,28 +201,20 @@ function AgentPropertyRow({
   label,
   ariaLabel = label,
   children,
-  emphasized = false,
 }: {
   label: string;
   ariaLabel?: string;
   children: React.ReactNode;
-  emphasized?: boolean;
 }) {
   return (
     <div
       role="group"
       aria-label={ariaLabel}
-      className={cn(
-        'grid h-12 min-w-0 grid-cols-[5rem_minmax(0,1fr)] border-t',
-        emphasized ? 'border-border/80 bg-muted/10' : 'border-border/45',
-      )}
+      className="grid h-12 min-w-0 grid-cols-[5rem_minmax(0,1fr)] border-t border-border/45"
     >
       <div
         data-slot="agent-property-label"
-        className={cn(
-          'flex items-center whitespace-nowrap border-r px-2.5 text-[11px] font-semibold text-foreground',
-          emphasized ? 'border-border/70 bg-muted/30' : 'border-border/45 bg-muted/20',
-        )}
+        className="flex items-center whitespace-nowrap border-r border-border/45 bg-muted/20 px-2.5 text-[11px] font-semibold text-foreground"
       >
         {label}
       </div>
@@ -341,38 +333,43 @@ function AgentCard({
     : t(`settings.agents.preview.detection.${detection}`);
   const detectionPaths = detectionPathsFor(item);
   const detectionLabels = detectionPaths.map((path) => detectionPathLabel(path, t));
-  const visibleDetectionLabels = detectionLabels.length <= 2
-    ? detectionLabels
-    : detectionLabels.slice(0, 1);
+  const visibleDetectionLabels = detectionLabels.slice(0, 1);
   const hiddenDetectionCount = detectionLabels.length - visibleDetectionLabels.length;
   const detectionFallback = item.definition.detection.kind === 'eve'
     ? t('settings.agents.detection.eve')
     : t('settings.agents.pathUnavailable');
+  const usesDetectionPaths = item.definition.detection.kind !== 'eve';
 
   return (
-    <article className="grid h-full min-w-0 grid-rows-[3.5rem_repeat(3,3rem)] overflow-hidden rounded-lg border border-border/60 bg-background transition-colors hover:border-border [contain-intrinsic-size:auto_12.5rem] [content-visibility:auto]">
-      <header className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-4">
+    <article className="grid h-full min-w-0 grid-rows-[4rem_auto_auto] overflow-hidden rounded-lg border border-border/60 bg-background transition-colors hover:border-border [contain-intrinsic-size:auto_16rem] [content-visibility:auto]">
+      <header className="flex min-h-16 min-w-0 items-center gap-3 px-4">
         <AgentIcon agentId={item.definition.id} className="h-8 w-8 rounded-md" />
-        <div className="flex min-w-0 flex-col justify-center">
-          <h2 className="truncate text-[13px] font-semibold leading-4 text-foreground" title={item.definition.displayName}>
-            {item.definition.displayName}
-          </h2>
+        <div data-slot="agent-card-identity" className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-[13px] font-semibold leading-4 text-foreground" title={item.definition.displayName}>
+              {item.definition.displayName}
+            </h2>
+            <span className="shrink-0 rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-muted-foreground">
+              {t(`settings.agents.source.${item.customDefinition ? 'custom' : 'builtin'}`)}
+            </span>
+          </div>
           <p className="truncate font-mono text-[10px] leading-3.5 text-muted-foreground" translate="no">
             {item.definition.id}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <span
                 aria-label={t(`settings.agents.preview.detection.${detection}`)}
                 className={cn(
-                  'inline-flex size-6 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  'inline-flex h-6 max-w-24 items-center gap-1 whitespace-nowrap rounded-sm text-[10px] outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   detection === 'detected' ? 'text-foreground' : 'text-muted-foreground',
                 )}
                 tabIndex={0}
               >
                 {detectionIcon(detection)}
+                <span className="truncate">{t(`settings.agents.preview.detection.${detection}`)}</span>
               </span>
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={4}>{detectionHint}</TooltipContent>
@@ -382,7 +379,7 @@ function AgentCard({
               <Button
                 type="button"
                 variant="ghost"
-                size="icon-sm"
+                size="icon-xs"
                 disabled={actionsDisabled}
                 aria-label={t('settings.agents.editNamed', { name: item.definition.displayName })}
                 onClick={onEdit}
@@ -394,7 +391,7 @@ function AgentCard({
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon-xs"
                     disabled={actionsDisabled}
                     aria-label={t('settings.agents.moreActionsNamed', { name: item.definition.displayName })}
                   >
@@ -417,60 +414,81 @@ function AgentCard({
         </div>
       </header>
 
-      <ScopeDirectories
-        scope="global"
-        definition={item.definition}
-        customDefinition={item.customDefinition}
-        runtime={item.runtime?.global}
-        runtimeState={runtimeState}
-      />
-      <ScopeDirectories
-        scope="project"
-        definition={item.definition}
-        customDefinition={item.customDefinition}
-        runtime={item.runtime?.project}
-        runtimeState={runtimeState}
-      />
-      <AgentPropertyRow
-        label={t('settings.agents.detection.cardLabel')}
-        ariaLabel={t('settings.agents.detection.cardTooltip')}
-        emphasized
+      <section
+        role="group"
+        aria-label={t('settings.agents.skillReading.title')}
       >
-        {(visibleDetectionLabels.length > 0 ? visibleDetectionLabels : [detectionFallback]).map((path) => (
-          <div key={path} className="min-w-0">
-            <PathValue value={path} muted />
-          </div>
-        ))}
-        {hiddenDetectionCount > 0 ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className="w-fit shrink-0 rounded-sm text-[10px] leading-4 text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                tabIndex={0}
-                aria-label={t('settings.agents.detection.morePaths', { count: hiddenDetectionCount })}
-              >
-                +{hiddenDetectionCount}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent
-              side="top"
-              sideOffset={6}
-              showArrow={false}
-              className="max-w-[22rem] space-y-1.5 border bg-popover p-2.5 text-left text-popover-foreground shadow-md text-wrap"
-            >
-              {detectionLabels.map((path) => (
-                <div
-                  key={path}
-                  className="font-mono text-xs leading-5 text-foreground [overflow-wrap:anywhere]"
-                  translate="no"
+        <h3 className="flex h-7 items-center border-t border-border/60 px-3 text-[10px] font-semibold text-muted-foreground">
+          {t('settings.agents.skillReading.title')}
+        </h3>
+        <ScopeDirectories
+          scope="global"
+          definition={item.definition}
+          customDefinition={item.customDefinition}
+          runtime={item.runtime?.global}
+          runtimeState={runtimeState}
+        />
+        <ScopeDirectories
+          scope="project"
+          definition={item.definition}
+          customDefinition={item.customDefinition}
+          runtime={item.runtime?.project}
+          runtimeState={runtimeState}
+        />
+      </section>
+
+      <section
+        role="group"
+        aria-label={t('settings.agents.installDetection.title')}
+        className="border-t border-border/60 bg-muted/10 px-3 py-2.5"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[11px] font-semibold text-foreground">
+            {t('settings.agents.installDetection.title')}
+          </h3>
+          {usesDetectionPaths ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              {t('settings.agents.installDetection.cardHint')}
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-2">
+          {(visibleDetectionLabels.length > 0 ? visibleDetectionLabels : [detectionFallback]).map((path) => (
+            <div key={path} className="min-w-0 flex-1">
+              <PathValue value={path} muted />
+            </div>
+          ))}
+          {hiddenDetectionCount > 0 ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className="w-fit shrink-0 rounded-sm text-[10px] leading-4 text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  tabIndex={0}
+                  aria-label={t('settings.agents.detection.morePaths', { count: hiddenDetectionCount })}
                 >
-                  {path}
-                </div>
-              ))}
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
-      </AgentPropertyRow>
+                  +{hiddenDetectionCount}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent
+                side="top"
+                sideOffset={6}
+                showArrow={false}
+                className="max-w-[22rem] space-y-1.5 border bg-popover p-2.5 text-left text-popover-foreground shadow-md text-wrap"
+              >
+                {detectionLabels.slice(1).map((path) => (
+                  <div
+                    key={path}
+                    className="font-mono text-xs leading-5 text-foreground [overflow-wrap:anywhere]"
+                    translate="no"
+                  >
+                    {path}
+                  </div>
+                ))}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+        </div>
+      </section>
     </article>
   );
 }
@@ -498,14 +516,18 @@ export function AgentCardGrid({
             ? 'settings.agents.empty.searchTitle'
             : source === 'custom'
               ? 'settings.agents.empty.customTitle'
-              : 'settings.agents.empty.builtinTitle', { query })}
+              : source === 'builtin'
+                ? 'settings.agents.empty.builtinTitle'
+                : 'settings.agents.empty.allTitle', { query })}
         </p>
         <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
           {t(hasQuery
             ? 'settings.agents.empty.searchDescription'
             : source === 'custom'
               ? 'settings.agents.empty.customDescription'
-              : 'settings.agents.empty.builtinDescription')}
+              : source === 'builtin'
+                ? 'settings.agents.empty.builtinDescription'
+                : 'settings.agents.empty.allDescription')}
         </p>
         {hasQuery ? (
           <Button type="button" variant="link" size="sm" onClick={onClearQuery}>

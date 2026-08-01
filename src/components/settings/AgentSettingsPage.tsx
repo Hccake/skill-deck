@@ -28,8 +28,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { environmentKey } from '@/lib/context';
 import {
   useOptionalUnsavedChanges,
@@ -59,6 +59,9 @@ interface AgentSettingsPageProps {
   onNavigate?: (view: 'list' | 'new' | 'edit', agentId?: string) => void;
   onConfigurationRequestFinished?: () => void;
 }
+
+type AgentSourceFilter = 'all' | AgentSource;
+const agentSourceFilters: AgentSourceFilter[] = ['all', 'builtin', 'custom'];
 
 function asAgentCommandError(error: unknown): AgentCommandError | null {
   if (!error || typeof error !== 'object' || !('kind' in error)) return null;
@@ -131,7 +134,7 @@ export function AgentSettingsPage({
   const loadDeleteImpact = useAgentRegistryStore((state) => state.loadDeleteImpact);
 
   const [query, setQuery] = useState('');
-  const [source, setSource] = useState<AgentSource>('custom');
+  const [source, setSource] = useState<AgentSourceFilter>('all');
   const [draft, setDraft] = useState<CustomAgentDefinition | null>(null);
   const [initialDraftJson, setInitialDraftJson] = useState<string | null>(null);
   const [originalId, setOriginalId] = useState<string | null>(null);
@@ -403,11 +406,19 @@ export function AgentSettingsPage({
     customDefinition: definition,
     runtime: runtimeAgents[definition.id],
   })), [data?.activeCustom, runtimeAgents]);
-  const sourceItems = source === 'builtin' ? builtinItems : customItems;
   const visibleSourceItems = useMemo(
-    () => filterAgentItems(sourceItems, query),
-    [query, sourceItems],
+    () => filterAgentItems(
+      source === 'all'
+        ? [...builtinItems, ...customItems]
+        : source === 'builtin' ? builtinItems : customItems,
+      query,
+    ),
+    [builtinItems, customItems, query, source],
   );
+  const totalAgentCount = builtinItems.length + customItems.length;
+  const detectedAgentCount = runtimeState === 'ready'
+    ? [...builtinItems, ...customItems].filter((item) => item.runtime?.detection === 'detected').length
+    : null;
   const resolvedGlobalSharedPath = Object.values(runtimeAgents)
     .find((agent) => agent?.global.sharedPath)?.global.sharedPath ?? null;
   const edit = (definition: CustomAgentDefinition) => {
@@ -765,11 +776,18 @@ export function AgentSettingsPage({
         />
       ) : (
         <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div
+        data-slot="agent-settings-header"
+        className="flex flex-wrap items-start justify-between gap-3"
+      >
         <div className="max-w-2xl space-y-1">
           <h2 className="text-lg font-semibold text-foreground">{t('settings.agents.title')}</h2>
           <p className="text-sm leading-6 text-muted-foreground">{t('settings.agents.description')}</p>
         </div>
+        <Button size="sm" disabled={readOnly} onClick={startNew}>
+          <Plus className="h-3.5 w-3.5" />
+          {t('settings.agents.add')}
+        </Button>
       </div>
 
       {snapshot?.state === 'loading' ? (
@@ -860,39 +878,98 @@ export function AgentSettingsPage({
         </section>
       ) : null}
 
+      <section
+        role="group"
+        aria-label={t('settings.agents.summary.label')}
+        className="flex flex-wrap items-center gap-x-8 gap-y-3"
+      >
+        <div className="flex items-baseline gap-2">
+          <span
+            data-slot="agent-total-count"
+            className="text-xl font-semibold tabular-nums text-foreground"
+          >
+            {totalAgentCount}
+          </span>
+          <span className="text-xs text-muted-foreground">{t('settings.agents.summary.total')}</span>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span
+            data-slot="agent-detected-count"
+            className="text-xl font-semibold tabular-nums text-foreground"
+          >
+            {detectedAgentCount ?? '—'}
+          </span>
+          <span className="text-xs text-muted-foreground">{t('settings.agents.summary.detected')}</span>
+        </div>
+      </section>
+
       <SharedDirectoriesReference
         resolvedGlobalPath={resolvedGlobalSharedPath}
         runtimeState={runtimeState}
       />
 
-      <Tabs
-        value={source}
-        className="gap-3"
-        onValueChange={(value) => {
-          setSource(value as AgentSource);
-          setQuery('');
-        }}
-      >
+      <div className="space-y-3">
         <div
           role="toolbar"
           aria-label={t('settings.agents.registryToolbar')}
           className="flex flex-col gap-2 sm:flex-row sm:items-center"
         >
           <div className="flex items-center justify-between gap-2 sm:contents">
-            <TabsList className="grid w-full max-w-xs grid-cols-2 sm:shrink-0">
-              <TabsTrigger value="custom">
-                {t('settings.agents.tabs.custom')}
-                <span className="text-muted-foreground">{customItems.length}</span>
-              </TabsTrigger>
-              <TabsTrigger value="builtin">
-                {t('settings.agents.tabs.builtin')}
-                <span className="text-muted-foreground">{builtinItems.length}</span>
-              </TabsTrigger>
-            </TabsList>
-            <Button className="sm:order-3" size="sm" disabled={readOnly} onClick={startNew}>
-              <Plus className="h-3.5 w-3.5" />
-              {t('settings.agents.add')}
-            </Button>
+            <div
+              role="group"
+              aria-label={t('settings.agents.sourceFilter.label')}
+              className="inline-grid grid-cols-3 rounded-md border border-border/60 bg-muted/25 p-0.5 sm:shrink-0"
+            >
+              {agentSourceFilters.map((filter) => {
+                const filterCount = filter === 'all'
+                  ? builtinItems.length + customItems.length
+                  : filter === 'builtin' ? builtinItems.length : customItems.length;
+                const countDescriptionId = `agent-source-${filter}-count`;
+                return (
+                  <button
+                    key={filter}
+                    type="button"
+                    data-agent-source-filter={filter}
+                    aria-label={t(`settings.agents.sourceFilter.${filter}`)}
+                    aria-describedby={countDescriptionId}
+                    aria-pressed={source === filter}
+                    onClick={() => {
+                      setSource(filter);
+                      setQuery('');
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                      event.preventDefault();
+                      const direction = event.key === 'ArrowRight' ? 1 : -1;
+                      const currentIndex = agentSourceFilters.indexOf(filter);
+                      const nextIndex = (
+                        currentIndex + direction + agentSourceFilters.length
+                      ) % agentSourceFilters.length;
+                      const nextFilter = agentSourceFilters[nextIndex];
+                      setSource(nextFilter);
+                      setQuery('');
+                      event.currentTarget.parentElement
+                        ?.querySelector<HTMLButtonElement>(`[data-agent-source-filter="${nextFilter}"]`)
+                        ?.focus();
+                    }}
+                    className={cn(
+                      'flex h-7 items-center justify-center gap-1.5 rounded px-3 text-xs transition-colors',
+                      source === filter
+                        ? 'bg-background font-medium text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {t(`settings.agents.sourceFilter.${filter}`)}
+                    <span aria-hidden="true" className="text-muted-foreground">
+                      {filterCount}
+                    </span>
+                    <span id={countDescriptionId} className="sr-only">
+                      {t('settings.agents.sourceFilter.count', { count: filterCount })}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="relative w-full sm:order-2 sm:ml-auto sm:max-w-sm">
@@ -926,23 +1003,19 @@ export function AgentSettingsPage({
           </div>
         </div>
 
-        {(['custom', 'builtin'] as const).map((tabSource) => (
-          <TabsContent key={tabSource} value={tabSource} className="mt-0">
-            <AgentCardGrid
-              items={tabSource === source ? visibleSourceItems : []}
-              source={tabSource}
-              query={query}
-              actionsDisabled={readOnly || pendingSecondaryAction !== null}
-              runtimeState={runtimeState}
-              onClearQuery={() => setQuery('')}
-              onAddCustom={startNew}
-              onEdit={edit}
-              onDuplicate={(definition) => void duplicate(definition)}
-              onDelete={(definition) => void previewDelete(definition)}
-            />
-          </TabsContent>
-        ))}
-      </Tabs>
+        <AgentCardGrid
+          items={visibleSourceItems}
+          source={source}
+          query={query}
+          actionsDisabled={readOnly || pendingSecondaryAction !== null}
+          runtimeState={runtimeState}
+          onClearQuery={() => setQuery('')}
+          onAddCustom={startNew}
+          onEdit={edit}
+          onDuplicate={(definition) => void duplicate(definition)}
+          onDelete={(definition) => void previewDelete(definition)}
+        />
+      </div>
         </>
       )}
 

@@ -572,16 +572,31 @@
           "configure": "取消配置并返回"
         }
       },
-      "tabs": {
+      "sourceFilter": {
+        "label": "按来源筛选 Agent",
+        "all": "全部",
+        "builtin": "内置",
+        "custom": "自定义",
+        "count": "Agent 数量：{{count}}"
+      },
+      "source": {
         "builtin": "内置",
         "custom": "自定义"
       },
+      "summary": {
+        "label": "Agent 概览",
+        "total": "Agent 定义",
+        "detected": "已检测到"
+      },
       "search": {
+        "all": "搜索 Agent…",
         "builtin": "搜索内置 Agent…",
         "custom": "搜索自定义 Agent…",
         "clear": "清除搜索"
       },
       "empty": {
+        "allTitle": "没有 Agent",
+        "allDescription": "当前版本没有可查看的 Agent 定义。",
         "builtinTitle": "没有内置 Agent",
         "builtinDescription": "当前版本没有可查看的内置 Agent 定义。",
         "customTitle": "尚未创建自定义 Agent",
@@ -664,6 +679,7 @@
       },
       "installDetection": {
         "title": "安装检测",
+        "cardHint": "任一位置存在",
         "hint": "任一检测路径存在，即视为已安装。"
       },
       "pathKinds": {
