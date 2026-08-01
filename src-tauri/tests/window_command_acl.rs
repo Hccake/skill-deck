@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::test::{get_ipc_response, mock_builder, MockRuntime, INVOKE_KEY};
 use tauri::webview::InvokeRequest;
 use tauri::{App, WebviewWindow, WebviewWindowBuilder};
@@ -125,6 +125,7 @@ fn clear_github_credential() -> &'static str {
 
 fn test_app() -> App<MockRuntime> {
     mock_builder()
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             list_agents,
             save_custom_agent,
@@ -162,6 +163,14 @@ fn window(app: &App<MockRuntime>, label: &str) -> WebviewWindow<MockRuntime> {
 }
 
 fn invoke(window: &WebviewWindow<MockRuntime>, command: &str) -> Result<Value, Value> {
+    invoke_with_body(window, command, tauri::ipc::InvokeBody::default())
+}
+
+fn invoke_with_body(
+    window: &WebviewWindow<MockRuntime>,
+    command: &str,
+    body: tauri::ipc::InvokeBody,
+) -> Result<Value, Value> {
     let url = window.url().expect("mock webview URL");
     get_ipc_response(
         window,
@@ -170,12 +179,37 @@ fn invoke(window: &WebviewWindow<MockRuntime>, command: &str) -> Result<Value, V
             callback: tauri::ipc::CallbackFn(0),
             error: tauri::ipc::CallbackFn(1),
             url,
-            body: tauri::ipc::InvokeBody::default(),
+            body,
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),
         },
     )
     .map(|body| body.deserialize::<Value>().expect("JSON response"))
+}
+
+#[test]
+fn discover_http_is_available_only_to_main_window() {
+    let app = test_app();
+    let main = window(&app, "main");
+    let wizard = window(&app, "install-wizard");
+    let request = || {
+        tauri::ipc::InvokeBody::Json(json!({
+            "clientConfig": {
+                "method": "GET",
+                "url": "https://skills.sh/api/search?q=react&limit=1",
+                "headers": []
+            }
+        }))
+    };
+
+    assert!(
+        invoke_with_body(&main, "plugin:http|fetch", request()).is_ok(),
+        "the main window must be able to start Discover HTTP requests"
+    );
+    assert_denied(
+        invoke_with_body(&wizard, "plugin:http|fetch", request()),
+        "plugin:http|fetch",
+    );
 }
 
 fn assert_denied(result: Result<Value, Value>, command: &str) {

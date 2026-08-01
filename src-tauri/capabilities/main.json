@@ -6,6 +6,14 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://skills.sh/*"
+        }
+      ]
+    },
     "os:default",
     "main-commands"
   ]
