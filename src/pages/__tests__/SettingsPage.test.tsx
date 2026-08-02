@@ -1,28 +1,14 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPage } from '../SettingsPage';
-import type { AgentDefaultsSnapshot } from '@/stores/settings';
 
 const ubuntu = { kind: 'wsl', distro_name: 'Ubuntu' } as const;
-const mockLoadAgentDefaults = vi.fn();
 const mockRefreshProjects = vi.fn();
 let projectLoadState: 'idle' | 'ready' = 'ready';
-const snapshot: AgentDefaultsSnapshot = {
-  agents: [],
-  selectionGroups: { global: [], project: [] },
-  registryRevision: 'registry-1',
-  defaults: { global: [], project: [] },
-  loadState: 'ready' as const,
-  loadRequestId: 1,
-  saveRequestId: 0,
-  saving: false,
-  error: null,
-};
-let currentSnapshot = snapshot;
 
 vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
@@ -35,24 +21,6 @@ vi.mock('@/stores/projects', () => ({
     loadStateByEnvironment: { 'wsl:ubuntu': projectLoadState },
     refresh: mockRefreshProjects,
   }),
-}));
-
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: (selector: (state: unknown) => unknown) => selector({
-    agentDefaultsByEnvironment: { 'wsl:ubuntu': currentSnapshot },
-    loadAgentDefaults: mockLoadAgentDefaults,
-  }),
-}));
-
-vi.mock('@/components/settings/InstallPreferencesPage', () => ({
-  InstallPreferencesPage: ({ environment, snapshot: selectedSnapshot }: {
-    environment: typeof ubuntu;
-    snapshot: typeof snapshot;
-  }) => (
-    <div>
-      environment:{environment.distro_name};state:{selectedSnapshot.loadState}
-    </div>
-  ),
 }));
 
 vi.mock('@/components/settings/AgentSettingsPage', () => ({
@@ -79,12 +47,10 @@ describe('SettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     projectLoadState = 'ready';
-    currentSnapshot = snapshot;
   });
 
   it('does not load inactive Settings section data', async () => {
     projectLoadState = 'idle';
-    currentSnapshot = { ...snapshot, loadState: 'idle' };
 
     render(
       <MemoryRouter initialEntries={['/settings']}>
@@ -94,18 +60,19 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByText('general-section')).toBeDefined();
     expect(mockRefreshProjects).not.toHaveBeenCalled();
-    expect(mockLoadAgentDefaults).not.toHaveBeenCalled();
   });
 
-  it('passes the selected environment snapshot to install preferences', async () => {
+  it('hides install preferences and falls back from its legacy section URL', async () => {
     render(
       <MemoryRouter initialEntries={['/settings?section=install-preferences']}>
         <SettingsPage />
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('environment:Ubuntu;state:ready')).toBeDefined();
-    await waitFor(() => expect(mockLoadAgentDefaults).not.toHaveBeenCalled());
+    expect(await screen.findByText('general-section')).toBeDefined();
+    expect(screen.queryByRole('button', {
+      name: 'settings.nav.installPreferences',
+    })).toBeNull();
   });
 
   it('opens Agent management as an independent settings subpage', async () => {

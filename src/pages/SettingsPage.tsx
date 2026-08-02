@@ -1,21 +1,18 @@
-import { lazy, Suspense, useEffect, useRef } from 'react';
+import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Settings2, SlidersHorizontal, GitBranch, FolderOpen, Info, Bot } from 'lucide-react';
+import { Settings2, GitBranch, FolderOpen, Info, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { environmentKey } from '@/lib/context';
-import { useSettingsStore, type AgentDefaultsSnapshot } from '@/stores/settings';
 import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
 
 const AboutTab = lazy(() => import('@/components/settings/AboutTab').then((module) => ({ default: module.AboutTab })));
 const GeneralTab = lazy(() => import('@/components/settings/GeneralTab').then((module) => ({ default: module.GeneralTab })));
 const GitSettingsPage = lazy(() => import('@/components/settings/GitSettingsPage').then((module) => ({ default: module.GitSettingsPage })));
-const InstallPreferencesPage = lazy(() => import('@/components/settings/InstallPreferencesPage').then((module) => ({ default: module.InstallPreferencesPage })));
 const ProjectsTab = lazy(() => import('@/components/settings/ProjectsTab').then((module) => ({ default: module.ProjectsTab })));
 const AgentSettingsPage = lazy(() => import('@/components/settings/AgentSettingsPage').then((module) => ({ default: module.AgentSettingsPage })));
 
-type SettingsSectionId = 'general' | 'agents' | 'install-preferences' | 'git' | 'projects' | 'about';
+type SettingsSectionId = 'general' | 'agents' | 'git' | 'projects' | 'about';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId;
@@ -33,11 +30,6 @@ const SETTINGS_SECTIONS: Array<{
     titleKey: 'settings.nav.agents',
   },
   {
-    id: 'install-preferences',
-    icon: SlidersHorizontal,
-    titleKey: 'settings.nav.installPreferences',
-  },
-  {
     id: 'git',
     icon: GitBranch,
     titleKey: 'settings.nav.git',
@@ -50,19 +42,7 @@ const SETTINGS_SECTIONS: Array<{
 ];
 
 const DEFAULT_SECTION: SettingsSectionId = 'general';
-const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'agents', 'install-preferences', 'git', 'projects', 'about'];
-
-const EMPTY_AGENT_DEFAULTS_SNAPSHOT: AgentDefaultsSnapshot = {
-  agents: [],
-  selectionGroups: { global: [], project: [] },
-  registryRevision: '',
-  defaults: { global: [], project: [] },
-  loadState: 'idle',
-  loadRequestId: 0,
-  saveRequestId: 0,
-  saving: false,
-  error: null,
-};
+const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'agents', 'git', 'projects', 'about'];
 
 function isSettingsSection(value: string | null): value is SettingsSectionId {
   return !!value && VALID_SECTION_IDS.includes(value as SettingsSectionId);
@@ -77,29 +57,6 @@ export function SettingsPage() {
     ? sectionParam
     : DEFAULT_SECTION;
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
-  const selectedEnvironmentKey = environmentKey(selectedContext.environment);
-  const agentDefaultsSnapshot = useSettingsStore(
-    (state) => state.agentDefaultsByEnvironment[selectedEnvironmentKey],
-  );
-  const loadAgentDefaults = useSettingsStore((state) => state.loadAgentDefaults);
-  const lastAgentDefaultsEnvironment = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (activeSection !== 'install-preferences') return;
-    if (lastAgentDefaultsEnvironment.current === selectedEnvironmentKey) return;
-    lastAgentDefaultsEnvironment.current = selectedEnvironmentKey;
-    if (!agentDefaultsSnapshot
-      || agentDefaultsSnapshot.loadState === 'idle'
-      || agentDefaultsSnapshot.loadState === 'error') {
-      void loadAgentDefaults(selectedContext.environment);
-    }
-  }, [
-    agentDefaultsSnapshot,
-    activeSection,
-    loadAgentDefaults,
-    selectedContext.environment,
-    selectedEnvironmentKey,
-  ]);
 
   const setSection = (sectionId: SettingsSectionId) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -133,13 +90,6 @@ export function SettingsPage() {
               }
               setSearchParams(nextParams, { replace: false });
             }}
-          />
-        );
-      case 'install-preferences':
-        return (
-          <InstallPreferencesPage
-            environment={selectedContext.environment}
-            snapshot={agentDefaultsSnapshot ?? EMPTY_AGENT_DEFAULTS_SNAPSHOT}
           />
         );
       case 'git':
