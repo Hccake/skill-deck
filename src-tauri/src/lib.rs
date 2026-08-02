@@ -199,7 +199,7 @@ pub fn run() {
             });
 
             let mutation_app_handle = app.handle().clone();
-            runtime.mutation().set_mutation_listener(move |snapshot| {
+            runtime.admission().set_mutation_listener(move |snapshot| {
                 if let Err(error) =
                     mutation_app_handle.emit(core::mutation::MUTATION_STATE_CHANGED_EVENT, snapshot)
                 {

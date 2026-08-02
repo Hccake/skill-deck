@@ -34,11 +34,9 @@ export function WslIntegrationSection() {
   if (!supported) return null;
 
   const changeSetting = async (nextEnabled: boolean) => {
-    try {
-      await changeWslIntegration(nextEnabled);
+    const outcome = await changeWslIntegration(nextEnabled);
+    if (outcome.status === 'succeeded') {
       setConfirmOpen(false);
-    } catch (error) {
-      console.error('Failed to update WSL integration setting:', error);
     }
   };
 

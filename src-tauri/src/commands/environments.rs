@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::application::environment_projects;
 use crate::environment::project_service;
 pub use crate::environment::project_service::EnvironmentDiscoverySnapshot;
 use crate::environment::types::{AddProjectResult, EnvironmentRef, ProjectInfo};
@@ -55,12 +56,12 @@ pub async fn add_environment_project(
     native_path: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<AddProjectResult, AppError> {
-    project_service::add_environment_project(
+    environment_projects::add_environment_project(
         environment,
         native_path,
         runtime.environments(),
         runtime.projects(),
-        runtime.mutation(),
+        runtime.admission(),
     )
     .await
 }
@@ -72,12 +73,12 @@ pub async fn remove_environment_project(
     project_id: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<Vec<ProjectInfo>, AppError> {
-    project_service::remove_environment_project(
+    environment_projects::remove_environment_project(
         environment,
         project_id,
         runtime.environments(),
         runtime.projects(),
-        runtime.mutation(),
+        runtime.admission(),
     )
     .await
 }
@@ -90,13 +91,13 @@ pub async fn set_environment_project_cross_storage_warning(
     suppressed: bool,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<ProjectInfo, AppError> {
-    project_service::set_environment_project_cross_storage_warning(
+    environment_projects::set_environment_project_cross_storage_warning(
         environment,
         project_id,
         suppressed,
         runtime.environments(),
         runtime.projects(),
-        runtime.mutation(),
+        runtime.admission(),
     )
     .await
 }
@@ -106,5 +107,5 @@ pub async fn set_environment_project_cross_storage_warning(
 pub fn retry_host_project_migration(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<Vec<ProjectInfo>, AppError> {
-    project_service::retry_host_project_migration(runtime.projects(), runtime.mutation())
+    environment_projects::retry_host_project_migration(runtime.projects(), runtime.admission())
 }

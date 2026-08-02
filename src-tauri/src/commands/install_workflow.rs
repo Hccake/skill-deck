@@ -23,7 +23,7 @@ pub async fn install_skills(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallResponse, AppError> {
     let guard = runtime
-        .mutation()
+        .admission()
         .begin_mutation(MutationKind::Install, request.context.clone())?;
     guard.transition(MutationPhase::Acquiring, None, true);
     runtime

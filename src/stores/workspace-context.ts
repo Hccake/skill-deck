@@ -18,13 +18,17 @@ export type WslIntegrationFailure = {
   error: AppError;
 };
 
+export type WslIntegrationChangeOutcome =
+  | { status: 'succeeded' }
+  | { status: 'failed'; failure: WslIntegrationFailure };
+
 export interface WorkspaceContextState {
   selectedContext: ContextRef;
   transition: WorkspaceTransition;
   wslIntegrationFailure: WslIntegrationFailure | null;
   contextRevision: number;
   switchEnvironment: (environment: EnvironmentRef) => Promise<void>;
-  changeWslIntegration: (enabled: boolean) => Promise<void>;
+  changeWslIntegration: (enabled: boolean) => Promise<WslIntegrationChangeOutcome>;
   clearWslIntegrationFailure: () => void;
   selectGlobal: () => void;
   selectProject: (projectId: string) => void;
@@ -82,7 +86,14 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
     },
 
     changeWslIntegration: async (enabled) => {
-      if (get().transition.kind !== 'idle') throw transitionConflict();
+      if (get().transition.kind !== 'idle') {
+        const failure: WslIntegrationFailure = {
+          stage: 'busy',
+          error: { kind: 'mutationBusy' },
+        };
+        set({ wslIntegrationFailure: failure });
+        return { status: 'failed', failure };
+      }
       const switchHost = !enabled
         && get().selectedContext.environment.kind === 'wsl';
       set({
@@ -97,13 +108,12 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
           try {
             await connectAndCommit(HOST);
           } catch (error) {
-            set({
-              wslIntegrationFailure: {
-                stage: 'switchHost',
-                error: toAppError(error),
-              },
-            });
-            throw error;
+            const failure: WslIntegrationFailure = {
+              stage: 'switchHost',
+              error: toAppError(error),
+            };
+            set({ wslIntegrationFailure: failure });
+            return { status: 'failed', failure };
           }
           set({ transition: { kind: 'wslIntegration', phase: 'disabling' } });
         }
@@ -112,14 +122,14 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
           await useEnvironmentStore.getState().setWslIntegrationEnabled(enabled);
         } catch (error) {
           const appError = toAppError(error);
-          set({
-            wslIntegrationFailure: {
-              stage: appError.kind === 'wslIntegrationBusy' ? 'busy' : 'persistSetting',
-              error: appError,
-            },
-          });
-          throw error;
+          const failure: WslIntegrationFailure = {
+            stage: appError.kind === 'wslIntegrationBusy' ? 'busy' : 'persistSetting',
+            error: appError,
+          };
+          set({ wslIntegrationFailure: failure });
+          return { status: 'failed', failure };
         }
+        return { status: 'succeeded' };
       } finally {
         set({ transition: { kind: 'idle' } });
       }

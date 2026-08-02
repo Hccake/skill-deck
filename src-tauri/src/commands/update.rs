@@ -65,7 +65,7 @@ async fn execute_update(
 ) -> Result<UpdateResponse, AppError> {
     let context = execution.request.context.clone();
     let guard = runtime
-        .mutation()
+        .admission()
         .begin_mutation(MutationKind::Update, context.clone())?;
     guard.transition(MutationPhase::Acquiring, None, true);
     let result = runtime

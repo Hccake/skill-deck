@@ -24,7 +24,7 @@ pub async fn copy_skill_to_projects(
 ) -> Result<CopyResponse, AppError> {
     let context = request.request.source.clone();
     let guard = runtime
-        .mutation()
+        .admission()
         .begin_mutation(MutationKind::Copy, context.clone())?;
     guard.transition(MutationPhase::Preparing, None, false);
     runtime.copy().execute(&request, guard.cancellation()).await

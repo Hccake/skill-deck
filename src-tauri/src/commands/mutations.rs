@@ -7,7 +7,7 @@ use crate::runtime::RuntimeServiceGraph;
 #[tauri::command]
 #[specta::specta]
 pub fn get_active_mutation(runtime: State<'_, RuntimeServiceGraph>) -> MutationSnapshot {
-    runtime.mutation().snapshot()
+    runtime.admission().snapshot()
 }
 
 #[tauri::command]
@@ -15,16 +15,16 @@ pub fn get_active_mutation(runtime: State<'_, RuntimeServiceGraph>) -> MutationS
 pub fn request_cancel_active_mutation(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<bool, AppError> {
-    runtime.mutation().request_cancel()
+    runtime.admission().request_cancel()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::core::mutation::SingleMutationController;
+    use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 
     #[test]
     fn new_controller_has_no_active_mutation() {
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let snapshot = controller.snapshot();
         assert_eq!(snapshot.revision, 0);
         assert!(snapshot.active.is_none());

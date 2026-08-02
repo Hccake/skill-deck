@@ -13,6 +13,7 @@ use tokio::time::Duration;
 
 #[cfg(target_os = "windows")]
 use crate::background_process::tokio_command;
+use crate::environment::path_mapping::map_wsl_input_without_wslpath;
 use crate::environment::types::{
     EnvironmentKey, EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus,
 };
@@ -187,16 +188,16 @@ impl EnvironmentRegistry {
         }
     }
 
-    pub(crate) fn with_wsl_access<T>(
+    pub fn map_input_without_process(
         &self,
         distro_name: &str,
-        action: impl FnOnce() -> Result<T, AppError>,
-    ) -> Result<T, AppError> {
+        path: &str,
+    ) -> Result<Option<String>, AppError> {
         let _permit = self.acquire_wsl_access(distro_name)?;
-        action()
+        map_wsl_input_without_wslpath(distro_name, path)
     }
 
-    pub(crate) async fn discover_using<Discover, DiscoveryFuture>(
+    async fn discover_with<Discover, DiscoveryFuture>(
         &self,
         discover: Discover,
     ) -> Result<Vec<String>, AppError>
@@ -208,7 +209,23 @@ impl EnvironmentRegistry {
         discover().await
     }
 
-    pub(crate) async fn connect_using<C, CFut>(
+    pub async fn discover(&self) -> Result<Vec<String>, AppError> {
+        self.discover_with(discover_wsl_distributions).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn discover_using<Discover, DiscoveryFuture>(
+        &self,
+        discover: Discover,
+    ) -> Result<Vec<String>, AppError>
+    where
+        Discover: FnOnce() -> DiscoveryFuture,
+        DiscoveryFuture: Future<Output = Result<Vec<String>, AppError>>,
+    {
+        self.discover_with(discover).await
+    }
+
+    async fn connect_with<C, CFut>(
         &self,
         distro_name: &str,
         mut connector: C,
@@ -223,6 +240,26 @@ impl EnvironmentRegistry {
         let mut session = connector(distro_name.to_string()).await?;
         self.insert_with_permit(&mut session, &permit)?;
         Ok(session)
+    }
+
+    pub async fn connect(&self, distro_name: &str) -> Result<WslSession, AppError> {
+        self.connect_with(distro_name, |distro_name| async move {
+            connect_wsl_environment(&distro_name).await
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn connect_using<C, CFut>(
+        &self,
+        distro_name: &str,
+        connector: C,
+    ) -> Result<WslSession, AppError>
+    where
+        C: FnMut(String) -> CFut,
+        CFut: Future<Output = Result<WslSession, AppError>>,
+    {
+        self.connect_with(distro_name, connector).await
     }
 
     pub fn insert(&self, mut session: WslSession) {
@@ -785,7 +822,7 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
 }
 
 #[cfg(target_os = "windows")]
-pub async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
+async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
     let mut command = tokio_command("wsl.exe");
     command.args(["--list", "--quiet"]);
     let outcome = match timeout(Duration::from_secs(10), command.output()).await {
@@ -801,12 +838,12 @@ pub async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
+async fn discover_wsl_distributions() -> Result<Vec<String>, AppError> {
     Ok(Vec::new())
 }
 
 #[cfg(target_os = "windows")]
-pub async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, AppError> {
+async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, AppError> {
     const SCRIPT: &str = include_str!("wsl/scripts/session.sh");
     let mut command = tokio_command("wsl.exe");
     command.args([
@@ -849,7 +886,7 @@ pub async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, Ap
 }
 
 #[cfg(not(target_os = "windows"))]
-pub async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, AppError> {
+async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, AppError> {
     Err(AppError::EnvironmentUnavailable {
         environment: EnvironmentRef::Wsl {
             distro_name: _distro_name.to_string(),

@@ -19,8 +19,17 @@ pub enum AdmissionDenied {
     ApplicationTerminating,
 }
 
+#[derive(Clone, Copy)]
+enum AdmissionIntent {
+    Mutation,
+    Lifecycle,
+    InstallWizard,
+    WslSettingChange,
+    ExclusiveAction,
+}
+
 impl AdmissionDenied {
-    fn as_legacy_error(self) -> AppError {
+    pub(crate) fn into_legacy_error(self) -> AppError {
         match self {
             Self::ApplicationTerminating => AppError::ApplicationTerminating,
             _ => AppError::MutationBusy,
@@ -81,6 +90,7 @@ struct AdmissionState {
     lifecycle: Option<LifecycleState>,
     wizard: WizardState,
     setting_token: Option<u64>,
+    exclusive_token: Option<u64>,
     termination_requested: bool,
 }
 
@@ -93,6 +103,7 @@ impl Default for AdmissionState {
             lifecycle: None,
             wizard: WizardState::Idle,
             setting_token: None,
+            exclusive_token: None,
             termination_requested: false,
         }
     }
@@ -114,26 +125,14 @@ pub struct RuntimeAdmissionCoordinator {
 }
 
 impl RuntimeAdmissionCoordinator {
-    #[cfg(test)]
-    pub fn begin(
-        &self,
-        kind: MutationKind,
-        context: ContextRef,
-    ) -> Result<MutationPermit, AppError> {
-        self.begin_mutation(kind, context)
-    }
-
     pub fn begin_mutation(
         &self,
         kind: MutationKind,
         context: ContextRef,
     ) -> Result<MutationPermit, AppError> {
         let mut state = self.lock_state();
-        self.ensure_process_running(&state)
-            .map_err(AdmissionDenied::as_legacy_error)?;
-        if state.mutation.is_some() || state.lifecycle.is_some() || state.setting_token.is_some() {
-            return Err(AppError::MutationBusy);
-        }
+        self.denial_for(&state, AdmissionIntent::Mutation)
+            .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
         let token = next_token(&mut state);
         let cancellation = CancellationSignal::default();
         state.revision = next_revision(state.revision);
@@ -161,11 +160,8 @@ impl RuntimeAdmissionCoordinator {
 
     pub fn begin_lifecycle(&self, kind: LifecycleLeaseKind) -> Result<LifecyclePermit, AppError> {
         let mut state = self.lock_state();
-        self.ensure_process_running(&state)
-            .map_err(AdmissionDenied::as_legacy_error)?;
-        if state.mutation.is_some() || state.lifecycle.is_some() || state.setting_token.is_some() {
-            return Err(AppError::MutationBusy);
-        }
+        self.denial_for(&state, AdmissionIntent::Lifecycle)
+            .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
         let token = next_token(&mut state);
         state.revision = next_revision(state.revision);
         state.lifecycle = Some(LifecycleState {
@@ -187,9 +183,8 @@ impl RuntimeAdmissionCoordinator {
         observed_window: WizardWindowPresence,
     ) -> Result<WizardAdmission, AdmissionDenied> {
         let mut state = self.lock_state();
-        self.ensure_process_running(&state)?;
-        if state.setting_token.is_some() {
-            return Err(AdmissionDenied::WslSettingChange);
+        if let Some(denied) = self.denial_for(&state, AdmissionIntent::InstallWizard) {
+            return Err(denied);
         }
 
         match observed_window {
@@ -272,18 +267,8 @@ impl RuntimeAdmissionCoordinator {
 
     pub fn begin_wsl_integration_change(&self) -> Result<SettingPermit, AdmissionDenied> {
         let mut state = self.lock_state();
-        self.ensure_process_running(&state)?;
-        if state.mutation.is_some() {
-            return Err(AdmissionDenied::Mutation);
-        }
-        if state.lifecycle.is_some() {
-            return Err(AdmissionDenied::Lifecycle);
-        }
-        if !matches!(state.wizard, WizardState::Idle) {
-            return Err(AdmissionDenied::InstallWizard);
-        }
-        if state.setting_token.is_some() {
-            return Err(AdmissionDenied::WslSettingChange);
+        if let Some(denied) = self.denial_for(&state, AdmissionIntent::WslSettingChange) {
+            return Err(denied);
         }
         let token = next_token(&mut state);
         state.setting_token = Some(token);
@@ -337,11 +322,13 @@ impl RuntimeAdmissionCoordinator {
         if state.mutation.is_some()
             || state.lifecycle.is_some()
             || state.setting_token.is_some()
+            || state.exclusive_token.is_some()
             || matches!(state.wizard, WizardState::Reserved { .. })
         {
             return TerminationAdmission::Blocked(activity_snapshot_from_state(&state));
         }
         state.termination_requested = true;
+        state.revision = next_revision(state.revision);
         TerminationAdmission::Acquired
     }
 
@@ -349,10 +336,21 @@ impl RuntimeAdmissionCoordinator {
         &self,
         action: impl FnOnce() -> T,
     ) -> Result<T, Box<BackendActivitySnapshot>> {
-        let state = self.lock_state();
-        if state.mutation.is_some() || state.lifecycle.is_some() || state.setting_token.is_some() {
+        let mut state = self.lock_state();
+        if self
+            .denial_for(&state, AdmissionIntent::ExclusiveAction)
+            .is_some()
+        {
             return Err(Box::new(activity_snapshot_from_state(&state)));
         }
+        let token = next_token(&mut state);
+        state.exclusive_token = Some(token);
+        state.revision = next_revision(state.revision);
+        drop(state);
+        let _permit = ExclusivePermit {
+            inner: Arc::clone(&self.inner),
+            token,
+        };
         Ok(action())
     }
 
@@ -365,11 +363,6 @@ impl RuntimeAdmissionCoordinator {
             .mutation_listener
             .lock()
             .expect("mutation listener lock poisoned") = Some(Arc::new(listener));
-    }
-
-    #[cfg(test)]
-    pub fn set_listener(&self, listener: impl Fn(MutationSnapshot) + Send + Sync + 'static) {
-        self.set_mutation_listener(listener);
     }
 
     #[cfg(test)]
@@ -399,11 +392,59 @@ impl RuntimeAdmissionCoordinator {
         }
     }
 
-    fn ensure_process_running(&self, state: &AdmissionState) -> Result<(), AdmissionDenied> {
+    fn denial_for(
+        &self,
+        state: &AdmissionState,
+        intent: AdmissionIntent,
+    ) -> Option<AdmissionDenied> {
         if state.termination_requested {
-            Err(AdmissionDenied::ApplicationTerminating)
-        } else {
-            Ok(())
+            return Some(AdmissionDenied::ApplicationTerminating);
+        }
+        match intent {
+            AdmissionIntent::Mutation | AdmissionIntent::Lifecycle => {
+                if state.mutation.is_some() {
+                    Some(AdmissionDenied::Mutation)
+                } else if state.lifecycle.is_some() || state.exclusive_token.is_some() {
+                    Some(AdmissionDenied::Lifecycle)
+                } else if state.setting_token.is_some() {
+                    Some(AdmissionDenied::WslSettingChange)
+                } else {
+                    None
+                }
+            }
+            AdmissionIntent::InstallWizard => {
+                if state.setting_token.is_some() {
+                    Some(AdmissionDenied::WslSettingChange)
+                } else if state.exclusive_token.is_some() {
+                    Some(AdmissionDenied::Lifecycle)
+                } else {
+                    None
+                }
+            }
+            AdmissionIntent::WslSettingChange => {
+                if state.mutation.is_some() {
+                    Some(AdmissionDenied::Mutation)
+                } else if state.lifecycle.is_some() || state.exclusive_token.is_some() {
+                    Some(AdmissionDenied::Lifecycle)
+                } else if !matches!(state.wizard, WizardState::Idle) {
+                    Some(AdmissionDenied::InstallWizard)
+                } else if state.setting_token.is_some() {
+                    Some(AdmissionDenied::WslSettingChange)
+                } else {
+                    None
+                }
+            }
+            AdmissionIntent::ExclusiveAction => {
+                if state.mutation.is_some() {
+                    Some(AdmissionDenied::Mutation)
+                } else if state.lifecycle.is_some() || state.exclusive_token.is_some() {
+                    Some(AdmissionDenied::Lifecycle)
+                } else if state.setting_token.is_some() {
+                    Some(AdmissionDenied::WslSettingChange)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -588,6 +629,24 @@ pub struct SettingPermit {
     token: u64,
 }
 
+struct ExclusivePermit {
+    inner: Arc<AdmissionInner>,
+    token: u64,
+}
+
+impl Drop for ExclusivePermit {
+    fn drop(&mut self) {
+        let coordinator = RuntimeAdmissionCoordinator {
+            inner: Arc::clone(&self.inner),
+        };
+        let mut state = coordinator.lock_state();
+        if state.exclusive_token == Some(self.token) {
+            state.exclusive_token = None;
+            state.revision = next_revision(state.revision);
+        }
+    }
+}
+
 impl fmt::Debug for SettingPermit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -749,4 +808,44 @@ mod tests {
         assert!(admission.install_wizard_snapshot().active);
         assert_eq!(admission.wizard_instance_id().as_deref(), Some("wizard-1"));
     }
+
+    #[test]
+    fn idle_action_runs_without_holding_the_admission_lock() {
+        let admission = RuntimeAdmissionCoordinator::default();
+
+        let result = admission.with_idle(|| {
+            assert!(matches!(
+                admission.begin_mutation(MutationKind::Install, host_global()),
+                Err(AppError::MutationBusy)
+            ));
+            admission.mutation_snapshot().revision
+        });
+
+        assert_eq!(result, Ok(1));
+        assert_eq!(admission.mutation_snapshot().revision, 2);
+        admission
+            .begin_mutation(MutationKind::Install, host_global())
+            .expect("exclusive action released admission");
+    }
+
+    #[test]
+    fn exclusive_action_and_setting_change_conflict_in_both_directions() {
+        let admission = RuntimeAdmissionCoordinator::default();
+        admission
+            .with_idle(|| {
+                assert_eq!(
+                    admission.begin_wsl_integration_change().unwrap_err(),
+                    AdmissionDenied::Lifecycle
+                );
+            })
+            .expect("exclusive action");
+
+        let _setting = admission
+            .begin_wsl_integration_change()
+            .expect("setting change");
+        assert!(admission.with_idle(|| ()).is_err());
+    }
 }
+
+#[cfg(test)]
+mod mutation_tests;

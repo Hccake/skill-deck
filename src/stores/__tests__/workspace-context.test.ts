@@ -182,7 +182,60 @@ describe('useWorkspaceContextStore', () => {
     });
 
     persisting.resolve();
-    await disabling;
+    await expect(disabling).resolves.toEqual({ status: 'succeeded' });
     expect(useWorkspaceContextStore.getState().transition).toEqual({ kind: 'idle' });
+  });
+
+  it('returns the failing stage and skips persistence when Host switching fails', async () => {
+    useWorkspaceContextStore.setState({
+      selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
+    });
+    vi.spyOn(useEnvironmentStore.getState(), 'connect')
+      .mockRejectedValue(new Error('host unavailable'));
+    const setEnabled = vi.spyOn(useEnvironmentStore.getState(), 'setWslIntegrationEnabled');
+
+    const outcome = await useWorkspaceContextStore.getState().changeWslIntegration(false);
+
+    expect(outcome).toEqual({
+      status: 'failed',
+      failure: {
+        stage: 'switchHost',
+        error: { kind: 'custom', data: { message: 'host unavailable' } },
+      },
+    });
+    expect(setEnabled).not.toHaveBeenCalled();
+    expect(useWorkspaceContextStore.getState().transition).toEqual({ kind: 'idle' });
+  });
+
+  it('returns a structured backend busy result', async () => {
+    const error = {
+      kind: 'wslIntegrationBusy' as const,
+      data: { reason: 'wslOperation' as const },
+    };
+    vi.spyOn(useEnvironmentStore.getState(), 'setWslIntegrationEnabled').mockRejectedValue(error);
+
+    await expect(
+      useWorkspaceContextStore.getState().changeWslIntegration(true),
+    ).resolves.toEqual({
+      status: 'failed',
+      failure: { stage: 'busy', error },
+    });
+    expect(useWorkspaceContextStore.getState().transition).toEqual({ kind: 'idle' });
+  });
+
+  it('returns a structured busy result when another workspace transition owns admission', async () => {
+    const connecting = deferred<void>();
+    vi.spyOn(useEnvironmentStore.getState(), 'connect').mockReturnValue(connecting.promise);
+
+    const switching = useWorkspaceContextStore.getState().switchEnvironment(ubuntu);
+    await expect(
+      useWorkspaceContextStore.getState().changeWslIntegration(false),
+    ).resolves.toEqual({
+      status: 'failed',
+      failure: { stage: 'busy', error: { kind: 'mutationBusy' } },
+    });
+
+    connecting.resolve();
+    await switching;
   });
 });

@@ -27,9 +27,15 @@ describe('formatAppError', () => {
 
   it.each<[AppError, string]>([
     [{ kind: 'applicationTerminating' }, 'addSkill.error.applicationTerminating'],
+    [{ kind: 'wslIntegrationBusy', data: { reason: 'mutation' } }, 'settings.general.wslBusyMutation'],
+    [{ kind: 'wslIntegrationBusy', data: { reason: 'lifecycle' } }, 'settings.general.wslBusyLifecycle'],
     [
       { kind: 'wslIntegrationBusy', data: { reason: 'installWizard' } },
       'settings.general.wslBusyInstallWizard',
+    ],
+    [
+      { kind: 'wslIntegrationBusy', data: { reason: 'wslOperation' } },
+      'settings.general.wslBusyOperation',
     ],
     [{ kind: 'mutationCancelled' }, 'addSkill.error.mutationCancelled'],
     [

@@ -1,10 +1,9 @@
 use serde::Serialize;
 use specta::Type;
+#[cfg(test)]
 use std::future::Future;
 
-use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
 use crate::core::app_config::get_config_path;
-use crate::core::mutation::MutationKind;
 use crate::core::projects::{
     add_project_binding, migrate_legacy_projects, normalize_project_native_path,
     remove_project_binding, set_project_cross_storage_warning_suppressed, ProjectMigrationRegistry,
@@ -19,9 +18,7 @@ use crate::environment::types::{
     ProjectStorageInfo, StorageAccess,
 };
 use crate::environment::wsl::operations::projects;
-use crate::environment::wsl::{
-    connect_wsl_environment, discover_wsl_distributions, EnvironmentRegistry, WslSession,
-};
+use crate::environment::wsl::{EnvironmentRegistry, WslSession};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -110,6 +107,7 @@ fn environment_infos_from_wsl_discovery(
     }
 }
 
+#[cfg(test)]
 async fn list_environments_with<Discover, DiscoveryFuture>(
     registry: &EnvironmentRegistry,
     wsl_integration_supported: bool,
@@ -152,23 +150,28 @@ fn host_only_environment_snapshot(
 pub async fn list_environments(
     registry: &EnvironmentRegistry,
 ) -> Result<EnvironmentDiscoverySnapshot, AppError> {
-    Ok(list_environments_with(
-        registry,
-        cfg!(target_os = "windows"),
-        discover_wsl_distributions,
-    )
-    .await)
+    let supported = cfg!(target_os = "windows");
+    if !supported || !registry.wsl_integration_enabled() {
+        return Ok(host_only_environment_snapshot(
+            supported,
+            registry.capability_revision(),
+        ));
+    }
+    let discovered = registry.discover().await;
+    if !registry.wsl_integration_enabled() {
+        return Ok(host_only_environment_snapshot(
+            supported,
+            registry.capability_revision(),
+        ));
+    }
+    Ok(environment_infos_from_wsl_discovery(discovered, registry))
 }
 
 pub async fn connect_environment(
     distro_name: String,
     registry: &EnvironmentRegistry,
 ) -> Result<WslSession, AppError> {
-    registry
-        .connect_using(&distro_name, |distro_name| async move {
-            connect_wsl_environment(&distro_name).await
-        })
-        .await
+    registry.connect(&distro_name).await
 }
 
 pub async fn map_environment_path(
@@ -182,9 +185,7 @@ pub async fn map_environment_path(
             ProjectPathSemantics::host(),
         )),
         EnvironmentRef::Wsl { distro_name } => {
-            if let Some(mapped) = registry.with_wsl_access(&distro_name, || {
-                map_wsl_input_without_wslpath(&distro_name, &path)
-            })? {
+            if let Some(mapped) = registry.map_input_without_process(&distro_name, &path)? {
                 return Ok(mapped);
             }
             registry
@@ -283,24 +284,6 @@ async fn wsl_project_infos(
     projects::project_infos(session, bindings).await
 }
 
-fn begin_project_mutation(
-    controller: &RuntimeAdmissionCoordinator,
-    kind: MutationKind,
-    environment: EnvironmentRef,
-    project_id: Option<&str>,
-) -> Result<MutationPermit, AppError> {
-    let scope = project_id.map_or(
-        crate::environment::types::ContextScope::Global,
-        |project_id| crate::environment::types::ContextScope::Project {
-            project_id: project_id.to_string(),
-        },
-    );
-    controller.begin_mutation(
-        kind,
-        crate::environment::types::ContextRef { environment, scope },
-    )
-}
-
 pub(crate) async fn read_wsl_projects(
     session: &WslSession,
 ) -> Result<Vec<crate::environment::types::ProjectBinding>, AppError> {
@@ -339,14 +322,7 @@ pub async fn add_environment_project(
     native_path: String,
     registry: &EnvironmentRegistry,
     migration: &ProjectMigrationRegistry,
-    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<AddProjectResult, AppError> {
-    let _guard = begin_project_mutation(
-        controller,
-        MutationKind::AddProject,
-        environment.clone(),
-        None,
-    )?;
     match environment {
         EnvironmentRef::Host => {
             let result = ensure_host_projects_ready(migration)?.add(native_path)?;
@@ -395,14 +371,7 @@ pub async fn remove_environment_project(
     project_id: String,
     registry: &EnvironmentRegistry,
     migration: &ProjectMigrationRegistry,
-    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<Vec<ProjectInfo>, AppError> {
-    let _guard = begin_project_mutation(
-        controller,
-        MutationKind::RemoveProject,
-        environment.clone(),
-        Some(&project_id),
-    )?;
     match environment {
         EnvironmentRef::Host => Ok(host_project_infos(
             ensure_host_projects_ready(migration)?.remove(&project_id)?,
@@ -430,14 +399,7 @@ pub async fn set_environment_project_cross_storage_warning(
     suppressed: bool,
     registry: &EnvironmentRegistry,
     migration: &ProjectMigrationRegistry,
-    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<ProjectInfo, AppError> {
-    let _guard = begin_project_mutation(
-        controller,
-        MutationKind::UpdateProjectPreference,
-        environment.clone(),
-        Some(&project_id),
-    )?;
     match environment {
         EnvironmentRef::Host => {
             let projects = ensure_host_projects_ready(migration)?
@@ -472,13 +434,7 @@ pub async fn set_environment_project_cross_storage_warning(
 
 pub fn retry_host_project_migration(
     migration: &ProjectMigrationRegistry,
-    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<Vec<ProjectInfo>, AppError> {
-    let context = crate::environment::types::ContextRef {
-        environment: EnvironmentRef::Host,
-        scope: crate::environment::types::ContextScope::Global,
-    };
-    let _guard = controller.begin_mutation(MutationKind::ProjectMigration, context)?;
     match run_host_project_migration() {
         Ok(state) => {
             migration.set(state);
@@ -501,11 +457,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        begin_project_mutation, environment_infos_from_wsl_discovery, host_environment_info,
+        environment_infos_from_wsl_discovery, host_environment_info,
         host_project_info_for_platform, host_projects_store_from_config, list_environments_with,
         map_environment_path, parse_wsl_project_storage,
     };
-    use crate::core::mutation::{MutationKind, SingleMutationController};
     use crate::environment::types::{
         EnvironmentRef, EnvironmentStatus, ProjectBinding, StorageAccess,
     };
@@ -731,55 +686,5 @@ mod tests {
         assert_eq!(fs::read(&config_path).expect("read config"), original);
         assert!(!temp.path().join("projects.json").exists());
         assert_eq!(fs::read_dir(temp.path()).expect("list files").count(), 1);
-    }
-
-    #[test]
-    fn project_mutation_captures_environment_and_scope() {
-        let controller = SingleMutationController::default();
-        let environment = EnvironmentRef::Wsl {
-            distro_name: "Ubuntu".to_string(),
-        };
-        let guard = begin_project_mutation(
-            &controller,
-            MutationKind::RemoveProject,
-            environment.clone(),
-            Some("project-1"),
-        )
-        .expect("begin project mutation");
-
-        let active = controller.snapshot().active.expect("active mutation");
-        assert_eq!(active.context.environment, environment);
-        assert_eq!(
-            active.context.scope,
-            crate::environment::types::ContextScope::Project {
-                project_id: "project-1".to_string(),
-            }
-        );
-        assert!(!active.cancelable);
-        drop(guard);
-    }
-
-    #[test]
-    fn project_mutation_is_rejected_while_another_write_is_active() {
-        let controller = SingleMutationController::default();
-        let _guard = controller
-            .begin(
-                MutationKind::Install,
-                crate::environment::types::ContextRef {
-                    environment: EnvironmentRef::Host,
-                    scope: crate::environment::types::ContextScope::Global,
-                },
-            )
-            .expect("begin install");
-
-        assert!(matches!(
-            begin_project_mutation(
-                &controller,
-                MutationKind::AddProject,
-                EnvironmentRef::Host,
-                None,
-            ),
-            Err(AppError::MutationBusy)
-        ));
     }
 }

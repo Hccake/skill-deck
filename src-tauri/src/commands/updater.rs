@@ -135,7 +135,7 @@ pub async fn download_and_install_application_update(
     progress: Channel<ApplicationUpdateProgress>,
 ) -> Result<ApplicationUpdateResult, AppError> {
     download_and_install_with(
-        runtime.mutation(),
+        runtime.admission(),
         &TauriApplicationUpdater { app },
         &expected_version,
         Arc::new(move |event| {
@@ -186,14 +186,15 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::core::mutation::{MutationKind, SingleMutationController};
+    use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
+    use crate::core::mutation::MutationKind;
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 
     struct FakeUpdater {
         version: String,
         installed: Arc<Mutex<bool>>,
         observed_lease: Arc<Mutex<bool>>,
-        controller: Arc<SingleMutationController>,
+        controller: Arc<RuntimeAdmissionCoordinator>,
     }
 
     impl ApplicationUpdater for FakeUpdater {
@@ -218,7 +219,8 @@ mod tests {
                 *self.observed_lease.lock().unwrap() =
                     self.controller.activity_snapshot().lifecycle.is_some();
                 assert!(matches!(
-                    self.controller.begin(MutationKind::Install, host_global()),
+                    self.controller
+                        .begin_mutation(MutationKind::Install, host_global()),
                     Err(AppError::MutationBusy)
                 ));
                 *self.installed.lock().unwrap() = true;
@@ -229,7 +231,7 @@ mod tests {
 
     #[tokio::test]
     async fn combined_update_holds_one_backend_lease_until_install_returns() {
-        let controller = Arc::new(SingleMutationController::default());
+        let controller = Arc::new(RuntimeAdmissionCoordinator::default());
         let installed = Arc::new(Mutex::new(false));
         let observed_lease = Arc::new(Mutex::new(false));
         let updater = FakeUpdater {
@@ -252,7 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn version_mismatch_does_not_install() {
-        let controller = Arc::new(SingleMutationController::default());
+        let controller = Arc::new(RuntimeAdmissionCoordinator::default());
         let installed = Arc::new(Mutex::new(false));
         let updater = FakeUpdater {
             version: "2.0.1".to_string(),

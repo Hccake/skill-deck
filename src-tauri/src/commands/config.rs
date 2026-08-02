@@ -58,7 +58,7 @@ pub async fn save_default_target_agents(
         expected_registry_revision,
         runtime.environments(),
         runtime.agents(),
-        runtime.mutation(),
+        runtime.admission(),
     )
     .await
 }

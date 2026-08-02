@@ -1346,6 +1346,7 @@ mod tests {
     use std::sync::{Arc, Barrier};
 
     use super::*;
+    use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
     use crate::core::agent_definition::{
         AgentFieldError, AgentId, CustomAgentDefinition, CustomPathBase, CustomPathSpec,
         CustomScopeDefinition, ScopeLocation,
@@ -1354,7 +1355,7 @@ mod tests {
     use crate::core::custom_agent_repository::{CustomAgentFile, CustomAgentRepository};
     use crate::core::lock_repository::LockTarget;
     use crate::core::lossless_lock::LockSchema;
-    use crate::core::mutation::{MutationKind, SingleMutationController};
+    use crate::core::mutation::MutationKind;
     use crate::environment::agent_environment::{
         AgentEnvironmentResolver, DetectionState, EnvironmentContext,
     };
@@ -2456,7 +2457,7 @@ mod tests {
             custom_definition("kept-agent", ".kept-agent"),
         )]);
         let service = ManagedAgentRegistry::from_repository(repository);
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let environments = EnvironmentRegistry::default();
         let revision = service.registry_snapshot(true).revision.clone();
 
@@ -2492,7 +2493,7 @@ mod tests {
     fn invalid_save_preflight_does_not_publish_mutation_state() {
         let (_temp, repository) = repository_with_records(Vec::new());
         let service = ManagedAgentRegistry::from_repository(repository);
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let mut invalid = custom_definition("invalid-agent", ".invalid-agent");
         invalid.display_name = "   ".to_string();
 
@@ -2523,13 +2524,13 @@ mod tests {
         let (_temp, repository) = repository_with_records(Vec::new());
         let repository_path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
         let _guard = controller
-            .begin(MutationKind::Install, context.clone())
+            .begin_mutation(MutationKind::Install, context.clone())
             .expect("occupy controller");
         let controller_revision = controller.snapshot().revision;
         let repository_before = std::fs::read(&repository_path).expect("repository bytes");
@@ -2576,13 +2577,13 @@ mod tests {
         let (_temp, repository) = repository_with_records(vec![CustomAgentRecord::valid(source)]);
         let repository_path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
         let _guard = controller
-            .begin(MutationKind::Install, context.clone())
+            .begin_mutation(MutationKind::Install, context.clone())
             .expect("occupy controller");
         let controller_revision = controller.snapshot().revision;
         let repository_before = std::fs::read(&repository_path).expect("repository bytes");
@@ -2625,13 +2626,13 @@ mod tests {
         let (_temp, repository) = repository_with_records(vec![invalid]);
         let path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
         let _guard = controller
-            .begin(MutationKind::Install, context.clone())
+            .begin_mutation(MutationKind::Install, context.clone())
             .expect("occupy controller");
         let before = std::fs::read(&path).expect("repository bytes");
 
@@ -2660,13 +2661,13 @@ mod tests {
         };
         let service =
             ManagedAgentRegistry::from_repository_initializer(|| Err(expected_error.clone()));
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
         let _guard = controller
-            .begin(MutationKind::Install, context.clone())
+            .begin_mutation(MutationKind::Install, context.clone())
             .expect("occupy controller");
         let controller_revision = controller.snapshot().revision;
 
@@ -2701,7 +2702,7 @@ mod tests {
         let (temp, repository) = repository_with_records(vec![CustomAgentRecord::valid(source)]);
         let repository_path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
@@ -2712,7 +2713,7 @@ mod tests {
         std::fs::write(&lock_path, br#"{"version":3,"skills":{}}"#).expect("lock fixture");
         let barrier = Arc::new(Barrier::new(2));
         let guard = controller
-            .begin(MutationKind::SaveAgentDefaults, context.clone())
+            .begin_mutation(MutationKind::SaveAgentDefaults, context.clone())
             .expect("defaults guard");
 
         let save_error = std::thread::scope(|scope| {

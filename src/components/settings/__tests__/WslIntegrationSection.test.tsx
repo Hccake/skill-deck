@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     scope: { scope: 'global' },
   } as ContextRef,
   writeBlocked: false,
-  changeWslIntegration: vi.fn(async (_enabled: boolean): Promise<void> => undefined),
+  changeWslIntegration: vi.fn(async (_enabled: boolean) => ({ status: 'succeeded' as const })),
   clearFailure: vi.fn(),
 }));
 
@@ -54,7 +54,7 @@ describe('WslIntegrationSection', () => {
       scope: { scope: 'global' },
     };
     mocks.writeBlocked = false;
-    mocks.changeWslIntegration.mockResolvedValue(undefined);
+    mocks.changeWslIntegration.mockResolvedValue({ status: 'succeeded' });
   });
 
   it('does not render outside Windows', () => {

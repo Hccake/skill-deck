@@ -68,7 +68,7 @@ pub fn execute_lifecycle_action(
     action: LifecycleAction,
 ) -> Result<LifecycleActionOutcome, AppError> {
     if action == LifecycleAction::CloseCurrentWindow {
-        return match runtime.mutation().with_idle(|| window.destroy()) {
+        return match runtime.admission().with_idle(|| window.destroy()) {
             Ok(Ok(())) => Ok(LifecycleActionOutcome::Performed),
             Ok(Err(error)) => Err(AppError::Io {
                 message: error.to_string(),
@@ -79,7 +79,7 @@ pub fn execute_lifecycle_action(
         };
     }
 
-    match runtime.mutation().request_termination() {
+    match runtime.admission().request_termination() {
         TerminationAdmission::Blocked(snapshot) => {
             let wizard = app.get_webview_window(INSTALL_WIZARD_LABEL);
             if resolve_blocked_route(action, window.label(), wizard.is_some())

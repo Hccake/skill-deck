@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::install_wizard_session::InstallWizardSessionSnapshot;
 use crate::application::runtime_admission::{
-    AdmissionDenied, RuntimeAdmissionCoordinator, WizardAdmission, WizardWindowObservation,
-    WizardWindowPresence,
+    RuntimeAdmissionCoordinator, WizardAdmission, WizardWindowObservation, WizardWindowPresence,
 };
 use crate::error::AppError;
 
@@ -57,7 +56,7 @@ impl InstallWizardWorkflow {
             match self
                 .admission
                 .admit_install_wizard(observed)
-                .map_err(admission_error)?
+                .map_err(|error| error.into_legacy_error())?
             {
                 WizardAdmission::Existing { instance_id } => {
                     self.set_tracked_instance(Some(instance_id.clone()));
@@ -138,13 +137,6 @@ impl InstallWizardWorkflow {
             .tracked_instance
             .lock()
             .expect("install wizard instance lock poisoned") = instance_id;
-    }
-}
-
-fn admission_error(error: AdmissionDenied) -> AppError {
-    match error {
-        AdmissionDenied::ApplicationTerminating => AppError::ApplicationTerminating,
-        _ => AppError::MutationBusy,
     }
 }
 

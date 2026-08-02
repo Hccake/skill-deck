@@ -21,7 +21,7 @@ pub async fn cleanup_duplicate_agent_copies(
             skill_name,
             agents,
             runtime.remove(),
-            runtime.mutation(),
+            runtime.admission(),
         )
         .await
 }

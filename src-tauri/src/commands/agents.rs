@@ -71,7 +71,7 @@ pub fn save_custom_agent(
         original_id,
         expected_registry_revision,
         runtime.agents(),
-        runtime.mutation(),
+        runtime.admission(),
     )
 }
 
@@ -88,7 +88,7 @@ pub async fn delete_custom_agent(
         id,
         expected_registry_revision,
         runtime.agents(),
-        runtime.mutation(),
+        runtime.admission(),
         runtime.environments(),
     )
     .await
@@ -107,7 +107,7 @@ pub async fn delete_invalid_custom_agent(
         index,
         expected_registry_revision,
         runtime.agents(),
-        runtime.mutation(),
+        runtime.admission(),
     )
     .await
 }

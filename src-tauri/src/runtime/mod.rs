@@ -178,10 +178,6 @@ impl RuntimeServiceGraph {
         &self.projects
     }
 
-    pub fn mutation(&self) -> &RuntimeAdmissionCoordinator {
-        self.admission.as_ref()
-    }
-
     pub fn admission(&self) -> &RuntimeAdmissionCoordinator {
         self.admission.as_ref()
     }

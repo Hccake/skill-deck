@@ -23,7 +23,7 @@ pub async fn remove_skill(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<RemoveResponse, AppError> {
     let guard = runtime
-        .mutation()
+        .admission()
         .begin_mutation(MutationKind::Remove, request.context.clone())?;
     guard.transition(MutationPhase::Preparing, None, false);
     runtime
