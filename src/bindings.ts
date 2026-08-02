@@ -73,14 +73,6 @@ async previewCustomAgentDelete(context: ContextRef, id: AgentId, expectedRegistr
     else return { status: "error", error: e  as any };
 }
 },
-async duplicateCustomAgentDraft(sourceId: AgentId, newId: AgentId) : Promise<Result<CustomAgentDefinition, AgentCommandError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("duplicate_custom_agent_draft", { sourceId, newId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async listEveInstallTargets(context: ContextRef) : Promise<Result<InstallTargetInfo[], AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_eve_install_targets", { context }) };

@@ -531,10 +531,8 @@
       "backToList": "返回 Agent 列表",
       "edit": "编辑 Agent",
       "editNamed": "编辑 {{name}}",
-      "duplicate": "复制",
+      "deleteNamed": "删除 {{name}}",
       "delete": "删除",
-      "moreActions": "更多操作",
-      "moreActionsNamed": "{{name}} 的更多操作",
       "copyPath": "复制路径",
       "pathRule": "路径规则",
       "listLabel": "Agent 列表",
@@ -546,13 +544,11 @@
       "form": {
         "title": {
           "create": "创建自定义 Agent",
-          "edit": "编辑自定义 Agent",
-          "duplicate": "复制自定义 Agent"
+          "edit": "编辑自定义 Agent"
         },
         "action": {
           "create": "创建 Agent",
-          "edit": "保存",
-          "duplicate": "创建副本"
+          "edit": "保存"
         }
       },
       "sourceFilter": {
@@ -594,6 +590,7 @@
       "customEmpty": "没有符合当前搜索条件的自定义 Agent。",
       "needsAttentionTitle": "需要处理",
       "conflictsTitle": "定义冲突",
+      "builtinConflict": "与内置 Agent {{name}} 使用相同 ID，当前自定义定义未生效。",
       "invalidTitle": "无效的自定义定义",
       "saved": "Agent 已保存",
       "loadError": "无法加载 Agent 定义。",
@@ -601,7 +598,6 @@
       "refreshError": "无法刷新 Agent 定义，当前仍显示上一次读取的数据。",
       "runtimeError": "无法解析当前 Environment 中的 Agent 路径和检测状态。定义仍可查看。",
       "saveError": "Agent 保存失败",
-      "duplicateError": "复制 Agent 定义失败",
       "deletePreviewError": "无法检查删除此 Agent 定义的影响",
       "deletePreviewLoading": "正在检查删除影响…",
       "retryDeletePreview": "重新检查",

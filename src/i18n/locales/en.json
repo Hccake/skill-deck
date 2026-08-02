@@ -531,10 +531,8 @@
       "backToList": "Back to Agent list",
       "edit": "Edit Agent",
       "editNamed": "Edit {{name}}",
-      "duplicate": "Duplicate",
+      "deleteNamed": "Delete {{name}}",
       "delete": "Delete",
-      "moreActions": "More actions",
-      "moreActionsNamed": "More actions for {{name}}",
       "copyPath": "Copy path",
       "pathRule": "Path rule",
       "listLabel": "Agent list",
@@ -546,13 +544,11 @@
       "form": {
         "title": {
           "create": "Create Custom Agent",
-          "edit": "Edit Custom Agent",
-          "duplicate": "Duplicate Custom Agent"
+          "edit": "Edit Custom Agent"
         },
         "action": {
           "create": "Create Agent",
-          "edit": "Save",
-          "duplicate": "Create Copy"
+          "edit": "Save"
         }
       },
       "sourceFilter": {
@@ -594,6 +590,7 @@
       "customEmpty": "No custom Agents match the current search.",
       "needsAttentionTitle": "Needs attention",
       "conflictsTitle": "Definition conflicts",
+      "builtinConflict": "Uses the same ID as built-in Agent {{name}}. This custom definition is inactive.",
       "invalidTitle": "Invalid custom definitions",
       "saved": "Agent saved",
       "loadError": "Unable to load Agent definitions.",
@@ -601,7 +598,6 @@
       "refreshError": "Unable to refresh Agent definitions. Previously loaded data remains visible.",
       "runtimeError": "Unable to resolve Agent paths and detection for the current Environment. Definitions remain available.",
       "saveError": "Failed to save Agent",
-      "duplicateError": "Failed to duplicate Agent definition",
       "deletePreviewError": "Could not inspect the effects of deleting this Agent definition",
       "deletePreviewLoading": "Checking what this deletion will affect…",
       "retryDeletePreview": "Retry preview",

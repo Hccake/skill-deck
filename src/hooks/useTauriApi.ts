@@ -100,13 +100,6 @@ export async function saveCustomAgent(
   ));
 }
 
-export async function duplicateCustomAgentDraft(
-  sourceId: AgentId,
-  newId: AgentId,
-): Promise<CustomAgentDefinition> {
-  return unwrap(await commands.duplicateCustomAgentDraft(sourceId, newId));
-}
-
 export async function previewCustomAgentDelete(
   context: ContextRef,
   id: AgentId,

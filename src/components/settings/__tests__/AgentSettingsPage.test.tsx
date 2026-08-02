@@ -46,13 +46,9 @@ function openCustomEditor() {
   fireEvent.click(screen.getByRole('button', { name: 'settings.agents.editNamed' }));
 }
 
-function selectCustomMenuAction(name: string) {
+function selectCustomDeleteAction() {
   selectCustomTab();
-  fireEvent.pointerDown(screen.getByRole('button', { name: 'settings.agents.moreActionsNamed' }), {
-    button: 0,
-    ctrlKey: false,
-  });
-  fireEvent.click(screen.getByRole('menuitem', { name }));
+  fireEvent.click(screen.getByRole('button', { name: 'settings.agents.deleteNamed' }));
 }
 
 const context = { environment: { kind: 'host' }, scope: { scope: 'global' } } as const;
@@ -100,7 +96,6 @@ const actions = {
     _originalId?: unknown,
     _revision?: unknown,
   ) => undefined),
-  duplicateDraft: vi.fn(),
   loadDeleteImpact: vi.fn(async () => ({
     agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
     environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
@@ -1173,7 +1168,7 @@ describe('AgentSettingsPage', () => {
   it('previews definition-only deletion before confirming', async () => {
     render(<AgentSettingsPage context={context} />);
 
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
 
     await screen.findByText('settings.agents.deleteFilesSafe');
     expect(actions.loadDeleteImpact).toHaveBeenCalledWith(context, 'my-agent', 'registry-1');
@@ -1205,7 +1200,7 @@ describe('AgentSettingsPage', () => {
     } as never);
     render(<AgentSettingsPage context={projectContext} />);
 
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
 
     expect(await screen.findByText(
       'settings.agents.deletePathUnavailableReasons.projectContextRequired',
@@ -1231,7 +1226,7 @@ describe('AgentSettingsPage', () => {
     actions.loadDeleteImpact.mockImplementation(() => new Promise(() => undefined));
     render(<AgentSettingsPage context={context} />);
 
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
 
     expect(screen.getByText('settings.agents.deleteTitle')).toBeDefined();
     expect(screen.getByRole('status').textContent)
@@ -1248,7 +1243,7 @@ describe('AgentSettingsPage', () => {
       });
     render(<AgentSettingsPage context={context} />);
 
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
 
     expect((await screen.findByRole('alert')).textContent)
       .toContain('settings.agents.deletePreviewError');
@@ -1262,7 +1257,7 @@ describe('AgentSettingsPage', () => {
       .mockRejectedValueOnce(new Error('delete failed'))
       .mockResolvedValueOnce([]);
     render(<AgentSettingsPage context={context} />);
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
     await screen.findByText('settings.agents.deleteFilesSafe');
     const confirmation = screen.getByLabelText('settings.agents.deleteConfirmId') as HTMLInputElement;
     fireEvent.change(confirmation, { target: { value: 'my-agent' } });
@@ -1292,7 +1287,7 @@ describe('AgentSettingsPage', () => {
       kind: 'staleRegistryRevision', expected: 'registry-1', actual: 'registry-2',
     });
     render(<AgentSettingsPage context={context} />);
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
     await screen.findByText('settings.agents.deleteFilesSafe');
     const confirmation = screen.getByLabelText('settings.agents.deleteConfirmId') as HTMLInputElement;
     fireEvent.change(confirmation, { target: { value: 'my-agent' } });
@@ -1329,36 +1324,6 @@ describe('AgentSettingsPage', () => {
 
     expect(await screen.findByText('settings.agents.validation.invalidAgentId')).toBeDefined();
     expect(document.activeElement).toBe(idInput);
-  });
-
-  it('keeps a duplicate draft intact when its generated ID conflicts at save time', async () => {
-    actions.duplicateDraft.mockResolvedValue({
-      ...snapshot.activeCustom[0].definition,
-      id: 'my-agent-copy',
-    });
-    actions.validateDraft.mockResolvedValue({} as never);
-    actions.saveDraft.mockRejectedValue({
-      kind: 'invalidDraft',
-      errors: [{ field: 'id', code: 'duplicateAgentId' }],
-    });
-    render(<AgentSettingsPage context={context} />);
-    selectCustomMenuAction('settings.agents.duplicate');
-    const name = await screen.findByLabelText('settings.agents.fields.displayName');
-    fireEvent.change(name, { target: { value: 'Reviewed Copy' } });
-
-    fireEvent.click(screen.getByRole('button', {
-      name: 'settings.agents.form.action.duplicate',
-    }));
-
-    expect(await screen.findByText('settings.agents.validation.duplicateAgentId')).toBeDefined();
-    expect(screen.getByDisplayValue('Reviewed Copy')).toBeDefined();
-    expect(screen.getByDisplayValue('my-agent-copy')).toBeDefined();
-    expect(actions.saveDraft).toHaveBeenCalledWith(
-      context,
-      expect.objectContaining({ id: 'my-agent-copy' }),
-      null,
-      'registry-1',
-    );
   });
 
   it('keeps background validation errors hidden until the draft changes or save is attempted', async () => {
@@ -1546,7 +1511,7 @@ describe('AgentSettingsPage', () => {
     } as never);
     actions.deleteAgent.mockResolvedValue([{ code: 'defaultCleanupFailed' }] as never);
     render(<AgentSettingsPage context={context} />);
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
 
     expect(await screen.findByText('/home/me/.my-agent/skills')).toBeDefined();
     expect(screen.getByText('settings.agents.deleteObservedSkillCount')).toBeDefined();
@@ -1655,12 +1620,13 @@ describe('AgentSettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'settings.agents.stale.reload' })).toBeNull();
   });
 
-  it('makes card details keyboard reachable and labels actions with the Agent name', async () => {
+  it('shows direct named edit and delete actions without an overflow menu', async () => {
     render(<AgentSettingsPage context={context} />);
     selectCustomTab();
 
     expect(screen.getByRole('button', { name: 'settings.agents.editNamed' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'settings.agents.moreActionsNamed' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'settings.agents.deleteNamed' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'settings.agents.moreActionsNamed' })).toBeNull();
     expect(screen.getByLabelText('settings.agents.preview.detection.loading').getAttribute('tabindex')).toBe('0');
     expect(screen.getByText('~/.my-agent').getAttribute('tabindex')).toBe('0');
     expect(screen.getByText('+1').getAttribute('tabindex')).toBe('0');
@@ -1700,7 +1666,7 @@ describe('AgentSettingsPage', () => {
     expect(screen.getByRole('article').textContent).toContain('Codex');
   });
 
-  it('shows conflicts and invalid records in Needs attention with recovery actions', async () => {
+  it('explains disabled conflicts and offers deletion without a recovery action', async () => {
     registryState.snapshot = {
       ...structuredClone(snapshot),
       disabledConflicts: [{
@@ -1714,10 +1680,6 @@ describe('AgentSettingsPage', () => {
         errors: [{ field: 'displayName', code: 'required' }],
       }],
     };
-    actions.duplicateDraft.mockResolvedValue({
-      ...snapshot.activeCustom[0].definition,
-      id: 'my-agent-copy',
-    });
     render(<AgentSettingsPage context={context} />);
 
     const needsAttention = screen.getByText('settings.agents.needsAttentionTitle');
@@ -1727,27 +1689,23 @@ describe('AgentSettingsPage', () => {
     expect(needsAttention.compareDocumentPosition(customTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('broken-agent')).toBeDefined();
     expect(screen.getByText('settings.agents.validation.required')).toBeDefined();
-    fireEvent.click(screen.getAllByLabelText('settings.agents.duplicate')[0]);
-    await waitFor(() => expect(actions.duplicateDraft).toHaveBeenCalledWith(
+    expect(screen.getByText('settings.agents.builtinConflict')).toBeDefined();
+    expect(screen.queryByLabelText('settings.agents.duplicate')).toBeNull();
+
+    fireEvent.click(screen.getAllByLabelText('settings.agents.deleteNamed')[0]);
+
+    await waitFor(() => expect(actions.loadDeleteImpact).toHaveBeenCalledWith(
+      context,
       'my-agent',
-      'my-agent-copy',
+      'registry-1',
     ));
-    expect(screen.getByRole('heading', { name: 'settings.agents.form.title.duplicate' })).toBeDefined();
-    expect(screen.queryByRole('list', { name: 'settings.agents.listLabel' })).toBeNull();
   });
 
-  it('reports duplicate failures and keeps delete-preview failures retryable', async () => {
-    actions.duplicateDraft.mockRejectedValueOnce(new Error('duplicate failed'));
+  it('keeps delete-preview failures retryable', async () => {
     actions.loadDeleteImpact.mockRejectedValueOnce(new Error('preview failed'));
     render(<AgentSettingsPage context={context} />);
 
-    selectCustomMenuAction('settings.agents.duplicate');
-    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith(
-      'settings.agents.duplicateError',
-    ));
-    expect((screen.getByRole('button', { name: 'settings.agents.moreActionsNamed' }) as HTMLButtonElement).disabled).toBe(false);
-
-    selectCustomMenuAction('settings.agents.delete');
+    selectCustomDeleteAction();
     expect((await screen.findByRole('alert')).textContent)
       .toContain('settings.agents.deletePreviewError');
     expect((screen.getByRole('button', {

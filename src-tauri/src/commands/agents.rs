@@ -132,16 +132,6 @@ pub async fn preview_custom_agent_delete(
 
 #[tauri::command]
 #[specta::specta]
-pub fn duplicate_custom_agent_draft(
-    source_id: AgentId,
-    new_id: AgentId,
-    runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<CustomAgentDefinition, AgentCommandError> {
-    agents::duplicate_custom_agent_draft(source_id, new_id, runtime.agents())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn list_eve_install_targets(
     context: ContextRef,
     runtime: State<'_, RuntimeServiceGraph>,

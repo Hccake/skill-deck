@@ -30,7 +30,6 @@ const { mockCommands } = vi.hoisted(() => ({
     getAgentSettingsSnapshot: vi.fn(),
     validateCustomAgentDraft: vi.fn(),
     saveCustomAgent: vi.fn(),
-    duplicateCustomAgentDraft: vi.fn(),
     previewCustomAgentDelete: vi.fn(),
     deleteCustomAgent: vi.fn(),
     deleteInvalidCustomAgent: vi.fn(),
@@ -61,7 +60,6 @@ import {
   getAgentSettingsSnapshot,
   validateCustomAgentDraft,
   saveCustomAgent,
-  duplicateCustomAgentDraft,
   previewCustomAgentDelete,
   deleteCustomAgent,
   deleteInvalidCustomAgent,
@@ -313,7 +311,6 @@ describe('useTauriApi unwrap logic', () => {
       data: { registryRevision: 'registry-1', environmentRevision: 'environment-1', environment: context.environment, resolved: {} },
     });
     mockCommands.saveCustomAgent.mockResolvedValue({ status: 'ok', data: settings });
-    mockCommands.duplicateCustomAgentDraft.mockResolvedValue({ status: 'ok', data: draft });
     mockCommands.previewCustomAgentDelete.mockResolvedValue({ status: 'ok', data: impact });
     mockCommands.deleteCustomAgent.mockResolvedValue({ status: 'ok', data: deletion });
     mockCommands.deleteInvalidCustomAgent.mockResolvedValue({ status: 'ok', data: deletion });
@@ -322,14 +319,12 @@ describe('useTauriApi unwrap logic', () => {
       registryRevision: 'registry-1',
     });
     await expect(saveCustomAgent(context, draft, null, 'registry-1')).resolves.toEqual(settings);
-    await expect(duplicateCustomAgentDraft('my-agent', 'my-agent-copy')).resolves.toEqual(draft);
     await expect(previewCustomAgentDelete(context, 'my-agent', 'registry-1')).resolves.toEqual(impact);
     await expect(deleteCustomAgent(context, 'my-agent', 'registry-1')).resolves.toEqual(deletion);
     await expect(deleteInvalidCustomAgent(context, 0, 'registry-1')).resolves.toEqual(deletion);
 
     expect(mockCommands.validateCustomAgentDraft).toHaveBeenCalledWith(context, draft);
     expect(mockCommands.saveCustomAgent).toHaveBeenCalledWith(context, draft, null, 'registry-1');
-    expect(mockCommands.duplicateCustomAgentDraft).toHaveBeenCalledWith('my-agent', 'my-agent-copy');
     expect(mockCommands.previewCustomAgentDelete).toHaveBeenCalledWith(context, 'my-agent', 'registry-1');
     expect(mockCommands.deleteCustomAgent).toHaveBeenCalledWith(context, 'my-agent', 'registry-1');
     expect(mockCommands.deleteInvalidCustomAgent).toHaveBeenCalledWith(context, 0, 'registry-1');

@@ -46,7 +46,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
   listAgents: vi.fn(),
   validateCustomAgentDraft: vi.fn(),
   saveCustomAgent: vi.fn(),
-  duplicateCustomAgentDraft: vi.fn(),
   previewCustomAgentDelete: vi.fn(),
   deleteCustomAgent: vi.fn(),
   deleteInvalidCustomAgent: vi.fn(),

@@ -12,7 +12,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "delete_custom_agent",
     "delete_invalid_custom_agent",
     "download_and_install_application_update",
-    "duplicate_custom_agent_draft",
     "execute_lifecycle_action",
     "fetch_available",
     "focus_install_wizard",

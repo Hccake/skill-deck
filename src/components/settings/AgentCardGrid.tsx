@@ -2,9 +2,7 @@ import {
   CheckCircle2,
   Circle,
   CircleHelp,
-  Copy,
   Loader2,
-  MoreHorizontal,
   Pencil,
   Plus,
   Trash2,
@@ -12,12 +10,6 @@ import {
 import { useTranslation } from 'react-i18next';
 import { AgentIcon } from '@/components/agents/AgentIcon';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type {
@@ -45,7 +37,6 @@ interface AgentCardGridProps {
   onClearQuery: () => void;
   onAddCustom: () => void;
   onEdit: (definition: CustomAgentDefinition) => void;
-  onDuplicate: (definition: CustomAgentDefinition) => void;
   onDelete: (definition: CustomAgentDefinition) => void;
 }
 
@@ -314,14 +305,12 @@ function AgentCard({
   runtimeState,
   actionsDisabled,
   onEdit,
-  onDuplicate,
   onDelete,
 }: {
   item: AgentListItem;
   runtimeState: AgentCardGridProps['runtimeState'];
   actionsDisabled: boolean;
   onEdit: () => void;
-  onDuplicate: () => void;
   onDelete: () => void;
 }) {
   const { t } = useTranslation();
@@ -376,39 +365,37 @@ function AgentCard({
           </Tooltip>
           {item.customDefinition ? (
             <div className="flex items-center gap-0.5">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                disabled={actionsDisabled}
-                aria-label={t('settings.agents.editNamed', { name: item.definition.displayName })}
-                onClick={onEdit}
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-xs"
                     disabled={actionsDisabled}
-                    aria-label={t('settings.agents.moreActionsNamed', { name: item.definition.displayName })}
+                    aria-label={t('settings.agents.editNamed', { name: item.definition.displayName })}
+                    onClick={onEdit}
                   >
-                    <MoreHorizontal className="h-4 w-4" />
+                    <Pencil className="h-3.5 w-3.5" />
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={onDuplicate}>
-                    <Copy className="h-4 w-4" />
-                    {t('settings.agents.duplicate')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
-                    <Trash2 className="h-4 w-4" />
-                    {t('settings.agents.delete')}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                </TooltipTrigger>
+                <TooltipContent>{t('settings.agents.editNamed', { name: item.definition.displayName })}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+                    disabled={actionsDisabled}
+                    aria-label={t('settings.agents.deleteNamed', { name: item.definition.displayName })}
+                    onClick={onDelete}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('settings.agents.deleteNamed', { name: item.definition.displayName })}</TooltipContent>
+              </Tooltip>
             </div>
           ) : null}
         </div>
@@ -502,7 +489,6 @@ export function AgentCardGrid({
   onClearQuery,
   onAddCustom,
   onEdit,
-  onDuplicate,
   onDelete,
 }: AgentCardGridProps) {
   const { t } = useTranslation();
@@ -563,7 +549,6 @@ export function AgentCardGrid({
             actionsDisabled={actionsDisabled}
             runtimeState={runtimeState}
             onEdit={() => item.customDefinition && onEdit(item.customDefinition)}
-            onDuplicate={() => item.customDefinition && onDuplicate(item.customDefinition)}
             onDelete={() => item.customDefinition && onDelete(item.customDefinition)}
           />
         </div>

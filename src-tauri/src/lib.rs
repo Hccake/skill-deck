@@ -39,7 +39,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::agents::delete_custom_agent,
             commands::agents::delete_invalid_custom_agent,
             commands::agents::preview_custom_agent_delete,
-            commands::agents::duplicate_custom_agent_draft,
             commands::agents::list_eve_install_targets,
             commands::skills::list_skills,
             commands::skills::read_skill_content,
@@ -316,5 +315,11 @@ mod command_surface_tests {
     #[test]
     fn registered_commands_match_the_app_manifest_inventory() {
         assert_eq!(registered_commands(), app_manifest_commands());
+    }
+
+    #[test]
+    fn removed_agent_definition_duplication_is_not_exported() {
+        assert!(!registered_commands().contains("duplicate_custom_agent_draft"));
+        assert!(!app_manifest_commands().contains("duplicate_custom_agent_draft"));
     }
 }

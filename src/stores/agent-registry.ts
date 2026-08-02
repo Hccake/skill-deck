@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import {
-  duplicateCustomAgentDraft,
   getAgentSettingsSnapshot,
   listAgents,
   previewCustomAgentDelete,
@@ -30,7 +29,6 @@ interface AgentRegistryApi {
   getAgentSettingsSnapshot: typeof getAgentSettingsSnapshot;
   listAgents: typeof listAgents;
   validateCustomAgentDraft: typeof validateCustomAgentDraft;
-  duplicateCustomAgentDraft: typeof duplicateCustomAgentDraft;
   previewCustomAgentDelete: typeof previewCustomAgentDelete;
 }
 
@@ -44,7 +42,6 @@ interface AgentRegistryState {
     draft: CustomAgentDefinition,
     lane?: 'background' | 'submit',
   ) => Promise<CustomAgentDraftValidation | null>;
-  duplicateDraft: (sourceId: AgentId, newId: AgentId) => Promise<CustomAgentDefinition>;
   loadDeleteImpact: (
     context: ContextRef,
     id: AgentId,
@@ -59,7 +56,6 @@ const api: AgentRegistryApi = {
   getAgentSettingsSnapshot,
   listAgents,
   validateCustomAgentDraft,
-  duplicateCustomAgentDraft,
   previewCustomAgentDelete,
 };
 
@@ -188,8 +184,6 @@ export function createAgentRegistryStore(overrides: Partial<AgentRegistryApi> = 
           throw error;
         }
       },
-
-      duplicateDraft: async (sourceId, newId) => client.duplicateCustomAgentDraft(sourceId, newId),
 
       loadDeleteImpact: async (context, id, revision) => {
         const generationKey = `delete-impact:${deleteImpactContextAgentKey(context, id)}`;

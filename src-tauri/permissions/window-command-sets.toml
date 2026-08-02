@@ -33,7 +33,6 @@ permissions = [
   "allow-delete-custom-agent",
   "allow-delete-invalid-custom-agent",
   "allow-download-and-install-application-update",
-  "allow-duplicate-custom-agent-draft",
   "allow-focus-install-wizard",
   "allow-get-agent-settings-snapshot",
   "allow-get-config",

@@ -58,10 +58,12 @@ describe('Agent Skill directory copy', () => {
       privateAriaLabel: '{{scope}}: reads this Agent\'s Skill directory',
       bothAriaLabel: '{{scope}}: reads the shared Skill directory and this Agent\'s Skill directory',
     });
-    expect(zhCN.settings.agents.duplicate).toBe('复制');
     expect(zhCN.settings.agents.delete).toBe('删除');
-    expect(en.settings.agents.duplicate).toBe('Duplicate');
     expect(en.settings.agents.delete).toBe('Delete');
+    expect(zhCN.settings.agents).not.toHaveProperty('duplicate');
+    expect(en.settings.agents).not.toHaveProperty('duplicate');
+    expect(zhCN.settings.agents.form.title).not.toHaveProperty('duplicate');
+    expect(en.settings.agents.form.title).not.toHaveProperty('duplicate');
     expect(zhCN.settings.agents.detection).toMatchObject({
       cardLabel: '检测',
       cardTooltip: 'Agent 安装检测路径',

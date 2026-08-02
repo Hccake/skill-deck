@@ -440,22 +440,6 @@ impl ManagedAgentRegistry {
             Arc::new(AgentRegistry::new(file.records));
         Ok(())
     }
-
-    fn duplicate_draft(
-        &self,
-        source_id: &AgentId,
-        new_id: AgentId,
-    ) -> Result<CustomAgentDefinition, AgentCommandError> {
-        let repository = self.repository()?;
-        if self.registry().snapshot().get(&new_id).is_some() {
-            return Err(AgentCommandError::InvalidDraft {
-                errors: vec![AgentFieldError::new("id", "duplicateAgentId")],
-            });
-        }
-        repository
-            .duplicate_draft(source_id, new_id)
-            .map_err(AgentCommandError::from)
-    }
 }
 
 fn validate_draft(definition: &CustomAgentDefinition) -> Result<(), AgentCommandError> {
@@ -848,14 +832,6 @@ where
     Ok((defaults, runtime, inspections))
 }
 
-pub fn duplicate_custom_agent_draft(
-    source_id: AgentId,
-    new_id: AgentId,
-    registry: &ManagedAgentRegistry,
-) -> Result<CustomAgentDefinition, AgentCommandError> {
-    duplicate_custom_agent_draft_inner(registry, source_id, new_id)
-}
-
 fn settings_snapshot(
     registry: &ManagedAgentRegistry,
     environment: EnvironmentRef,
@@ -1243,14 +1219,6 @@ fn delete_preview_snapshot(
         revision: revision.to_string(),
         active_definitions: BTreeMap::from([(normalized.id.clone(), normalized)]),
     })
-}
-
-fn duplicate_custom_agent_draft_inner(
-    registry: &ManagedAgentRegistry,
-    source_id: AgentId,
-    new_id: AgentId,
-) -> Result<CustomAgentDefinition, AgentCommandError> {
-    registry.duplicate_draft(&source_id, new_id)
 }
 
 fn host_environment_context(resolved: &ResolvedContext) -> EnvironmentContext {
@@ -1705,12 +1673,6 @@ mod tests {
         )
         .await
         .expect("read-only validation remains available");
-        let duplicate_error = duplicate_custom_agent_draft_inner(
-            &service,
-            AgentId::parse("unavailable-source").unwrap(),
-            AgentId::parse("codex").unwrap(),
-        )
-        .expect_err("custom records are unavailable");
         let expected_error = AppError::ConfigurationReadOnly;
         let expected_command_error = AgentCommandError::Application {
             error: expected_error.clone(),
@@ -1763,7 +1725,6 @@ mod tests {
             .values()
             .all(|agent| agent.definition.source == AgentSource::Builtin));
         assert_eq!(validation.resolved.definition.id.as_str(), "preview-agent");
-        assert_eq!(duplicate_error, expected_command_error);
         assert_eq!(invalid_save_error, expected_command_error);
         assert_eq!(collision_save_error, expected_command_error);
         assert_eq!(save_error, expected_command_error);
@@ -1804,12 +1765,6 @@ mod tests {
         )
         .await
         .expect_err("path failure blocks validation");
-        let duplicate_error = duplicate_custom_agent_draft_inner(
-            &service,
-            AgentId::parse("missing-source").unwrap(),
-            AgentId::parse("copy-agent").unwrap(),
-        )
-        .expect_err("path failure blocks duplicate");
         let save_error = save_custom_agent_inner(
             &service,
             EnvironmentRef::Host,
@@ -1842,7 +1797,6 @@ mod tests {
         assert_eq!(first_runtime.registry_revision, settings.registry_revision);
         assert_eq!(second_runtime.registry_revision, settings.registry_revision);
         assert_eq!(validation_error, expected_command_error);
-        assert_eq!(duplicate_error, expected_command_error);
         assert_eq!(save_error, expected_command_error);
         assert_eq!(delete_error, expected_command_error);
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Plus, Search, Trash2, X } from 'lucide-react';
+import { Plus, Search, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { AgentIcon } from '@/components/agents/AgentIcon';
@@ -10,7 +10,6 @@ import {
 } from './AgentDefinitionForm';
 import {
   createAgentDraft,
-  retargetDefaultAgentPaths,
   updateAgentDraft,
 } from './agent-definition-draft';
 import { filterAgentItems, type AgentListItem } from './agent-settings-presentation';
@@ -28,6 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { environmentKey } from '@/lib/context';
@@ -127,7 +127,6 @@ export function AgentSettingsPage({
   const snapshot = useAgentRegistryStore((state) => state.settingsByEnvironment[key]);
   const loadSettings = useAgentRegistryStore((state) => state.loadSettings);
   const validateDraft = useAgentRegistryStore((state) => state.validateDraft);
-  const duplicateDraft = useAgentRegistryStore((state) => state.duplicateDraft);
   const loadDeleteImpact = useAgentRegistryStore((state) => state.loadDeleteImpact);
   const businessWriteBlocked = useBusinessWriteBlocked();
 
@@ -445,26 +444,6 @@ export function AgentSettingsPage({
     }
   };
 
-  const duplicate = async (definition: CustomAgentDefinition) => {
-    const action = `duplicate:${definition.id}`;
-    if (readOnly || pendingSecondaryAction) return;
-    setPendingSecondaryAction(action);
-    const nextId = `${definition.id}-copy`;
-    try {
-      const duplicated = await duplicateDraft(definition.id, nextId);
-      const nextDraft = retargetDefaultAgentPaths(duplicated, definition.id, duplicated.id);
-      handledRouteDraftKey.current = 'new';
-      setSource('custom');
-      setQuery('');
-      openDraftSession(nextDraft, 'duplicate', null);
-      onNavigate?.('new');
-    } catch {
-      toast.error(t('settings.agents.duplicateError'));
-    } finally {
-      setPendingSecondaryAction((current) => current === action ? null : current);
-    }
-  };
-
   const loadDeletePreview = async (definition: CustomAgentDefinition, revision: string) => {
     const requestId = ++deletePreviewRequestId.current;
     const action = `delete-preview:${definition.id}`;
@@ -668,25 +647,27 @@ export function AgentSettingsPage({
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{conflict.definition.displayName}</p>
                 <p className="truncate text-xs text-muted-foreground">{conflict.definition.id}</p>
+                <p className="mt-1 text-xs leading-5 text-warning">
+                  {t('settings.agents.builtinConflict', { name: conflict.builtin.displayName })}
+                </p>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={readOnly || pendingSecondaryAction !== null}
-                aria-label={t('settings.agents.duplicate')}
-                onClick={() => void duplicate(conflict.definition)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={readOnly || pendingSecondaryAction !== null}
-                aria-label={t('settings.agents.delete')}
-                onClick={() => void previewDelete(conflict.definition)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+                    disabled={readOnly || pendingSecondaryAction !== null}
+                    aria-label={t('settings.agents.deleteNamed', { name: conflict.definition.displayName })}
+                    onClick={() => void previewDelete(conflict.definition)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t('settings.agents.deleteNamed', { name: conflict.definition.displayName })}
+                </TooltipContent>
+              </Tooltip>
             </div>
           ))}
           {data.invalidCustomRecords.map((record) => (
@@ -845,7 +826,6 @@ export function AgentSettingsPage({
           onClearQuery={() => setQuery('')}
           onAddCustom={startNew}
           onEdit={edit}
-          onDuplicate={(definition) => void duplicate(definition)}
           onDelete={(definition) => void previewDelete(definition)}
         />
       </div>

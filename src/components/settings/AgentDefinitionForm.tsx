@@ -462,7 +462,7 @@ export function AgentDefinitionForm({
   );
 }
 
-export type AgentDefinitionFormMode = 'create' | 'edit' | 'duplicate';
+export type AgentDefinitionFormMode = 'create' | 'edit';
 
 interface AgentDefinitionFormPageProps extends Omit<AgentDefinitionFormProps, 'disabled' | 'idReadOnly'> {
   mode: AgentDefinitionFormMode;

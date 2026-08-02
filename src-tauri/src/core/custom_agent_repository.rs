@@ -182,27 +182,6 @@ impl CustomAgentRepository {
         self.save(&file)?;
         Ok(file)
     }
-
-    pub fn duplicate_draft(
-        &self,
-        source_id: &AgentId,
-        new_id: AgentId,
-    ) -> Result<CustomAgentDefinition, AppError> {
-        let file = self.load()?;
-        let mut definition = file
-            .records
-            .iter()
-            .find_map(|record| {
-                record_definition(record).filter(|definition| &definition.id == source_id)
-            })
-            .cloned()
-            .ok_or_else(|| AppError::InvalidAgent {
-                agent: source_id.to_string(),
-            })?;
-        definition.id = new_id;
-        definition.validate().map_err(invalid_definition_error)?;
-        Ok(definition)
-    }
 }
 
 fn record_definition(record: &CustomAgentRecord) -> Option<&CustomAgentDefinition> {
@@ -1161,48 +1140,5 @@ mod tests {
         ));
         assert_eq!(repository.load().expect("reload repository"), saved);
         assert_eq!(fs::read_to_string(marker).expect("read marker"), "keep me");
-    }
-
-    #[test]
-    fn duplicate_draft_changes_only_the_id_without_persisting() {
-        let temp = tempdir().expect("tempdir");
-        let repository = CustomAgentRepository::new(temp.path().join("custom-agents.json"));
-        let source = definition("source-agent");
-        repository
-            .save(&file(vec![CustomAgentRecord::valid(source.clone())]))
-            .expect("save source");
-
-        let draft = repository
-            .duplicate_draft(
-                &source.id,
-                AgentId::parse("source-agent-copy").expect("copy ID"),
-            )
-            .expect("duplicate draft");
-
-        assert_eq!(draft.id.as_str(), "source-agent-copy");
-        assert_eq!(draft.display_name, source.display_name);
-        assert_eq!(repository.load().unwrap().valid_records().count(), 1);
-    }
-
-    #[test]
-    fn duplicate_draft_finds_a_source_after_other_records() {
-        let temp = tempdir().expect("tempdir");
-        let repository = CustomAgentRepository::new(temp.path().join("custom-agents.json"));
-        repository
-            .save(&file(vec![
-                CustomAgentRecord::valid(definition("first-agent")),
-                CustomAgentRecord::valid(definition("source-agent")),
-            ]))
-            .expect("save sources");
-
-        let draft = repository
-            .duplicate_draft(
-                &AgentId::parse("source-agent").unwrap(),
-                AgentId::parse("source-agent-copy").unwrap(),
-            )
-            .expect("duplicate second record");
-
-        assert_eq!(draft.id.as_str(), "source-agent-copy");
-        assert_eq!(draft.display_name, "source-agent display");
     }
 }

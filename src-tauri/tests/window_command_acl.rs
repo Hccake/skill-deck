@@ -269,6 +269,13 @@ fn assert_denied(result: Result<Value, Value>, command: &str) {
 }
 
 #[test]
+fn permission_sets_do_not_export_removed_agent_definition_duplication() {
+    let permission_sets = include_str!("../permissions/window-command-sets.toml");
+
+    assert!(!permission_sets.contains("allow-duplicate-custom-agent-draft"));
+}
+
+#[test]
 fn main_window_allows_skill_repair_commands() {
     let app = test_app();
     let main = window(&app, "main");

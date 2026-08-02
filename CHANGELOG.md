@@ -5,6 +5,18 @@ All notable changes to Skill Deck will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **安装向导窗口协作** — 安装向导打开期间，主窗口保持业务只读并提供返回向导入口；未知 Agent 作为不可用目标保留，用户关闭向导并在 Settings 创建定义后重新发起安装。
+- **Agent 管理与安装目标** — Agent 编辑器改为独立子页面；自定义 Agent 只保留创建、编辑和删除，卡片直接提供具名的编辑与删除图标，ID 冲突记录明确说明当前定义未生效；Settings 不再提供单独的默认安装目标页面，每次安装仍可在向导中确认目标。
+
+### Fixed
+
+- **安装向导搜索与恢复** — 安装向导可以在限域权限内搜索 `skills.sh`；主窗口在事件监听失败后仍核对 Backend 状态，并可在重新获得焦点或用户重试时恢复监听。
+- **Agent 管理可靠性** — 保存校验不再被后台校验竞态取消；新建 Agent 的并发 ID 冲突显示字段错误并保留草稿；删除预览使用当前 Context，并明确显示无法解析的 Project 影响。
+
 ## [1.7.0-beta.2] - 2026-07-27
 
 ### Added
