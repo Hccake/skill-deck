@@ -797,7 +797,7 @@ mod tests {
             environment_variables: BTreeMap::new(),
             availability: EnvironmentStatus::Available,
             revision: "skill-tests-host".to_string(),
-            wsl_session: None,
+            wsl_workspace: None,
         });
         tauri::async_runtime::block_on(
             resolver.resolve_registry(registry.snapshot(), Some(project_path)),

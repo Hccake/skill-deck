@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use tokio::time::Duration;
 
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
 };
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
 use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
 
@@ -18,12 +18,25 @@ const READ_OPERATION: WslOperationDescriptor = wsl_operation("atomic-file", "rea
 const WRITE_OPERATION: WslOperationDescriptor = wsl_operation("atomic-file", "write", WRITE_SCRIPT);
 
 pub struct WslAtomicDocumentIo {
-    session: WslSession,
+    access: WslAtomicDocumentAccess,
+}
+
+enum WslAtomicDocumentAccess {
+    Workspace(WslWorkspace),
+    Session(WslSession),
 }
 
 impl WslAtomicDocumentIo {
-    pub fn new(session: WslSession) -> Self {
-        Self { session }
+    pub fn new(workspace: WslWorkspace) -> Self {
+        Self {
+            access: WslAtomicDocumentAccess::Workspace(workspace),
+        }
+    }
+
+    pub(crate) fn from_active_session(session: WslSession) -> Self {
+        Self {
+            access: WslAtomicDocumentAccess::Session(session),
+        }
     }
 
     async fn run(
@@ -33,26 +46,40 @@ impl WslAtomicDocumentIo {
         stdin: Vec<u8>,
         stdout_limit: usize,
     ) -> Result<Vec<u8>, AppError> {
-        let output = WslOperationExecutor::execute(
-            operation,
-            WslOperationRequest {
-                session: self.session.clone(),
-                args: vec![path.to_string()],
-                stdin,
-                timeout: Duration::from_secs(10),
-                stdout_limit,
-                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                cancellation: None,
-            },
-        )
-        .await?;
-        Ok(output.stdout)
+        let execute = |session, stdin: Vec<u8>| async move {
+            WslOperationExecutor::execute(
+                operation,
+                WslOperationRequest {
+                    session,
+                    args: vec![path.to_string()],
+                    stdin,
+                    timeout: Duration::from_secs(10),
+                    stdout_limit,
+                    stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+                    cancellation: None,
+                },
+            )
+            .await
+            .map(|output| output.stdout)
+        };
+        match &self.access {
+            WslAtomicDocumentAccess::Workspace(workspace) => {
+                workspace
+                    .with_session_retry(move |session| execute(session, stdin.clone()))
+                    .await
+            }
+            WslAtomicDocumentAccess::Session(session) => execute(session.clone(), stdin).await,
+        }
     }
 
     fn path<'a>(&self, target: &'a ResourceLocator) -> Result<&'a str, AppError> {
+        let expected_distro_name = match &self.access {
+            WslAtomicDocumentAccess::Workspace(workspace) => workspace.distro_name(),
+            WslAtomicDocumentAccess::Session(session) => &session.distro_name,
+        };
         match &target.environment {
             EnvironmentRef::Wsl { distro_name }
-                if distro_name.eq_ignore_ascii_case(&self.session.distro_name)
+                if distro_name.eq_ignore_ascii_case(expected_distro_name)
                     && target.native_path.starts_with('/') =>
             {
                 Ok(&target.native_path)

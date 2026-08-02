@@ -10,7 +10,7 @@ use crate::core::skill_lock;
 use crate::environment::context_resolver::ContextResolver;
 use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
 /// 获取 GUI scope-aware 默认安装目标
@@ -27,7 +27,7 @@ pub async fn get_default_target_agents_host(
 
 pub async fn get_default_target_agents(
     context: ContextRef,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
 ) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
     ensure_global_context(&context)?;
@@ -47,7 +47,7 @@ pub async fn get_default_target_agents(
                     async move {
                         let locator = ContextResolver::resolve_wsl(context, &session).await?.lock;
                         read_effective_default_target_agents(
-                            EnvironmentLockIo::Wsl(session),
+                            EnvironmentLockIo::ActiveWsl(session),
                             &LockTarget {
                                 primary: locator,
                                 legacy: None,
@@ -140,7 +140,7 @@ pub(crate) async fn commit_default_target_agents(
 pub(crate) async fn remove_default_target_agent_reference(
     context: ContextRef,
     id: &AgentId,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
     post_delete_registry: &AgentRegistrySnapshot,
 ) -> Result<(), AppError> {
     let global_context = ContextRef {
@@ -168,7 +168,7 @@ pub(crate) async fn remove_default_target_agent_reference(
                     async move {
                         let resolved = ContextResolver::resolve_wsl(context, &session).await?;
                         remove_default_target_agent_reference_with_io(
-                            EnvironmentLockIo::Wsl(session),
+                            EnvironmentLockIo::ActiveWsl(session),
                             global_lock_target(resolved.lock),
                             &id,
                             &post_delete_registry,
@@ -183,7 +183,7 @@ pub(crate) async fn remove_default_target_agent_reference(
 
 pub(crate) async fn read_raw_default_target_agents(
     context: ContextRef,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
 ) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
     let global_context = ContextRef {
         environment: context.environment.clone(),
@@ -206,7 +206,7 @@ pub(crate) async fn read_raw_default_target_agents(
                     async move {
                         let resolved = ContextResolver::resolve_wsl(context, &session).await?;
                         read_raw_default_target_agents_with_io(
-                            EnvironmentLockIo::Wsl(session),
+                            EnvironmentLockIo::ActiveWsl(session),
                             global_lock_target(resolved.lock),
                         )
                         .await
@@ -284,7 +284,7 @@ pub async fn save_default_target_agents(
     context: ContextRef,
     defaults: skill_lock::DefaultTargetAgents,
     expected_registry_revision: String,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
 ) -> Result<(), AgentCommandError> {
@@ -328,7 +328,7 @@ pub async fn save_default_target_agents(
                         let locator = ContextResolver::resolve_wsl(context, &session).await?.lock;
                         guard.transition(MutationPhase::Committing, None, false);
                         commit_default_target_agents(
-                            EnvironmentLockIo::Wsl(session),
+                            EnvironmentLockIo::ActiveWsl(session),
                             LockTarget {
                                 primary: locator,
                                 legacy: None,

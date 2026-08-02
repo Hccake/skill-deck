@@ -18,7 +18,7 @@ use crate::environment::types::{
     ProjectStorageInfo, StorageAccess,
 };
 use crate::environment::wsl::operations::projects;
-use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -61,7 +61,7 @@ pub fn host_environment_info() -> EnvironmentInfo {
 
 fn environment_infos_from_wsl_discovery(
     discovery: Result<Vec<String>, AppError>,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
 ) -> EnvironmentDiscoverySnapshot {
     let mut environments = vec![host_environment_info()];
     let error = match discovery {
@@ -109,7 +109,7 @@ fn environment_infos_from_wsl_discovery(
 
 #[cfg(test)]
 async fn list_environments_with<Discover, DiscoveryFuture>(
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     wsl_integration_supported: bool,
     discover: Discover,
 ) -> EnvironmentDiscoverySnapshot
@@ -148,7 +148,7 @@ fn host_only_environment_snapshot(
 }
 
 pub async fn list_environments(
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
 ) -> Result<EnvironmentDiscoverySnapshot, AppError> {
     let supported = cfg!(target_os = "windows");
     if !supported || !registry.wsl_integration_enabled() {
@@ -169,15 +169,31 @@ pub async fn list_environments(
 
 pub async fn connect_environment(
     distro_name: String,
-    registry: &EnvironmentRegistry,
-) -> Result<WslSession, AppError> {
-    registry.connect(&distro_name).await
+    registry: &WslRuntime,
+) -> Result<EnvironmentInfo, AppError> {
+    let session = registry.connect(&distro_name).await?;
+    let runtime = registry.runtime_status(&distro_name);
+    Ok(EnvironmentInfo {
+        environment: EnvironmentRef::Wsl {
+            distro_name: distro_name.clone(),
+        },
+        display_name: distro_name,
+        status: runtime
+            .as_ref()
+            .map(|runtime| runtime.status)
+            .unwrap_or(EnvironmentStatus::Available),
+        revision: runtime
+            .as_ref()
+            .map(|runtime| runtime.revision)
+            .unwrap_or(session.runtime_generation),
+        error: runtime.and_then(|runtime| runtime.error),
+    })
 }
 
 pub async fn map_environment_path(
     environment: EnvironmentRef,
     path: String,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
 ) -> Result<String, AppError> {
     match environment {
         EnvironmentRef::Host => Ok(normalize_project_native_path(
@@ -299,7 +315,7 @@ async fn write_wsl_projects(
 
 pub async fn list_environment_projects(
     environment: EnvironmentRef,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     migration: &ProjectMigrationRegistry,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     match environment {
@@ -320,7 +336,7 @@ pub async fn list_environment_projects(
 pub async fn add_environment_project(
     environment: EnvironmentRef,
     native_path: String,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     migration: &ProjectMigrationRegistry,
 ) -> Result<AddProjectResult, AppError> {
     match environment {
@@ -369,7 +385,7 @@ pub async fn add_environment_project(
 pub async fn remove_environment_project(
     environment: EnvironmentRef,
     project_id: String,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     migration: &ProjectMigrationRegistry,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     match environment {
@@ -397,7 +413,7 @@ pub async fn set_environment_project_cross_storage_warning(
     environment: EnvironmentRef,
     project_id: String,
     suppressed: bool,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     migration: &ProjectMigrationRegistry,
 ) -> Result<ProjectInfo, AppError> {
     match environment {
@@ -464,7 +480,7 @@ mod tests {
     use crate::environment::types::{
         EnvironmentRef, EnvironmentStatus, ProjectBinding, StorageAccess,
     };
-    use crate::environment::wsl::EnvironmentRegistry;
+    use crate::environment::wsl::WslRuntime;
     use crate::error::AppError;
 
     #[test]
@@ -553,7 +569,7 @@ mod tests {
 
     #[test]
     fn unavailable_wsl_discovery_keeps_the_host_environment() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         let snapshot = environment_infos_from_wsl_discovery(
             Err(AppError::EnvironmentDiscoveryFailed {
                 message: "wsl.exe was blocked".to_string(),
@@ -570,7 +586,7 @@ mod tests {
 
     #[test]
     fn empty_wsl_discovery_is_normal_host_only_snapshot() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         let snapshot = environment_infos_from_wsl_discovery(Ok(Vec::new()), &registry);
 
         assert_eq!(snapshot.environments, vec![host_environment_info()]);
@@ -580,7 +596,7 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_wsl_integration_returns_host_without_discovery() {
-        let registry = EnvironmentRegistry::new(false);
+        let registry = WslRuntime::new(false);
         let calls = Arc::new(AtomicUsize::new(0));
         let discovery_calls = Arc::clone(&calls);
 
@@ -602,7 +618,7 @@ mod tests {
 
     #[tokio::test]
     async fn discovery_drops_wsl_results_when_integration_is_disabled_while_waiting() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         let task_registry = registry.clone();
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
@@ -626,7 +642,7 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_wsl_integration_rejects_path_mapping_without_wslpath() {
-        let registry = EnvironmentRegistry::new(false);
+        let registry = WslRuntime::new(false);
 
         let error = map_environment_path(
             EnvironmentRef::Wsl {
@@ -649,7 +665,7 @@ mod tests {
 
     #[test]
     fn discovered_distributions_are_flat_environment_entries() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         let snapshot = environment_infos_from_wsl_discovery(
             Ok(vec![
                 "Ubuntu-24.04".to_string(),

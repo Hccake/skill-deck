@@ -514,7 +514,7 @@ mod tests {
     use crate::environment::types::{
         ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
     };
-    use crate::environment::wsl::EnvironmentRegistry;
+    use crate::environment::wsl::WslRuntime;
     use crate::models::InstallMode;
 
     struct Facts(InstallPlanningFacts);
@@ -598,7 +598,7 @@ mod tests {
         };
         let planner = ConcreteInstallPlanner::new(
             Facts(facts),
-            RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default())),
+            RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
             Arc::clone(&manager),
             || "2026-07-18T00:00:00.000Z".to_string(),
         );
@@ -742,7 +742,7 @@ mod tests {
         };
         let planner = ConcreteInstallPlanner::new(
             Facts(facts),
-            RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default())),
+            RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
             Arc::clone(&manager),
             || "2026-07-18T00:00:00.000Z".to_string(),
         );

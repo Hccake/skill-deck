@@ -374,7 +374,7 @@ async listEnvironments() : Promise<Result<EnvironmentDiscoverySnapshot, AppError
     else return { status: "error", error: e  as any };
 }
 },
-async connectEnvironment(distroName: string) : Promise<Result<WslSession, AppError>> {
+async connectEnvironment(distroName: string) : Promise<Result<EnvironmentInfo, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("connect_environment", { distroName }) };
 } catch (e) {
@@ -846,7 +846,6 @@ export type UpdateSourceResult = { id: string; source: string; status: UpdateSou
 export type UpdateSourceStatus = "acquired" | "failed"
 export type UpdateWarningCode = "preservedConflictingCopy"
 export type WslIntegrationBusyReason = "mutation" | "lifecycle" | "installWizard" | "wslOperation"
-export type WslSession = { distroName: string; user: string; uid: number; home: string; xdgStateHome: string | null; configHome: string; environment: Partial<{ [key in string]: string }> }
 
 /** tauri-specta globals **/
 

@@ -6,11 +6,11 @@ use crate::environment::types::{
     EnvironmentRef, ProjectBinding, ProjectInfo, ProjectStorageInfo, ResourceLocator, StorageAccess,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT,
 };
+use crate::environment::wsl::WslSession;
 use crate::error::AppError;
 use crate::storage::atomic_document::AtomicDocumentIo;
 
@@ -106,7 +106,7 @@ pub fn parse_project_storage(
 
 pub async fn read_projects(session: &WslSession) -> Result<Vec<ProjectBinding>, AppError> {
     let target = projects_locator(session);
-    let io = WslAtomicDocumentIo::new(session.clone());
+    let io = WslAtomicDocumentIo::from_active_session(session.clone());
     match io.read_optional(&target).await? {
         Some(bytes) => Ok(serde_json::from_slice::<ProjectsFile>(&bytes)?.projects),
         None => Ok(Vec::new()),
@@ -118,7 +118,7 @@ pub async fn write_projects(
     projects: Vec<ProjectBinding>,
 ) -> Result<Vec<ProjectBinding>, AppError> {
     let file = ProjectsFile::new(projects, ProjectPathSemantics::Posix);
-    WslAtomicDocumentIo::new(session.clone())
+    WslAtomicDocumentIo::from_active_session(session.clone())
         .write_atomic(
             &projects_locator(session),
             serde_json::to_vec_pretty(&file)?,

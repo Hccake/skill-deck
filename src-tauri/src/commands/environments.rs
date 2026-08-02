@@ -2,9 +2,8 @@ use tauri::State;
 
 use crate::application::environment_projects;
 use crate::environment::project_service;
-pub use crate::environment::project_service::EnvironmentDiscoverySnapshot;
+pub use crate::environment::project_service::{EnvironmentDiscoverySnapshot, EnvironmentInfo};
 use crate::environment::types::{AddProjectResult, EnvironmentRef, ProjectInfo};
-use crate::environment::wsl::WslSession;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -13,7 +12,7 @@ use crate::runtime::RuntimeServiceGraph;
 pub async fn list_environments(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<EnvironmentDiscoverySnapshot, AppError> {
-    project_service::list_environments(runtime.environments()).await
+    project_service::list_environments(runtime.wsl()).await
 }
 
 #[tauri::command]
@@ -21,8 +20,8 @@ pub async fn list_environments(
 pub async fn connect_environment(
     distro_name: String,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<WslSession, AppError> {
-    project_service::connect_environment(distro_name, runtime.environments()).await
+) -> Result<EnvironmentInfo, AppError> {
+    project_service::connect_environment(distro_name, runtime.wsl()).await
 }
 
 #[tauri::command]
@@ -32,7 +31,7 @@ pub async fn map_environment_path(
     path: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<String, AppError> {
-    project_service::map_environment_path(environment, path, runtime.environments()).await
+    project_service::map_environment_path(environment, path, runtime.wsl()).await
 }
 
 #[tauri::command]
@@ -41,12 +40,7 @@ pub async fn list_environment_projects(
     environment: EnvironmentRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<Vec<ProjectInfo>, AppError> {
-    project_service::list_environment_projects(
-        environment,
-        runtime.environments(),
-        runtime.projects(),
-    )
-    .await
+    project_service::list_environment_projects(environment, runtime.wsl(), runtime.projects()).await
 }
 
 #[tauri::command]
@@ -59,7 +53,7 @@ pub async fn add_environment_project(
     environment_projects::add_environment_project(
         environment,
         native_path,
-        runtime.environments(),
+        runtime.wsl(),
         runtime.projects(),
         runtime.admission(),
     )
@@ -76,7 +70,7 @@ pub async fn remove_environment_project(
     environment_projects::remove_environment_project(
         environment,
         project_id,
-        runtime.environments(),
+        runtime.wsl(),
         runtime.projects(),
         runtime.admission(),
     )
@@ -95,7 +89,7 @@ pub async fn set_environment_project_cross_storage_warning(
         environment,
         project_id,
         suppressed,
-        runtime.environments(),
+        runtime.wsl(),
         runtime.projects(),
         runtime.admission(),
     )

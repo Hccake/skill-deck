@@ -6,11 +6,11 @@ use crate::environment::content_manifest::{
 };
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{normalized_wsl_distro_name, EnvironmentRef};
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT,
 };
+use crate::environment::wsl::WslSession;
 use crate::error::AppError;
 
 const PROTOCOL_HEADER: &[u8] = b"SDCM 1\n";

@@ -12,7 +12,7 @@ pub async fn list_skills(
     context: ContextRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<ListSkillsResult, AppError> {
-    crate::application::skills::list_skills(context, runtime.environments(), runtime.agents()).await
+    crate::application::skills::list_skills(context, runtime.wsl(), runtime.agents()).await
 }
 
 #[tauri::command]

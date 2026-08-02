@@ -6,8 +6,7 @@ use crate::application::install_planner::{InstallPlanningFactSource, InstallPlan
 use crate::application::mutation::plan::stable_digest;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySourceDescriptor, DiscoverySourceLocation,
-    PayloadPlanningMetadata, PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey,
-    RetainedDiscoverySource,
+    PayloadPlanningMetadata, PayloadSessionManager, PayloadStorageKey, RetainedDiscoverySource,
 };
 use crate::application::remove::{ObservedEntryKind, ObservedEntryOwner, ObservedPhysicalEntry};
 use crate::core::agent_definition::AgentAdapter;
@@ -19,7 +18,7 @@ use crate::environment::types::{
     same_environment_identity, ContextRef, ContextScope, EnvironmentRef, ResourceLocator,
 };
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
 #[derive(Debug, Clone)]
@@ -48,14 +47,11 @@ pub struct SkillEntryObserver<F, T> {
 
 pub struct InstalledSkillPayloadAcquirer {
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
 }
 
 impl InstalledSkillPayloadAcquirer {
-    pub fn new(
-        payloads: Arc<PayloadSessionManager>,
-        environments: Arc<EnvironmentRegistry>,
-    ) -> Self {
+    pub fn new(payloads: Arc<PayloadSessionManager>, environments: Arc<WslRuntime>) -> Self {
         Self {
             payloads,
             environments,
@@ -95,59 +91,46 @@ impl InstalledSkillPayloadAcquirer {
                     .await
             }
             EnvironmentRef::Wsl { distro_name } => {
-                let payloads = self.payloads.clone();
-                let context = context.clone();
+                let workspace = self.environments.workspace(distro_name)?;
                 let canonical_path = canonical.destination.native_path.clone();
                 let skill_name = skill_name.to_string();
-                self.environments
-                    .with_session_retry(distro_name, move |session| {
-                        let payloads = payloads.clone();
-                        let context = context.clone();
-                        let source_fingerprint = source_fingerprint.clone();
-                        let canonical_path = canonical_path.clone();
-                        let skill_name = skill_name.clone();
-                        async move {
-                            let storage: Arc<dyn PayloadSessionStorage> =
-                                Arc::new(WslPayloadSessionStorage::new(session.clone()));
-                            let retained = RetainedDiscoverySource::new(
-                                DiscoverySourceLocation::WslNative {
-                                    distro_name: session.distro_name.clone(),
-                                    linux_root: canonical_path.clone(),
-                                    ref_revision: None,
-                                },
-                                DiscoverySourceDescriptor {
-                                    source: "installed-canonical".to_string(),
-                                    source_type: "installed".to_string(),
-                                    source_url: None,
-                                    ref_name: None,
-                                },
-                                BTreeMap::new(),
-                                (),
-                            );
-                            let discovery = payloads
-                                .discover_with_source(
-                                    context.environment,
-                                    source_fingerprint,
-                                    storage.clone(),
-                                    retained,
-                                )
-                                .await?;
-                            let key =
-                                PayloadStorageKey::new(&discovery.session_id, skill_name.clone());
-                            let acquired = storage
-                                .acquire_from_source_path(&key, &canonical_path, None)
-                                .await?;
-                            payloads
-                                .register_existing_payload_with_metadata(
-                                    &discovery,
-                                    skill_name.clone(),
-                                    acquired.manifest,
-                                    acquired.total_bytes,
-                                    installed_metadata(&skill_name, acquired.computed_hash),
-                                )
-                                .await
-                        }
-                    })
+                let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+                let retained = RetainedDiscoverySource::new(
+                    DiscoverySourceLocation::WslNative {
+                        distro_name: distro_name.clone(),
+                        linux_root: canonical_path.clone(),
+                        ref_revision: None,
+                    },
+                    DiscoverySourceDescriptor {
+                        source: "installed-canonical".to_string(),
+                        source_type: "installed".to_string(),
+                        source_url: None,
+                        ref_name: None,
+                    },
+                    BTreeMap::new(),
+                    (),
+                );
+                let discovery = self
+                    .payloads
+                    .discover_with_source(
+                        context.environment.clone(),
+                        source_fingerprint,
+                        storage.clone(),
+                        retained,
+                    )
+                    .await?;
+                let key = PayloadStorageKey::new(&discovery.session_id, skill_name.clone());
+                let acquired = storage
+                    .acquire_from_path(&key, &canonical_path, None)
+                    .await?;
+                self.payloads
+                    .register_existing_payload_with_metadata(
+                        &discovery,
+                        skill_name.clone(),
+                        acquired.manifest,
+                        acquired.total_bytes,
+                        installed_metadata(&skill_name, acquired.computed_hash),
+                    )
                     .await
             }
         }
@@ -436,7 +419,7 @@ mod tests {
         EntryFingerprint, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
     use crate::environment::types::{EnvironmentRef, ResourceLocator};
-    use crate::environment::wsl::EnvironmentRegistry;
+    use crate::environment::wsl::WslRuntime;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -563,7 +546,7 @@ mod tests {
         ));
         let acquirer = InstalledSkillPayloadAcquirer::new(
             Arc::clone(&manager),
-            Arc::new(EnvironmentRegistry::default()),
+            Arc::new(WslRuntime::default()),
         );
         let context = crate::environment::types::ContextRef {
             environment: EnvironmentRef::Host,

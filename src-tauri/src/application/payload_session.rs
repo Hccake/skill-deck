@@ -718,6 +718,26 @@ impl PayloadSessionManager {
             .collect())
     }
 
+    pub fn retire_wsl_sessions(&self) -> usize {
+        let Ok(mut sessions) = self.inner.sessions.lock() else {
+            log::error!("payload session lock poisoned while retiring WSL sessions");
+            return 0;
+        };
+        let retired_ids = sessions
+            .iter()
+            .filter(|(_, session)| matches!(session.environment, EnvironmentRef::Wsl { .. }))
+            .map(|(session_id, _)| session_id.clone())
+            .collect::<Vec<_>>();
+        let retired = retired_ids
+            .iter()
+            .filter_map(|session_id| sessions.remove(session_id))
+            .collect::<Vec<_>>();
+        let retired_count = retired.len();
+        drop(sessions);
+        drop(retired);
+        retired_count
+    }
+
     pub fn begin_maintenance(&self, environment: &EnvironmentRef) -> Result<(), AppError> {
         self.update_maintenance_state(environment, |state| {
             state.gate = PayloadMaintenanceGate::Pending;
@@ -2423,6 +2443,34 @@ mod tests {
                 .expect("WSL protected sessions"),
             HashSet::from([wsl.session_id])
         );
+    }
+
+    #[tokio::test]
+    async fn retiring_wsl_sessions_keeps_host_sessions_and_invalidates_old_handles() {
+        let now = Arc::new(AtomicU64::new(100_000));
+        let manager = manager(now);
+        let host = manager
+            .discover(EnvironmentRef::Host, "host-source")
+            .await
+            .expect("host");
+        let wsl = manager
+            .discover(
+                EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu".to_string(),
+                },
+                "wsl-source",
+            )
+            .await
+            .expect("wsl");
+
+        assert_eq!(manager.retire_wsl_sessions(), 1);
+
+        assert!(manager.storage_for_discovery(&host).is_ok());
+        assert!(matches!(
+            manager.storage_for_discovery(&wsl),
+            Err(AppError::PayloadSessionExpired { session_id })
+                if session_id == wsl.session_id
+        ));
     }
 
     #[test]

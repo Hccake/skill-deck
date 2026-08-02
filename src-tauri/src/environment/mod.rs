@@ -1,4 +1,3 @@
-pub mod acquisition;
 pub mod agent_environment;
 pub mod content_manifest;
 pub mod context_resolver;
@@ -16,7 +15,6 @@ pub mod recovery;
 pub mod runtime;
 pub mod types;
 pub mod wsl;
-pub mod wsl_protocol;
 
 #[allow(unused_imports)]
 pub use agent_environment::{

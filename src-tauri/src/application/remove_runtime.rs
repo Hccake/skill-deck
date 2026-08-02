@@ -6,13 +6,13 @@ use crate::application::remove::RemoveService;
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
 use crate::application::skill_entries::SkillEntryObserver;
 use crate::environment::planning::RuntimeTargetFactResolver;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 
 pub type RuntimeRemoveService =
     RemoveService<RuntimePlanningFactSource, RuntimeTargetFactResolver, RuntimePlanExecutor>;
 
 pub fn build_runtime_remove_service(
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
 ) -> RuntimeRemoveService {

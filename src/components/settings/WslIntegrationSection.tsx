@@ -43,6 +43,14 @@ export function WslIntegrationSection() {
   const saving = transition.kind === 'wslIntegration';
   const disabled = transition.kind !== 'idle' || writeBlocked;
   const errorMessage = failure ? formatAppError(failure.error, t) : null;
+  const hostAlreadySelected = selectedEnvironment.kind === 'host';
+  const activeDisableLabel = transition.kind === 'wslIntegration'
+    ? transition.phase === 'switchingHost'
+      ? 'settings.general.wslSwitchingHost'
+      : transition.phase === 'disabling'
+        ? 'settings.general.wslDisabling'
+        : null
+    : null;
 
   return (
     <>
@@ -66,7 +74,7 @@ export function WslIntegrationSection() {
             <LoaderCircle
               role="status"
               aria-label={t('settings.general.wslSaving')}
-              className="h-4 w-4 animate-spin text-muted-foreground"
+              className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none"
             />
           ) : (
             <span aria-hidden="true" className="h-4 w-4" />
@@ -101,7 +109,9 @@ export function WslIntegrationSection() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t('settings.general.wslDisableTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('settings.general.wslDisableDescription')}
+              {t(hostAlreadySelected
+                ? 'settings.general.wslDisableAfterHostDescription'
+                : 'settings.general.wslDisableDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {errorMessage ? (
@@ -118,7 +128,18 @@ export function WslIntegrationSection() {
                 void changeSetting(false);
               }}
             >
-              {t('settings.general.wslDisableConfirm')}
+              {activeDisableLabel ? (
+                <>
+                  <LoaderCircle
+                    role="status"
+                    aria-label={t(activeDisableLabel)}
+                    className="h-4 w-4 animate-spin motion-reduce:animate-none"
+                  />
+                  {t(activeDisableLabel)}
+                </>
+              ) : t(hostAlreadySelected
+                ? 'settings.general.wslDisableOnlyConfirm'
+                : 'settings.general.wslDisableConfirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

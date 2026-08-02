@@ -17,7 +17,7 @@ use crate::environment::types::{same_environment_identity, EnvironmentRef, Envir
 use crate::environment::wsl::operations::path_metadata::{
     self, PathMetadataContent, PathMetadataKind, PathMetadataQuery,
 };
-use crate::environment::wsl::WslSession;
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
 
 #[cfg(all(test, unix))]
@@ -31,7 +31,7 @@ pub struct EnvironmentContext {
     pub environment_variables: BTreeMap<String, String>,
     pub availability: EnvironmentStatus,
     pub revision: String,
-    pub wsl_session: Option<WslSession>,
+    pub wsl_workspace: Option<WslWorkspace>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -167,7 +167,8 @@ type MetadataQuery =
 
 enum MetadataBackend {
     Host,
-    Wsl(WslSession),
+    Wsl(WslWorkspace),
+    ActiveWsl(WslSession),
     Unavailable,
     #[cfg(test)]
     Custom(MetadataQuery),
@@ -192,6 +193,17 @@ impl AgentEnvironmentResolver {
         Self {
             environment_context: context,
             metadata_backend,
+            cache: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub(crate) fn from_active_wsl_session(
+        context: EnvironmentContext,
+        session: WslSession,
+    ) -> Self {
+        Self {
+            environment_context: context,
+            metadata_backend: MetadataBackend::ActiveWsl(session),
             cache: Mutex::new(BTreeMap::new()),
         }
     }
@@ -470,7 +482,10 @@ impl AgentEnvironmentResolver {
         }
         let metadata = match &self.metadata_backend {
             MetadataBackend::Host => query_host_metadata(queries),
-            MetadataBackend::Wsl(session) => query_wsl_metadata(session, queries).await,
+            MetadataBackend::Wsl(workspace) => query_wsl_metadata(workspace, queries).await,
+            MetadataBackend::ActiveWsl(session) => {
+                query_active_wsl_metadata(session, queries).await
+            }
             #[cfg(test)]
             MetadataBackend::Custom(query) => query(queries),
             MetadataBackend::Unavailable => Ok(BTreeMap::new()),
@@ -875,12 +890,12 @@ fn metadata_backend(context: &EnvironmentContext) -> MetadataBackend {
     match &context.environment {
         EnvironmentRef::Host => MetadataBackend::Host,
         EnvironmentRef::Wsl { distro_name } => context
-            .wsl_session
+            .wsl_workspace
             .as_ref()
-            .filter(|session| {
+            .filter(|workspace| {
                 same_environment_identity(
                     &EnvironmentRef::Wsl {
-                        distro_name: session.distro_name.clone(),
+                        distro_name: workspace.distro_name().to_string(),
                     },
                     &EnvironmentRef::Wsl {
                         distro_name: distro_name.clone(),
@@ -950,22 +965,36 @@ fn read_eve_package(path: &Path) -> Option<bool> {
 }
 
 async fn query_wsl_metadata(
+    workspace: &WslWorkspace,
+    queries: &[PathQuery],
+) -> Result<BTreeMap<String, PathMetadata>, AppError> {
+    let facts = workspace
+        .inspect_path_metadata(
+            queries
+                .iter()
+                .map(|query| PathMetadataQuery {
+                    path: query.path.clone(),
+                    inspect_content: query.inspect_eve_package,
+                })
+                .collect::<Vec<_>>(),
+            None,
+        )
+        .await?;
+    metadata_from_typed_facts(facts)
+}
+
+async fn query_active_wsl_metadata(
     session: &WslSession,
     queries: &[PathQuery],
 ) -> Result<BTreeMap<String, PathMetadata>, AppError> {
-    let facts = path_metadata::inspect(
-        session,
-        &queries
-            .iter()
-            .map(|query| PathMetadataQuery {
-                path: query.path.clone(),
-                inspect_content: query.inspect_eve_package,
-            })
-            .collect::<Vec<_>>(),
-        None,
-    )
-    .await?;
-    metadata_from_typed_facts(facts)
+    let queries = queries
+        .iter()
+        .map(|query| PathMetadataQuery {
+            path: query.path.clone(),
+            inspect_content: query.inspect_eve_package,
+        })
+        .collect::<Vec<_>>();
+    metadata_from_typed_facts(path_metadata::inspect(session, &queries, None).await?)
 }
 
 #[cfg(test)]
@@ -1197,7 +1226,7 @@ mod tests {
             environment_variables: BTreeMap::new(),
             availability,
             revision: revision.to_string(),
-            wsl_session: None,
+            wsl_workspace: None,
         }
     }
 

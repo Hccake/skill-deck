@@ -28,7 +28,7 @@ use crate::environment::types::{
     ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
-use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
 use crate::storage::atomic_document::AtomicDocumentIo;
 use crate::storage::lock_plan::load_lock_document;
@@ -50,14 +50,14 @@ pub struct HostRuntimeSnapshot {
 #[derive(Clone)]
 pub struct RuntimePlanningFactSource {
     registry: Arc<dyn AgentRegistrySnapshotSource>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     host: Arc<dyn HostRuntimeSource>,
 }
 
 impl RuntimePlanningFactSource {
     pub fn for_current_user(
         registry: Arc<dyn AgentRegistrySnapshotSource>,
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
     ) -> Self {
         Self {
             registry,
@@ -69,7 +69,7 @@ impl RuntimePlanningFactSource {
     #[cfg(test)]
     pub fn with_host_snapshot(
         registry: Arc<dyn AgentRegistrySnapshotSource>,
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
         host: HostRuntimeSnapshot,
     ) -> Self {
         Self {
@@ -93,11 +93,15 @@ impl RuntimePlanningFactSource {
             EnvironmentRef::Wsl { distro_name } => {
                 let context = context.clone();
                 let registry = Arc::clone(&registry);
+                let workspace = self.environments.workspace(distro_name)?;
                 self.environments
                     .with_session_retry(distro_name, move |session| {
                         let context = context.clone();
                         let registry = Arc::clone(&registry);
-                        async move { capture_wsl_base(&context, registry, session).await }
+                        let workspace = workspace.clone();
+                        async move {
+                            capture_wsl_base(&context, registry, session, workspace).await
+                        }
                     })
                     .await
             }
@@ -218,11 +222,12 @@ async fn capture_wsl_base(
     context: &ContextRef,
     registry: Arc<AgentRegistrySnapshot>,
     session: WslSession,
+    workspace: crate::environment::wsl::WslWorkspace,
 ) -> Result<CapturedBase, AppError> {
-    let io = WslAtomicDocumentIo::new(session.clone());
+    let io = WslAtomicDocumentIo::from_active_session(session.clone());
     let (resolved, project_schema_version) =
         resolve_wsl_context_from_io(&io, context, &session).await?;
-    let environment = wsl_environment_context(&resolved, session.clone());
+    let environment = wsl_environment_context(&resolved, session.clone(), workspace);
     let targets = resolve_wsl_targets(
         &session,
         &[
@@ -398,13 +403,13 @@ async fn load_current_lock(base: &CapturedBase) -> Result<LosslessLockDocument, 
             .await
         }
         EnvironmentRef::Wsl { .. } => {
-            let session = base
+            let workspace = base
                 .environment_context
-                .wsl_session
+                .wsl_workspace
                 .clone()
                 .ok_or(AppError::StaleEnvironment)?;
             load_lock_document(
-                &WslAtomicDocumentIo::new(session),
+                &WslAtomicDocumentIo::new(workspace),
                 &base.resolved_context.lock,
                 None,
                 base.lock_schema,
@@ -457,11 +462,15 @@ fn host_environment_context(
         environment_variables: host.environment_variables.clone(),
         availability: EnvironmentStatus::Available,
         revision,
-        wsl_session: None,
+        wsl_workspace: None,
     }
 }
 
-fn wsl_environment_context(resolved: &ResolvedContext, session: WslSession) -> EnvironmentContext {
+fn wsl_environment_context(
+    resolved: &ResolvedContext,
+    session: WslSession,
+    workspace: crate::environment::wsl::WslWorkspace,
+) -> EnvironmentContext {
     let revision = environment_revision("wsl", &(session.runtime_generation, &session));
     EnvironmentContext {
         environment: resolved.context.environment.clone(),
@@ -470,7 +479,7 @@ fn wsl_environment_context(resolved: &ResolvedContext, session: WslSession) -> E
         environment_variables: session.environment.clone(),
         availability: EnvironmentStatus::Available,
         revision,
-        wsl_session: Some(session),
+        wsl_workspace: Some(workspace),
     }
 }
 
@@ -509,7 +518,7 @@ mod tests {
     };
     use crate::core::agent_registry::AgentRegistrySnapshot;
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
-    use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+    use crate::environment::wsl::{WslRuntime, WslSession};
     use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
 
     struct StaticRegistry(Arc<AgentRegistrySnapshot>);
@@ -626,7 +635,7 @@ mod tests {
         let registry = Arc::new(StaticRegistry(Arc::new(registry_snapshot())));
         let source = RuntimePlanningFactSource::with_host_snapshot(
             registry,
-            Arc::new(EnvironmentRegistry::default()),
+            Arc::new(WslRuntime::default()),
             HostRuntimeSnapshot {
                 home: home.clone(),
                 config_home: temp.path().join("config"),
@@ -724,6 +733,8 @@ mod tests {
             *io.reads.lock().unwrap(),
             vec!["/home/alice/.skill-deck/projects.json"]
         );
+        let runtime = WslRuntime::default();
+        let workspace = runtime.workspace(&session.distro_name).unwrap();
 
         let first = wsl_environment_context(
             &resolved,
@@ -731,6 +742,7 @@ mod tests {
                 runtime_generation: 1,
                 ..session.clone()
             },
+            workspace.clone(),
         );
         let second = wsl_environment_context(
             &resolved,
@@ -738,6 +750,7 @@ mod tests {
                 runtime_generation: 2,
                 ..session
             },
+            workspace,
         );
         assert_ne!(first.revision, second.revision);
     }

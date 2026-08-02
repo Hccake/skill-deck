@@ -20,21 +20,22 @@ use crate::environment::types::{
 use crate::error::AppError;
 
 pub mod operations;
+pub(crate) mod protocol;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
-pub struct WslSession {
-    pub distro_name: String,
-    pub user: String,
-    pub uid: u32,
-    pub home: String,
-    pub xdg_state_home: Option<String>,
-    pub config_home: String,
-    pub environment: BTreeMap<String, String>,
+pub(crate) struct WslSession {
+    pub(crate) distro_name: String,
+    pub(crate) user: String,
+    pub(crate) uid: u32,
+    pub(crate) home: String,
+    pub(crate) xdg_state_home: Option<String>,
+    pub(crate) config_home: String,
+    pub(crate) environment: BTreeMap<String, String>,
     #[serde(skip)]
     #[specta(skip)]
-    pub runtime_generation: u64,
+    pub(crate) runtime_generation: u64,
 }
 
 #[derive(Clone)]
@@ -52,16 +53,17 @@ enum WslCapabilityState {
     Disabling,
 }
 
-struct EnvironmentRegistryState {
+struct WslRuntimeState {
     capability: WslCapabilityState,
     capability_revision: u64,
     active_wsl_permits: usize,
+    active_source_owners: usize,
     next_generation: u64,
     sessions: HashMap<EnvironmentKey, CachedWslSession>,
     runtime: HashMap<EnvironmentKey, EnvironmentRuntimeStatus>,
 }
 
-impl EnvironmentRegistryState {
+impl WslRuntimeState {
     fn new(supported: bool, enabled: bool) -> Self {
         Self {
             capability: if !supported {
@@ -73,6 +75,7 @@ impl EnvironmentRegistryState {
             },
             capability_revision: 0,
             active_wsl_permits: 0,
+            active_source_owners: 0,
             next_generation: 0,
             sessions: HashMap::new(),
             runtime: HashMap::new(),
@@ -88,35 +91,72 @@ pub struct EnvironmentRuntimeStatus {
 }
 
 #[derive(Clone)]
-pub struct EnvironmentRegistry {
-    state: Arc<Mutex<EnvironmentRegistryState>>,
+pub(crate) struct WslRuntime {
+    state: Arc<Mutex<WslRuntimeState>>,
     reconnect_locks: Arc<Mutex<HashMap<EnvironmentKey, Arc<AsyncMutex<()>>>>>,
     listener: Arc<Mutex<Option<EnvironmentRuntimeListener>>>,
     quiescence: Arc<Notify>,
+    source_retirement: Arc<Notify>,
+    deferred_source_cleanups: Arc<Mutex<Vec<WslSourceCleanupIntent>>>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WslSourceCleanupIntent {
+    distro_name: String,
+    native_root: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct WslWorkspace {
+    registry: WslRuntime,
+    distro_name: String,
+    capability_cycle: u64,
+}
+
+impl std::fmt::Debug for WslWorkspace {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WslWorkspace")
+            .field("distro_name", &self.distro_name)
+            .field("capability_cycle", &self.capability_cycle)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for WslWorkspace {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.registry.state, &other.registry.state)
+            && self.distro_name.eq_ignore_ascii_case(&other.distro_name)
+            && self.capability_cycle == other.capability_cycle
+    }
+}
+
+impl Eq for WslWorkspace {}
 
 type EnvironmentRuntimeListener = Arc<dyn Fn(EnvironmentRuntimeEvent) + Send + Sync>;
 
-impl Default for EnvironmentRegistry {
+impl Default for WslRuntime {
     fn default() -> Self {
         Self::new(true)
     }
 }
 
-impl EnvironmentRegistry {
+impl WslRuntime {
     pub fn new(wsl_integration_enabled: bool) -> Self {
         Self::new_with_support(true, wsl_integration_enabled)
     }
 
     pub fn new_with_support(supported: bool, wsl_integration_enabled: bool) -> Self {
         Self {
-            state: Arc::new(Mutex::new(EnvironmentRegistryState::new(
+            state: Arc::new(Mutex::new(WslRuntimeState::new(
                 supported,
                 wsl_integration_enabled,
             ))),
             reconnect_locks: Arc::new(Mutex::new(HashMap::new())),
             listener: Arc::new(Mutex::new(None)),
             quiescence: Arc::new(Notify::new()),
+            source_retirement: Arc::new(Notify::new()),
+            deferred_source_cleanups: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -124,7 +164,7 @@ impl EnvironmentRegistry {
         matches!(
             self.state
                 .lock()
-                .expect("environment registry lock poisoned")
+                .expect("WSL runtime lock poisoned")
                 .capability,
             WslCapabilityState::Enabled | WslCapabilityState::Disabling
         )
@@ -164,13 +204,40 @@ impl EnvironmentRegistry {
             .capability_revision
     }
 
+    fn enabled_cycle(&self, distro_name: &str) -> Result<u64, AppError> {
+        let state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        match state.capability {
+            WslCapabilityState::Enabled => Ok(state.capability_revision),
+            WslCapabilityState::Unsupported => Err(AppError::CapabilityUnavailable {
+                capability: "wslIntegration".to_string(),
+                path: None,
+            }),
+            WslCapabilityState::Disabled
+            | WslCapabilityState::Enabling
+            | WslCapabilityState::Disabling => Err(Self::disabled_error(distro_name)),
+        }
+    }
+
     fn acquire_wsl_access(&self, distro_name: &str) -> Result<WslAccessPermit, AppError> {
+        self.acquire_wsl_access_for_cycle(distro_name, None)
+    }
+
+    fn acquire_wsl_access_for_cycle(
+        &self,
+        distro_name: &str,
+        expected_cycle: Option<u64>,
+    ) -> Result<WslAccessPermit, AppError> {
         let mut state = self
             .state
             .lock()
             .expect("environment registry lock poisoned");
         match state.capability {
-            WslCapabilityState::Enabled => {
+            WslCapabilityState::Enabled
+                if expected_cycle.is_none_or(|cycle| cycle == state.capability_revision) =>
+            {
                 state.active_wsl_permits = state.active_wsl_permits.saturating_add(1);
                 Ok(WslAccessPermit {
                     state: Arc::clone(&self.state),
@@ -178,6 +245,28 @@ impl EnvironmentRegistry {
                     capability_revision: state.capability_revision,
                 })
             }
+            WslCapabilityState::Unsupported => Err(AppError::CapabilityUnavailable {
+                capability: "wslIntegration".to_string(),
+                path: None,
+            }),
+            WslCapabilityState::Enabled
+            | WslCapabilityState::Disabled
+            | WslCapabilityState::Enabling
+            | WslCapabilityState::Disabling => Err(Self::disabled_error(distro_name)),
+        }
+    }
+
+    pub fn workspace(&self, distro_name: &str) -> Result<WslWorkspace, AppError> {
+        let state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        match state.capability {
+            WslCapabilityState::Enabled => Ok(WslWorkspace {
+                registry: self.clone(),
+                distro_name: distro_name.to_string(),
+                capability_cycle: state.capability_revision,
+            }),
             WslCapabilityState::Unsupported => Err(AppError::CapabilityUnavailable {
                 capability: "wslIntegration".to_string(),
                 path: None,
@@ -234,9 +323,10 @@ impl EnvironmentRegistry {
         C: FnMut(String) -> CFut,
         CFut: Future<Output = Result<WslSession, AppError>>,
     {
+        let expected_cycle = self.enabled_cycle(distro_name)?;
         let reconnect_lock = self.reconnect_lock(distro_name);
         let _reconnect = reconnect_lock.lock().await;
-        let permit = self.acquire_wsl_access(distro_name)?;
+        let permit = self.acquire_wsl_access_for_cycle(distro_name, Some(expected_cycle))?;
         let mut session = connector(distro_name.to_string()).await?;
         self.insert_with_permit(&mut session, &permit)?;
         Ok(session)
@@ -464,6 +554,7 @@ impl EnvironmentRegistry {
     async fn get_or_connect_using<C, CFut>(
         &self,
         distro_name: &str,
+        expected_cycle: Option<u64>,
         connector: &mut C,
     ) -> Result<(CachedWslSession, WslAccessPermit), AppError>
     where
@@ -471,14 +562,14 @@ impl EnvironmentRegistry {
         CFut: Future<Output = Result<WslSession, AppError>>,
     {
         if self.get_cached(distro_name).is_some() {
-            let permit = self.acquire_wsl_access(distro_name)?;
+            let permit = self.acquire_wsl_access_for_cycle(distro_name, expected_cycle)?;
             if let Some(cached) = self.get_cached(distro_name) {
                 return Ok((cached, permit));
             }
         }
         let reconnect_lock = self.reconnect_lock(distro_name);
         let _reconnect = reconnect_lock.lock().await;
-        let permit = self.acquire_wsl_access(distro_name)?;
+        let permit = self.acquire_wsl_access_for_cycle(distro_name, expected_cycle)?;
         if let Some(cached) = self.get_cached(distro_name) {
             return Ok((cached, permit));
         }
@@ -497,6 +588,24 @@ impl EnvironmentRegistry {
     pub(crate) async fn with_session_retry_using<T, C, CFut, O, OFut>(
         &self,
         distro_name: &str,
+        connector: C,
+        operation: O,
+    ) -> Result<T, AppError>
+    where
+        C: FnMut(String) -> CFut,
+        CFut: Future<Output = Result<WslSession, AppError>>,
+        O: FnMut(WslSession) -> OFut,
+        OFut: Future<Output = Result<T, AppError>>,
+    {
+        let expected_cycle = self.enabled_cycle(distro_name)?;
+        self.with_session_retry_in_cycle(distro_name, Some(expected_cycle), connector, operation)
+            .await
+    }
+
+    async fn with_session_retry_in_cycle<T, C, CFut, O, OFut>(
+        &self,
+        distro_name: &str,
+        expected_cycle: Option<u64>,
         mut connector: C,
         mut operation: O,
     ) -> Result<T, AppError>
@@ -507,15 +616,17 @@ impl EnvironmentRegistry {
         OFut: Future<Output = Result<T, AppError>>,
     {
         let (initial, initial_access) = self
-            .get_or_connect_using(distro_name, &mut connector)
+            .get_or_connect_using(distro_name, expected_cycle, &mut connector)
             .await?;
+        self.reconcile_deferred_source_cleanups(&initial.session)
+            .await;
         match operation(initial.session.clone()).await {
             Ok(result) => Ok(result),
             Err(AppError::EnvironmentUnavailable { .. }) => {
                 drop(initial_access);
                 let reconnect_lock = self.reconnect_lock(distro_name);
                 let _reconnect = reconnect_lock.lock().await;
-                let access = self.acquire_wsl_access(distro_name)?;
+                let access = self.acquire_wsl_access_for_cycle(distro_name, expected_cycle)?;
                 let refreshed = match self.get_cached(distro_name) {
                     Some(cached) if cached.generation != initial.generation => cached,
                     _ => {
@@ -561,6 +672,43 @@ impl EnvironmentRegistry {
         }
     }
 
+    async fn reconcile_deferred_source_cleanups(&self, session: &WslSession) {
+        let pending = {
+            let mut intents = self
+                .deferred_source_cleanups
+                .lock()
+                .expect("WSL cleanup queue lock poisoned");
+            let mut pending = Vec::new();
+            let mut retained = Vec::new();
+            for intent in intents.drain(..) {
+                if intent
+                    .distro_name
+                    .eq_ignore_ascii_case(&session.distro_name)
+                {
+                    pending.push(intent);
+                } else {
+                    retained.push(intent);
+                }
+            }
+            *intents = retained;
+            pending
+        };
+        for intent in pending {
+            if crate::environment::wsl::operations::source_acquisition::cleanup_wsl_source(
+                session,
+                &intent.native_root,
+            )
+            .await
+            .is_err()
+            {
+                self.deferred_source_cleanups
+                    .lock()
+                    .expect("WSL cleanup queue lock poisoned")
+                    .push(intent);
+            }
+        }
+    }
+
     pub async fn with_session_retry<T, O, OFut>(
         &self,
         distro_name: &str,
@@ -587,10 +735,11 @@ impl EnvironmentRegistry {
         O: FnMut(WslSession) -> OFut,
         OFut: Future<Output = Result<T, AppError>>,
     {
+        let expected_cycle = self.enabled_cycle(distro_name)?;
         let mut connector =
             |distro_name: String| async move { connect_wsl_environment(&distro_name).await };
         let (cached, _access) = self
-            .get_or_connect_using(distro_name, &mut connector)
+            .get_or_connect_using(distro_name, Some(expected_cycle), &mut connector)
             .await?;
         let result = operation(cached.session).await;
         if let Err(error @ AppError::EnvironmentUnavailable { .. }) = &result {
@@ -600,8 +749,114 @@ impl EnvironmentRegistry {
     }
 }
 
+impl WslWorkspace {
+    pub fn distro_name(&self) -> &str {
+        &self.distro_name
+    }
+
+    pub(crate) fn defer_source_cleanup(&self, native_root: String) {
+        self.registry
+            .deferred_source_cleanups
+            .lock()
+            .expect("WSL cleanup queue lock poisoned")
+            .push(WslSourceCleanupIntent {
+                distro_name: self.distro_name.clone(),
+                native_root,
+            });
+    }
+
+    pub(crate) fn register_source_owner(&self) -> Result<(), AppError> {
+        let mut state = self
+            .registry
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        if state.capability_revision != self.capability_cycle
+            || !matches!(
+                state.capability,
+                WslCapabilityState::Enabled | WslCapabilityState::Disabling
+            )
+        {
+            return Err(WslRuntime::disabled_error(&self.distro_name));
+        }
+        state.active_source_owners = state.active_source_owners.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn release_source_owner(&self) {
+        let mut state = self
+            .registry
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        state.active_source_owners = state.active_source_owners.saturating_sub(1);
+        let retired = state.active_source_owners == 0;
+        drop(state);
+        if retired {
+            self.registry.source_retirement.notify_waiters();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn deferred_source_cleanup_count(&self) -> usize {
+        self.registry
+            .deferred_source_cleanups
+            .lock()
+            .expect("WSL cleanup queue lock poisoned")
+            .len()
+    }
+
+    pub(crate) async fn with_access<T, O, OFut>(&self, operation: O) -> Result<T, AppError>
+    where
+        O: FnOnce() -> OFut,
+        OFut: Future<Output = Result<T, AppError>>,
+    {
+        let _access = self
+            .registry
+            .acquire_wsl_access_for_cycle(&self.distro_name, Some(self.capability_cycle))?;
+        operation().await
+    }
+
+    async fn with_session_retry<T, O, OFut>(&self, operation: O) -> Result<T, AppError>
+    where
+        O: FnMut(WslSession) -> OFut,
+        OFut: Future<Output = Result<T, AppError>>,
+    {
+        self.registry
+            .with_session_retry_in_cycle(
+                &self.distro_name,
+                Some(self.capability_cycle),
+                |distro_name| async move { connect_wsl_environment(&distro_name).await },
+                operation,
+            )
+            .await
+    }
+
+    #[cfg(test)]
+    async fn with_session_retry_using<T, C, CFut, O, OFut>(
+        &self,
+        connector: C,
+        operation: O,
+    ) -> Result<T, AppError>
+    where
+        C: FnMut(String) -> CFut,
+        CFut: Future<Output = Result<WslSession, AppError>>,
+        O: FnMut(WslSession) -> OFut,
+        OFut: Future<Output = Result<T, AppError>>,
+    {
+        self.registry
+            .with_session_retry_in_cycle(
+                &self.distro_name,
+                Some(self.capability_cycle),
+                connector,
+                operation,
+            )
+            .await
+    }
+}
+
 pub struct WslAccessPermit {
-    state: Arc<Mutex<EnvironmentRegistryState>>,
+    state: Arc<Mutex<WslRuntimeState>>,
     quiescence: Arc<Notify>,
     capability_revision: u64,
 }
@@ -622,7 +877,7 @@ impl Drop for WslAccessPermit {
 }
 
 pub struct WslDisableTransition {
-    registry: EnvironmentRegistry,
+    registry: WslRuntime,
     completed: bool,
 }
 
@@ -649,6 +904,48 @@ impl WslDisableTransition {
         timeout(limit, wait).await.map_err(|_| ())
     }
 
+    pub(crate) async fn flush_deferred_source_cleanups(&self) {
+        let sessions = self
+            .registry
+            .state
+            .lock()
+            .expect("environment registry lock poisoned")
+            .sessions
+            .values()
+            .map(|cached| cached.session.clone())
+            .collect::<Vec<_>>();
+        for session in sessions {
+            self.registry
+                .reconcile_deferred_source_cleanups(&session)
+                .await;
+        }
+    }
+
+    pub(crate) async fn wait_for_source_retirement(
+        &self,
+        limit: std::time::Duration,
+    ) -> Result<(), ()> {
+        let wait = async {
+            loop {
+                let notified = self.registry.source_retirement.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self
+                    .registry
+                    .state
+                    .lock()
+                    .expect("environment registry lock poisoned")
+                    .active_source_owners
+                    == 0
+                {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        timeout(limit, wait).await.map_err(|_| ())
+    }
+
     pub fn commit_disabled(mut self) {
         let mut state = self
             .registry
@@ -657,6 +954,7 @@ impl WslDisableTransition {
             .expect("environment registry lock poisoned");
         assert_eq!(state.capability, WslCapabilityState::Disabling);
         assert_eq!(state.active_wsl_permits, 0);
+        assert_eq!(state.active_source_owners, 0);
         state.sessions.clear();
         state.runtime.clear();
         state.capability = WslCapabilityState::Disabled;
@@ -682,7 +980,7 @@ impl Drop for WslDisableTransition {
 }
 
 pub struct WslEnableTransition {
-    registry: EnvironmentRegistry,
+    registry: WslRuntime,
     completed: bool,
 }
 
@@ -901,6 +1199,7 @@ async fn connect_wsl_environment(_distro_name: &str) -> Result<WslSession, AppEr
     reason = "WSL 解析测试需要直接运行内置的 shell 脚本"
 )]
 mod tests {
+    use std::future::Future;
     #[cfg(target_os = "linux")]
     use std::process::{Command, Output, Stdio};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -908,7 +1207,7 @@ mod tests {
 
     use super::{
         interpret_wsl_discovery_outcome, parse_wsl_list_output, parse_wsl_session_output,
-        EnvironmentRegistry, WslDiscoveryCommandOutcome, WslSession,
+        WslDiscoveryCommandOutcome, WslRuntime, WslSession,
     };
     use crate::environment::types::{EnvironmentRef, EnvironmentRuntimeEvent, EnvironmentStatus};
     use crate::error::{AppError, LockConflictTarget};
@@ -961,7 +1260,7 @@ mod tests {
 
     #[test]
     fn cloned_registry_handles_share_cached_sessions() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         let cloned = registry.clone();
 
         cloned.insert(sample_session("Ubuntu", "alice"));
@@ -974,7 +1273,7 @@ mod tests {
 
     #[test]
     fn registry_uses_one_cached_session_for_case_insensitive_distro_aliases() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "alice"));
 
         assert_eq!(
@@ -988,7 +1287,7 @@ mod tests {
 
     #[test]
     fn registry_uses_one_reconnect_lock_for_case_insensitive_distro_aliases() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
 
         assert!(Arc::ptr_eq(
             &registry.reconnect_lock("Ubuntu"),
@@ -998,7 +1297,7 @@ mod tests {
 
     #[test]
     fn reinserting_identical_session_advances_runtime_generation() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "alice"));
         let first = registry.get("Ubuntu").expect("first session");
 
@@ -1010,7 +1309,7 @@ mod tests {
 
     #[test]
     fn environment_runtime_event_and_snapshot_share_monotonic_revision() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         let events = record_runtime_events(&registry);
 
         registry.insert(sample_session("Ubuntu", "alice"));
@@ -1035,9 +1334,7 @@ mod tests {
         }
     }
 
-    fn record_runtime_events(
-        registry: &EnvironmentRegistry,
-    ) -> Arc<Mutex<Vec<EnvironmentRuntimeEvent>>> {
+    fn record_runtime_events(registry: &WslRuntime) -> Arc<Mutex<Vec<EnvironmentRuntimeEvent>>> {
         let events = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&events);
         registry.set_listener(move |event| {
@@ -1051,7 +1348,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_retry_reuses_a_cached_session_without_connecting() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "alice"));
         let connects = Arc::new(AtomicUsize::new(0));
         let connector_count = Arc::clone(&connects);
@@ -1074,7 +1371,7 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_registry_rejects_wsl_before_connecting() {
-        let registry = EnvironmentRegistry::new(false);
+        let registry = WslRuntime::new(false);
         let connects = Arc::new(AtomicUsize::new(0));
         let connector_count = Arc::clone(&connects);
 
@@ -1101,26 +1398,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn waiting_reconnect_task_cannot_start_connector_after_disable_commits() {
-        let registry = Arc::new(EnvironmentRegistry::default());
+    async fn workspace_from_an_old_capability_cycle_cannot_connect_after_reenable() {
+        let registry = WslRuntime::default();
+        let workspace = registry.workspace("Ubuntu").expect("enabled workspace");
+
+        let disable = registry.begin_disable().expect("begin disable");
+        disable
+            .wait_for_quiescence(std::time::Duration::from_secs(1))
+            .await
+            .expect("quiescent runtime");
+        disable.commit_disabled();
+        registry
+            .begin_enable()
+            .expect("begin enable")
+            .commit_enabled();
+
+        let connects = Arc::new(AtomicUsize::new(0));
+        let connector_count = Arc::clone(&connects);
+        let error = workspace
+            .with_session_retry_using(
+                move |_| {
+                    connector_count.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(sample_session("Ubuntu", "unexpected")) }
+                },
+                |session| async move { Ok(session.user) },
+            )
+            .await
+            .expect_err("stale workspace");
+
+        assert!(matches!(error, AppError::EnvironmentUnavailable { .. }));
+        assert_eq!(connects.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn waiting_reconnect_task_cannot_cross_disable_and_reenable_cycle() {
+        let registry = WslRuntime::default();
         let reconnect_lock = registry.reconnect_lock("Ubuntu");
         let held_reconnect = reconnect_lock.lock().await;
         let connects = Arc::new(AtomicUsize::new(0));
-        let task_registry = Arc::clone(&registry);
         let task_connects = Arc::clone(&connects);
-        let task = tokio::spawn(async move {
-            task_registry
-                .with_session_retry_using(
-                    "Ubuntu",
-                    move |_| {
-                        task_connects.fetch_add(1, Ordering::SeqCst);
-                        async { Ok(sample_session("Ubuntu", "unexpected")) }
-                    },
-                    |session| async move { Ok(session.user) },
-                )
-                .await
-        });
-        tokio::task::yield_now().await;
+        let operation = registry.with_session_retry_using(
+            "Ubuntu",
+            move |_| {
+                task_connects.fetch_add(1, Ordering::SeqCst);
+                async { Ok(sample_session("Ubuntu", "unexpected")) }
+            },
+            |session| async move { Ok(session.user) },
+        );
+        tokio::pin!(operation);
+        std::future::poll_fn(|context| {
+            assert!(matches!(
+                operation.as_mut().poll(context),
+                std::task::Poll::Pending
+            ));
+            std::task::Poll::Ready(())
+        })
+        .await;
 
         let transition = registry.begin_disable().expect("begin disable");
         transition
@@ -1128,19 +1461,20 @@ mod tests {
             .await
             .expect("no access permit while reconnect lock is pending");
         transition.commit_disabled();
+        registry
+            .begin_enable()
+            .expect("begin enable")
+            .commit_enabled();
         drop(held_reconnect);
 
-        let error = task
-            .await
-            .expect("waiting task")
-            .expect_err("disabled task rejected");
+        let error = operation.await.expect_err("disabled task rejected");
         assert!(matches!(error, AppError::EnvironmentUnavailable { .. }));
         assert_eq!(connects.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
     async fn disable_timeout_rolls_capability_back_to_enabled() {
-        let registry = Arc::new(EnvironmentRegistry::default());
+        let registry = Arc::new(WslRuntime::default());
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
         let signals = Arc::new(Mutex::new((Some(started_tx), Some(release_rx))));
@@ -1186,8 +1520,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disable_waits_for_managed_source_owners_before_committing() {
+        let registry = WslRuntime::default();
+        let workspace = registry.workspace("Ubuntu").expect("enabled workspace");
+        let active_operation = registry
+            .acquire_wsl_access("Ubuntu")
+            .expect("active WSL operation");
+        let transition = registry.begin_disable().expect("begin disable");
+        workspace
+            .register_source_owner()
+            .expect("active operation registers source owner while disabling");
+        drop(active_operation);
+        transition
+            .wait_for_quiescence(std::time::Duration::from_secs(1))
+            .await
+            .expect("no active command permits");
+
+        assert!(transition
+            .wait_for_source_retirement(std::time::Duration::ZERO)
+            .await
+            .is_err());
+        workspace.release_source_owner();
+        transition
+            .wait_for_source_retirement(std::time::Duration::from_secs(1))
+            .await
+            .expect("source owner retired");
+        transition.commit_disabled();
+    }
+
+    #[tokio::test]
     async fn session_retry_reconnects_once_after_environment_unavailable() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "old-user"));
         let events = record_runtime_events(&registry);
         let connects = Arc::new(AtomicUsize::new(0));
@@ -1239,7 +1602,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_retry_does_not_repeat_a_started_business_failure() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "alice"));
         let events = record_runtime_events(&registry);
         let connects = Arc::new(AtomicUsize::new(0));
@@ -1307,7 +1670,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_retry_retries_at_most_once() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "alice"));
         let events = record_runtime_events(&registry);
         let connects = Arc::new(AtomicUsize::new(0));
@@ -1359,7 +1722,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_retry_connector_failure_invalidates_and_publishes_unavailable() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "old-user"));
         let events = record_runtime_events(&registry);
         let operations = Arc::new(AtomicUsize::new(0));
@@ -1396,7 +1759,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_operation_invalidates_without_replaying_a_mutation() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(sample_session("Ubuntu", "old-user"));
         let events = record_runtime_events(&registry);
         let operations = Arc::new(AtomicUsize::new(0));
@@ -1429,7 +1792,7 @@ mod tests {
 
     #[tokio::test]
     async fn old_generation_failure_does_not_invalidate_or_publish_over_a_new_session() {
-        let registry = Arc::new(EnvironmentRegistry::default());
+        let registry = Arc::new(WslRuntime::default());
         registry.insert(sample_session("Ubuntu", "old-user"));
         let events = record_runtime_events(&registry);
         let replacement_registry = Arc::clone(&registry);
@@ -1467,12 +1830,12 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_session_failures_share_one_reconnect() {
-        let registry = Arc::new(EnvironmentRegistry::default());
+        let registry = Arc::new(WslRuntime::default());
         registry.insert(sample_session("Ubuntu", "old-user"));
         let barrier = Arc::new(tokio::sync::Barrier::new(2));
         let connects = Arc::new(AtomicUsize::new(0));
 
-        let run = |registry: Arc<EnvironmentRegistry>| {
+        let run = |registry: Arc<WslRuntime>| {
             let barrier = Arc::clone(&barrier);
             let connects = Arc::clone(&connects);
             async move {
@@ -1577,7 +1940,7 @@ mod tests {
 
     #[test]
     fn registry_keeps_successful_sessions_by_distro() {
-        let registry = EnvironmentRegistry::default();
+        let registry = WslRuntime::default();
         registry.insert(WslSession {
             distro_name: "Ubuntu".to_string(),
             user: "alice".to_string(),

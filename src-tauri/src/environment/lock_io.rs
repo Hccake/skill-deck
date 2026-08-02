@@ -7,7 +7,7 @@ use crate::storage::atomic_document::AtomicDocumentIo;
 
 pub enum EnvironmentLockIo {
     Host,
-    Wsl(WslSession),
+    ActiveWsl(WslSession),
 }
 
 impl EnvironmentLockIo {
@@ -17,8 +17,8 @@ impl EnvironmentLockIo {
     ) -> Result<Option<Vec<u8>>, AppError> {
         match self {
             Self::Host => NativeAtomicDocumentIo.read_optional(locator).await,
-            Self::Wsl(session) => {
-                WslAtomicDocumentIo::new(session.clone())
+            Self::ActiveWsl(session) => {
+                WslAtomicDocumentIo::from_active_session(session.clone())
                     .read_optional(locator)
                     .await
             }
@@ -41,8 +41,8 @@ impl EnvironmentLockIo {
     ) -> Result<(), AppError> {
         match self {
             Self::Host => NativeAtomicDocumentIo.write_atomic(locator, bytes).await,
-            Self::Wsl(session) => {
-                WslAtomicDocumentIo::new(session.clone())
+            Self::ActiveWsl(session) => {
+                WslAtomicDocumentIo::from_active_session(session.clone())
                     .write_atomic(locator, bytes)
                     .await
             }

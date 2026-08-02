@@ -887,7 +887,7 @@ mod tests {
     use crate::environment::types::{
         ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ProjectBinding,
     };
-    use crate::environment::wsl::EnvironmentRegistry;
+    use crate::environment::wsl::WslRuntime;
     use crate::models::InstallMode;
 
     #[test]
@@ -1202,7 +1202,7 @@ mod tests {
             (source.clone(), source_facts),
             (target.clone(), planning_facts(target, &target_root, false)),
         ])));
-        let environments = Arc::new(EnvironmentRegistry::default());
+        let environments = Arc::new(WslRuntime::default());
         let storage =
             Arc::new(NativePayloadSessionStorage::new(temp.path().join("payloads")).unwrap());
         let payloads = Arc::new(PayloadSessionManager::new(
@@ -1328,7 +1328,7 @@ mod tests {
             ),
             (second.clone(), planning_facts(second, &second_root, false)),
         ])));
-        let environments = Arc::new(EnvironmentRegistry::default());
+        let environments = Arc::new(WslRuntime::default());
         let storage =
             Arc::new(NativePayloadSessionStorage::new(temp.path().join("payloads")).unwrap());
         let payloads = Arc::new(PayloadSessionManager::new(

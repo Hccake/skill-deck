@@ -19,7 +19,7 @@ pub async fn list_agents(
     context: ContextRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<AgentRuntimeSnapshot, AgentCommandError> {
-    agents::list_agents(context, runtime.environments(), runtime.agents()).await
+    agents::list_agents(context, runtime.wsl(), runtime.agents()).await
 }
 
 #[tauri::command]
@@ -29,8 +29,8 @@ pub async fn list_agent_selection_groups(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<AgentSelectionGroups, AgentCommandError> {
     let agent_runtime =
-        agents::list_agents(context.clone(), runtime.environments(), runtime.agents()).await?;
-    let targets = RuntimeTargetFactResolver::new(runtime.environments_arc());
+        agents::list_agents(context.clone(), runtime.wsl(), runtime.agents()).await?;
+    let targets = RuntimeTargetFactResolver::new(runtime.wsl_arc());
     resolve_agent_selection_groups(&context, &agent_runtime, &targets)
         .await
         .map_err(AgentCommandError::from)
@@ -52,8 +52,7 @@ pub async fn validate_custom_agent_draft(
     draft: CustomAgentDefinition,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<CustomAgentDraftValidation, AgentCommandError> {
-    agents::validate_custom_agent_draft(context, draft, runtime.environments(), runtime.agents())
-        .await
+    agents::validate_custom_agent_draft(context, draft, runtime.wsl(), runtime.agents()).await
 }
 
 #[tauri::command]
@@ -89,7 +88,7 @@ pub async fn delete_custom_agent(
         expected_registry_revision,
         runtime.agents(),
         runtime.admission(),
-        runtime.environments(),
+        runtime.wsl(),
     )
     .await
 }
@@ -125,7 +124,7 @@ pub async fn preview_custom_agent_delete(
         id,
         expected_registry_revision,
         runtime.agents(),
-        runtime.environments(),
+        runtime.wsl(),
     )
     .await
 }
@@ -136,5 +135,5 @@ pub async fn list_eve_install_targets(
     context: ContextRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<Vec<InstallTargetInfo>, crate::error::AppError> {
-    agents::list_eve_install_targets(context, runtime.environments()).await
+    agents::list_eve_install_targets(context, runtime.wsl()).await
 }

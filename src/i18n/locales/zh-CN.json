@@ -533,7 +533,11 @@
       "wslBusyOperation": "WSL 操作尚未结束，请稍后重试。",
       "wslDisableTitle": "关闭 WSL Environment？",
       "wslDisableDescription": "Skill Deck 将切换到 Windows，并停止发现和使用 WSL Environment。已保存的 WSL 项目和设置会继续保留。",
-      "wslDisableConfirm": "切换到 Windows 并关闭"
+      "wslDisableAfterHostDescription": "当前 Environment 已切换到 Windows。关闭 WSL 集成后，Skill Deck 将停止发现和使用 WSL Environment；已保存的 WSL 项目和设置会继续保留。",
+      "wslDisableConfirm": "切换到 Windows 并关闭",
+      "wslDisableOnlyConfirm": "关闭 WSL 集成",
+      "wslSwitchingHost": "正在切换到 Windows",
+      "wslDisabling": "正在关闭 WSL 集成"
     },
     "agents": {
       "title": "Agents",

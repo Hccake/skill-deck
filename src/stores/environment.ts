@@ -27,6 +27,7 @@ interface EnvironmentState {
   wslIntegrationEnabled: boolean;
   wslCapabilityRevision: number;
   discover: () => Promise<void>;
+  retryDiscovery: () => Promise<void>;
   setWslIntegrationEnabled: (enabled: boolean) => Promise<void>;
   connect: (environment: EnvironmentRef) => Promise<void>;
   applyRuntimeEvent: (event: EnvironmentRuntimeEvent) => void;
@@ -86,6 +87,8 @@ let discoveryInFlight: Promise<void> | null = null;
 let wslSettingInFlight: Promise<void> | null = null;
 let environmentRequestSequence = 0;
 let wslSettingSequence = 0;
+let connectionRequestSequence = 0;
+const activeConnectionRequests = new Map<string, number>();
 
 function authoritativeSnapshotState(snapshot: EnvironmentDiscoverySnapshot) {
   const runtimeByEnvironment = Object.fromEntries(
@@ -103,24 +106,15 @@ function authoritativeSnapshotState(snapshot: EnvironmentDiscoverySnapshot) {
   };
 }
 
-export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) => ({
-  environments: [],
-  runtimeByEnvironment: {},
-  discoveryState: 'idle',
-  discoveryError: null,
-  discoveryCompletedAt: null,
-  wslIntegrationSupported: false,
-  wslIntegrationEnabled: false,
-  wslCapabilityRevision: 0,
-
-  discover: () => {
+export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) => {
+  const requestDiscovery = (force: boolean) => {
     if (wslSettingInFlight) return wslSettingInFlight;
     if (discoveryInFlight) return discoveryInFlight;
 
     const { discoveryCompletedAt, environments } = get();
     const coolingDown = discoveryCompletedAt !== null
       && Date.now() < discoveryCompletedAt + DISCOVERY_COOLDOWN_MS;
-    if (coolingDown) return Promise.resolve();
+    if (!force && coolingDown) return Promise.resolve();
 
     if (environments.length === 0) {
       set({ discoveryState: 'loading', discoveryError: null });
@@ -191,7 +185,20 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
     })();
     discoveryInFlight = request;
     return request;
-  },
+  };
+
+  return {
+  environments: [],
+  runtimeByEnvironment: {},
+  discoveryState: 'idle',
+  discoveryError: null,
+  discoveryCompletedAt: null,
+  wslIntegrationSupported: false,
+  wslIntegrationEnabled: false,
+  wslCapabilityRevision: 0,
+
+  discover: () => requestDiscovery(false),
+  retryDiscovery: () => requestDiscovery(true),
 
   setWslIntegrationEnabled: (enabled) => {
     const sequence = ++environmentRequestSequence;
@@ -212,31 +219,72 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   },
 
   connect: async (environment) => {
-    set((state) => ({
-      environments: updateEnvironment(state.environments, environment, {
-        status: environment.kind === 'host' ? 'available' : 'connecting',
-        error: null,
-      }),
-    }));
-    if (environment.kind === 'host') return;
-
-    try {
-      await connectEnvironment(environment.distro_name);
+    if (environment.kind === 'host') {
       set((state) => ({
         environments: updateEnvironment(state.environments, environment, {
           status: 'available',
           error: null,
         }),
       }));
+      return;
+    }
+    const key = environmentKey(environment);
+    const requestSequence = ++connectionRequestSequence;
+    activeConnectionRequests.set(key, requestSequence);
+    const startingState = get();
+    const startingInfo = startingState.runtimeByEnvironment[key]
+      ?? startingState.environments.find((entry) => environmentKey(entry.environment) === key);
+    const startingRevision = startingInfo?.revision ?? 0;
+    const capabilityRevision = startingState.wslCapabilityRevision;
+    set((state) => ({
+      environments: updateEnvironment(state.environments, environment, {
+        status: 'connecting',
+        error: null,
+      }),
+    }));
+
+    try {
+      const connected = await connectEnvironment(environment.distro_name);
+      set((state) => {
+        if (
+          activeConnectionRequests.get(key) !== requestSequence
+          || state.wslCapabilityRevision !== capabilityRevision
+        ) return state;
+        const authoritative = newerEnvironment(state.runtimeByEnvironment[key], connected);
+        return {
+          environments: updateEnvironment(state.environments, environment, authoritative),
+          runtimeByEnvironment: {
+            ...state.runtimeByEnvironment,
+            [key]: authoritative,
+          },
+        };
+      });
     } catch (error) {
       const appError = toAppError(error);
-      set((state) => ({
-        environments: updateEnvironment(state.environments, environment, {
+      set((state) => {
+        const current = state.runtimeByEnvironment[key]
+          ?? state.environments.find((entry) => environmentKey(entry.environment) === key);
+        if (
+          activeConnectionRequests.get(key) !== requestSequence
+          || state.wslCapabilityRevision !== capabilityRevision
+          || !current
+          || current.revision > startingRevision
+        ) return state;
+        const failed = {
+          ...current,
           status: 'unavailable',
           error: appError,
-        }),
-      }));
+        } satisfies EnvironmentInfo;
+        return {
+          environments: updateEnvironment(state.environments, environment, failed),
+          runtimeByEnvironment: { ...state.runtimeByEnvironment, [key]: failed },
+        };
+      });
       throw error;
+    } finally {
+      if (activeConnectionRequests.get(key) === requestSequence) {
+        activeConnectionRequests.delete(key);
+      }
     }
   },
 
@@ -264,4 +312,5 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
       };
     });
   },
-}));
+  };
+});

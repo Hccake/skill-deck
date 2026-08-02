@@ -60,7 +60,7 @@ use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::recovery::RecoveryMarkerStore;
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::git_fixture::{BareSkillRepo as FileBareSkillRepo, CountingGitTransport};
 use crate::models::InstallMode;
@@ -128,7 +128,7 @@ impl PreparedEntryExecutor for VerifyFailureEntryExecutor {
 }
 
 struct VerifyFailurePlanExecutor {
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     facts: RuntimePlanningFactSource,
     recovery_root: PathBuf,
 }
@@ -328,7 +328,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     )?;
 
     let registry = Arc::new(StaticRegistry(Arc::new(test_registry())));
-    let environments = Arc::new(EnvironmentRegistry::default());
+    let environments = Arc::new(WslRuntime::default());
     let facts = RuntimePlanningFactSource::with_host_snapshot(
         registry,
         environments.clone(),
@@ -867,7 +867,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
 
 fn executor(
     execution: &RuntimeExecutionDependencies,
-    environments: &Arc<EnvironmentRegistry>,
+    environments: &Arc<WslRuntime>,
     facts: &RuntimePlanningFactSource,
 ) -> RuntimePlanExecutor {
     let revisions: Arc<dyn RuntimeRevisionSource> = Arc::new(facts.clone());
@@ -1209,7 +1209,7 @@ mod update_lifecycle {
     }
 
     struct StageFailurePlanExecutor {
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
         facts: RuntimePlanningFactSource,
         recovery_root: PathBuf,
         private_root: PathBuf,
@@ -1256,7 +1256,7 @@ mod update_lifecycle {
         git_transport: Arc<CountingGitTransport>,
         project_path: PathBuf,
         recovery_root: PathBuf,
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
         facts: RuntimePlanningFactSource,
         targets: RuntimeTargetFactResolver,
         payloads: Arc<PayloadSessionManager>,
@@ -1299,7 +1299,7 @@ mod update_lifecycle {
             )
             .expect("write lifecycle lock");
 
-            let environments = Arc::new(EnvironmentRegistry::default());
+            let environments = Arc::new(WslRuntime::default());
             let registry = Arc::new(StaticRegistry(Arc::new(test_registry())));
             let facts = RuntimePlanningFactSource::with_host_snapshot(
                 registry,

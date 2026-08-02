@@ -168,7 +168,7 @@ pub fn run() {
                 recovery_root,
                 agent_registry.clone(),
             )?;
-            let environments = runtime.environments_arc();
+            let environments = runtime.wsl_arc();
             let maintenance = runtime.maintenance().clone();
 
             let environment_app_handle = app.handle().clone();

@@ -16,16 +16,16 @@ use crate::environment::planning::{
 };
 use crate::environment::types::{EnvironmentRef, ResourceLocator, StorageAccess};
 use crate::environment::wsl::operations::path::map_storage_path_to_host;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
 #[derive(Clone)]
 pub struct RuntimeCopyProjectComparator {
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
 }
 
 impl RuntimeCopyProjectComparator {
-    pub fn new(environments: Arc<EnvironmentRegistry>) -> Self {
+    pub fn new(environments: Arc<WslRuntime>) -> Self {
         Self { environments }
     }
 
@@ -158,7 +158,7 @@ pub type RuntimeCopyService = CopyService<
 
 pub fn build_runtime_copy_service(
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
 ) -> RuntimeCopyService {

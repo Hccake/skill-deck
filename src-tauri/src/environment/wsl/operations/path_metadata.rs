@@ -1,11 +1,11 @@
 use tokio::time::Duration;
 
 use crate::core::mutation::CancellationSignal;
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     decode_nul_records, wsl_operation, WslOperationDescriptor, WslOperationExecutor,
     WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
 };
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
 
 pub(crate) const PATH_METADATA_SCRIPT: &str = include_str!("../scripts/path-metadata.sh");
@@ -83,6 +83,21 @@ pub async fn inspect(
         return Err(protocol_error());
     }
     Ok(facts)
+}
+
+impl WslWorkspace {
+    pub(crate) async fn inspect_path_metadata(
+        &self,
+        queries: Vec<PathMetadataQuery>,
+        cancellation: Option<CancellationSignal>,
+    ) -> Result<Vec<PathMetadataFact>, AppError> {
+        self.with_session_retry(move |session| {
+            let queries = queries.clone();
+            let cancellation = cancellation.clone();
+            async move { inspect(&session, &queries, cancellation).await }
+        })
+        .await
+    }
 }
 
 pub fn parse_path_metadata(bytes: &[u8]) -> Result<Vec<PathMetadataFact>, AppError> {

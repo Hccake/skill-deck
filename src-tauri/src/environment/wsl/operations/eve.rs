@@ -1,10 +1,10 @@
 use tokio::time::Duration;
 
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     decode_nul_records, wsl_operation, WslOperationDescriptor, WslOperationExecutor,
     WslOperationRequest, DEFAULT_WSL_STDERR_LIMIT,
 };
+use crate::environment::wsl::WslSession;
 use crate::error::AppError;
 
 const EVE_PROJECT_SCRIPT: &str = include_str!("../scripts/eve.sh");

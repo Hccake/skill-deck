@@ -13,3 +13,4 @@ pub mod projects;
 pub mod recovery;
 pub mod scan;
 pub mod skill_content;
+pub mod source_acquisition;

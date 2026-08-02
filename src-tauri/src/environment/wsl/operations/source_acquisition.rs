@@ -2,14 +2,14 @@ use tokio::time::Duration;
 use uuid::Uuid;
 
 use crate::core::mutation::CancellationSignal;
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     no_wsl_exit_mapping, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
 };
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
 
-const WSL_SOURCE_ACQUISITION_SCRIPT: &str = include_str!("wsl/scripts/source-acquisition.sh");
+const WSL_SOURCE_ACQUISITION_SCRIPT: &str = include_str!("../scripts/source-acquisition.sh");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WslAcquisitionSource {
@@ -111,9 +111,10 @@ where
 
 #[derive(Debug)]
 pub struct WslNativeSource {
-    session: WslSession,
+    workspace: WslWorkspace,
     native_root: String,
     cleanup_root: Option<String>,
+    managed_owner_registered: bool,
     ref_revision: Option<String>,
 }
 
@@ -132,33 +133,40 @@ impl Drop for WslNativeSource {
         let Some(native_root) = self.cleanup_root.take() else {
             return;
         };
-        let session = self.session.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                let descriptor = WslOperationDescriptor {
-                    subcommand: "cleanup",
-                    script: WSL_SOURCE_ACQUISITION_SCRIPT,
-                    map_exit: no_wsl_exit_mapping,
-                };
-                let _ = WslOperationExecutor::execute(
-                    &descriptor,
-                    WslOperationRequest {
-                        session,
-                        args: vec![native_root],
-                        stdin: Vec::new(),
-                        timeout: Duration::from_secs(10),
-                        stdout_limit: 64,
-                        stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                        cancellation: None,
-                    },
-                )
-                .await;
-            });
+        self.workspace.defer_source_cleanup(native_root);
+        if self.managed_owner_registered {
+            self.workspace.release_source_owner();
         }
     }
 }
 
+pub(crate) async fn cleanup_wsl_source(
+    session: &WslSession,
+    native_root: &str,
+) -> Result<(), AppError> {
+    let descriptor = WslOperationDescriptor {
+        subcommand: "cleanup",
+        script: WSL_SOURCE_ACQUISITION_SCRIPT,
+        map_exit: no_wsl_exit_mapping,
+    };
+    WslOperationExecutor::execute(
+        &descriptor,
+        WslOperationRequest {
+            session: session.clone(),
+            args: vec![native_root.to_string()],
+            stdin: Vec::new(),
+            timeout: Duration::from_secs(10),
+            stdout_limit: 64,
+            stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+            cancellation: None,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn acquire_wsl_source_native(
+    workspace: WslWorkspace,
     session: &WslSession,
     source: WslAcquisitionSource,
     cancellation: CancellationSignal,
@@ -199,10 +207,15 @@ pub async fn acquire_wsl_source_native(
     } else {
         None
     };
+    let managed_owner_registered = plan.cleanup_root.is_some();
+    if managed_owner_registered {
+        workspace.register_source_owner()?;
+    }
     Ok(WslNativeSource {
-        session: session.clone(),
+        workspace,
         native_root: plan.native_root,
         cleanup_root: plan.cleanup_root,
+        managed_owner_registered,
         ref_revision,
     })
 }
@@ -240,10 +253,10 @@ mod tests {
 
     use super::{
         build_wsl_native_source_plan, run_wsl_acquisition_plan_with, WslAcquisitionPlan,
-        WslAcquisitionSource,
+        WslAcquisitionSource, WslNativeSource,
     };
     use crate::core::mutation::CancellationSignal;
-    use crate::environment::wsl::WslSession;
+    use crate::environment::wsl::{WslRuntime, WslSession};
 
     #[cfg(unix)]
     fn git(cwd: &std::path::Path, args: &[&str]) -> String {
@@ -282,6 +295,23 @@ mod tests {
         ] {
             assert!(super::parse_wsl_git_acquisition_response(invalid).is_err());
         }
+    }
+
+    #[test]
+    fn dropping_native_source_only_defers_cleanup_to_the_runtime() {
+        let runtime = WslRuntime::default();
+        let workspace = runtime.workspace("Ubuntu").expect("enabled workspace");
+        let source = WslNativeSource {
+            workspace: workspace.clone(),
+            native_root: "/tmp/skill-deck-source/repo".to_string(),
+            cleanup_root: Some("/tmp/skill-deck-source".to_string()),
+            managed_owner_registered: false,
+            ref_revision: None,
+        };
+
+        drop(source);
+
+        assert_eq!(workspace.deferred_source_cleanup_count(), 1);
     }
 
     #[cfg(unix)]

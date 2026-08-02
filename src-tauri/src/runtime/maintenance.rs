@@ -17,7 +17,7 @@ use crate::environment::maintenance::{
 use crate::environment::native::acquire::NativePayloadSessionStorage;
 use crate::environment::types::{EnvironmentKey, EnvironmentRef};
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
 pub struct MaintenanceTaskOutcome {
@@ -35,7 +35,7 @@ pub struct RuntimeMaintenanceTasks {
     payloads: Arc<PayloadSessionManager>,
     native_payload_storage: Arc<NativePayloadSessionStorage>,
     recovery: Arc<RuntimeRecoveryGraph>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     mutation: Arc<RuntimeAdmissionCoordinator>,
 }
 
@@ -44,7 +44,7 @@ impl RuntimeMaintenanceTasks {
         payloads: Arc<PayloadSessionManager>,
         native_payload_storage: Arc<NativePayloadSessionStorage>,
         recovery: Arc<RuntimeRecoveryGraph>,
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
         mutation: Arc<RuntimeAdmissionCoordinator>,
     ) -> Self {
         Self {
@@ -82,36 +82,25 @@ impl RuntimeMaintenanceTasks {
                 recovery: Err(AppError::MutationBusy),
             };
         }
-        let payloads = Arc::clone(&self.payloads);
-        let recovery = Arc::clone(&self.recovery);
-        let operation_environment = environment.clone();
-        let result = self
-            .environments
-            .with_session(distro_name, move |session| {
-                let payloads = Arc::clone(&payloads);
-                let recovery = Arc::clone(&recovery);
-                let environment = operation_environment.clone();
-                async move {
-                    let payload = match payloads.protected_session_ids(&environment) {
-                        Ok(protected) => {
-                            WslPayloadSessionStorage::new(session.clone())
-                                .sweep_orphans(&protected)
-                                .await
-                        }
-                        Err(error) => Err(error),
-                    };
-                    let recovery = recovery.reindex_wsl(session).await;
-                    Ok(MaintenanceTaskOutcome { payload, recovery })
-                }
-            })
-            .await;
-        match result {
-            Ok(outcome) => outcome,
-            Err(error) => MaintenanceTaskOutcome {
-                payload: Err(maintenance_environment_error(environment, &error)),
-                recovery: Err(maintenance_environment_error(environment, &error)),
-            },
-        }
+        let workspace = match self.environments.workspace(distro_name) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return MaintenanceTaskOutcome {
+                    payload: Err(maintenance_environment_error(environment, &error)),
+                    recovery: Err(maintenance_environment_error(environment, &error)),
+                };
+            }
+        };
+        let payload = match self.payloads.protected_session_ids(environment) {
+            Ok(protected) => {
+                WslPayloadSessionStorage::new(workspace.clone())
+                    .sweep_orphans(&protected)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        let recovery = self.recovery.reindex_wsl(workspace).await;
+        MaintenanceTaskOutcome { payload, recovery }
     }
 }
 

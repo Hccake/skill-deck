@@ -7,14 +7,14 @@ use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanE
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
 use crate::application::skill_entries::{InstalledSkillPayloadAcquirer, SkillEntryObserver};
 use crate::environment::planning::RuntimeTargetFactResolver;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 
 pub type RuntimeManageAgentsService =
     ManageAgentsService<RuntimePlanningFactSource, RuntimeTargetFactResolver, RuntimePlanExecutor>;
 
 pub fn build_runtime_manage_agents_service(
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
 ) -> RuntimeManageAgentsService {

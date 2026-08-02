@@ -17,8 +17,8 @@ use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::WslSession;
 use crate::error::AppError;
 
-pub const DEFAULT_WSL_STDOUT_LIMIT: usize = 16 * 1024 * 1024;
-pub const DEFAULT_WSL_STDERR_LIMIT: usize = 1024 * 1024;
+pub(super) const DEFAULT_WSL_STDOUT_LIMIT: usize = 16 * 1024 * 1024;
+pub(super) const DEFAULT_WSL_STDERR_LIMIT: usize = 1024 * 1024;
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const WSL_BOOTSTRAP_SCRIPT: &str = r#"printf 'skill-deck-wsl-shell-started-v1\n' >&2; script=$1; shift; exec /bin/sh -c "$script" -- "$@""#;
 const WSL_SHELL_STARTED_MARKER: &[u8] = b"skill-deck-wsl-shell-started-v1\n";
@@ -34,19 +34,19 @@ struct WslCommandRequest {
     pub cancellation: Option<CancellationSignal>,
 }
 
-pub type WslExitMapper = fn(Option<i32>, &str) -> Option<AppError>;
+pub(super) type WslExitMapper = fn(Option<i32>, &str) -> Option<AppError>;
 
-pub fn no_wsl_exit_mapping(_: Option<i32>, _: &str) -> Option<AppError> {
+pub(super) fn no_wsl_exit_mapping(_: Option<i32>, _: &str) -> Option<AppError> {
     None
 }
 
-pub struct WslOperationDescriptor {
-    pub subcommand: &'static str,
-    pub script: &'static str,
-    pub map_exit: WslExitMapper,
+pub(super) struct WslOperationDescriptor {
+    pub(super) subcommand: &'static str,
+    pub(super) script: &'static str,
+    pub(super) map_exit: WslExitMapper,
 }
 
-pub const fn wsl_operation(
+pub(super) const fn wsl_operation(
     _name: &'static str,
     subcommand: &'static str,
     script: &'static str,
@@ -58,26 +58,26 @@ pub const fn wsl_operation(
     }
 }
 
-pub struct WslOperationRequest {
-    pub session: WslSession,
-    pub args: Vec<String>,
-    pub stdin: Vec<u8>,
-    pub timeout: Duration,
-    pub stdout_limit: usize,
-    pub stderr_limit: usize,
-    pub cancellation: Option<CancellationSignal>,
+pub(super) struct WslOperationRequest {
+    pub(super) session: WslSession,
+    pub(super) args: Vec<String>,
+    pub(super) stdin: Vec<u8>,
+    pub(super) timeout: Duration,
+    pub(super) stdout_limit: usize,
+    pub(super) stderr_limit: usize,
+    pub(super) cancellation: Option<CancellationSignal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WslCommandOutput {
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
-    pub exit_code: Option<i32>,
+pub(super) struct WslCommandOutput {
+    pub(super) stdout: Vec<u8>,
+    pub(super) stderr: Vec<u8>,
+    pub(super) exit_code: Option<i32>,
 }
 
 struct WslCommandRunner;
 
-pub struct WslOperationExecutor;
+pub(super) struct WslOperationExecutor;
 
 pub(crate) fn build_wsl_exec_args(
     distro_name: &str,
@@ -100,7 +100,7 @@ pub(crate) fn build_wsl_exec_args(
     args
 }
 
-pub fn decode_nul_records(bytes: &[u8]) -> Vec<String> {
+pub(super) fn decode_nul_records(bytes: &[u8]) -> Vec<String> {
     bytes
         .split(|byte| *byte == 0)
         .filter(|record| !record.is_empty())
@@ -414,7 +414,7 @@ impl WslCommandRunner {
 }
 
 impl WslOperationExecutor {
-    pub async fn execute(
+    pub(super) async fn execute(
         descriptor: &WslOperationDescriptor,
         request: WslOperationRequest,
     ) -> Result<WslCommandOutput, AppError> {

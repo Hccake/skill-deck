@@ -5,11 +5,11 @@ use crate::environment::recovery::{
     RecoveryMarkerRef, RecoveryMarkerStore,
 };
 use crate::environment::types::{same_environment_identity, EnvironmentRef, ResourceLocator};
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
 };
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::{AppError, RecoveryResourceId};
 
 const ENUMERATE_SCRIPT: &str = include_str!("../scripts/recovery.sh");
@@ -102,21 +102,40 @@ fn protocol_error() -> AppError {
 }
 
 pub struct WslRecoveryMarkerStore {
-    session: WslSession,
+    access: WslRecoveryAccess,
     namespace: String,
 }
 
+enum WslRecoveryAccess {
+    Workspace(WslWorkspace),
+    ActiveSession(WslSession),
+}
+
 impl WslRecoveryMarkerStore {
-    pub fn new(session: WslSession) -> Self {
+    pub fn new(workspace: WslWorkspace) -> Self {
         Self {
-            session,
+            access: WslRecoveryAccess::Workspace(workspace),
             namespace: "/tmp".to_string(),
+        }
+    }
+
+    pub(crate) fn from_active_session(session: WslSession) -> Self {
+        Self {
+            access: WslRecoveryAccess::ActiveSession(session),
+            namespace: "/tmp".to_string(),
+        }
+    }
+
+    fn distro_name(&self) -> &str {
+        match &self.access {
+            WslRecoveryAccess::Workspace(workspace) => workspace.distro_name(),
+            WslRecoveryAccess::ActiveSession(session) => &session.distro_name,
         }
     }
 
     fn environment_ref(&self) -> EnvironmentRef {
         EnvironmentRef::Wsl {
-            distro_name: self.session.distro_name.clone(),
+            distro_name: self.distro_name().to_string(),
         }
     }
 
@@ -160,20 +179,36 @@ impl WslRecoveryMarkerStore {
         stdin: Vec<u8>,
         stdout_limit: usize,
     ) -> Result<Vec<u8>, AppError> {
-        let output = WslOperationExecutor::execute(
-            operation,
-            WslOperationRequest {
-                session: self.session.clone(),
-                args,
-                stdin,
-                timeout: Duration::from_secs(30),
-                stdout_limit,
-                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                cancellation: None,
-            },
-        )
-        .await?;
-        Ok(output.stdout)
+        let execute = |session, args: Vec<String>, stdin: Vec<u8>| async move {
+            WslOperationExecutor::execute(
+                operation,
+                WslOperationRequest {
+                    session,
+                    args,
+                    stdin,
+                    timeout: Duration::from_secs(30),
+                    stdout_limit,
+                    stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+                    cancellation: None,
+                },
+            )
+            .await
+            .map(|output| output.stdout)
+        };
+        match &self.access {
+            WslRecoveryAccess::Workspace(workspace) => {
+                workspace
+                    .with_session_retry(move |session| {
+                        let args = args.clone();
+                        let stdin = stdin.clone();
+                        execute(session, args, stdin)
+                    })
+                    .await
+            }
+            WslRecoveryAccess::ActiveSession(session) => {
+                execute(session.clone(), args, stdin).await
+            }
+        }
     }
 
     async fn write(
@@ -326,6 +361,50 @@ impl RecoveryMarkerStore for WslRecoveryMarkerStore {
 
 fn parse_write_response(bytes: &[u8]) -> Result<(), AppError> {
     (bytes == b"1\0").then_some(()).ok_or_else(protocol_error)
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::environment::wsl::{WslRuntime, WslSession};
+
+    fn session() -> WslSession {
+        WslSession {
+            distro_name: "Ubuntu".to_string(),
+            user: "alice".to_string(),
+            uid: 1000,
+            home: "/home/alice".to_string(),
+            xdg_state_home: None,
+            config_home: "/home/alice/.config".to_string(),
+            environment: BTreeMap::new(),
+            runtime_generation: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_store_from_an_old_cycle_cannot_enumerate_after_reenable() {
+        let runtime = WslRuntime::default();
+        runtime.insert(session());
+        let store =
+            WslRecoveryMarkerStore::new(runtime.workspace("Ubuntu").expect("enabled workspace"));
+
+        let disable = runtime.begin_disable().expect("begin disable");
+        disable
+            .wait_for_quiescence(Duration::from_secs(1))
+            .await
+            .expect("quiescent runtime");
+        disable.commit_disabled();
+        runtime
+            .begin_enable()
+            .expect("begin enable")
+            .commit_enabled();
+
+        let error = store.enumerate().await.expect_err("stale recovery store");
+
+        assert!(matches!(error, AppError::EnvironmentUnavailable { .. }));
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

@@ -13,11 +13,11 @@ use crate::core::skill_payload::{
     verify_skill_payload_integrity, verify_skill_payload_manifest, PayloadEntry, PayloadEntryKind,
     SkillPayload, SkillPayloadManifest,
 };
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT,
 };
+use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
 
 const PROTOCOL_VERSION: &str = "1";
@@ -76,7 +76,7 @@ const SOURCE_REVISION_OPERATION: WslOperationDescriptor =
     wsl_operation("payload", "source-revision", SOURCE_REVISION_SCRIPT);
 
 pub struct WslPayloadSessionStorage {
-    session: WslSession,
+    workspace: WslWorkspace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,8 +87,8 @@ pub struct WslAcquiredPayload {
 }
 
 impl WslPayloadSessionStorage {
-    pub fn new(session: WslSession) -> Self {
-        Self { session }
+    pub fn new(workspace: WslWorkspace) -> Self {
+        Self { workspace }
     }
 
     fn managed_paths(&self, key: &PayloadStorageKey) -> Result<(String, String), AppError> {
@@ -123,20 +123,29 @@ impl WslPayloadSessionStorage {
         stdout_limit: usize,
         cancellation: Option<CancellationSignal>,
     ) -> Result<Vec<u8>, AppError> {
-        let output = WslOperationExecutor::execute(
-            operation,
-            WslOperationRequest {
-                session: self.session.clone(),
-                args,
-                stdin,
-                timeout,
-                stdout_limit,
-                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
-                cancellation,
-            },
-        )
-        .await?;
-        Ok(output.stdout)
+        self.workspace
+            .with_session_retry(move |session| {
+                let args = args.clone();
+                let stdin = stdin.clone();
+                let cancellation = cancellation.clone();
+                async move {
+                    WslOperationExecutor::execute(
+                        operation,
+                        WslOperationRequest {
+                            session,
+                            args,
+                            stdin,
+                            timeout,
+                            stdout_limit,
+                            stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+                            cancellation,
+                        },
+                    )
+                    .await
+                    .map(|output| output.stdout)
+                }
+            })
+            .await
     }
 
     pub async fn acquire_from_path(
@@ -209,13 +218,40 @@ impl WslPayloadSessionStorage {
         }
         Ok(acquired)
     }
+
+    pub(crate) async fn source_metadata_fingerprint_in_active_session(
+        &self,
+        session: &WslSession,
+        source_root: &str,
+    ) -> Result<String, AppError> {
+        if !source_root.starts_with('/') {
+            return Err(AppError::UnsafePath {
+                path: source_root.to_string(),
+                reason: "WSL payload source must be an absolute POSIX path".to_string(),
+            });
+        }
+        let output = WslOperationExecutor::execute(
+            &SOURCE_FINGERPRINT_OPERATION,
+            WslOperationRequest {
+                session: session.clone(),
+                args: vec![source_root.to_string()],
+                stdin: Vec::new(),
+                timeout: Duration::from_secs(30),
+                stdout_limit: 128,
+                stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+                cancellation: None,
+            },
+        )
+        .await?;
+        parse_source_fingerprint(&output.stdout)
+    }
 }
 
 impl PayloadSessionStorage for WslPayloadSessionStorage {
     fn local_source(&self, key: &PayloadStorageKey) -> Result<PayloadLocalSource, AppError> {
         let (_, payload_root) = self.managed_paths(key)?;
         Ok(PayloadLocalSource::WslManaged {
-            distro_name: self.session.distro_name.clone(),
+            distro_name: self.workspace.distro_name().to_string(),
             payload_root,
         })
     }
@@ -778,9 +814,15 @@ mod tests {
         }
     }
 
+    fn storage() -> WslPayloadSessionStorage {
+        let runtime = crate::environment::wsl::WslRuntime::default();
+        runtime.insert(session());
+        WslPayloadSessionStorage::new(runtime.workspace("Ubuntu").expect("enabled workspace"))
+    }
+
     #[test]
     fn local_source_is_an_opaque_backend_owned_wsl_path() {
-        let storage = WslPayloadSessionStorage::new(session());
+        let storage = storage();
         let key = PayloadStorageKey::new("session-1", "skills/demo");
         assert_eq!(
             storage.local_source(&key).expect("local source"),
@@ -1292,9 +1334,15 @@ mod portable_tests {
         }
     }
 
+    fn storage() -> WslPayloadSessionStorage {
+        let runtime = crate::environment::wsl::WslRuntime::default();
+        runtime.insert(session());
+        WslPayloadSessionStorage::new(runtime.workspace("Ubuntu").expect("enabled workspace"))
+    }
+
     #[test]
     fn local_source_is_an_opaque_backend_owned_wsl_path() {
-        let storage = WslPayloadSessionStorage::new(session());
+        let storage = storage();
         let key = PayloadStorageKey::new("session-1", "skills/demo");
         assert_eq!(
             storage.local_source(&key).expect("local source"),
@@ -1316,5 +1364,52 @@ mod portable_tests {
         );
         assert!(parse_source_revision(format!("1\0{}\0", "a".repeat(39)).as_bytes()).is_err());
         assert!(parse_source_revision(format!("1\0{}z\0", "a".repeat(39)).as_bytes()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::environment::wsl::{WslRuntime, WslSession};
+
+    fn session() -> WslSession {
+        WslSession {
+            distro_name: "Ubuntu".to_string(),
+            user: "alice".to_string(),
+            uid: 1000,
+            home: "/home/alice".to_string(),
+            xdg_state_home: None,
+            config_home: "/home/alice/.config".to_string(),
+            environment: BTreeMap::new(),
+            runtime_generation: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn payload_storage_from_an_old_cycle_cannot_start_an_operation_after_reenable() {
+        let runtime = WslRuntime::default();
+        runtime.insert(session());
+        let storage =
+            WslPayloadSessionStorage::new(runtime.workspace("Ubuntu").expect("enabled workspace"));
+
+        let disable = runtime.begin_disable().expect("begin disable");
+        disable
+            .wait_for_quiescence(Duration::from_secs(1))
+            .await
+            .expect("quiescent runtime");
+        disable.commit_disabled();
+        runtime
+            .begin_enable()
+            .expect("begin enable")
+            .commit_enabled();
+
+        let error = storage
+            .source_metadata_fingerprint("/tmp/source")
+            .await
+            .expect_err("stale payload storage");
+
+        assert!(matches!(error, AppError::EnvironmentUnavailable { .. }));
     }
 }

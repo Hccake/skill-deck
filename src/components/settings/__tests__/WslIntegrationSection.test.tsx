@@ -132,4 +132,49 @@ describe('WslIntegrationSection', () => {
     );
     expect(screen.getByRole('alertdialog')).toBeTruthy();
   });
+
+  it('does not offer another Host switch after only the setting write failed', async () => {
+    mocks.supported = true;
+    mocks.enabled = true;
+    mocks.selectedContext = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    };
+    const view = render(<WslIntegrationSection />);
+
+    fireEvent.click(screen.getByRole('switch', { name: 'settings.general.wslTitle' }));
+    mocks.selectedContext = {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    };
+    mocks.failure = {
+      stage: 'persistSetting',
+      error: { kind: 'custom', data: { message: 'write failed' } },
+    };
+    view.rerender(<WslIntegrationSection />);
+
+    expect(screen.getByText('settings.general.wslDisableAfterHostDescription')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'settings.general.wslDisableOnlyConfirm' }))
+      .toBeTruthy();
+    expect(screen.queryByText('settings.general.wslDisableDescription')).toBeNull();
+  });
+
+  it('shows the active disable phase inside the confirmation dialog', () => {
+    mocks.supported = true;
+    mocks.enabled = true;
+    mocks.selectedContext = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    };
+    const view = render(<WslIntegrationSection />);
+    fireEvent.click(screen.getByRole('switch', { name: 'settings.general.wslTitle' }));
+    mocks.selectedContext = {
+      environment: { kind: 'host' },
+      scope: { scope: 'global' },
+    };
+    mocks.transition = { kind: 'wslIntegration', phase: 'disabling' };
+    view.rerender(<WslIntegrationSection />);
+
+    expect(screen.getByRole('status', { name: 'settings.general.wslDisabling' })).toBeTruthy();
+  });
 });

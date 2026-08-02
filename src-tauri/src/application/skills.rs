@@ -15,7 +15,7 @@ use crate::environment::native::inspection::NativeInspector;
 use crate::environment::read_service::ReadService;
 use crate::environment::types::{ContextRef, EnvironmentRef, ResourceLocator};
 use crate::environment::wsl::operations::inspection::WslInspector;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
 fn agent_command_error(error: AgentCommandError) -> AppError {
@@ -236,7 +236,7 @@ mod environment_tests {
 
 pub async fn list_skills(
     context: ContextRef,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
 ) -> Result<ListSkillsResult, AppError> {
     let runtime = crate::application::agents::list_agents(
@@ -273,8 +273,12 @@ pub async fn list_skills(
                             ReadService::new(vec![Arc::new(WslInspector::new(session.clone()))]);
                         let snapshot = read_service.execute(&plan.read_plan).await?;
                         let result = project_skill_snapshot(&plan, snapshot, &runtime)?;
-                        enrich_from_context_lock(result, &resolved, EnvironmentLockIo::Wsl(session))
-                            .await
+                        enrich_from_context_lock(
+                            result,
+                            &resolved,
+                            EnvironmentLockIo::ActiveWsl(session),
+                        )
+                        .await
                     }
                 })
                 .await

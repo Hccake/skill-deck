@@ -194,11 +194,11 @@ impl AuthorizedResourceOpener for crate::environment::opener::SystemResourceOpen
 
 #[derive(Clone)]
 pub struct RuntimeResourceReader {
-    environments: Arc<crate::environment::wsl::EnvironmentRegistry>,
+    environments: Arc<crate::environment::wsl::WslRuntime>,
 }
 
 impl RuntimeResourceReader {
-    pub fn new(environments: Arc<crate::environment::wsl::EnvironmentRegistry>) -> Self {
+    pub fn new(environments: Arc<crate::environment::wsl::WslRuntime>) -> Self {
         Self { environments }
     }
 }
@@ -242,7 +242,7 @@ pub type RuntimeResourceService = ResourceService<
 >;
 
 pub fn build_runtime_resource_service(
-    environments: Arc<crate::environment::wsl::EnvironmentRegistry>,
+    environments: Arc<crate::environment::wsl::WslRuntime>,
     registry: Arc<dyn crate::application::runtime_facts::AgentRegistrySnapshotSource>,
 ) -> RuntimeResourceService {
     let facts = crate::application::runtime_facts::RuntimePlanningFactSource::for_current_user(

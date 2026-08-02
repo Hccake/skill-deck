@@ -8,7 +8,7 @@ use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanE
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
 use crate::application::source_evidence::SourceEvidenceCoordinator;
 use crate::environment::planning::RuntimeTargetFactResolver;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 
 pub type RuntimeInstallService = InstallService<
     ConcreteInstallPlanner<RuntimePlanningFactSource, RuntimeTargetFactResolver>,
@@ -17,7 +17,7 @@ pub type RuntimeInstallService = InstallService<
 
 pub fn build_runtime_install_service(
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
     update_evidence: SourceEvidenceCoordinator,

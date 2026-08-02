@@ -17,7 +17,7 @@ import type {
   CustomAgentDraftValidation,
   AddProjectResult, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo, EnvironmentRef,
   InstallWizardSessionSnapshot, MutationSnapshot,
-  ProjectBinding, ProjectInfo, WslSession, ActiveMutation,
+  ProjectBinding, ProjectInfo, ActiveMutation,
   SkillIdentity,
   InstallRequest, InstallPreview, InstallResponse, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
@@ -39,7 +39,7 @@ export type {
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
   InstallTargetInfo, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
   EnvironmentRef, AddProjectResult, InstallWizardSessionSnapshot, MutationSnapshot,
-  ProjectBinding, ProjectInfo, WslSession,
+  ProjectBinding, ProjectInfo,
   ActiveMutation, AgentDeleteImpact, AgentDeleteResult, AgentOperationWarning,
   AgentSettingsSnapshot, CustomAgentDefinition, CustomAgentDraftValidation,
   SkillIdentity, InstallRequest, InstallPreview, InstallResponse, PreviewToken,
@@ -312,7 +312,7 @@ export async function listEnvironments(): Promise<EnvironmentDiscoverySnapshot> 
   return unwrap(await commands.listEnvironments());
 }
 
-export async function connectEnvironment(distroName: string): Promise<WslSession> {
+export async function connectEnvironment(distroName: string): Promise<EnvironmentInfo> {
   return unwrap(await commands.connectEnvironment(distroName));
 }
 

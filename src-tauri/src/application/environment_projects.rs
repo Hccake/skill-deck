@@ -5,7 +5,7 @@ use crate::environment::project_service;
 use crate::environment::types::{
     AddProjectResult, ContextRef, ContextScope, EnvironmentRef, ProjectInfo,
 };
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
 fn begin_project_mutation(
@@ -23,7 +23,7 @@ fn begin_project_mutation(
 pub async fn add_environment_project(
     environment: EnvironmentRef,
     native_path: String,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     migration: &ProjectMigrationRegistry,
     admission: &RuntimeAdmissionCoordinator,
 ) -> Result<AddProjectResult, AppError> {
@@ -39,7 +39,7 @@ pub async fn add_environment_project(
 pub async fn remove_environment_project(
     environment: EnvironmentRef,
     project_id: String,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     migration: &ProjectMigrationRegistry,
     admission: &RuntimeAdmissionCoordinator,
 ) -> Result<Vec<ProjectInfo>, AppError> {
@@ -56,7 +56,7 @@ pub async fn set_environment_project_cross_storage_warning(
     environment: EnvironmentRef,
     project_id: String,
     suppressed: bool,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
     migration: &ProjectMigrationRegistry,
     admission: &RuntimeAdmissionCoordinator,
 ) -> Result<ProjectInfo, AppError> {

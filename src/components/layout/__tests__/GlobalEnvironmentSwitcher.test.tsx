@@ -33,7 +33,7 @@ const mocks = vi.hoisted(() => ({
   } as ContextRef,
   transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
   switchEnvironment: vi.fn(async (_environment: EnvironmentRef) => undefined),
-  discover: vi.fn(async () => undefined),
+  retryDiscovery: vi.fn(async () => undefined),
   guard: vi.fn(async (action: () => void | Promise<void>) => {
     await action();
     return true;
@@ -58,7 +58,7 @@ vi.mock('@/stores/environment', () => ({
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
     environments: mocks.environments,
     discoveryError: mocks.discoveryError,
-    discover: mocks.discover,
+    retryDiscovery: mocks.retryDiscovery,
   }),
 }));
 vi.mock('@/stores/workspace-context', () => ({
@@ -98,7 +98,7 @@ describe('GlobalEnvironmentSwitcher', () => {
     };
     mocks.transition = { kind: 'idle' };
     mocks.switchEnvironment.mockResolvedValue(undefined);
-    mocks.discover.mockResolvedValue(undefined);
+    mocks.retryDiscovery.mockResolvedValue(undefined);
     useMutationStore.setState({
       revision: 0,
       activeMutation: null,
@@ -182,7 +182,7 @@ describe('GlobalEnvironmentSwitcher', () => {
     expect(await screen.findByText('context.environmentDiscoveryFailed')).toBeDefined();
     fireEvent.click(screen.getByRole('menuitem', { name: 'context.environmentRetry' }));
 
-    await waitFor(() => expect(mocks.discover).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.retryDiscovery).toHaveBeenCalledTimes(1));
   });
 
   it('reports a failed switch once from the global control', async () => {

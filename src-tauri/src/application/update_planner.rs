@@ -1051,7 +1051,7 @@ mod tests {
         };
         use crate::environment::runtime::ContextSnapshotRevision;
         use crate::environment::types::{ContextRef, ContextScope, ResourceLocator};
-        use crate::environment::wsl::EnvironmentRegistry;
+        use crate::environment::wsl::WslRuntime;
 
         struct Facts(InstallPlanningFacts);
 
@@ -1190,7 +1190,7 @@ mod tests {
             let planner = ConcreteUpdatePlanner::new(
                 Facts(facts),
                 CountingTargets {
-                    inner: RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default())),
+                    inner: RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
                     manifest_reads: Arc::clone(&manifest_reads),
                 },
                 Arc::clone(&manager),

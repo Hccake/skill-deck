@@ -26,7 +26,7 @@ use crate::environment::types::{
     ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
 };
 use crate::environment::wsl::operations::eve::inspect_eve_project;
-use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
 use crate::models::{InstallTargetInfo, Scope};
 use serde::{Deserialize, Serialize};
@@ -453,7 +453,7 @@ fn validate_draft(definition: &CustomAgentDefinition) -> Result<(), AgentCommand
 
 pub async fn list_agents(
     context: ContextRef,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
 ) -> Result<AgentRuntimeSnapshot, AgentCommandError> {
     match &context.environment {
@@ -470,10 +470,12 @@ pub async fn list_agents(
         }
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
+            let workspace = environment_registry.workspace(&distro_name)?;
             let retry_context = context.clone();
             let service = agent_registry;
             environment_registry
                 .with_session_retry(&distro_name, move |session| {
+                    let workspace = workspace.clone();
                     let context = retry_context.clone();
                     async move {
                         let resolved =
@@ -482,8 +484,12 @@ pub async fn list_agents(
                             .project
                             .as_ref()
                             .map(|project| project.native_path.clone());
-                        let environment = wsl_environment_context(&resolved, session.clone());
-                        list_agents_dynamic(service, environment, project_path.as_deref()).await
+                        let environment =
+                            wsl_environment_context(&resolved, session.clone(), workspace);
+                        let snapshot = service.registry_snapshot(true);
+                        AgentEnvironmentResolver::from_active_wsl_session(environment, session)
+                            .resolve_registry(&snapshot, project_path.as_deref())
+                            .await
                     }
                 })
                 .await
@@ -533,7 +539,7 @@ pub fn get_agent_settings_snapshot(
 pub async fn validate_custom_agent_draft(
     context: ContextRef,
     draft: CustomAgentDefinition,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
 ) -> Result<CustomAgentDraftValidation, AgentCommandError> {
     let draft_id = draft.id.clone();
@@ -556,9 +562,11 @@ pub async fn validate_custom_agent_draft(
         }
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
+            let workspace = environment_registry.workspace(&distro_name)?;
             let retry_context = context.clone();
             environment_registry
                 .with_session_retry(&distro_name, move |session| {
+                    let workspace = workspace.clone();
                     let context = retry_context.clone();
                     let preview_snapshot = preview_snapshot.clone();
                     let draft_id = draft_id.clone();
@@ -568,10 +576,13 @@ pub async fn validate_custom_agent_draft(
                             .project
                             .as_ref()
                             .map(|project| project.native_path.clone());
-                        resolve_custom_agent_preview(
+                        resolve_custom_agent_preview_with_resolver(
                             &preview_snapshot,
                             &draft_id,
-                            wsl_environment_context(&resolved, session),
+                            AgentEnvironmentResolver::from_active_wsl_session(
+                                wsl_environment_context(&resolved, session.clone(), workspace),
+                                session,
+                            ),
                             project_path.as_deref(),
                         )
                         .await
@@ -607,7 +618,7 @@ pub async fn delete_custom_agent(
     expected_registry_revision: String,
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
 ) -> Result<AgentDeleteResult, AgentCommandError> {
     delete_custom_agent_with_cleanup(
         registry,
@@ -662,7 +673,7 @@ pub async fn preview_custom_agent_delete(
     id: AgentId,
     expected_registry_revision: String,
     registry: &ManagedAgentRegistry,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
 ) -> Result<AgentDeleteImpact, AgentCommandError> {
     let captured = registry.preview_delete_definition(&id, &expected_registry_revision)?;
     let definition = captured.definition;
@@ -695,14 +706,17 @@ pub async fn preview_custom_agent_delete(
         }
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();
+            let workspace = environment_registry.workspace(&distro_name)?;
             environment_registry
                 .with_session_retry(&distro_name, move |session| {
+                    let workspace = workspace.clone();
                     let context = context.clone();
                     let definition = definition.clone();
                     let snapshot = snapshot.clone();
                     async move {
                         let agent_id = definition.id.clone();
                         let display_name = definition.display_name.clone();
+                        let context_workspace = workspace.clone();
                         let (defaults, runtime, inspections) = collect_wsl_delete_preview_facts(
                             &session,
                             move |session| {
@@ -718,11 +732,17 @@ pub async fn preview_custom_agent_delete(
                                         .project
                                         .as_ref()
                                         .map(|project| project.native_path.clone());
-                                    let runtime = AgentEnvironmentResolver::from_environment(
-                                        wsl_environment_context(&contexts.runtime, session),
-                                    )
-                                    .resolve_registry(&snapshot, project_path.as_deref())
-                                    .await?;
+                                    let runtime =
+                                        AgentEnvironmentResolver::from_active_wsl_session(
+                                            wsl_environment_context(
+                                                &contexts.runtime,
+                                                session.clone(),
+                                                context_workspace,
+                                            ),
+                                            session,
+                                        )
+                                        .resolve_registry(&snapshot, project_path.as_deref())
+                                        .await?;
                                     Ok((contexts, runtime))
                                 }
                             },
@@ -730,7 +750,7 @@ pub async fn preview_custom_agent_delete(
                                 let session = session.clone();
                                 async move {
                                     crate::application::default_agents::read_raw_default_target_agents_with_io(
-                                        EnvironmentLockIo::Wsl(session),
+                                        EnvironmentLockIo::ActiveWsl(session),
                                         crate::core::lock_repository::LockTarget {
                                             primary,
                                             legacy: None,
@@ -877,7 +897,22 @@ async fn resolve_custom_agent_preview(
     environment: EnvironmentContext,
     project_path: Option<&str>,
 ) -> Result<CustomAgentDraftValidation, AppError> {
-    let runtime = AgentEnvironmentResolver::from_environment(environment)
+    resolve_custom_agent_preview_with_resolver(
+        preview_snapshot,
+        draft_id,
+        AgentEnvironmentResolver::from_environment(environment),
+        project_path,
+    )
+    .await
+}
+
+async fn resolve_custom_agent_preview_with_resolver(
+    preview_snapshot: &AgentRegistrySnapshot,
+    draft_id: &AgentId,
+    resolver: AgentEnvironmentResolver,
+    project_path: Option<&str>,
+) -> Result<CustomAgentDraftValidation, AppError> {
+    let runtime = resolver
         .resolve_registry(preview_snapshot, project_path)
         .await?;
     let resolved = runtime
@@ -1175,7 +1210,7 @@ fn delete_custom_agent_with_controller(
 async fn delete_custom_agent_with_cleanup(
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    environment_registry: &EnvironmentRegistry,
+    environment_registry: &WslRuntime,
     context: ContextRef,
     id: AgentId,
     expected_registry_revision: String,
@@ -1241,11 +1276,15 @@ fn host_environment_context(resolved: &ResolvedContext) -> EnvironmentContext {
         environment_variables,
         availability: EnvironmentStatus::Available,
         revision,
-        wsl_session: None,
+        wsl_workspace: None,
     }
 }
 
-fn wsl_environment_context(resolved: &ResolvedContext, session: WslSession) -> EnvironmentContext {
+fn wsl_environment_context(
+    resolved: &ResolvedContext,
+    session: WslSession,
+    workspace: crate::environment::wsl::WslWorkspace,
+) -> EnvironmentContext {
     let revision = environment_revision("wsl", &session);
     EnvironmentContext {
         environment: resolved.context.environment.clone(),
@@ -1254,7 +1293,7 @@ fn wsl_environment_context(resolved: &ResolvedContext, session: WslSession) -> E
         environment_variables: session.environment.clone(),
         availability: EnvironmentStatus::Available,
         revision,
-        wsl_session: Some(session),
+        wsl_workspace: Some(workspace),
     }
 }
 
@@ -1271,7 +1310,7 @@ fn environment_revision(value_kind: &str, value: &impl Serialize) -> String {
 /// 列出指定项目内 Eve 可安装的具体目标：root agent 与已存在 subagents。
 pub async fn list_eve_install_targets(
     context: ContextRef,
-    registry: &EnvironmentRegistry,
+    registry: &WslRuntime,
 ) -> Result<Vec<InstallTargetInfo>, AppError> {
     match &context.environment {
         EnvironmentRef::Host => {
@@ -1411,7 +1450,7 @@ mod tests {
             environment_variables: BTreeMap::new(),
             availability: EnvironmentStatus::Available,
             revision: "host-test-revision".to_string(),
-            wsl_session: None,
+            wsl_workspace: None,
         }
     }
 
@@ -2458,7 +2497,7 @@ mod tests {
         )]);
         let service = ManagedAgentRegistry::from_repository(repository);
         let controller = RuntimeAdmissionCoordinator::default();
-        let environments = EnvironmentRegistry::default();
+        let environments = WslRuntime::default();
         let revision = service.registry_snapshot(true).revision.clone();
 
         let error = delete_custom_agent_with_cleanup(
@@ -2787,7 +2826,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_wsl_session_builds_the_current_environment_context() {
+    fn selected_wsl_workspace_builds_the_current_environment_context() {
         let session = WslSession {
             distro_name: "Ubuntu-24.04".to_string(),
             user: "alice".to_string(),
@@ -2826,7 +2865,9 @@ mod tests {
             },
         };
 
-        let context = wsl_environment_context(&resolved, session.clone());
+        let runtime = WslRuntime::default();
+        let workspace = runtime.workspace(&session.distro_name).unwrap();
+        let context = wsl_environment_context(&resolved, session.clone(), workspace.clone());
 
         assert_eq!(
             context.environment,
@@ -2837,7 +2878,7 @@ mod tests {
         assert_eq!(context.home, "/home/alice");
         assert_eq!(context.config_home, "/home/alice/.config");
         assert_eq!(context.environment_variables["CODEX_HOME"], "/opt/codex");
-        assert_eq!(context.wsl_session, Some(session));
+        assert_eq!(context.wsl_workspace, Some(workspace));
         assert_ne!(context.revision, "compatibility-host");
     }
 

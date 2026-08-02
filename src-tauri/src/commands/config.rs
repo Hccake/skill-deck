@@ -26,11 +26,12 @@ pub async fn set_wsl_integration_enabled(
     enabled: bool,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<crate::environment::project_service::EnvironmentDiscoverySnapshot, AppError> {
-    environment_settings::set_wsl_integration_enabled(
-        enabled,
-        runtime.environments(),
+    environment_settings::WslIntegrationSettings::new(
+        runtime.wsl(),
         runtime.admission(),
+        runtime.payloads(),
     )
+    .set_enabled(enabled)
     .await
 }
 
@@ -40,8 +41,7 @@ pub async fn get_default_target_agents(
     context: ContextRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
-    default_agents::get_default_target_agents(context, runtime.environments(), runtime.agents())
-        .await
+    default_agents::get_default_target_agents(context, runtime.wsl(), runtime.agents()).await
 }
 
 #[tauri::command]
@@ -56,7 +56,7 @@ pub async fn save_default_target_agents(
         context,
         defaults,
         expected_registry_revision,
-        runtime.environments(),
+        runtime.wsl(),
         runtime.agents(),
         runtime.admission(),
     )

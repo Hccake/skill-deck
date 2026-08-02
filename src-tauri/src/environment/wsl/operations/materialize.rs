@@ -24,11 +24,11 @@ use crate::environment::types::{EnvironmentRef, ResourceLocator};
 use crate::environment::wsl::operations::content_manifest::inspect_path as inspect_content_manifest;
 use crate::environment::wsl::operations::entry::inspect_entries;
 use crate::environment::wsl::operations::recovery::WslRecoveryMarkerStore;
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT,
 };
+use crate::environment::wsl::WslSession;
 use crate::error::{AppError, RecoveryResourceId};
 
 const MATERIALIZE_SCRIPT: &str = include_str!("../scripts/materialize.sh");
@@ -404,7 +404,7 @@ pub struct WslPreparedEntryExecutor {
 
 impl WslPreparedEntryExecutor {
     pub fn new(session: WslSession, operation_id: impl Into<String>) -> Self {
-        let recovery_store = Arc::new(WslRecoveryMarkerStore::new(session.clone()));
+        let recovery_store = Arc::new(WslRecoveryMarkerStore::from_active_session(session.clone()));
         Self::with_recovery_store(session, operation_id, recovery_store)
     }
 

@@ -20,7 +20,7 @@ use crate::environment::types::{
 use crate::environment::wsl::operations::content_manifest as wsl_content_manifest;
 use crate::environment::wsl::operations::entry::inspect_entries;
 use crate::environment::wsl::operations::projection::{project_targets, ProjectedPosixTarget};
-use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,11 +56,11 @@ pub trait TargetFactResolver: Send + Sync {
 
 #[derive(Clone)]
 pub struct RuntimeTargetFactResolver {
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
 }
 
 impl RuntimeTargetFactResolver {
-    pub fn new(environments: Arc<EnvironmentRegistry>) -> Self {
+    pub fn new(environments: Arc<WslRuntime>) -> Self {
         Self { environments }
     }
 }
@@ -324,7 +324,7 @@ mod tests {
 
     use super::*;
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
-    use crate::environment::wsl::EnvironmentRegistry;
+    use crate::environment::wsl::WslRuntime;
 
     fn wsl_session() -> WslSession {
         WslSession {
@@ -404,7 +404,7 @@ mod tests {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
-        let resolver = RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default()));
+        let resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
 
         let facts = resolver
             .resolve(
@@ -446,7 +446,7 @@ mod tests {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
-        let resolver = RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default()));
+        let resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
 
         let facts = resolver
             .resolve(
@@ -495,7 +495,7 @@ mod tests {
             environment: EnvironmentRef::Host,
             scope: ContextScope::Global,
         };
-        let resolver = RuntimeTargetFactResolver::new(Arc::new(EnvironmentRegistry::default()));
+        let resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
 
         assert!(resolver
             .resolve(

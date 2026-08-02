@@ -53,6 +53,7 @@ describe('useEnvironmentStore', () => {
     vi.clearAllMocks();
     now = 1_000_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
+    mocks.connectEnvironment.mockResolvedValue(ubuntu);
     useEnvironmentStore.setState({
       environments: [],
       runtimeByEnvironment: {},
@@ -83,6 +84,87 @@ describe('useEnvironmentStore', () => {
     expect(useEnvironmentStore.getState().wslIntegrationSupported).toBe(true);
     expect(useEnvironmentStore.getState().wslIntegrationEnabled).toBe(true);
     expect(mocks.connectEnvironment).not.toHaveBeenCalled();
+  });
+
+  it('does not let an older connection response overwrite a newer runtime event', async () => {
+    const connection = deferred<EnvironmentInfo>();
+    mocks.connectEnvironment.mockReturnValue(connection.promise);
+    useEnvironmentStore.setState({
+      environments: [host, ubuntu],
+      runtimeByEnvironment: { host, 'wsl:ubuntu': ubuntu },
+      wslIntegrationEnabled: true,
+      wslCapabilityRevision: 4,
+    });
+
+    const pending = useEnvironmentStore.getState().connect(ubuntu.environment);
+    useEnvironmentStore.getState().applyRuntimeEvent({
+      environment: ubuntu.environment,
+      status: 'unavailable',
+      revision: 3,
+      capabilityRevision: 4,
+      error: { kind: 'environmentUnavailable', data: { environment: ubuntu.environment, message: 'stopped' } },
+    });
+    connection.resolve({ ...ubuntu, status: 'available', revision: 2 });
+    await pending;
+
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [host, {
+        environment: ubuntu.environment,
+        status: 'unavailable',
+        revision: 3,
+      }],
+      runtimeByEnvironment: {
+        host,
+        'wsl:ubuntu': {
+          environment: ubuntu.environment,
+          status: 'unavailable',
+          revision: 3,
+        },
+      },
+    });
+  });
+
+  it('does not let an older connection failure overwrite a newer runtime event', async () => {
+    const connection = deferred<EnvironmentInfo>();
+    mocks.connectEnvironment.mockReturnValue(connection.promise);
+    useEnvironmentStore.setState({
+      environments: [host, ubuntu],
+      runtimeByEnvironment: { host, 'wsl:ubuntu': ubuntu },
+      wslIntegrationEnabled: true,
+      wslCapabilityRevision: 4,
+    });
+
+    const pending = useEnvironmentStore.getState().connect(ubuntu.environment);
+    useEnvironmentStore.getState().applyRuntimeEvent({
+      environment: ubuntu.environment,
+      status: 'available',
+      revision: 3,
+      capabilityRevision: 4,
+      error: null,
+    });
+    connection.reject({
+      kind: 'environmentUnavailable',
+      data: { environment: ubuntu.environment, message: 'older failure' },
+    });
+    await expect(pending).rejects.toMatchObject({ kind: 'environmentUnavailable' });
+
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [host, {
+        environment: ubuntu.environment,
+        status: 'available',
+        revision: 3,
+        error: null,
+      }],
+      runtimeByEnvironment: {
+        host,
+        'wsl:ubuntu': {
+          environment: ubuntu.environment,
+          status: 'available',
+          revision: 3,
+          error: null,
+        },
+      },
+    });
   });
 
   it('applies the authoritative Host-only snapshot after disabling WSL integration', async () => {
@@ -237,6 +319,26 @@ describe('useEnvironmentStore', () => {
     expect(mocks.listEnvironments).toHaveBeenCalledTimes(2);
   });
 
+  it('lets an explicit retry bypass the automatic discovery cooldown', async () => {
+    const error: AppError = {
+      kind: 'environmentDiscoveryFailed',
+      data: { message: 'wsl.exe is blocked' },
+    };
+    mocks.listEnvironments
+      .mockResolvedValueOnce({ environments: [host], error })
+      .mockResolvedValueOnce({ environments: [host, ubuntu], error: null });
+
+    await useEnvironmentStore.getState().discover();
+    await useEnvironmentStore.getState().retryDiscovery();
+
+    expect(mocks.listEnvironments).toHaveBeenCalledTimes(2);
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [host, ubuntu],
+      discoveryState: 'ready',
+      discoveryError: null,
+    });
+  });
+
   it('keeps the last successful inventory when discovery returns a typed error', async () => {
     const error: AppError = {
       kind: 'environmentDiscoveryFailed',
@@ -318,9 +420,9 @@ describe('useEnvironmentStore', () => {
   });
 
   it('exposes WSL connecting state without owning selected context', async () => {
-    let finishConnect: (() => void) | undefined;
+    let finishConnect: ((environment: EnvironmentInfo) => void) | undefined;
     useEnvironmentStore.setState({ environments: [host, ubuntu] });
-    mocks.connectEnvironment.mockImplementation(() => new Promise<void>((resolve) => {
+    mocks.connectEnvironment.mockImplementation(() => new Promise<EnvironmentInfo>((resolve) => {
       finishConnect = resolve;
     }));
 
@@ -328,9 +430,19 @@ describe('useEnvironmentStore', () => {
 
     expect(useEnvironmentStore.getState().environments[1].status).toBe('connecting');
     expect('selectedEnvironment' in useEnvironmentStore.getState()).toBe(false);
-    finishConnect?.();
+    finishConnect?.(ubuntu);
     await connection;
     expect(useEnvironmentStore.getState().environments[1].status).toBe('available');
+  });
+
+  it('applies the authoritative EnvironmentInfo returned by WSL connection', async () => {
+    const connected = { ...ubuntu, revision: 7 };
+    useEnvironmentStore.setState({ environments: [host, ubuntu] });
+    mocks.connectEnvironment.mockResolvedValue(connected);
+
+    await useEnvironmentStore.getState().connect(ubuntu.environment);
+
+    expect(useEnvironmentStore.getState().environments[1]).toEqual(connected);
   });
 
   it('stores a typed connection error only on the failed EnvironmentInfo', async () => {

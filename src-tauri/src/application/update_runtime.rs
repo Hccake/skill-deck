@@ -27,12 +27,12 @@ use crate::core::source_identity::{NormalizedRef, SourceProvider};
 use crate::core::{compute_local_ref_revision, GithubTokenProvider};
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::EnvironmentRef;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
 pub struct RuntimeUpdatePayloadAcquirer {
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
     evidence: SourceEvidenceCoordinator,
     git_transport: Arc<dyn GitSourceTransport>,
@@ -69,7 +69,7 @@ fn snapshot_reuse_eligible(environment: &EnvironmentRef) -> bool {
 impl RuntimeUpdatePayloadAcquirer {
     pub fn new(
         payloads: Arc<PayloadSessionManager>,
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
         evidence: SourceEvidenceCoordinator,
     ) -> Self {
@@ -85,7 +85,7 @@ impl RuntimeUpdatePayloadAcquirer {
     #[cfg(test)]
     pub(crate) fn with_git_transport(
         payloads: Arc<PayloadSessionManager>,
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
         evidence: SourceEvidenceCoordinator,
         git_transport: Arc<dyn GitSourceTransport>,
@@ -344,7 +344,7 @@ pub type RuntimeUpdateCheckService = UpdateCheckService<RuntimePlanningFactSourc
 
 pub fn build_runtime_source_evidence_coordinator(
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
     github_token_provider: Arc<dyn GithubTokenProvider>,
 ) -> Result<SourceEvidenceCoordinator, AppError> {
@@ -365,7 +365,7 @@ pub fn build_runtime_source_evidence_coordinator(
 }
 
 pub fn build_runtime_update_check_service(
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     evidence: SourceEvidenceCoordinator,
 ) -> RuntimeUpdateCheckService {
@@ -377,7 +377,7 @@ pub fn build_runtime_update_check_service(
 
 pub fn build_runtime_update_service(
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
     snapshots: Arc<SourceSnapshotReuseIndex>,

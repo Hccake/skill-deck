@@ -36,7 +36,7 @@ export function GlobalEnvironmentSwitcher() {
   const unsavedChanges = useOptionalUnsavedChanges();
   const environments = useEnvironmentStore((state) => state.environments);
   const discoveryError = useEnvironmentStore((state) => state.discoveryError);
-  const discover = useEnvironmentStore((state) => state.discover);
+  const retryEnvironmentDiscovery = useEnvironmentStore((state) => state.retryDiscovery);
   const selectedEnvironment = useWorkspaceContextStore(
     (state) => state.selectedContext.environment,
   );
@@ -75,7 +75,7 @@ export function GlobalEnvironmentSwitcher() {
   };
 
   const retryDiscovery = () => {
-    void discover().catch((error) => {
+    void retryEnvironmentDiscovery().catch((error) => {
       toast.error(formatAppError(toAppError(error), t));
     });
   };

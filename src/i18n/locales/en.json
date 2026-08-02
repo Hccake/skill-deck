@@ -533,7 +533,11 @@
       "wslBusyOperation": "A WSL operation is still running. Try again shortly.",
       "wslDisableTitle": "Disable WSL Environment?",
       "wslDisableDescription": "Skill Deck will switch to Windows and stop discovering or using WSL environments. Saved WSL projects and settings will be kept.",
-      "wslDisableConfirm": "Switch to Windows and disable"
+      "wslDisableAfterHostDescription": "The current Environment is already Windows. Disabling WSL will stop discovering or using WSL environments. Saved WSL projects and settings will be kept.",
+      "wslDisableConfirm": "Switch to Windows and disable",
+      "wslDisableOnlyConfirm": "Disable WSL integration",
+      "wslSwitchingHost": "Switching to Windows",
+      "wslDisabling": "Disabling WSL integration"
     },
     "agents": {
       "title": "Agents",

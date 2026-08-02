@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
 use crate::core::mutation::CancellationSignal;
-use crate::environment::wsl::WslSession;
-use crate::environment::wsl_protocol::{
+use crate::environment::wsl::protocol::{
     wsl_operation, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
     DEFAULT_WSL_STDERR_LIMIT,
 };
+use crate::environment::wsl::WslSession;
 use crate::error::AppError;
 
 const PROTOCOL_VERSION: &str = "2";

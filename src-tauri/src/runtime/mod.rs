@@ -27,7 +27,7 @@ use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::{GithubApiClient, GithubTokenProvider};
 use crate::environment::native::acquire::NativePayloadSessionStorage;
 use crate::environment::project_service::initialize_host_project_migration;
-use crate::environment::wsl::EnvironmentRegistry;
+use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::storage::github_credentials::KeyringGithubCredentialStore;
 
@@ -36,7 +36,7 @@ pub mod maintenance;
 use maintenance::{RuntimeMaintenanceCoordinator, RuntimeMaintenanceTasks};
 
 pub struct RuntimeServiceGraph {
-    environments: Arc<EnvironmentRegistry>,
+    wsl: Arc<WslRuntime>,
     agents: ManagedAgentRegistry,
     projects: ProjectMigrationRegistry,
     admission: Arc<RuntimeAdmissionCoordinator>,
@@ -63,7 +63,7 @@ impl RuntimeServiceGraph {
     ) -> Result<Self, AppError> {
         let wsl_integration_enabled =
             cfg!(target_os = "windows") && crate::core::read_config()?.wsl_integration_enabled;
-        let environments = Arc::new(EnvironmentRegistry::new_with_support(
+        let wsl = Arc::new(WslRuntime::new_with_support(
             cfg!(target_os = "windows"),
             wsl_integration_enabled,
         ));
@@ -72,7 +72,7 @@ impl RuntimeServiceGraph {
         let admission = Arc::new(RuntimeAdmissionCoordinator::default());
         let install_wizard = Arc::new(InstallWizardWorkflow::new(admission.clone()));
         let registry: Arc<dyn AgentRegistrySnapshotSource> = Arc::new(agents.clone());
-        let execution = RuntimeExecutionDependencies::new(environments.clone(), recovery_root)?;
+        let execution = RuntimeExecutionDependencies::new(wsl.clone(), recovery_root)?;
         let source_snapshots = Arc::new(
             crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex::default(),
         );
@@ -87,7 +87,7 @@ impl RuntimeServiceGraph {
             payloads.clone(),
             native_payload_storage,
             recovery_graph,
-            environments.clone(),
+            wsl.clone(),
             admission.clone(),
         ));
         let maintenance = Arc::new(RuntimeMaintenanceCoordinator::new(
@@ -96,53 +96,48 @@ impl RuntimeServiceGraph {
         ));
         let update_evidence = build_runtime_source_evidence_coordinator(
             payloads.clone(),
-            environments.clone(),
+            wsl.clone(),
             source_snapshots.clone(),
             github_token_provider,
         )?;
         let install = build_runtime_install_service(
             payloads.clone(),
-            environments.clone(),
+            wsl.clone(),
             registry.clone(),
             execution.clone(),
             update_evidence.clone(),
         );
         let update_check = build_runtime_update_check_service(
-            environments.clone(),
+            wsl.clone(),
             registry.clone(),
             update_evidence.clone(),
         );
         let update_evidence_for_update = update_evidence.clone();
         let update = build_runtime_update_service(
             payloads.clone(),
-            environments.clone(),
+            wsl.clone(),
             registry.clone(),
             execution.clone(),
             source_snapshots,
             update_evidence_for_update,
         );
-        let remove =
-            build_runtime_remove_service(environments.clone(), registry.clone(), execution.clone());
+        let remove = build_runtime_remove_service(wsl.clone(), registry.clone(), execution.clone());
         let manage_agents = build_runtime_manage_agents_service(
             payloads.clone(),
-            environments.clone(),
+            wsl.clone(),
             registry.clone(),
             execution.clone(),
         );
-        let resources = build_runtime_resource_service(environments.clone(), registry.clone());
-        let copy = build_runtime_copy_service(
-            payloads.clone(),
-            environments.clone(),
-            registry,
-            execution.clone(),
-        );
+        let resources = build_runtime_resource_service(wsl.clone(), registry.clone());
+        let copy =
+            build_runtime_copy_service(payloads.clone(), wsl.clone(), registry, execution.clone());
         let update_evidence_for_credentials = update_evidence.clone();
         let github_credentials = GithubCredentialWorkflowService::new(
             github_credentials,
             Arc::new(move || update_evidence_for_credentials.clear_host_github_auth_suppression()),
         );
         Ok(Self {
-            environments,
+            wsl,
             agents,
             projects: initialize_host_project_migration(),
             admission,
@@ -162,12 +157,12 @@ impl RuntimeServiceGraph {
         })
     }
 
-    pub fn environments(&self) -> &EnvironmentRegistry {
-        self.environments.as_ref()
+    pub fn wsl(&self) -> &WslRuntime {
+        self.wsl.as_ref()
     }
 
-    pub fn environments_arc(&self) -> Arc<EnvironmentRegistry> {
-        self.environments.clone()
+    pub fn wsl_arc(&self) -> Arc<WslRuntime> {
+        self.wsl.clone()
     }
 
     pub fn agents(&self) -> &ManagedAgentRegistry {

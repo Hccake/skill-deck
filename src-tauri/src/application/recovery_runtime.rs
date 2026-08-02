@@ -12,7 +12,7 @@ use crate::environment::recovery::{
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::operations::entry::{inspect_entries, PosixEntryKind};
 use crate::environment::wsl::operations::recovery::WslRecoveryMarkerStore;
-use crate::environment::wsl::{EnvironmentRegistry, WslSession};
+use crate::environment::wsl::{WslRuntime, WslSession, WslWorkspace};
 use crate::error::AppError;
 use crate::storage::recovery_repository::{
     RecoveryConsistency, RecoveryConsistencyChecker, RecoveryRepository,
@@ -21,11 +21,11 @@ use crate::storage::recovery_repository::{
 
 #[derive(Clone)]
 pub struct RuntimeRecoveryConsistencyChecker {
-    environments: Arc<EnvironmentRegistry>,
+    environments: Arc<WslRuntime>,
 }
 
 impl RuntimeRecoveryConsistencyChecker {
-    pub fn new(environments: Arc<EnvironmentRegistry>) -> Self {
+    pub fn new(environments: Arc<WslRuntime>) -> Self {
         Self { environments }
     }
 
@@ -159,11 +159,11 @@ pub struct RuntimeRecoveryGraph {
 
 impl RuntimeRecoveryGraph {
     pub fn new(
-        environments: Arc<EnvironmentRegistry>,
+        environments: Arc<WslRuntime>,
         recovery_root: std::path::PathBuf,
     ) -> Result<Self, AppError> {
         let native_underlying = Arc::new(NativeRecoveryMarkerStore::new(recovery_root)?);
-        let checker = Arc::new(RuntimeRecoveryConsistencyChecker::new(environments));
+        let checker = Arc::new(RuntimeRecoveryConsistencyChecker::new(environments.clone()));
         let repository_store: Arc<dyn RecoveryMarkerStore> = native_underlying.clone();
         let repository = Arc::new(RecoveryRepository::new(vec![repository_store], checker));
         let native_store: Arc<dyn RecoveryMarkerStore> = Arc::new(
@@ -179,12 +179,15 @@ impl RuntimeRecoveryGraph {
         Arc::clone(&self.native_store)
     }
 
-    pub fn wsl_store(&self, session: WslSession) -> Result<Arc<dyn RecoveryMarkerStore>, AppError> {
+    pub fn wsl_store(
+        &self,
+        workspace: WslWorkspace,
+    ) -> Result<Arc<dyn RecoveryMarkerStore>, AppError> {
         let environment = EnvironmentRef::Wsl {
-            distro_name: session.distro_name.clone(),
+            distro_name: workspace.distro_name().to_string(),
         };
         let underlying: Arc<dyn RecoveryMarkerStore> =
-            Arc::new(WslRecoveryMarkerStore::new(session));
+            Arc::new(WslRecoveryMarkerStore::new(workspace));
         self.repository.register_store(underlying)?;
         Ok(Arc::new(RepositoryRecoveryMarkerStore::new(
             environment,
@@ -192,12 +195,28 @@ impl RuntimeRecoveryGraph {
         )))
     }
 
-    pub async fn reindex_wsl(&self, session: WslSession) -> Result<(), AppError> {
+    pub(crate) fn active_wsl_store(
+        &self,
+        session: WslSession,
+    ) -> Result<Arc<dyn RecoveryMarkerStore>, AppError> {
         let environment = EnvironmentRef::Wsl {
             distro_name: session.distro_name.clone(),
         };
         let underlying: Arc<dyn RecoveryMarkerStore> =
-            Arc::new(WslRecoveryMarkerStore::new(session));
+            Arc::new(WslRecoveryMarkerStore::from_active_session(session));
+        self.repository.register_store(underlying)?;
+        Ok(Arc::new(RepositoryRecoveryMarkerStore::new(
+            environment,
+            Arc::clone(&self.repository),
+        )))
+    }
+
+    pub async fn reindex_wsl(&self, workspace: WslWorkspace) -> Result<(), AppError> {
+        let environment = EnvironmentRef::Wsl {
+            distro_name: workspace.distro_name().to_string(),
+        };
+        let underlying: Arc<dyn RecoveryMarkerStore> =
+            Arc::new(WslRecoveryMarkerStore::new(workspace));
         self.repository.register_store(underlying)?;
         self.repository
             .reindex_environment(&environment, &HashSet::new())
