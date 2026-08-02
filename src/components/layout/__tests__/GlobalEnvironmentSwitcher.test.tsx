@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => ({
     environment: { kind: 'host' },
     scope: { scope: 'global' },
   } as ContextRef,
-  pendingEnvironment: null as EnvironmentRef | null,
+  transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
   switchEnvironment: vi.fn(async (_environment: EnvironmentRef) => undefined),
   discover: vi.fn(async () => undefined),
   guard: vi.fn(async (action: () => void | Promise<void>) => {
@@ -64,7 +64,7 @@ vi.mock('@/stores/environment', () => ({
 vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
     selectedContext: mocks.selectedContext,
-    pendingEnvironment: mocks.pendingEnvironment,
+    transition: mocks.transition,
     switchEnvironment: mocks.switchEnvironment,
   }),
 }));
@@ -96,7 +96,7 @@ describe('GlobalEnvironmentSwitcher', () => {
       environment: { kind: 'host' },
       scope: { scope: 'global' },
     };
-    mocks.pendingEnvironment = null;
+    mocks.transition = { kind: 'idle' };
     mocks.switchEnvironment.mockResolvedValue(undefined);
     mocks.discover.mockResolvedValue(undefined);
     useMutationStore.setState({
@@ -160,7 +160,9 @@ describe('GlobalEnvironmentSwitcher', () => {
     }],
   ])('disables global switching while %s', (_label, pendingEnvironment, activeMutation) => {
     mocks.environments = [host, ubuntu];
-    mocks.pendingEnvironment = pendingEnvironment;
+    mocks.transition = pendingEnvironment
+      ? { kind: 'switchEnvironment', target: pendingEnvironment }
+      : { kind: 'idle' };
     useMutationStore.setState({ activeMutation });
 
     renderSwitcher();

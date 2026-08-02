@@ -75,14 +75,22 @@ impl InstallWizardWorkflow {
                     let instance_id = uuid::Uuid::new_v4().to_string();
                     let workflow = Arc::clone(self);
                     let destroyed_instance = instance_id.clone();
-                    adapter.create(
+                    self.set_tracked_instance(Some(instance_id.clone()));
+                    if let Err(error) = adapter.create(
                         request.take().expect("wizard request consumed once"),
                         &instance_id,
                         Arc::new(move || {
                             workflow.observe_destroyed(&destroyed_instance);
                         }),
-                    )?;
-                    self.set_tracked_instance(Some(instance_id.clone()));
+                    ) {
+                        self.set_tracked_instance(None);
+                        return Err(error);
+                    }
+                    if self.tracked_instance_id().as_deref() != Some(instance_id.as_str()) {
+                        return Err(AppError::Io {
+                            message: "Install wizard window closed during creation".to_string(),
+                        });
+                    }
                     reservation.activate(instance_id);
                     return Ok(());
                 }
@@ -98,9 +106,8 @@ impl InstallWizardWorkflow {
         match observed_instance {
             Some(instance_id) => {
                 self.set_tracked_instance(Some(instance_id.clone()));
-                self.admission.observe_install_wizard_window(
-                    WizardWindowObservation::Present { instance_id },
-                )
+                self.admission
+                    .observe_install_wizard_window(WizardWindowObservation::Present { instance_id })
             }
             None => {
                 let Some(instance_id) = self.tracked_instance_id() else {
@@ -120,11 +127,10 @@ impl InstallWizardWorkflow {
             *tracked = None;
         }
         drop(tracked);
-        self.admission.observe_install_wizard_window(
-            WizardWindowObservation::Destroyed {
+        self.admission
+            .observe_install_wizard_window(WizardWindowObservation::Destroyed {
                 instance_id: instance_id.to_string(),
-            },
-        )
+            })
     }
 
     fn set_tracked_instance(&self, instance_id: Option<String>) {
@@ -163,7 +169,11 @@ mod tests {
 
         fn focus(&self, _instance_id: &str) -> Result<bool, AppError> {
             let mut results = self.focus_results.lock().expect("focus results lock");
-            let focused = if results.is_empty() { true } else { results.remove(0) };
+            let focused = if results.is_empty() {
+                true
+            } else {
+                results.remove(0)
+            };
             if !focused {
                 *self.instance.lock().expect("instance lock") = None;
             }

@@ -59,7 +59,7 @@ export function ProjectsTab() {
   const writeBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
-  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
+  const transitionActive = useWorkspaceContextStore((state) => state.transition.kind !== 'idle');
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
   const loadStateByEnvironment = useProjectStore((state) => state.loadStateByEnvironment);
@@ -77,10 +77,10 @@ export function ProjectsTab() {
   )?.status;
 
   useEffect(() => {
-    if (loadState === 'idle' && !pendingEnvironment && selectedStatus === 'available') {
+    if (loadState === 'idle' && !transitionActive && selectedStatus === 'available') {
       void refresh(environment).catch(() => undefined);
     }
-  }, [environment, loadState, pendingEnvironment, refresh, selectedStatus]);
+  }, [environment, loadState, refresh, selectedStatus, transitionActive]);
 
   const addProject = async () => {
     const targetEnvironment = environment;
@@ -111,7 +111,7 @@ export function ProjectsTab() {
           className="h-8 cursor-pointer gap-1.5 px-3 text-xs font-medium"
           onClick={() => void addProject()}
           aria-label={t('settings.addProject')}
-          disabled={writeBlocked || pendingEnvironment !== null || selectedStatus !== 'available'}
+          disabled={writeBlocked || transitionActive || selectedStatus !== 'available'}
         >
           <Plus className="h-3.5 w-3.5" />
           {t('settings.addProject')}

@@ -27,6 +27,10 @@ describe('formatAppError', () => {
 
   it.each<[AppError, string]>([
     [{ kind: 'applicationTerminating' }, 'addSkill.error.applicationTerminating'],
+    [
+      { kind: 'wslIntegrationBusy', data: { reason: 'installWizard' } },
+      'settings.general.wslBusyInstallWizard',
+    ],
     [{ kind: 'mutationCancelled' }, 'addSkill.error.mutationCancelled'],
     [
       { kind: 'environmentDiscoveryFailed', data: { message: 'wsl list failed' } },

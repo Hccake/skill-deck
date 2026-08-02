@@ -38,6 +38,15 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.error.mutationBusy');
     case 'applicationTerminating':
       return t('addSkill.error.applicationTerminating');
+    case 'wslIntegrationBusy': {
+      const messageKey = {
+        mutation: 'settings.general.wslBusyMutation',
+        lifecycle: 'settings.general.wslBusyLifecycle',
+        installWizard: 'settings.general.wslBusyInstallWizard',
+        wslOperation: 'settings.general.wslBusyOperation',
+      }[error.data.reason];
+      return t(messageKey);
+    }
     case 'mutationCancelled':
       return t('addSkill.error.mutationCancelled');
     case 'environmentDiscoveryFailed':

@@ -34,7 +34,7 @@ const mocks = vi.hoisted(() => ({
       environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
       scope: { scope: 'global' as const },
     } as ContextRef,
-    pendingEnvironment: null as EnvironmentRef | null,
+    transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
     contextRevision: 2,
   },
   projects: {
@@ -82,7 +82,7 @@ describe('ProjectsTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.switchEnvironment.mockResolvedValue(undefined);
-    mocks.workspace.pendingEnvironment = null;
+    mocks.workspace.transition = { kind: 'idle' };
     mocks.workspace.contextRevision = 2;
     mocks.projects.projectsByEnvironment = { 'wsl:ubuntu': [project] };
     mocks.projects.loadStateByEnvironment = { 'wsl:ubuntu': 'ready' };
@@ -124,7 +124,7 @@ describe('ProjectsTab', () => {
   });
 
   it('leaves Environment switching to the main-window header', () => {
-    mocks.workspace.pendingEnvironment = { kind: 'host' };
+    mocks.workspace.transition = { kind: 'switchEnvironment', target: { kind: 'host' } };
     render(<ProjectsTab />);
 
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();

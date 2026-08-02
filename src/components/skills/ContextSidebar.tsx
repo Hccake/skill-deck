@@ -189,7 +189,7 @@ export function ContextSidebar() {
   const writeBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
-  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
+  const transitionActive = useWorkspaceContextStore((state) => state.transition.kind !== 'idle');
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
   const selectGlobal = useWorkspaceContextStore((state) => state.selectGlobal);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
@@ -214,16 +214,16 @@ export function ContextSidebar() {
   )?.status;
 
   useEffect(() => {
-    if (loadState === 'idle' && !pendingEnvironment && selectedStatus === 'available') {
+    if (loadState === 'idle' && !transitionActive && selectedStatus === 'available') {
       void refresh(environment).catch(() => undefined);
     }
-  }, [environment, loadState, pendingEnvironment, refresh, selectedStatus]);
+  }, [environment, loadState, refresh, selectedStatus, transitionActive]);
 
   useEffect(() => {
-    if (!selectedProjectId || loadState !== 'ready' || pendingEnvironment) return;
+    if (!selectedProjectId || loadState !== 'ready' || transitionActive) return;
     if (projects.some((entry) => entry.binding.id === selectedProjectId)) return;
     selectGlobal();
-  }, [loadState, pendingEnvironment, projects, selectGlobal, selectedProjectId]);
+  }, [loadState, projects, selectGlobal, selectedProjectId, transitionActive]);
 
   const addProject = async () => {
     const targetEnvironment = environment;
@@ -314,7 +314,7 @@ export function ContextSidebar() {
           className="w-full flex items-center justify-start gap-1.5 px-3 py-2 rounded-md hover:bg-foreground/[0.04] transition-colors text-muted-foreground hover:text-foreground font-semibold text-sm cursor-pointer"
           onClick={() => void addProject()}
           aria-label={t('context.addProject')}
-          disabled={writeBlocked || pendingEnvironment !== null || selectedStatus !== 'available'}
+          disabled={writeBlocked || transitionActive || selectedStatus !== 'available'}
         >
           <Plus className="h-4 w-4" />
           {t('context.addProject')}

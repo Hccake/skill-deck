@@ -3,20 +3,21 @@
 import '@/test-utils';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, EnvironmentRef } from '@/bindings';
+import type { AppError, ContextRef } from '@/bindings';
 import { WslIntegrationSection } from '../WslIntegrationSection';
 
 const mocks = vi.hoisted(() => ({
   supported: false,
   enabled: false,
-  pendingEnvironment: null as EnvironmentRef | null,
+  transition: { kind: 'idle' } as { kind: string; phase?: string },
+  failure: null as { stage: string; error: AppError } | null,
   selectedContext: {
     environment: { kind: 'host' },
     scope: { scope: 'global' },
   } as ContextRef,
   writeBlocked: false,
-  setEnabled: vi.fn(async (_enabled: boolean): Promise<void> => undefined),
-  switchEnvironment: vi.fn(async (_environment: EnvironmentRef) => undefined),
+  changeWslIntegration: vi.fn(async (_enabled: boolean): Promise<void> => undefined),
+  clearFailure: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -26,14 +27,15 @@ vi.mock('@/stores/environment', () => ({
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
     wslIntegrationSupported: mocks.supported,
     wslIntegrationEnabled: mocks.enabled,
-    setWslIntegrationEnabled: mocks.setEnabled,
   }),
 }));
 vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
     selectedContext: mocks.selectedContext,
-    pendingEnvironment: mocks.pendingEnvironment,
-    switchEnvironment: mocks.switchEnvironment,
+    transition: mocks.transition,
+    wslIntegrationFailure: mocks.failure,
+    changeWslIntegration: mocks.changeWslIntegration,
+    clearWslIntegrationFailure: mocks.clearFailure,
   }),
 }));
 vi.mock('@/hooks/useBusinessWriteBlocked', () => ({
@@ -45,14 +47,14 @@ describe('WslIntegrationSection', () => {
     vi.clearAllMocks();
     mocks.supported = false;
     mocks.enabled = false;
-    mocks.pendingEnvironment = null;
+    mocks.transition = { kind: 'idle' };
+    mocks.failure = null;
     mocks.selectedContext = {
       environment: { kind: 'host' },
       scope: { scope: 'global' },
     };
     mocks.writeBlocked = false;
-    mocks.setEnabled.mockResolvedValue(undefined);
-    mocks.switchEnvironment.mockResolvedValue(undefined);
+    mocks.changeWslIntegration.mockResolvedValue(undefined);
   });
 
   it('does not render outside Windows', () => {
@@ -68,8 +70,7 @@ describe('WslIntegrationSection', () => {
 
     fireEvent.click(screen.getByRole('switch', { name: 'settings.general.wslTitle' }));
 
-    await waitFor(() => expect(mocks.setEnabled).toHaveBeenCalledWith(true));
-    expect(mocks.switchEnvironment).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.changeWslIntegration).toHaveBeenCalledWith(true));
   });
 
   it('switches to Host before disabling the active WSL environment', async () => {
@@ -85,10 +86,7 @@ describe('WslIntegrationSection', () => {
     expect(screen.getByRole('alertdialog')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'settings.general.wslDisableConfirm' }));
 
-    await waitFor(() => expect(mocks.setEnabled).toHaveBeenCalledWith(false));
-    expect(mocks.switchEnvironment).toHaveBeenCalledWith({ kind: 'host' });
-    expect(mocks.switchEnvironment.mock.invocationCallOrder[0])
-      .toBeLessThan(mocks.setEnabled.mock.invocationCallOrder[0]);
+    await waitFor(() => expect(mocks.changeWslIntegration).toHaveBeenCalledWith(false));
   });
 
   it('keeps the setting read-only while business writes or Environment switching are active', () => {
@@ -99,32 +97,39 @@ describe('WslIntegrationSection', () => {
     expect((screen.getByRole('switch') as HTMLButtonElement).disabled).toBe(true);
 
     mocks.writeBlocked = false;
-    mocks.pendingEnvironment = { kind: 'wsl', distro_name: 'Ubuntu' };
+    mocks.transition = { kind: 'switchEnvironment' };
     rerender(<WslIntegrationSection />);
     expect((screen.getByRole('switch') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('shows progress and prevents repeated changes while discovery is pending', async () => {
+  it('shows progress and prevents repeated changes while the workflow is pending', () => {
     mocks.supported = true;
-    let finish: (() => void) | undefined;
-    mocks.setEnabled.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    mocks.transition = { kind: 'wslIntegration', phase: 'enabling' };
     render(<WslIntegrationSection />);
-
-    fireEvent.click(screen.getByRole('switch', { name: 'settings.general.wslTitle' }));
 
     expect(screen.getByRole('status', { name: 'settings.general.wslSaving' })).toBeTruthy();
     expect((screen.getByRole('switch') as HTMLButtonElement).disabled).toBe(true);
-    finish?.();
-    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   });
 
-  it('shows a stable error when the setting change fails', async () => {
+  it('shows a setting error in the confirmation dialog when disabling fails', async () => {
     mocks.supported = true;
-    mocks.setEnabled.mockRejectedValue(new Error('save failed'));
-    render(<WslIntegrationSection />);
+    mocks.enabled = true;
+    mocks.selectedContext = {
+      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
+      scope: { scope: 'global' },
+    };
+    const view = render(<WslIntegrationSection />);
 
     fireEvent.click(screen.getByRole('switch', { name: 'settings.general.wslTitle' }));
+    mocks.failure = {
+      stage: 'busy',
+      error: { kind: 'wslIntegrationBusy', data: { reason: 'installWizard' } },
+    };
+    view.rerender(<WslIntegrationSection />);
 
-    expect(await screen.findByText('settings.general.wslSaveError')).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'settings.general.wslBusyInstallWizard',
+    );
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
   });
 });

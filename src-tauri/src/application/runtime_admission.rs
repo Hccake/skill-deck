@@ -159,10 +159,7 @@ impl RuntimeAdmissionCoordinator {
         })
     }
 
-    pub fn begin_lifecycle(
-        &self,
-        kind: LifecycleLeaseKind,
-    ) -> Result<LifecyclePermit, AppError> {
+    pub fn begin_lifecycle(&self, kind: LifecycleLeaseKind) -> Result<LifecyclePermit, AppError> {
         let mut state = self.lock_state();
         self.ensure_process_running(&state)
             .map_err(AdmissionDenied::as_legacy_error)?;
@@ -315,12 +312,9 @@ impl RuntimeAdmissionCoordinator {
     }
 
     pub fn active_for_environment(&self, environment: &EnvironmentRef) -> bool {
-        self.lock_state()
-            .mutation
-            .as_ref()
-            .is_some_and(|mutation| {
-                same_environment_identity(&mutation.active.context.environment, environment)
-            })
+        self.lock_state().mutation.as_ref().is_some_and(|mutation| {
+            same_environment_identity(&mutation.active.context.environment, environment)
+        })
     }
 
     pub fn request_cancel(&self) -> Result<bool, AppError> {
@@ -498,7 +492,9 @@ pub struct MutationPermit {
 
 impl fmt::Debug for MutationPermit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("MutationPermit").finish_non_exhaustive()
+        formatter
+            .debug_struct("MutationPermit")
+            .finish_non_exhaustive()
     }
 }
 
@@ -564,7 +560,9 @@ pub struct LifecyclePermit {
 
 impl fmt::Debug for LifecyclePermit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("LifecyclePermit").finish_non_exhaustive()
+        formatter
+            .debug_struct("LifecyclePermit")
+            .finish_non_exhaustive()
     }
 }
 
@@ -592,7 +590,9 @@ pub struct SettingPermit {
 
 impl fmt::Debug for SettingPermit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("SettingPermit").finish_non_exhaustive()
+        formatter
+            .debug_struct("SettingPermit")
+            .finish_non_exhaustive()
     }
 }
 
@@ -727,11 +727,10 @@ mod tests {
             panic!("expected reservation");
         };
         reservation.activate("wizard-2".to_string());
-        let snapshot = admission.observe_install_wizard_window(
-            WizardWindowObservation::Destroyed {
+        let snapshot =
+            admission.observe_install_wizard_window(WizardWindowObservation::Destroyed {
                 instance_id: "wizard-1".to_string(),
-            },
-        );
+            });
 
         assert!(snapshot.active);
         assert_eq!(admission.wizard_instance_id().as_deref(), Some("wizard-2"));

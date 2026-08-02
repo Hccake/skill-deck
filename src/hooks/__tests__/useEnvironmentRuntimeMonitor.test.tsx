@@ -52,6 +52,7 @@ describe('useEnvironmentRuntimeMonitor', () => {
       .toBeLessThan(mocks.discover.mock.invocationCallOrder[0]);
 
     const event: EnvironmentRuntimeEvent = {
+      capabilityRevision: 0,
       revision: 2,
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       status: 'unavailable',

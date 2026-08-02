@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
+use tokio::time::timeout;
 #[cfg(target_os = "windows")]
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 
 #[cfg(target_os = "windows")]
 use crate::background_process::tokio_command;
@@ -41,12 +42,41 @@ struct CachedWslSession {
     session: WslSession,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WslCapabilityState {
+    Unsupported,
+    Disabled,
+    Enabling,
+    Enabled,
+    Disabling,
+}
+
 struct EnvironmentRegistryState {
-    wsl_integration_enabled: bool,
+    capability: WslCapabilityState,
+    capability_revision: u64,
+    active_wsl_permits: usize,
     next_generation: u64,
     sessions: HashMap<EnvironmentKey, CachedWslSession>,
     runtime: HashMap<EnvironmentKey, EnvironmentRuntimeStatus>,
+}
+
+impl EnvironmentRegistryState {
+    fn new(supported: bool, enabled: bool) -> Self {
+        Self {
+            capability: if !supported {
+                WslCapabilityState::Unsupported
+            } else if enabled {
+                WslCapabilityState::Enabled
+            } else {
+                WslCapabilityState::Disabled
+            },
+            capability_revision: 0,
+            active_wsl_permits: 0,
+            next_generation: 0,
+            sessions: HashMap::new(),
+            runtime: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +91,7 @@ pub struct EnvironmentRegistry {
     state: Arc<Mutex<EnvironmentRegistryState>>,
     reconnect_locks: Arc<Mutex<HashMap<EnvironmentKey, Arc<AsyncMutex<()>>>>>,
     listener: Arc<Mutex<Option<EnvironmentRuntimeListener>>>,
+    quiescence: Arc<Notify>,
 }
 
 type EnvironmentRuntimeListener = Arc<dyn Fn(EnvironmentRuntimeEvent) + Send + Sync>;
@@ -73,29 +104,43 @@ impl Default for EnvironmentRegistry {
 
 impl EnvironmentRegistry {
     pub fn new(wsl_integration_enabled: bool) -> Self {
+        Self::new_with_support(true, wsl_integration_enabled)
+    }
+
+    pub fn new_with_support(supported: bool, wsl_integration_enabled: bool) -> Self {
         Self {
-            state: Arc::new(Mutex::new(EnvironmentRegistryState {
+            state: Arc::new(Mutex::new(EnvironmentRegistryState::new(
+                supported,
                 wsl_integration_enabled,
-                ..EnvironmentRegistryState::default()
-            })),
+            ))),
             reconnect_locks: Arc::new(Mutex::new(HashMap::new())),
             listener: Arc::new(Mutex::new(None)),
+            quiescence: Arc::new(Notify::new()),
         }
     }
 
     pub fn wsl_integration_enabled(&self) -> bool {
-        self.state
-            .lock()
-            .expect("environment registry lock poisoned")
-            .wsl_integration_enabled
+        matches!(
+            self.state
+                .lock()
+                .expect("environment registry lock poisoned")
+                .capability,
+            WslCapabilityState::Enabled | WslCapabilityState::Disabling
+        )
     }
 
+    #[cfg(test)]
     pub fn set_wsl_integration_enabled(&self, enabled: bool) {
         let mut state = self
             .state
             .lock()
             .expect("environment registry lock poisoned");
-        state.wsl_integration_enabled = enabled;
+        state.capability = if enabled {
+            WslCapabilityState::Enabled
+        } else {
+            WslCapabilityState::Disabled
+        };
+        state.capability_revision = state.capability_revision.saturating_add(1);
         if !enabled {
             state.sessions.clear();
             state.runtime.clear();
@@ -111,17 +156,92 @@ impl EnvironmentRegistry {
         }
     }
 
-    pub(crate) fn ensure_wsl_integration_enabled(&self, distro_name: &str) -> Result<(), AppError> {
-        self.wsl_integration_enabled()
-            .then_some(())
-            .ok_or_else(|| Self::disabled_error(distro_name))
+    pub fn capability_revision(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("environment registry lock poisoned")
+            .capability_revision
+    }
+
+    fn acquire_wsl_access(&self, distro_name: &str) -> Result<WslAccessPermit, AppError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        match state.capability {
+            WslCapabilityState::Enabled => {
+                state.active_wsl_permits = state.active_wsl_permits.saturating_add(1);
+                Ok(WslAccessPermit {
+                    state: Arc::clone(&self.state),
+                    quiescence: Arc::clone(&self.quiescence),
+                    capability_revision: state.capability_revision,
+                })
+            }
+            WslCapabilityState::Unsupported => Err(AppError::CapabilityUnavailable {
+                capability: "wslIntegration".to_string(),
+                path: None,
+            }),
+            WslCapabilityState::Disabled
+            | WslCapabilityState::Enabling
+            | WslCapabilityState::Disabling => Err(Self::disabled_error(distro_name)),
+        }
+    }
+
+    pub(crate) fn with_wsl_access<T>(
+        &self,
+        distro_name: &str,
+        action: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let _permit = self.acquire_wsl_access(distro_name)?;
+        action()
+    }
+
+    pub(crate) async fn discover_using<Discover, DiscoveryFuture>(
+        &self,
+        discover: Discover,
+    ) -> Result<Vec<String>, AppError>
+    where
+        Discover: FnOnce() -> DiscoveryFuture,
+        DiscoveryFuture: Future<Output = Result<Vec<String>, AppError>>,
+    {
+        let _permit = self.acquire_wsl_access("discovery")?;
+        discover().await
+    }
+
+    pub(crate) async fn connect_using<C, CFut>(
+        &self,
+        distro_name: &str,
+        mut connector: C,
+    ) -> Result<WslSession, AppError>
+    where
+        C: FnMut(String) -> CFut,
+        CFut: Future<Output = Result<WslSession, AppError>>,
+    {
+        let reconnect_lock = self.reconnect_lock(distro_name);
+        let _reconnect = reconnect_lock.lock().await;
+        let permit = self.acquire_wsl_access(distro_name)?;
+        let mut session = connector(distro_name.to_string()).await?;
+        self.insert_with_permit(&mut session, &permit)?;
+        Ok(session)
     }
 
     pub fn insert(&self, mut session: WslSession) {
-        let _ = self.insert_if_enabled(&mut session);
+        if let Ok(permit) = self.acquire_wsl_access(&session.distro_name) {
+            let _ = self.insert_with_permit(&mut session, &permit);
+        }
     }
 
+    #[cfg(test)]
     pub(crate) fn insert_if_enabled(&self, session: &mut WslSession) -> Result<(), AppError> {
+        let permit = self.acquire_wsl_access(&session.distro_name)?;
+        self.insert_with_permit(session, &permit)
+    }
+
+    fn insert_with_permit(
+        &self,
+        session: &mut WslSession,
+        permit: &WslAccessPermit,
+    ) -> Result<(), AppError> {
         let distro_name = session.distro_name.clone();
         let key = EnvironmentKey::wsl(&distro_name);
         let environment = EnvironmentRef::Wsl {
@@ -131,7 +251,12 @@ impl EnvironmentRegistry {
             .state
             .lock()
             .expect("environment registry lock poisoned");
-        if !state.wsl_integration_enabled {
+        if state.capability_revision != permit.capability_revision
+            || !matches!(
+                state.capability,
+                WslCapabilityState::Enabled | WslCapabilityState::Disabling
+            )
+        {
             return Err(Self::disabled_error(&distro_name));
         }
         state.next_generation = state.next_generation.saturating_add(1);
@@ -154,12 +279,49 @@ impl EnvironmentRegistry {
         );
         drop(state);
         self.publish(EnvironmentRuntimeEvent {
+            capability_revision: permit.capability_revision,
             revision: generation,
             environment,
             status: EnvironmentStatus::Available,
             error: None,
         });
         Ok(())
+    }
+
+    pub fn begin_disable(&self) -> Result<WslDisableTransition, AppError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        if state.capability != WslCapabilityState::Enabled {
+            return Err(Self::disabled_error(""));
+        }
+        state.capability = WslCapabilityState::Disabling;
+        Ok(WslDisableTransition {
+            registry: self.clone(),
+            completed: false,
+        })
+    }
+
+    pub fn begin_enable(&self) -> Result<WslEnableTransition, AppError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        match state.capability {
+            WslCapabilityState::Disabled => {
+                state.capability = WslCapabilityState::Enabling;
+                Ok(WslEnableTransition {
+                    registry: self.clone(),
+                    completed: false,
+                })
+            }
+            WslCapabilityState::Unsupported => Err(AppError::CapabilityUnavailable {
+                capability: "wslIntegration".to_string(),
+                path: None,
+            }),
+            _ => Err(Self::disabled_error("")),
+        }
     }
 
     #[cfg(test)]
@@ -248,8 +410,10 @@ impl EnvironmentRegistry {
                     error: Some(error.clone()),
                 },
             );
+            let capability_revision = state.capability_revision;
             drop(state);
             self.publish(EnvironmentRuntimeEvent {
+                capability_revision,
                 revision,
                 environment: EnvironmentRef::Wsl {
                     distro_name: distro_name.to_string(),
@@ -264,23 +428,27 @@ impl EnvironmentRegistry {
         &self,
         distro_name: &str,
         connector: &mut C,
-    ) -> Result<CachedWslSession, AppError>
+    ) -> Result<(CachedWslSession, WslAccessPermit), AppError>
     where
         C: FnMut(String) -> CFut,
         CFut: Future<Output = Result<WslSession, AppError>>,
     {
-        self.ensure_wsl_integration_enabled(distro_name)?;
-        if let Some(cached) = self.get_cached(distro_name) {
-            return Ok(cached);
+        if self.get_cached(distro_name).is_some() {
+            let permit = self.acquire_wsl_access(distro_name)?;
+            if let Some(cached) = self.get_cached(distro_name) {
+                return Ok((cached, permit));
+            }
         }
         let reconnect_lock = self.reconnect_lock(distro_name);
         let _reconnect = reconnect_lock.lock().await;
+        let permit = self.acquire_wsl_access(distro_name)?;
         if let Some(cached) = self.get_cached(distro_name) {
-            return Ok(cached);
+            return Ok((cached, permit));
         }
         let mut session = connector(distro_name.to_string()).await?;
-        self.insert_if_enabled(&mut session)?;
+        self.insert_with_permit(&mut session, &permit)?;
         self.get_cached(distro_name)
+            .map(|cached| (cached, permit))
             .ok_or_else(|| AppError::EnvironmentUnavailable {
                 environment: EnvironmentRef::Wsl {
                     distro_name: distro_name.to_string(),
@@ -301,14 +469,16 @@ impl EnvironmentRegistry {
         O: FnMut(WslSession) -> OFut,
         OFut: Future<Output = Result<T, AppError>>,
     {
-        let initial = self
+        let (initial, initial_access) = self
             .get_or_connect_using(distro_name, &mut connector)
             .await?;
         match operation(initial.session.clone()).await {
             Ok(result) => Ok(result),
             Err(AppError::EnvironmentUnavailable { .. }) => {
+                drop(initial_access);
                 let reconnect_lock = self.reconnect_lock(distro_name);
                 let _reconnect = reconnect_lock.lock().await;
+                let access = self.acquire_wsl_access(distro_name)?;
                 let refreshed = match self.get_cached(distro_name) {
                     Some(cached) if cached.generation != initial.generation => cached,
                     _ => {
@@ -324,7 +494,7 @@ impl EnvironmentRegistry {
                             }
                             Err(error) => return Err(error),
                         };
-                        self.insert_if_enabled(&mut session)?;
+                        self.insert_with_permit(&mut session, &access)?;
                         self.get_cached(distro_name).ok_or_else(|| {
                             AppError::EnvironmentUnavailable {
                                 environment: EnvironmentRef::Wsl {
@@ -335,7 +505,7 @@ impl EnvironmentRegistry {
                         })?
                     }
                 };
-                match operation(refreshed.session).await {
+                let result = match operation(refreshed.session).await {
                     Ok(result) => Ok(result),
                     Err(error @ AppError::EnvironmentUnavailable { .. }) => {
                         self.publish_unavailable_if_current(
@@ -346,7 +516,9 @@ impl EnvironmentRegistry {
                         Err(error)
                     }
                     Err(error) => Err(error),
-                }
+                };
+                drop(access);
+                result
             }
             Err(error) => Err(error),
         }
@@ -380,7 +552,7 @@ impl EnvironmentRegistry {
     {
         let mut connector =
             |distro_name: String| async move { connect_wsl_environment(&distro_name).await };
-        let cached = self
+        let (cached, _access) = self
             .get_or_connect_using(distro_name, &mut connector)
             .await?;
         let result = operation(cached.session).await;
@@ -388,6 +560,122 @@ impl EnvironmentRegistry {
             self.publish_unavailable_if_current(distro_name, cached.generation, error.clone());
         }
         result
+    }
+}
+
+pub struct WslAccessPermit {
+    state: Arc<Mutex<EnvironmentRegistryState>>,
+    quiescence: Arc<Notify>,
+    capability_revision: u64,
+}
+
+impl Drop for WslAccessPermit {
+    fn drop(&mut self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        state.active_wsl_permits = state.active_wsl_permits.saturating_sub(1);
+        let quiescent = state.active_wsl_permits == 0;
+        drop(state);
+        if quiescent {
+            self.quiescence.notify_waiters();
+        }
+    }
+}
+
+pub struct WslDisableTransition {
+    registry: EnvironmentRegistry,
+    completed: bool,
+}
+
+impl WslDisableTransition {
+    pub async fn wait_for_quiescence(&self, limit: std::time::Duration) -> Result<(), ()> {
+        let wait = async {
+            loop {
+                let notified = self.registry.quiescence.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self
+                    .registry
+                    .state
+                    .lock()
+                    .expect("environment registry lock poisoned")
+                    .active_wsl_permits
+                    == 0
+                {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        timeout(limit, wait).await.map_err(|_| ())
+    }
+
+    pub fn commit_disabled(mut self) {
+        let mut state = self
+            .registry
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        assert_eq!(state.capability, WslCapabilityState::Disabling);
+        assert_eq!(state.active_wsl_permits, 0);
+        state.sessions.clear();
+        state.runtime.clear();
+        state.capability = WslCapabilityState::Disabled;
+        state.capability_revision = state.capability_revision.saturating_add(1);
+        self.completed = true;
+    }
+}
+
+impl Drop for WslDisableTransition {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let mut state = self
+            .registry
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        if state.capability == WslCapabilityState::Disabling {
+            state.capability = WslCapabilityState::Enabled;
+        }
+    }
+}
+
+pub struct WslEnableTransition {
+    registry: EnvironmentRegistry,
+    completed: bool,
+}
+
+impl WslEnableTransition {
+    pub fn commit_enabled(mut self) {
+        let mut state = self
+            .registry
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        assert_eq!(state.capability, WslCapabilityState::Enabling);
+        state.capability = WslCapabilityState::Enabled;
+        state.capability_revision = state.capability_revision.saturating_add(1);
+        self.completed = true;
+    }
+}
+
+impl Drop for WslEnableTransition {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let mut state = self
+            .registry
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        if state.capability == WslCapabilityState::Enabling {
+            state.capability = WslCapabilityState::Disabled;
+        }
     }
 }
 
@@ -776,6 +1064,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn waiting_reconnect_task_cannot_start_connector_after_disable_commits() {
+        let registry = Arc::new(EnvironmentRegistry::default());
+        let reconnect_lock = registry.reconnect_lock("Ubuntu");
+        let held_reconnect = reconnect_lock.lock().await;
+        let connects = Arc::new(AtomicUsize::new(0));
+        let task_registry = Arc::clone(&registry);
+        let task_connects = Arc::clone(&connects);
+        let task = tokio::spawn(async move {
+            task_registry
+                .with_session_retry_using(
+                    "Ubuntu",
+                    move |_| {
+                        task_connects.fetch_add(1, Ordering::SeqCst);
+                        async { Ok(sample_session("Ubuntu", "unexpected")) }
+                    },
+                    |session| async move { Ok(session.user) },
+                )
+                .await
+        });
+        tokio::task::yield_now().await;
+
+        let transition = registry.begin_disable().expect("begin disable");
+        transition
+            .wait_for_quiescence(std::time::Duration::from_secs(1))
+            .await
+            .expect("no access permit while reconnect lock is pending");
+        transition.commit_disabled();
+        drop(held_reconnect);
+
+        let error = task
+            .await
+            .expect("waiting task")
+            .expect_err("disabled task rejected");
+        assert!(matches!(error, AppError::EnvironmentUnavailable { .. }));
+        assert_eq!(connects.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn disable_timeout_rolls_capability_back_to_enabled() {
+        let registry = Arc::new(EnvironmentRegistry::default());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let signals = Arc::new(Mutex::new((Some(started_tx), Some(release_rx))));
+        let task_registry = Arc::clone(&registry);
+        let task_signals = Arc::clone(&signals);
+        let operation = tokio::spawn(async move {
+            task_registry
+                .with_session_retry_using(
+                    "Ubuntu",
+                    move |_| async { Ok(sample_session("Ubuntu", "alice")) },
+                    move |_| {
+                        let (started_tx, release_rx) = {
+                            let mut signals = task_signals.lock().expect("signals lock");
+                            (
+                                signals.0.take().expect("one operation start"),
+                                signals.1.take().expect("one operation release"),
+                            )
+                        };
+                        async move {
+                            started_tx.send(()).expect("signal operation start");
+                            release_rx.await.expect("release operation");
+                            Ok(())
+                        }
+                    },
+                )
+                .await
+        });
+        started_rx.await.expect("operation started");
+
+        let transition = registry.begin_disable().expect("begin disable");
+        transition
+            .wait_for_quiescence(std::time::Duration::ZERO)
+            .await
+            .expect_err("active permit prevents disable");
+        drop(transition);
+
+        assert!(registry.wsl_integration_enabled());
+        release_tx.send(()).expect("release operation");
+        operation
+            .await
+            .expect("operation task")
+            .expect("operation result");
+    }
+
+    #[tokio::test]
     async fn session_retry_reconnects_once_after_environment_unavailable() {
         let registry = EnvironmentRegistry::default();
         registry.insert(sample_session("Ubuntu", "old-user"));
@@ -816,6 +1189,7 @@ mod tests {
         assert_eq!(
             *events.lock().expect("runtime event recorder lock poisoned"),
             vec![EnvironmentRuntimeEvent {
+                capability_revision: 0,
                 revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
@@ -934,6 +1308,7 @@ mod tests {
         assert_eq!(
             events.last(),
             Some(&EnvironmentRuntimeEvent {
+                capability_revision: 0,
                 revision: 3,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
@@ -971,6 +1346,7 @@ mod tests {
         assert_eq!(
             *events.lock().expect("runtime event recorder lock poisoned"),
             vec![EnvironmentRuntimeEvent {
+                capability_revision: 0,
                 revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
@@ -1003,6 +1379,7 @@ mod tests {
         assert_eq!(
             *events.lock().expect("runtime event recorder lock poisoned"),
             vec![EnvironmentRuntimeEvent {
+                capability_revision: 0,
                 revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
@@ -1040,6 +1417,7 @@ mod tests {
         assert_eq!(
             events.as_slice(),
             &[EnvironmentRuntimeEvent {
+                capability_revision: 0,
                 revision: 2,
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),

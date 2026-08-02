@@ -25,6 +25,7 @@ interface EnvironmentState {
   discoveryError: AppError | null;
   wslIntegrationSupported: boolean;
   wslIntegrationEnabled: boolean;
+  wslCapabilityRevision: number;
   discover: () => Promise<void>;
   setWslIntegrationEnabled: (enabled: boolean) => Promise<void>;
   connect: (environment: EnvironmentRef) => Promise<void>;
@@ -98,6 +99,7 @@ function authoritativeSnapshotState(snapshot: EnvironmentDiscoverySnapshot) {
     discoveryCompletedAt: Date.now(),
     wslIntegrationSupported: snapshot.wslIntegrationSupported,
     wslIntegrationEnabled: snapshot.wslIntegrationEnabled,
+    wslCapabilityRevision: snapshot.wslCapabilityRevision ?? 0,
   };
 }
 
@@ -109,6 +111,7 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   discoveryCompletedAt: null,
   wslIntegrationSupported: false,
   wslIntegrationEnabled: false,
+  wslCapabilityRevision: 0,
 
   discover: () => {
     if (wslSettingInFlight) return wslSettingInFlight;
@@ -157,6 +160,8 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
             discoveryError: snapshot.error,
             wslIntegrationSupported: snapshot.wslIntegrationSupported,
             wslIntegrationEnabled: snapshot.wslIntegrationEnabled,
+            wslCapabilityRevision: snapshot.wslCapabilityRevision
+              ?? state.wslCapabilityRevision,
           };
         });
       } catch (error) {
@@ -238,7 +243,11 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   applyRuntimeEvent: (event) => {
     const key = environmentKey(event.environment);
     set((state) => {
-      if (event.environment.kind === 'wsl' && !state.wslIntegrationEnabled) return state;
+      if (
+        event.environment.kind === 'wsl'
+        && (!state.wslIntegrationEnabled
+          || event.capabilityRevision !== state.wslCapabilityRevision)
+      ) return state;
       const current = state.runtimeByEnvironment[key]
         ?? state.environments.find((entry) => environmentKey(entry.environment) === key);
       if (current && event.revision <= current.revision) return state;

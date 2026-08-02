@@ -10,8 +10,8 @@ use crate::application::remove::{
     ObservedEntryKind, ObservedPhysicalEntry, RemoveIntent, RemoveRequest,
 };
 use crate::application::remove_runtime::RuntimeRemoveService;
-use crate::core::agent_definition::AgentId;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
+use crate::core::agent_definition::AgentId;
 use crate::core::mutation::{MutationKind, MutationPhase};
 use crate::environment::types::{ContextRef, ResourceLocator};
 use crate::error::AppError;

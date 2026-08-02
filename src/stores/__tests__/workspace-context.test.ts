@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
 import { useEnvironmentStore } from '../environment';
 import { useProjectStore } from '../projects';
-import { useWorkspaceContextStore } from '../workspace-context';
+import { selectPendingEnvironment, useWorkspaceContextStore } from '../workspace-context';
 
 const host: EnvironmentRef = { kind: 'host' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
@@ -23,7 +23,8 @@ describe('useWorkspaceContextStore', () => {
     vi.restoreAllMocks();
     useWorkspaceContextStore.setState({
       selectedContext: { environment: host, scope: { scope: 'global' } },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
+      wslIntegrationFailure: null,
       contextRevision: 0,
     });
   });
@@ -31,7 +32,7 @@ describe('useWorkspaceContextStore', () => {
   it('starts at Host Global and increments revision only for committed changes', () => {
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: host, scope: { scope: 'global' } },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
       contextRevision: 0,
     });
 
@@ -54,15 +55,15 @@ describe('useWorkspaceContextStore', () => {
     const switching = useWorkspaceContextStore.getState().switchEnvironment(ubuntu);
 
     expect(useWorkspaceContextStore.getState().selectedContext.environment).toEqual(host);
-    expect(useWorkspaceContextStore.getState().pendingEnvironment).toEqual(ubuntu);
+    expect(selectPendingEnvironment(useWorkspaceContextStore.getState())).toEqual(ubuntu);
     await expect(useWorkspaceContextStore.getState().switchEnvironment(debian))
-      .rejects.toThrow('Environment switch already in progress');
+      .rejects.toThrow('Workspace transition already in progress');
 
     connecting.resolve();
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledWith(ubuntu));
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
       contextRevision: 1,
     });
     refreshing.resolve([]);
@@ -80,7 +81,7 @@ describe('useWorkspaceContextStore', () => {
 
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
       contextRevision: 1,
     });
   });
@@ -96,7 +97,7 @@ describe('useWorkspaceContextStore', () => {
     expect(refresh).not.toHaveBeenCalled();
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: host, scope: { scope: 'global' } },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
       contextRevision: 0,
     });
   });
@@ -123,7 +124,7 @@ describe('useWorkspaceContextStore', () => {
         environment: host,
         scope: { scope: 'project', project_id: 'project-a' },
       },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
       contextRevision: 4,
     });
   });
@@ -149,8 +150,39 @@ describe('useWorkspaceContextStore', () => {
         environment: host,
         scope: { scope: 'project', project_id: 'project-a' },
       },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
       contextRevision: 4,
     });
+  });
+
+  it('owns Host switching and setting persistence as one WSL transition', async () => {
+    useWorkspaceContextStore.setState({
+      selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
+    });
+    const connecting = deferred<void>();
+    const persisting = deferred<void>();
+    vi.spyOn(useEnvironmentStore.getState(), 'connect').mockReturnValue(connecting.promise);
+    const setEnabled = vi.spyOn(useEnvironmentStore.getState(), 'setWslIntegrationEnabled')
+      .mockReturnValue(persisting.promise);
+    vi.spyOn(useProjectStore.getState(), 'refresh').mockResolvedValue([]);
+
+    const disabling = useWorkspaceContextStore.getState().changeWslIntegration(false);
+    expect(useWorkspaceContextStore.getState().transition).toEqual({
+      kind: 'wslIntegration',
+      phase: 'switchingHost',
+    });
+    await expect(useWorkspaceContextStore.getState().switchEnvironment(debian))
+      .rejects.toThrow('Workspace transition already in progress');
+
+    connecting.resolve();
+    await vi.waitFor(() => expect(setEnabled).toHaveBeenCalledWith(false));
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      selectedContext: { environment: host, scope: { scope: 'global' } },
+      transition: { kind: 'wslIntegration', phase: 'disabling' },
+    });
+
+    persisting.resolve();
+    await disabling;
+    expect(useWorkspaceContextStore.getState().transition).toEqual({ kind: 'idle' });
   });
 });

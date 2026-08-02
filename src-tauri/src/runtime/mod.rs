@@ -63,7 +63,10 @@ impl RuntimeServiceGraph {
     ) -> Result<Self, AppError> {
         let wsl_integration_enabled =
             cfg!(target_os = "windows") && crate::core::read_config()?.wsl_integration_enabled;
-        let environments = Arc::new(EnvironmentRegistry::new(wsl_integration_enabled));
+        let environments = Arc::new(EnvironmentRegistry::new_with_support(
+            cfg!(target_os = "windows"),
+            wsl_integration_enabled,
+        ));
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;
         let payloads = Arc::new(payloads);
         let admission = Arc::new(RuntimeAdmissionCoordinator::default());

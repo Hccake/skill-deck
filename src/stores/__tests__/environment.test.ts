@@ -358,6 +358,7 @@ describe('useEnvironmentStore', () => {
       data: { environment: ubuntu.environment, message: 'distribution stopped' },
     };
     const event: EnvironmentRuntimeEvent = {
+      capabilityRevision: 0,
       revision: 2,
       environment: ubuntu.environment,
       status: 'unavailable',
@@ -397,6 +398,7 @@ describe('useEnvironmentStore', () => {
     });
 
     useEnvironmentStore.getState().applyRuntimeEvent({
+      capabilityRevision: 0,
       revision: 2,
       environment: ubuntu.environment,
       status: 'available',
@@ -418,6 +420,7 @@ describe('useEnvironmentStore', () => {
     });
 
     useEnvironmentStore.getState().applyRuntimeEvent({
+      capabilityRevision: 0,
       revision: 2,
       environment: debian.environment,
       status: 'unavailable',

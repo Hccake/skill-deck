@@ -2,8 +2,8 @@ use serde::Serialize;
 use specta::Type;
 use std::future::Future;
 
-use crate::core::app_config::get_config_path;
 use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
+use crate::core::app_config::get_config_path;
 use crate::core::mutation::MutationKind;
 use crate::core::projects::{
     add_project_binding, migrate_legacy_projects, normalize_project_native_path,
@@ -43,6 +43,7 @@ pub struct EnvironmentDiscoverySnapshot {
     pub error: Option<AppError>,
     pub wsl_integration_supported: bool,
     pub wsl_integration_enabled: bool,
+    pub wsl_capability_revision: u64,
 }
 
 pub fn host_environment_info() -> EnvironmentInfo {
@@ -105,6 +106,7 @@ fn environment_infos_from_wsl_discovery(
         error,
         wsl_integration_supported: cfg!(target_os = "windows"),
         wsl_integration_enabled: cfg!(target_os = "windows") && registry.wsl_integration_enabled(),
+        wsl_capability_revision: registry.capability_revision(),
     }
 }
 
@@ -118,22 +120,32 @@ where
     DiscoveryFuture: Future<Output = Result<Vec<String>, AppError>>,
 {
     if !wsl_integration_supported || !registry.wsl_integration_enabled() {
-        return host_only_environment_snapshot(wsl_integration_supported);
+        return host_only_environment_snapshot(
+            wsl_integration_supported,
+            registry.capability_revision(),
+        );
     }
 
-    let discovered = discover().await;
+    let discovered = registry.discover_using(discover).await;
     if !registry.wsl_integration_enabled() {
-        return host_only_environment_snapshot(wsl_integration_supported);
+        return host_only_environment_snapshot(
+            wsl_integration_supported,
+            registry.capability_revision(),
+        );
     }
     environment_infos_from_wsl_discovery(discovered, registry)
 }
 
-fn host_only_environment_snapshot(wsl_integration_supported: bool) -> EnvironmentDiscoverySnapshot {
+fn host_only_environment_snapshot(
+    wsl_integration_supported: bool,
+    wsl_capability_revision: u64,
+) -> EnvironmentDiscoverySnapshot {
     EnvironmentDiscoverySnapshot {
         environments: vec![host_environment_info()],
         error: None,
         wsl_integration_supported,
         wsl_integration_enabled: false,
+        wsl_capability_revision,
     }
 }
 
@@ -152,10 +164,11 @@ pub async fn connect_environment(
     distro_name: String,
     registry: &EnvironmentRegistry,
 ) -> Result<WslSession, AppError> {
-    registry.ensure_wsl_integration_enabled(&distro_name)?;
-    let mut session = connect_wsl_environment(&distro_name).await?;
-    registry.insert_if_enabled(&mut session)?;
-    Ok(session)
+    registry
+        .connect_using(&distro_name, |distro_name| async move {
+            connect_wsl_environment(&distro_name).await
+        })
+        .await
 }
 
 pub async fn map_environment_path(
@@ -169,8 +182,9 @@ pub async fn map_environment_path(
             ProjectPathSemantics::host(),
         )),
         EnvironmentRef::Wsl { distro_name } => {
-            registry.ensure_wsl_integration_enabled(&distro_name)?;
-            if let Some(mapped) = map_wsl_input_without_wslpath(&distro_name, &path)? {
+            if let Some(mapped) = registry.with_wsl_access(&distro_name, || {
+                map_wsl_input_without_wslpath(&distro_name, &path)
+            })? {
                 return Ok(mapped);
             }
             registry

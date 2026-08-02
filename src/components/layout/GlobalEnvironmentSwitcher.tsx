@@ -40,7 +40,7 @@ export function GlobalEnvironmentSwitcher() {
   const selectedEnvironment = useWorkspaceContextStore(
     (state) => state.selectedContext.environment,
   );
-  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
+  const transition = useWorkspaceContextStore((state) => state.transition);
   const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
   const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
   const selectedKey = environmentKey(selectedEnvironment);
@@ -56,7 +56,7 @@ export function GlobalEnvironmentSwitcher() {
     && (selectedEntry.status === 'unavailable' || selectedEntry.status === 'error')
     ? selectedEntry.error
     : null;
-  const pending = pendingEnvironment !== null;
+  const pending = transition.kind !== 'idle';
   const disabled = pending || writeBlocked;
   const visible = environments.length > 1 || discoveryError !== null || selectedConnectionError !== null;
 

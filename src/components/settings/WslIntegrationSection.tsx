@@ -15,44 +15,36 @@ import { Switch } from '@/components/ui/switch';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-
-const HOST = { kind: 'host' } as const;
+import { formatAppError } from '@/utils/format-app-error';
 
 export function WslIntegrationSection() {
   const { t } = useTranslation();
   const supported = useEnvironmentStore((state) => state.wslIntegrationSupported);
   const enabled = useEnvironmentStore((state) => state.wslIntegrationEnabled);
-  const setEnabled = useEnvironmentStore((state) => state.setWslIntegrationEnabled);
   const selectedEnvironment = useWorkspaceContextStore(
     (state) => state.selectedContext.environment,
   );
-  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
-  const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
+  const transition = useWorkspaceContextStore((state) => state.transition);
+  const changeWslIntegration = useWorkspaceContextStore((state) => state.changeWslIntegration);
+  const failure = useWorkspaceContextStore((state) => state.wslIntegrationFailure);
+  const clearFailure = useWorkspaceContextStore((state) => state.clearWslIntegrationFailure);
   const writeBlocked = useBusinessWriteBlocked();
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   if (!supported) return null;
 
   const changeSetting = async (nextEnabled: boolean) => {
-    setSaving(true);
-    setSaveError(false);
     try {
-      if (!nextEnabled && selectedEnvironment.kind === 'wsl') {
-        await switchEnvironment(HOST);
-      }
-      await setEnabled(nextEnabled);
+      await changeWslIntegration(nextEnabled);
       setConfirmOpen(false);
     } catch (error) {
       console.error('Failed to update WSL integration setting:', error);
-      setSaveError(true);
-    } finally {
-      setSaving(false);
     }
   };
 
-  const disabled = saving || writeBlocked || pendingEnvironment !== null;
+  const saving = transition.kind === 'wslIntegration';
+  const disabled = transition.kind !== 'idle' || writeBlocked;
+  const errorMessage = failure ? formatAppError(failure.error, t) : null;
 
   return (
     <>
@@ -64,9 +56,9 @@ export function WslIntegrationSection() {
           <p id="wsl-integration-description" className="text-xs leading-5 text-muted-foreground">
             {t('settings.general.wslDescription')}
           </p>
-          {saveError ? (
+          {errorMessage && !confirmOpen ? (
             <p role="alert" className="text-xs leading-5 text-destructive">
-              {t('settings.general.wslSaveError')}
+              {errorMessage}
             </p>
           ) : null}
         </div>
@@ -88,6 +80,7 @@ export function WslIntegrationSection() {
             aria-describedby="wsl-integration-description"
             onCheckedChange={(nextEnabled) => {
               if (!nextEnabled && selectedEnvironment.kind === 'wsl') {
+                clearFailure();
                 setConfirmOpen(true);
                 return;
               }
@@ -97,7 +90,15 @@ export function WslIntegrationSection() {
         </div>
       </section>
 
-      <AlertDialog open={confirmOpen} onOpenChange={(open) => { if (!saving) setConfirmOpen(open); }}>
+      <AlertDialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!saving) {
+            setConfirmOpen(open);
+            if (!open) clearFailure();
+          }
+        }}
+      >
         <AlertDialogContent dismissible={!saving} aria-busy={saving}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('settings.general.wslDisableTitle')}</AlertDialogTitle>
@@ -105,6 +106,11 @@ export function WslIntegrationSection() {
               {t('settings.general.wslDisableDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {errorMessage ? (
+            <p role="alert" className="text-sm leading-5 text-destructive">
+              {errorMessage}
+            </p>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={saving}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction

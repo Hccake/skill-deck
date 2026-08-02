@@ -125,6 +125,7 @@ pub enum EnvironmentStatus {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct EnvironmentRuntimeEvent {
+    pub capability_revision: u64,
     pub revision: u64,
     pub environment: EnvironmentRef,
     pub status: EnvironmentStatus,

@@ -22,13 +22,11 @@ struct TauriInstallWizardWindowAdapter<'a> {
 
 impl InstallWizardWindowAdapter for TauriInstallWizardWindowAdapter<'_> {
     fn current_instance(&self) -> Option<String> {
-        self.app
-            .get_webview_window(INSTALL_WIZARD_LABEL)
-            .map(|_| {
-                self.tracked_instance
-                    .clone()
-                    .unwrap_or_else(|| "observed-install-wizard".to_string())
-            })
+        self.app.get_webview_window(INSTALL_WIZARD_LABEL).map(|_| {
+            self.tracked_instance
+                .clone()
+                .unwrap_or_else(|| "observed-install-wizard".to_string())
+        })
     }
 
     fn focus(&self, _instance_id: &str) -> Result<bool, crate::error::AppError> {
@@ -47,12 +45,12 @@ impl InstallWizardWindowAdapter for TauriInstallWizardWindowAdapter<'_> {
         _instance_id: &str,
         on_destroyed: std::sync::Arc<dyn Fn() + Send + Sync>,
     ) -> Result<(), crate::error::AppError> {
-        let main_window = self
-            .app
-            .get_webview_window("main")
-            .ok_or_else(|| crate::error::AppError::Io {
-                message: "Main window not found".to_string(),
-            })?;
+        let main_window =
+            self.app
+                .get_webview_window("main")
+                .ok_or_else(|| crate::error::AppError::Io {
+                    message: "Main window not found".to_string(),
+                })?;
         let url = WebviewUrl::App(format!("/wizard?{}", request.query).into());
         let wizard = WebviewWindowBuilder::new(self.app, INSTALL_WIZARD_LABEL, url)
             .title("Skill Deck")
@@ -137,10 +135,9 @@ pub async fn open_install_wizard(
         app: &app,
         tracked_instance: runtime.install_wizard().tracked_instance_id(),
     };
-    runtime.install_wizard().open_or_focus_install_wizard(
-        &adapter,
-        InstallWizardWindowRequest { query },
-    )
+    runtime
+        .install_wizard()
+        .open_or_focus_install_wizard(&adapter, InstallWizardWindowRequest { query })
 }
 
 #[tauri::command]

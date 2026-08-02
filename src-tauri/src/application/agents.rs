@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::application::runtime_facts::AgentRegistrySnapshotSource;
 use crate::core::agent_definition::{
     AgentFieldError, AgentId, AgentSource, CustomAgentDefinition, PathSpec, ScopeDefinition,
@@ -12,7 +13,6 @@ use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
 use crate::core::agent_settings::{AgentSettingsSnapshot, AgentStorageIssue, CustomAgentRecord};
 use crate::core::agents::AgentType;
 use crate::core::custom_agent_repository::CustomAgentRepository;
-use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::core::mutation::MutationKind;
 use crate::core::paths::PATHS;
 use crate::environment::agent_environment::{
@@ -645,7 +645,8 @@ fn delete_invalid_custom_agent_with_controller(
 ) -> Result<AgentDeleteResult, AgentCommandError> {
     registry.repository()?;
     registry.assert_revision(&expected_registry_revision)?;
-    let _guard = controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
+    let _guard =
+        controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
     registry.delete_invalid(
         usize::try_from(index).expect("custom Agent record index must fit in usize"),
         &expected_registry_revision,
@@ -948,7 +949,8 @@ fn save_custom_agent_with_original_id_controller(
     expected_registry_revision: String,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
     registry.preflight_save(&draft, original_id.as_ref(), &expected_registry_revision)?;
-    let _guard = controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
+    let _guard =
+        controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
     save_custom_agent_inner_with_original_id(
         registry,
         context.environment,
@@ -1160,7 +1162,8 @@ fn delete_custom_agent_with_controller(
     expected_registry_revision: String,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
     registry.preflight_delete(&id, &expected_registry_revision)?;
-    let _guard = controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
+    let _guard =
+        controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
     delete_custom_agent_inner(
         registry,
         context.environment,
@@ -1178,7 +1181,8 @@ async fn delete_custom_agent_with_cleanup(
     expected_registry_revision: String,
 ) -> Result<AgentDeleteResult, AgentCommandError> {
     registry.preflight_delete(&id, &expected_registry_revision)?;
-    let _guard = controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
+    let _guard =
+        controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
     let environment = context.environment.clone();
     delete_definition_then_cleanup(
         || {

@@ -33,10 +33,29 @@ describe('Environment revision convergence', () => {
       runtimeByEnvironment: {},
       wslIntegrationSupported: true,
       wslIntegrationEnabled: true,
+      wslCapabilityRevision: 3,
       discoveryState: 'idle',
       discoveryError: null,
       discoveryCompletedAt: null,
     });
+  });
+
+  it('rejects runtime events from an earlier WSL enable cycle', () => {
+    useEnvironmentStore.setState({
+      environments: [host, ubuntu],
+      runtimeByEnvironment: { host, 'wsl:ubuntu': ubuntu },
+    });
+    const staleCycle: EnvironmentRuntimeEvent = {
+      capabilityRevision: 2,
+      revision: 99,
+      environment: ubuntu.environment,
+      status: 'unavailable',
+      error: null,
+    };
+
+    useEnvironmentStore.getState().applyRuntimeEvent(staleCycle);
+
+    expect(useEnvironmentStore.getState().environments[1]).toEqual(ubuntu);
   });
 
   it('rejects older events and older discovery snapshots per Environment', async () => {
@@ -45,10 +64,12 @@ describe('Environment revision convergence', () => {
       error: null,
       wslIntegrationSupported: true,
       wslIntegrationEnabled: true,
+      wslCapabilityRevision: 3,
     });
     await useEnvironmentStore.getState().discover();
 
     const newer: EnvironmentRuntimeEvent = {
+      capabilityRevision: 3,
       revision: 7,
       environment: ubuntu.environment,
       status: 'unavailable',
@@ -65,6 +86,7 @@ describe('Environment revision convergence', () => {
       error: null,
       wslIntegrationSupported: true,
       wslIntegrationEnabled: true,
+      wslCapabilityRevision: 3,
     });
     useEnvironmentStore.setState({ discoveryCompletedAt: null });
     await useEnvironmentStore.getState().discover();
@@ -78,6 +100,7 @@ describe('Environment revision convergence', () => {
 
   it('retains an event that races ahead of initial discovery and merges it when inventory arrives', async () => {
     const event: EnvironmentRuntimeEvent = {
+      capabilityRevision: 3,
       revision: 9,
       environment: ubuntu.environment,
       status: 'connecting',
@@ -89,6 +112,7 @@ describe('Environment revision convergence', () => {
       error: null,
       wslIntegrationSupported: true,
       wslIntegrationEnabled: true,
+      wslCapabilityRevision: 3,
     });
 
     await useEnvironmentStore.getState().discover();

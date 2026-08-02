@@ -32,7 +32,7 @@ describe('project removal coordinator', () => {
         environment: ubuntu,
         scope: { scope: 'project', project_id: 'project-a' },
       },
-      pendingEnvironment: null,
+      transition: { kind: 'idle' },
       contextRevision: 4,
     });
   });

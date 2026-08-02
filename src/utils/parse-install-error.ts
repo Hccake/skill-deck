@@ -150,6 +150,12 @@ export function parseInstallError(
         suggestions: [t('addSkill.error.suggestion.retryOrContact')],
       };
 
+    case 'wslIntegrationBusy':
+      return {
+        message: t('settings.general.wslBusyOperation'),
+        suggestions: [t('addSkill.error.suggestion.retryOrContact')],
+      };
+
     case 'mutationCancelled':
       return {
         message: t('addSkill.error.mutationCancelled'),

@@ -15,7 +15,7 @@ const EMPTY_PROJECTS: ProjectInfo[] = [];
 export function CrossStorageWarningBanner() {
   const { t } = useTranslation();
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
-  const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);
+  const transitionActive = useWorkspaceContextStore((state) => state.transition.kind !== 'idle');
   const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
   const environments = useEnvironmentStore((state) => state.environments);
   const environment = selectedContext.environment;
@@ -92,7 +92,7 @@ export function CrossStorageWarningBanner() {
             onClick={() => void switchEnvironment(owner).catch((error) => {
               console.error('Failed to switch to storage owner:', error);
             })}
-            disabled={pendingEnvironment !== null}
+            disabled={transitionActive}
           >
             {t('crossStorage.switchToOwner', { owner: ownerLabel })}
           </Button>

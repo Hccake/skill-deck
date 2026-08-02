@@ -527,6 +527,10 @@
       "wslDescription": "发现已安装的 WSL 发行版，并允许在 Windows 与 WSL 之间切换。",
       "wslSaving": "正在更新 WSL 集成",
       "wslSaveError": "无法更新 WSL 集成设置，请重试。",
+      "wslBusyMutation": "另一个 Skill 操作正在进行，请等待操作完成后重试。",
+      "wslBusyLifecycle": "应用正在执行更新或维护，请稍后重试。",
+      "wslBusyInstallWizard": "安装向导正在使用当前环境，请先完成或关闭向导。",
+      "wslBusyOperation": "WSL 操作尚未结束，请稍后重试。",
       "wslDisableTitle": "关闭 WSL Environment？",
       "wslDisableDescription": "Skill Deck 将切换到 Windows，并停止发现和使用 WSL Environment。已保存的 WSL 项目和设置会继续保留。",
       "wslDisableConfirm": "切换到 Windows 并关闭"

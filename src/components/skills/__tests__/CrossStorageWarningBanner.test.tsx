@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
   }] as ProjectInfo[],
   setCrossStorageWarning: vi.fn().mockResolvedValue([]),
   switchEnvironment: vi.fn().mockResolvedValue(undefined),
-  pendingEnvironment: null as ContextRef['environment'] | null,
+  transition: { kind: 'idle' } as { kind: string; target?: ContextRef['environment'] },
   environments: [
     { environment: { kind: 'host' as const }, displayName: 'Windows', status: 'available' as const },
     {
@@ -52,7 +52,7 @@ vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => (
     selector({
       selectedContext: mocks.context,
-      pendingEnvironment: mocks.pendingEnvironment,
+      transition: mocks.transition,
       switchEnvironment: mocks.switchEnvironment,
     })
   ),
@@ -88,7 +88,7 @@ describe('CrossStorageWarningBanner', () => {
       },
       storage: { access: 'crossStorage', owner: { kind: 'host' } },
     }];
-    mocks.pendingEnvironment = null;
+    mocks.transition = { kind: 'idle' };
     mocks.environments = [
       { environment: { kind: 'host' }, displayName: 'Windows', status: 'available' },
       {

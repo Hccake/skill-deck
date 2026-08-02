@@ -32,7 +32,7 @@ const mocks = vi.hoisted(() => ({
       environment: { kind: 'host' as const },
       scope: { scope: 'global' as const },
     } as ContextRef,
-    pendingEnvironment: null as EnvironmentRef | null,
+    transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
     contextRevision: 0,
   },
   projects: {
@@ -119,7 +119,7 @@ describe('ContextSidebar', () => {
       environment: { kind: 'host' },
       scope: { scope: 'global' },
     };
-    mocks.workspace.pendingEnvironment = null;
+    mocks.workspace.transition = { kind: 'idle' };
     mocks.workspace.contextRevision = 0;
     mocks.projects.projectsByEnvironment = { host: [] };
     mocks.projects.loadStateByEnvironment = { host: 'ready' };

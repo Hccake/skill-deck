@@ -7,6 +7,16 @@ use thiserror::Error;
 
 use crate::environment::types::EnvironmentRef;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum WslIntegrationBusyReason {
+    Mutation,
+    Lifecycle,
+    InstallWizard,
+    WslOperation,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(transparent)]
 pub struct RecoveryResourceId(String);
@@ -139,6 +149,9 @@ pub enum AppError {
 
     #[error("The application is terminating")]
     ApplicationTerminating,
+
+    #[error("WSL integration cannot change while {reason:?} is active")]
+    WslIntegrationBusy { reason: WslIntegrationBusyReason },
 
     #[error("Skill operation was cancelled")]
     MutationCancelled,

@@ -292,7 +292,9 @@ impl ErrorReport {
             AppError::PathNotFound { path } => {
                 Self::with_details(OperationErrorCode::ExecutionFailed, false, path)
             }
-            AppError::MutationBusy | AppError::ApplicationTerminating => {
+            AppError::MutationBusy
+            | AppError::ApplicationTerminating
+            | AppError::WslIntegrationBusy { .. } => {
                 Self::new(OperationErrorCode::ExecutionFailed).with_retryable(true)
             }
         };
