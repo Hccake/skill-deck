@@ -188,27 +188,67 @@ fn invoke_with_body(
 }
 
 #[test]
-fn discover_http_is_available_only_to_main_window() {
+fn skills_search_http_is_scoped_to_skills_sh_in_main_and_install_wizard() {
     let app = test_app();
     let main = window(&app, "main");
     let wizard = window(&app, "install-wizard");
-    let request = || {
+    let request = |url: &str| {
         tauri::ipc::InvokeBody::Json(json!({
             "clientConfig": {
                 "method": "GET",
-                "url": "https://skills.sh/api/search?q=react&limit=1",
+                "url": url,
                 "headers": []
             }
         }))
     };
 
     assert!(
-        invoke_with_body(&main, "plugin:http|fetch", request()).is_ok(),
+        invoke_with_body(
+            &main,
+            "plugin:http|fetch",
+            request("https://skills.sh/api/search?q=react&limit=1"),
+        )
+        .is_ok(),
         "the main window must be able to start Discover HTTP requests"
     );
-    assert_denied(
-        invoke_with_body(&wizard, "plugin:http|fetch", request()),
+    assert!(
+        invoke_with_body(
+            &wizard,
+            "plugin:http|fetch",
+            request("https://skills.sh/api/search?q=react&limit=1"),
+        )
+        .is_ok(),
+        "the install wizard must be able to start Skill search HTTP requests"
+    );
+    for search_window in [&main, &wizard] {
+        assert!(
+            invoke_with_body(
+                search_window,
+                "plugin:http|fetch",
+                request("https://skills.sh"),
+            )
+            .is_ok(),
+            "Skill search windows must allow the scoped skills.sh root URL"
+        );
+    }
+    assert_url_denied(invoke_with_body(
+        &main,
         "plugin:http|fetch",
+        request("https://example.com/api/search?q=react"),
+    ));
+    assert_url_denied(invoke_with_body(
+        &wizard,
+        "plugin:http|fetch",
+        request("https://example.com/api/search?q=react"),
+    ));
+}
+
+fn assert_url_denied(result: Result<Value, Value>) {
+    let error = result.expect_err("URL outside the configured scope must be denied");
+    let message = error.as_str().expect("URL denial must be a string");
+    assert!(
+        message.contains("url not allowed on the configured scope"),
+        "unexpected URL scope denial: {error}"
     );
 }
 
