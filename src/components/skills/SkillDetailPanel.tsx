@@ -35,7 +35,7 @@ import {
   providerCooldownDeadline,
   type SkillListItem,
 } from '@/stores/skills-utils';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface SkillDetailPanelProps {
   skill: SkillListItem;
@@ -75,7 +75,7 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
   onRepairSource,
 }: SkillDetailPanelProps) {
   const { t, i18n } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const [copied, setCopied] = useState(false);
   const [checkDone, setCheckDone] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ContextRef, EnvironmentInfo, EnvironmentRef, ProjectInfo } from '@/bindings';
 import { ProjectsTab } from '../ProjectsTab';
 import { useMutationStore } from '@/stores/mutation';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const ubuntu = { kind: 'wsl' as const, distro_name: 'Ubuntu' };
 const project: ProjectInfo = {
@@ -92,6 +93,7 @@ describe('ProjectsTab', () => {
       cancelling: false,
       loading: false,
     });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('adds the raw picker path to the committed environment', async () => {
@@ -126,5 +128,15 @@ describe('ProjectsTab', () => {
     render(<ProjectsTab />);
 
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
+  });
+
+  it('keeps project registration read-only while the install wizard is open', () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    render(<ProjectsTab />);
+
+    expect((screen.getByRole('button', { name: 'settings.addProject' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    expect((screen.getByRole('button', { name: 'settings.removeProject' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 });

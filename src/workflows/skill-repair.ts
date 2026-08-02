@@ -8,6 +8,7 @@ import type {
   InstallResponse,
   RecoveryAction,
 } from '@/bindings';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { toAppError } from '@/utils/to-app-error';
 import { prepareInstall, type InstallPreparationOutcome } from './skill-install-preparation';
 
@@ -25,6 +26,7 @@ export interface RepairSkillSourceRequest {
 }
 
 export type RepairOutcome =
+  | { status: 'blocked' }
   | { status: 'succeeded'; response: InstallResponse }
   | { status: 'stopped' }
   | { status: 'missing' }
@@ -81,6 +83,7 @@ export async function repairSkillSource(
   request: RepairSkillSourceRequest,
   api: RepairWorkflowApi = defaultApi,
 ): Promise<RepairOutcome> {
+  if (isBusinessWriteBlocked()) return { status: 'blocked' };
   if (request.stopRequested()) return { status: 'stopped' };
   request.onPhase?.('validating');
 

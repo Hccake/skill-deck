@@ -3,7 +3,7 @@ import {
   cleanupDuplicateAgentCopies,
   previewManageSkillAgents,
 } from '@/hooks/useTauriApi';
-import { useMutationStore } from '@/stores/mutation';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { t } from '@/stores/skills-utils';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
@@ -11,7 +11,7 @@ import type { AgentId } from '@/bindings';
 import { formatWorkflowError } from './mutation-presentation';
 
 export async function executeDuplicateCleanup(agents: AgentId[]): Promise<void> {
-  if (useMutationStore.getState().activeMutation || agents.length === 0) return;
+  if (isBusinessWriteBlocked() || agents.length === 0) return;
   const { manageAgentsSkill, manageAgentsContext } = useSkillDialogStore.getState();
   if (!manageAgentsSkill || !manageAgentsContext) return;
 

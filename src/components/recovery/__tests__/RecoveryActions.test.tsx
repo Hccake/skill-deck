@@ -4,6 +4,7 @@ import '@/test-utils';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RecoveryActions } from '../RecoveryActions';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const mocks = vi.hoisted(() => ({
   getStatus: vi.fn(),
@@ -26,6 +27,7 @@ describe('RecoveryActions', () => {
     vi.clearAllMocks();
     mocks.open.mockResolvedValue(undefined);
     mocks.confirm.mockResolvedValue(undefined);
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('opens opaque recovery data and confirms cleanup with the displayed revision', async () => {
@@ -106,5 +108,23 @@ describe('RecoveryActions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'recovery.open' }));
 
     await waitFor(() => expect(screen.getByText('recovery.openError')).toBeDefined());
+  });
+
+  it('keeps recovery inspection available but blocks cleanup during the wizard session', async () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    mocks.getStatus.mockResolvedValue({
+      resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
+      environment: { kind: 'host' }, displayPaths: [], diagnostic: null,
+    });
+
+    render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} />);
+    await screen.findByText('recovery.state.consistentCanCleanup');
+
+    expect((screen.getByRole('button', { name: 'recovery.open' }) as HTMLButtonElement).disabled)
+      .toBe(false);
+    expect((screen.getByRole('button', { name: 'recovery.refresh' }) as HTMLButtonElement).disabled)
+      .toBe(false);
+    expect((screen.getByRole('button', { name: 'recovery.cleanup' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 });

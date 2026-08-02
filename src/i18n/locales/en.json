@@ -17,6 +17,17 @@
     "discover": "Discover",
     "settings": "Settings"
   },
+  "installWizardSession": {
+    "checkingTitle": "Checking installation wizard status",
+    "checkingDescription": "The main window stays read-only until the current wizard status is confirmed.",
+    "readOnlyTitle": "Installation wizard in progress",
+    "readOnlyDescription": "The main window is read-only while the wizard is open. You can still browse and switch Environment or Context.",
+    "returnToWizard": "Return to wizard",
+    "focusFailed": "The installation wizard could not be focused. Try again.",
+    "syncFailedTitle": "Installation wizard status unavailable",
+    "syncFailedDescription": "The main window stays read-only to prevent simultaneous changes. Reconnect and try again.",
+    "retryMonitoring": "Retry"
+  },
   "recovery": {
     "title": "Recovery required",
     "center": {
@@ -558,18 +569,12 @@
         "title": {
           "create": "Create Custom Agent",
           "edit": "Edit Custom Agent",
-          "duplicate": "Duplicate Custom Agent",
-          "configure": "Configure Custom Agent"
+          "duplicate": "Duplicate Custom Agent"
         },
         "action": {
           "create": "Create Agent",
           "edit": "Save",
-          "duplicate": "Create Copy",
-          "configure": "Save and Return to Install",
-          "completeConfiguration": "Retry Return to Install"
-        },
-        "cancel": {
-          "configure": "Cancel Configuration and Return"
+          "duplicate": "Create Copy"
         }
       },
       "sourceFilter": {
@@ -627,11 +632,6 @@
       "invalidDetailTitle": "Review invalid Agent record",
       "invalidDetailDescription": "This raw record cannot be used as an Agent definition. Review it before deleting it.",
       "confirmInvalidDelete": "Delete invalid record",
-      "configurationCompletionError": "Unable to finish the Agent configuration request. Try again.",
-      "configurationPending": {
-        "title": "Agent saved",
-        "description": "The definition was written, but Skill Deck could not return to the install wizard. Retry this step without saving the definition again."
-      },
       "deleted": "Agent definition deleted",
       "deleteError": "Failed to delete Agent definition",
       "deleteStale": "The Agent Registry changed. Review the refreshed impact and enter the Agent ID again.",
@@ -804,12 +804,6 @@
       },
       "warnings": {
         "defaultCleanupFailed": "The Agent was deleted, but old default references could not be cleaned up. They will be removed the next time defaults are saved."
-      },
-      "dirtyRequest": {
-        "title": "Discard the unsaved Agent?",
-        "description": "The install wizard requested another Agent. Continue discards this draft; staying keeps it and cancels the incoming request.",
-        "stay": "Stay here",
-        "continue": "Continue and discard"
       },
       "dirtyNavigation": {
         "title": "Discard unsaved changes?",
@@ -1178,13 +1172,10 @@
       "noAutomaticAgents": "No related agents were detected.",
       "noDefaultAvailableAgents": "No ready-to-use Agents were detected.",
       "unknownTitle": "Unknown Agents",
-      "unknownHint": "These Agent IDs came from the install request but are not defined in Skill Deck yet.",
-      "configureUnknown": "Configure Agent",
-      "configurationResult": {
-        "saved": "The Agent was added and selected.",
-        "cancelled": "Agent configuration was cancelled.",
-        "failed": "Agent configuration could not be completed."
-      }
+      "unknownHint": "Skill Deck has no matching Agent definitions, so these targets are unavailable. Close the install wizard, create the definitions in Settings > Agents, and start the installation again.",
+      "unknownRemovableHint": "Remove unavailable targets to continue with the remaining Agents.",
+      "unknownUnavailable": "Unavailable",
+      "removeUnknown": "Remove target"
     },
     "scope": {
       "title": "Usage Scope",

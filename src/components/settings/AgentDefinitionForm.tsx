@@ -462,13 +462,12 @@ export function AgentDefinitionForm({
   );
 }
 
-export type AgentDefinitionFormMode = 'create' | 'edit' | 'duplicate' | 'configure';
+export type AgentDefinitionFormMode = 'create' | 'edit' | 'duplicate';
 
 interface AgentDefinitionFormPageProps extends Omit<AgentDefinitionFormProps, 'disabled' | 'idReadOnly'> {
   mode: AgentDefinitionFormMode;
   readOnly: boolean;
   saving: boolean;
-  configurationPersisted: boolean;
   onBack: () => void;
   onSave: () => void;
 }
@@ -482,14 +481,13 @@ export function AgentDefinitionFormPage({
   saving,
   stale,
   deleted = false,
-  configurationPersisted,
   onChange,
   onBack,
   onSave,
   onReload,
 }: AgentDefinitionFormPageProps) {
   const { t } = useTranslation();
-  const disabled = readOnly || saving || configurationPersisted || deleted;
+  const disabled = readOnly || saving || deleted;
 
   return (
     <form
@@ -521,17 +519,10 @@ export function AgentDefinitionFormPage({
         </div>
       </header>
 
-      {configurationPersisted ? (
-        <Alert className="mb-5">
-          <AlertTitle>{t('settings.agents.configurationPending.title')}</AlertTitle>
-          <AlertDescription>{t('settings.agents.configurationPending.description')}</AlertDescription>
-        </Alert>
-      ) : null}
-
       <AgentDefinitionForm
         draft={draft}
         originalId={originalId}
-        idReadOnly={mode === 'configure'}
+        idReadOnly={mode === 'edit'}
         errors={errors}
         disabled={disabled}
         stale={stale}
@@ -541,18 +532,12 @@ export function AgentDefinitionFormPage({
       />
 
       <footer className="sticky bottom-0 z-10 mt-6 flex flex-wrap justify-end gap-2 border-t border-border/60 bg-background/95 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur supports-[backdrop-filter]:bg-background/85">
-        {!configurationPersisted ? (
-          <Button type="button" variant="outline" disabled={saving} onClick={onBack}>
-            {mode === 'configure'
-              ? t('settings.agents.form.cancel.configure')
-              : t('common.cancel')}
-          </Button>
-        ) : null}
+        <Button type="button" variant="outline" disabled={saving} onClick={onBack}>
+          {t('common.cancel')}
+        </Button>
         <Button type="submit" disabled={readOnly || saving || stale || deleted}>
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> : null}
-          {t(configurationPersisted
-            ? 'settings.agents.form.action.completeConfiguration'
-            : `settings.agents.form.action.${mode}`)}
+          {t(`settings.agents.form.action.${mode}`)}
         </Button>
       </footer>
     </form>

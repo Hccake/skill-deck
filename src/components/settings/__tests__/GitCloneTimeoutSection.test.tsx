@@ -4,6 +4,7 @@ import '@/test-utils';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { GitCloneTimeoutSection } from '../GitCloneTimeoutSection';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const mockGetConfig = vi.fn();
 const mockSaveConfig = vi.fn();
@@ -48,6 +49,7 @@ describe('GitCloneTimeoutSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('loads the persisted timeout and highlights the matching preset', async () => {
@@ -61,6 +63,16 @@ describe('GitCloneTimeoutSection', () => {
     await waitFor(() => {
       expect(screen.getByRole('combobox').textContent).toContain('5 min');
     });
+  });
+
+  it('keeps the clone timeout read-only while the install wizard is open', async () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    mockGetConfig.mockResolvedValue({ projects: [], gitCloneTimeoutSecs: 120 });
+
+    render(<GitCloneTimeoutSection />);
+
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeDefined());
+    expect((screen.getByRole('combobox') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('saves immediately when a preset is selected', async () => {

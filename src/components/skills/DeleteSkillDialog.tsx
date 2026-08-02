@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillRemoval, openSkillRemoval } from '@/workflows/skill-remove';
 import type { RecoveryAction } from '@/bindings';
@@ -76,7 +76,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
   const feedback = useSkillDialogStore((state) => state.deleteFeedback);
   const loading = useSkillDialogStore((state) => state.loadingAgentDetails);
   const close = useSkillDialogStore((state) => state.closeDelete);
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const [removing, setRemoving] = useState(false);
   const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
   const [showFullPaths, setShowFullPaths] = useState(false);

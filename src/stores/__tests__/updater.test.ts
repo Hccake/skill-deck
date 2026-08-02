@@ -12,6 +12,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 import { useUpdaterStore } from '../updater';
+import { useInstallWizardSessionStore } from '../install-wizard-session';
 
 describe('useUpdaterStore', () => {
   beforeEach(() => {
@@ -22,6 +23,7 @@ describe('useUpdaterStore', () => {
       downloadedBytes: 0, totalBytes: null, error: null, lastCheckTime: null,
       dialogVisible: false, failedOperation: null,
     });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('checks through the Backend and opens the dialog when an update exists', async () => {
@@ -110,5 +112,15 @@ describe('useUpdaterStore', () => {
       newVersion: '2.1.0',
       failedOperation: null,
     });
+  });
+
+  it('does not start application installation while the wizard session is active', async () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    useUpdaterStore.setState({ status: 'available', newVersion: '2.0.0' });
+
+    await useUpdaterStore.getState().downloadAndInstall();
+
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(useUpdaterStore.getState().status).toBe('available');
   });
 });

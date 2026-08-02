@@ -13,6 +13,13 @@ import type {
   ContextRef,
   CustomAgentDefinition,
 } from '@/bindings';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+
+function requireBusinessWriteAvailable(): void {
+  if (isBusinessWriteBlocked()) {
+    throw new Error('Business writes are currently blocked');
+  }
+}
 
 export function applyAgentRegistryMutationResult(settings: AgentSettingsSnapshot): void {
   useAgentRegistryStore.getState().invalidateAll();
@@ -41,18 +48,21 @@ export interface AgentDefinitionWorkflow {
 
 export const agentDefinitionWorkflow: AgentDefinitionWorkflow = {
   async save(context, draft, expectedRevision) {
+    requireBusinessWriteAvailable();
     const settings = await saveCustomAgent(context, draft, expectedRevision);
     applyAgentRegistryMutationResult(settings);
     return settings;
   },
 
   async delete(context, id, expectedRevision) {
+    requireBusinessWriteAvailable();
     const result = await deleteCustomAgent(context, id, expectedRevision);
     applyAgentRegistryMutationResult(result.settings);
     return result;
   },
 
   async deleteInvalid(context, index, expectedRevision) {
+    requireBusinessWriteAvailable();
     const result = await deleteInvalidCustomAgent(context, index, expectedRevision);
     applyAgentRegistryMutationResult(result.settings);
     return result;

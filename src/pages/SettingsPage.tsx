@@ -121,25 +121,17 @@ export function SettingsPage() {
             context={selectedContext}
             view={searchParams.get('view')}
             agentId={searchParams.get('id')}
-            configurationAgentId={searchParams.get('configureAgent')}
             onNavigate={(view, agentId) => {
               const nextParams = new URLSearchParams(searchParams);
               if (view === 'list') {
                 nextParams.delete('view');
                 nextParams.delete('id');
-                nextParams.delete('configureAgent');
               } else {
                 nextParams.set('view', view);
                 if (agentId) nextParams.set('id', agentId);
                 else nextParams.delete('id');
               }
               setSearchParams(nextParams, { replace: false });
-            }}
-            onConfigurationRequestFinished={() => {
-              const nextParams = new URLSearchParams(searchParams);
-              nextParams.delete('configureAgent');
-              nextParams.delete('view');
-              setSearchParams(nextParams, { replace: true });
             }}
           />
         );

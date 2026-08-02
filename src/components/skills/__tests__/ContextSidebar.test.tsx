@@ -11,6 +11,7 @@ import type {
 } from '@/bindings';
 import type { ProjectRemovalRequest } from '@/stores/project-removal';
 import { useMutationStore } from '@/stores/mutation';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { ContextSidebar } from '../ContextSidebar';
 
 const mocks = vi.hoisted(() => ({
@@ -139,6 +140,7 @@ describe('ContextSidebar', () => {
       cancelling: false,
       loading: false,
     });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('leaves Environment switching to the main-window header', () => {
@@ -291,5 +293,17 @@ describe('ContextSidebar', () => {
     expect((screen.getByRole('button', { name: 'context.addProject' }) as HTMLButtonElement).disabled)
       .toBe(true);
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
+  });
+
+  it('keeps Context selection available while the wizard blocks project writes', () => {
+    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    render(<ContextSidebar />);
+
+    fireEvent.click(screen.getByText('C:\\Code\\a'));
+
+    expect(mocks.selectProject).toHaveBeenCalledWith('a');
+    expect((screen.getByRole('button', { name: 'context.addProject' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 });

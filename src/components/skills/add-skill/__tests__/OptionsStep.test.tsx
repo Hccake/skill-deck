@@ -3,32 +3,14 @@
 import '@/test-utils';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentRuntimeSnapshot, ResolvedAgent } from '@/bindings';
+import type { ResolvedAgent } from '@/bindings';
 import type { InstallTargetOptionsController } from '@/hooks/useInstallTargetOptions';
 import { makeResolvedAgent, makeResolvedAgentScope } from '@/test-utils';
 import { canProceedForStep, shouldShowInstallModeSelection, type WizardState } from '../types';
 import { OptionsStep } from '../OptionsStep';
 
-const mocks = vi.hoisted(() => ({
-  configure: vi.fn(),
-  onSaved: null as null | ((snapshot: AgentRuntimeSnapshot, agentId: string) => void),
-}));
-
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
-}));
-
-vi.mock('@/hooks/useAgentConfigurationFlow', () => ({
-  useAgentConfigurationFlow: ({ onSaved }: {
-    onSaved: (snapshot: AgentRuntimeSnapshot, agentId: string) => void;
-  }) => {
-    mocks.onSaved = onSaved;
-    return {
-      configuringAgentId: null,
-      configurationResult: null,
-      configure: mocks.configure,
-    };
-  },
 }));
 
 vi.mock('@/components/agents/AgentSelector', () => ({
@@ -38,14 +20,14 @@ vi.mock('@/components/agents/AgentSelector', () => ({
     selectionGroups,
     unknownAgentIds,
     onSelectionChange,
-    onConfigureAgent,
+    onRemoveUnknownAgent,
   }: {
     selectedAgents: string[];
     allAgents: ResolvedAgent[];
     selectionGroups: Array<{ groupId: string }>;
     unknownAgentIds: string[];
     onSelectionChange: (agents: string[]) => void;
-    onConfigureAgent: (agentId: string) => void;
+    onRemoveUnknownAgent?: (agentId: string) => void;
   }) => (
     <div>
       <span>selected:{selectedAgents.join(',')}</span>
@@ -54,7 +36,9 @@ vi.mock('@/components/agents/AgentSelector', () => ({
       <span>unknown:{unknownAgentIds.join(',')}</span>
       <button type="button" onClick={() => onSelectionChange(['private-agent'])}>select-private</button>
       {unknownAgentIds.map((id) => (
-        <button type="button" key={id} onClick={() => onConfigureAgent(id)}>configure:{id}</button>
+        onRemoveUnknownAgent ? (
+          <button type="button" key={id} onClick={() => onRemoveUnknownAgent(id)}>remove:{id}</button>
+        ) : <span key={id}>blocked:{id}</span>
       ))}
     </div>
   ),
@@ -123,7 +107,6 @@ function readyController(
       defaultsUnavailable: false,
     },
     retry: vi.fn(),
-    acceptConfiguredAgent: vi.fn(),
     ...overrides,
   };
 }
@@ -149,7 +132,6 @@ function renderStep({
 describe('OptionsStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.onSaved = null;
   });
 
   it('blocks confirmation while a preselected Agent ID is still unknown', () => {
@@ -178,7 +160,6 @@ describe('OptionsStep', () => {
     const base = {
       inputKey: 'host/global',
       retry,
-      acceptConfiguredAgent: vi.fn(),
     };
     const { rerender } = render(
       <OptionsStep
@@ -244,9 +225,26 @@ describe('OptionsStep', () => {
     expect(screen.getByText('addSkill.mode.symlink')).toBeDefined();
   });
 
-  it('delegates unknown Agent configuration to the configuration flow', () => {
-    renderStep({ state: createState({ preSelectedAgents: ['private-agent'] }) });
-    fireEvent.click(screen.getByRole('button', { name: 'configure:private-agent' }));
-    expect(mocks.configure).toHaveBeenCalledWith('private-agent');
+  it('keeps the only unknown preselected Agent blocking without exposing removal', () => {
+    renderStep({ state: createState({ preSelectedAgents: ['unknown-agent'] }) });
+
+    expect(screen.getByText('blocked:unknown-agent')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'remove:unknown-agent' })).toBeNull();
+    expect(canProceedForStep(createState({ preSelectedAgents: ['unknown-agent'] }))).toBe(false);
+  });
+
+  it('removes an unknown preselected Agent when another requested Agent is valid', () => {
+    const knownAgent = privateAgent('known-agent');
+    const state = createState({
+      preSelectedAgents: ['known-agent', 'unknown-agent'],
+      allAgents: [knownAgent],
+    });
+    const { updateState } = renderStep({
+      state,
+      targetOptions: readyController([knownAgent]),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'remove:unknown-agent' }));
+    expect(updateState).toHaveBeenCalledWith({ preSelectedAgents: ['known-agent'] });
   });
 });

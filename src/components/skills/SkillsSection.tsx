@@ -22,7 +22,7 @@ import {
   type SkillListItem,
   type UpdatePlan,
 } from '@/stores/skills-utils';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
@@ -92,7 +92,7 @@ export const SkillsSection = memo(function SkillsSection({
   emptyState,
 }: SkillsSectionProps) {
   const { t, i18n } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
 
   // 单次遍历派生所有更新相关状态（js-combine-iterations）— 仅统计当前 section 的 skills
   let isAnyUpdating = false;

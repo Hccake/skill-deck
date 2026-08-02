@@ -30,6 +30,11 @@ const mocks = vi.hoisted(() => ({
   projectState: {
     projectsByEnvironment: {} as Record<string, ProjectInfo[]>,
   },
+  installWizardState: {
+    active: false,
+    loading: false,
+    syncError: null as 'monitor' | 'refresh' | null,
+  },
 }));
 
 vi.mock('react-i18next', () => ({
@@ -65,6 +70,13 @@ vi.mock('@/stores/projects', () => ({
   useProjectStore: (selector: (state: unknown) => unknown) => selector(mocks.projectState),
 }));
 
+vi.mock('@/stores/install-wizard-session', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/stores/install-wizard-session')>(),
+  useInstallWizardSessionStore: (selector: (state: unknown) => unknown) => (
+    selector(mocks.installWizardState)
+  ),
+}));
+
 describe('MutationStatusBar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,6 +84,9 @@ describe('MutationStatusBar', () => {
     mocks.mutationState.cancelling = false;
     mocks.environmentState.environments = [];
     mocks.projectState.projectsByEnvironment = {};
+    mocks.installWizardState.active = false;
+    mocks.installWizardState.loading = false;
+    mocks.installWizardState.syncError = null;
   });
 
   it('shows the mutation environment, project, status, and cancel action', async () => {
@@ -115,5 +130,17 @@ describe('MutationStatusBar', () => {
 
     expect(screen.getByText('mutation.cancelling')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'mutation.cancel' })).toBeNull();
+  });
+
+  it('does not let the main window cancel work owned by the install wizard', () => {
+    mocks.mutationState.activeMutation = mutation;
+    mocks.installWizardState.active = true;
+
+    render(<MutationStatusBar />);
+
+    const cancelButton = screen.getByRole('button', { name: 'mutation.cancel' });
+    expect((cancelButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(cancelButton);
+    expect(mocks.cancelActiveMutation).not.toHaveBeenCalled();
   });
 });

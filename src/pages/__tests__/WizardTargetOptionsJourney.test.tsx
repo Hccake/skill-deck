@@ -36,13 +36,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
   listEveInstallTargets: (context: unknown) => mocks.listTargets(context),
   getDefaultTargetAgents: (context: unknown) => mocks.getDefaults(context),
 }));
-vi.mock('@/hooks/useAgentConfigurationFlow', () => ({
-  useAgentConfigurationFlow: () => ({
-    configuringAgentId: null,
-    configurationResult: null,
-    configure: vi.fn(),
-  }),
-}));
 vi.mock('@/components/skills/add-skill/StepIndicator', () => ({ StepIndicator: () => null }));
 vi.mock('@/components/skills/add-skill/ScopeBadge', () => ({ ScopeBadge: () => null }));
 vi.mock('@/components/skills/add-skill/ScopeStep', () => ({ ScopeStep: () => null }));

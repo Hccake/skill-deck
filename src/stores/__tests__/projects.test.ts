@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActiveMutation, EnvironmentRef, ProjectInfo } from '@/bindings';
 import { useMutationStore } from '../mutation';
 import { useProjectStore } from '../projects';
+import { useInstallWizardSessionStore } from '../install-wizard-session';
 
 const mocks = vi.hoisted(() => ({
   listEnvironmentProjects: vi.fn(),
@@ -62,6 +63,7 @@ describe('useProjectStore', () => {
       cancelling: false,
       loading: false,
     });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('keeps the newest refresh result for one environment', async () => {
@@ -157,5 +159,13 @@ describe('useProjectStore', () => {
       .rejects.toThrow('Another write operation is already running');
     await expect(useProjectStore.getState().setCrossStorageWarning(ubuntu, 'app', true))
       .rejects.toThrow('Another write operation is already running');
+  });
+
+  it('blocks project writes while the install wizard session is active', async () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    await expect(useProjectStore.getState().add(ubuntu, '/work/app'))
+      .rejects.toThrow('Another write operation is already running');
+    expect(mocks.addEnvironmentProject).not.toHaveBeenCalled();
   });
 });

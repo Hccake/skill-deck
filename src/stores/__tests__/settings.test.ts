@@ -38,6 +38,7 @@ import { useSettingsStore } from '../settings';
 import { useAgentRegistryStore } from '../agent-registry';
 import { useMutationStore } from '../mutation';
 import { useSkillsDataStore } from '../skills-data';
+import { useInstallWizardSessionStore } from '../install-wizard-session';
 import { contextKey } from '@/lib/context';
 
 const host: EnvironmentRef = { kind: 'host' };
@@ -136,6 +137,7 @@ describe('useSettingsStore', () => {
     });
     useAgentRegistryStore.setState({ settingsByEnvironment: {}, runtimeByContext: {} });
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('updates theme and locale independently of environment snapshots', () => {
@@ -428,5 +430,20 @@ describe('useSettingsStore', () => {
     await useSettingsStore.getState().saveGithubCredential('second-token');
 
     expect(clearCooldown).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps appearance settings available but blocks credential writes during the wizard', async () => {
+    useSettingsStore.setState({ theme: 'light' });
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    useSettingsStore.getState().toggleTheme();
+    const saved = await useSettingsStore.getState().saveGithubCredential('secret-token');
+    const cleared = await useSettingsStore.getState().clearGithubCredential();
+
+    expect(useSettingsStore.getState().theme).toBe('dark');
+    expect(saved).toBeNull();
+    expect(cleared).toBeNull();
+    expect(mockSaveGithubCredential).not.toHaveBeenCalled();
+    expect(mockClearGithubCredential).not.toHaveBeenCalled();
   });
 });

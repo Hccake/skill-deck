@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { GlobalEmptyState, ProjectEmptyState, SkillFilterEmptyState } from '../EmptyStates';
 import { useMutationStore } from '@/stores/mutation';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -19,6 +20,16 @@ vi.mock('react-i18next', () => ({
 describe('skill empty states', () => {
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+  });
+
+  it('disables add actions while the install wizard keeps the main window read-only', () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    render(<GlobalEmptyState onAdd={vi.fn()} />);
+
+    expect((screen.getByRole('button', { name: 'skills.add' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 
   it('disables every empty-state add action during another mutation', () => {

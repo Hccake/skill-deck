@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useSettingsStore } from '@/stores/settings';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 function statusKey(validation: GithubCredentialValidationStatus): string {
   return `settings.githubCredential.status.${validation}`;
@@ -76,6 +77,7 @@ function getCredentialViewMode(status: GithubCredentialStatus | null): Credentia
 
 export function GithubCredentialSection() {
   const { t, i18n } = useTranslation();
+  const writeBlocked = useBusinessWriteBlocked();
   const status = useSettingsStore((state) => state.githubCredential.status);
   const loadState = useSettingsStore((state) => state.githubCredential.loadState);
   const saving = useSettingsStore((state) => state.githubCredential.saving);
@@ -96,6 +98,7 @@ export function GithubCredentialSection() {
   const busy = saving || clearing;
 
   function openConfigureDialog() {
+    if (writeBlocked) return;
     setToken('');
     setFeedback(null);
     setConfigureOpen(true);
@@ -111,7 +114,7 @@ export function GithubCredentialSection() {
   }
 
   async function handleSave() {
-    if (!token.trim()) return;
+    if (writeBlocked || !token.trim()) return;
     setFeedback(null);
     const result = await saveCredential(token);
     if (!result) return;
@@ -140,6 +143,7 @@ export function GithubCredentialSection() {
   const viewMode = getCredentialViewMode(status);
 
   async function handleClear() {
+    if (writeBlocked) return;
     setFeedback(null);
     const result = await clearCredential();
     if (!result) return;
@@ -247,7 +251,7 @@ export function GithubCredentialSection() {
               type="button"
               size="sm"
               variant="outline"
-              disabled={busy}
+              disabled={busy || writeBlocked}
               onClick={openConfigureDialog}
             >
               <KeyRound aria-hidden="true" />
@@ -258,7 +262,7 @@ export function GithubCredentialSection() {
               size="sm"
               variant="outline"
               className="border-destructive/30 text-destructive hover:border-destructive/50 hover:bg-destructive/10 hover:text-destructive"
-              disabled={busy}
+              disabled={busy || writeBlocked}
               onClick={() => setRemoveOpen(true)}
             >
               <Trash2 aria-hidden="true" />
@@ -266,7 +270,13 @@ export function GithubCredentialSection() {
             </Button>
           </div>
         ) : viewMode === 'unconfigured' ? (
-          <Button type="button" size="sm" variant="outline" onClick={openConfigureDialog}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={writeBlocked}
+            onClick={openConfigureDialog}
+          >
             {t('settings.githubCredential.configure')}
           </Button>
         ) : null}
@@ -318,7 +328,7 @@ export function GithubCredentialSection() {
                   value={token}
                   placeholder={t('settings.githubCredential.tokenPlaceholder')}
                   className="h-10 font-mono text-sm"
-                  disabled={busy}
+                  disabled={busy || writeBlocked}
                   onChange={(event) => {
                     setToken(event.target.value);
                     setFeedback(null);
@@ -352,7 +362,7 @@ export function GithubCredentialSection() {
                   {t('common.cancel')}
                 </Button>
               </DialogClose>
-              <Button type="submit" size="sm" disabled={busy || !token.trim()}>
+              <Button type="submit" size="sm" disabled={writeBlocked || busy || !token.trim()}>
                 {saving
                   ? <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
                   : <ShieldCheck aria-hidden="true" />}
@@ -402,7 +412,7 @@ export function GithubCredentialSection() {
             <AlertDialogAction
               size="sm"
               variant="destructive"
-              disabled={clearing}
+              disabled={writeBlocked || clearing}
               onClick={(event) => {
                 event.preventDefault();
                 void handleClear();

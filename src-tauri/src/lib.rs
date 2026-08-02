@@ -85,8 +85,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::environments::retry_host_project_migration,
             commands::mutations::get_active_mutation,
             commands::mutations::request_cancel_active_mutation,
-            commands::agent_configuration::request_agent_configuration,
-            commands::agent_configuration::complete_agent_configuration,
             commands::updater::check_application_update,
             commands::updater::download_and_install_application_update,
         ])
@@ -94,8 +92,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             EnvironmentRuntimeEvent,
             InstallWizardSessionSnapshot,
             LifecycleActionRequestedEvent,
-            commands::agent_configuration::AgentConfigurationRequestedEvent,
-            commands::agent_configuration::AgentConfigurationCompletedEvent,
         ])
 }
 

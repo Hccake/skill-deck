@@ -54,6 +54,16 @@ fn get_active_mutation() -> &'static str {
 }
 
 #[tauri::command]
+fn get_install_wizard_session() -> &'static str {
+    "get-install-wizard-session"
+}
+
+#[tauri::command]
+fn focus_install_wizard() -> &'static str {
+    "focus-install-wizard"
+}
+
+#[tauri::command]
 fn request_cancel_active_mutation() -> &'static str {
     "request-cancel-active-mutation"
 }
@@ -99,16 +109,6 @@ fn check_application_update() -> &'static str {
 }
 
 #[tauri::command]
-fn request_agent_configuration() -> &'static str {
-    "request-agent-configuration"
-}
-
-#[tauri::command]
-fn complete_agent_configuration() -> &'static str {
-    "complete-agent-configuration"
-}
-
-#[tauri::command]
 fn get_github_credential_status() -> &'static str {
     "get-github-credential-status"
 }
@@ -137,6 +137,8 @@ fn test_app() -> App<MockRuntime> {
             check_skill_audit,
             list_environment_projects,
             get_active_mutation,
+            get_install_wizard_session,
+            focus_install_wizard,
             request_cancel_active_mutation,
             execute_lifecycle_action,
             preview_install,
@@ -146,8 +148,6 @@ fn test_app() -> App<MockRuntime> {
             open_skill_resource,
             open_config_resource,
             check_application_update,
-            request_agent_configuration,
-            complete_agent_configuration,
             get_github_credential_status,
             save_github_credential,
             clear_github_credential,
@@ -255,10 +255,6 @@ fn main_window_allows_skill_repair_commands() {
         Ok(Value::from("open-config-resource"))
     );
     assert_eq!(
-        invoke(&main, "complete_agent_configuration"),
-        Ok(Value::from("complete-agent-configuration"))
-    );
-    assert_eq!(
         invoke(&main, "get_github_credential_status"),
         Ok(Value::from("get-github-credential-status"))
     );
@@ -269,10 +265,6 @@ fn main_window_allows_skill_repair_commands() {
     assert_eq!(
         invoke(&main, "clear_github_credential"),
         Ok(Value::from("clear-github-credential"))
-    );
-    assert_denied(
-        invoke(&main, "request_agent_configuration"),
-        "request_agent_configuration",
     );
     assert_eq!(
         invoke(&main, "fetch_available"),
@@ -289,6 +281,14 @@ fn main_window_allows_skill_repair_commands() {
     assert_eq!(
         invoke(&main, "install_skills"),
         Ok(Value::from("install-skills"))
+    );
+    assert_eq!(
+        invoke(&main, "get_install_wizard_session"),
+        Ok(Value::from("get-install-wizard-session"))
+    );
+    assert_eq!(
+        invoke(&main, "focus_install_wizard"),
+        Ok(Value::from("focus-install-wizard"))
     );
 }
 
@@ -329,14 +329,6 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
         invoke(&wizard, "install_skills"),
         Ok(Value::from("install-skills"))
     );
-    assert_eq!(
-        invoke(&wizard, "request_agent_configuration"),
-        Ok(Value::from("request-agent-configuration"))
-    );
-    assert_denied(
-        invoke(&wizard, "complete_agent_configuration"),
-        "complete_agent_configuration",
-    );
     assert_denied(invoke(&wizard, "save_custom_agent"), "save_custom_agent");
     assert_denied(
         invoke(&wizard, "list_recovery_resources"),
@@ -369,6 +361,14 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "clear_github_credential"),
         "clear_github_credential",
+    );
+    assert_denied(
+        invoke(&wizard, "get_install_wizard_session"),
+        "get_install_wizard_session",
+    );
+    assert_denied(
+        invoke(&wizard, "focus_install_wizard"),
+        "focus_install_wizard",
     );
 }
 

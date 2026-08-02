@@ -23,7 +23,7 @@ import { formatInstalls } from '@/lib/discover/format';
 import type { DiscoverSkillDetail } from '@/lib/discover/api';
 import type { DiscoverAuditRisk, DiscoverSecurityAudit, DiscoverSkillSummary } from '@/lib/discover/types';
 import { delay } from '@/lib/discover-utils';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 const PROSE_WITH_LISTS_CLASS_NAME = 'skill-prose skill-prose-with-lists';
 
@@ -129,7 +129,7 @@ export function DiscoverDetailPanel({
   onInstall,
 }: DiscoverDetailPanelProps) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const [detail, setDetail] = useState<DiscoverSkillDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);

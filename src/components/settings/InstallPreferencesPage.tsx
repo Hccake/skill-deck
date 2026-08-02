@@ -17,7 +17,6 @@ import {
   type InstallScope,
 } from '@/lib/agentTargets';
 import { useSettingsStore } from '@/stores/settings';
-import { useMutationStore } from '@/stores/mutation';
 import { agentDisplayName, agentId, isAgentDetected } from '@/lib/agents';
 import {
   buildAgentSelectionRows,
@@ -27,6 +26,7 @@ import {
 } from '@/lib/agentSelection';
 import type { AgentId, AgentSelectionGroup, DetectionState, EnvironmentRef, ResolvedAgent } from '@/bindings';
 import type { AgentDefaultsSnapshot } from '@/stores/settings';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface ScopeAgentGroups {
   detectedDefaultAvailable: ResolvedAgent[];
@@ -49,10 +49,10 @@ export function InstallPreferencesPage({
   snapshot: AgentDefaultsSnapshot;
 }) {
   const { t } = useTranslation();
-  const mutationActive = useMutationStore((state) => state.activeMutation !== null);
+  const businessWriteBlocked = useBusinessWriteBlocked();
   const saveAgentDefaults = useSettingsStore((state) => state.saveAgentDefaults);
   const loadAgentDefaults = useSettingsStore((state) => state.loadAgentDefaults);
-  const writeBlocked = mutationActive || snapshot.loadState !== 'ready' || snapshot.saving;
+  const writeBlocked = businessWriteBlocked || snapshot.loadState !== 'ready' || snapshot.saving;
   const loaded = snapshot.agents.length > 0
     || snapshot.loadState === 'ready'
     || snapshot.loadState === 'error'

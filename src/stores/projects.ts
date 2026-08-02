@@ -13,7 +13,7 @@ import type {
 } from '@/bindings';
 import { environmentKey } from '@/lib/context';
 import { toAppError } from '@/utils/to-app-error';
-import { isMutationWriteBlocked } from './mutation';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 export type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -44,7 +44,7 @@ function isCurrentRefresh(key: string, generation: number): boolean {
 }
 
 function requireWriteAvailable(): void {
-  if (isMutationWriteBlocked()) {
+  if (isBusinessWriteBlocked()) {
     throw new Error('Another write operation is already running');
   }
 }

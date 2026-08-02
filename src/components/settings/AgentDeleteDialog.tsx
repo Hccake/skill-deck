@@ -16,6 +16,7 @@ export function AgentDeleteDialog({
   previewState,
   confirmation,
   deleting,
+  writeBlocked,
   executionError,
   stale,
   onConfirmationChange,
@@ -28,6 +29,7 @@ export function AgentDeleteDialog({
   previewState: DeletePreviewState;
   confirmation: string;
   deleting: boolean;
+  writeBlocked: boolean;
   executionError: boolean;
   stale: boolean;
   onConfirmationChange: (value: string) => void;
@@ -112,7 +114,7 @@ export function AgentDeleteDialog({
                   value={confirmation}
                   autoComplete="off"
                   spellCheck={false}
-                  disabled={deleting}
+                  disabled={deleting || writeBlocked}
                   onChange={(event) => onConfirmationChange(event.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -131,7 +133,7 @@ export function AgentDeleteDialog({
           ) : null}
           {previewReady ? (
             <AlertDialogAction
-              disabled={deleting || confirmation !== impact.agentId}
+              disabled={writeBlocked || deleting || confirmation !== impact.agentId}
               onClick={(event) => { event.preventDefault(); onConfirm(); }}
             >
               {t(deleting

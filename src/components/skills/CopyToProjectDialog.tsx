@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { environmentKey, sameEnvironment } from '@/lib/context';
 import type { ContextRef, EnvironmentInfo, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type { CopyOutcome } from '@/workflows/skill-copy';
 
 export interface CopyTargetSelection {
@@ -88,7 +88,7 @@ function CopyToProjectDialogSession({
   onCopy,
 }: CopyToProjectDialogProps) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const [copying, setCopying] = useState(false);
   const [projectLoadState, setProjectLoadState] = useState<ProjectLoadState>('idle');
   const [projectLoadAttempt, setProjectLoadAttempt] = useState(0);

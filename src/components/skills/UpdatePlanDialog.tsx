@@ -16,6 +16,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useProjectStore } from '@/stores/projects';
 import { presentMutationUnit } from '@/workflows/mutation-presentation';
@@ -207,6 +208,7 @@ export function UpdatePlanDialog({
   const activeMutation = useMutationStore((state) => state.activeMutation);
   const cancelling = useMutationStore((state) => state.cancelling);
   const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
+  const businessWriteBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
   const displayResults = result?.skills ?? EMPTY_RESULTS;
@@ -214,7 +216,7 @@ export function UpdatePlanDialog({
   const executing = phase === 'executing';
   const matchingUpdateMutation = context !== null && activeMutation?.kind === 'update'
     && contextKey(activeMutation.context) === contextKey(context);
-  const writeBlocked = activeMutation !== null;
+  const writeBlocked = businessWriteBlocked;
 
   useEffect(() => {
     acceptMutation(activeMutation);

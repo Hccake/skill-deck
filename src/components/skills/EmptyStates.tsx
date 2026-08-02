@@ -2,7 +2,7 @@
 import { useTranslation } from 'react-i18next';
 import { FolderOpen, Package, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface GlobalEmptyStateProps {
   onAdd: () => void;
@@ -10,7 +10,7 @@ interface GlobalEmptyStateProps {
 
 export function GlobalEmptyState({ onAdd }: GlobalEmptyStateProps) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
 
   return (
     <div className="flex flex-col items-center justify-center min-h-48 py-8">
@@ -49,7 +49,7 @@ interface ProjectEmptyStateProps {
 
 export function ProjectEmptyState({ onAdd }: ProjectEmptyStateProps) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
 
   return (
     <div className="relative overflow-hidden border border-dashed border-border/80 bg-accent/20 p-5">

@@ -56,14 +56,13 @@ vi.mock('@/components/settings/InstallPreferencesPage', () => ({
 }));
 
 vi.mock('@/components/settings/AgentSettingsPage', () => ({
-  AgentSettingsPage: ({ context, view, agentId, configurationAgentId }: {
+  AgentSettingsPage: ({ context, view, agentId }: {
     context: { environment: typeof ubuntu };
     view?: string | null;
     agentId?: string | null;
-    configurationAgentId?: string | null;
   }) => (
     <div>
-      agents-environment:{context.environment.distro_name};view:{view};id:{agentId};configure:{configurationAgentId}
+      agents-environment:{context.environment.distro_name};view:{view};id:{agentId}
     </div>
   ),
 }));
@@ -116,7 +115,7 @@ describe('SettingsPage', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('agents-environment:Ubuntu;view:;id:;configure:')).toBeDefined();
+    expect(await screen.findByText('agents-environment:Ubuntu;view:;id:')).toBeDefined();
   });
 
   it('parses the Agent child route once and passes it to the subpage', async () => {
@@ -126,20 +125,6 @@ describe('SettingsPage', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('agents-environment:Ubuntu;view:edit;id:my-agent;configure:')).toBeDefined();
-  });
-
-  it('passes a cross-window Agent request to the new definition form', async () => {
-    render(
-      <MemoryRouter initialEntries={[
-        '/settings?section=agents&view=new&configureAgent=new-agent',
-      ]}>
-        <SettingsPage />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText(
-      'agents-environment:Ubuntu;view:new;id:;configure:new-agent',
-    )).toBeDefined();
+    expect(await screen.findByText('agents-environment:Ubuntu;view:edit;id:my-agent')).toBeDefined();
   });
 });

@@ -8,7 +8,6 @@ import type {
 import {
   canCreatePrivateCopy,
   filterAdditionalAgentIds,
-  isAdditionalAgent,
   migrateDefaultTargetAgents,
   type InstallScope,
 } from '@/lib/agentTargets';
@@ -110,34 +109,6 @@ export function reconcileInstallTargetSelection({
       return [targetSelection(availableTarget)];
     }),
     mode: selection.mode,
-  };
-}
-
-export function selectConfiguredAgent({
-  scope,
-  selection,
-  facts,
-  configuredAgentId,
-}: {
-  scope: InstallScope;
-  selection: InstallTargetSelection;
-  facts: InstallTargetFacts;
-  configuredAgentId: AgentId;
-}): InstallTargetSelection {
-  const configuredAgent = facts.allAgents.find((agent) => (
-    agentId(agent) === configuredAgentId
-  ));
-  if (!configuredAgent || !isAdditionalAgent(configuredAgent, scope)) {
-    return selection;
-  }
-
-  return {
-    ...selection,
-    selectedAgents: filterAdditionalAgentIds(
-      [...selection.selectedAgents, configuredAgentId],
-      facts.allAgents,
-      scope,
-    ),
   };
 }
 

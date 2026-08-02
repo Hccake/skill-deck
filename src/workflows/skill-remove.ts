@@ -3,7 +3,7 @@ import { previewRemove, removeSkill } from '@/hooks/useTauriApi';
 import { getSkillIdentity, isSameSkillIdentity } from '@/lib/skills/identity';
 import { useSkillDetailStore } from '@/stores/skill-detail';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
-import { useMutationStore } from '@/stores/mutation';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import { t, type DeleteTarget } from '@/stores/skills-utils';
 import type { ContextRef, InstalledSkill, RecoveryAction } from '@/bindings';
@@ -74,7 +74,7 @@ export async function openSkillRemoval(
 }
 
 export async function executeSkillRemoval(): Promise<SkillRemovalOutcome> {
-  if (useMutationStore.getState().activeMutation) return { status: 'notRun' };
+  if (isBusinessWriteBlocked()) return { status: 'notRun' };
   const { deleteTarget, deletePreview } = useSkillDialogStore.getState();
   if (!deleteTarget || !deletePreview) return { status: 'notRun' };
   useSkillDialogStore.getState().setDeleteFeedback(null);

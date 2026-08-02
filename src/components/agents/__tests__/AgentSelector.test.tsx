@@ -24,7 +24,14 @@ vi.mock('react-i18next', () => ({
       if (key === 'addSkill.agents.privateRequiredHint') {
         return 'These Agents need to be connected to the Skill separately. When selected, install will create a link or copy for them.';
       }
-      if (key === 'addSkill.agents.configureUnknown') return 'Configure Agent';
+      if (key === 'addSkill.agents.unknownHint') {
+        return 'Close the install wizard, create the Agent definition, and start again.';
+      }
+      if (key === 'addSkill.agents.unknownRemovableHint') {
+        return 'Remove unavailable targets to continue with the remaining Agents.';
+      }
+      if (key === 'addSkill.agents.unknownUnavailable') return 'Unavailable';
+      if (key === 'addSkill.agents.removeUnknown') return 'Remove target';
       if (key === 'addSkill.agents.privateCopyTitle') {
         return 'Keep separately';
       }
@@ -483,22 +490,58 @@ describe('AgentSelector', () => {
     expect(path.parentElement?.className).toContain('flex-1');
   });
 
-  it('keeps unknown pasted Agent IDs visible with a configure action', () => {
-    const onConfigureAgent = vi.fn();
+  it('keeps unknown pasted Agent IDs visible as unavailable without a configuration action', () => {
     renderAgentSelector(
       <AgentSelector
         selectedAgents={[]}
         allAgents={[]}
         unknownAgentIds={['private-agent']}
         onSelectionChange={vi.fn()}
-        onConfigureAgent={onConfigureAgent}
         scope="global"
       />
     );
 
     expect(screen.getByText('private-agent')).toBeDefined();
-    fireEvent.click(screen.getByRole('button', { name: 'Configure Agent' }));
-    expect(onConfigureAgent).toHaveBeenCalledWith('private-agent');
+    expect(screen.getByText('Unavailable')).toBeDefined();
+    expect(screen.getByText('Close the install wizard, create the Agent definition, and start again.')).toBeDefined();
+    expect(screen.queryByText('Remove unavailable targets to continue with the remaining Agents.')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Configure Agent/i })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /private-agent/i })).toBeNull();
+  });
+
+  it('removes an unknown target only when the caller exposes the removal action', () => {
+    const onRemoveUnknownAgent = vi.fn();
+    const { rerender } = renderAgentSelector(
+      <AgentSelector
+        selectedAgents={[]}
+        allAgents={[]}
+        unknownAgentIds={['private-agent']}
+        onSelectionChange={vi.fn()}
+        onRemoveUnknownAgent={onRemoveUnknownAgent}
+        scope="global"
+      />
+    );
+
+    expect(screen.getByText('Remove unavailable targets to continue with the remaining Agents.')).toBeDefined();
+    expect(screen.queryByText('Close the install wizard, create the Agent definition, and start again.')).toBeNull();
+    const removeButton = screen.getByRole('button', { name: 'Remove target' });
+    expect(removeButton.closest('[aria-disabled="true"]')).toBeNull();
+    fireEvent.click(removeButton);
+    expect(onRemoveUnknownAgent).toHaveBeenCalledWith('private-agent');
+
+    rerender(
+      <TooltipProvider>
+        <AgentSelector
+          selectedAgents={[]}
+          allAgents={[]}
+          unknownAgentIds={['private-agent']}
+          onSelectionChange={vi.fn()}
+          scope="global"
+        />
+      </TooltipProvider>
+    );
+    expect(screen.getByText('Close the install wizard, create the Agent definition, and start again.')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Remove target' })).toBeNull();
   });
 
   it('uses native checkbox semantics for selectable Agent rows', () => {

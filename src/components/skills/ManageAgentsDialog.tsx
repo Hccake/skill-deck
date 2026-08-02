@@ -30,7 +30,7 @@ import type {
   ObservedPhysicalEntry,
   RecoveryAction,
 } from '@/bindings';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type { ManageAgentsOutcome } from '@/workflows/skill-manage-agents';
 
 interface ManageAgentsDialogProps {
@@ -220,7 +220,7 @@ function ManageAgentsDialogBody({
   onSave,
 }: ManageAgentsDialogBodyProps) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const [mode, setMode] = useState<InstallMode>('symlink');
   const selectableAgents = useMemo(
     () => agentDetails?.availableAgents ?? allAgents,

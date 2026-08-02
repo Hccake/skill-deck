@@ -5,6 +5,10 @@ import { Button } from '@/components/ui/button';
 import { environmentKey, useEnvironmentStore } from '@/stores/environment';
 import { useProjectStore } from '@/stores/projects';
 import { useMutationStore } from '@/stores/mutation';
+import {
+  selectInstallWizardSessionBlocksWrites,
+  useInstallWizardSessionStore,
+} from '@/stores/install-wizard-session';
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { formatMutationStatus } from '@/lib/mutationStatus';
 
@@ -22,6 +26,9 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
   const activeMutation = useMutationStore((state) => state.activeMutation);
   const cancelling = useMutationStore((state) => state.cancelling);
   const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
+  const installWizardBlocksCancellation = useInstallWizardSessionStore(
+    selectInstallWizardSessionBlocksWrites,
+  );
   const environments = useEnvironmentStore((state) => state.environments);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
 
@@ -83,6 +90,7 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
           variant="ghost"
           size="sm"
           className="h-7 flex-shrink-0 gap-1 px-2"
+          disabled={installWizardBlocksCancellation}
           onClick={() => void cancelActiveMutation()}
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />

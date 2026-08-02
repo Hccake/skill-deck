@@ -33,6 +33,8 @@ import { agentDefinitionWorkflow } from '../agent-definitions';
 import { useAgentRegistryStore } from '@/stores/agent-registry';
 import { useSettingsStore } from '@/stores/settings';
 import { useSkillsDataStore } from '@/stores/skills-data';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
+import { useMutationStore } from '@/stores/mutation';
 
 const host: EnvironmentRef = { kind: 'host' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
@@ -105,6 +107,8 @@ describe('Agent definition workflow ownership', () => {
         [contextKey(ubuntuGlobal)]: {} as never,
       },
     });
+    useMutationStore.setState({ activeMutation: null });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('invalidates every Agent projection, rejects old in-flight responses, then accepts the returned Settings snapshot', async () => {
@@ -129,5 +133,13 @@ describe('Agent definition workflow ownership', () => {
     });
     expect(useSettingsStore.getState().agentDefaultsByEnvironment).toEqual({});
     expect(useSkillsDataStore.getState().snapshots).toEqual({});
+  });
+
+  it('does not send Agent definition writes while the install wizard is active', async () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    await expect(agentDefinitionWorkflow.save(hostGlobal, draft(), 'registry-1'))
+      .rejects.toThrow('Business writes are currently blocked');
+    expect(api.saveCustomAgent).not.toHaveBeenCalled();
   });
 });

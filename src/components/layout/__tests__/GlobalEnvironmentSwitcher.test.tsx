@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { AppError, ContextRef, EnvironmentInfo, EnvironmentRef } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { GlobalEnvironmentSwitcher } from '../GlobalEnvironmentSwitcher';
 
@@ -104,6 +105,7 @@ describe('GlobalEnvironmentSwitcher', () => {
       cancelling: false,
       loading: false,
     });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('stays hidden when Host is the only available Environment', () => {
@@ -195,5 +197,15 @@ describe('GlobalEnvironmentSwitcher', () => {
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledTimes(1));
     expect(mocks.toastError).toHaveBeenCalledWith('addSkill.error.environmentUnavailable');
+  });
+
+  it('keeps Environment switching available while the install wizard makes business actions read-only', () => {
+    mocks.environments = [host, ubuntu];
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    renderSwitcher();
+
+    expect((screen.getByRole('button', { name: /Environment:/ }) as HTMLButtonElement).disabled)
+      .toBe(false);
   });
 });

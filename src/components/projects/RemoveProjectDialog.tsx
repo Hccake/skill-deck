@@ -14,7 +14,7 @@ import {
   confirmProjectRemoval,
   type ProjectRemovalRequest,
 } from '@/stores/project-removal';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface RemoveProjectDialogProps {
   request: ProjectRemovalRequest | null;
@@ -24,7 +24,7 @@ interface RemoveProjectDialogProps {
 
 export function RemoveProjectDialog({ request, onClose, onRemoved }: RemoveProjectDialogProps) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const [submitting, setSubmitting] = useState(false);
   const [failedRequest, setFailedRequest] = useState<ProjectRemovalRequest | null>(null);
   const failed = failedRequest === request;

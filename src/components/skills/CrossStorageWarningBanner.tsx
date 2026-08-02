@@ -7,7 +7,7 @@ import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useProjectStore } from '@/stores/projects';
 import { environmentKey, sameEnvironment } from '@/lib/context';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type { ProjectInfo } from '@/bindings';
 
 const EMPTY_PROJECTS: ProjectInfo[] = [];
@@ -23,7 +23,7 @@ export function CrossStorageWarningBanner() {
     state.projectsByEnvironment[environmentKey(environment)] ?? EMPTY_PROJECTS
   ));
   const setCrossStorageWarning = useProjectStore((state) => state.setCrossStorageWarning);
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const [dismissing, setDismissing] = useState(false);
 
   if (selectedContext.scope.scope !== 'project') return null;

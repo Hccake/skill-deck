@@ -3,6 +3,7 @@ import type { ContextRef, InstalledSkill } from '@/bindings';
 import { useMutationStore } from '../mutation';
 import { useProjectStore } from '../projects';
 import { useSkillDialogStore } from '../skill-dialog';
+import { useInstallWizardSessionStore } from '../install-wizard-session';
 
 const mocks = vi.hoisted(() => ({
   previewRemove: vi.fn(),
@@ -62,6 +63,7 @@ describe('Skill dialog context capture', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
     useSkillDialogStore.setState({
       deleteTarget: null,
       deletePreview: null,
@@ -127,5 +129,13 @@ describe('Skill dialog context capture', () => {
     expect(useSkillDialogStore.getState().manageAgentsContext).toEqual(context);
     expect(useSkillDialogStore.getState().manageAgentDetails).toBeNull();
     expect(mocks.previewManageSkillAgents).not.toHaveBeenCalled();
+  });
+
+  it('does not open a second install wizard while one session is active', () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    useSkillDialogStore.getState().openAdd(context, '/source');
+
+    expect(mocks.openInstallWizard).not.toHaveBeenCalled();
   });
 });

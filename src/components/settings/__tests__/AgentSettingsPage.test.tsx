@@ -16,6 +16,7 @@ import { AgentSettingsPage } from '../AgentSettingsPage';
 import { UnsavedChangesProvider } from '@/lifecycle/UnsavedChangesProvider';
 import type { AgentSettingsSnapshot } from '@/bindings';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 globalThis.ResizeObserver = class ResizeObserver {
   observe() {}
@@ -56,13 +57,11 @@ function RoutedAgentSettingsHarness() {
         context={context}
         view={searchParams.get('view')}
         agentId={searchParams.get('id')}
-        configurationAgentId={searchParams.get('configureAgent')}
         onNavigate={(view, agentId) => {
           const nextParams = new URLSearchParams(searchParams);
           if (view === 'list') {
             nextParams.delete('view');
             nextParams.delete('id');
-            nextParams.delete('configureAgent');
           } else {
             nextParams.set('view', view);
             if (agentId) nextParams.set('id', agentId);
@@ -97,7 +96,6 @@ const actions = {
   deleteAgent: vi.fn(async (_context?: unknown, _id?: unknown, _revision?: unknown) => []),
   deleteInvalid: vi.fn((_context?: unknown, _index?: unknown, _revision?: unknown) => undefined),
 };
-const completeRequest = vi.fn(async (_agentId: string, _outcome: unknown) => undefined);
 const listRuntimeAgents = vi.fn();
 const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 const registryState = vi.hoisted(() => ({
@@ -128,7 +126,6 @@ const pageState = vi.hoisted(() => ({
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  completeAgentConfiguration: (agentId: string, outcome: unknown) => completeRequest(agentId, outcome),
   listAgents: (selectedContext: unknown) => listRuntimeAgents(selectedContext),
 }));
 
@@ -218,13 +215,13 @@ describe('AgentSettingsPage', () => {
     actions.validateDraft.mockResolvedValue(null);
     actions.saveDraft.mockResolvedValue(undefined);
     actions.deleteAgent.mockResolvedValue([]);
-    completeRequest.mockResolvedValue(undefined);
     listRuntimeAgents.mockReturnValue(new Promise(() => undefined));
     actions.loadDeleteImpact.mockResolvedValue({
       agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
       environmentRevision: 'environment-1', scopes: [], losesManagementCapability: true,
       filesWillBeDeleted: false,
     });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('leaves Environment switching to the main-window header', () => {
@@ -1010,7 +1007,7 @@ describe('AgentSettingsPage', () => {
     expect(router.state.location.search).not.toContain('view=');
   });
 
-  it('uses read-only Agent IDs in edit and configure pages so they remain focusable', async () => {
+  it('uses read-only Agent IDs in edit pages so they remain focusable', async () => {
     render(<AgentSettingsPage context={context} />);
     openCustomEditor();
 
@@ -1021,8 +1018,8 @@ describe('AgentSettingsPage', () => {
     expect(document.activeElement).toBe(id);
   });
 
-  it('clears search and returns to Custom when opening create or Wizard configuration', async () => {
-    const { rerender } = render(<AgentSettingsPage context={context} />);
+  it('clears search and returns to Custom when opening create', async () => {
+    render(<AgentSettingsPage context={context} />);
     selectCustomTab();
     fireEvent.change(screen.getByLabelText('settings.agents.search.custom'), {
       target: { value: 'hidden' },
@@ -1040,17 +1037,6 @@ describe('AgentSettingsPage', () => {
       name: 'settings.agents.sourceFilter.custom',
     }).getAttribute('aria-pressed')).toBe('true');
     expect((screen.getByLabelText('settings.agents.search.custom') as HTMLInputElement).value).toBe('');
-
-    rerender(<AgentSettingsPage context={context} configurationAgentId="wizard-agent" />);
-    expect(await screen.findByDisplayValue('wizard-agent')).toBeDefined();
-    expect(screen.queryByRole('group', {
-      name: 'settings.agents.sourceFilter.label',
-    })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledWith('wizard-agent', 'cancelled'));
-    expect(screen.getByRole('button', {
-      name: 'settings.agents.sourceFilter.custom',
-    }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('derives private Global, Project and Detection paths from a generated Agent ID', () => {
@@ -1264,168 +1250,6 @@ describe('AgentSettingsPage', () => {
     expect(screen.getByRole('alert').textContent).toContain('settings.agents.deleteStale');
   });
 
-  it('prefills an Agent request and reports cancellation to the Wizard', async () => {
-    const finished = vi.fn();
-    render(
-      <AgentSettingsPage
-        context={context}
-        configurationAgentId="new-agent"
-        onConfigurationRequestFinished={finished}
-      />,
-    );
-
-    expect((await screen.findByLabelText('settings.agents.fields.id') as HTMLInputElement).value).toBe('new-agent');
-    expect(screen.getByRole('heading', { name: 'settings.agents.form.title.configure' })).toBeDefined();
-    expect(screen.queryByRole('list', { name: 'settings.agents.listLabel' })).toBeNull();
-    expect(screen.queryByText('settings.agents.form.description.configure')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
-
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledWith('new-agent', 'cancelled'));
-    expect(finished).toHaveBeenCalled();
-  });
-
-  it('retries only Wizard completion after the Agent definition was saved', async () => {
-    const finished = vi.fn();
-    actions.validateDraft.mockResolvedValue({} as never);
-    completeRequest
-      .mockRejectedValueOnce(new Error('completion unavailable'))
-      .mockResolvedValueOnce(undefined);
-    render(
-      <AgentSettingsPage
-        context={context}
-        configurationAgentId="new-agent"
-        onConfigurationRequestFinished={finished}
-      />,
-    );
-
-    fireEvent.change(await screen.findByLabelText('settings.agents.fields.displayName'), {
-      target: { value: 'New Agent' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.configure' }));
-
-    await waitFor(() => expect(actions.saveDraft).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(1));
-    expect(toasts.error).toHaveBeenCalledWith('settings.agents.configurationCompletionError');
-    expect(screen.getByText('settings.agents.configurationPending.description')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'settings.agents.form.cancel.configure' })).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', {
-      name: 'settings.agents.form.action.completeConfiguration',
-    }));
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(2));
-    expect(actions.saveDraft).toHaveBeenCalledTimes(1);
-    expect(finished).toHaveBeenCalledTimes(1);
-  });
-
-  it('discards a dirty requested draft once before returning to the Agent list', async () => {
-    const finished = vi.fn();
-    const navigate = vi.fn();
-    const router = createMemoryRouter([{
-      path: '*',
-      element: (
-        <UnsavedChangesProvider>
-          <AgentSettingsPage
-            context={context}
-            configurationAgentId="new-agent"
-            onConfigurationRequestFinished={finished}
-            onNavigate={navigate}
-          />
-        </UnsavedChangesProvider>
-      ),
-    }]);
-    render(<RouterProvider router={router} />);
-
-    await screen.findByLabelText('settings.agents.fields.id');
-    fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
-      target: { value: 'Configured Agent' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
-    fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.discard',
-    }));
-
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(1));
-    expect(finished).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith('list');
-  });
-
-  it('keeps the requested draft open when cancellation completion fails', async () => {
-    const finished = vi.fn();
-    completeRequest.mockRejectedValueOnce(new Error('completion unavailable'));
-    render(
-      <AgentSettingsPage
-        context={context}
-        configurationAgentId="new-agent"
-        onConfigurationRequestFinished={finished}
-      />,
-    );
-
-    await screen.findByLabelText('settings.agents.fields.id');
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.cancel.configure' }));
-
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(1));
-    expect(screen.getByLabelText('settings.agents.fields.id')).toBeDefined();
-    expect(finished).not.toHaveBeenCalled();
-    expect(toasts.error).toHaveBeenCalledWith('settings.agents.configurationCompletionError');
-  });
-
-  it('keeps a dirty draft and cancels an incoming request when Stay is chosen', async () => {
-    const finished = vi.fn();
-    const { rerender } = render(
-      <AgentSettingsPage context={context} onConfigurationRequestFinished={finished} />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
-    fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
-      target: { value: 'Unfinished Agent' },
-    });
-
-    rerender(
-      <AgentSettingsPage
-        context={context}
-        configurationAgentId="new-agent"
-        onConfigurationRequestFinished={finished}
-      />,
-    );
-
-    await screen.findByText('settings.agents.dirtyRequest.title');
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dirtyRequest.stay' }));
-
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledWith('new-agent', 'cancelled'));
-    expect(screen.getByDisplayValue('Unfinished Agent')).toBeDefined();
-    expect(finished).toHaveBeenCalled();
-  });
-
-  it('keeps an incoming request visible when Stay cancellation fails', async () => {
-    const finished = vi.fn();
-    completeRequest.mockRejectedValueOnce(new Error('completion unavailable'));
-    const { rerender } = render(
-      <AgentSettingsPage context={context} onConfigurationRequestFinished={finished} />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
-    fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
-      target: { value: 'Unfinished Agent' },
-    });
-    rerender(
-      <AgentSettingsPage
-        context={context}
-        configurationAgentId="new-agent"
-        onConfigurationRequestFinished={finished}
-      />,
-    );
-
-    await screen.findByText('settings.agents.dirtyRequest.title');
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.dirtyRequest.stay' }));
-
-    await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(1));
-    expect(screen.getByText('settings.agents.dirtyRequest.title')).toBeDefined();
-    expect(screen.getByDisplayValue('Unfinished Agent')).toBeDefined();
-    expect(finished).not.toHaveBeenCalled();
-    expect(toasts.error).toHaveBeenCalledWith('settings.agents.configurationCompletionError');
-  });
-
   it('supports an absolute Global private path without offering absolute Project paths', () => {
     render(<AgentSettingsPage context={context} />);
     openCustomEditor();
@@ -1562,6 +1386,18 @@ describe('AgentSettingsPage', () => {
     expect((screen.getByRole('button', { name: 'settings.agents.add' }) as HTMLButtonElement).disabled).toBe(true);
     selectCustomTab();
     expect((screen.getByRole('button', { name: 'settings.agents.editNamed' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps Agent definitions readable but disables management during the install wizard', () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    render(<AgentSettingsPage context={context} />);
+
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    expect((screen.getByRole('button', { name: 'settings.agents.add' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    selectCustomTab();
+    expect((screen.getByRole('button', { name: 'settings.agents.editNamed' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 
   it('disables the empty-state add action when Custom storage is read-only', () => {

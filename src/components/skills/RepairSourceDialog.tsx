@@ -17,6 +17,7 @@ import { fetchAvailable } from '@/hooks/useTauriApi';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
 import type { FetchResult, RecoveryAction } from '@/bindings';
@@ -51,7 +52,7 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const closeRepairSource = useSkillDialogStore((s) => s.closeRepairSource);
   const markSourceRepairSucceeded = useSkillsDataStore((s) => s.markSourceRepairSucceeded);
   const syncSkills = useSkillsDataStore((s) => s.syncSkills);
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
   const cancelling = useMutationStore((state) => state.cancelling);
   const [source, setSource] = useState(target.source);

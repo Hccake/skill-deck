@@ -5,6 +5,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useUpdaterStore } from '@/stores/updater';
 import { UpdateDialog } from '../update-dialog';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -21,6 +22,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
 
 describe('UpdateDialog', () => {
   beforeEach(() => {
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
     useUpdaterStore.setState({
       status: 'error',
       newVersion: '2.0.0',
@@ -55,5 +57,19 @@ describe('UpdateDialog', () => {
 
     expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite');
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('37');
+  });
+
+  it('blocks update installation and restart while the wizard is open', () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    useUpdaterStore.setState({ status: 'available', error: null, failedOperation: null });
+    const view = render(<UpdateDialog open />);
+    expect((screen.getByRole('button', { name: 'settings.update.updateNow' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+
+    view.unmount();
+    useUpdaterStore.setState({ status: 'ready' });
+    render(<UpdateDialog open />);
+    expect((screen.getByRole('button', { name: 'settings.update.restartNow' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 });

@@ -13,7 +13,7 @@ import {
 } from '@/stores/project-removal';
 import { environmentKey, sameEnvironment } from '@/lib/context';
 import type { ProjectInfo } from '@/bindings';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface ProjectRowProps {
   project: ProjectInfo;
@@ -56,7 +56,7 @@ function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
 
 export function ProjectsTab() {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);

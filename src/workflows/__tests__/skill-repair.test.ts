@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { repairSkillSource } from '../skill-repair';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
+import { useMutationStore } from '@/stores/mutation';
 
 const context = {
   environment: { kind: 'host' },
@@ -41,6 +43,23 @@ function api() {
 }
 
 describe('repairSkillSource', () => {
+  beforeEach(() => {
+    useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+  });
+
+  it('does not begin source repair while the install wizard is active', async () => {
+    const workflowApi = api();
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    await expect(repairSkillSource(request(), workflowApi as never)).resolves.toEqual({
+      status: 'blocked',
+    });
+    expect(workflowApi.fetchAvailable).not.toHaveBeenCalled();
+    expect(workflowApi.prepareInstall).not.toHaveBeenCalled();
+    expect(workflowApi.installSkills).not.toHaveBeenCalled();
+  });
+
   it('returns a typed success after discovery, preparation, and execution', async () => {
     const workflowApi = api();
 

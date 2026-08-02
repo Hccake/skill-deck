@@ -37,7 +37,8 @@ import {
 } from '@/lifecycle/unsaved-changes-context';
 import { useAgentRegistryStore } from '@/stores/agent-registry';
 import { agentDefinitionWorkflow } from '@/workflows/agent-definitions';
-import { completeAgentConfiguration, listAgents } from '@/hooks/useTauriApi';
+import { listAgents } from '@/hooks/useTauriApi';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type {
   AgentCommandError,
   AgentDefinition,
@@ -55,9 +56,7 @@ interface AgentSettingsPageProps {
   context: ContextRef;
   view?: string | null;
   agentId?: string | null;
-  configurationAgentId?: string | null;
   onNavigate?: (view: 'list' | 'new' | 'edit', agentId?: string) => void;
-  onConfigurationRequestFinished?: () => void;
 }
 
 type AgentSourceFilter = 'all' | AgentSource;
@@ -120,9 +119,7 @@ export function AgentSettingsPage({
   context,
   view,
   agentId,
-  configurationAgentId,
   onNavigate,
-  onConfigurationRequestFinished,
 }: AgentSettingsPageProps) {
   const { t } = useTranslation();
   const unsavedChanges = useOptionalUnsavedChanges();
@@ -132,6 +129,7 @@ export function AgentSettingsPage({
   const validateDraft = useAgentRegistryStore((state) => state.validateDraft);
   const duplicateDraft = useAgentRegistryStore((state) => state.duplicateDraft);
   const loadDeleteImpact = useAgentRegistryStore((state) => state.loadDeleteImpact);
+  const businessWriteBlocked = useBusinessWriteBlocked();
 
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<AgentSourceFilter>('all');
@@ -139,8 +137,6 @@ export function AgentSettingsPage({
   const [initialDraftJson, setInitialDraftJson] = useState<string | null>(null);
   const [originalId, setOriginalId] = useState<string | null>(null);
   const [formMode, setFormMode] = useState<AgentDefinitionFormMode>('create');
-  const [activeConfigurationAgentId, setActiveConfigurationAgentId] = useState<string | null>(null);
-  const [pendingConfigurationAgentId, setPendingConfigurationAgentId] = useState<string | null>(null);
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<AgentFieldError[]>([]);
@@ -149,7 +145,6 @@ export function AgentSettingsPage({
   const [formSession, setFormSession] = useState(0);
   const [staleRevision, setStaleRevision] = useState(false);
   const [staleDeleted, setStaleDeleted] = useState(false);
-  const [configurationPersisted, setConfigurationPersisted] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CustomAgentDefinition | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<AgentDeleteImpact | null>(null);
   const [deletePreviewState, setDeletePreviewState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -167,7 +162,6 @@ export function AgentSettingsPage({
 
   const validationRequestId = useRef(0);
   const runtimeRequestId = useRef(0);
-  const handledConfigurationAgentId = useRef<string | null>(null);
   const handledRouteDraftKey = useRef<string | null>(null);
   const staleReloadRevision = useRef<string | null>(null);
   const deletePreviewRequestId = useRef(0);
@@ -175,49 +169,18 @@ export function AgentSettingsPage({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const data = snapshot?.data;
   const registryRevision = data?.registryRevision;
-  const readOnly = data?.customStorageIssue?.readOnly ?? false;
+  const readOnly = (data?.customStorageIssue?.readOnly ?? false) || businessWriteBlocked;
   const runtimeContext = useMemo<ContextRef>(() => ({
     environment: context.environment,
     scope: { scope: 'global' },
   }), [context.environment]);
   const dirty = draft !== null && initialDraftJson !== JSON.stringify(draft);
   const draftOpen = draft !== null;
-  const routeDraftKey = configurationAgentId
-    ? null
-    : view === 'new'
-      ? 'new'
-      : view === 'edit' && agentId
-        ? `edit:${agentId}`
-        : null;
-
-  useEffect(() => {
-    if (!configurationAgentId) {
-      handledConfigurationAgentId.current = null;
-      return;
-    }
-    if (handledConfigurationAgentId.current === configurationAgentId) return;
-    handledConfigurationAgentId.current = configurationAgentId;
-    if (dirty && activeConfigurationAgentId !== configurationAgentId) {
-      setPendingConfigurationAgentId(configurationAgentId);
-      return;
-    }
-    const nextDraft = createAgentDraft(configurationAgentId);
-    detachedDraftFields.current.clear();
-    setSource('custom');
-    setQuery('');
-    setDraft(nextDraft);
-    setFormSession((current) => current + 1);
-    setInitialDraftJson(JSON.stringify(nextDraft));
-    setOriginalId(null);
-    setFormMode('configure');
-    setActiveConfigurationAgentId(configurationAgentId);
-    setFieldErrors([]);
-    setValidationAttempted(false);
-    setFormInteracted(false);
-    setStaleRevision(false);
-    setStaleDeleted(false);
-    setConfigurationPersisted(false);
-  }, [activeConfigurationAgentId, configurationAgentId, dirty]);
+  const routeDraftKey = view === 'new'
+    ? 'new'
+    : view === 'edit' && agentId
+      ? `edit:${agentId}`
+      : null;
 
   useEffect(() => {
     if (!snapshot || snapshot.state === 'idle') void loadSettings(context);
@@ -250,7 +213,7 @@ export function AgentSettingsPage({
         handledRouteDraftKey.current = null;
         return;
       }
-      if (!onNavigate || configurationAgentId || activeConfigurationAgentId || dirty) return;
+      if (!onNavigate || dirty) return;
       staleReloadRevision.current = null;
       detachedDraftFields.current.clear();
       handledRouteDraftKey.current = null;
@@ -262,7 +225,6 @@ export function AgentSettingsPage({
       setFormInteracted(false);
       setStaleRevision(false);
       setStaleDeleted(false);
-      setConfigurationPersisted(false);
       return;
     }
     if (handledRouteDraftKey.current === routeDraftKey || dirty) return;
@@ -282,7 +244,6 @@ export function AgentSettingsPage({
       setFormInteracted(false);
       setStaleRevision(false);
       setStaleDeleted(false);
-      setConfigurationPersisted(false);
       return;
     }
     if (view === 'edit' && agentId && snapshot?.data) {
@@ -301,7 +262,6 @@ export function AgentSettingsPage({
         setFormInteracted(false);
         setStaleRevision(false);
         setStaleDeleted(false);
-        setConfigurationPersisted(false);
       } else {
         handledRouteDraftKey.current = routeDraftKey;
         staleReloadRevision.current = null;
@@ -309,20 +269,16 @@ export function AgentSettingsPage({
         setDraft(null);
         setInitialDraftJson(null);
         setOriginalId(null);
-        setActiveConfigurationAgentId(null);
         setFieldErrors([]);
         setValidationAttempted(false);
         setFormInteracted(false);
         setStaleRevision(false);
         setStaleDeleted(false);
-        setConfigurationPersisted(false);
         onNavigate?.('list');
       }
     }
   }, [
-    activeConfigurationAgentId,
     agentId,
-    configurationAgentId,
     dirty,
     draft,
     onNavigate,
@@ -337,7 +293,7 @@ export function AgentSettingsPage({
   }, [draftOpen, formSession]);
 
   useEffect(() => {
-    if (!draft || readOnly || staleRevision || staleDeleted || configurationPersisted) return;
+    if (!draft || readOnly || staleRevision || staleDeleted) return;
     const requestId = ++validationRequestId.current;
     const timer = window.setTimeout(() => {
       void validateDraft(runtimeContext, draft)
@@ -356,7 +312,7 @@ export function AgentSettingsPage({
         });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [configurationPersisted, draft, readOnly, runtimeContext, staleDeleted, staleRevision, validateDraft]);
+  }, [draft, readOnly, runtimeContext, staleDeleted, staleRevision, validateDraft]);
 
   useEffect(() => {
     const previousRevision = staleReloadRevision.current;
@@ -422,6 +378,7 @@ export function AgentSettingsPage({
   const resolvedGlobalSharedPath = Object.values(runtimeAgents)
     .find((agent) => agent?.global.sharedPath)?.global.sharedPath ?? null;
   const edit = (definition: CustomAgentDefinition) => {
+    if (readOnly) return;
     const nextDraft = structuredClone(definition);
     handledRouteDraftKey.current = `edit:${definition.id}`;
     detachedDraftFields.current.clear();
@@ -430,17 +387,16 @@ export function AgentSettingsPage({
     setInitialDraftJson(JSON.stringify(nextDraft));
     setOriginalId(definition.id);
     setFormMode('edit');
-    setActiveConfigurationAgentId(null);
     setFieldErrors([]);
     setValidationAttempted(false);
     setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
-    setConfigurationPersisted(false);
     onNavigate?.('edit', definition.id);
   };
 
   const startNew = () => {
+    if (readOnly) return;
     const nextDraft = createAgentDraft();
     handledRouteDraftKey.current = 'new';
     detachedDraftFields.current.clear();
@@ -451,13 +407,11 @@ export function AgentSettingsPage({
     setInitialDraftJson(JSON.stringify(nextDraft));
     setOriginalId(null);
     setFormMode('create');
-    setActiveConfigurationAgentId(null);
     setFieldErrors([]);
     setValidationAttempted(false);
     setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
-    setConfigurationPersisted(false);
     onNavigate?.('new');
   };
 
@@ -467,28 +421,14 @@ export function AgentSettingsPage({
     setDraft(null);
     setInitialDraftJson(null);
     setOriginalId(null);
-    setActiveConfigurationAgentId(null);
     setFieldErrors([]);
     setValidationAttempted(false);
     setFormInteracted(false);
     setStaleRevision(false);
     setStaleDeleted(false);
-    setConfigurationPersisted(false);
   };
 
   const discardDraft = async () => {
-    if (activeConfigurationAgentId) {
-      try {
-        await completeAgentConfiguration(
-          activeConfigurationAgentId,
-          configurationPersisted ? 'saved' : 'cancelled',
-        );
-        onConfigurationRequestFinished?.();
-      } catch (error) {
-        toast.error(t('settings.agents.configurationCompletionError'));
-        throw error;
-      }
-    }
     clearDraft();
   };
   useRegisterUnsavedChanges({ dirty, discard: discardDraft });
@@ -519,36 +459,11 @@ export function AgentSettingsPage({
     setValidationAttempted(true);
     setSaving(true);
     validationRequestId.current += 1;
-    if (activeConfigurationAgentId && configurationPersisted) {
-      try {
-        await completeAgentConfiguration(activeConfigurationAgentId, 'saved');
-        onConfigurationRequestFinished?.();
-        clearDraft();
-        onNavigate?.('list');
-        toast.success(t('settings.agents.saved'));
-      } catch {
-        toast.error(t('settings.agents.configurationCompletionError'));
-      } finally {
-        setSaving(false);
-      }
-      return;
-    }
     try {
       const currentValidation = await validateDraft(runtimeContext, draft);
       if (!currentValidation) return;
       setFieldErrors([]);
       await agentDefinitionWorkflow.save(context, draft, data.registryRevision);
-      if (activeConfigurationAgentId) {
-        setConfigurationPersisted(true);
-        setInitialDraftJson(JSON.stringify(draft));
-        try {
-          await completeAgentConfiguration(activeConfigurationAgentId, 'saved');
-          onConfigurationRequestFinished?.();
-        } catch {
-          toast.error(t('settings.agents.configurationCompletionError'));
-          return;
-        }
-      }
       clearDraft();
       onNavigate?.('list');
       toast.success(t('settings.agents.saved'));
@@ -569,7 +484,7 @@ export function AgentSettingsPage({
 
   const duplicate = async (definition: CustomAgentDefinition) => {
     const action = `duplicate:${definition.id}`;
-    if (pendingSecondaryAction) return;
+    if (readOnly || pendingSecondaryAction) return;
     setPendingSecondaryAction(action);
     const nextId = `${definition.id}-copy`;
     try {
@@ -584,51 +499,17 @@ export function AgentSettingsPage({
       setInitialDraftJson(JSON.stringify(nextDraft));
       setOriginalId(null);
       setFormMode('duplicate');
-      setActiveConfigurationAgentId(null);
       setFieldErrors([]);
       setValidationAttempted(false);
       setFormInteracted(false);
       setStaleRevision(false);
       setStaleDeleted(false);
-      setConfigurationPersisted(false);
       onNavigate?.('new');
     } catch {
       toast.error(t('settings.agents.duplicateError'));
     } finally {
       setPendingSecondaryAction((current) => current === action ? null : current);
     }
-  };
-
-  const stayWithCurrentDraft = async () => {
-    if (!pendingConfigurationAgentId) return;
-    try {
-      await completeAgentConfiguration(pendingConfigurationAgentId, 'cancelled');
-      setPendingConfigurationAgentId(null);
-      onConfigurationRequestFinished?.();
-    } catch {
-      toast.error(t('settings.agents.configurationCompletionError'));
-    }
-  };
-
-  const continueWithConfigurationRequest = () => {
-    if (!pendingConfigurationAgentId) return;
-    const nextDraft = createAgentDraft(pendingConfigurationAgentId);
-    detachedDraftFields.current.clear();
-    setSource('custom');
-    setQuery('');
-    setDraft(nextDraft);
-    setFormSession((current) => current + 1);
-    setInitialDraftJson(JSON.stringify(nextDraft));
-    setOriginalId(null);
-    setFormMode('configure');
-    setActiveConfigurationAgentId(pendingConfigurationAgentId);
-    setPendingConfigurationAgentId(null);
-    setFieldErrors([]);
-    setValidationAttempted(false);
-    setFormInteracted(false);
-    setStaleRevision(false);
-    setStaleDeleted(false);
-    setConfigurationPersisted(false);
   };
 
   const loadDeletePreview = async (definition: CustomAgentDefinition, revision: string) => {
@@ -664,7 +545,7 @@ export function AgentSettingsPage({
   };
 
   const confirmDelete = async () => {
-    if (!deleteImpact) return;
+    if (!deleteImpact || readOnly) return;
     setDeleteExecutionError(false);
     setDeleting(true);
     try {
@@ -696,7 +577,7 @@ export function AgentSettingsPage({
   };
 
   const confirmInvalidDelete = async () => {
-    if (!invalidRecord || !data || deletingInvalid) return;
+    if (!invalidRecord || !data || deletingInvalid || readOnly) return;
     setDeletingInvalid(true);
     try {
       const result = await agentDefinitionWorkflow.deleteInvalid(
@@ -761,7 +642,6 @@ export function AgentSettingsPage({
           saving={saving}
           stale={staleRevision}
           deleted={staleDeleted}
-          configurationPersisted={configurationPersisted}
           onChange={(nextDraft) => {
             setFormInteracted(true);
             setDraft((current) => (
@@ -1034,23 +914,6 @@ export function AgentSettingsPage({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={pendingConfigurationAgentId !== null}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('settings.agents.dirtyRequest.title')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('settings.agents.dirtyRequest.description')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => void stayWithCurrentDraft()}>
-              {t('settings.agents.dirtyRequest.stay')}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={continueWithConfigurationRequest}>
-              {t('settings.agents.dirtyRequest.continue')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
       <AgentDeleteDialog
         target={deleteTarget ? {
           agentId: deleteTarget.id,
@@ -1060,6 +923,7 @@ export function AgentSettingsPage({
         previewState={deletePreviewState}
         confirmation={deleteConfirmation}
         deleting={deleting}
+        writeBlocked={readOnly}
         executionError={deleteExecutionError}
         stale={deleteStale}
         onConfirmationChange={setDeleteConfirmation}
@@ -1102,7 +966,7 @@ export function AgentSettingsPage({
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deletingInvalid}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={deletingInvalid}
+              disabled={deletingInvalid || readOnly}
               onClick={(event) => {
                 event.preventDefault();
                 void confirmInvalidDelete();

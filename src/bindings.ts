@@ -441,22 +441,6 @@ async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async requestAgentConfiguration(agentId: AgentId) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("request_agent_configuration", { agentId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async completeAgentConfiguration(agentId: AgentId, outcome: AgentConfigurationOutcome) : Promise<Result<null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("complete_agent_configuration", { agentId, outcome }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async checkApplicationUpdate() : Promise<Result<ApplicationUpdateInfo | null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_application_update") };
@@ -479,14 +463,10 @@ async downloadAndInstallApplicationUpdate(expectedVersion: string, progress: TAU
 
 
 export const events = __makeEvents__<{
-agentConfigurationCompletedEvent: AgentConfigurationCompletedEvent,
-agentConfigurationRequestedEvent: AgentConfigurationRequestedEvent,
 environmentRuntimeEvent: EnvironmentRuntimeEvent,
 installWizardSessionSnapshot: InstallWizardSessionSnapshot,
 lifecycleActionRequestedEvent: LifecycleActionRequestedEvent
 }>({
-agentConfigurationCompletedEvent: "agent-configuration-completed-event",
-agentConfigurationRequestedEvent: "agent-configuration-requested-event",
 environmentRuntimeEvent: "environment-runtime-event",
 installWizardSessionSnapshot: "install-wizard-session-snapshot",
 lifecycleActionRequestedEvent: "lifecycle-action-requested-event"
@@ -507,9 +487,6 @@ export type AdapterTargetId = string
 export type AddProjectResult = { project: ProjectInfo; created: boolean }
 export type AgentAdapter = "standard" | "eve"
 export type AgentCommandError = { kind: "application"; error: AppError } | { kind: "invalidDraft"; errors: AgentFieldError[] } | { kind: "staleRegistryRevision"; expected: string; actual: string }
-export type AgentConfigurationCompletedEvent = { agentId: AgentId; outcome: AgentConfigurationOutcome }
-export type AgentConfigurationOutcome = "saved" | "cancelled"
-export type AgentConfigurationRequestedEvent = { agentId: AgentId }
 export type AgentDefinition = { id: AgentId; displayName: string; source: AgentSource; aliases: AgentId[]; global: ScopeDefinition; project: ScopeDefinition; detection: DetectionSpec; legacyPaths: LegacyPath[]; adapter: AgentAdapter }
 export type AgentDeleteImpact = { agentId: AgentId; displayName: string; registryRevision: string; environmentRevision: string; scopes: AgentDeleteScopeImpact[]; losesManagementCapability: boolean; filesWillBeDeleted: boolean }
 export type AgentDeletePathImpact = { kind: AgentDeletePathKind; logicalPath: PathSpec; resolvedPath: string | null; presence: DirectoryPresenceState; observedSkillCount: number | null; observedSkillCountTruncated: boolean; unavailableReason: DetectionReason | null }

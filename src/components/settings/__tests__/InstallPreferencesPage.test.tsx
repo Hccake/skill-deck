@@ -9,6 +9,7 @@ import { InstallPreferencesPage } from '../InstallPreferencesPage';
 import enLocale from '@/i18n/locales/en.json';
 import { makeResolvedAgent } from '@/test-utils';
 import { useMutationStore } from '@/stores/mutation';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const mockSaveAgentDefaults = vi.fn();
 const mockLoadAgentDefaults = vi.fn();
@@ -110,6 +111,7 @@ describe('InstallPreferencesPage', () => {
     mockSaveAgentDefaults.mockResolvedValue(undefined);
     mockLoadAgentDefaults.mockResolvedValue(undefined);
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
   it('saves the next defaults to the explicit environment', () => {
@@ -139,6 +141,17 @@ describe('InstallPreferencesPage', () => {
 
     renderPage();
     const row = screen.getByRole('checkbox', { name: /Claude Code/ });
+    expect((row as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(row);
+    expect(mockSaveAgentDefaults).not.toHaveBeenCalled();
+  });
+
+  it('disables changes while the install wizard is open', () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+
+    renderPage();
+    const row = screen.getByRole('checkbox', { name: /Claude Code/ });
+
     expect((row as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(row);
     expect(mockSaveAgentDefaults).not.toHaveBeenCalled();

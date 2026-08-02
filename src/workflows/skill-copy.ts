@@ -2,7 +2,7 @@ import {
   copySkillToProjects,
   previewCopySkillToProjects,
 } from '@/hooks/useTauriApi';
-import { useMutationStore } from '@/stores/mutation';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { getSkillOperationAgents } from '@/stores/skills-utils';
 import { toAppError } from '@/utils/to-app-error';
@@ -59,7 +59,7 @@ export async function executeSkillCopy({
   environment: targetEnvironment,
   projectIds: targetProjectIds,
 }: SkillCopySelection): Promise<CopyOutcome> {
-  if (useMutationStore.getState().activeMutation) return { status: 'blocked' };
+  if (isBusinessWriteBlocked()) return { status: 'blocked' };
   const { copySkill, copyContext } = useSkillDialogStore.getState();
   if (!copySkill || !copyContext) return { status: 'blocked' };
 

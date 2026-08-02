@@ -17,11 +17,13 @@ import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useUpdaterStore } from '@/stores/updater';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 const RELEASE_URL = 'https://github.com/hccake/skill-deck/releases/latest';
 
 export function UpdateDialog({ open }: { open: boolean }) {
   const { t } = useTranslation();
+  const writeBlocked = useBusinessWriteBlocked();
   const { requestAction } = useWindowLifecycle();
   const {
     status,
@@ -89,7 +91,11 @@ export function UpdateDialog({ open }: { open: boolean }) {
               >
                 {t('settings.update.later')}
               </Button>
-              <Button className="cursor-pointer" onClick={() => downloadAndInstall()}>
+              <Button
+                className="cursor-pointer"
+                disabled={writeBlocked}
+                onClick={() => downloadAndInstall()}
+              >
                 {t('settings.update.updateNow')}
               </Button>
             </DialogFooter>
@@ -148,6 +154,7 @@ export function UpdateDialog({ open }: { open: boolean }) {
               </Button>
               <Button
                 className="cursor-pointer"
+                disabled={writeBlocked}
                 onClick={() => void requestAction('restartApplication')}
               >
                 {t('settings.update.restartNow')}
@@ -171,7 +178,10 @@ export function UpdateDialog({ open }: { open: boolean }) {
               <Button variant="ghost" onClick={() => dismiss()}>
                 {t('settings.update.hide')}
               </Button>
-              <Button onClick={() => void retry()}>
+              <Button
+                disabled={writeBlocked && failedOperation === 'install'}
+                onClick={() => void retry()}
+              >
                 {t('settings.update.retry')}
               </Button>
             </DialogFooter>

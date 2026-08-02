@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   refreshWorkspace: vi.fn(),
   listen: vi.fn().mockResolvedValue(() => undefined),
   monitorEnvironmentRuntime: vi.fn(),
-  agentConfigurationRouter: vi.fn(),
+  monitorInstallWizardSession: vi.fn(),
   recoveryCenter: vi.fn(),
   checkForUpdate: vi.fn(),
   shouldAutoCheck: vi.fn(() => false),
@@ -49,14 +49,11 @@ vi.mock('@/components/recovery/RecoveryCenter', () => ({
     return null;
   },
 }));
-vi.mock('@/components/settings/AgentConfigurationRequestRouter', () => ({
-  AgentConfigurationRequestRouter: () => {
-    mocks.agentConfigurationRouter();
-    return null;
-  },
-}));
 vi.mock('@/hooks/useEnvironmentRuntimeMonitor', () => ({
   useEnvironmentRuntimeMonitor: mocks.monitorEnvironmentRuntime,
+}));
+vi.mock('@/hooks/useInstallWizardSessionMonitor', () => ({
+  useInstallWizardSessionMonitor: mocks.monitorInstallWizardSession,
 }));
 vi.mock('@/pages/SkillsPage', () => ({ SkillsPage: () => null }));
 vi.mock('@/pages/DiscoverPage', () => ({ DiscoverPage: () => null }));
@@ -93,7 +90,7 @@ describe('App', () => {
     mocks.refreshWorkspace.mockClear();
     mocks.listen.mockClear();
     mocks.monitorEnvironmentRuntime.mockClear();
-    mocks.agentConfigurationRouter.mockClear();
+    mocks.monitorInstallWizardSession.mockClear();
     mocks.recoveryCenter.mockClear();
     mocks.checkForUpdate.mockClear();
     mocks.shouldAutoCheck.mockReset();
@@ -133,6 +130,7 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('mutation-status-bar', {}, { timeout: 5000 })).toBeDefined();
+    expect(mocks.monitorInstallWizardSession).toHaveBeenCalledTimes(1);
   });
 
   it('mounts lifecycle error toasts in the wizard window', () => {
@@ -144,15 +142,15 @@ describe('App', () => {
     expect(screen.getByText('window-toaster')).toBeDefined();
   });
 
-  it('does not mount main-window Environment, recovery, or Agent routing owners in the wizard', () => {
+  it('does not mount main-window Environment or recovery owners in the wizard', () => {
     window.history.pushState({}, '', '/wizard');
     window.dispatchEvent(new PopStateEvent('popstate'));
 
     render(<App />);
 
     expect(mocks.monitorEnvironmentRuntime).not.toHaveBeenCalled();
+    expect(mocks.monitorInstallWizardSession).not.toHaveBeenCalled();
     expect(mocks.recoveryCenter).not.toHaveBeenCalled();
-    expect(mocks.agentConfigurationRouter).not.toHaveBeenCalled();
   });
 
   it('does not check for application updates from the install wizard', () => {

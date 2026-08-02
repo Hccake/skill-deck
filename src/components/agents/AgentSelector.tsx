@@ -5,7 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import {
   formatAgentTargetPath,
   groupAgentsByScopedTarget,
@@ -43,8 +43,7 @@ interface AgentSelectorProps {
   privateCopyAgentsExpanded?: boolean;
   onPrivateCopyExpandedChange?: (expanded: boolean) => void;
   unknownAgentIds?: AgentId[];
-  configuringAgentId?: AgentId | null;
-  onConfigureAgent?: (agentId: AgentId) => void;
+  onRemoveUnknownAgent?: (agentId: AgentId) => void;
   showPaths?: boolean;
 }
 
@@ -59,8 +58,7 @@ export function AgentSelector({
   privateCopyAgentsExpanded = false,
   onPrivateCopyExpandedChange,
   unknownAgentIds = [],
-  configuringAgentId = null,
-  onConfigureAgent,
+  onRemoveUnknownAgent,
   showPaths = true,
 }: AgentSelectorProps) {
   const { t } = useTranslation();
@@ -144,22 +142,34 @@ export function AgentSelector({
         <div className="space-y-2">
           <div className="space-y-0.5">
             <p className="text-sm font-semibold">{t('addSkill.agents.unknownTitle')}</p>
-            <p className="text-xs text-muted-foreground">{t('addSkill.agents.unknownHint')}</p>
+            <p className="text-xs text-muted-foreground">
+              {t(onRemoveUnknownAgent
+                ? 'addSkill.agents.unknownRemovableHint'
+                : 'addSkill.agents.unknownHint')}
+            </p>
           </div>
           {unknownAgentIds.map((unknownId) => (
-            <div key={unknownId} className="flex min-w-0 items-center gap-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+            <div
+              key={unknownId}
+              className="flex min-w-0 items-center gap-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2"
+            >
               <AgentIcon agentId={unknownId} className="h-8 w-8" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{unknownId}</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!onConfigureAgent || configuringAgentId === unknownId}
-                onClick={() => onConfigureAgent?.(unknownId)}
-              >
-                {configuringAgentId === unknownId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                {t('addSkill.agents.configureUnknown')}
-              </Button>
+              <span className="rounded-full border border-warning/40 bg-background/70 px-2 py-0.5 text-[11px] font-medium text-warning">
+                {t('addSkill.agents.unknownUnavailable')}
+              </span>
+              {onRemoveUnknownAgent ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('addSkill.agents.removeUnknown')}
+                  title={t('addSkill.agents.removeUnknown')}
+                  onClick={() => onRemoveUnknownAgent(unknownId)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
             </div>
           ))}
         </div>

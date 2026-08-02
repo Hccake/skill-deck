@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { getConfig, saveConfig, type SkillDeckConfig } from '@/hooks/useTauriApi';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 const DEFAULT_TIMEOUT_SECS = 120;
 const MIN_TIMEOUT_SECS = 30;
@@ -50,6 +51,7 @@ function presetLabel(seconds: typeof PRESETS[number], t: ReturnType<typeof useTr
 
 export function GitCloneTimeoutSection() {
   const { t } = useTranslation();
+  const writeBlocked = useBusinessWriteBlocked();
   const [config, setConfig] = useState<SkillDeckConfig | null>(null);
   const [currentTimeoutSecs, setCurrentTimeoutSecs] = useState(DEFAULT_TIMEOUT_SECS);
   const [selectedOption, setSelectedOption] = useState<TimeoutOption>('120');
@@ -111,6 +113,7 @@ export function GitCloneTimeoutSection() {
       revertToCurrentOnError?: boolean;
     }
   ) => {
+    if (writeBlocked) return;
     const normalized = normalizeTimeout(nextTimeoutSecs);
 
     try {
@@ -138,7 +141,7 @@ export function GitCloneTimeoutSection() {
     } finally {
       setSaving(false);
     }
-  }, [config, currentTimeoutSecs, flashSaved, t]);
+  }, [config, currentTimeoutSecs, flashSaved, t, writeBlocked]);
 
   const handlePresetClick = useCallback((seconds: typeof PRESETS[number]) => {
     void persistTimeout(seconds, {
@@ -239,7 +242,7 @@ export function GitCloneTimeoutSection() {
                 setSaveError(null);
               }
             }}
-            disabled={saving}
+            disabled={saving || writeBlocked}
           >
             <SelectTrigger size="sm" className="w-[110px] h-8 bg-background">
               <SelectValue placeholder={presetLabel(120, t)} />
@@ -260,7 +263,7 @@ export function GitCloneTimeoutSection() {
             type="button"
             variant="ghost"
             size="sm"
-            disabled={saving || currentTimeoutSecs === DEFAULT_TIMEOUT_SECS}
+            disabled={writeBlocked || saving || currentTimeoutSecs === DEFAULT_TIMEOUT_SECS}
             className={cn(
               "h-8 w-8 rounded-md p-0 transition-all duration-300 cursor-pointer",
               currentTimeoutSecs === DEFAULT_TIMEOUT_SECS
@@ -292,6 +295,7 @@ export function GitCloneTimeoutSection() {
                 aria-label={t('settings.cloneTimeout.customLabel')}
                 inputMode="numeric"
                 value={customValue}
+                disabled={writeBlocked}
                 className="h-8 rounded-md bg-background pr-12 text-sm shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
                 onChange={(event) => {
                   setCustomValue(event.target.value);
@@ -306,7 +310,7 @@ export function GitCloneTimeoutSection() {
             <Button
               type="button"
               size="sm"
-              disabled={saving}
+              disabled={saving || writeBlocked}
               onClick={handleCustomSave}
               className="h-8 rounded-md px-4 text-xs cursor-pointer shadow-sm"
             >

@@ -4,7 +4,7 @@ import {
   previewManageSkillAgents,
 } from '@/hooks/useTauriApi';
 import { buildAgentWriteIntents } from '@/lib/install-workflow';
-import { useMutationStore } from '@/stores/mutation';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { t } from '@/stores/skills-utils';
 import type {
@@ -97,7 +97,7 @@ export async function executeManageAgentChanges(
   mode: InstallMode,
   addOptionalAgents: AgentId[],
 ): Promise<ManageAgentsOutcome> {
-  if (useMutationStore.getState().activeMutation) return { status: 'blocked' };
+  if (isBusinessWriteBlocked()) return { status: 'blocked' };
   const {
     manageAgentsSkill,
     manageAgentsContext,

@@ -26,7 +26,6 @@ permissions = [
   "allow-check-application-update",
   "allow-check-updates",
   "allow-clear-github-credential",
-  "allow-complete-agent-configuration",
   "allow-confirm-recovery-resource-resolved",
   "allow-connect-environment",
   "allow-copy-skill-to-projects",
@@ -73,6 +72,5 @@ permissions = [
 identifier = "install-wizard-commands"
 description = "Application commands available to the install wizard"
 permissions = [
-  "shared-business-commands",
-  "allow-request-agent-configuration"
+  "shared-business-commands"
 ]

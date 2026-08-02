@@ -4,6 +4,7 @@ import { contextKey } from '@/lib/context';
 import { previewUpdate, updateSkill, updateSkillsBatch } from '@/hooks/useTauriApi';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { toAppError } from '@/utils/to-app-error';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 export type SkillUpdatePhase =
   | 'closed'
@@ -51,6 +52,7 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
   ...closedState,
   generation: 0,
   open: async (context, skillNames, batch = skillNames.length > 1) => {
+    if (isBusinessWriteBlocked()) return false;
     const generation = get().generation + 1;
     // Capture the operation before awaiting so navigation cannot alter execution intent.
     set({
@@ -76,6 +78,7 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
     return { conflictDecisions };
   }),
   confirm: async () => {
+    if (isBusinessWriteBlocked()) return;
     const { context, skillNames, preview, batch, conflictDecisions, phase, confirming } = get();
     if (phase !== 'ready' || confirming || !context || !preview) return;
     const generation = get().generation;

@@ -14,11 +14,13 @@ import { useUpdaterStore } from '@/stores/updater';
 import { Progress } from '@/components/ui/progress';
 import { COMPATIBLE_CLI_VERSION } from '@/constants';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 import logoUrl from '@/assets/logo.png';
 
 export function AboutTab() {
   const { t } = useTranslation();
+  const writeBlocked = useBusinessWriteBlocked();
   const {
     status: updateStatus,
     newVersion,
@@ -130,7 +132,11 @@ export function AboutTab() {
             </div>
           ) : updateStatus === 'ready' ? (
             <div className="flex flex-col items-center space-y-2">
-              <Button onClick={() => void requestAction('restartApplication')} className="h-9 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs gap-2 w-48 transition-all font-semibold">
+              <Button
+                disabled={writeBlocked}
+                onClick={() => void requestAction('restartApplication')}
+                className="h-9 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs gap-2 w-48 transition-all font-semibold"
+              >
                 <RefreshCw className="h-3.5 w-3.5" />
                 {t('settings.update.restartNow')}
               </Button>

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AgentId,
-  AgentRuntimeSnapshot,
   AppError,
   ContextRef,
   InstallTargetInfo,
@@ -18,7 +17,6 @@ import { toAppError } from '@/utils/to-app-error';
 import {
   initializeInstallTargetSelection,
   reconcileInstallTargetSelection,
-  selectConfiguredAgent,
   type InstallTargetFacts,
   type InstallTargetSelection,
 } from '@/workflows/install-target-options';
@@ -42,10 +40,6 @@ export interface InstallTargetOptionsInput {
 
 export type InstallTargetOptionsController = InstallTargetOptionsState & {
   retry: () => Promise<void>;
-  acceptConfiguredAgent: (
-    runtimeSnapshot: AgentRuntimeSnapshot,
-    configuredAgentId: AgentId,
-  ) => void;
 };
 
 function inputKey(context: ContextRef, scope: InstallScope, preselectedAgents: AgentId[]) {
@@ -79,7 +73,6 @@ export function useInstallTargetOptions({
   const stateRef = useRef<InstallTargetOptionsState>(state);
   const initializedKeyRef = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
-  const groupRefreshGenerationRef = useRef(0);
   const previousKeyRef = useRef(key);
   const latestRef = useRef({
     key,
@@ -138,7 +131,6 @@ export function useInstallTargetOptions({
       return;
     }
     const generation = ++loadGenerationRef.current;
-    groupRefreshGenerationRef.current += 1;
 
     updateControllerState({ status: 'loading', inputKey: requestedKey });
     try {
@@ -179,7 +171,6 @@ export function useInstallTargetOptions({
       previousKeyRef.current = key;
       initializedKeyRef.current = null;
       loadGenerationRef.current += 1;
-      groupRefreshGenerationRef.current += 1;
     }
   }, [key]);
 
@@ -190,57 +181,9 @@ export function useInstallTargetOptions({
 
   useEffect(() => () => {
     loadGenerationRef.current += 1;
-    groupRefreshGenerationRef.current += 1;
   }, []);
 
   const retry = useCallback(() => load(true), [load]);
-
-  const acceptConfiguredAgent = useCallback((
-    runtimeSnapshot: AgentRuntimeSnapshot,
-    configuredAgentId: AgentId,
-  ) => {
-    const current = stateRef.current;
-    const latest = latestRef.current;
-    if (current.status !== 'ready' || current.inputKey !== latest.key) return;
-
-    const facts: InstallTargetFacts = {
-      ...current.facts,
-      allAgents: agentsForScope(runtimeSnapshot, latest.scope),
-    };
-    const reconciled = reconcileInstallTargetSelection({
-      scope: latest.scope,
-      selection: latest.selection,
-      facts,
-    });
-    const nextSelection = selectConfiguredAgent({
-      scope: latest.scope,
-      selection: reconciled,
-      facts,
-      configuredAgentId,
-    });
-    latestRef.current.selection = nextSelection;
-    latest.updateState(selectionPatch(nextSelection, facts));
-    updateControllerState({ status: 'ready', inputKey: latest.key, facts });
-
-    const requestedKey = latest.key;
-    const generation = ++groupRefreshGenerationRef.current;
-    void listAgentSelectionGroups(latest.context).then((groups) => {
-      const readyState = stateRef.current;
-      if (generation !== groupRefreshGenerationRef.current
-        || requestedKey !== latestRef.current.key
-        || readyState.status !== 'ready'
-        || readyState.inputKey !== requestedKey) {
-        return;
-      }
-      const refreshedFacts = {
-        ...readyState.facts,
-        selectionGroups: groups[latest.scope],
-      };
-      publishFacts(refreshedFacts, requestedKey);
-    }).catch((error) => {
-      console.error('Failed to refresh Agent selection groups:', error);
-    });
-  }, [publishFacts, updateControllerState]);
 
   const visibleState: InstallTargetOptionsState = state.status !== 'idle'
     && state.inputKey !== key
@@ -250,6 +193,5 @@ export function useInstallTargetOptions({
   return {
     ...visibleState,
     retry,
-    acceptConfiguredAgent,
   };
 }

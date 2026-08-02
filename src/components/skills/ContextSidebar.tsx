@@ -22,7 +22,7 @@ import { environmentKey, sameEnvironment } from '@/lib/context';
 import { openConfigResource } from '@/hooks/useTauriApi';
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
 import { cn } from '@/lib/utils';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 const EMPTY_PROJECTS: ProjectInfo[] = [];
 
@@ -186,7 +186,7 @@ function ProjectContextItem({
 
 export function ContextSidebar() {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const pendingEnvironment = useWorkspaceContextStore((state) => state.pendingEnvironment);

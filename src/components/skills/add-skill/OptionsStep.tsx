@@ -12,7 +12,6 @@ import { Bot, Copy, Info, Link2, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AgentId, InstallTargetInfo, ResolvedAgent } from '@/bindings';
 import type { AdapterTargetSelection } from '@/lib/install-workflow';
-import { useAgentConfigurationFlow } from '@/hooks/useAgentConfigurationFlow';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import type { InstallTargetOptionsController } from '@/hooks/useInstallTargetOptions';
@@ -40,15 +39,6 @@ export function OptionsStep({ state, updateState, targetOptions }: OptionsStepPr
   const { t } = useTranslation();
   const scope = state.scope;
 
-  const {
-    configuringAgentId,
-    configurationResult,
-    configure,
-  } = useAgentConfigurationFlow({
-    context: state.context,
-    onSaved: targetOptions.acceptConfiguredAgent,
-  });
-
   const facts = targetOptions.status === 'ready' ? targetOptions.facts : null;
   const allAgents = facts?.allAgents ?? EMPTY_AGENTS;
 
@@ -57,6 +47,11 @@ export function OptionsStep({ state, updateState, targetOptions }: OptionsStepPr
     const knownIds = new Set(allAgents.map((agent) => agentId(agent)));
     return state.preSelectedAgents.filter((id, index, ids) =>
       ids.indexOf(id) === index && !knownIds.has(id));
+  }, [allAgents, facts, state.preSelectedAgents]);
+  const hasKnownPreselectedAgent = useMemo(() => {
+    if (!facts) return false;
+    const knownIds = new Set(allAgents.map((agent) => agentId(agent)));
+    return state.preSelectedAgents.some((id) => knownIds.has(id));
   }, [allAgents, facts, state.preSelectedAgents]);
 
   const handleSelectionChange = useCallback(
@@ -172,14 +167,12 @@ export function OptionsStep({ state, updateState, targetOptions }: OptionsStepPr
           privateCopyAgentsExpanded={state.privateCopyAgentsExpanded}
           onPrivateCopyExpandedChange={(expanded) => updateState({ privateCopyAgentsExpanded: expanded })}
           unknownAgentIds={unknownAgentIds}
-          configuringAgentId={configuringAgentId}
-          onConfigureAgent={(id) => void configure(id)}
+          onRemoveUnknownAgent={hasKnownPreselectedAgent
+            ? (id) => updateState({
+                preSelectedAgents: state.preSelectedAgents.filter((agentId) => agentId !== id),
+              })
+            : undefined}
         />
-        {configurationResult ? (
-          <p role="status" aria-live="polite" className="text-xs text-muted-foreground">
-            {t(`addSkill.agents.configurationResult.${configurationResult}`)}
-          </p>
-        ) : null}
       </div>
 
       {showConcreteTargets ? (

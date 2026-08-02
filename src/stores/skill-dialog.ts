@@ -13,7 +13,7 @@ import {
 } from '@/hooks/useTauriApi';
 import { useProjectStore } from './projects';
 import { environmentKey } from '@/lib/context';
-import { isMutationWriteBlocked } from './mutation';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type {
   InstalledSkill,
   SkillScope,
@@ -115,7 +115,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
   }),
 
   openAdd: (context, projectPath = projectPathForContext(context)) => {
-    if (isMutationWriteBlocked()) return;
+    if (isBusinessWriteBlocked()) return;
     const scope = context.scope.scope;
     openInstallWizard({
       entryPoint: 'skills-panel',
@@ -128,7 +128,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
   },
 
   openAddWithPrefill: (prefill, context) => {
-    if (isMutationWriteBlocked()) return;
+    if (isBusinessWriteBlocked()) return;
     const scope = prefill.scope ?? context.scope.scope;
     const projectPath =
       scope === 'project'

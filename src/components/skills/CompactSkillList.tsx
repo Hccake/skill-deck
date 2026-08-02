@@ -11,7 +11,7 @@ import {
 } from '@/lib/skills/identity';
 import { CompactSkillItem } from './CompactSkillItem';
 import type { InstalledSkill } from '@/bindings';
-import { useMutationStore } from '@/stores/mutation';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 interface CompactSkillListProps {
   globalSkills: InstalledSkill[];
@@ -43,7 +43,7 @@ export const CompactSkillList = memo(function CompactSkillList({
   globalEmptyState,
 }: CompactSkillListProps) {
   const { t } = useTranslation();
-  const writeBlocked = useMutationStore((state) => state.activeMutation !== null);
+  const writeBlocked = useBusinessWriteBlocked();
 
   return (
     <div className="flex-1 relative min-h-0">

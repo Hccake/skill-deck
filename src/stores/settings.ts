@@ -11,7 +11,7 @@ import {
 } from '@/hooks/useTauriApi';
 import { useAgentRegistryStore } from './agent-registry';
 import { useSkillsDataStore } from './skills-data';
-import { isMutationWriteBlocked } from './mutation';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type { DefaultTargetAgents } from '@/hooks/useTauriApi';
 import type {
   AgentSelectionGroups,
@@ -241,7 +241,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       saveAgentDefaults: async (environment, defaults) => {
-        if (isMutationWriteBlocked()) return;
+        if (isBusinessWriteBlocked()) return;
         const key = environmentKey(environment);
         const context = globalContext(environment);
         const current = get().agentDefaultsByEnvironment[key]
@@ -334,6 +334,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       saveGithubCredential: async (token) => {
+        if (isBusinessWriteBlocked()) return null;
         const requestId = get().githubCredential.requestId + 1;
         set((state) => ({
           githubCredential: {
@@ -376,6 +377,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
 
       clearGithubCredential: async () => {
+        if (isBusinessWriteBlocked()) return null;
         const requestId = get().githubCredential.requestId + 1;
         set((state) => ({
           githubCredential: {

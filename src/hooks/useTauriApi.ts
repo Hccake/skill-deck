@@ -27,7 +27,6 @@ import type {
   CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
-  AgentConfigurationOutcome,
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
@@ -51,7 +50,6 @@ export type {
   CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
-  AgentConfigurationOutcome,
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
@@ -125,19 +123,6 @@ export async function deleteInvalidCustomAgent(
   expectedRegistryRevision: string,
 ): Promise<AgentDeleteResult> {
   return unwrap(await commands.deleteInvalidCustomAgent(context, index, expectedRegistryRevision));
-}
-
-export async function requestAgentConfiguration(
-  agentId: AgentId,
-): Promise<void> {
-  unwrap(await commands.requestAgentConfiguration(agentId));
-}
-
-export async function completeAgentConfiguration(
-  agentId: AgentId,
-  outcome: AgentConfigurationOutcome,
-): Promise<void> {
-  unwrap(await commands.completeAgentConfiguration(agentId, outcome));
 }
 
 export async function getRecoveryResourceStatus(

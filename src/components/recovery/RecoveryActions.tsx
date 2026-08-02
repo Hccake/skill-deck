@@ -13,6 +13,7 @@ import {
   openRecoveryResource,
 } from '@/hooks/useTauriApi';
 import type { RecoveryAction, RecoveryResourceStatus } from '@/bindings';
+import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 export function RecoveryActions({ recovery, initialStatus, onResolved }: {
   recovery: RecoveryAction;
@@ -20,6 +21,7 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
   onResolved?: () => void;
 }) {
   const { t } = useTranslation();
+  const writeBlocked = useBusinessWriteBlocked();
   const [status, setStatus] = useState<RecoveryResourceStatus | null>(() => (
     initialStatus?.resourceId === recovery.resourceId ? initialStatus : null
   ));
@@ -50,7 +52,7 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
   }, [initialStatus, recovery.resourceId, refresh]);
 
   const cleanup = async () => {
-    if (!status || status.state !== 'consistentCanCleanup') return;
+    if (writeBlocked || !status || status.state !== 'consistentCanCleanup') return;
     setLoading(true);
     try {
       await confirmRecoveryResourceResolved(recovery.resourceId, status.revision);
@@ -90,7 +92,7 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
             <RefreshCw className="h-3.5 w-3.5" />{t('recovery.refresh')}
           </Button>
           {status?.state === 'consistentCanCleanup' ? (
-            <Button variant="outline" size="sm" disabled={loading} onClick={() => setConfirmOpen(true)}>
+            <Button variant="outline" size="sm" disabled={writeBlocked || loading} onClick={() => setConfirmOpen(true)}>
               <Trash2 className="h-3.5 w-3.5" />{t('recovery.cleanup')}
             </Button>
           ) : null}
@@ -121,7 +123,7 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loading}>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction disabled={loading} onClick={(event) => { event.preventDefault(); void cleanup(); }}>
+            <AlertDialogAction disabled={writeBlocked || loading} onClick={(event) => { event.preventDefault(); void cleanup(); }}>
               {t('recovery.confirmCleanup')}
             </AlertDialogAction>
           </AlertDialogFooter>

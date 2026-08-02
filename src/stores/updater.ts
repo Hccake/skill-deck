@@ -5,6 +5,7 @@ import {
 } from '@/hooks/useTauriApi';
 import { toAppError } from '@/utils/to-app-error';
 import type { AppError, ApplicationUpdateProgress } from '@/bindings';
+import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 const LAST_CHECK_KEY = 'updater_last_check';
 const LAST_CHECK_ERROR_KEY = 'updater_last_check_error';
@@ -103,6 +104,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
   },
 
   downloadAndInstall: async () => {
+    if (isBusinessWriteBlocked()) return;
     const version = get().newVersion;
     if (get().status !== 'available' || !version) return;
     set({

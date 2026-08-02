@@ -17,6 +17,17 @@
     "discover": "发现",
     "settings": "设置"
   },
+  "installWizardSession": {
+    "checkingTitle": "正在确认安装向导状态",
+    "checkingDescription": "确认当前向导状态前，主窗口暂时保持只读。",
+    "readOnlyTitle": "安装向导正在进行",
+    "readOnlyDescription": "向导打开期间，主窗口仅供浏览。你仍可切换 Environment 和 Context。",
+    "returnToWizard": "返回安装向导",
+    "focusFailed": "无法返回安装向导，请重试。",
+    "syncFailedTitle": "暂时无法确认安装向导状态",
+    "syncFailedDescription": "为避免同时修改业务数据，主窗口暂时保持只读。请重新连接后再试。",
+    "retryMonitoring": "重试"
+  },
   "recovery": {
     "title": "本次操作未完成",
     "center": {
@@ -558,18 +569,12 @@
         "title": {
           "create": "创建自定义 Agent",
           "edit": "编辑自定义 Agent",
-          "duplicate": "复制自定义 Agent",
-          "configure": "配置自定义 Agent"
+          "duplicate": "复制自定义 Agent"
         },
         "action": {
           "create": "创建 Agent",
           "edit": "保存",
-          "duplicate": "创建副本",
-          "configure": "保存并返回安装",
-          "completeConfiguration": "重试返回安装"
-        },
-        "cancel": {
-          "configure": "取消配置并返回"
+          "duplicate": "创建副本"
         }
       },
       "sourceFilter": {
@@ -627,11 +632,6 @@
       "invalidDetailTitle": "查看无效 Agent 记录",
       "invalidDetailDescription": "这条原始记录无法作为 Agent 定义使用，请确认内容后再删除。",
       "confirmInvalidDelete": "删除无效记录",
-      "configurationCompletionError": "无法完成 Agent 配置请求，请重试。",
-      "configurationPending": {
-        "title": "Agent 已保存",
-        "description": "定义已经写入，但暂时无法返回安装向导。请重试此步骤，不会再次保存定义。"
-      },
       "deleted": "Agent 定义已删除",
       "deleteError": "Agent 定义删除失败",
       "deleteStale": "Agent Registry 已发生变化，请检查刷新后的影响并重新输入 Agent ID。",
@@ -804,12 +804,6 @@
       },
       "warnings": {
         "defaultCleanupFailed": "Agent 已删除，但旧的默认引用暂未清理；下次保存默认设置时会自动清理。"
-      },
-      "dirtyRequest": {
-        "title": "放弃当前未保存的 Agent？",
-        "description": "安装向导请求配置另一个 Agent。继续会放弃当前草稿；留在此处会保留草稿并取消该请求。",
-        "stay": "留在此处",
-        "continue": "继续并放弃草稿"
       },
       "dirtyNavigation": {
         "title": "放弃未保存的更改？",
@@ -1178,13 +1172,10 @@
       "noAutomaticAgents": "未检测到相关 Agent。",
       "noDefaultAvailableAgents": "未检测到可直接使用的 Agent。",
       "unknownTitle": "未知 Agents",
-      "unknownHint": "安装请求包含这些 Agent ID，但 Skill Deck 中还没有对应定义。",
-      "configureUnknown": "配置 Agent",
-      "configurationResult": {
-        "saved": "Agent 已添加并选中。",
-        "cancelled": "已取消 Agent 配置。",
-        "failed": "未能完成 Agent 配置。"
-      }
+      "unknownHint": "Skill Deck 中没有对应的 Agent 定义，当前无法安装到这些目标。请关闭安装向导，前往 Settings > Agents 创建定义后重新安装。",
+      "unknownRemovableHint": "移除不可用目标后，可以继续使用其余 Agent 完成本次安装。",
+      "unknownUnavailable": "不可用",
+      "removeUnknown": "移除此目标"
     },
     "scope": {
       "title": "使用范围",

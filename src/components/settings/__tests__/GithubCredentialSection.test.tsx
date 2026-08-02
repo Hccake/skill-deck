@@ -8,6 +8,7 @@ import type { GithubCredentialStatus } from '@/bindings';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useSettingsStore } from '@/stores/settings';
 import { GithubCredentialSection } from '../GithubCredentialSection';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 import enLocale from '@/i18n/locales/en.json';
 
@@ -103,6 +104,7 @@ describe('GithubCredentialSection', () => {
       disconnect() {}
     });
     resetStore();
+    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
     mockGetGithubCredentialStatus.mockResolvedValue(verified);
     mockClearGithubCredential.mockResolvedValue({
       cleared: true,
@@ -135,6 +137,16 @@ describe('GithubCredentialSection', () => {
       expect(screen.queryByRole('dialog', { name: 'Configure GitHub Token' })).toBeNull();
     });
     expect(screen.getByText(/octocat/)).toBeTruthy();
+  });
+
+  it('keeps credential status readable but disables maintenance during the wizard', async () => {
+    useInstallWizardSessionStore.setState({ revision: 1, active: true });
+    renderCredential();
+
+    expect((await screen.findByRole('button', { name: 'Replace' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    expect((screen.getByRole('button', { name: 'Remove' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 
   it('replaces or removes a saved token through explicit actions', async () => {
