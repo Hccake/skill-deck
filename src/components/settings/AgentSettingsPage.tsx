@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Plus, Search, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -182,6 +182,39 @@ export function AgentSettingsPage({
       ? `edit:${agentId}`
       : null;
 
+  const resetDraftFeedback = useCallback(() => {
+    setFieldErrors([]);
+    setValidationAttempted(false);
+    setFormInteracted(false);
+    setStaleRevision(false);
+    setStaleDeleted(false);
+  }, []);
+
+  const openDraftSession = useCallback((
+    nextDraft: CustomAgentDefinition,
+    mode: AgentDefinitionFormMode,
+    nextOriginalId: string | null,
+  ) => {
+    staleReloadRevision.current = null;
+    detachedDraftFields.current.clear();
+    setDraft(nextDraft);
+    setFormSession((current) => current + 1);
+    setInitialDraftJson(JSON.stringify(nextDraft));
+    setOriginalId(nextOriginalId);
+    setFormMode(mode);
+    resetDraftFeedback();
+  }, [resetDraftFeedback]);
+
+  const clearDraftSession = useCallback(() => {
+    staleReloadRevision.current = null;
+    detachedDraftFields.current.clear();
+    handledRouteDraftKey.current = null;
+    setDraft(null);
+    setInitialDraftJson(null);
+    setOriginalId(null);
+    resetDraftFeedback();
+  }, [resetDraftFeedback]);
+
   useEffect(() => {
     if (!snapshot || snapshot.state === 'idle') void loadSettings(context);
   }, [context, loadSettings, snapshot]);
@@ -214,36 +247,16 @@ export function AgentSettingsPage({
         return;
       }
       if (!onNavigate || dirty) return;
-      staleReloadRevision.current = null;
-      detachedDraftFields.current.clear();
-      handledRouteDraftKey.current = null;
-      setDraft(null);
-      setInitialDraftJson(null);
-      setOriginalId(null);
-      setFieldErrors([]);
-      setValidationAttempted(false);
-      setFormInteracted(false);
-      setStaleRevision(false);
-      setStaleDeleted(false);
+      clearDraftSession();
       return;
     }
     if (handledRouteDraftKey.current === routeDraftKey || dirty) return;
     if (view === 'new') {
       handledRouteDraftKey.current = routeDraftKey;
       const nextDraft = createAgentDraft();
-      detachedDraftFields.current.clear();
       setSource('custom');
       setQuery('');
-      setDraft(nextDraft);
-      setFormSession((current) => current + 1);
-      setInitialDraftJson(JSON.stringify(nextDraft));
-      setOriginalId(null);
-      setFormMode('create');
-      setFieldErrors([]);
-      setValidationAttempted(false);
-      setFormInteracted(false);
-      setStaleRevision(false);
-      setStaleDeleted(false);
+      openDraftSession(nextDraft, 'create', null);
       return;
     }
     if (view === 'edit' && agentId && snapshot?.data) {
@@ -251,29 +264,10 @@ export function AgentSettingsPage({
       if (definition) {
         handledRouteDraftKey.current = routeDraftKey;
         const nextDraft = structuredClone(definition);
-        detachedDraftFields.current.clear();
-        setDraft(nextDraft);
-        setFormSession((current) => current + 1);
-        setInitialDraftJson(JSON.stringify(nextDraft));
-        setOriginalId(definition.id);
-        setFormMode('edit');
-        setFieldErrors([]);
-        setValidationAttempted(false);
-        setFormInteracted(false);
-        setStaleRevision(false);
-        setStaleDeleted(false);
+        openDraftSession(nextDraft, 'edit', definition.id);
       } else {
+        clearDraftSession();
         handledRouteDraftKey.current = routeDraftKey;
-        staleReloadRevision.current = null;
-        detachedDraftFields.current.clear();
-        setDraft(null);
-        setInitialDraftJson(null);
-        setOriginalId(null);
-        setFieldErrors([]);
-        setValidationAttempted(false);
-        setFormInteracted(false);
-        setStaleRevision(false);
-        setStaleDeleted(false);
         onNavigate?.('list');
       }
     }
@@ -281,7 +275,9 @@ export function AgentSettingsPage({
     agentId,
     dirty,
     draft,
+    clearDraftSession,
     onNavigate,
+    openDraftSession,
     routeDraftKey,
     snapshot?.data,
     view,
@@ -293,10 +289,10 @@ export function AgentSettingsPage({
   }, [draftOpen, formSession]);
 
   useEffect(() => {
-    if (!draft || readOnly || staleRevision || staleDeleted) return;
+    if (!draft || readOnly || saving || staleRevision || staleDeleted) return;
     const requestId = ++validationRequestId.current;
     const timer = window.setTimeout(() => {
-      void validateDraft(runtimeContext, draft)
+      void validateDraft(runtimeContext, draft, 'background')
         .then(() => {
           if (requestId !== validationRequestId.current) return;
           setFieldErrors([]);
@@ -312,7 +308,7 @@ export function AgentSettingsPage({
         });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [draft, readOnly, runtimeContext, staleDeleted, staleRevision, validateDraft]);
+  }, [draft, readOnly, runtimeContext, saving, staleDeleted, staleRevision, validateDraft]);
 
   useEffect(() => {
     const previousRevision = staleReloadRevision.current;
@@ -381,17 +377,7 @@ export function AgentSettingsPage({
     if (readOnly) return;
     const nextDraft = structuredClone(definition);
     handledRouteDraftKey.current = `edit:${definition.id}`;
-    detachedDraftFields.current.clear();
-    setDraft(nextDraft);
-    setFormSession((current) => current + 1);
-    setInitialDraftJson(JSON.stringify(nextDraft));
-    setOriginalId(definition.id);
-    setFormMode('edit');
-    setFieldErrors([]);
-    setValidationAttempted(false);
-    setFormInteracted(false);
-    setStaleRevision(false);
-    setStaleDeleted(false);
+    openDraftSession(nextDraft, 'edit', definition.id);
     onNavigate?.('edit', definition.id);
   };
 
@@ -399,37 +385,14 @@ export function AgentSettingsPage({
     if (readOnly) return;
     const nextDraft = createAgentDraft();
     handledRouteDraftKey.current = 'new';
-    detachedDraftFields.current.clear();
     setSource('custom');
     setQuery('');
-    setDraft(nextDraft);
-    setFormSession((current) => current + 1);
-    setInitialDraftJson(JSON.stringify(nextDraft));
-    setOriginalId(null);
-    setFormMode('create');
-    setFieldErrors([]);
-    setValidationAttempted(false);
-    setFormInteracted(false);
-    setStaleRevision(false);
-    setStaleDeleted(false);
+    openDraftSession(nextDraft, 'create', null);
     onNavigate?.('new');
   };
 
-  const clearDraft = () => {
-    staleReloadRevision.current = null;
-    detachedDraftFields.current.clear();
-    setDraft(null);
-    setInitialDraftJson(null);
-    setOriginalId(null);
-    setFieldErrors([]);
-    setValidationAttempted(false);
-    setFormInteracted(false);
-    setStaleRevision(false);
-    setStaleDeleted(false);
-  };
-
   const discardDraft = async () => {
-    clearDraft();
+    clearDraftSession();
   };
   useRegisterUnsavedChanges({ dirty, discard: discardDraft });
 
@@ -460,11 +423,11 @@ export function AgentSettingsPage({
     setSaving(true);
     validationRequestId.current += 1;
     try {
-      const currentValidation = await validateDraft(runtimeContext, draft);
+      const currentValidation = await validateDraft(runtimeContext, draft, 'submit');
       if (!currentValidation) return;
       setFieldErrors([]);
-      await agentDefinitionWorkflow.save(context, draft, data.registryRevision);
-      clearDraft();
+      await agentDefinitionWorkflow.save(context, draft, originalId, data.registryRevision);
+      clearDraftSession();
       onNavigate?.('list');
       toast.success(t('settings.agents.saved'));
     } catch (error) {
@@ -491,19 +454,9 @@ export function AgentSettingsPage({
       const duplicated = await duplicateDraft(definition.id, nextId);
       const nextDraft = retargetDefaultAgentPaths(duplicated, definition.id, duplicated.id);
       handledRouteDraftKey.current = 'new';
-      detachedDraftFields.current.clear();
       setSource('custom');
       setQuery('');
-      setDraft(nextDraft);
-      setFormSession((current) => current + 1);
-      setInitialDraftJson(JSON.stringify(nextDraft));
-      setOriginalId(null);
-      setFormMode('duplicate');
-      setFieldErrors([]);
-      setValidationAttempted(false);
-      setFormInteracted(false);
-      setStaleRevision(false);
-      setStaleDeleted(false);
+      openDraftSession(nextDraft, 'duplicate', null);
       onNavigate?.('new');
     } catch {
       toast.error(t('settings.agents.duplicateError'));
@@ -521,7 +474,7 @@ export function AgentSettingsPage({
     setDeleteExecutionError(false);
     setPendingSecondaryAction(action);
     try {
-      const impact = await loadDeleteImpact(runtimeContext, definition.id, revision);
+      const impact = await loadDeleteImpact(context, definition.id, revision);
       if (requestId === deletePreviewRequestId.current && impact) {
         setDeleteImpact(impact);
         setDeletePreviewState('ready');

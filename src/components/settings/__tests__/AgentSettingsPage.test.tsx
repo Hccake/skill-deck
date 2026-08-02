@@ -29,6 +29,14 @@ function render(ui: React.ReactElement) {
   return testingRender(ui, { wrapper: TooltipProvider });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function selectCustomTab() {
   fireEvent.click(screen.getByRole('button', { name: /settings\.agents\.sourceFilter\.custom/ }));
 }
@@ -86,7 +94,12 @@ function renderRoutedAgentSettings(initialEntry = '/settings?section=agents') {
 const actions = {
   loadSettings: vi.fn(async () => undefined),
   validateDraft: vi.fn(async () => null),
-  saveDraft: vi.fn(async (_context?: unknown, _draft?: unknown, _revision?: unknown) => undefined),
+  saveDraft: vi.fn(async (
+    _context?: unknown,
+    _draft?: unknown,
+    _originalId?: unknown,
+    _revision?: unknown,
+  ) => undefined),
   duplicateDraft: vi.fn(),
   loadDeleteImpact: vi.fn(async () => ({
     agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
@@ -132,7 +145,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
 vi.mock('@/workflows/agent-definitions', () => ({
   agentDefinitionWorkflow: {
     save: async (...args: unknown[]) => {
-      await actions.saveDraft(args[0], args[1], args[2]);
+      await actions.saveDraft(args[0], args[1], args[2], args[3]);
       return registryState.snapshot;
     },
     delete: async (...args: unknown[]) => ({
@@ -1172,6 +1185,48 @@ describe('AgentSettingsPage', () => {
     await waitFor(() => expect(actions.deleteAgent).toHaveBeenCalledWith(context, 'my-agent', 'registry-1'));
   });
 
+  it('uses the current Project Context and keeps deletion available when project impact is unresolved', async () => {
+    const projectContext = {
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: 'project-1' },
+    } as const;
+    actions.loadDeleteImpact.mockResolvedValue({
+      agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
+      environmentRevision: 'environment-1', losesManagementCapability: true,
+      filesWillBeDeleted: false,
+      scopes: [{
+        scope: 'project', defaultReferenced: false,
+        paths: [{
+          kind: 'private', logicalPath: { kind: 'project', relativePath: '.my-agent/skills' },
+          resolvedPath: null, presence: 'projectNotSelected', observedSkillCount: null,
+          observedSkillCountTruncated: false, unavailableReason: 'projectContextRequired',
+        }],
+      }],
+    } as never);
+    render(<AgentSettingsPage context={projectContext} />);
+
+    selectCustomMenuAction('settings.agents.delete');
+
+    expect(await screen.findByText(
+      'settings.agents.deletePathUnavailableReasons.projectContextRequired',
+    )).toBeDefined();
+    expect(screen.getByText('settings.agents.deleteFilesSafe')).toBeDefined();
+    expect(actions.loadDeleteImpact).toHaveBeenCalledWith(
+      projectContext,
+      'my-agent',
+      'registry-1',
+    );
+    fireEvent.change(screen.getByLabelText('settings.agents.deleteConfirmId'), {
+      target: { value: 'my-agent' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.confirmDelete' }));
+    await waitFor(() => expect(actions.deleteAgent).toHaveBeenCalledWith(
+      projectContext,
+      'my-agent',
+      'registry-1',
+    ));
+  });
+
   it('opens the Agent deletion shell immediately while loading its impact', () => {
     actions.loadDeleteImpact.mockImplementation(() => new Promise(() => undefined));
     render(<AgentSettingsPage context={context} />);
@@ -1276,6 +1331,36 @@ describe('AgentSettingsPage', () => {
     expect(document.activeElement).toBe(idInput);
   });
 
+  it('keeps a duplicate draft intact when its generated ID conflicts at save time', async () => {
+    actions.duplicateDraft.mockResolvedValue({
+      ...snapshot.activeCustom[0].definition,
+      id: 'my-agent-copy',
+    });
+    actions.validateDraft.mockResolvedValue({} as never);
+    actions.saveDraft.mockRejectedValue({
+      kind: 'invalidDraft',
+      errors: [{ field: 'id', code: 'duplicateAgentId' }],
+    });
+    render(<AgentSettingsPage context={context} />);
+    selectCustomMenuAction('settings.agents.duplicate');
+    const name = await screen.findByLabelText('settings.agents.fields.displayName');
+    fireEvent.change(name, { target: { value: 'Reviewed Copy' } });
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'settings.agents.form.action.duplicate',
+    }));
+
+    expect(await screen.findByText('settings.agents.validation.duplicateAgentId')).toBeDefined();
+    expect(screen.getByDisplayValue('Reviewed Copy')).toBeDefined();
+    expect(screen.getByDisplayValue('my-agent-copy')).toBeDefined();
+    expect(actions.saveDraft).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({ id: 'my-agent-copy' }),
+      null,
+      'registry-1',
+    );
+  });
+
   it('keeps background validation errors hidden until the draft changes or save is attempted', async () => {
     actions.validateDraft.mockRejectedValue({
       kind: 'invalidDraft',
@@ -1322,6 +1407,34 @@ describe('AgentSettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.create' }));
 
     await waitFor(() => expect(actions.validateDraft).toHaveBeenCalled());
+  });
+
+  it('cancels pending background validation when saving and uses the submit lane once', async () => {
+    vi.useFakeTimers();
+    const submitValidation = deferred<unknown>();
+    actions.validateDraft.mockReturnValue(submitValidation.promise as never);
+    try {
+      render(<AgentSettingsPage context={context} />);
+      fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
+      fireEvent.change(screen.getByLabelText('settings.agents.fields.displayName'), {
+        target: { value: 'Submitted Agent' },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.create' }));
+      await act(async () => { await Promise.resolve(); });
+      await act(async () => { vi.advanceTimersByTime(300); });
+
+      expect(actions.validateDraft).toHaveBeenCalledTimes(1);
+      expect(actions.validateDraft).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ id: 'submitted-agent' }),
+        'submit',
+      );
+      await act(async () => { submitValidation.resolve({}); });
+      expect(actions.saveDraft).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('focuses the add-path control when detection paths fail collection validation', async () => {
@@ -1477,6 +1590,12 @@ describe('AgentSettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'settings.agents.form.action.edit' }));
 
     expect(await screen.findByText('settings.agents.stale.title')).toBeDefined();
+    expect(actions.saveDraft).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({ id: 'my-agent' }),
+      'my-agent',
+      'registry-1',
+    );
     expect(screen.getByDisplayValue('My Reviewed Agent')).toBeDefined();
     expect((screen.getByRole('button', {
       name: 'settings.agents.form.action.edit',
@@ -1609,7 +1728,10 @@ describe('AgentSettingsPage', () => {
     expect(screen.getByText('broken-agent')).toBeDefined();
     expect(screen.getByText('settings.agents.validation.required')).toBeDefined();
     fireEvent.click(screen.getAllByLabelText('settings.agents.duplicate')[0]);
-    await waitFor(() => expect(actions.duplicateDraft).toHaveBeenCalledWith('my-agent', 'my-agent-copy'));
+    await waitFor(() => expect(actions.duplicateDraft).toHaveBeenCalledWith(
+      'my-agent',
+      'my-agent-copy',
+    ));
     expect(screen.getByRole('heading', { name: 'settings.agents.form.title.duplicate' })).toBeDefined();
     expect(screen.queryByRole('list', { name: 'settings.agents.listLabel' })).toBeNull();
   });

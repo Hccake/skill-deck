@@ -285,6 +285,19 @@ impl ManagedAgentRegistry {
         Ok(())
     }
 
+    fn reject_custom_collision(
+        &self,
+        id: &AgentId,
+        original_id: Option<&AgentId>,
+    ) -> Result<(), AgentCommandError> {
+        if original_id != Some(id) && self.registry().snapshot().get(id).is_some() {
+            return Err(AgentCommandError::InvalidDraft {
+                errors: vec![AgentFieldError::new("id", "duplicateAgentId")],
+            });
+        }
+        Ok(())
+    }
+
     fn assert_revision(&self, expected: &str) -> Result<(), AgentCommandError> {
         let actual = self.registry().snapshot().revision.clone();
         if expected != actual {
@@ -299,11 +312,13 @@ impl ManagedAgentRegistry {
     fn preflight_save(
         &self,
         definition: &CustomAgentDefinition,
+        original_id: Option<&AgentId>,
         expected_registry_revision: &str,
     ) -> Result<(), AgentCommandError> {
         self.repository()?;
         validate_draft(definition)?;
         self.reject_builtin_collision(&definition.id)?;
+        self.reject_custom_collision(&definition.id, original_id)?;
         self.assert_revision(expected_registry_revision)
     }
 
@@ -365,6 +380,7 @@ impl ManagedAgentRegistry {
     fn save(
         &self,
         definition: CustomAgentDefinition,
+        original_id: Option<&AgentId>,
         expected_registry_revision: &str,
     ) -> Result<(), AgentCommandError> {
         let _mutation = self
@@ -374,6 +390,7 @@ impl ManagedAgentRegistry {
         let repository = self.repository()?;
         validate_draft(&definition)?;
         self.reject_builtin_collision(&definition.id)?;
+        self.reject_custom_collision(&definition.id, original_id)?;
         self.assert_revision(expected_registry_revision)?;
         let file = repository.upsert(definition)?;
         *self
@@ -584,15 +601,17 @@ pub async fn validate_custom_agent_draft(
 pub fn save_custom_agent(
     context: ContextRef,
     draft: CustomAgentDefinition,
+    original_id: Option<AgentId>,
     expected_registry_revision: String,
     registry: &ManagedAgentRegistry,
     controller: &SingleMutationController,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
-    save_custom_agent_with_controller(
+    save_custom_agent_with_original_id_controller(
         registry,
         controller,
         context,
         draft,
+        original_id,
         expected_registry_revision,
     )
 }
@@ -898,16 +917,34 @@ async fn resolve_custom_agent_preview(
     })
 }
 
+#[cfg(test)]
 fn save_custom_agent_inner(
     registry: &ManagedAgentRegistry,
     environment: EnvironmentRef,
     draft: CustomAgentDefinition,
     expected_registry_revision: String,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
-    registry.save(draft, &expected_registry_revision)?;
+    save_custom_agent_inner_with_original_id(
+        registry,
+        environment,
+        draft,
+        None,
+        expected_registry_revision,
+    )
+}
+
+fn save_custom_agent_inner_with_original_id(
+    registry: &ManagedAgentRegistry,
+    environment: EnvironmentRef,
+    draft: CustomAgentDefinition,
+    original_id: Option<AgentId>,
+    expected_registry_revision: String,
+) -> Result<AgentSettingsSnapshot, AgentCommandError> {
+    registry.save(draft, original_id.as_ref(), &expected_registry_revision)?;
     Ok(registry.settings_snapshot(environment))
 }
 
+#[cfg(test)]
 fn save_custom_agent_with_controller(
     registry: &ManagedAgentRegistry,
     controller: &SingleMutationController,
@@ -915,12 +952,31 @@ fn save_custom_agent_with_controller(
     draft: CustomAgentDefinition,
     expected_registry_revision: String,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
-    registry.preflight_save(&draft, &expected_registry_revision)?;
+    save_custom_agent_with_original_id_controller(
+        registry,
+        controller,
+        context,
+        draft,
+        None,
+        expected_registry_revision,
+    )
+}
+
+fn save_custom_agent_with_original_id_controller(
+    registry: &ManagedAgentRegistry,
+    controller: &SingleMutationController,
+    context: ContextRef,
+    draft: CustomAgentDefinition,
+    original_id: Option<AgentId>,
+    expected_registry_revision: String,
+) -> Result<AgentSettingsSnapshot, AgentCommandError> {
+    registry.preflight_save(&draft, original_id.as_ref(), &expected_registry_revision)?;
     let _guard = controller.begin(MutationKind::ManageAgentDefinitions, context.clone())?;
-    save_custom_agent_inner(
+    save_custom_agent_inner_with_original_id(
         registry,
         context.environment,
         draft,
+        original_id,
         expected_registry_revision,
     )
 }
@@ -1460,6 +1516,50 @@ mod tests {
             })
             .expect("seed custom agents");
         (temp, repository)
+    }
+
+    #[test]
+    fn create_reports_an_id_collision_when_another_window_claims_the_id() {
+        let (_temp, repository) = repository_with_records(Vec::new());
+        let service = ManagedAgentRegistry::from_repository(repository);
+        let initial_revision = service.registry_snapshot(true).revision.clone();
+        let draft = custom_definition("new-agent", ".new-agent");
+
+        save_custom_agent_inner(
+            &service,
+            EnvironmentRef::Host,
+            draft.clone(),
+            initial_revision.clone(),
+        )
+        .expect("other window claims Agent ID");
+
+        let error = save_custom_agent_inner(
+            &service,
+            EnvironmentRef::Host,
+            draft.clone(),
+            initial_revision.clone(),
+        )
+        .expect_err("duplicate ID must be reported before stale revision");
+
+        assert_eq!(
+            error,
+            AgentCommandError::InvalidDraft {
+                errors: vec![AgentFieldError::new("id", "duplicateAgentId")],
+            }
+        );
+
+        let edit_error = save_custom_agent_inner_with_original_id(
+            &service,
+            EnvironmentRef::Host,
+            draft.clone(),
+            Some(draft.id),
+            initial_revision,
+        )
+        .expect_err("editing an existing ID must preserve stale revision semantics");
+        assert!(matches!(
+            edit_error,
+            AgentCommandError::StaleRegistryRevision { .. }
+        ));
     }
 
     #[test]

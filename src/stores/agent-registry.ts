@@ -42,6 +42,7 @@ interface AgentRegistryState {
   validateDraft: (
     context: ContextRef,
     draft: CustomAgentDefinition,
+    lane?: 'background' | 'submit',
   ) => Promise<CustomAgentDraftValidation | null>;
   duplicateDraft: (sourceId: AgentId, newId: AgentId) => Promise<CustomAgentDefinition>;
   loadDeleteImpact: (
@@ -174,9 +175,9 @@ export function createAgentRegistryStore(overrides: Partial<AgentRegistryApi> = 
         }
       },
 
-      validateDraft: async (context, draft) => {
+      validateDraft: async (context, draft, lane = 'background') => {
         const key = contextKey(context);
-        const generationKey = `validation:${key}`;
+        const generationKey = `validation:${lane}:${key}`;
         const requestId = nextGeneration(generationKey);
         try {
           const data = await client.validateCustomAgentDraft(context, draft);

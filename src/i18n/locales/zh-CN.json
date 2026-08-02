@@ -507,7 +507,6 @@
       "sectionLabel": "设置分类",
       "general": "外观与语言",
       "agents": "Agents",
-      "installPreferences": "默认安装设置",
       "git": "Git",
       "projects": "项目",
       "about": "关于"
@@ -524,27 +523,6 @@
       "appearanceDescription": "选择适合当前工作环境的显示主题。",
       "languageTitle": "语言",
       "languageDescription": "切换界面语言。"
-    },
-    "installPreferences": {
-      "title": "默认接入设置",
-      "description": "设置安装 Skill 时默认一起启用的 Agent。可直接使用的 Agent 无需选择。",
-      "loadError": "无法加载 Agent 默认设置。",
-      "staleSave": "无法确认本次保存结果，请刷新后再继续修改。",
-      "globalTitle": "全局",
-      "projectTitle": "项目",
-      "automaticSection": "可直接使用",
-      "automaticHint": "这些 Agent 无需选择，安装后即可使用。",
-      "additionalSection": "需要单独接入",
-      "additionalHint": "选择后，每次安装 Skill 时都会自动为这些 Agent 建立链接或副本。",
-      "migratedDefaultTargets": "已移除不再需要的默认接入项，不影响这些 Agent 使用 Skill。",
-      "selectAll": "全选",
-      "selectedCount": "已选 {{count}} 个",
-      "automaticDetectionSummary": "已检测到 {{detected}} 个，未检测到 {{undetected}} 个，暂时无法判断 {{indeterminate}} 个",
-      "otherAgentsToggle": "显示其他 {{count}} 个 Agent",
-      "otherAutomaticAgentsToggle": "显示其他 {{count}} 个可直接使用的 Agent",
-      "noAutomaticAgents": "未检测到相关 Agent。",
-      "noAdditionalAgents": "当前没有需要单独接入的 Agent。",
-      "noVisibleAdditionalAgents": "没有已安装或已选择的需要单独接入的 Agent。"
     },
     "agents": {
       "title": "Agents",
@@ -644,6 +622,10 @@
       "deleteDefaultReferenced": "当前默认目标",
       "deleteObservedSkillCount": "检测到 {{count}}{{suffix}} 个 Skill",
       "deletePathUnavailable": "当前环境无法解析此路径",
+      "deletePathUnavailableReasons": {
+        "projectContextRequired": "当前 Project 路径不可用，因此无法检查项目范围的影响。此操作不会删除任何文件。",
+        "environmentUnavailable": "当前 Environment 不可用，因此无法检查此路径。此操作不会删除任何文件。"
+      },
       "deletePathKind": {
         "shared": "通用 Skill 目录",
         "private": "此 Agent 的 Skill 目录"
@@ -1157,7 +1139,7 @@
       "privateCopySelected": "已选 {{count}} 个",
       "targetTitle": "目标 Agent",
       "loadError": "无法加载所选环境的 Agent。",
-      "defaultLoadWarning": "未能读取默认接入设置，已使用内置推荐项。你仍可调整本次安装目标。",
+      "defaultLoadWarning": "未能读取默认目标，已使用内置推荐项。你仍可调整本次安装目标。",
       "concreteTargetsTitle": "项目内目标",
       "concreteTargetsHint": "选择要安装到的项目内目标，例如 Eve root 或 subagent。",
       "expandOtherAgents": "显示其他 {{count}} 个 Agent",

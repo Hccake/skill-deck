@@ -321,14 +321,14 @@ describe('useTauriApi unwrap logic', () => {
     await expect(validateCustomAgentDraft(context, draft)).resolves.toMatchObject({
       registryRevision: 'registry-1',
     });
-    await expect(saveCustomAgent(context, draft, 'registry-1')).resolves.toEqual(settings);
+    await expect(saveCustomAgent(context, draft, null, 'registry-1')).resolves.toEqual(settings);
     await expect(duplicateCustomAgentDraft('my-agent', 'my-agent-copy')).resolves.toEqual(draft);
     await expect(previewCustomAgentDelete(context, 'my-agent', 'registry-1')).resolves.toEqual(impact);
     await expect(deleteCustomAgent(context, 'my-agent', 'registry-1')).resolves.toEqual(deletion);
     await expect(deleteInvalidCustomAgent(context, 0, 'registry-1')).resolves.toEqual(deletion);
 
     expect(mockCommands.validateCustomAgentDraft).toHaveBeenCalledWith(context, draft);
-    expect(mockCommands.saveCustomAgent).toHaveBeenCalledWith(context, draft, 'registry-1');
+    expect(mockCommands.saveCustomAgent).toHaveBeenCalledWith(context, draft, null, 'registry-1');
     expect(mockCommands.duplicateCustomAgentDraft).toHaveBeenCalledWith('my-agent', 'my-agent-copy');
     expect(mockCommands.previewCustomAgentDelete).toHaveBeenCalledWith(context, 'my-agent', 'registry-1');
     expect(mockCommands.deleteCustomAgent).toHaveBeenCalledWith(context, 'my-agent', 'registry-1');

@@ -61,12 +61,14 @@ pub async fn validate_custom_agent_draft(
 pub fn save_custom_agent(
     context: ContextRef,
     draft: CustomAgentDefinition,
+    original_id: Option<AgentId>,
     expected_registry_revision: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
     agents::save_custom_agent(
         context,
         draft,
+        original_id,
         expected_registry_revision,
         runtime.agents(),
         runtime.mutation(),

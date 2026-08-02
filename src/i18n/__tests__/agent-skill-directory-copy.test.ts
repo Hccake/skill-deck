@@ -10,6 +10,7 @@ describe('Agent Skill directory copy', () => {
     });
     expect(zhCN.settings.agents.installDetection).toEqual({
       title: '安装检测',
+      cardHint: '任一位置存在',
       hint: '任一检测路径存在，即视为已安装。',
     });
     expect(zhCN.settings.agents.global).toMatchObject({
@@ -75,7 +76,6 @@ describe('Agent Skill directory copy', () => {
     const copy = JSON.stringify({
       settings: {
         agents: zhCN.settings.agents,
-        installPreferences: zhCN.settings.installPreferences,
       },
       addSkillAgents: zhCN.addSkill.agents,
     });

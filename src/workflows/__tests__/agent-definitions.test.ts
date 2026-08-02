@@ -31,10 +31,10 @@ vi.mock('@/hooks/useTauriApi', () => api);
 
 import { agentDefinitionWorkflow } from '../agent-definitions';
 import { useAgentRegistryStore } from '@/stores/agent-registry';
-import { useSettingsStore } from '@/stores/settings';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useMutationStore } from '@/stores/mutation';
+import { BusinessWriteBlockedError } from '@/hooks/useBusinessWriteBlocked';
 
 const host: EnvironmentRef = { kind: 'host' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
@@ -95,12 +95,6 @@ describe('Agent definition workflow ownership', () => {
         [contextKey(ubuntuGlobal)]: { data: runtime(ubuntuGlobal, 'registry-1'), state: 'ready', requestId: 1, error: null },
       },
     });
-    useSettingsStore.setState({
-      agentDefaultsByEnvironment: {
-        host: {} as never,
-      'wsl:ubuntu': {} as never,
-      },
-    });
     useSkillsDataStore.setState({
       snapshots: {
         [contextKey(hostGlobal)]: {} as never,
@@ -117,7 +111,7 @@ describe('Agent definition workflow ownership', () => {
     api.saveCustomAgent.mockResolvedValue(settings(ubuntu, 'registry-2'));
 
     const staleLoad = useAgentRegistryStore.getState().loadRuntime(hostGlobal);
-    const result = await agentDefinitionWorkflow.save(hostGlobal, draft(), 'registry-1');
+    const result = await agentDefinitionWorkflow.save(hostGlobal, draft(), null, 'registry-1');
     oldRuntime.resolve(runtime(hostGlobal, 'registry-1'));
     await staleLoad;
 
@@ -131,15 +125,14 @@ describe('Agent definition workflow ownership', () => {
         data: expect.objectContaining({ registryRevision: 'registry-2' }),
       }),
     });
-    expect(useSettingsStore.getState().agentDefaultsByEnvironment).toEqual({});
     expect(useSkillsDataStore.getState().snapshots).toEqual({});
   });
 
   it('does not send Agent definition writes while the install wizard is active', async () => {
     useInstallWizardSessionStore.setState({ revision: 1, active: true });
 
-    await expect(agentDefinitionWorkflow.save(hostGlobal, draft(), 'registry-1'))
-      .rejects.toThrow('Business writes are currently blocked');
+    await expect(agentDefinitionWorkflow.save(hostGlobal, draft(), null, 'registry-1'))
+      .rejects.toEqual(new BusinessWriteBlockedError('installWizardActive'));
     expect(api.saveCustomAgent).not.toHaveBeenCalled();
   });
 });

@@ -507,7 +507,6 @@
       "sectionLabel": "Settings section",
       "general": "Appearance",
       "agents": "Agents",
-      "installPreferences": "Default Install Settings",
       "git": "Git",
       "projects": "Projects",
       "about": "About"
@@ -524,27 +523,6 @@
       "appearanceDescription": "Choose the display style that fits your current workspace.",
       "languageTitle": "Language",
       "languageDescription": "Choose the interface language."
-    },
-    "installPreferences": {
-      "title": "Default Setup",
-      "description": "Set which Agents are enabled by default when installing Skills. Agents that are ready to use do not need to be selected.",
-      "loadError": "Unable to load Agent defaults.",
-      "staleSave": "The save could not be confirmed. Refresh before making more changes.",
-      "globalTitle": "Global",
-      "projectTitle": "Project",
-      "automaticSection": "Ready to use",
-      "automaticHint": "These Agents are ready to use after install. No selection is needed.",
-      "additionalSection": "Needs separate setup",
-      "additionalHint": "Selected Agents will be connected by default with a link or copy each time you install a Skill.",
-      "migratedDefaultTargets": "Default separate setup was removed where it is no longer needed. These Agents can still use Skills.",
-      "selectAll": "Select All",
-      "selectedCount": "{{count}} selected",
-      "automaticDetectionSummary": "{{detected}} detected, {{undetected}} not detected, {{indeterminate}} unable to determine",
-      "otherAgentsToggle": "Show {{count}} other Agents",
-      "otherAutomaticAgentsToggle": "Show {{count}} other ready-to-use Agents",
-      "noAutomaticAgents": "No related agents were detected.",
-      "noAdditionalAgents": "No Agents need separate setup.",
-      "noVisibleAdditionalAgents": "There are no installed or selected Agents that need separate setup."
     },
     "agents": {
       "title": "Agents",
@@ -644,6 +622,10 @@
       "deleteDefaultReferenced": "Current default target",
       "deleteObservedSkillCount": "{{count}}{{suffix}} Skill(s) detected",
       "deletePathUnavailable": "This path cannot be resolved in the current environment",
+      "deletePathUnavailableReasons": {
+        "projectContextRequired": "Project impact cannot be inspected because the current Project path is unavailable. No files will be deleted.",
+        "environmentUnavailable": "This path cannot be inspected because the current Environment is unavailable. No files will be deleted."
+      },
       "deletePathKind": {
         "shared": "Shared directory",
         "private": "Agent directory"
@@ -1157,7 +1139,7 @@
       "privateCopySelected": "{{count}} selected",
       "targetTitle": "Target agents",
       "loadError": "Could not load Agents for the selected Environment.",
-      "defaultLoadWarning": "Default setup could not be loaded, so built-in recommendations are being used. You can still adjust the targets for this install.",
+      "defaultLoadWarning": "Default targets could not be loaded, so built-in recommendations are being used. You can still adjust the targets for this install.",
       "concreteTargetsTitle": "Project-local targets",
       "concreteTargetsHint": "Choose the project-local targets to install to, such as Eve root or subagents.",
       "expandOtherAgents": "Show {{count}} other Agents",

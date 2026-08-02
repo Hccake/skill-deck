@@ -4,7 +4,6 @@ import {
   saveCustomAgent,
 } from '@/hooks/useTauriApi';
 import { useAgentRegistryStore } from '@/stores/agent-registry';
-import { useSettingsStore } from '@/stores/settings';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import type {
   AgentDeleteResult,
@@ -13,17 +12,10 @@ import type {
   ContextRef,
   CustomAgentDefinition,
 } from '@/bindings';
-import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
-
-function requireBusinessWriteAvailable(): void {
-  if (isBusinessWriteBlocked()) {
-    throw new Error('Business writes are currently blocked');
-  }
-}
+import { assertBusinessWriteAvailable } from '@/hooks/useBusinessWriteBlocked';
 
 export function applyAgentRegistryMutationResult(settings: AgentSettingsSnapshot): void {
   useAgentRegistryStore.getState().invalidateAll();
-  useSettingsStore.getState().invalidateAgentDefaults();
   useSkillsDataStore.getState().invalidateAgentProjections();
   useAgentRegistryStore.getState().acceptSettings(settings);
 }
@@ -32,6 +24,7 @@ export interface AgentDefinitionWorkflow {
   save(
     context: ContextRef,
     draft: CustomAgentDefinition,
+    originalId: AgentId | null,
     expectedRevision: string,
   ): Promise<AgentSettingsSnapshot>;
   delete(
@@ -47,22 +40,22 @@ export interface AgentDefinitionWorkflow {
 }
 
 export const agentDefinitionWorkflow: AgentDefinitionWorkflow = {
-  async save(context, draft, expectedRevision) {
-    requireBusinessWriteAvailable();
-    const settings = await saveCustomAgent(context, draft, expectedRevision);
+  async save(context, draft, originalId, expectedRevision) {
+    assertBusinessWriteAvailable();
+    const settings = await saveCustomAgent(context, draft, originalId, expectedRevision);
     applyAgentRegistryMutationResult(settings);
     return settings;
   },
 
   async delete(context, id, expectedRevision) {
-    requireBusinessWriteAvailable();
+    assertBusinessWriteAvailable();
     const result = await deleteCustomAgent(context, id, expectedRevision);
     applyAgentRegistryMutationResult(result.settings);
     return result;
   },
 
   async deleteInvalid(context, index, expectedRevision) {
-    requireBusinessWriteAvailable();
+    assertBusinessWriteAvailable();
     const result = await deleteInvalidCustomAgent(context, index, expectedRevision);
     applyAgentRegistryMutationResult(result.settings);
     return result;

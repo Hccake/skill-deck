@@ -41,9 +41,9 @@ async validateCustomAgentDraft(context: ContextRef, draft: CustomAgentDefinition
     else return { status: "error", error: e  as any };
 }
 },
-async saveCustomAgent(context: ContextRef, draft: CustomAgentDefinition, expectedRegistryRevision: string) : Promise<Result<AgentSettingsSnapshot, AgentCommandError>> {
+async saveCustomAgent(context: ContextRef, draft: CustomAgentDefinition, originalId: AgentId | null, expectedRegistryRevision: string) : Promise<Result<AgentSettingsSnapshot, AgentCommandError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_custom_agent", { context, draft, expectedRegistryRevision }) };
+    return { status: "ok", data: await TAURI_INVOKE("save_custom_agent", { context, draft, originalId, expectedRegistryRevision }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

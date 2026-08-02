@@ -91,7 +91,11 @@ export function AgentDeleteDialog({
                       {path.resolvedPath ? (
                         <code className="block break-all font-mono text-[11px]" translate="no">{path.resolvedPath}</code>
                       ) : (
-                        <p className="text-muted-foreground">{t('settings.agents.deletePathUnavailable')}</p>
+                        <p className="text-muted-foreground">
+                          {path.unavailableReason
+                            ? t(`settings.agents.deletePathUnavailableReasons.${path.unavailableReason}`)
+                            : t('settings.agents.deletePathUnavailable')}
+                        </p>
                       )}
                       {path.observedSkillCount !== null ? (
                         <p>{t('settings.agents.deleteObservedSkillCount', {

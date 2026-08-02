@@ -186,6 +186,30 @@ describe('agent registry store', () => {
     expect(store.getState()).not.toHaveProperty('validationByContext');
   });
 
+  it('keeps submit validation independent from an overlapping background validation', async () => {
+    const backgroundValidation = deferred<CustomAgentDraftValidation>();
+    const submitValidation = deferred<CustomAgentDraftValidation>();
+    api.validateCustomAgentDraft
+      .mockReturnValueOnce(backgroundValidation.promise)
+      .mockReturnValueOnce(submitValidation.promise);
+    const store = createAgentRegistryStore();
+
+    const backgroundRequest = store.getState().validateDraft(
+      hostGlobal,
+      draft('background-agent'),
+      'background',
+    );
+    const submitRequest = store.getState().validateDraft(
+      hostGlobal,
+      draft('submitted-agent'),
+      'submit',
+    );
+    submitValidation.resolve(validation('submit'));
+    await expect(submitRequest).resolves.toEqual(validation('submit'));
+    backgroundValidation.resolve(validation('background'));
+    await expect(backgroundRequest).resolves.toEqual(validation('background'));
+  });
+
   it('returns delete impact without retaining transient preview state', async () => {
     api.previewCustomAgentDelete.mockResolvedValue(deleteImpact('registry-1'));
     const store = createAgentRegistryStore();

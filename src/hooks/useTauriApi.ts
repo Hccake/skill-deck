@@ -89,9 +89,15 @@ export async function validateCustomAgentDraft(
 export async function saveCustomAgent(
   context: ContextRef,
   draft: CustomAgentDefinition,
+  originalId: AgentId | null,
   expectedRegistryRevision: string,
 ): Promise<AgentSettingsSnapshot> {
-  return unwrap(await commands.saveCustomAgent(context, draft, expectedRegistryRevision));
+  return unwrap(await commands.saveCustomAgent(
+    context,
+    draft,
+    originalId,
+    expectedRegistryRevision,
+  ));
 }
 
 export async function duplicateCustomAgentDraft(
