@@ -312,6 +312,17 @@ async openInstallWizard(entryPoint: string, context: ContextRef, projectPath: st
     else return { status: "error", error: e  as any };
 }
 },
+async getInstallWizardSession() : Promise<InstallWizardSessionSnapshot> {
+    return await TAURI_INVOKE("get_install_wizard_session");
+},
+async focusInstallWizard() : Promise<Result<boolean, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("focus_install_wizard") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * 检查 skill 的安全审计数据
  */
@@ -471,11 +482,13 @@ export const events = __makeEvents__<{
 agentConfigurationCompletedEvent: AgentConfigurationCompletedEvent,
 agentConfigurationRequestedEvent: AgentConfigurationRequestedEvent,
 environmentRuntimeEvent: EnvironmentRuntimeEvent,
+installWizardSessionSnapshot: InstallWizardSessionSnapshot,
 lifecycleActionRequestedEvent: LifecycleActionRequestedEvent
 }>({
 agentConfigurationCompletedEvent: "agent-configuration-completed-event",
 agentConfigurationRequestedEvent: "agent-configuration-requested-event",
 environmentRuntimeEvent: "environment-runtime-event",
+installWizardSessionSnapshot: "install-wizard-session-snapshot",
 lifecycleActionRequestedEvent: "lifecycle-action-requested-event"
 })
 
@@ -668,6 +681,7 @@ export type InstallSkillPreview = { skillName: string; payload: AcquiredPayloadH
  * 具体安装目标展示信息，供前端确认页、完成页和目标选择使用。
  */
 export type InstallTargetInfo = { targetId: string; agent: AgentId; displayName: string; subagent?: string | null; path: string }
+export type InstallWizardSessionSnapshot = { revision: number; active: boolean }
 /**
  * 已安装的 Skill 信息
  * 对应 CLI: InstalledSkill (installer.ts:783-790)

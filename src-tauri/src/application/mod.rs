@@ -10,6 +10,7 @@ pub mod github_credentials;
 pub mod install;
 pub mod install_planner;
 pub mod install_runtime;
+pub mod install_wizard_session;
 pub mod manage_agents;
 pub mod manage_agents_runtime;
 pub mod mutation;

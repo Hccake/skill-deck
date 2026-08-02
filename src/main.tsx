@@ -11,8 +11,10 @@ import './i18n';
 import './index.css';
 import App from './App.tsx';
 import { bootstrapAppPreferences } from './app/bootstrap';
+import { prepareInstallWizardSessionMonitoring } from './stores/install-wizard-session';
 
 bootstrapAppPreferences();
+prepareInstallWizardSessionMonitoring(window.location.pathname);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

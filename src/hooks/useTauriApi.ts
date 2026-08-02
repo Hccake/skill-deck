@@ -16,7 +16,7 @@ import type {
   CustomAgentDefinition,
   CustomAgentDraftValidation,
   AddProjectResult, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo, EnvironmentRef,
-  MutationSnapshot,
+  InstallWizardSessionSnapshot, MutationSnapshot,
   ProjectBinding, ProjectInfo, WslSession, ActiveMutation,
   SkillIdentity,
   InstallRequest, InstallPreview, InstallResponse, PreviewToken,
@@ -39,7 +39,8 @@ export type {
   SkillAuditData, DuplicateCleanupResult,
   InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
   InstallTargetInfo, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
-  EnvironmentRef, AddProjectResult, MutationSnapshot, ProjectBinding, ProjectInfo, WslSession,
+  EnvironmentRef, AddProjectResult, InstallWizardSessionSnapshot, MutationSnapshot,
+  ProjectBinding, ProjectInfo, WslSession,
   ActiveMutation, AgentDeleteImpact, AgentDeleteResult, AgentOperationWarning,
   AgentSettingsSnapshot, CustomAgentDefinition, CustomAgentDraftValidation,
   SkillIdentity, InstallRequest, InstallPreview, InstallResponse, PreviewToken,
@@ -443,6 +444,14 @@ export async function openInstallWizard(params: {
       params.prefillSkillName ?? null,
     )
   );
+}
+
+export async function getInstallWizardSession(): Promise<InstallWizardSessionSnapshot> {
+  return commands.getInstallWizardSession();
+}
+
+export async function focusInstallWizard(): Promise<boolean> {
+  return unwrap(await commands.focusInstallWizard());
 }
 
 // ============ Agent 管理 API ============

@@ -1,7 +1,11 @@
 // src-tauri/src/commands/wizard.rs
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
+use crate::application::install_wizard_session::InstallWizardSessionSnapshot;
 use crate::environment::types::{ContextRef, ContextScope};
+use crate::runtime::RuntimeServiceGraph;
+
+pub const INSTALL_WIZARD_LABEL: &str = "install-wizard";
 
 const INSTALL_WIZARD_WIDTH: f64 = 680.0;
 const INSTALL_WIZARD_HEIGHT: f64 = 560.0;
@@ -46,6 +50,7 @@ fn build_wizard_query(
 #[specta::specta]
 pub async fn open_install_wizard(
     app: AppHandle,
+    runtime: State<'_, RuntimeServiceGraph>,
     entry_point: String,
     context: ContextRef,
     project_path: Option<String>,
@@ -53,10 +58,11 @@ pub async fn open_install_wizard(
     prefill_skill_name: Option<String>,
 ) -> Result<(), crate::error::AppError> {
     // 如果窗口已存在，聚焦并返回
-    if let Some(window) = app.get_webview_window("install-wizard") {
+    if let Some(window) = app.get_webview_window(INSTALL_WIZARD_LABEL) {
         window.set_focus().map_err(|e| crate::error::AppError::Io {
             message: e.to_string(),
         })?;
+        runtime.install_wizard_session().activate();
         return Ok(());
     }
 
@@ -75,7 +81,7 @@ pub async fn open_install_wizard(
             message: "Main window not found".to_string(),
         })?;
 
-    let _wizard_window = WebviewWindowBuilder::new(&app, "install-wizard", url)
+    let _wizard_window = WebviewWindowBuilder::new(&app, INSTALL_WIZARD_LABEL, url)
         .title("Skill Deck")
         .inner_size(INSTALL_WIZARD_WIDTH, INSTALL_WIZARD_HEIGHT)
         .min_inner_size(INSTALL_WIZARD_MIN_WIDTH, INSTALL_WIZARD_MIN_HEIGHT)
@@ -92,7 +98,51 @@ pub async fn open_install_wizard(
             message: e.to_string(),
         })?;
 
+    runtime.install_wizard_session().activate();
+
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_install_wizard_session(
+    app: AppHandle,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> InstallWizardSessionSnapshot {
+    runtime
+        .install_wizard_session()
+        .reconcile_window_presence(app.get_webview_window(INSTALL_WIZARD_LABEL).is_some())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn focus_install_wizard(
+    app: AppHandle,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<bool, crate::error::AppError> {
+    let Some(window) = app.get_webview_window(INSTALL_WIZARD_LABEL) else {
+        runtime
+            .install_wizard_session()
+            .reconcile_window_presence(false);
+        return Ok(false);
+    };
+    window.show().map_err(|error| crate::error::AppError::Io {
+        message: error.to_string(),
+    })?;
+    window
+        .unminimize()
+        .map_err(|error| crate::error::AppError::Io {
+            message: error.to_string(),
+        })?;
+    window
+        .set_focus()
+        .map_err(|error| crate::error::AppError::Io {
+            message: error.to_string(),
+        })?;
+    runtime
+        .install_wizard_session()
+        .reconcile_window_presence(true);
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use crate::application::github_credentials::{
     resolve_environment_github_token, GithubCredentialService, GithubCredentialWorkflowService,
 };
 use crate::application::install_runtime::{build_runtime_install_service, RuntimeInstallService};
+use crate::application::install_wizard_session::InstallWizardSessionController;
 use crate::application::manage_agents_runtime::{
     build_runtime_manage_agents_service, RuntimeManageAgentsService,
 };
@@ -39,6 +40,7 @@ pub struct RuntimeServiceGraph {
     agents: ManagedAgentRegistry,
     projects: ProjectMigrationRegistry,
     mutation: Arc<SingleMutationController>,
+    install_wizard_session: Arc<InstallWizardSessionController>,
     duplicate_cleanup: DuplicateCleanupService,
     payloads: Arc<PayloadSessionManager>,
     maintenance: Arc<RuntimeMaintenanceCoordinator>,
@@ -63,6 +65,7 @@ impl RuntimeServiceGraph {
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;
         let payloads = Arc::new(payloads);
         let mutation = Arc::new(SingleMutationController::default());
+        let install_wizard_session = Arc::new(InstallWizardSessionController::default());
         let registry: Arc<dyn AgentRegistrySnapshotSource> = Arc::new(agents.clone());
         let execution = RuntimeExecutionDependencies::new(environments.clone(), recovery_root)?;
         let source_snapshots = Arc::new(
@@ -138,6 +141,7 @@ impl RuntimeServiceGraph {
             agents,
             projects: initialize_host_project_migration(),
             mutation,
+            install_wizard_session,
             duplicate_cleanup: DuplicateCleanupService,
             payloads,
             maintenance,
@@ -171,6 +175,10 @@ impl RuntimeServiceGraph {
 
     pub fn mutation(&self) -> &SingleMutationController {
         self.mutation.as_ref()
+    }
+
+    pub fn install_wizard_session(&self) -> &InstallWizardSessionController {
+        self.install_wizard_session.as_ref()
     }
 
     pub fn duplicate_cleanup(&self) -> &DuplicateCleanupService {

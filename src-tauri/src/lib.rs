@@ -4,6 +4,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
+use application::install_wizard_session::InstallWizardSessionSnapshot;
 use commands::lifecycle::LifecycleActionRequestedEvent;
 use commands::ManagedAgentRegistry;
 use environment::types::EnvironmentRuntimeEvent;
@@ -67,6 +68,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::update::update_skill,
             commands::update::update_skills_batch,
             commands::wizard::open_install_wizard,
+            commands::wizard::get_install_wizard_session,
+            commands::wizard::focus_install_wizard,
             commands::audit::check_skill_audit,
             commands::manage_agents::preview_manage_skill_agents,
             commands::manage_agents::manage_skill_agents,
@@ -89,6 +92,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
         ])
         .events(collect_events![
             EnvironmentRuntimeEvent,
+            InstallWizardSessionSnapshot,
             LifecycleActionRequestedEvent,
             commands::agent_configuration::AgentConfigurationRequestedEvent,
             commands::agent_configuration::AgentConfigurationCompletedEvent,
@@ -207,6 +211,15 @@ pub fn run() {
                 }
             });
 
+            let wizard_session_app_handle = app.handle().clone();
+            runtime
+                .install_wizard_session()
+                .set_listener(move |snapshot| {
+                    if let Err(error) = snapshot.emit_to(&wizard_session_app_handle, "main") {
+                        log::warn!("Failed to emit install wizard session state: {error}");
+                    }
+                });
+
             let host_environment = environment::types::EnvironmentRef::Host;
             maintenance.register(host_environment.clone())?;
             let host_maintenance = maintenance.clone();
@@ -220,6 +233,15 @@ pub fn run() {
             builder.mount_events(app);
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == commands::wizard::INSTALL_WIZARD_LABEL
+                && matches!(event, tauri::WindowEvent::Destroyed)
+            {
+                if let Some(runtime) = window.try_state::<RuntimeServiceGraph>() {
+                    runtime.install_wizard_session().deactivate();
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
