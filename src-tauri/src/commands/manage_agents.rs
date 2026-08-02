@@ -24,7 +24,7 @@ pub async fn manage_skill_agents(
 ) -> Result<ManageAgentsResponse, AppError> {
     let guard = runtime
         .mutation()
-        .begin(MutationKind::ManageAgents, request.context.clone())?;
+        .begin_mutation(MutationKind::ManageAgents, request.context.clone())?;
     guard.transition(MutationPhase::Preparing, None, false);
     runtime
         .manage_agents()

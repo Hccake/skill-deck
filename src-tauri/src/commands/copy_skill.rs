@@ -25,7 +25,7 @@ pub async fn copy_skill_to_projects(
     let context = request.request.source.clone();
     let guard = runtime
         .mutation()
-        .begin(MutationKind::Copy, context.clone())?;
+        .begin_mutation(MutationKind::Copy, context.clone())?;
     guard.transition(MutationPhase::Preparing, None, false);
     runtime.copy().execute(&request, guard.cancellation()).await
 }

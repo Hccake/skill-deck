@@ -3,7 +3,8 @@ use specta::Type;
 use std::future::Future;
 
 use crate::core::app_config::get_config_path;
-use crate::core::mutation::{MutationGuard, MutationKind, SingleMutationController};
+use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
+use crate::core::mutation::MutationKind;
 use crate::core::projects::{
     add_project_binding, migrate_legacy_projects, normalize_project_native_path,
     remove_project_binding, set_project_cross_storage_warning_suppressed, ProjectMigrationRegistry,
@@ -268,19 +269,19 @@ async fn wsl_project_infos(
     projects::project_infos(session, bindings).await
 }
 
-fn begin_project_mutation<'a>(
-    controller: &'a SingleMutationController,
+fn begin_project_mutation(
+    controller: &RuntimeAdmissionCoordinator,
     kind: MutationKind,
     environment: EnvironmentRef,
     project_id: Option<&str>,
-) -> Result<MutationGuard<'a>, AppError> {
+) -> Result<MutationPermit, AppError> {
     let scope = project_id.map_or(
         crate::environment::types::ContextScope::Global,
         |project_id| crate::environment::types::ContextScope::Project {
             project_id: project_id.to_string(),
         },
     );
-    controller.begin(
+    controller.begin_mutation(
         kind,
         crate::environment::types::ContextRef { environment, scope },
     )
@@ -324,7 +325,7 @@ pub async fn add_environment_project(
     native_path: String,
     registry: &EnvironmentRegistry,
     migration: &ProjectMigrationRegistry,
-    controller: &SingleMutationController,
+    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<AddProjectResult, AppError> {
     let _guard = begin_project_mutation(
         controller,
@@ -380,7 +381,7 @@ pub async fn remove_environment_project(
     project_id: String,
     registry: &EnvironmentRegistry,
     migration: &ProjectMigrationRegistry,
-    controller: &SingleMutationController,
+    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     let _guard = begin_project_mutation(
         controller,
@@ -415,7 +416,7 @@ pub async fn set_environment_project_cross_storage_warning(
     suppressed: bool,
     registry: &EnvironmentRegistry,
     migration: &ProjectMigrationRegistry,
-    controller: &SingleMutationController,
+    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<ProjectInfo, AppError> {
     let _guard = begin_project_mutation(
         controller,
@@ -457,13 +458,13 @@ pub async fn set_environment_project_cross_storage_warning(
 
 pub fn retry_host_project_migration(
     migration: &ProjectMigrationRegistry,
-    controller: &SingleMutationController,
+    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     let context = crate::environment::types::ContextRef {
         environment: EnvironmentRef::Host,
         scope: crate::environment::types::ContextScope::Global,
     };
-    let _guard = controller.begin(MutationKind::ProjectMigration, context)?;
+    let _guard = controller.begin_mutation(MutationKind::ProjectMigration, context)?;
     match run_host_project_migration() {
         Ok(state) => {
             migration.set(state);

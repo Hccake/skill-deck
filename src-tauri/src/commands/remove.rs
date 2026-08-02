@@ -24,7 +24,7 @@ pub async fn remove_skill(
 ) -> Result<RemoveResponse, AppError> {
     let guard = runtime
         .mutation()
-        .begin(MutationKind::Remove, request.context.clone())?;
+        .begin_mutation(MutationKind::Remove, request.context.clone())?;
     guard.transition(MutationPhase::Preparing, None, false);
     runtime
         .remove()

@@ -4,7 +4,8 @@ use crate::core::agent_definition::AgentId;
 use crate::core::agent_registry::AgentRegistrySnapshot;
 use crate::core::lock_repository::{LockMutationTargets, LockRepository, LockTarget};
 use crate::core::lossless_lock::LockSchema;
-use crate::core::mutation::{MutationGuard, MutationKind, MutationPhase, SingleMutationController};
+use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
+use crate::core::mutation::{MutationKind, MutationPhase};
 use crate::core::skill_lock;
 use crate::environment::context_resolver::ContextResolver;
 use crate::environment::lock_io::EnvironmentLockIo;
@@ -101,15 +102,15 @@ fn validate_default_target_agents_revision(
     Ok(())
 }
 
-fn begin_default_target_agents_save<'a>(
-    controller: &'a SingleMutationController,
+fn begin_default_target_agents_save(
+    controller: &RuntimeAdmissionCoordinator,
     context: ContextRef,
     expected_registry_revision: &str,
     initial_snapshot: &AgentRegistrySnapshot,
-) -> Result<MutationGuard<'a>, AgentCommandError> {
+) -> Result<MutationPermit, AgentCommandError> {
     validate_default_target_agents_revision(expected_registry_revision, initial_snapshot)?;
     controller
-        .begin(MutationKind::SaveAgentDefaults, context)
+        .begin_mutation(MutationKind::SaveAgentDefaults, context)
         .map_err(AgentCommandError::from)
 }
 
@@ -285,7 +286,7 @@ pub async fn save_default_target_agents(
     expected_registry_revision: String,
     registry: &EnvironmentRegistry,
     agent_registry: &ManagedAgentRegistry,
-    controller: &SingleMutationController,
+    controller: &RuntimeAdmissionCoordinator,
 ) -> Result<(), AgentCommandError> {
     ensure_global_context(&context)?;
     let initial_snapshot = agent_registry_snapshot_for_defaults(agent_registry);
@@ -675,7 +676,7 @@ mod tests {
         let mut r2 = r1.clone();
         r2.revision = "registry-revision-r2".to_string();
         r2.active_definitions.clear();
-        let controller = SingleMutationController::default();
+        let controller = RuntimeAdmissionCoordinator::default();
         let context = ContextRef {
             environment: EnvironmentRef::Host,
             scope: crate::environment::types::ContextScope::Global,

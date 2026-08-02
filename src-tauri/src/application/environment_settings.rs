@@ -1,5 +1,4 @@
-use crate::application::install_wizard_session::InstallWizardSessionController;
-use crate::core::mutation::SingleMutationController;
+use crate::application::runtime_admission::{AdmissionDenied, RuntimeAdmissionCoordinator};
 use crate::core::update_config;
 use crate::environment::project_service::{self, EnvironmentDiscoverySnapshot};
 use crate::environment::wsl::EnvironmentRegistry;
@@ -35,8 +34,7 @@ pub fn save_config_preserving_wsl_setting(config: SkillDeckConfig) -> Result<(),
 pub async fn set_wsl_integration_enabled(
     enabled: bool,
     environments: &EnvironmentRegistry,
-    mutation: &SingleMutationController,
-    install_wizard_session: &InstallWizardSessionController,
+    admission: &RuntimeAdmissionCoordinator,
 ) -> Result<EnvironmentDiscoverySnapshot, AppError> {
     if enabled && !cfg!(target_os = "windows") {
         return Err(AppError::CapabilityUnavailable {
@@ -44,18 +42,16 @@ pub async fn set_wsl_integration_enabled(
             path: None,
         });
     }
-    if install_wizard_session.is_active() {
-        return Err(AppError::MutationBusy);
-    }
-
-    mutation
-        .with_idle(|| {
-            persist_wsl_integration_setting_with(enabled, environments, || {
-                update_config(|config| config.wsl_integration_enabled = enabled)?;
-                Ok(())
-            })
-        })
-        .map_err(|_| AppError::MutationBusy)??;
+    let _permit = admission
+        .begin_wsl_integration_change()
+        .map_err(|error| match error {
+            AdmissionDenied::ApplicationTerminating => AppError::ApplicationTerminating,
+            _ => AppError::MutationBusy,
+        })?;
+    persist_wsl_integration_setting_with(enabled, environments, || {
+        update_config(|config| config.wsl_integration_enabled = enabled)?;
+        Ok(())
+    })?;
 
     project_service::list_environments(environments).await
 }

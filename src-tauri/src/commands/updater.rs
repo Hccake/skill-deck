@@ -9,7 +9,8 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tauri_plugin_updater::UpdaterExt;
 
-use crate::core::mutation::{LifecycleLeaseKind, SingleMutationController};
+use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
+use crate::core::mutation::LifecycleLeaseKind;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -145,7 +146,7 @@ pub async fn download_and_install_application_update(
 }
 
 async fn download_and_install_with<U: ApplicationUpdater>(
-    controller: &SingleMutationController,
+    controller: &RuntimeAdmissionCoordinator,
     updater: &U,
     expected_version: &str,
     progress: Arc<dyn Fn(ApplicationUpdateProgress) + Send + Sync>,

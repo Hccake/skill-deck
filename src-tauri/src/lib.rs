@@ -199,7 +199,7 @@ pub fn run() {
             });
 
             let mutation_app_handle = app.handle().clone();
-            runtime.mutation().set_listener(move |snapshot| {
+            runtime.mutation().set_mutation_listener(move |snapshot| {
                 if let Err(error) =
                     mutation_app_handle.emit(core::mutation::MUTATION_STATE_CHANGED_EVENT, snapshot)
                 {
@@ -209,8 +209,8 @@ pub fn run() {
 
             let wizard_session_app_handle = app.handle().clone();
             runtime
-                .install_wizard_session()
-                .set_listener(move |snapshot| {
+                .admission()
+                .set_install_wizard_listener(move |snapshot| {
                     if let Err(error) = snapshot.emit_to(&wizard_session_app_handle, "main") {
                         log::warn!("Failed to emit install wizard session state: {error}");
                     }
@@ -229,15 +229,6 @@ pub fn run() {
             builder.mount_events(app);
 
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            if window.label() == commands::wizard::INSTALL_WIZARD_LABEL
-                && matches!(event, tauri::WindowEvent::Destroyed)
-            {
-                if let Some(runtime) = window.try_state::<RuntimeServiceGraph>() {
-                    runtime.install_wizard_session().deactivate();
-                }
-            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

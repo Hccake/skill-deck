@@ -29,8 +29,7 @@ pub async fn set_wsl_integration_enabled(
     environment_settings::set_wsl_integration_enabled(
         enabled,
         runtime.environments(),
-        runtime.mutation(),
-        runtime.install_wizard_session(),
+        runtime.admission(),
     )
     .await
 }

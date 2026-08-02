@@ -9,7 +9,8 @@ use crate::application::payload_session::{
     PayloadCleanupReport, PayloadSessionMaintenance, PayloadSessionManager,
 };
 use crate::application::recovery_runtime::RuntimeRecoveryGraph;
-use crate::core::mutation::{LifecycleLeaseKind, SingleMutationController};
+use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
+use crate::core::mutation::LifecycleLeaseKind;
 use crate::environment::maintenance::{
     MaintenanceIssueCode, RuntimeMaintenanceState, RuntimeMaintenanceStatus,
 };
@@ -35,7 +36,7 @@ pub struct RuntimeMaintenanceTasks {
     native_payload_storage: Arc<NativePayloadSessionStorage>,
     recovery: Arc<RuntimeRecoveryGraph>,
     environments: Arc<EnvironmentRegistry>,
-    mutation: Arc<SingleMutationController>,
+    mutation: Arc<RuntimeAdmissionCoordinator>,
 }
 
 impl RuntimeMaintenanceTasks {
@@ -44,7 +45,7 @@ impl RuntimeMaintenanceTasks {
         native_payload_storage: Arc<NativePayloadSessionStorage>,
         recovery: Arc<RuntimeRecoveryGraph>,
         environments: Arc<EnvironmentRegistry>,
-        mutation: Arc<SingleMutationController>,
+        mutation: Arc<RuntimeAdmissionCoordinator>,
     ) -> Self {
         Self {
             payloads,

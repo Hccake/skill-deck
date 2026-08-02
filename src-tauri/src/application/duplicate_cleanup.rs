@@ -11,7 +11,8 @@ use crate::application::remove::{
 };
 use crate::application::remove_runtime::RuntimeRemoveService;
 use crate::core::agent_definition::AgentId;
-use crate::core::mutation::{MutationKind, MutationPhase, SingleMutationController};
+use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
+use crate::core::mutation::{MutationKind, MutationPhase};
 use crate::environment::types::{ContextRef, ResourceLocator};
 use crate::error::AppError;
 
@@ -36,7 +37,7 @@ impl DuplicateCleanupService {
         skill_name: String,
         agents: Vec<AgentId>,
         remove: &RuntimeRemoveService,
-        controller: &SingleMutationController,
+        controller: &RuntimeAdmissionCoordinator,
     ) -> Result<Vec<DuplicateCleanupResult>, AppError> {
         validate_agents(&agents)?;
         let preview = remove.preview(&context, &skill_name).await?;
@@ -50,7 +51,7 @@ impl DuplicateCleanupService {
         if selected_ids.is_empty() {
             return Ok(cleanup_results(&agents, &selected, None));
         }
-        let guard = controller.begin(MutationKind::DuplicateCleanup, context.clone())?;
+        let guard = controller.begin_mutation(MutationKind::DuplicateCleanup, context.clone())?;
         guard.transition(MutationPhase::Preparing, None, false);
         let response = remove
             .execute(

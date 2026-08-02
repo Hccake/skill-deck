@@ -8,7 +8,7 @@ use crate::application::github_credentials::{
     resolve_environment_github_token, GithubCredentialService, GithubCredentialWorkflowService,
 };
 use crate::application::install_runtime::{build_runtime_install_service, RuntimeInstallService};
-use crate::application::install_wizard_session::InstallWizardSessionController;
+use crate::application::install_wizard_workflow::InstallWizardWorkflow;
 use crate::application::manage_agents_runtime::{
     build_runtime_manage_agents_service, RuntimeManageAgentsService,
 };
@@ -17,12 +17,12 @@ use crate::application::plan_runner::RuntimeExecutionDependencies;
 use crate::application::recovery_runtime::RuntimeRecoveryService;
 use crate::application::remove_runtime::{build_runtime_remove_service, RuntimeRemoveService};
 use crate::application::resources::{build_runtime_resource_service, RuntimeResourceService};
+use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::application::runtime_facts::AgentRegistrySnapshotSource;
 use crate::application::update_runtime::{
     build_runtime_source_evidence_coordinator, build_runtime_update_check_service,
     build_runtime_update_service, RuntimeUpdateCheckService, RuntimeUpdateService,
 };
-use crate::core::mutation::SingleMutationController;
 use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::{GithubApiClient, GithubTokenProvider};
 use crate::environment::native::acquire::NativePayloadSessionStorage;
@@ -39,8 +39,8 @@ pub struct RuntimeServiceGraph {
     environments: Arc<EnvironmentRegistry>,
     agents: ManagedAgentRegistry,
     projects: ProjectMigrationRegistry,
-    mutation: Arc<SingleMutationController>,
-    install_wizard_session: Arc<InstallWizardSessionController>,
+    admission: Arc<RuntimeAdmissionCoordinator>,
+    install_wizard: Arc<InstallWizardWorkflow>,
     duplicate_cleanup: DuplicateCleanupService,
     payloads: Arc<PayloadSessionManager>,
     maintenance: Arc<RuntimeMaintenanceCoordinator>,
@@ -66,8 +66,8 @@ impl RuntimeServiceGraph {
         let environments = Arc::new(EnvironmentRegistry::new(wsl_integration_enabled));
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;
         let payloads = Arc::new(payloads);
-        let mutation = Arc::new(SingleMutationController::default());
-        let install_wizard_session = Arc::new(InstallWizardSessionController::default());
+        let admission = Arc::new(RuntimeAdmissionCoordinator::default());
+        let install_wizard = Arc::new(InstallWizardWorkflow::new(admission.clone()));
         let registry: Arc<dyn AgentRegistrySnapshotSource> = Arc::new(agents.clone());
         let execution = RuntimeExecutionDependencies::new(environments.clone(), recovery_root)?;
         let source_snapshots = Arc::new(
@@ -85,7 +85,7 @@ impl RuntimeServiceGraph {
             native_payload_storage,
             recovery_graph,
             environments.clone(),
-            mutation.clone(),
+            admission.clone(),
         ));
         let maintenance = Arc::new(RuntimeMaintenanceCoordinator::new(
             payloads.clone(),
@@ -142,8 +142,8 @@ impl RuntimeServiceGraph {
             environments,
             agents,
             projects: initialize_host_project_migration(),
-            mutation,
-            install_wizard_session,
+            admission,
+            install_wizard,
             duplicate_cleanup: DuplicateCleanupService,
             payloads,
             maintenance,
@@ -175,12 +175,16 @@ impl RuntimeServiceGraph {
         &self.projects
     }
 
-    pub fn mutation(&self) -> &SingleMutationController {
-        self.mutation.as_ref()
+    pub fn mutation(&self) -> &RuntimeAdmissionCoordinator {
+        self.admission.as_ref()
     }
 
-    pub fn install_wizard_session(&self) -> &InstallWizardSessionController {
-        self.install_wizard_session.as_ref()
+    pub fn admission(&self) -> &RuntimeAdmissionCoordinator {
+        self.admission.as_ref()
+    }
+
+    pub fn install_wizard(&self) -> &Arc<InstallWizardWorkflow> {
+        &self.install_wizard
     }
 
     pub fn duplicate_cleanup(&self) -> &DuplicateCleanupService {

@@ -66,7 +66,7 @@ async fn execute_update(
     let context = execution.request.context.clone();
     let guard = runtime
         .mutation()
-        .begin(MutationKind::Update, context.clone())?;
+        .begin_mutation(MutationKind::Update, context.clone())?;
     guard.transition(MutationPhase::Acquiring, None, true);
     let result = runtime
         .update()
