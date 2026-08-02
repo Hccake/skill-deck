@@ -61,7 +61,9 @@ impl RuntimeServiceGraph {
         recovery_root: std::path::PathBuf,
         agents: ManagedAgentRegistry,
     ) -> Result<Self, AppError> {
-        let environments = Arc::new(EnvironmentRegistry::default());
+        let wsl_integration_enabled =
+            cfg!(target_os = "windows") && crate::core::read_config()?.wsl_integration_enabled;
+        let environments = Arc::new(EnvironmentRegistry::new(wsl_integration_enabled));
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;
         let payloads = Arc::new(payloads);
         let mutation = Arc::new(SingleMutationController::default());

@@ -31,6 +31,8 @@ describe('Environment revision convergence', () => {
     useEnvironmentStore.setState({
       environments: [],
       runtimeByEnvironment: {},
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
       discoveryState: 'idle',
       discoveryError: null,
       discoveryCompletedAt: null,
@@ -38,7 +40,12 @@ describe('Environment revision convergence', () => {
   });
 
   it('rejects older events and older discovery snapshots per Environment', async () => {
-    api.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
+    api.listEnvironments.mockResolvedValue({
+      environments: [host, ubuntu],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
+    });
     await useEnvironmentStore.getState().discover();
 
     const newer: EnvironmentRuntimeEvent = {
@@ -56,6 +63,8 @@ describe('Environment revision convergence', () => {
     api.listEnvironments.mockResolvedValue({
       environments: [host, { ...ubuntu, revision: 6 }],
       error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
     });
     useEnvironmentStore.setState({ discoveryCompletedAt: null });
     await useEnvironmentStore.getState().discover();
@@ -75,7 +84,12 @@ describe('Environment revision convergence', () => {
       error: null,
     };
     useEnvironmentStore.getState().applyRuntimeEvent(event);
-    api.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
+    api.listEnvironments.mockResolvedValue({
+      environments: [host, ubuntu],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
+    });
 
     await useEnvironmentStore.getState().discover();
 

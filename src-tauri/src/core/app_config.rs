@@ -2,6 +2,9 @@ use crate::error::AppError;
 use crate::models::SkillDeckConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+static CONFIG_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
 /// 获取配置文件路径: ~/.skill-deck/config.json
 pub fn get_config_path() -> Result<PathBuf, AppError> {
@@ -13,12 +16,30 @@ pub fn get_config_path() -> Result<PathBuf, AppError> {
 
 pub fn read_config() -> Result<SkillDeckConfig, AppError> {
     let path = get_config_path()?;
+    let _guard = CONFIG_UPDATE_LOCK
+        .lock()
+        .expect("config update lock poisoned");
     read_config_from_path(&path)
 }
 
-pub fn write_config(config: &SkillDeckConfig) -> Result<(), AppError> {
+pub fn update_config(
+    update: impl FnOnce(&mut SkillDeckConfig),
+) -> Result<SkillDeckConfig, AppError> {
     let path = get_config_path()?;
-    write_config_to_path(config, &path)
+    update_config_at_path(&path, update)
+}
+
+fn update_config_at_path(
+    path: &Path,
+    update: impl FnOnce(&mut SkillDeckConfig),
+) -> Result<SkillDeckConfig, AppError> {
+    let _guard = CONFIG_UPDATE_LOCK
+        .lock()
+        .expect("config update lock poisoned");
+    let mut config = read_config_from_path(path)?;
+    update(&mut config);
+    write_config_to_path(&config, path)?;
+    Ok(config)
 }
 
 fn read_config_from_path(path: &Path) -> Result<SkillDeckConfig, AppError> {
@@ -55,7 +76,10 @@ fn write_config_to_path(config: &SkillDeckConfig, path: &Path) -> Result<(), App
 
 #[cfg(test)]
 mod tests {
-    use super::{read_config_from_path, write_config_to_path};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::{read_config_from_path, update_config_at_path, write_config_to_path};
     use crate::models::SkillDeckConfig;
     use tempfile::tempdir;
 
@@ -85,5 +109,53 @@ mod tests {
 
         assert_eq!(read_back.projects, vec!["/demo"]);
         assert_eq!(read_back.git_clone_timeout_secs, 300);
+    }
+
+    #[test]
+    fn config_updates_are_serialized_across_read_modify_write() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("config.json");
+        let (first_entered_tx, first_entered_rx) = mpsc::channel();
+        let (release_first_tx, release_first_rx) = mpsc::channel();
+        let (second_attempting_tx, second_attempting_rx) = mpsc::channel();
+        let (second_entered_tx, second_entered_rx) = mpsc::channel();
+
+        std::thread::scope(|scope| {
+            let first_path = path.clone();
+            scope.spawn(move || {
+                update_config_at_path(&first_path, |config| {
+                    config.git_clone_timeout_secs = 300;
+                    first_entered_tx.send(()).expect("first entered");
+                    release_first_rx.recv().expect("release first");
+                })
+                .expect("first update");
+            });
+            first_entered_rx.recv().expect("first update started");
+
+            let second_path = path.clone();
+            scope.spawn(move || {
+                second_attempting_tx.send(()).expect("second attempting");
+                update_config_at_path(&second_path, |config| {
+                    second_entered_tx.send(()).expect("second entered");
+                    config.wsl_integration_enabled = true;
+                })
+                .expect("second update");
+            });
+            second_attempting_rx
+                .recv()
+                .expect("second update attempted");
+            assert!(second_entered_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err());
+
+            release_first_tx.send(()).expect("release first update");
+            second_entered_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("second update entered after first completed");
+        });
+
+        let config = read_config_from_path(&path).expect("final config");
+        assert_eq!(config.git_clone_timeout_secs, 300);
+        assert!(config.wsl_integration_enabled);
     }
 }

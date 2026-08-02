@@ -1,5 +1,6 @@
 use serde::Serialize;
 use specta::Type;
+use std::future::Future;
 
 use crate::core::app_config::get_config_path;
 use crate::core::mutation::{MutationGuard, MutationKind, SingleMutationController};
@@ -39,6 +40,8 @@ pub struct EnvironmentInfo {
 pub struct EnvironmentDiscoverySnapshot {
     pub environments: Vec<EnvironmentInfo>,
     pub error: Option<AppError>,
+    pub wsl_integration_supported: bool,
+    pub wsl_integration_enabled: bool,
 }
 
 pub fn host_environment_info() -> EnvironmentInfo {
@@ -99,24 +102,58 @@ fn environment_infos_from_wsl_discovery(
     EnvironmentDiscoverySnapshot {
         environments,
         error,
+        wsl_integration_supported: cfg!(target_os = "windows"),
+        wsl_integration_enabled: cfg!(target_os = "windows") && registry.wsl_integration_enabled(),
+    }
+}
+
+async fn list_environments_with<Discover, DiscoveryFuture>(
+    registry: &EnvironmentRegistry,
+    wsl_integration_supported: bool,
+    discover: Discover,
+) -> EnvironmentDiscoverySnapshot
+where
+    Discover: FnOnce() -> DiscoveryFuture,
+    DiscoveryFuture: Future<Output = Result<Vec<String>, AppError>>,
+{
+    if !wsl_integration_supported || !registry.wsl_integration_enabled() {
+        return host_only_environment_snapshot(wsl_integration_supported);
+    }
+
+    let discovered = discover().await;
+    if !registry.wsl_integration_enabled() {
+        return host_only_environment_snapshot(wsl_integration_supported);
+    }
+    environment_infos_from_wsl_discovery(discovered, registry)
+}
+
+fn host_only_environment_snapshot(wsl_integration_supported: bool) -> EnvironmentDiscoverySnapshot {
+    EnvironmentDiscoverySnapshot {
+        environments: vec![host_environment_info()],
+        error: None,
+        wsl_integration_supported,
+        wsl_integration_enabled: false,
     }
 }
 
 pub async fn list_environments(
     registry: &EnvironmentRegistry,
 ) -> Result<EnvironmentDiscoverySnapshot, AppError> {
-    Ok(environment_infos_from_wsl_discovery(
-        discover_wsl_distributions().await,
+    Ok(list_environments_with(
         registry,
-    ))
+        cfg!(target_os = "windows"),
+        discover_wsl_distributions,
+    )
+    .await)
 }
 
 pub async fn connect_environment(
     distro_name: String,
     registry: &EnvironmentRegistry,
 ) -> Result<WslSession, AppError> {
-    let session = connect_wsl_environment(&distro_name).await?;
-    registry.insert(session.clone());
+    registry.ensure_wsl_integration_enabled(&distro_name)?;
+    let mut session = connect_wsl_environment(&distro_name).await?;
+    registry.insert_if_enabled(&mut session)?;
     Ok(session)
 }
 
@@ -131,6 +168,7 @@ pub async fn map_environment_path(
             ProjectPathSemantics::host(),
         )),
         EnvironmentRef::Wsl { distro_name } => {
+            registry.ensure_wsl_integration_enabled(&distro_name)?;
             if let Some(mapped) = map_wsl_input_without_wslpath(&distro_name, &path)? {
                 return Ok(mapped);
             }
@@ -442,12 +480,15 @@ pub fn retry_host_project_migration(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use tempfile::tempdir;
 
     use super::{
         begin_project_mutation, environment_infos_from_wsl_discovery, host_environment_info,
-        host_project_info_for_platform, host_projects_store_from_config, parse_wsl_project_storage,
+        host_project_info_for_platform, host_projects_store_from_config, list_environments_with,
+        map_environment_path, parse_wsl_project_storage,
     };
     use crate::core::mutation::{MutationKind, SingleMutationController};
     use crate::environment::types::{
@@ -565,6 +606,75 @@ mod tests {
         assert_eq!(snapshot.environments, vec![host_environment_info()]);
         assert_eq!(snapshot.environments[0].revision, 0);
         assert_eq!(snapshot.error, None);
+    }
+
+    #[tokio::test]
+    async fn disabled_wsl_integration_returns_host_without_discovery() {
+        let registry = EnvironmentRegistry::new(false);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let discovery_calls = Arc::clone(&calls);
+
+        let snapshot = list_environments_with(&registry, cfg!(target_os = "windows"), move || {
+            discovery_calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(vec!["Ubuntu".to_string()]) }
+        })
+        .await;
+
+        assert_eq!(snapshot.environments, vec![host_environment_info()]);
+        assert_eq!(snapshot.error, None);
+        assert_eq!(
+            snapshot.wsl_integration_supported,
+            cfg!(target_os = "windows")
+        );
+        assert!(!snapshot.wsl_integration_enabled);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn discovery_drops_wsl_results_when_integration_is_disabled_while_waiting() {
+        let registry = EnvironmentRegistry::default();
+        let task_registry = registry.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+
+        let discovery = tokio::spawn(async move {
+            list_environments_with(&task_registry, true, move || async move {
+                started_tx.send(()).expect("signal discovery start");
+                release_rx.await.expect("release discovery");
+                Ok(vec!["Ubuntu".to_string()])
+            })
+            .await
+        });
+        started_rx.await.expect("discovery started");
+        registry.set_wsl_integration_enabled(false);
+        release_tx.send(()).expect("release discovery");
+
+        let snapshot = discovery.await.expect("discovery task");
+        assert_eq!(snapshot.environments, vec![host_environment_info()]);
+        assert!(!snapshot.wsl_integration_enabled);
+    }
+
+    #[tokio::test]
+    async fn disabled_wsl_integration_rejects_path_mapping_without_wslpath() {
+        let registry = EnvironmentRegistry::new(false);
+
+        let error = map_environment_path(
+            EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            },
+            "/home/alice/project".to_string(),
+            &registry,
+        )
+        .await
+        .expect_err("disabled WSL path mapping");
+
+        assert!(matches!(
+            error,
+            AppError::EnvironmentUnavailable {
+                environment: EnvironmentRef::Wsl { ref distro_name },
+                ..
+            } if distro_name == "Ubuntu"
+        ));
     }
 
     #[test]

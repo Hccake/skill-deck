@@ -505,7 +505,7 @@
     "title": "Settings",
     "nav": {
       "sectionLabel": "Settings section",
-      "general": "Appearance",
+      "general": "General",
       "agents": "Agents",
       "git": "Git",
       "projects": "Projects",
@@ -517,12 +517,19 @@
       "about": "About"
     },
     "general": {
-      "title": "Appearance",
-      "description": "Tune how Skill Deck looks and behaves day to day.",
+      "title": "General",
+      "description": "Manage appearance, language, and platform integrations.",
       "appearanceTitle": "Theme",
       "appearanceDescription": "Choose the display style that fits your current workspace.",
       "languageTitle": "Language",
-      "languageDescription": "Choose the interface language."
+      "languageDescription": "Choose the interface language.",
+      "wslTitle": "WSL Environment",
+      "wslDescription": "Discover installed WSL distributions and allow switching between Windows and WSL.",
+      "wslSaving": "Updating WSL integration",
+      "wslSaveError": "WSL integration could not be updated. Try again.",
+      "wslDisableTitle": "Disable WSL Environment?",
+      "wslDisableDescription": "Skill Deck will switch to Windows and stop discovering or using WSL environments. Saved WSL projects and settings will be kept.",
+      "wslDisableConfirm": "Switch to Windows and disable"
     },
     "agents": {
       "title": "Agents",

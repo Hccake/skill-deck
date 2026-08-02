@@ -5,6 +5,7 @@ pub mod copy;
 pub mod copy_runtime;
 pub mod default_agents;
 pub mod duplicate_cleanup;
+pub mod environment_settings;
 pub(crate) mod git_transport;
 pub mod github_credentials;
 pub mod install;

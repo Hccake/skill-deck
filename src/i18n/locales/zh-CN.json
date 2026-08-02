@@ -505,7 +505,7 @@
     "title": "设置",
     "nav": {
       "sectionLabel": "设置分类",
-      "general": "外观与语言",
+      "general": "通用",
       "agents": "Agents",
       "git": "Git",
       "projects": "项目",
@@ -517,12 +517,19 @@
       "about": "关于"
     },
     "general": {
-      "title": "外观与语言",
-      "description": "调整 Skill Deck 的显示方式和常用偏好。",
+      "title": "通用",
+      "description": "管理外观、语言和平台集成。",
       "appearanceTitle": "外观",
       "appearanceDescription": "选择适合当前工作环境的显示主题。",
       "languageTitle": "语言",
-      "languageDescription": "切换界面语言。"
+      "languageDescription": "切换界面语言。",
+      "wslTitle": "WSL Environment",
+      "wslDescription": "发现已安装的 WSL 发行版，并允许在 Windows 与 WSL 之间切换。",
+      "wslSaving": "正在更新 WSL 集成",
+      "wslSaveError": "无法更新 WSL 集成设置，请重试。",
+      "wslDisableTitle": "关闭 WSL Environment？",
+      "wslDisableDescription": "Skill Deck 将切换到 Windows，并停止发现和使用 WSL Environment。已保存的 WSL 项目和设置会继续保留。",
+      "wslDisableConfirm": "切换到 Windows 并关闭"
     },
     "agents": {
       "title": "Agents",

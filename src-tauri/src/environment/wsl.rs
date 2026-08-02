@@ -43,6 +43,7 @@ struct CachedWslSession {
 
 #[derive(Default)]
 struct EnvironmentRegistryState {
+    wsl_integration_enabled: bool,
     next_generation: u64,
     sessions: HashMap<EnvironmentKey, CachedWslSession>,
     runtime: HashMap<EnvironmentKey, EnvironmentRuntimeStatus>,
@@ -55,7 +56,7 @@ pub struct EnvironmentRuntimeStatus {
     pub error: Option<AppError>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EnvironmentRegistry {
     state: Arc<Mutex<EnvironmentRegistryState>>,
     reconnect_locks: Arc<Mutex<HashMap<EnvironmentKey, Arc<AsyncMutex<()>>>>>,
@@ -64,8 +65,63 @@ pub struct EnvironmentRegistry {
 
 type EnvironmentRuntimeListener = Arc<dyn Fn(EnvironmentRuntimeEvent) + Send + Sync>;
 
+impl Default for EnvironmentRegistry {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
 impl EnvironmentRegistry {
+    pub fn new(wsl_integration_enabled: bool) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(EnvironmentRegistryState {
+                wsl_integration_enabled,
+                ..EnvironmentRegistryState::default()
+            })),
+            reconnect_locks: Arc::new(Mutex::new(HashMap::new())),
+            listener: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn wsl_integration_enabled(&self) -> bool {
+        self.state
+            .lock()
+            .expect("environment registry lock poisoned")
+            .wsl_integration_enabled
+    }
+
+    pub fn set_wsl_integration_enabled(&self, enabled: bool) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("environment registry lock poisoned");
+        state.wsl_integration_enabled = enabled;
+        if !enabled {
+            state.sessions.clear();
+            state.runtime.clear();
+        }
+    }
+
+    fn disabled_error(distro_name: &str) -> AppError {
+        AppError::EnvironmentUnavailable {
+            environment: EnvironmentRef::Wsl {
+                distro_name: distro_name.to_string(),
+            },
+            message: "WSL integration is disabled".to_string(),
+        }
+    }
+
+    pub(crate) fn ensure_wsl_integration_enabled(&self, distro_name: &str) -> Result<(), AppError> {
+        self.wsl_integration_enabled()
+            .then_some(())
+            .ok_or_else(|| Self::disabled_error(distro_name))
+    }
+
     pub fn insert(&self, mut session: WslSession) {
+        let _ = self.insert_if_enabled(&mut session);
+    }
+
+    pub(crate) fn insert_if_enabled(&self, session: &mut WslSession) -> Result<(), AppError> {
         let distro_name = session.distro_name.clone();
         let key = EnvironmentKey::wsl(&distro_name);
         let environment = EnvironmentRef::Wsl {
@@ -75,6 +131,9 @@ impl EnvironmentRegistry {
             .state
             .lock()
             .expect("environment registry lock poisoned");
+        if !state.wsl_integration_enabled {
+            return Err(Self::disabled_error(&distro_name));
+        }
         state.next_generation = state.next_generation.saturating_add(1);
         let generation = state.next_generation;
         session.runtime_generation = generation;
@@ -82,7 +141,7 @@ impl EnvironmentRegistry {
             key.clone(),
             CachedWslSession {
                 generation,
-                session,
+                session: session.clone(),
             },
         );
         state.runtime.insert(
@@ -100,6 +159,7 @@ impl EnvironmentRegistry {
             status: EnvironmentStatus::Available,
             error: None,
         });
+        Ok(())
     }
 
     #[cfg(test)]
@@ -209,6 +269,7 @@ impl EnvironmentRegistry {
         C: FnMut(String) -> CFut,
         CFut: Future<Output = Result<WslSession, AppError>>,
     {
+        self.ensure_wsl_integration_enabled(distro_name)?;
         if let Some(cached) = self.get_cached(distro_name) {
             return Ok(cached);
         }
@@ -217,8 +278,8 @@ impl EnvironmentRegistry {
         if let Some(cached) = self.get_cached(distro_name) {
             return Ok(cached);
         }
-        let session = connector(distro_name.to_string()).await?;
-        self.insert(session);
+        let mut session = connector(distro_name.to_string()).await?;
+        self.insert_if_enabled(&mut session)?;
         self.get_cached(distro_name)
             .ok_or_else(|| AppError::EnvironmentUnavailable {
                 environment: EnvironmentRef::Wsl {
@@ -251,7 +312,7 @@ impl EnvironmentRegistry {
                 let refreshed = match self.get_cached(distro_name) {
                     Some(cached) if cached.generation != initial.generation => cached,
                     _ => {
-                        let session = match connector(distro_name.to_string()).await {
+                        let mut session = match connector(distro_name.to_string()).await {
                             Ok(session) => session,
                             Err(error @ AppError::EnvironmentUnavailable { .. }) => {
                                 self.publish_unavailable_if_current(
@@ -263,7 +324,7 @@ impl EnvironmentRegistry {
                             }
                             Err(error) => return Err(error),
                         };
-                        self.insert(session);
+                        self.insert_if_enabled(&mut session)?;
                         self.get_cached(distro_name).ok_or_else(|| {
                             AppError::EnvironmentUnavailable {
                                 environment: EnvironmentRef::Wsl {
@@ -683,6 +744,34 @@ mod tests {
             .expect("cached operation");
 
         assert_eq!(user, "alice");
+        assert_eq!(connects.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn disabled_registry_rejects_wsl_before_connecting() {
+        let registry = EnvironmentRegistry::new(false);
+        let connects = Arc::new(AtomicUsize::new(0));
+        let connector_count = Arc::clone(&connects);
+
+        let error = registry
+            .with_session_retry_using(
+                "Ubuntu",
+                move |_| {
+                    connector_count.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(sample_session("Ubuntu", "unexpected")) }
+                },
+                |session| async move { Ok(session.user) },
+            )
+            .await
+            .expect_err("disabled WSL integration");
+
+        assert!(matches!(
+            error,
+            AppError::EnvironmentUnavailable {
+                environment: EnvironmentRef::Wsl { ref distro_name },
+                ..
+            } if distro_name == "Ubuntu"
+        ));
         assert_eq!(connects.load(Ordering::SeqCst), 0);
     }
 

@@ -26,6 +26,13 @@ pub struct InstallWizardSessionController {
 }
 
 impl InstallWizardSessionController {
+    pub fn is_active(&self) -> bool {
+        self.state
+            .lock()
+            .expect("install wizard session lock poisoned")
+            .active
+    }
+
     #[cfg(test)]
     fn snapshot(&self) -> InstallWizardSessionSnapshot {
         snapshot_from_state(

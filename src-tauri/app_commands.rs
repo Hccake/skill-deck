@@ -52,6 +52,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "save_default_target_agents",
     "save_github_credential",
     "set_environment_project_cross_storage_warning",
+    "set_wsl_integration_enabled",
     "update_skill",
     "update_skills_batch",
     "validate_custom_agent_draft",

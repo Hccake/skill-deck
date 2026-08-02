@@ -19,6 +19,9 @@ pub struct SkillDeckConfig {
     /// Git 仓库拉取超时（秒）
     #[serde(default = "default_git_clone_timeout_secs")]
     pub git_clone_timeout_secs: u32,
+    /// 是否允许 Skill Deck 发现和使用 WSL Environment
+    #[serde(default)]
+    pub wsl_integration_enabled: bool,
     #[serde(default)]
     pub hidden_wsl_distros: Vec<String>,
     #[serde(default)]
@@ -32,6 +35,7 @@ impl Default for SkillDeckConfig {
         Self {
             projects: Vec::new(),
             git_clone_timeout_secs: default_git_clone_timeout_secs(),
+            wsl_integration_enabled: false,
             hidden_wsl_distros: Vec::new(),
             last_selected_environment: None,
             last_connected_wsl_user_by_distro: std::collections::BTreeMap::new(),
@@ -47,6 +51,7 @@ mod tests {
     fn test_default_config_includes_clone_timeout() {
         let config = SkillDeckConfig::default();
         assert_eq!(config.git_clone_timeout_secs, 120);
+        assert!(!config.wsl_integration_enabled);
     }
 
     #[test]
@@ -56,5 +61,6 @@ mod tests {
 
         assert_eq!(config.projects, vec!["/demo"]);
         assert_eq!(config.git_clone_timeout_secs, 120);
+        assert!(!config.wsl_integration_enabled);
     }
 }

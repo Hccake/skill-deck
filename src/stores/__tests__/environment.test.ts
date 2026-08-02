@@ -5,11 +5,13 @@ import { useEnvironmentStore } from '../environment';
 const mocks = vi.hoisted(() => ({
   listEnvironments: vi.fn(),
   connectEnvironment: vi.fn(),
+  setWslIntegrationEnabled: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listEnvironments: (...args: unknown[]) => mocks.listEnvironments(...args),
   connectEnvironment: (...args: unknown[]) => mocks.connectEnvironment(...args),
+  setWslIntegrationEnabled: (...args: unknown[]) => mocks.setWslIntegrationEnabled(...args),
 }));
 
 const host: EnvironmentInfo = {
@@ -57,6 +59,8 @@ describe('useEnvironmentStore', () => {
       discoveryState: 'idle',
       discoveryError: null,
       discoveryCompletedAt: null,
+      wslIntegrationSupported: false,
+      wslIntegrationEnabled: false,
     });
   });
 
@@ -65,13 +69,108 @@ describe('useEnvironmentStore', () => {
   });
 
   it('discovers environments without connecting a distribution', async () => {
-    mocks.listEnvironments.mockResolvedValue({ environments: [host, ubuntu], error: null });
+    mocks.listEnvironments.mockResolvedValue({
+      environments: [host, ubuntu],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
+    });
 
     await useEnvironmentStore.getState().discover();
 
     expect(useEnvironmentStore.getState().environments).toEqual([host, ubuntu]);
     expect(useEnvironmentStore.getState().discoveryState).toBe('ready');
+    expect(useEnvironmentStore.getState().wslIntegrationSupported).toBe(true);
+    expect(useEnvironmentStore.getState().wslIntegrationEnabled).toBe(true);
     expect(mocks.connectEnvironment).not.toHaveBeenCalled();
+  });
+
+  it('applies the authoritative Host-only snapshot after disabling WSL integration', async () => {
+    useEnvironmentStore.setState({
+      environments: [host, ubuntu],
+      runtimeByEnvironment: { host, 'wsl:ubuntu': ubuntu },
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
+    });
+    mocks.setWslIntegrationEnabled.mockResolvedValue({
+      environments: [host],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: false,
+    });
+
+    await useEnvironmentStore.getState().setWslIntegrationEnabled(false);
+
+    expect(mocks.setWslIntegrationEnabled).toHaveBeenCalledWith(false);
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [host],
+      runtimeByEnvironment: { host },
+      discoveryState: 'ready',
+      discoveryError: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: false,
+    });
+  });
+
+  it('does not let an older discovery overwrite a completed WSL setting change', async () => {
+    const discovery = deferred<{
+      environments: EnvironmentInfo[];
+      error: AppError | null;
+      wslIntegrationSupported: boolean;
+      wslIntegrationEnabled: boolean;
+    }>();
+    mocks.listEnvironments.mockReturnValue(discovery.promise);
+    mocks.setWslIntegrationEnabled.mockResolvedValue({
+      environments: [host],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: false,
+    });
+
+    const pendingDiscovery = useEnvironmentStore.getState().discover();
+    await useEnvironmentStore.getState().setWslIntegrationEnabled(false);
+    discovery.resolve({
+      environments: [host, ubuntu],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
+    });
+    await pendingDiscovery;
+
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [host],
+      runtimeByEnvironment: { host },
+      wslIntegrationEnabled: false,
+    });
+  });
+
+  it('does not start discovery while a WSL setting change is pending', async () => {
+    const setting = deferred<{
+      environments: EnvironmentInfo[];
+      error: AppError | null;
+      wslIntegrationSupported: boolean;
+      wslIntegrationEnabled: boolean;
+    }>();
+    mocks.setWslIntegrationEnabled.mockReturnValue(setting.promise);
+    mocks.listEnvironments.mockResolvedValue({
+      environments: [host],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: false,
+    });
+
+    const pendingSetting = useEnvironmentStore.getState().setWslIntegrationEnabled(true);
+    const pendingDiscovery = useEnvironmentStore.getState().discover();
+
+    expect(mocks.listEnvironments).not.toHaveBeenCalled();
+    setting.resolve({
+      environments: [host, ubuntu],
+      error: null,
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
+    });
+    await Promise.all([pendingSetting, pendingDiscovery]);
+    expect(useEnvironmentStore.getState().wslIntegrationEnabled).toBe(true);
   });
 
   it('keeps Host usable and exposes a typed discovery error', async () => {
@@ -264,7 +363,10 @@ describe('useEnvironmentStore', () => {
       status: 'unavailable',
       error,
     };
-    useEnvironmentStore.setState({ environments: [host, ubuntu, debian] });
+    useEnvironmentStore.setState({
+      environments: [host, ubuntu, debian],
+      wslIntegrationEnabled: true,
+    });
 
     useEnvironmentStore.getState().applyRuntimeEvent(event);
 
@@ -291,6 +393,7 @@ describe('useEnvironmentStore', () => {
         { ...ubuntu, status: 'unavailable', error: ubuntuError },
         { ...debian, status: 'unavailable', error: debianError },
       ],
+      wslIntegrationEnabled: true,
     });
 
     useEnvironmentStore.getState().applyRuntimeEvent({
@@ -309,7 +412,10 @@ describe('useEnvironmentStore', () => {
   });
 
   it('retains runtime events that arrive before a distribution appears in discovery', () => {
-    useEnvironmentStore.setState({ environments: [host, ubuntu] });
+    useEnvironmentStore.setState({
+      environments: [host, ubuntu],
+      wslIntegrationEnabled: true,
+    });
 
     useEnvironmentStore.getState().applyRuntimeEvent({
       revision: 2,

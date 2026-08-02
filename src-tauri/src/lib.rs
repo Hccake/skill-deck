@@ -44,6 +44,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::skills::read_skill_content,
             commands::config::get_config,
             commands::config::save_config,
+            commands::config::set_wsl_integration_enabled,
             commands::config::get_default_target_agents,
             commands::config::save_default_target_agents,
             commands::github_credentials::get_github_credential_status,

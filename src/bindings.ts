@@ -113,6 +113,14 @@ async saveConfig(config: SkillDeckConfig) : Promise<Result<null, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async setWslIntegrationEnabled(enabled: boolean) : Promise<Result<EnvironmentDiscoverySnapshot, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_wsl_integration_enabled", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getDefaultTargetAgents(context: ContextRef) : Promise<Result<DefaultTargetAgents | null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_default_target_agents", { context }) };
@@ -580,7 +588,7 @@ export type DirectoryPresenceState = "present" | "missing" | "legacyPath" | "bro
 export type DisabledAgentConflict = { definition: CustomAgentDefinition; builtin: AgentDefinition; raw: unknown }
 export type DiscoverySessionHandle = { sessionId: string; environment: EnvironmentRef; sourceFingerprint: string; expiresAtEpochMs: number }
 export type DuplicateCleanupResult = { agent: AgentId; success: boolean; skipped: boolean; path: ResourceLocator | null; error: OperationErrorCode | null }
-export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null }
+export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null; wslIntegrationSupported: boolean; wslIntegrationEnabled: boolean }
 export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus; revision: number; error: AppError | null }
 export type EnvironmentRef = { kind: "host" } | { kind: "wsl"; distro_name: string }
 export type EnvironmentRuntimeEvent = { revision: number; environment: EnvironmentRef; status: EnvironmentStatus; error: AppError | null }
@@ -802,7 +810,11 @@ projects?: string[];
 /**
  * Git 仓库拉取超时（秒）
  */
-gitCloneTimeoutSecs?: number; hiddenWslDistros?: string[]; lastSelectedEnvironment?: EnvironmentRef | null; lastConnectedWslUserByDistro?: Partial<{ [key in string]: string }> }
+gitCloneTimeoutSecs?: number;
+/**
+ * 是否允许 Skill Deck 发现和使用 WSL Environment
+ */
+wslIntegrationEnabled?: boolean; hiddenWslDistros?: string[]; lastSelectedEnvironment?: EnvironmentRef | null; lastConnectedWslUserByDistro?: Partial<{ [key in string]: string }> }
 export type SkillIdentity = { context: ContextRef; skillName: string }
 /**
  * Skill 范围

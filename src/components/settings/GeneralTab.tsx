@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useSettingsStore } from '@/stores/settings';
 import type { Locale, Theme } from '@/stores/settings';
 import { cn } from '@/lib/utils';
+import { WslIntegrationSection } from './WslIntegrationSection';
 
 const THEME_OPTIONS: Array<{ value: Theme; icon: typeof Sun; labelKey: string }> = [
   { value: 'light', icon: Sun, labelKey: 'theme.light' },
@@ -118,6 +119,8 @@ export function GeneralTab() {
             })}
           </div>
         </section>
+
+        <WslIntegrationSection />
       </div>
     </div>
   );

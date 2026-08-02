@@ -198,6 +198,12 @@ export async function saveConfig(config: SkillDeckConfig): Promise<void> {
   unwrap(await commands.saveConfig(config));
 }
 
+export async function setWslIntegrationEnabled(
+  enabled: boolean,
+): Promise<EnvironmentDiscoverySnapshot> {
+  return unwrap(await commands.setWslIntegrationEnabled(enabled));
+}
+
 export async function getGithubCredentialStatus(): Promise<GithubCredentialStatus> {
   return unwrap(await commands.getGithubCredentialStatus());
 }

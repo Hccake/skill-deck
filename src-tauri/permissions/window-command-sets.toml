@@ -62,6 +62,7 @@ permissions = [
   "allow-save-default-target-agents",
   "allow-save-github-credential",
   "allow-set-environment-project-cross-storage-warning",
+  "allow-set-wsl-integration-enabled",
   "allow-update-skill",
   "allow-update-skills-batch",
   "allow-validate-custom-agent-draft"

@@ -1,7 +1,12 @@
 import { create } from 'zustand';
-import { connectEnvironment, listEnvironments } from '@/hooks/useTauriApi';
+import {
+  connectEnvironment,
+  listEnvironments,
+  setWslIntegrationEnabled as setWslIntegrationEnabledApi,
+} from '@/hooks/useTauriApi';
 import type {
   AppError,
+  EnvironmentDiscoverySnapshot,
   EnvironmentInfo,
   EnvironmentRef,
   EnvironmentRuntimeEvent,
@@ -18,7 +23,10 @@ interface EnvironmentState {
   runtimeByEnvironment: Record<string, EnvironmentInfo>;
   discoveryState: EnvironmentDiscoveryState;
   discoveryError: AppError | null;
+  wslIntegrationSupported: boolean;
+  wslIntegrationEnabled: boolean;
   discover: () => Promise<void>;
+  setWslIntegrationEnabled: (enabled: boolean) => Promise<void>;
   connect: (environment: EnvironmentRef) => Promise<void>;
   applyRuntimeEvent: (event: EnvironmentRuntimeEvent) => void;
 }
@@ -74,7 +82,24 @@ function withHostFallback(
 
 const DISCOVERY_COOLDOWN_MS = 30_000;
 let discoveryInFlight: Promise<void> | null = null;
-let discoverySequence = 0;
+let wslSettingInFlight: Promise<void> | null = null;
+let environmentRequestSequence = 0;
+let wslSettingSequence = 0;
+
+function authoritativeSnapshotState(snapshot: EnvironmentDiscoverySnapshot) {
+  const runtimeByEnvironment = Object.fromEntries(
+    snapshot.environments.map((entry) => [environmentKey(entry.environment), entry]),
+  );
+  return {
+    environments: snapshot.environments,
+    runtimeByEnvironment,
+    discoveryState: snapshot.error ? 'error' as const : 'ready' as const,
+    discoveryError: snapshot.error,
+    discoveryCompletedAt: Date.now(),
+    wslIntegrationSupported: snapshot.wslIntegrationSupported,
+    wslIntegrationEnabled: snapshot.wslIntegrationEnabled,
+  };
+}
 
 export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) => ({
   environments: [],
@@ -82,8 +107,11 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   discoveryState: 'idle',
   discoveryError: null,
   discoveryCompletedAt: null,
+  wslIntegrationSupported: false,
+  wslIntegrationEnabled: false,
 
   discover: () => {
+    if (wslSettingInFlight) return wslSettingInFlight;
     if (discoveryInFlight) return discoveryInFlight;
 
     const { discoveryCompletedAt, environments } = get();
@@ -95,11 +123,12 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
       set({ discoveryState: 'loading', discoveryError: null });
     }
 
-    const sequence = ++discoverySequence;
+    const sequence = ++environmentRequestSequence;
     const request = (async () => {
       try {
         const snapshot = await listEnvironments();
         set((state) => {
+          if (sequence !== environmentRequestSequence) return state;
           const discovered = snapshot.environments.map((entry) => {
             const key = environmentKey(entry.environment);
             return newerEnvironment(state.runtimeByEnvironment[key], entry);
@@ -126,10 +155,13 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
             runtimeByEnvironment,
             discoveryState: snapshot.error ? 'error' : 'ready',
             discoveryError: snapshot.error,
+            wslIntegrationSupported: snapshot.wslIntegrationSupported,
+            wslIntegrationEnabled: snapshot.wslIntegrationEnabled,
           };
         });
       } catch (error) {
         set((state) => {
+          if (sequence !== environmentRequestSequence) return state;
           const environments = withHostFallback(
             state.environments,
             state.runtimeByEnvironment,
@@ -146,11 +178,31 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
         });
         throw error;
       } finally {
-        set({ discoveryCompletedAt: Date.now() });
-        if (discoverySequence === sequence) discoveryInFlight = null;
+        if (sequence === environmentRequestSequence) {
+          set({ discoveryCompletedAt: Date.now() });
+        }
+        discoveryInFlight = null;
       }
     })();
     discoveryInFlight = request;
+    return request;
+  },
+
+  setWslIntegrationEnabled: (enabled) => {
+    const sequence = ++environmentRequestSequence;
+    const settingSequence = ++wslSettingSequence;
+    const request = (async () => {
+      try {
+        const snapshot = await setWslIntegrationEnabledApi(enabled);
+        set((state) => {
+          if (sequence !== environmentRequestSequence) return state;
+          return authoritativeSnapshotState(snapshot);
+        });
+      } finally {
+        if (settingSequence === wslSettingSequence) wslSettingInFlight = null;
+      }
+    })();
+    wslSettingInFlight = request;
     return request;
   },
 
@@ -186,6 +238,7 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   applyRuntimeEvent: (event) => {
     const key = environmentKey(event.environment);
     set((state) => {
+      if (event.environment.kind === 'wsl' && !state.wslIntegrationEnabled) return state;
       const current = state.runtimeByEnvironment[key]
         ?? state.environments.find((entry) => environmentKey(entry.environment) === key);
       if (current && event.revision <= current.revision) return state;

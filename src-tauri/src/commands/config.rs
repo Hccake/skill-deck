@@ -1,8 +1,8 @@
 use tauri::State;
 
-use crate::application::default_agents;
+use crate::application::{default_agents, environment_settings};
 use crate::commands::agents::AgentCommandError;
-use crate::core::{read_config, skill_lock, write_config};
+use crate::core::{read_config, skill_lock};
 use crate::environment::types::ContextRef;
 use crate::error::AppError;
 use crate::models::SkillDeckConfig;
@@ -17,7 +17,22 @@ pub fn get_config() -> Result<SkillDeckConfig, AppError> {
 #[tauri::command]
 #[specta::specta]
 pub fn save_config(config: SkillDeckConfig) -> Result<(), AppError> {
-    write_config(&config)
+    environment_settings::save_config_preserving_wsl_setting(config)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_wsl_integration_enabled(
+    enabled: bool,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<crate::environment::project_service::EnvironmentDiscoverySnapshot, AppError> {
+    environment_settings::set_wsl_integration_enabled(
+        enabled,
+        runtime.environments(),
+        runtime.mutation(),
+        runtime.install_wizard_session(),
+    )
+    .await
 }
 
 #[tauri::command]
