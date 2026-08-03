@@ -3,11 +3,12 @@ import { persist } from 'zustand/middleware';
 import i18n from '@/i18n';
 import {
   getGithubCredentialStatus,
-  clearGithubCredential,
-  saveGithubCredential,
+  clearGithubCredential as clearGithubCredentialCommand,
+  saveGithubCredential as saveGithubCredentialCommand,
 } from '@/hooks/useTauriApi';
 import { useSkillsDataStore } from './skills-data';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { runBusinessWrite } from '@/workflows/install-session-feedback';
 import type {
   AppError,
   GithubCredentialClearResult,
@@ -140,7 +141,9 @@ export const useSettingsStore = create<SettingsState>()(
           },
         }));
         try {
-          const result = await saveGithubCredential(token);
+          const outcome = await runBusinessWrite(() => saveGithubCredentialCommand(token));
+          if (outcome.status === 'notRun') return null;
+          const result = outcome.value;
           set((state) => state.githubCredential.requestId === requestId ? {
             githubCredential: {
               ...state.githubCredential,
@@ -183,7 +186,9 @@ export const useSettingsStore = create<SettingsState>()(
           },
         }));
         try {
-          const result = await clearGithubCredential();
+          const outcome = await runBusinessWrite(() => clearGithubCredentialCommand());
+          if (outcome.status === 'notRun') return null;
+          const result = outcome.value;
           set((state) => state.githubCredential.requestId === requestId ? {
             githubCredential: {
               ...state.githubCredential,

@@ -17,6 +17,7 @@ import type {
   ObservedEntryId,
   RecoveryAction,
 } from '@/bindings';
+import { runBusinessWrite } from './install-session-feedback';
 
 let managePreviewGeneration = 0;
 
@@ -124,7 +125,7 @@ export async function executeManageAgentChanges(
       removeEntryIds,
       requestedMode: mode,
     });
-    const result = await manageSkillAgents({
+    const outcome = await runBusinessWrite(() => manageSkillAgents({
       token: preview.token,
       context,
       skillName: manageAgentsSkill.name,
@@ -135,7 +136,9 @@ export async function executeManageAgentChanges(
         (entry) => removeEntryIds.includes(entry.entryId) && entry.kind === 'directory',
       ),
       canonicalPayload: preview.canonicalPayload,
-    });
+    }));
+    if (outcome.status === 'notRun') return { status: 'blocked' };
+    const result = outcome.value;
     const failedUnits = result.units.filter((unit) => unit.status !== 'succeeded');
 
     if (hasStaleManageAgentResult(failedUnits)) {

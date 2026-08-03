@@ -11,6 +11,7 @@ import type {
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { toAppError } from '@/utils/to-app-error';
 import { prepareInstall, type InstallPreparationOutcome } from './skill-install-preparation';
+import { runBusinessWrite } from './install-session-feedback';
 
 export interface RepairSkillSourceRequest {
   context: ContextRef;
@@ -127,7 +128,11 @@ export async function repairSkillSource(
   let response: InstallResponse;
   request.onPhase?.('installing');
   try {
-    response = await api.installSkills(preparation.prepared.request, preparation.prepared.preview.token);
+    const outcome = await runBusinessWrite(() => (
+      api.installSkills(preparation.prepared.request, preparation.prepared.preview.token)
+    ));
+    if (outcome.status === 'notRun') return { status: 'blocked' };
+    response = outcome.value;
   } catch (error) {
     if (request.stopRequested()) return { status: 'stopped' };
     return { status: 'failed', stage: 'execution', error: toAppError(error) };

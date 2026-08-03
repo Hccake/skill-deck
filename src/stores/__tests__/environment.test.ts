@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, EnvironmentInfo, EnvironmentRuntimeEvent } from '@/bindings';
 import { useEnvironmentStore } from '../environment';
+import { useInstallWizardSessionStore } from '../install-wizard-session';
 
 const mocks = vi.hoisted(() => ({
   listEnvironments: vi.fn(),
   connectEnvironment: vi.fn(),
   setWslIntegrationEnabled: vi.fn(),
+  getInstallWizardSession: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   listEnvironments: (...args: unknown[]) => mocks.listEnvironments(...args),
   connectEnvironment: (...args: unknown[]) => mocks.connectEnvironment(...args),
   setWslIntegrationEnabled: (...args: unknown[]) => mocks.setWslIntegrationEnabled(...args),
+  getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
 const host: EnvironmentInfo = {
@@ -63,6 +66,11 @@ describe('useEnvironmentStore', () => {
       wslIntegrationSupported: false,
       wslIntegrationEnabled: false,
     });
+    useInstallWizardSessionStore.setState({
+      revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
+      syncError: null, monitorRetryRevision: 0, snapshotVersion: 0,
+    });
+    mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
   });
 
   afterEach(() => {
@@ -191,6 +199,24 @@ describe('useEnvironmentStore', () => {
       discoveryError: null,
       wslIntegrationSupported: true,
       wslIntegrationEnabled: false,
+    });
+  });
+
+  it('keeps the current snapshot when installation wins WSL-setting admission', async () => {
+    useEnvironmentStore.setState({
+      environments: [host, ubuntu],
+      runtimeByEnvironment: { host, 'wsl:ubuntu': ubuntu },
+      wslIntegrationSupported: true,
+      wslIntegrationEnabled: true,
+    });
+    mocks.setWslIntegrationEnabled.mockRejectedValue({ kind: 'installWizardActive' });
+
+    const changed = await useEnvironmentStore.getState().setWslIntegrationEnabled(false);
+
+    expect(changed).toBe(false);
+    expect(useEnvironmentStore.getState()).toMatchObject({
+      environments: [host, ubuntu],
+      wslIntegrationEnabled: true,
     });
   });
 

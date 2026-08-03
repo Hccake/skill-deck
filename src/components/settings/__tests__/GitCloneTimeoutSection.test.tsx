@@ -8,6 +8,7 @@ import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const mockGetConfig = vi.fn();
 const mockSaveConfig = vi.fn();
+const mockGetInstallWizardSession = vi.fn();
 
 import enLocale from '@/i18n/locales/en.json';
 
@@ -43,13 +44,23 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/hooks/useTauriApi', () => ({
   getConfig: (...args: unknown[]) => mockGetConfig(...args),
   saveConfig: (...args: unknown[]) => mockSaveConfig(...args),
+  getInstallWizardSession: (...args: unknown[]) => mockGetInstallWizardSession(...args),
 }));
 
 describe('GitCloneTimeoutSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
-    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0,
+      active: false,
+      loading: false,
+      hasConfirmedSnapshot: false,
+      syncError: null,
+      monitorRetryRevision: 0,
+      snapshotVersion: 0,
+    });
+    mockGetInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
   });
 
   it('loads the persisted timeout and highlights the matching preset', async () => {
@@ -195,6 +206,21 @@ describe('GitCloneTimeoutSection', () => {
 
     expect(screen.getByRole('combobox').textContent).toContain('2 min');
     expect(screen.getByText('Failed to save timeout setting')).toBeTruthy();
+  });
+
+  it('keeps local feedback clear when the install flow wins the save race', async () => {
+    mockGetConfig.mockResolvedValue({ projects: [], gitCloneTimeoutSecs: 120 });
+    mockSaveConfig.mockRejectedValue({ kind: 'installWizardActive' });
+
+    render(<GitCloneTimeoutSection />);
+
+    await waitFor(() => expect(screen.getByRole('combobox').textContent).toContain('2 min'));
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(screen.getByRole('option', { name: '10 min' }));
+
+    await waitFor(() => expect(useInstallWizardSessionStore.getState().active).toBe(true));
+    expect(screen.getByRole('combobox').textContent).toContain('2 min');
+    expect(screen.queryByText('Failed to save timeout setting')).toBeNull();
   });
 
   it('reloads config before saving after the initial load fails', async () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, ContextRef, UpdatePreview, UpdateResponse } from '@/bindings';
 import { contextKey } from '@/lib/context';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const mocks = vi.hoisted(() => ({
   previewUpdate: vi.fn<() => Promise<UpdatePreview>>(),
@@ -8,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   updateSkillsBatch: vi.fn<() => Promise<UpdateResponse>>(),
   applyUpdateResult: vi.fn(),
   snapshots: {} as Record<string, unknown>,
+  getInstallWizardSession: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => mocks);
@@ -41,6 +43,11 @@ describe('skill update workflow', () => {
     mocks.updateSkillsBatch.mockReset();
     mocks.applyUpdateResult.mockReset();
     mocks.snapshots = {};
+    mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
+    useInstallWizardSessionStore.setState({
+      revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
+      syncError: null, monitorRetryRevision: 0, snapshotVersion: 0,
+    });
   });
 
   it('keeps Backend preview as the only display authority', async () => {
@@ -157,5 +164,21 @@ describe('skill update workflow', () => {
       result: null,
       executionError: commandError,
     });
+  });
+
+  it('returns to the ready phase when installation wins update admission', async () => {
+    mocks.previewUpdate.mockResolvedValue(preview());
+    mocks.updateSkill.mockRejectedValue({ kind: 'installWizardActive' });
+
+    await useSkillUpdateWorkflow.getState().open(context, ['demo']);
+    await useSkillUpdateWorkflow.getState().confirm();
+
+    expect(useSkillUpdateWorkflow.getState()).toMatchObject({
+      phase: 'ready',
+      result: null,
+      executionError: null,
+      confirming: false,
+    });
+    expect(mocks.applyUpdateResult).not.toHaveBeenCalled();
   });
 });

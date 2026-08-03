@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   check: vi.fn(),
   install: vi.fn(),
+  getInstallWizardSession: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   checkApplicationUpdate: () => mocks.check(),
   downloadAndInstallApplicationUpdate: (version: string, progress: (event: unknown) => void) =>
     mocks.install(version, progress),
+  getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
 import { useUpdaterStore } from '../updater';
@@ -23,7 +25,11 @@ describe('useUpdaterStore', () => {
       downloadedBytes: 0, totalBytes: null, error: null, lastCheckTime: null,
       dialogVisible: false, failedOperation: null,
     });
-    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
+      syncError: null, monitorRetryRevision: 0, snapshotVersion: 0,
+    });
+    mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
   });
 
   it('checks through the Backend and opens the dialog when an update exists', async () => {
@@ -122,5 +128,16 @@ describe('useUpdaterStore', () => {
 
     expect(mocks.install).not.toHaveBeenCalled();
     expect(useUpdaterStore.getState().status).toBe('available');
+  });
+
+  it('restores the available state when installation wins application-update admission', async () => {
+    useUpdaterStore.setState({ status: 'available', newVersion: '2.0.0', dialogVisible: true });
+    mocks.install.mockRejectedValue({ kind: 'installWizardActive' });
+
+    await useUpdaterStore.getState().downloadAndInstall();
+
+    expect(useUpdaterStore.getState()).toMatchObject({
+      status: 'available', error: null, dialogVisible: true, failedOperation: null,
+    });
   });
 });

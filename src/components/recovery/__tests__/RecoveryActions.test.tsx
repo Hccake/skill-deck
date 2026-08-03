@@ -10,12 +10,14 @@ const mocks = vi.hoisted(() => ({
   getStatus: vi.fn(),
   open: vi.fn(),
   confirm: vi.fn(),
+  getInstallWizardSession: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   getRecoveryResourceStatus: (id: string) => mocks.getStatus(id),
   openRecoveryResource: (id: string) => mocks.open(id),
   confirmRecoveryResourceResolved: (id: string, revision: string) => mocks.confirm(id, revision),
+  getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -27,7 +29,16 @@ describe('RecoveryActions', () => {
     vi.clearAllMocks();
     mocks.open.mockResolvedValue(undefined);
     mocks.confirm.mockResolvedValue(undefined);
-    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0,
+      active: false,
+      loading: false,
+      hasConfirmedSnapshot: false,
+      syncError: null,
+      monitorRetryRevision: 0,
+      snapshotVersion: 0,
+    });
+    mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
   });
 
   it('opens opaque recovery data and confirms cleanup with the displayed revision', async () => {
@@ -93,6 +104,29 @@ describe('RecoveryActions', () => {
     await waitFor(() => expect(mocks.getStatus).toHaveBeenCalledTimes(2));
     expect(onResolved).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'recovery.cleanup' })).toBeDefined();
+  });
+
+  it('keeps cleanup local feedback clear when the install flow wins the race', async () => {
+    mocks.getStatus.mockResolvedValue({
+      resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
+      environment: { kind: 'host' }, displayPaths: [], diagnostic: null,
+    });
+    mocks.confirm.mockRejectedValue({ kind: 'installWizardActive' });
+    const onResolved = vi.fn();
+    render(<RecoveryActions
+      recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }}
+      onResolved={onResolved}
+    />);
+
+    await screen.findByText('recovery.state.consistentCanCleanup');
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.cleanup' }));
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.confirmCleanup' }));
+
+    await waitFor(() => expect(useInstallWizardSessionStore.getState().active).toBe(true));
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect((screen.getByRole('button', { name: 'recovery.cleanup' }) as HTMLButtonElement).disabled)
+      .toBe(true);
   });
 
   it('reports an open failure instead of leaving an unhandled rejection', async () => {

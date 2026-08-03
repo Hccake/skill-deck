@@ -9,6 +9,7 @@ import { t } from '@/stores/skills-utils';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import type { AgentId } from '@/bindings';
 import { formatWorkflowError } from './mutation-presentation';
+import { runBusinessWrite } from './install-session-feedback';
 
 export async function executeDuplicateCleanup(agents: AgentId[]): Promise<void> {
   if (isBusinessWriteBlocked() || agents.length === 0) return;
@@ -17,10 +18,12 @@ export async function executeDuplicateCleanup(agents: AgentId[]): Promise<void> 
 
   const context = manageAgentsContext;
   try {
-    const results = await cleanupDuplicateAgentCopies(context, {
+    const outcome = await runBusinessWrite(() => cleanupDuplicateAgentCopies(context, {
       skillName: manageAgentsSkill.name,
       agents,
-    });
+    }));
+    if (outcome.status === 'notRun') return;
+    const results = outcome.value;
     const failures = results.filter((result) => !result.success && !result.skipped);
     if (failures.length > 0) {
       toast.error(appendCrossStorageFailureGuidance(

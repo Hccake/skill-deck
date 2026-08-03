@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   updateSkill: vi.fn(),
   updateSkillsBatch: vi.fn(),
   checkSkillAudit: vi.fn(),
+  getInstallWizardSession: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => api);
@@ -101,7 +102,11 @@ describe('Agent definition workflow ownership', () => {
       },
     });
     useMutationStore.setState({ activeMutation: null });
-    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
+      syncError: null, monitorRetryRevision: 0, snapshotVersion: 0,
+    });
+    api.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
   });
 
   it('invalidates every Agent projection, rejects old in-flight responses, then accepts the returned Settings snapshot', async () => {
@@ -114,7 +119,7 @@ describe('Agent definition workflow ownership', () => {
     oldRuntime.resolve(runtime(hostGlobal, 'registry-1'));
     await staleLoad;
 
-    expect(result.registryRevision).toBe('registry-2');
+    expect(result?.registryRevision).toBe('registry-2');
     expect(useAgentRegistryStore.getState().runtimeByContext).toEqual({});
     expect(useAgentRegistryStore.getState()).not.toHaveProperty('validationByContext');
     expect(useAgentRegistryStore.getState()).not.toHaveProperty('deleteImpactByKey');
@@ -133,5 +138,30 @@ describe('Agent definition workflow ownership', () => {
     await expect(agentDefinitionWorkflow.save(hostGlobal, draft(), null, 'registry-1'))
       .rejects.toEqual(new BusinessWriteBlockedError('installWizardActive'));
     expect(api.saveCustomAgent).not.toHaveBeenCalled();
+  });
+
+  it('returns null without invalidating projections when installation wins admission', async () => {
+    api.saveCustomAgent.mockRejectedValue({
+      kind: 'application',
+      error: { kind: 'installWizardActive' },
+    });
+
+    await expect(agentDefinitionWorkflow.save(hostGlobal, draft(), null, 'registry-1'))
+      .resolves.toBeNull();
+
+    expect(useAgentRegistryStore.getState().runtimeByContext).not.toEqual({});
+    expect(useSkillsDataStore.getState().snapshots).not.toEqual({});
+  });
+
+  it('returns null when installation wins Agent deletion admission', async () => {
+    api.deleteCustomAgent.mockRejectedValue({
+      kind: 'application',
+      error: { kind: 'installWizardActive' },
+    });
+
+    await expect(agentDefinitionWorkflow.delete(hostGlobal, 'custom-agent', 'registry-1'))
+      .resolves.toBeNull();
+
+    expect(useAgentRegistryStore.getState().runtimeByContext).not.toEqual({});
   });
 });

@@ -8,6 +8,7 @@ import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidanc
 import { t, type DeleteTarget } from '@/stores/skills-utils';
 import type { ContextRef, InstalledSkill, RecoveryAction } from '@/bindings';
 import { formatWorkflowError, presentMutationResults } from './mutation-presentation';
+import { runBusinessWrite } from './install-session-feedback';
 
 let removalPreviewGeneration = 0;
 
@@ -81,12 +82,14 @@ export async function executeSkillRemoval(): Promise<SkillRemovalOutcome> {
 
   try {
     const context = deleteTarget.context;
-    const result = await removeSkill({
+    const outcome = await runBusinessWrite(() => removeSkill({
       token: deletePreview.token,
       context,
       skillName: deleteTarget.skill.name,
       intent: { kind: 'fullSkill' },
-    });
+    }));
+    if (outcome.status === 'notRun') return { status: 'notRun' };
+    const result = outcome.value;
     const failed = result.units.filter((unit) => unit.status !== 'succeeded');
     if (failed.length > 0) {
       const recovery = failed.flatMap((unit) => (

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextRef, InstalledSkill, ManageAgentsPreview, RemovePreview } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillRemoval, openSkillRemoval } from '../skill-remove';
 import { executeManageAgentChanges, openManageAgentChanges } from '../skill-manage-agents';
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   syncSkills: vi.fn(),
   refreshContext: vi.fn(),
   deselectSkill: vi.fn(),
+  getInstallWizardSession: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
@@ -28,6 +30,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   previewCopySkillToProjects: (...args: unknown[]) => mocks.previewCopySkillToProjects(...args),
   copySkillToProjects: (...args: unknown[]) => mocks.copySkillToProjects(...args),
   cleanupDuplicateAgentCopies: (...args: unknown[]) => mocks.cleanupDuplicateAgentCopies(...args),
+  getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
 vi.mock('@/stores/skills-data', () => ({
@@ -117,6 +120,11 @@ describe('skill workflows', () => {
     mocks.previewRemove.mockReset();
     mocks.previewManageSkillAgents.mockReset();
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
+      syncError: null, monitorRetryRevision: 0, snapshotVersion: 0,
+    });
+    mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
     useSkillDialogStore.setState({
       deleteTarget: null,
       deletePreview: null,
@@ -163,6 +171,19 @@ describe('skill workflows', () => {
       intent: { kind: 'fullSkill' },
     });
     expect(useSkillDialogStore.getState().deleteTarget).toBeNull();
+  });
+
+  it('returns notRun without local failure feedback when installation wins removal admission', async () => {
+    useSkillDialogStore.setState({
+      deleteTarget: { skill, scope: 'project', projectPath: '/source', context },
+      deletePreview: removePreview,
+    });
+    mocks.removeSkill.mockRejectedValueOnce({ kind: 'installWizardActive' });
+
+    await expect(executeSkillRemoval()).resolves.toEqual({ status: 'notRun' });
+
+    expect(useSkillDialogStore.getState().deleteFeedback).toBeNull();
+    expect(mocks.syncSkills).not.toHaveBeenCalled();
   });
 
   it('does not let a slow removal preview replace a newer dialog target', async () => {
@@ -294,6 +315,20 @@ describe('skill workflows', () => {
       removeEntryIds: ['shared-entry'],
       confirmEntityDirectories: true,
     }));
+  });
+
+  it('returns blocked without local failure handling when installation wins Agent admission', async () => {
+    useSkillDialogStore.setState({
+      manageAgentsSkill: skill,
+      manageAgentsContext: context,
+      manageAgentDetails: managePreview,
+    });
+    mocks.manageSkillAgents.mockRejectedValueOnce({ kind: 'installWizardActive' });
+
+    await expect(executeManageAgentChanges([], ['shared-entry'], 'copy', []))
+      .resolves.toEqual({ status: 'blocked' });
+
+    expect(mocks.syncSkills).not.toHaveBeenCalled();
   });
 
   it('returns a failed outcome and keeps the management dialog open when execution fails', async () => {
@@ -449,6 +484,18 @@ describe('skill workflows', () => {
     }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] });
   });
 
+  it('returns blocked without a copy error when installation wins copy admission', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    mocks.copySkillToProjects.mockRejectedValueOnce({ kind: 'installWizardActive' });
+
+    await expect(executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['host-target'],
+    })).resolves.toEqual({ status: 'blocked' });
+
+    expect(mocks.refreshContext).not.toHaveBeenCalled();
+  });
+
   it('returns source repair guidance without starting copy execution', async () => {
     useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
     mocks.previewCopySkillToProjects.mockResolvedValue({
@@ -564,5 +611,19 @@ describe('skill workflows', () => {
       origin: 'selfMutation',
       mutatedSkillNames: ['toolkit'],
     });
+  });
+
+  it('does not show duplicate-cleanup failure feedback when installation wins admission', async () => {
+    useSkillDialogStore.setState({
+      manageAgentsSkill: skill,
+      manageAgentsContext: context,
+      manageAgentDetails: managePreview,
+    });
+    mocks.cleanupDuplicateAgentCopies.mockRejectedValueOnce({ kind: 'installWizardActive' });
+
+    await executeDuplicateCleanup(['codex']);
+
+    expect(mocks.previewManageSkillAgents).not.toHaveBeenCalled();
+    expect(mocks.syncSkills).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,7 @@ export type WslIntegrationFailure = {
 
 export type WslIntegrationChangeOutcome =
   | { status: 'succeeded' }
+  | { status: 'notRun' }
   | { status: 'failed'; failure: WslIntegrationFailure };
 
 export interface WorkspaceContextState {
@@ -119,7 +120,8 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
         }
 
         try {
-          await useEnvironmentStore.getState().setWslIntegrationEnabled(enabled);
+          const changed = await useEnvironmentStore.getState().setWslIntegrationEnabled(enabled);
+          if (!changed) return { status: 'notRun' };
         } catch (error) {
           const appError = toAppError(error);
           const failure: WslIntegrationFailure = {

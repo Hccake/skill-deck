@@ -425,7 +425,13 @@ export function AgentSettingsPage({
       const currentValidation = await validateDraft(runtimeContext, draft, 'submit');
       if (!currentValidation) return;
       setFieldErrors([]);
-      await agentDefinitionWorkflow.save(context, draft, originalId, data.registryRevision);
+      const result = await agentDefinitionWorkflow.save(
+        context,
+        draft,
+        originalId,
+        data.registryRevision,
+      );
+      if (!result) return;
       clearDraftSession();
       onNavigate?.('list');
       toast.success(t('settings.agents.saved'));
@@ -486,6 +492,7 @@ export function AgentSettingsPage({
         deleteImpact.agentId,
         deleteImpact.registryRevision,
       );
+      if (!result) return;
       setDeleteTarget(null);
       setDeleteImpact(null);
       setDeleteConfirmation('');
@@ -517,6 +524,7 @@ export function AgentSettingsPage({
         invalidRecord.index,
         data.registryRevision,
       );
+      if (!result) return;
       setInvalidRecord(null);
       toast.success(t('settings.agents.deleted'));
       for (const warning of result.warnings) {

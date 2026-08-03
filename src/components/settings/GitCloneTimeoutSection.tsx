@@ -14,6 +14,7 @@ import {
 import { cn } from '@/lib/utils';
 import { getConfig, saveConfig, type SkillDeckConfig } from '@/hooks/useTauriApi';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { runBusinessWrite } from '@/workflows/install-session-feedback';
 
 const DEFAULT_TIMEOUT_SECS = 120;
 const MIN_TIMEOUT_SECS = 30;
@@ -125,7 +126,13 @@ export function GitCloneTimeoutSection() {
         gitCloneTimeoutSecs: normalized,
       };
 
-      await saveConfig(nextConfig);
+      const outcome = await runBusinessWrite(() => saveConfig(nextConfig));
+      if (outcome.status === 'notRun') {
+        if (options?.revertToCurrentOnError) {
+          setSelectedOption(getOptionForTimeout(currentTimeoutSecs));
+        }
+        return;
+      }
       setConfig(nextConfig);
       setCurrentTimeoutSecs(normalized);
       setSelectedOption(options?.selectedOptionOnSuccess ?? getOptionForTimeout(normalized));

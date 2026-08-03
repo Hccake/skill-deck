@@ -3,6 +3,7 @@ import {
   checkApplicationUpdate,
   downloadAndInstallApplicationUpdate,
 } from '@/hooks/useTauriApi';
+import { runBusinessWrite } from '@/workflows/install-session-feedback';
 import { toAppError } from '@/utils/to-app-error';
 import type { AppError, ApplicationUpdateProgress } from '@/bindings';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
@@ -126,7 +127,14 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       }
     };
     try {
-      const result = await downloadAndInstallApplicationUpdate(version, onProgress);
+      const outcome = await runBusinessWrite(() => (
+        downloadAndInstallApplicationUpdate(version, onProgress)
+      ));
+      if (outcome.status === 'notRun') {
+        set({ status: 'available', error: null, failedOperation: null });
+        return;
+      }
+      const result = outcome.value;
       set({
         status: result.installed ? 'ready' : 'error',
         downloadProgress: result.installed ? 100 : get().downloadProgress,

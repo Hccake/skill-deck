@@ -4,6 +4,7 @@ import {
   listEnvironments,
   setWslIntegrationEnabled as setWslIntegrationEnabledApi,
 } from '@/hooks/useTauriApi';
+import { runBusinessWrite } from '@/workflows/install-session-feedback';
 import type {
   AppError,
   EnvironmentDiscoverySnapshot,
@@ -28,7 +29,7 @@ interface EnvironmentState {
   wslCapabilityRevision: number;
   discover: () => Promise<void>;
   retryDiscovery: () => Promise<void>;
-  setWslIntegrationEnabled: (enabled: boolean) => Promise<void>;
+  setWslIntegrationEnabled: (enabled: boolean) => Promise<boolean>;
   connect: (environment: EnvironmentRef) => Promise<void>;
   applyRuntimeEvent: (event: EnvironmentRuntimeEvent) => void;
 }
@@ -205,16 +206,22 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
     const settingSequence = ++wslSettingSequence;
     const request = (async () => {
       try {
-        const snapshot = await setWslIntegrationEnabledApi(enabled);
+        const outcome = await runBusinessWrite(() => setWslIntegrationEnabledApi(enabled));
+        if (outcome.status === 'notRun') return false;
+        const snapshot = outcome.value;
         set((state) => {
           if (sequence !== environmentRequestSequence) return state;
           return authoritativeSnapshotState(snapshot);
         });
+        return true;
       } finally {
         if (settingSequence === wslSettingSequence) wslSettingInFlight = null;
       }
     })();
-    wslSettingInFlight = request;
+    wslSettingInFlight = request.then(
+      () => undefined,
+      () => undefined,
+    );
     return request;
   },
 

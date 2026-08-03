@@ -160,7 +160,7 @@ describe('useWorkspaceContextStore', () => {
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
     });
     const connecting = deferred<void>();
-    const persisting = deferred<void>();
+    const persisting = deferred<boolean>();
     vi.spyOn(useEnvironmentStore.getState(), 'connect').mockReturnValue(connecting.promise);
     const setEnabled = vi.spyOn(useEnvironmentStore.getState(), 'setWslIntegrationEnabled')
       .mockReturnValue(persisting.promise);
@@ -181,7 +181,7 @@ describe('useWorkspaceContextStore', () => {
       transition: { kind: 'wslIntegration', phase: 'disabling' },
     });
 
-    persisting.resolve();
+    persisting.resolve(true);
     await expect(disabling).resolves.toEqual({ status: 'succeeded' });
     expect(useWorkspaceContextStore.getState().transition).toEqual({ kind: 'idle' });
   });
@@ -221,6 +221,19 @@ describe('useWorkspaceContextStore', () => {
       failure: { stage: 'busy', error },
     });
     expect(useWorkspaceContextStore.getState().transition).toEqual({ kind: 'idle' });
+  });
+
+  it('reports that the WSL setting was not changed after installation wins admission', async () => {
+    vi.spyOn(useEnvironmentStore.getState(), 'setWslIntegrationEnabled')
+      .mockResolvedValue(false);
+
+    await expect(useWorkspaceContextStore.getState().changeWslIntegration(true))
+      .resolves.toEqual({ status: 'notRun' });
+
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      transition: { kind: 'idle' },
+      wslIntegrationFailure: null,
+    });
   });
 
   it('returns a structured busy result when another workspace transition owns admission', async () => {

@@ -75,4 +75,14 @@ describe('project removal coordinator', () => {
       contextRevision: 5,
     });
   });
+
+  it('keeps the selected project when removal was not executed', async () => {
+    vi.spyOn(useProjectStore.getState(), 'remove').mockResolvedValue(null);
+
+    await expect(confirmProjectRemoval(captureProjectRemoval(ubuntu, project, 4)))
+      .resolves.toBe(false);
+
+    expect(useWorkspaceContextStore.getState().selectedContext.scope)
+      .toEqual({ scope: 'project', project_id: 'project-a' });
+  });
 });

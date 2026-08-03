@@ -15,6 +15,7 @@ import enLocale from '@/i18n/locales/en.json';
 const mockGetGithubCredentialStatus = vi.fn();
 const mockSaveGithubCredential = vi.fn();
 const mockClearGithubCredential = vi.fn();
+const mockGetInstallWizardSession = vi.fn();
 
 function lookupLocaleKey(key: string): string | undefined {
   let cursor: unknown = enLocale;
@@ -39,6 +40,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   getGithubCredentialStatus: (...args: unknown[]) => mockGetGithubCredentialStatus(...args),
   saveGithubCredential: (...args: unknown[]) => mockSaveGithubCredential(...args),
   clearGithubCredential: (...args: unknown[]) => mockClearGithubCredential(...args),
+  getInstallWizardSession: (...args: unknown[]) => mockGetInstallWizardSession(...args),
   getDefaultTargetAgents: vi.fn(),
   saveDefaultTargetAgents: vi.fn(),
   listAgentSelectionGroups: vi.fn(),
@@ -103,7 +105,16 @@ describe('GithubCredentialSection', () => {
       disconnect() {}
     });
     resetStore();
-    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0,
+      active: false,
+      loading: false,
+      hasConfirmedSnapshot: false,
+      syncError: null,
+      monitorRetryRevision: 0,
+      snapshotVersion: 0,
+    });
+    mockGetInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
     mockGetGithubCredentialStatus.mockResolvedValue(verified);
     mockClearGithubCredential.mockResolvedValue({
       cleared: true,
@@ -232,6 +243,22 @@ describe('GithubCredentialSection', () => {
       'The token change succeeded, but the saved update-check suppression could not be cleared. A later check may remain suppressed.',
     ))
       .toBeTruthy();
+  });
+
+  it('keeps credential errors clear when the install flow wins the save race', async () => {
+    mockSaveGithubCredential.mockRejectedValue({ kind: 'installWizardActive' });
+    renderCredential();
+
+    await screen.findByText(/octocat/);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    fireEvent.change(screen.getByLabelText('GitHub token'), {
+      target: { value: 'secret-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and save' }));
+
+    await waitFor(() => expect(useInstallWizardSessionStore.getState().active).toBe(true));
+    expect(useSettingsStore.getState().githubCredential.error).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Replace GitHub Token' })).toBeTruthy();
   });
 
   it('keeps the unavailable state compact while exposing the environment fallback from title help', async () => {

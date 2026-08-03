@@ -14,6 +14,7 @@ import type {
 import { environmentKey } from '@/lib/context';
 import { toAppError } from '@/utils/to-app-error';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { runBusinessWrite } from '@/workflows/install-session-feedback';
 
 export type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -22,13 +23,13 @@ interface ProjectState {
   loadStateByEnvironment: Record<string, ProjectLoadState>;
   errorsByEnvironment: Record<string, AppError | null>;
   refresh: (environment: EnvironmentRef) => Promise<ProjectInfo[]>;
-  add: (environment: EnvironmentRef, nativePath: string) => Promise<AddProjectResult>;
-  remove: (environment: EnvironmentRef, projectId: string) => Promise<ProjectInfo[]>;
+  add: (environment: EnvironmentRef, nativePath: string) => Promise<AddProjectResult | null>;
+  remove: (environment: EnvironmentRef, projectId: string) => Promise<ProjectInfo[] | null>;
   setCrossStorageWarning: (
     environment: EnvironmentRef,
     projectId: string,
     suppressed: boolean,
-  ) => Promise<ProjectInfo>;
+  ) => Promise<ProjectInfo | null>;
 }
 
 const refreshGenerations = new Map<string, number>();
@@ -108,7 +109,9 @@ export const useProjectStore = create<ProjectState>()((set) => ({
   add: async (environment, nativePath) => {
     requireWriteAvailable();
     const key = environmentKey(environment);
-    const result = await addEnvironmentProject(environment, nativePath);
+    const outcome = await runBusinessWrite(() => addEnvironmentProject(environment, nativePath));
+    if (outcome.status === 'notRun') return null;
+    const result = outcome.value;
     nextRefreshGeneration(key);
     set((state) => ({
       projectsByEnvironment: {
@@ -130,7 +133,9 @@ export const useProjectStore = create<ProjectState>()((set) => ({
   remove: async (environment, projectId) => {
     requireWriteAvailable();
     const key = environmentKey(environment);
-    const projects = await removeEnvironmentProject(environment, projectId);
+    const outcome = await runBusinessWrite(() => removeEnvironmentProject(environment, projectId));
+    if (outcome.status === 'notRun') return null;
+    const projects = outcome.value;
     nextRefreshGeneration(key);
     set((state) => ({
       projectsByEnvironment: {
@@ -152,11 +157,11 @@ export const useProjectStore = create<ProjectState>()((set) => ({
   setCrossStorageWarning: async (environment, projectId, suppressed) => {
     requireWriteAvailable();
     const key = environmentKey(environment);
-    const project = await setEnvironmentProjectCrossStorageWarning(
-      environment,
-      projectId,
-      suppressed,
-    );
+    const outcome = await runBusinessWrite(() => setEnvironmentProjectCrossStorageWarning(
+      environment, projectId, suppressed,
+    ));
+    if (outcome.status === 'notRun') return null;
+    const project = outcome.value;
     nextRefreshGeneration(key);
     set((state) => ({
       projectsByEnvironment: {

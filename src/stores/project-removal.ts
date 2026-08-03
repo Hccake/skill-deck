@@ -29,8 +29,9 @@ export function captureProjectRemoval(
   };
 }
 
-export async function confirmProjectRemoval(request: ProjectRemovalRequest): Promise<void> {
-  await useProjectStore.getState().remove(request.environment, request.projectId);
+export async function confirmProjectRemoval(request: ProjectRemovalRequest): Promise<boolean> {
+  const result = await useProjectStore.getState().remove(request.environment, request.projectId);
+  if (!result) return false;
 
   const workspace = useWorkspaceContextStore.getState();
   const stillSelected = workspace.contextRevision === request.contextRevision
@@ -40,4 +41,5 @@ export async function confirmProjectRemoval(request: ProjectRemovalRequest): Pro
   if (stillSelected) {
     workspace.selectGlobal();
   }
+  return true;
 }

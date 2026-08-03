@@ -5,6 +5,7 @@ import { previewUpdate, updateSkill, updateSkillsBatch } from '@/hooks/useTauriA
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { toAppError } from '@/utils/to-app-error';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { runBusinessWrite } from './install-session-feedback';
 
 export type SkillUpdatePhase =
   | 'closed'
@@ -85,10 +86,17 @@ export const useSkillUpdateWorkflow = create<SkillUpdateWorkflowState>()((set, g
     set({ phase: 'executing', confirming: true });
     try {
       const execution = { request: { context, skillNames }, overwritePrivateEntries: [...conflictDecisions] };
-      const result = batch
-        ? await updateSkillsBatch(execution, preview.token)
-        : await updateSkill(execution, preview.token);
+      const outcome = await runBusinessWrite(() => (
+        batch
+          ? updateSkillsBatch(execution, preview.token)
+          : updateSkill(execution, preview.token)
+      ));
       if (get().generation !== generation) return;
+      if (outcome.status === 'notRun') {
+        set({ phase: 'ready', result: null, executionError: null, confirming: false });
+        return;
+      }
+      const result = outcome.value;
       await useSkillsDataStore.getState().applyUpdateResult(context, result);
       if (get().generation !== generation) return;
       set({ phase: 'result', result, executionError: null, confirming: false });

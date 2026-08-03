@@ -3,6 +3,16 @@ import { repairSkillSource } from '../skill-repair';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useMutationStore } from '@/stores/mutation';
 
+const mocks = vi.hoisted(() => ({ getInstallWizardSession: vi.fn() }));
+
+vi.mock('@/hooks/useTauriApi', () => ({
+  fetchAvailable: vi.fn(),
+  installSkills: vi.fn(),
+  acquireSelectedPayloads: vi.fn(),
+  previewInstall: vi.fn(),
+  getInstallWizardSession: () => mocks.getInstallWizardSession(),
+}));
+
 const context = {
   environment: { kind: 'host' },
   scope: { scope: 'global' },
@@ -45,7 +55,11 @@ function api() {
 describe('repairSkillSource', () => {
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
-    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
+      syncError: null, monitorRetryRevision: 0, snapshotVersion: 0,
+    });
+    mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
   });
 
   it('does not begin source repair while the install wizard is active', async () => {
@@ -81,6 +95,14 @@ describe('repairSkillSource', () => {
       stage: 'execution',
       error: null,
     });
+  });
+
+  it('returns blocked when installation wins repair execution admission', async () => {
+    const workflowApi = api();
+    workflowApi.installSkills.mockRejectedValue({ kind: 'installWizardActive' });
+
+    await expect(repairSkillSource(request(), workflowApi as never))
+      .resolves.toEqual({ status: 'blocked' });
   });
 
   it('preserves a recovery action from the single Skill mutation', async () => {

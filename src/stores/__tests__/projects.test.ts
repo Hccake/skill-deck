@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   addEnvironmentProject: vi.fn(),
   removeEnvironmentProject: vi.fn(),
   setEnvironmentProjectCrossStorageWarning: vi.fn(),
+  getInstallWizardSession: vi.fn(),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   setEnvironmentProjectCrossStorageWarning: (...args: unknown[]) => (
     mocks.setEnvironmentProjectCrossStorageWarning(...args)
   ),
+  getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
@@ -63,7 +65,11 @@ describe('useProjectStore', () => {
       cancelling: false,
       loading: false,
     });
-    useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
+    useInstallWizardSessionStore.setState({
+      revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
+      syncError: null, monitorRetryRevision: 0, snapshotVersion: 0,
+    });
+    mocks.getInstallWizardSession.mockResolvedValue({ revision: 1, active: true });
   });
 
   it('keeps the newest refresh result for one environment', async () => {
@@ -100,7 +106,7 @@ describe('useProjectStore', () => {
     const result = await useProjectStore.getState().add(ubuntu, 'D:\\Code\\app');
 
     expect(mocks.addEnvironmentProject).toHaveBeenCalledWith(ubuntu, 'D:\\Code\\app');
-    expect(result.created).toBe(false);
+    expect(result?.created).toBe(false);
     expect(useProjectStore.getState().projectsByEnvironment['wsl:ubuntu'])
       .toEqual([authoritative]);
   });
@@ -167,5 +173,16 @@ describe('useProjectStore', () => {
     await expect(useProjectStore.getState().add(ubuntu, '/work/app'))
       .rejects.toThrow('Another write operation is already running');
     expect(mocks.addEnvironmentProject).not.toHaveBeenCalled();
+  });
+
+  it('returns null without changing projects when installation wins add admission', async () => {
+    const existing = [project('existing', '/work/existing')];
+    useProjectStore.setState({ projectsByEnvironment: { 'wsl:ubuntu': existing } });
+    mocks.addEnvironmentProject.mockRejectedValue({ kind: 'installWizardActive' });
+
+    await expect(useProjectStore.getState().add(ubuntu, '/work/app')).resolves.toBeNull();
+
+    expect(useProjectStore.getState().projectsByEnvironment['wsl:ubuntu']).toEqual(existing);
+    expect(useProjectStore.getState().errorsByEnvironment['wsl:ubuntu']).toBeUndefined();
   });
 });

@@ -14,6 +14,7 @@ import {
 } from '@/hooks/useTauriApi';
 import type { RecoveryAction, RecoveryResourceStatus } from '@/bindings';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { runBusinessWrite } from '@/workflows/install-session-feedback';
 
 export function RecoveryActions({ recovery, initialStatus, onResolved }: {
   recovery: RecoveryAction;
@@ -55,8 +56,11 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
     if (writeBlocked || !status || status.state !== 'consistentCanCleanup') return;
     setLoading(true);
     try {
-      await confirmRecoveryResourceResolved(recovery.resourceId, status.revision);
+      const outcome = await runBusinessWrite(() => (
+        confirmRecoveryResourceResolved(recovery.resourceId, status.revision)
+      ));
       setConfirmOpen(false);
+      if (outcome.status === 'notRun') return;
       onResolved?.();
     } catch {
       setConfirmOpen(false);

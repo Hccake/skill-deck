@@ -14,6 +14,7 @@ import type {
   MutationUnitResult,
   RecoveryAction,
 } from '@/bindings';
+import { runBusinessWrite } from './install-session-feedback';
 
 export interface SkillCopySelection {
   environment: EnvironmentRef;
@@ -88,11 +89,13 @@ export async function executeSkillCopy({
       return previewOutcome;
     }
     const preview = previewOutcome.preview;
-    const response = await copySkillToProjects({
+    const outcome = await runBusinessWrite(() => copySkillToProjects({
       request,
       token: preview.token,
       payload: preview.payload,
-    });
+    }));
+    if (outcome.status === 'notRun') return { status: 'blocked' };
+    const response = outcome.value;
 
     const succeededProjectIds = response.units
       .filter((unit) => unit.status === 'succeeded')

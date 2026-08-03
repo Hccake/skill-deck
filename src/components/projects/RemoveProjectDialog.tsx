@@ -35,7 +35,8 @@ export function RemoveProjectDialog({ request, onClose, onRemoved }: RemoveProje
     setFailedRequest(null);
     setSubmitting(true);
     try {
-      await confirmProjectRemoval(completedRequest);
+      const removed = await confirmProjectRemoval(completedRequest);
+      if (!removed) return;
       onClose();
       onRemoved?.(completedRequest);
     } catch (error) {

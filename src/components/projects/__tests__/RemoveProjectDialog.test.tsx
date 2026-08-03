@@ -64,8 +64,8 @@ describe('RemoveProjectDialog', () => {
   });
 
   it('closes only after backend removal succeeds', async () => {
-    let finishRemoval: (() => void) | undefined;
-    mocks.confirmProjectRemoval.mockImplementation(() => new Promise<void>((resolve) => {
+    let finishRemoval: ((removed: boolean) => void) | undefined;
+    mocks.confirmProjectRemoval.mockImplementation(() => new Promise<boolean>((resolve) => {
       finishRemoval = resolve;
     }));
     const onClose = vi.fn();
@@ -73,14 +73,14 @@ describe('RemoveProjectDialog', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'context.removeConfirm.confirm' }));
     expect(onClose).not.toHaveBeenCalled();
-    finishRemoval?.();
+    finishRemoval?.(true);
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(mocks.confirmProjectRemoval).toHaveBeenCalledWith(request);
   });
 
   it('shows removal progress and prevents implicit dismissal while the request is pending', async () => {
-    mocks.confirmProjectRemoval.mockImplementation(() => new Promise<void>(() => undefined));
+    mocks.confirmProjectRemoval.mockImplementation(() => new Promise<boolean>(() => undefined));
     const onClose = vi.fn();
     render(<RemoveProjectDialog request={request} onClose={onClose} />);
 
@@ -96,7 +96,7 @@ describe('RemoveProjectDialog', () => {
   it('keeps a failed removal open and retries it in place', async () => {
     mocks.confirmProjectRemoval
       .mockRejectedValueOnce(new Error('remove failed'))
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(true);
     const onClose = vi.fn();
     render(<RemoveProjectDialog request={request} onClose={onClose} />);
 
@@ -112,7 +112,7 @@ describe('RemoveProjectDialog', () => {
   });
 
   it('reports the removed request only after backend removal succeeds', async () => {
-    mocks.confirmProjectRemoval.mockResolvedValue(undefined);
+    mocks.confirmProjectRemoval.mockResolvedValue(true);
     const onRemoved = vi.fn();
     render(<RemoveProjectDialog request={request} onClose={vi.fn()} onRemoved={onRemoved} />);
 
@@ -120,5 +120,17 @@ describe('RemoveProjectDialog', () => {
 
     await waitFor(() => expect(onRemoved).toHaveBeenCalledWith(request));
     expect(mocks.confirmProjectRemoval).toHaveBeenCalledWith(request);
+  });
+
+  it('keeps the dialog open without an error when removal was not executed', async () => {
+    mocks.confirmProjectRemoval.mockResolvedValue(false);
+    const onClose = vi.fn();
+    render(<RemoveProjectDialog request={request} onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'context.removeConfirm.confirm' }));
+
+    await waitFor(() => expect(mocks.confirmProjectRemoval).toHaveBeenCalledWith(request));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
