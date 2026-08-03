@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Header } from '@/components/layout/Header';
-import { InstallWizardReadOnlyBar } from '@/components/layout/InstallWizardReadOnlyBar';
+import { InstallWizardSessionGate } from '@/components/layout/InstallWizardSessionGate';
 import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
 import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
 import { useInstallWizardSessionMonitor } from '@/hooks/useInstallWizardSessionMonitor';
@@ -39,12 +39,13 @@ export default function MainLayout() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <Header />
-      <InstallWizardReadOnlyBar />
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <Suspense fallback={<ContentFallback />}>
-          <Outlet />
-        </Suspense>
-      </main>
+      <InstallWizardSessionGate>
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <Suspense fallback={<ContentFallback />}>
+            <Outlet />
+          </Suspense>
+        </main>
+      </InstallWizardSessionGate>
       <MutationStatusBar />
     </div>
   );

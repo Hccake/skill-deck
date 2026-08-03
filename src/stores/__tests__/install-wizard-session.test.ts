@@ -24,6 +24,7 @@ describe('useInstallWizardSessionStore', () => {
       revision: 0,
       active: false,
       loading: false,
+      hasConfirmedSnapshot: false,
       syncError: null,
       monitorRetryRevision: 0,
     });
@@ -39,8 +40,28 @@ describe('useInstallWizardSessionStore', () => {
       revision: 0,
       active: false,
       loading: false,
+      hasConfirmedSnapshot: true,
       syncError: null,
     });
+  });
+
+  it('keeps the first snapshot confirmed while a background refresh is pending', async () => {
+    let resolveSnapshot: ((value: InstallWizardSessionSnapshot) => void) | undefined;
+    useInstallWizardSessionStore.setState({ hasConfirmedSnapshot: true });
+    mocks.getInstallWizardSession.mockImplementation(() => new Promise((resolve) => {
+      resolveSnapshot = resolve;
+    }));
+
+    const refresh = useInstallWizardSessionStore.getState().refreshSession();
+
+    expect(useInstallWizardSessionStore.getState()).toMatchObject({
+      active: false,
+      loading: true,
+      hasConfirmedSnapshot: true,
+    });
+
+    resolveSnapshot?.(snapshot(0, false));
+    await refresh;
   });
 
   it('starts fail-closed monitoring before the main window renders only', () => {

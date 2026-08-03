@@ -2,7 +2,7 @@
 
 import '@/test-utils';
 import { act, render } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstallWizardSessionSnapshot } from '@/bindings';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useInstallWizardSessionMonitor } from '../useInstallWizardSessionMonitor';
@@ -30,6 +30,14 @@ function snapshot(revision: number, active: boolean): InstallWizardSessionSnapsh
   return { revision, active };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function MonitorHarness() {
   useInstallWizardSessionMonitor();
   return null;
@@ -48,6 +56,10 @@ describe('useInstallWizardSessionMonitor', () => {
       monitorRetryRevision: 0,
       snapshotVersion: 0,
     });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('subscribes before recovery, forwards snapshots, and releases the listener', async () => {
@@ -106,10 +118,69 @@ describe('useInstallWizardSessionMonitor', () => {
     expect(useInstallWizardSessionStore.getState().syncError).toBeNull();
   });
 
-  it('recovers the current session again when the main window regains focus', async () => {
+  it('keeps the monitor error visible while listener recovery is pending', async () => {
+    mocks.listen
+      .mockRejectedValueOnce(new Error('listener unavailable'))
+      .mockReturnValueOnce(new Promise(() => undefined));
+    render(<MonitorHarness />);
+    await vi.waitFor(() => expect(useInstallWizardSessionStore.getState().syncError).toBe('monitor'));
+
+    act(() => useInstallWizardSessionStore.getState().retryMonitoring());
+
+    await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2));
+    expect(useInstallWizardSessionStore.getState().syncError).toBe('monitor');
+  });
+
+  it('rechecks after a recovered listener reuses the pending monitor-failure query', async () => {
+    const pendingSnapshot = deferred<InstallWizardSessionSnapshot>();
+    mocks.listen
+      .mockRejectedValueOnce(new Error('listener unavailable'))
+      .mockResolvedValueOnce(vi.fn());
+    mocks.getInstallWizardSession
+      .mockReturnValueOnce(pendingSnapshot.promise)
+      .mockResolvedValueOnce(snapshot(2, false));
+    render(<MonitorHarness />);
+    await vi.waitFor(() => expect(useInstallWizardSessionStore.getState().syncError).toBe('monitor'));
+
+    act(() => useInstallWizardSessionStore.getState().retryMonitoring());
+    await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2));
+    expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(1);
+
+    pendingSnapshot.resolve(snapshot(1, false));
+
+    await vi.waitFor(() => expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(useInstallWizardSessionStore.getState().syncError).toBeNull());
+  });
+
+  it('does not query again when an inactive session has healthy monitoring', async () => {
     render(<MonitorHarness />);
     await vi.waitFor(() => expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(1));
 
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('blur'));
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('revalidates an active session as soon as the main window gains focus', async () => {
+    render(<MonitorHarness />);
+    await vi.waitFor(() => expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(1));
+
+    act(() => useInstallWizardSessionStore.setState({ active: true }));
+    act(() => window.dispatchEvent(new Event('focus')));
+
+    await vi.waitFor(() => expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(2));
+  });
+
+  it('revalidates a refresh error as soon as the main window gains focus', async () => {
+    render(<MonitorHarness />);
+    await vi.waitFor(() => expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(1));
+
+    act(() => useInstallWizardSessionStore.setState({ syncError: 'refresh' }));
     act(() => window.dispatchEvent(new Event('focus')));
 
     await vi.waitFor(() => expect(mocks.getInstallWizardSession).toHaveBeenCalledTimes(2));

@@ -6,6 +6,7 @@ interface InstallWizardSessionState {
   revision: number;
   active: boolean;
   loading: boolean;
+  hasConfirmedSnapshot: boolean;
   syncError: 'monitor' | 'refresh' | null;
   monitorRetryRevision: number;
   snapshotVersion: number;
@@ -29,6 +30,7 @@ export const useInstallWizardSessionStore = create<InstallWizardSessionState>()(
   revision: 0,
   active: false,
   loading: false,
+  hasConfirmedSnapshot: false,
   syncError: null,
   monitorRetryRevision: 0,
   snapshotVersion: 0,
@@ -38,6 +40,7 @@ export const useInstallWizardSessionStore = create<InstallWizardSessionState>()(
       revision: snapshot.revision > state.revision ? snapshot.revision : state.revision,
       active: snapshot.revision > state.revision ? snapshot.active : state.active,
       loading: false,
+      hasConfirmedSnapshot: true,
       syncError: null,
       snapshotVersion: state.snapshotVersion + 1,
     }));
@@ -65,6 +68,7 @@ export const useInstallWizardSessionStore = create<InstallWizardSessionState>()(
             revision: snapshot.revision > state.revision ? snapshot.revision : state.revision,
             active: snapshot.revision > state.revision ? snapshot.active : state.active,
             loading: false,
+            hasConfirmedSnapshot: true,
             syncError: state.syncError === 'monitor' ? 'monitor' : null,
             snapshotVersion: state.snapshotVersion + 1,
           }));

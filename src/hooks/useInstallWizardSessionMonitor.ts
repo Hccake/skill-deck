@@ -15,7 +15,9 @@ export function useInstallWizardSessionMonitor() {
   const refreshSession = useInstallWizardSessionStore((state) => state.refreshSession);
 
   useEffect(() => {
-    beginMonitoring();
+    if (useInstallWizardSessionStore.getState().syncError !== 'monitor') {
+      beginMonitoring();
+    }
 
     const refresh = () => {
       void refreshSession().catch((error) => {
@@ -29,16 +31,31 @@ export function useInstallWizardSessionMonitor() {
       });
     };
 
+    const refreshAfterConnection = () => {
+      void refreshSession().catch((error) => {
+        console.error('Failed to refresh reconnected install wizard session:', error);
+      }).then(() => {
+        if (useInstallWizardSessionStore.getState().syncError !== 'monitor') return;
+        return refreshSession().catch((error) => {
+          console.error('Failed to confirm reconnected install wizard session:', error);
+        });
+      });
+    };
+
     let disposed = false;
     let unlisten: (() => void) | undefined;
     let listenerState: 'pending' | 'connected' | 'failed' = 'pending';
     let retryRequested = false;
     const recoverOnFocus = () => {
-      if (listenerState === 'connected') {
-        refresh();
-      } else if (listenerState === 'failed' && !retryRequested) {
+      if (listenerState === 'failed' && !retryRequested) {
         retryRequested = true;
         retryMonitoring();
+        return;
+      }
+      if (listenerState !== 'connected') return;
+      const { active, syncError } = useInstallWizardSessionStore.getState();
+      if (active || syncError === 'refresh') {
+        refresh();
       }
     };
     window.addEventListener('focus', recoverOnFocus);
@@ -50,7 +67,7 @@ export function useInstallWizardSessionMonitor() {
       } else {
         listenerState = 'connected';
         unlisten = stopListening;
-        refresh();
+        refreshAfterConnection();
       }
     }).catch((error) => {
       console.error('Failed to monitor install wizard session:', error);

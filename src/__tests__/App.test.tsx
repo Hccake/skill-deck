@@ -4,6 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
+import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
 const mocks = vi.hoisted(() => ({
   refreshWorkspace: vi.fn(),
@@ -55,7 +56,7 @@ vi.mock('@/hooks/useEnvironmentRuntimeMonitor', () => ({
 vi.mock('@/hooks/useInstallWizardSessionMonitor', () => ({
   useInstallWizardSessionMonitor: mocks.monitorInstallWizardSession,
 }));
-vi.mock('@/pages/SkillsPage', () => ({ SkillsPage: () => null }));
+vi.mock('@/pages/SkillsPage', () => ({ SkillsPage: () => <div>skills-page</div> }));
 vi.mock('@/pages/DiscoverPage', () => ({ DiscoverPage: () => null }));
 vi.mock('@/pages/SettingsPage', () => ({ SettingsPage: () => null }));
 vi.mock('@/pages/WizardPage', () => ({ WizardPage: () => null }));
@@ -96,6 +97,13 @@ describe('App', () => {
     mocks.shouldAutoCheck.mockReset();
     mocks.shouldAutoCheck.mockReturnValue(false);
     mocks.wizardResultHandler = null;
+    useInstallWizardSessionStore.setState({
+      revision: 0,
+      active: false,
+      loading: false,
+      hasConfirmedSnapshot: true,
+      syncError: null,
+    });
     window.history.replaceState({}, '', '/');
   });
 
@@ -131,6 +139,38 @@ describe('App', () => {
 
     expect(await screen.findByText('mutation-status-bar', {}, { timeout: 5000 })).toBeDefined();
     expect(mocks.monitorInstallWizardSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps route content behind the initial install wizard session check', async () => {
+    useInstallWizardSessionStore.setState({ loading: true, hasConfirmedSnapshot: false });
+
+    render(<App />);
+
+    const startupRegion = await screen.findByRole('main');
+    expect(startupRegion.className).toContain('flex-1');
+    expect(startupRegion.className).toContain('overflow-hidden');
+    await waitFor(() => expect(screen.queryByText('common.loading')).toBeNull());
+    expect(screen.queryByText('skills-page')).toBeNull();
+
+    act(() => useInstallWizardSessionStore.setState({
+      loading: false,
+      hasConfirmedSnapshot: true,
+    }));
+    expect(await screen.findByText('skills-page')).toBeDefined();
+    const contentRegion = screen.getByRole('main');
+    expect(contentRegion.className).toContain('flex-1');
+    expect(contentRegion.className).toContain('overflow-hidden');
+  });
+
+  it('keeps the same content region while an inactive session refreshes', async () => {
+    render(<App />);
+    expect(await screen.findByText('skills-page')).toBeDefined();
+    const contentRegion = screen.getByRole('main');
+
+    act(() => useInstallWizardSessionStore.setState({ loading: true }));
+
+    expect(screen.getByRole('main')).toBe(contentRegion);
+    expect(screen.queryByText('installWizardSession.startupDescription')).toBeNull();
   });
 
   it('mounts lifecycle error toasts in the wizard window', () => {

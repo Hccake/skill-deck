@@ -18,15 +18,14 @@
     "settings": "设置"
   },
   "installWizardSession": {
-    "checkingTitle": "正在确认安装向导状态",
-    "checkingDescription": "确认当前向导状态前，主窗口暂时保持只读。",
-    "readOnlyTitle": "安装向导正在进行",
-    "readOnlyDescription": "向导打开期间，主窗口仅供浏览。你仍可切换 Environment 和 Context。",
-    "returnToWizard": "返回安装向导",
-    "focusFailed": "无法返回安装向导，请重试。",
-    "syncFailedTitle": "暂时无法确认安装向导状态",
-    "syncFailedDescription": "为避免同时修改业务数据，主窗口暂时保持只读。请重新连接后再试。",
-    "retryMonitoring": "重试"
+    "startupDescription": "正在准备…",
+    "writeUnavailable": "修改操作暂不可用",
+    "writeUnavailableDescription": "安装流程已在另一窗口打开。完成或关闭后即可恢复，点击可继续处理。",
+    "operationNotRun": "当前操作未执行。请先完成或关闭另一窗口中的安装流程。",
+    "continueOperation": "继续处理",
+    "focusFailed": "无法打开安装窗口，请重试。",
+    "syncFailedTitle": "状态检查失败",
+    "syncFailedDescription": "暂时无法确认修改操作是否可用，点击可重新检查。"
   },
   "recovery": {
     "title": "本次操作未完成",

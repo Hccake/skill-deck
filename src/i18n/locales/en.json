@@ -18,15 +18,14 @@
     "settings": "Settings"
   },
   "installWizardSession": {
-    "checkingTitle": "Checking installation wizard status",
-    "checkingDescription": "The main window stays read-only until the current wizard status is confirmed.",
-    "readOnlyTitle": "Installation wizard in progress",
-    "readOnlyDescription": "The main window is read-only while the wizard is open. You can still browse and switch Environment or Context.",
-    "returnToWizard": "Return to wizard",
-    "focusFailed": "The installation wizard could not be focused. Try again.",
-    "syncFailedTitle": "Installation wizard status unavailable",
-    "syncFailedDescription": "The main window stays read-only to prevent simultaneous changes. Reconnect and try again.",
-    "retryMonitoring": "Retry"
+    "startupDescription": "Preparing…",
+    "writeUnavailable": "Changes temporarily unavailable",
+    "writeUnavailableDescription": "An installation flow is open in another window. Finish or close it to resume changes, or click to continue there.",
+    "operationNotRun": "This action was not completed. Finish or close the installation flow in the other window first.",
+    "continueOperation": "Continue",
+    "focusFailed": "The installation window could not be opened. Try again.",
+    "syncFailedTitle": "Status check failed",
+    "syncFailedDescription": "Skill Deck cannot confirm whether changes are available. Click to check again."
   },
   "recovery": {
     "title": "Recovery required",
