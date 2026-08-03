@@ -340,28 +340,10 @@ impl WslRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) async fn connect_using<C, CFut>(
-        &self,
-        distro_name: &str,
-        connector: C,
-    ) -> Result<WslSession, AppError>
-    where
-        C: FnMut(String) -> CFut,
-        CFut: Future<Output = Result<WslSession, AppError>>,
-    {
-        self.connect_with(distro_name, connector).await
-    }
-
-    pub fn insert(&self, mut session: WslSession) {
+    pub(crate) fn insert(&self, mut session: WslSession) {
         if let Ok(permit) = self.acquire_wsl_access(&session.distro_name) {
             let _ = self.insert_with_permit(&mut session, &permit);
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn insert_if_enabled(&self, session: &mut WslSession) -> Result<(), AppError> {
-        let permit = self.acquire_wsl_access(&session.distro_name)?;
-        self.insert_with_permit(session, &permit)
     }
 
     fn insert_with_permit(
