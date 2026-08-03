@@ -7,6 +7,10 @@ import { defineConfig } from "vite"
 export default defineConfig({
   server: {
     port: 15673,
+    strictPort: true,
+    watch: {
+      ignored: ["**/src-tauri/**"],
+    },
   },
   plugins: [react(), tailwindcss()],
   resolve: {
