@@ -3,12 +3,10 @@ use specta::Type;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_specta::Event;
 
+use crate::commands::window_role::{INSTALL_WIZARD_LABEL, MAIN_WINDOW_LABEL};
 use crate::core::mutation::{BackendActivitySnapshot, TerminationAdmission};
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
-
-const MAIN_WINDOW_LABEL: &str = "main";
-const INSTALL_WIZARD_LABEL: &str = "install-wizard";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

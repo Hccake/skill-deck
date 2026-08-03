@@ -50,6 +50,16 @@ describe('parseInstallError', () => {
       undefined,
     ],
     [
+      { kind: 'installWizardActive' },
+      'addSkill.error.installWizardActive',
+      undefined,
+    ],
+    [
+      { kind: 'installWizardSessionUnavailable' } as unknown as AppError,
+      'addSkill.error.installWizardSessionUnavailable',
+      undefined,
+    ],
+    [
       { kind: 'mutationCancelled' },
       'addSkill.error.mutationCancelled',
       undefined,

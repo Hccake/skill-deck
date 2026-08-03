@@ -147,6 +147,12 @@ pub enum AppError {
     #[error("Another Skill operation is already running")]
     MutationBusy,
 
+    #[error("The install wizard is active")]
+    InstallWizardActive,
+
+    #[error("The install wizard session is unavailable")]
+    InstallWizardSessionUnavailable,
+
     #[error("The application is terminating")]
     ApplicationTerminating,
 

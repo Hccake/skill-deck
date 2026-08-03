@@ -527,7 +527,7 @@
       "wslDescription": "发现已安装的 WSL 发行版，并允许在 Windows 与 WSL 之间切换。",
       "wslSaving": "正在更新 WSL 集成",
       "wslSaveError": "无法更新 WSL 集成设置，请重试。",
-      "wslBusyMutation": "另一个 Skill 操作正在进行，请等待操作完成后重试。",
+      "wslBusyMutation": "另一项修改操作正在进行，请等待完成后重试。",
       "wslBusyLifecycle": "应用正在执行更新或维护，请稍后重试。",
       "wslBusyInstallWizard": "安装向导正在使用当前环境，请先完成或关闭向导。",
       "wslBusyOperation": "WSL 操作尚未结束，请稍后重试。",
@@ -978,7 +978,10 @@
       "projectMigration": "迁移项目配置",
       "addProject": "添加项目",
       "removeProject": "移除项目",
-      "updateProjectPreference": "更新项目设置"
+      "updateProjectPreference": "更新项目设置",
+      "updateSettings": "保存设置",
+      "manageGithubCredential": "更新 GitHub 凭据",
+      "resolveRecovery": "清理恢复数据"
     },
     "phase": {
       "preparing": "准备中",
@@ -1300,7 +1303,9 @@
       "invalidSource": "无效的来源格式: {{value}}",
       "pathNotFound": "路径未找到: {{path}}",
       "installFailed": "安装失败",
-      "mutationBusy": "另一个 Skill 操作正在进行中",
+      "mutationBusy": "另一项修改操作正在进行中",
+      "installWizardActive": "安装向导正在进行中，请返回向导完成或关闭当前流程后再执行其他操作。",
+      "installWizardSessionUnavailable": "当前安装流程状态已失效，请关闭此窗口后重新开始。",
       "applicationTerminating": "应用正在退出，无法开始新的操作",
       "mutationCancelled": "Skill 操作已取消",
       "environmentDiscoveryFailed": "无法发现 WSL 环境",

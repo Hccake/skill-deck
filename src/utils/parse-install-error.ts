@@ -144,6 +144,16 @@ export function parseInstallError(
         ],
       };
 
+    case 'installWizardActive':
+      return {
+        message: t('addSkill.error.installWizardActive'),
+      };
+
+    case 'installWizardSessionUnavailable':
+      return {
+        message: t('addSkill.error.installWizardSessionUnavailable'),
+      };
+
     case 'applicationTerminating':
       return {
         message: t('addSkill.error.applicationTerminating'),

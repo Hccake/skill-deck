@@ -27,6 +27,14 @@ describe('formatAppError', () => {
 
   it.each<[AppError, string]>([
     [{ kind: 'applicationTerminating' }, 'addSkill.error.applicationTerminating'],
+    [
+      { kind: 'installWizardActive' } as AppError,
+      'addSkill.error.installWizardActive',
+    ],
+    [
+      { kind: 'installWizardSessionUnavailable' } as unknown as AppError,
+      'addSkill.error.installWizardSessionUnavailable',
+    ],
     [{ kind: 'wslIntegrationBusy', data: { reason: 'mutation' } }, 'settings.general.wslBusyMutation'],
     [{ kind: 'wslIntegrationBusy', data: { reason: 'lifecycle' } }, 'settings.general.wslBusyLifecycle'],
     [

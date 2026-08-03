@@ -18,6 +18,7 @@ pub mod skills;
 pub mod source_acquisition;
 pub mod update;
 pub mod updater;
+mod window_role;
 pub mod wizard;
 
 pub use agents::ManagedAgentRegistry;

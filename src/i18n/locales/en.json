@@ -527,7 +527,7 @@
       "wslDescription": "Discover installed WSL distributions and allow switching between Windows and WSL.",
       "wslSaving": "Updating WSL integration",
       "wslSaveError": "WSL integration could not be updated. Try again.",
-      "wslBusyMutation": "Another Skill operation is running. Try again after it finishes.",
+      "wslBusyMutation": "Another change is in progress. Try again after it finishes.",
       "wslBusyLifecycle": "The app is updating or performing maintenance. Try again shortly.",
       "wslBusyInstallWizard": "The install wizard is using the current environment. Finish or close it first.",
       "wslBusyOperation": "A WSL operation is still running. Try again shortly.",
@@ -978,7 +978,10 @@
       "projectMigration": "Migrating projects",
       "addProject": "Adding project",
       "removeProject": "Removing project",
-      "updateProjectPreference": "Updating project"
+      "updateProjectPreference": "Updating project",
+      "updateSettings": "Saving settings",
+      "manageGithubCredential": "Updating GitHub credentials",
+      "resolveRecovery": "Cleaning recovery data"
     },
     "phase": {
       "preparing": "Preparing",
@@ -1300,7 +1303,9 @@
       "invalidSource": "Invalid source format: {{value}}",
       "pathNotFound": "Path not found: {{path}}",
       "installFailed": "Installation failed",
-      "mutationBusy": "Another skill operation is already in progress",
+      "mutationBusy": "Another change is already in progress",
+      "installWizardActive": "The install wizard is in progress. Return to the wizard to finish or close it before starting another operation.",
+      "installWizardSessionUnavailable": "This installation session is no longer available. Close this window and start again.",
       "applicationTerminating": "The app is exiting and cannot start another operation",
       "mutationCancelled": "The skill operation was cancelled",
       "environmentDiscoveryFailed": "WSL environments could not be discovered",

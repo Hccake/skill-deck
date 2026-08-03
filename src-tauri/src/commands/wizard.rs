@@ -5,10 +5,9 @@ use crate::application::install_wizard_session::InstallWizardSessionSnapshot;
 use crate::application::install_wizard_workflow::{
     InstallWizardWindowAdapter, InstallWizardWindowRequest,
 };
+use crate::commands::window_role::INSTALL_WIZARD_LABEL;
 use crate::environment::types::{ContextRef, ContextScope};
 use crate::runtime::RuntimeServiceGraph;
-
-pub const INSTALL_WIZARD_LABEL: &str = "install-wizard";
 
 const INSTALL_WIZARD_WIDTH: f64 = 680.0;
 const INSTALL_WIZARD_HEIGHT: f64 = 560.0;

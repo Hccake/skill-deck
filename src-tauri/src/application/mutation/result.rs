@@ -293,6 +293,8 @@ impl ErrorReport {
                 Self::with_details(OperationErrorCode::ExecutionFailed, false, path)
             }
             AppError::MutationBusy
+            | AppError::InstallWizardActive
+            | AppError::InstallWizardSessionUnavailable
             | AppError::ApplicationTerminating
             | AppError::WslIntegrationBusy { .. } => {
                 Self::new(OperationErrorCode::ExecutionFailed).with_retryable(true)

@@ -27,6 +27,9 @@ pub enum MutationKind {
     AddProject,
     RemoveProject,
     UpdateProjectPreference,
+    UpdateSettings,
+    ManageGithubCredential,
+    ResolveRecovery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]

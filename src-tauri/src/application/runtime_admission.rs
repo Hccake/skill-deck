@@ -22,7 +22,8 @@ pub enum AdmissionDenied {
 #[derive(Clone, Copy)]
 enum AdmissionIntent {
     Mutation,
-    Lifecycle,
+    InstallWizardMutation,
+    Lifecycle(LifecycleLeaseKind),
     InstallWizard,
     WslSettingChange,
     ExclusiveAction,
@@ -32,6 +33,7 @@ impl AdmissionDenied {
     pub(crate) fn into_legacy_error(self) -> AppError {
         match self {
             Self::ApplicationTerminating => AppError::ApplicationTerminating,
+            Self::InstallWizard => AppError::InstallWizardActive,
             _ => AppError::MutationBusy,
         }
     }
@@ -66,10 +68,17 @@ impl fmt::Debug for WizardAdmission {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MutationOwner {
+    Standalone,
+    InstallWizard { instance_id: String },
+}
+
 struct MutationState {
     token: u64,
     active: ActiveMutation,
     cancellation: CancellationSignal,
+    owner: MutationOwner,
 }
 
 struct LifecycleState {
@@ -130,9 +139,39 @@ impl RuntimeAdmissionCoordinator {
         kind: MutationKind,
         context: ContextRef,
     ) -> Result<MutationPermit, AppError> {
-        let mut state = self.lock_state();
+        let state = self.lock_state();
         self.denial_for(&state, AdmissionIntent::Mutation)
             .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
+        Ok(self.register_mutation(state, kind, context, MutationOwner::Standalone))
+    }
+
+    pub fn begin_install_from_active_wizard(
+        &self,
+        context: ContextRef,
+    ) -> Result<MutationPermit, AppError> {
+        let state = self.lock_state();
+        if let Some(denied) = self.denial_for(&state, AdmissionIntent::InstallWizardMutation) {
+            return Err(match denied {
+                AdmissionDenied::InstallWizard => AppError::InstallWizardSessionUnavailable,
+                other => other.into_legacy_error(),
+            });
+        }
+        let WizardState::Active { instance_id } = &state.wizard else {
+            unreachable!("wizard mutation admission requires an active session");
+        };
+        let owner = MutationOwner::InstallWizard {
+            instance_id: instance_id.clone(),
+        };
+        Ok(self.register_mutation(state, MutationKind::Install, context, owner))
+    }
+
+    fn register_mutation(
+        &self,
+        mut state: std::sync::MutexGuard<'_, AdmissionState>,
+        kind: MutationKind,
+        context: ContextRef,
+        owner: MutationOwner,
+    ) -> MutationPermit {
         let token = next_token(&mut state);
         let cancellation = CancellationSignal::default();
         state.revision = next_revision(state.revision);
@@ -147,20 +186,22 @@ impl RuntimeAdmissionCoordinator {
                 cancelable: false,
             },
             cancellation: cancellation.clone(),
+            owner: owner.clone(),
         });
         let snapshot = mutation_snapshot_from_state(&state);
         drop(state);
         self.publish_mutation(snapshot);
-        Ok(MutationPermit {
+        MutationPermit {
             inner: Arc::clone(&self.inner),
             token,
             cancellation,
-        })
+            owner,
+        }
     }
 
     pub fn begin_lifecycle(&self, kind: LifecycleLeaseKind) -> Result<LifecyclePermit, AppError> {
         let mut state = self.lock_state();
-        self.denial_for(&state, AdmissionIntent::Lifecycle)
+        self.denial_for(&state, AdmissionIntent::Lifecycle(kind))
             .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
         let token = next_token(&mut state);
         state.revision = next_revision(state.revision);
@@ -401,7 +442,35 @@ impl RuntimeAdmissionCoordinator {
             return Some(AdmissionDenied::ApplicationTerminating);
         }
         match intent {
-            AdmissionIntent::Mutation | AdmissionIntent::Lifecycle => {
+            AdmissionIntent::Mutation
+            | AdmissionIntent::Lifecycle(LifecycleLeaseKind::ApplicationUpdate)
+            | AdmissionIntent::WslSettingChange => {
+                if state.mutation.is_some() {
+                    Some(AdmissionDenied::Mutation)
+                } else if !matches!(state.wizard, WizardState::Idle) {
+                    Some(AdmissionDenied::InstallWizard)
+                } else if state.lifecycle.is_some() || state.exclusive_token.is_some() {
+                    Some(AdmissionDenied::Lifecycle)
+                } else if state.setting_token.is_some() {
+                    Some(AdmissionDenied::WslSettingChange)
+                } else {
+                    None
+                }
+            }
+            AdmissionIntent::InstallWizardMutation => {
+                if !matches!(state.wizard, WizardState::Active { .. }) {
+                    Some(AdmissionDenied::InstallWizard)
+                } else if state.mutation.is_some() {
+                    Some(AdmissionDenied::Mutation)
+                } else if state.lifecycle.is_some() || state.exclusive_token.is_some() {
+                    Some(AdmissionDenied::Lifecycle)
+                } else if state.setting_token.is_some() {
+                    Some(AdmissionDenied::WslSettingChange)
+                } else {
+                    None
+                }
+            }
+            AdmissionIntent::Lifecycle(LifecycleLeaseKind::RuntimeMaintenance) => {
                 if state.mutation.is_some() {
                     Some(AdmissionDenied::Mutation)
                 } else if state.lifecycle.is_some() || state.exclusive_token.is_some() {
@@ -413,23 +482,16 @@ impl RuntimeAdmissionCoordinator {
                 }
             }
             AdmissionIntent::InstallWizard => {
-                if state.setting_token.is_some() {
+                if state.mutation.is_some() {
+                    Some(AdmissionDenied::Mutation)
+                } else if state.lifecycle.as_ref().is_some_and(|lifecycle| {
+                    lifecycle.active.kind == LifecycleLeaseKind::ApplicationUpdate
+                }) {
+                    Some(AdmissionDenied::Lifecycle)
+                } else if state.setting_token.is_some() {
                     Some(AdmissionDenied::WslSettingChange)
                 } else if state.exclusive_token.is_some() {
                     Some(AdmissionDenied::Lifecycle)
-                } else {
-                    None
-                }
-            }
-            AdmissionIntent::WslSettingChange => {
-                if state.mutation.is_some() {
-                    Some(AdmissionDenied::Mutation)
-                } else if state.lifecycle.is_some() || state.exclusive_token.is_some() {
-                    Some(AdmissionDenied::Lifecycle)
-                } else if !matches!(state.wizard, WizardState::Idle) {
-                    Some(AdmissionDenied::InstallWizard)
-                } else if state.setting_token.is_some() {
-                    Some(AdmissionDenied::WslSettingChange)
                 } else {
                     None
                 }
@@ -529,12 +591,14 @@ pub struct MutationPermit {
     inner: Arc<AdmissionInner>,
     token: u64,
     cancellation: CancellationSignal,
+    owner: MutationOwner,
 }
 
 impl fmt::Debug for MutationPermit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MutationPermit")
+            .field("owner", &self.owner)
             .finish_non_exhaustive()
     }
 }
@@ -579,13 +643,14 @@ impl Drop for MutationPermit {
             inner: Arc::clone(&self.inner),
         };
         let mut state = coordinator.lock_state();
-        if state
+        let Some(mutation) = state
             .mutation
             .as_ref()
-            .is_none_or(|mutation| mutation.token != self.token)
-        {
+            .filter(|mutation| mutation.token == self.token)
+        else {
             return;
-        }
+        };
+        debug_assert_eq!(mutation.owner, self.owner);
         state.mutation = None;
         state.revision = next_revision(state.revision);
         let snapshot = mutation_snapshot_from_state(&state);
@@ -763,6 +828,153 @@ mod tests {
         );
         drop(reservation);
         assert!(admission.begin_wsl_integration_change().is_ok());
+    }
+
+    #[test]
+    fn active_wizard_can_start_its_own_install() {
+        let admission = RuntimeAdmissionCoordinator::default();
+        let WizardAdmission::Reserved(reservation) = admission
+            .admit_install_wizard(WizardWindowPresence::Absent)
+            .expect("wizard reservation admitted")
+        else {
+            panic!("expected reservation");
+        };
+        reservation.activate("wizard-1".to_string());
+
+        let install = admission
+            .begin_install_from_active_wizard(host_global())
+            .expect("wizard install admitted");
+
+        assert_eq!(
+            admission.active().map(|mutation| mutation.kind),
+            Some(MutationKind::Install)
+        );
+        assert!(admission.install_wizard_snapshot().active);
+
+        assert_eq!(
+            admission
+                .begin_install_from_active_wizard(host_global())
+                .unwrap_err(),
+            AppError::MutationBusy
+        );
+        drop(install);
+
+        let retry = admission
+            .begin_install_from_active_wizard(host_global())
+            .expect("wizard install retry admitted");
+        drop(retry);
+    }
+
+    #[test]
+    fn wizard_install_requires_an_active_session() {
+        let admission = RuntimeAdmissionCoordinator::default();
+
+        assert_eq!(
+            admission
+                .begin_install_from_active_wizard(host_global())
+                .unwrap_err(),
+            AppError::InstallWizardSessionUnavailable
+        );
+
+        let external_mutation = admission
+            .begin_mutation(MutationKind::Remove, host_global())
+            .expect("external mutation admitted");
+        assert_eq!(
+            admission
+                .begin_install_from_active_wizard(host_global())
+                .unwrap_err(),
+            AppError::InstallWizardSessionUnavailable
+        );
+        drop(external_mutation);
+
+        let WizardAdmission::Reserved(_reservation) = admission
+            .admit_install_wizard(WizardWindowPresence::Absent)
+            .expect("wizard reservation admitted")
+        else {
+            panic!("expected reservation");
+        };
+        assert_eq!(
+            admission
+                .begin_install_from_active_wizard(host_global())
+                .unwrap_err(),
+            AppError::InstallWizardSessionUnavailable
+        );
+    }
+
+    #[test]
+    fn wizard_session_blocks_external_business_mutations_and_application_updates() {
+        let admission = RuntimeAdmissionCoordinator::default();
+        let WizardAdmission::Reserved(reservation) = admission
+            .admit_install_wizard(WizardWindowPresence::Absent)
+            .expect("wizard reservation admitted")
+        else {
+            panic!("expected reservation");
+        };
+
+        assert_eq!(
+            admission
+                .begin_mutation(MutationKind::Install, host_global())
+                .unwrap_err(),
+            AppError::InstallWizardActive
+        );
+        assert_eq!(
+            admission
+                .begin_lifecycle(LifecycleLeaseKind::ApplicationUpdate)
+                .unwrap_err(),
+            AppError::InstallWizardActive
+        );
+
+        reservation.activate("wizard-1".to_string());
+        assert_eq!(
+            admission
+                .begin_mutation(MutationKind::Remove, host_global())
+                .unwrap_err(),
+            AppError::InstallWizardActive
+        );
+        let maintenance = admission
+            .begin_lifecycle(LifecycleLeaseKind::RuntimeMaintenance)
+            .expect("runtime maintenance admitted");
+        assert_eq!(
+            admission
+                .begin_mutation(MutationKind::Remove, host_global())
+                .unwrap_err(),
+            AppError::InstallWizardActive
+        );
+        drop(maintenance);
+    }
+
+    #[test]
+    fn active_business_work_blocks_a_new_wizard_session() {
+        let admission = RuntimeAdmissionCoordinator::default();
+        let mutation = admission
+            .begin_mutation(MutationKind::Install, host_global())
+            .expect("mutation admitted");
+        assert_eq!(
+            admission
+                .admit_install_wizard(WizardWindowPresence::Absent)
+                .unwrap_err(),
+            AdmissionDenied::Mutation
+        );
+        drop(mutation);
+
+        let lifecycle = admission
+            .begin_lifecycle(LifecycleLeaseKind::ApplicationUpdate)
+            .expect("lifecycle admitted");
+        assert_eq!(
+            admission
+                .admit_install_wizard(WizardWindowPresence::Absent)
+                .unwrap_err(),
+            AdmissionDenied::Lifecycle
+        );
+        drop(lifecycle);
+
+        let maintenance = admission
+            .begin_lifecycle(LifecycleLeaseKind::RuntimeMaintenance)
+            .expect("runtime maintenance admitted");
+        assert!(admission
+            .admit_install_wizard(WizardWindowPresence::Absent)
+            .is_ok());
+        drop(maintenance);
     }
 
     #[test]
