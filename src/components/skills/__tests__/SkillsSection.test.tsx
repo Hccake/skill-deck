@@ -2,11 +2,16 @@
 
 import '@/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render as testingRender, screen, waitFor } from '@testing-library/react';
 import { SkillsSection } from '../SkillsSection';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import type { InstalledSkill } from '@/bindings';
 import type { SkillListItem } from '@/stores/skills-utils';
 import { useMutationStore } from '@/stores/mutation';
+
+const render = (ui: Parameters<typeof testingRender>[0]) => (
+  testingRender(ui, { wrapper: TooltipProvider })
+);
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -106,7 +111,8 @@ describe('SkillsSection', () => {
     expect(screen.queryByText('skills.upToDate')).toBeNull();
   });
 
-  it('keeps the last committed summary visible while Automatic is pending', () => {
+  it('keeps the last committed summary visible while Automatic is pending', async () => {
+    vi.useFakeTimers();
     render(
       <SkillsSection
         title="Global"
@@ -124,6 +130,12 @@ describe('SkillsSection', () => {
 
     expect(screen.getByText('skills.upToDate')).toBeTruthy();
     expect(screen.queryByText('skills.checking')).toBeNull();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+    expect(screen.getByText('skills.upToDate')).toBeTruthy();
+    expect(screen.getByTestId('update-summary-prefix').querySelector('.animate-spin')).toBeTruthy();
+    expect(screen.getByText('skills.checking').className).toContain('sr-only');
   });
 
   it('keeps the committed summary and adds a warning after a failed refresh', () => {
@@ -165,15 +177,22 @@ describe('SkillsSection', () => {
 
     expect(screen.getByText('skills.upToDate')).toBeTruthy();
     expect(screen.queryByText('skills.updateCheckIncompleteCount')).toBeNull();
-    expect(screen.getByLabelText('skills.updateStatusLabel.checkIncomplete')).toBeTruthy();
+    const warning = screen.getByLabelText('skills.updateStatusLabel.checkIncomplete');
+    expect(warning).toBeTruthy();
+    expect(warning.closest('[data-testid="update-summary-slot"]')).toBeTruthy();
+    expect(screen.queryByTestId('update-check-progress-slot')).toBeNull();
   });
 
-  it('shows the Automatic spinner only after 200ms without inserting checking copy', async () => {
+  it('shows a labelled Automatic status inside the summary only after 200ms', async () => {
     vi.useFakeTimers();
     render(
       <SkillsSection
         title="Global"
-        skills={[makeSkill('global')]}
+        skills={[makeSkill('global', {
+          hasUpdate: false,
+          updateStatus: null,
+          updateReason: null,
+        })]}
         scope="global"
         updatingSkills={new Map()}
         isAutomaticCheckingUpdates
@@ -184,12 +203,16 @@ describe('SkillsSection', () => {
       />
     );
 
-    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeNull();
+    expect(screen.queryByTestId('update-summary-prefix')).toBeNull();
     expect(screen.queryByText('skills.checking')).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(199); });
-    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeNull();
+    expect(screen.queryByTestId('update-summary-prefix')).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeTruthy();
+    const prefix = screen.getByTestId('update-summary-prefix');
+    expect(prefix.querySelector('.animate-spin')).toBeTruthy();
+    expect(prefix.closest('[data-testid="update-summary-slot"]')).toBeTruthy();
+    expect(screen.getByText('skills.checking')).toBeTruthy();
+    expect(screen.queryByTestId('update-check-progress-slot')).toBeNull();
     vi.useRealTimers();
   });
 
@@ -212,7 +235,8 @@ describe('SkillsSection', () => {
     rerender(<SkillsSection {...props} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
 
-    expect(screen.getByTestId('update-check-progress-slot').querySelector('.animate-spin')).toBeNull();
+    expect(screen.getByTestId('update-summary-prefix').querySelector('.animate-spin')).toBeNull();
+    expect(screen.queryByText('skills.checking')).toBeNull();
     vi.useRealTimers();
   });
 
@@ -340,8 +364,24 @@ describe('SkillsSection', () => {
 
     expect(screen.getByText('skills.updateCheckIncompleteCount')).toBeTruthy();
     expect(screen.getByText('skills.uncheckableUpdateCount')).toBeTruthy();
-    expect(screen.getByTestId('update-summary-slot').className).toContain('h-10');
-    expect(screen.getByTestId('update-summary-slot').className).toContain('w-72');
+
+    const summary = screen.getByTestId('update-summary-slot');
+    const identity = summary.parentElement;
+    const header = identity?.parentElement;
+    const actions = screen.getByTestId('skills-section-actions');
+
+    expect(header?.className).toContain('flex-row');
+    expect(header?.className).not.toContain('flex-col');
+    expect(identity?.className).toContain('min-w-0');
+    expect(identity?.className).not.toContain('flex-wrap');
+    expect(summary.className).toContain('h-10');
+    expect(summary.className).toContain('min-w-0');
+    expect(summary.className).toContain('flex-1');
+    expect(summary.className).not.toContain('w-72');
+    expect(summary.className).not.toContain('shrink-0');
+    expect(actions.className).toContain('shrink-0');
+    expect(screen.queryByTestId('update-check-progress-slot')).toBeNull();
+    expect(screen.getAllByTestId('update-summary-prefix')).toHaveLength(2);
   });
 
   it('disables Force during provider cooldown and exposes the retry time', () => {
@@ -590,6 +630,29 @@ describe('SkillsSection', () => {
     await waitFor(() => {
       expect(screen.queryByText('skills.updateDone')).toBeNull();
     });
+  });
+
+  it('marks the manual check as busy and respects reduced motion', () => {
+    render(
+      <SkillsSection
+        title="Global"
+        skills={[makeSkill('global')]}
+        scope="global"
+        updatingSkills={new Map()}
+        isCheckingUpdates
+        onSkillClick={vi.fn()}
+        onPrepareUpdate={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onCheckUpdates={vi.fn(async () => 'completed' as const)}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: 'skills.checkUpdates' });
+    const spinner = button.querySelector('.animate-spin');
+
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(spinner?.classList.contains('motion-reduce:animate-none')).toBe(true);
   });
 
   it('shows a completed check state without describing the Skill as updated', async () => {

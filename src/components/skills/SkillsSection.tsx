@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, Check, ArrowUpCircle, RefreshCw, CircleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CrossfadeSwap } from '@/components/ui/crossfade-swap';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SkillCard } from './SkillCard';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
@@ -181,7 +182,6 @@ export const SkillsSection = memo(function SkillsSection({
         : showUpToDate
           ? [t('skills.upToDate')]
           : [];
-  const summaryTransitionKey = summaryItems.join('\u0000') || 'empty';
   const warningTitle = latestFailure
     ? [
         t('skills.updateStatusLabel.checkIncomplete'),
@@ -203,6 +203,10 @@ export const SkillsSection = memo(function SkillsSection({
   const [checkDone, setCheckDone] = useState(false);
   const [showAutomaticSpinner, setShowAutomaticSpinner] = useState(false);
   const hideCheckDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleSummaryItems = showAutomaticSpinner && summaryItems.length === 0
+    ? [t('skills.checking')]
+    : summaryItems;
+  const summaryTransitionKey = visibleSummaryItems.join('\u0000') || 'empty';
 
   useEffect(() => {
     return () => {
@@ -267,66 +271,86 @@ export const SkillsSection = memo(function SkillsSection({
     <>
     <section className="mb-6">
       {/* Section Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <h2 className="text-sm font-bold tracking-tight text-foreground/90 flex items-center gap-1">
+      <div className="mb-3 flex flex-row items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <h2 className="flex shrink-0 items-center gap-1 text-sm font-bold tracking-normal text-foreground/90">
             {title}
             <span className="text-xs font-semibold opacity-50">({skills.length})</span>
           </h2>
-          {pathExists && (
-            <span
-              data-testid="update-check-progress-slot"
-              className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground"
-            >
-              {showAutomaticSpinner ? (
-                <RefreshCw
-                  role="img"
-                  aria-label={t('skills.checking')}
-                  className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-                />
-              ) : latestFailure ? (
-                <span
-                  tabIndex={0}
-                  title={warningTitle.join('\n')}
-                  className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-warning outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  aria-label={t('skills.updateStatusLabel.checkIncomplete')}
-                >
-                  <CircleAlert className="h-3.5 w-3.5" />
-                </span>
-              ) : null}
-            </span>
-          )}
           {pathExists ? (
             <span
               data-testid="update-summary-slot"
-              className="inline-flex h-10 w-72 max-w-full shrink-0 items-center text-xs"
+              className="inline-flex h-10 min-w-0 flex-1 items-center overflow-hidden text-xs"
               aria-live="polite"
               aria-atomic="true"
+              title={visibleSummaryItems.length > 0 ? visibleSummaryItems.join(' · ') : undefined}
             >
-              <CrossfadeSwap transitionKey={summaryTransitionKey} className="w-full">
-                {summaryItems.length > 0 ? (
-                  <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5">
-                    {summaryItems.map((item) => (
+              <CrossfadeSwap transitionKey={summaryTransitionKey} className="min-w-0 max-w-full">
+                {visibleSummaryItems.length > 0 ? (
+                  <span className="flex min-w-0 items-center gap-x-2 overflow-hidden whitespace-nowrap">
+                    {visibleSummaryItems.map((item, index) => (
                       <span
                         key={item}
                         className={cn(
-                          'inline-flex items-center gap-1.5 font-medium',
+                          'inline-flex min-w-0 items-center gap-1 font-medium',
                           isAnyUpdating ? 'text-primary' : 'text-muted-foreground/80',
                         )}
                       >
-                        <span aria-hidden="true" className="text-border">·</span>
-                        {item}
+                        <span
+                          data-testid="update-summary-prefix"
+                          className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                        >
+                          {index === 0 && showAutomaticSpinner ? (
+                            <RefreshCw
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none"
+                            />
+                          ) : index === 0 && latestFailure ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span
+                                  role="img"
+                                  tabIndex={0}
+                                  className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-warning outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                                  aria-label={t('skills.updateStatusLabel.checkIncomplete')}
+                                >
+                                  <CircleAlert aria-hidden="true" className="h-3.5 w-3.5" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent
+                                side="top"
+                                showArrow={false}
+                                className="max-w-72 whitespace-pre-line"
+                              >
+                                {warningTitle.join('\n')}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <span aria-hidden="true" className="text-border">·</span>
+                          )}
+                        </span>
+                        <span
+                          className={cn(
+                            'truncate',
+                            isAnyUpdating ? 'text-primary' : 'text-muted-foreground/80',
+                          )}
+                        >
+                          {item}
+                        </span>
                       </span>
                     ))}
                   </span>
                 ) : null}
               </CrossfadeSwap>
+              {showAutomaticSpinner && summaryItems.length > 0 ? (
+                <span className="sr-only">{t('skills.checking')}</span>
+              ) : null}
             </span>
           ) : null}
         </div>
         
         {/* Right Actions: Secondary maintenance actions + primary add action */}
-        <div data-testid="skills-section-actions" className="flex items-center gap-2">
+        <div data-testid="skills-section-actions" className="flex shrink-0 items-center gap-2">
           {pathExists && !isAnyUpdating && (updatesCount > 0 || (onCheckUpdates && skills.length > 0 && checkableCount > 0)) && (
             <div data-testid="skills-section-secondary-actions" className="flex items-center gap-0.5">
               {updatesCount > 0 && (
@@ -350,6 +374,7 @@ export const SkillsSection = memo(function SkillsSection({
                 ) : (
                   <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-medium gap-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
                     disabled={isCheckingUpdates || cooldownActive}
+                    aria-busy={isCheckingUpdates}
                     title={cooldownActive && cooldownDeadline
                       ? t('skills.updateEvidence.retryAt', {
                           time: new Date(cooldownDeadline).toLocaleString(i18n.language),
@@ -358,7 +383,13 @@ export const SkillsSection = memo(function SkillsSection({
                     onClick={() => {
                       void handleCheckUpdates();
                     }}>
-                    <RefreshCw className={cn("h-3.5 w-3.5 shrink-0", isCheckingUpdates && "animate-spin")} />
+                    <RefreshCw
+                      aria-hidden="true"
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0',
+                        isCheckingUpdates && 'animate-spin motion-reduce:animate-none',
+                      )}
+                    />
                     {t('skills.checkUpdates')}
                   </Button>
                 )
@@ -371,7 +402,7 @@ export const SkillsSection = memo(function SkillsSection({
             <Button
               variant="secondary"
               size="sm"
-              className="h-7 px-2.5 sm:px-3 text-xs font-semibold gap-1.5 shadow-none text-primary/80 bg-primary/[0.04] hover:bg-primary/10 hover:text-primary border border-transparent cursor-pointer transition-all"
+              className="h-7 px-2.5 sm:px-3 text-xs font-semibold gap-1.5 shadow-none text-primary/80 bg-primary/[0.04] hover:bg-primary/10 hover:text-primary border border-transparent cursor-pointer transition-colors"
               onClick={onAdd}
               disabled={writeBlocked}
             >

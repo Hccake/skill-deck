@@ -55,7 +55,7 @@ describe('InstallWizardStatusControl', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('explains unavailable writes and continues the open installation flow', async () => {
+  it('shows the explanation at the default window width and continues the open flow', async () => {
     useInstallWizardSessionStore.setState({ active: true });
     renderControl();
 
@@ -63,7 +63,8 @@ describe('InstallWizardStatusControl', () => {
       name: 'installWizardSession.writeUnavailable',
     });
     const label = screen.getByText('installWizardSession.writeUnavailable');
-    expect(label.className).toContain('xl:inline');
+    expect(label.className).toContain('min-[800px]:inline');
+    expect(label.className).not.toContain('xl:inline');
 
     fireEvent.click(button);
     await waitFor(() => expect(mocks.continueInstallFlow).toHaveBeenCalledTimes(1));

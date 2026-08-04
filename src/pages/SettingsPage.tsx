@@ -1,7 +1,8 @@
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Settings2, GitBranch, FolderOpen, Info, Bot } from 'lucide-react';
+import { SlidersHorizontal, GitBranch, FolderOpen, Info, Bot } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useOptionalUnsavedChanges } from '@/lifecycle/unsaved-changes-context';
@@ -16,12 +17,12 @@ type SettingsSectionId = 'general' | 'agents' | 'git' | 'projects' | 'about';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId;
-  icon: typeof Settings2;
+  icon: typeof SlidersHorizontal;
   titleKey: string;
 }> = [
   {
     id: 'general',
-    icon: Settings2,
+    icon: SlidersHorizontal,
     titleKey: 'settings.nav.general',
   },
   {
@@ -106,13 +107,12 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-muted/10">
-      <aside className="flex w-[64px] lg:w-56 shrink-0 border-r border-border/60 bg-background/90 backdrop-blur transition-all duration-300">
+      <aside className="flex w-[64px] shrink-0 border-r border-border/60 bg-background/90 backdrop-blur lg:w-56">
         <div className="flex h-full w-full flex-col px-2.5 lg:px-3 py-5">
-          <div className="px-1 lg:px-2 pb-5 flex items-center justify-center lg:justify-start">
-            <h1 className="hidden lg:block text-lg font-semibold tracking-tight text-foreground">
+          <div className="hidden items-center px-2 pb-5 lg:flex">
+            <h1 className="text-lg font-semibold tracking-normal text-foreground">
               {t('settings.title')}
             </h1>
-            <Settings2 className="lg:hidden h-5 w-5 text-muted-foreground" />
           </div>
 
           <nav className="space-y-0.5">
@@ -121,57 +121,72 @@ export function SettingsPage() {
               const selected = section.id === activeSection;
 
               return (
-                <button
-                  key={section.id}
-                  type="button"
-                  title={t(section.titleKey)}
-                  onClick={() => setSection(section.id)}
-                  className={cn(
-                    'group relative flex h-10 w-full cursor-pointer items-center justify-center lg:justify-start gap-2.5 rounded-lg lg:px-3 text-left text-sm transition-colors',
-                    selected
-                      ? 'bg-muted/50 font-medium text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
-                  )}
-                >
-                  {selected ? (
-                    <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />
-                  ) : null}
-                  <Icon
-                    className={cn(
-                      'h-4 w-4 shrink-0',
-                      selected ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
-                    )}
-                  />
-                  <span className="hidden lg:inline truncate">
+                <Tooltip key={section.id}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={t(section.titleKey)}
+                      onClick={() => setSection(section.id)}
+                      className={cn(
+                        'group relative flex h-10 w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 lg:justify-start lg:px-3',
+                        selected
+                          ? 'bg-muted/50 font-medium text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
+                      )}
+                    >
+                      {selected ? (
+                        <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />
+                      ) : null}
+                      <Icon
+                        aria-hidden="true"
+                        className={cn(
+                          'h-4 w-4 shrink-0',
+                          selected ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                        )}
+                      />
+                      <span className="hidden truncate lg:inline">
+                        {t(section.titleKey)}
+                      </span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" sideOffset={8} showArrow={false} className="lg:hidden">
                     {t(section.titleKey)}
-                  </span>
-                </button>
+                  </TooltipContent>
+                </Tooltip>
               );
             })}
           </nav>
 
-          <button
-            type="button"
-            title={t('settings.nav.about')}
-            onClick={() => setSection('about')}
-            className={cn(
-              'group relative mt-auto flex h-10 w-full cursor-pointer items-center justify-center lg:justify-start gap-2.5 rounded-lg lg:px-3 text-left text-sm transition-colors',
-              activeSection === 'about'
-                ? 'bg-muted/50 font-medium text-foreground shadow-sm'
-                : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
-            )}
-          >
-            {activeSection === 'about' ? (
-              <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />
-            ) : null}
-            <Info
-              className={cn(
-                'h-4 w-4 shrink-0',
-                activeSection === 'about' ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
-              )}
-            />
-            <span className="hidden lg:inline truncate">{t('settings.nav.about')}</span>
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('settings.nav.about')}
+                onClick={() => setSection('about')}
+                className={cn(
+                  'group relative mt-auto flex h-10 w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 lg:justify-start lg:px-3',
+                  activeSection === 'about'
+                    ? 'bg-muted/50 font-medium text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
+                )}
+              >
+                {activeSection === 'about' ? (
+                  <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" />
+                ) : null}
+                <Info
+                  aria-hidden="true"
+                  className={cn(
+                    'h-4 w-4 shrink-0',
+                    activeSection === 'about' ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                  )}
+                />
+                <span className="hidden truncate lg:inline">{t('settings.nav.about')}</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8} showArrow={false} className="lg:hidden">
+              {t('settings.nav.about')}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </aside>
 
@@ -180,7 +195,7 @@ export function SettingsPage() {
 
 
           <div className="min-h-0 flex-1">
-            <div key={activeSection} className="animate-in fade-in duration-300 slide-in-from-bottom-1.5 h-full">
+            <div key={activeSection} className="h-full animate-in fade-in slide-in-from-bottom-1.5 duration-300 motion-reduce:animate-none">
               <Suspense fallback={(
                 <div role="status" className="py-10 text-center text-sm text-muted-foreground">
                   {t('common.loading')}
