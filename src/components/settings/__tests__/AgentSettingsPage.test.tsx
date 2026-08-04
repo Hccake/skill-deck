@@ -1402,19 +1402,32 @@ describe('AgentSettingsPage', () => {
     }
   });
 
-  it('focuses the add-path control when detection paths fail collection validation', async () => {
-    actions.validateDraft.mockRejectedValue({
-      kind: 'invalidDraft',
-      errors: [{ field: 'detectionPaths', code: 'required' }],
-    });
-    render(<AgentSettingsPage context={context} />);
-    fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
+  it('lets submitted field errors override the initial form focus without waiting for timers', async () => {
+    vi.useFakeTimers();
+    try {
+      actions.validateDraft.mockRejectedValue({
+        kind: 'invalidDraft',
+        errors: [{ field: 'detectionPaths', code: 'required' }],
+      });
+      render(<AgentSettingsPage context={context} />);
+      fireEvent.click(screen.getByRole('button', { name: 'settings.agents.add' }));
 
-    const form = screen.getByRole('form', { name: 'settings.agents.form.title.create' });
-    fireEvent.submit(form);
+      const name = screen.getByLabelText('settings.agents.fields.displayName');
+      expect(document.activeElement).toBe(name);
 
-    const addPath = screen.getByRole('button', { name: 'settings.agents.detection.add' });
-    await waitFor(() => expect(document.activeElement).toBe(addPath));
+      const form = screen.getByRole('form', { name: 'settings.agents.form.title.create' });
+      await act(async () => {
+        fireEvent.submit(form);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('settings.agents.validation.required')).toBeDefined();
+      const addPath = screen.getByRole('button', { name: 'settings.agents.detection.add' });
+      expect(document.activeElement).toBe(addPath);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it('does not render resolved validation output inside the editor', async () => {

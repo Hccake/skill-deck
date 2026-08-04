@@ -1,8 +1,8 @@
 import type { AgentFieldError } from '@/bindings';
 
-export function focusFirstAgentFieldError(errors: AgentFieldError[]) {
+export function resolveFirstAgentFieldErrorTargetId(errors: AgentFieldError[]) {
   const field = errors[0]?.field;
-  const targetId = field === 'id'
+  return field === 'id'
     ? 'agent-id'
     : field === 'displayName'
       ? 'agent-name'
@@ -17,5 +17,4 @@ export function focusFirstAgentFieldError(errors: AgentFieldError[]) {
             : field === 'scopes'
               ? 'global-enabled'
               : null;
-  if (targetId) window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Search, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -13,7 +13,7 @@ import {
   updateAgentDraft,
 } from './agent-definition-draft';
 import { filterAgentItems, type AgentListItem } from './agent-settings-presentation';
-import { focusFirstAgentFieldError } from './agent-form-focus';
+import { resolveFirstAgentFieldErrorTargetId } from './agent-form-focus';
 import { AgentDeleteDialog } from './AgentDeleteDialog';
 import {
   AlertDialog,
@@ -139,6 +139,10 @@ export function AgentSettingsPage({
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<AgentFieldError[]>([]);
+  const [fieldErrorFocusRequest, setFieldErrorFocusRequest] = useState<{
+    targetId: string;
+    sequence: number;
+  } | null>(null);
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [formInteracted, setFormInteracted] = useState(false);
   const [formSession, setFormSession] = useState(0);
@@ -183,6 +187,7 @@ export function AgentSettingsPage({
 
   const resetDraftFeedback = useCallback(() => {
     setFieldErrors([]);
+    setFieldErrorFocusRequest(null);
     setValidationAttempted(false);
     setFormInteracted(false);
     setStaleRevision(false);
@@ -282,10 +287,15 @@ export function AgentSettingsPage({
     view,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!draftOpen) return;
     document.getElementById('agent-name')?.focus();
   }, [draftOpen, formSession]);
+
+  useLayoutEffect(() => {
+    if (!fieldErrorFocusRequest) return;
+    document.getElementById(fieldErrorFocusRequest.targetId)?.focus();
+  }, [fieldErrorFocusRequest]);
 
   useEffect(() => {
     if (!draft || readOnly || saving || staleRevision || staleDeleted) return;
@@ -439,7 +449,13 @@ export function AgentSettingsPage({
       const commandError = asAgentCommandError(error);
       if (commandError?.kind === 'invalidDraft') {
         setFieldErrors(commandError.errors);
-        focusFirstAgentFieldError(commandError.errors);
+        const targetId = resolveFirstAgentFieldErrorTargetId(commandError.errors);
+        if (targetId) {
+          setFieldErrorFocusRequest((current) => ({
+            targetId,
+            sequence: (current?.sequence ?? 0) + 1,
+          }));
+        }
       } else if (commandError?.kind === 'staleRegistryRevision') {
         setStaleRevision(true);
       } else {
