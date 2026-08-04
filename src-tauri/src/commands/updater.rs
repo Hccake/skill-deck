@@ -183,10 +183,13 @@ fn updater_error(error: impl std::fmt::Display) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
+    use crate::application::runtime_admission::{
+        RuntimeAdmissionCoordinator, WizardAdmission, WizardWindowPresence,
+    };
     use crate::core::mutation::MutationKind;
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 
@@ -194,6 +197,8 @@ mod tests {
         version: String,
         installed: Arc<Mutex<bool>>,
         observed_lease: Arc<Mutex<bool>>,
+        check_calls: Arc<AtomicUsize>,
+        download_calls: Arc<AtomicUsize>,
         controller: Arc<RuntimeAdmissionCoordinator>,
     }
 
@@ -202,6 +207,7 @@ mod tests {
             &'a self,
         ) -> UpdaterFuture<'a, Result<Option<ApplicationUpdateInfo>, AppError>> {
             Box::pin(async move {
+                self.check_calls.fetch_add(1, Ordering::SeqCst);
                 Ok(Some(ApplicationUpdateInfo {
                     version: self.version.clone(),
                     body: None,
@@ -215,6 +221,7 @@ mod tests {
             _progress: Arc<dyn Fn(ApplicationUpdateProgress) + Send + Sync>,
         ) -> UpdaterFuture<'a, Result<(), AppError>> {
             Box::pin(async move {
+                self.download_calls.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(expected_version, self.version);
                 *self.observed_lease.lock().unwrap() =
                     self.controller.activity_snapshot().lifecycle.is_some();
@@ -238,6 +245,8 @@ mod tests {
             version: "2.0.0".to_string(),
             installed: Arc::clone(&installed),
             observed_lease: Arc::clone(&observed_lease),
+            check_calls: Arc::new(AtomicUsize::new(0)),
+            download_calls: Arc::new(AtomicUsize::new(0)),
             controller: Arc::clone(&controller),
         };
 
@@ -260,6 +269,8 @@ mod tests {
             version: "2.0.1".to_string(),
             installed: Arc::clone(&installed),
             observed_lease: Arc::new(Mutex::new(false)),
+            check_calls: Arc::new(AtomicUsize::new(0)),
+            download_calls: Arc::new(AtomicUsize::new(0)),
             controller: Arc::clone(&controller),
         };
 
@@ -273,6 +284,36 @@ mod tests {
         .is_err());
         assert!(!*installed.lock().unwrap());
         assert!(controller.activity_snapshot().lifecycle.is_none());
+    }
+
+    #[tokio::test]
+    async fn wizard_session_rejects_update_before_check_or_download() {
+        let controller = Arc::new(RuntimeAdmissionCoordinator::default());
+        let WizardAdmission::Reserved(_reservation) = controller
+            .admit_install_wizard(WizardWindowPresence::Absent)
+            .expect("wizard reservation")
+        else {
+            panic!("expected wizard reservation");
+        };
+        let check_calls = Arc::new(AtomicUsize::new(0));
+        let download_calls = Arc::new(AtomicUsize::new(0));
+        let updater = FakeUpdater {
+            version: "2.0.0".to_string(),
+            installed: Arc::new(Mutex::new(false)),
+            observed_lease: Arc::new(Mutex::new(false)),
+            check_calls: Arc::clone(&check_calls),
+            download_calls: Arc::clone(&download_calls),
+            controller: Arc::clone(&controller),
+        };
+
+        let error =
+            download_and_install_with(controller.as_ref(), &updater, "2.0.0", Arc::new(|_| {}))
+                .await
+                .expect_err("wizard must block application update");
+
+        assert_eq!(error, AppError::InstallWizardActive);
+        assert_eq!(check_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(download_calls.load(Ordering::SeqCst), 0);
     }
 
     fn host_global() -> ContextRef {
