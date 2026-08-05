@@ -31,6 +31,7 @@ import type {
   WizardState,
 } from '@/components/skills/add-skill/types';
 import type { ContextRef } from '@/bindings';
+import { cn } from '@/lib/utils';
 
 type InstallResults = NonNullable<WizardState['installResults']>;
 
@@ -357,7 +358,12 @@ export function WizardPage() {
       {/* 右侧主内容区 (Main Content) */}
       <div className="flex-1 flex flex-col min-w-0 bg-background relative">
         {/* 内容滚动区 */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-8">
+        <div
+          className={cn(
+            'flex-1 min-h-0',
+            state.step === 'options' ? 'overflow-hidden p-0' : 'overflow-y-auto p-8',
+          )}
+        >
           <div key={state.step} className="h-full animate-in fade-in slide-in-from-bottom-2 duration-500">
             {renderContent()}
           </div>

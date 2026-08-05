@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+} from 'react';
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -7,7 +16,7 @@ import type {
   ManageAgentSelectionSnapshot,
   RecoveryAction,
 } from '@/bindings';
-import { AgentSelectionToolbar } from '@/components/agents/selection/AgentSelectionToolbar';
+import { AgentSelectionModeControl } from '@/components/agents/selection/AgentSelectionModeControl';
 import { AgentSelectionView } from '@/components/agents/selection/AgentSelectionView';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import {
@@ -59,23 +68,24 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
   return (
     <Dialog open={!!skill} onOpenChange={(open) => !open && !saving && requestCloseRef.current()}>
       <DialogContent
-        className="grid h-[min(38rem,calc(100dvh-2rem))] min-w-0 max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-2xl"
+        className="grid h-[min(42rem,calc(100dvh-2rem))] w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-3xl"
         dismissible={!saving}
         closeLabel={t('common.close')}
         aria-busy={loading || saving}
       >
-        <DialogHeader className="min-w-0 border-b px-6 pb-4 pt-6">
-          <DialogTitle>{t('skills.manageAgents.title')}</DialogTitle>
-          <DialogDescription className="min-w-0 break-words">
-            {t('skills.manageAgents.description', { name: skill?.name })}
-          </DialogDescription>
-        </DialogHeader>
         {loading ? (
-          <LoadingBody />
+          <>
+            <ManageDialogHeader skillName={skill?.name} />
+            <LoadingBody />
+          </>
         ) : loadFailed || !snapshot ? (
-          <LoadError onRetry={onRetry} />
+          <>
+            <ManageDialogHeader skillName={skill?.name} />
+            <LoadError onRetry={onRetry} />
+          </>
         ) : (
           <ReadySession
+            skillName={skill?.name}
             snapshot={snapshot}
             saving={saving}
             onSavingChange={setSaving}
@@ -90,6 +100,7 @@ export const ManageAgentsDialog = memo(function ManageAgentsDialog({
 });
 
 function ReadySession({
+  skillName,
   snapshot,
   saving,
   onSavingChange,
@@ -97,6 +108,7 @@ function ReadySession({
   onSave,
   requestCloseRef,
 }: {
+  skillName?: string;
   snapshot: ManageAgentSelectionSnapshot;
   saving: boolean;
   onSavingChange: (value: boolean) => void;
@@ -126,7 +138,7 @@ function ReadySession({
   const automaticRepair = useMemo(() => snapshot.itemStates.some((state) => (
     state.initialSelected && state.selectedEffect === 'repair'
   )), [snapshot.itemStates]);
-  const userModified = hasUserSelectionChanges(session);
+  const userModified = hasUserSelectionChanges(session, snapshot.selection);
   const hasActionableChanges = userModified || automaticRepair;
   const confirmationRequired = feedback === 'confirmationRequired';
 
@@ -159,79 +171,82 @@ function ReadySession({
 
   return (
     <>
-      <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)]">
-        <AgentSelectionToolbar
-          snapshot={snapshot.selection}
-          session={session}
-          onModeChange={(mode) => setSession((current) => ({ ...current, mode }))}
-          disabled={saving}
-        />
-        <div data-testid="manage-agents-dialog-body" className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-5">
-          {session.requiresReconfirmation ? (
-            <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-sm">
-              <span>{t('agentSelection.selectionChanged')}</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => setSession((current) => ({ ...current, requiresReconfirmation: false }))}
-              >
-                {t('agentSelection.confirmCurrentSelection')}
-              </Button>
-            </div>
-          ) : null}
-          {feedback && feedback !== 'succeeded' ? (
-            <div role="alert" className="mb-4 flex gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
-              <span className="space-y-1">
-                <span className="block font-medium">{t(`skills.manageAgents.${feedback}`)}</span>
-                {feedback === 'failed' ? <span className="block text-muted-foreground">{t('skills.manageAgents.failedDescription')}</span> : null}
-                {recovery.map((action) => <RecoveryActions key={action.resourceId} recovery={action} onResolved={onClose} />)}
-              </span>
-            </div>
-          ) : null}
-          <AgentSelectionView
+      <ManageDialogHeader
+        skillName={skillName}
+        modeControl={(
+          <AgentSelectionModeControl
             snapshot={snapshot.selection}
             session={session}
-            itemStates={snapshot.itemStates}
-            emptyMessage={t('agentSelection.manageEmpty')}
+            onModeChange={(mode) => setSession((current) => ({ ...current, mode }))}
             disabled={saving}
-            onItemChange={(itemId, selected) => setSession((current) => toggleSelectionItem(current, snapshot.selection, itemId, selected))}
-            onGroupChange={(groupId, selected) => setSession((current) => toggleSelectionGroup(current, snapshot.selection, groupId, selected))}
-            onOtherExpandedChange={(otherAgentsExpanded) => setSession((current) => ({ ...current, otherAgentsExpanded }))}
-            onAdditionalExpandedChange={(additionalInstallExpanded) => setSession((current) => ({ ...current, additionalInstallExpanded }))}
-            onGroupExpandedChange={(groupId, expanded) => setSession((current) => ({
-              ...current,
-              expandedGroupIds: expanded
-                ? [...new Set([...current.expandedGroupIds, groupId])]
-                : current.expandedGroupIds.filter((id) => id !== groupId),
-            }))}
           />
-        </div>
+        )}
+      />
+      <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-5">
+        {session.requiresReconfirmation ? (
+          <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-sm">
+            <span>{t('agentSelection.selectionChanged')}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setSession((current) => ({ ...current, requiresReconfirmation: false }))}
+            >
+              {t('agentSelection.confirmCurrentSelection')}
+            </Button>
+          </div>
+        ) : null}
+        {feedback && feedback !== 'succeeded' ? (
+          <div role="alert" className="mb-4 flex gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+            <span className="space-y-1">
+              <span className="block font-medium">{t(`skills.manageAgents.${feedback}`)}</span>
+              {feedback === 'failed' ? <span className="block text-muted-foreground">{t('skills.manageAgents.failedDescription')}</span> : null}
+              {recovery.map((action) => <RecoveryActions key={action.resourceId} recovery={action} onResolved={onClose} />)}
+            </span>
+          </div>
+        ) : null}
+        <AgentSelectionView
+          snapshot={snapshot.selection}
+          session={session}
+          itemStates={snapshot.itemStates}
+          emptyMessage={t('agentSelection.manageEmpty')}
+          disabled={saving}
+          onItemChange={(itemId, selected) => setSession((current) => toggleSelectionItem(current, snapshot.selection, itemId, selected))}
+          onGroupChange={(groupId, selected) => setSession((current) => toggleSelectionGroup(current, snapshot.selection, groupId, selected))}
+          onOtherExpandedChange={(otherAgentsExpanded) => setSession((current) => ({ ...current, otherAgentsExpanded }))}
+          onAdditionalExpandedChange={(additionalInstallExpanded) => setSession((current) => ({ ...current, additionalInstallExpanded }))}
+          onGroupExpandedChange={(groupId, expanded) => setSession((current) => ({
+            ...current,
+            expandedGroupIds: expanded
+              ? [...new Set([...current.expandedGroupIds, groupId])]
+              : current.expandedGroupIds.filter((id) => id !== groupId),
+          }))}
+        />
       </div>
       <DialogFooter className="border-t px-6 py-4">
         {snapshot.selection.items.length === 0 ? (
           <Button onClick={onClose}>{t('common.close')}</Button>
         ) : (
           <>
-        {confirmDiscard ? (
-          <div role="alert" className="mr-auto text-sm text-muted-foreground">{t('skills.manageAgents.discardConfirm')}</div>
-        ) : null}
-        <Button variant="outline" onClick={onClose} disabled={saving}>
-          {confirmDiscard ? t('skills.manageAgents.discard') : t('common.cancel')}
-        </Button>
-        {confirmDiscard ? (
-          <Button variant="secondary" onClick={() => setConfirmDiscard(false)}>{t('skills.manageAgents.continueEditing')}</Button>
-        ) : (
-          <Button
-            onClick={() => void save()}
-            disabled={writeBlocked || saving || session.requiresReconfirmation || !hasActionableChanges}
-          >
-            {saving ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
-            {confirmationRequired ? t('skills.manageAgents.confirmRemoval') : t('skills.manageAgents.save')}
-          </Button>
-        )}
+            {confirmDiscard ? (
+              <div role="alert" className="mr-auto text-sm text-muted-foreground">{t('skills.manageAgents.discardConfirm')}</div>
+            ) : null}
+            <Button variant="outline" onClick={onClose} disabled={saving}>
+              {confirmDiscard ? t('skills.manageAgents.discard') : t('common.cancel')}
+            </Button>
+            {confirmDiscard ? (
+              <Button variant="secondary" onClick={() => setConfirmDiscard(false)}>{t('skills.manageAgents.continueEditing')}</Button>
+            ) : (
+              <Button
+                onClick={() => void save()}
+                disabled={writeBlocked || saving || session.requiresReconfirmation || !hasActionableChanges}
+              >
+                {saving ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+                {confirmationRequired ? t('skills.manageAgents.confirmRemoval') : t('skills.manageAgents.save')}
+              </Button>
+            )}
           </>
         )}
       </DialogFooter>
@@ -239,10 +254,32 @@ function ReadySession({
   );
 }
 
+function ManageDialogHeader({ skillName, modeControl }: { skillName?: string; modeControl?: ReactNode }) {
+  const { t } = useTranslation();
+  const title = t('skills.manageAgents.title', { name: skillName });
+  return (
+    <DialogHeader
+      className="grid min-w-0 grid-cols-1 items-center gap-x-5 gap-y-3 border-b px-6 py-4 pr-14 text-left sm:grid-cols-[minmax(0,1fr)_auto]"
+    >
+      <DialogTitle className="min-w-0 truncate self-center" title={title}>
+        {title}
+      </DialogTitle>
+      <DialogDescription className="sr-only">
+        {t('skills.manageAgents.description', { name: skillName })}
+      </DialogDescription>
+      {modeControl ? (
+        <div className="min-w-0 sm:justify-self-end">
+          {modeControl}
+        </div>
+      ) : null}
+    </DialogHeader>
+  );
+}
+
 function LoadingBody() {
   const { t } = useTranslation();
   return (
-    <div data-testid="manage-agents-dialog-body" role="status" className="min-h-0 space-y-3 overflow-hidden px-6 py-5">
+    <div role="status" className="min-h-0 space-y-3 overflow-hidden px-6 py-5">
       <span className="sr-only">{t('common.loading')}</span>
       <Skeleton className="h-9 w-full" />
       <Skeleton className="h-10 w-full" />

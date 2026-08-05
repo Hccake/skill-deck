@@ -9,10 +9,10 @@ use crate::commands::window_role::INSTALL_WIZARD_LABEL;
 use crate::environment::types::{ContextRef, ContextScope};
 use crate::runtime::RuntimeServiceGraph;
 
-const INSTALL_WIZARD_WIDTH: f64 = 680.0;
-const INSTALL_WIZARD_HEIGHT: f64 = 560.0;
-const INSTALL_WIZARD_MIN_WIDTH: f64 = 620.0;
-const INSTALL_WIZARD_MIN_HEIGHT: f64 = 480.0;
+const INSTALL_WIZARD_WIDTH: f64 = 940.0;
+const INSTALL_WIZARD_HEIGHT: f64 = 690.0;
+const INSTALL_WIZARD_MIN_WIDTH: f64 = 680.0;
+const INSTALL_WIZARD_MIN_HEIGHT: f64 = 520.0;
 
 struct TauriInstallWizardWindowAdapter<'a> {
     app: &'a AppHandle,
@@ -181,10 +181,10 @@ mod tests {
 
     #[test]
     fn install_wizard_uses_wider_default_window() {
-        assert_eq!(INSTALL_WIZARD_WIDTH, 680.0);
-        assert_eq!(INSTALL_WIZARD_HEIGHT, 560.0);
-        assert_eq!(INSTALL_WIZARD_MIN_WIDTH, 620.0);
-        assert_eq!(INSTALL_WIZARD_MIN_HEIGHT, 480.0);
+        assert_eq!(INSTALL_WIZARD_WIDTH, 940.0);
+        assert_eq!(INSTALL_WIZARD_HEIGHT, 690.0);
+        assert_eq!(INSTALL_WIZARD_MIN_WIDTH, 680.0);
+        assert_eq!(INSTALL_WIZARD_MIN_HEIGHT, 520.0);
     }
 
     #[test]

@@ -134,21 +134,18 @@ export function refreshAgentSelectionSession(
   };
 }
 
-export function hasUserSelectionChanges(session: AgentSelectionSession): boolean {
-  return !sameSet(session.selectedItemIds, session.initialSelectedItemIds)
-    || session.mode !== session.initialMode;
+export function hasUserSelectionChanges(
+  session: AgentSelectionSession,
+  snapshot: AgentSelectionSnapshot,
+): boolean {
+  if (!sameSet(session.selectedItemIds, session.initialSelectedItemIds)) return true;
+  if (session.mode === session.initialMode) return false;
+  const modeItemIds = new Set(snapshot.requestedModeItemIds);
+  return session.selectedItemIds.some((id) => modeItemIds.has(id));
 }
 
 export function shouldShowInstallMode(snapshot: AgentSelectionSnapshot): boolean {
   return snapshot.requestedModeItemIds.length > 0;
-}
-
-export function isInstallModeDisabled(
-  session: AgentSelectionSession,
-  snapshot: AgentSelectionSnapshot,
-): boolean {
-  const requested = new Set(snapshot.requestedModeItemIds);
-  return !session.selectedItemIds.some((id) => requested.has(id));
 }
 
 function uniqueSelectable(

@@ -91,13 +91,29 @@ describe('ManageAgentsDialog', () => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
-  it('uses a fixed header and footer with the Agent list as the only scroll area', () => {
+  it('uses a compact, wider header with the Skill name and installation mode', () => {
     renderDialog();
 
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
-    expect(screen.getByTestId('manage-agents-dialog-body').className).toContain('overflow-y-auto');
-    expect(screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' })).toBeDefined();
+    const title = screen.getByText('skills.manageAgents.title:{"name":"frontend-design"}');
+    const header = title.closest('[data-slot="dialog-header"]');
+    const description = screen.getByText(/^skills\.manageAgents\.description:/);
+    const mode = screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' });
+    const dialog = screen.getByRole('dialog', { name: 'skills.manageAgents.title:{"name":"frontend-design"}' });
+    expect(header?.contains(mode)).toBe(true);
+    expect(description.parentElement).toBe(header);
+    expect(description.className).toContain('sr-only');
+    expect(dialog.className).toContain('sm:max-w-3xl');
+  });
+
+  it('allows choosing the mode first without treating an inactive choice as a saved change', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    const copyMode = screen.getByRole('radio', { name: 'agentSelection.copy' });
+    expect(copyMode.hasAttribute('disabled')).toBe(false);
+    await user.click(copyMode);
+
+    expect(screen.getByRole('button', { name: 'skills.manageAgents.save' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('renders loading and retry states without mounting a stale selection', async () => {
@@ -135,16 +151,84 @@ describe('ManageAgentsDialog', () => {
     expect(screen.queryByRole('button', { name: 'skills.manageAgents.save' })).toBeNull();
   });
 
-  it('shows direct-use Agents compactly and keeps uncertain readers in a tooltip', async () => {
+  it('shows direct-use Agents as badges and reveals uncertain readers on hover', async () => {
+    const user = userEvent.setup();
+    const current = snapshot();
+    current.selection.agents.push({ id: 'aider', displayName: 'Aider', detection: 'indeterminate' });
+    current.selection.directAgentIds.push('aider');
+    renderDialog({ snapshot: current });
+
+    const codexBadge = screen.getByText('Codex').closest('[data-slot="direct-agent-badge"]');
+    expect(codexBadge).not.toBeNull();
+    expect(codexBadge?.querySelector('svg')).not.toBeNull();
+
+    const more = screen.getByRole('button', { name: /^agentSelection\.moreAgents:/ });
+    expect(more.closest('[data-slot="direct-agent-badge"]')).not.toBeNull();
+    expect(more.querySelector('svg')).toBeNull();
+    await user.hover(more);
+
+    const popover = await screen.findByRole('dialog', { name: /^agentSelection\.moreAgents:/ });
+    const description = within(popover).getByText('agentSelection.moreAgentsDescription');
+    expect(description.className).toContain('whitespace-nowrap');
+    for (const name of ['Warp', 'Aider']) {
+      const badge = within(popover).getByText(name).closest('[data-slot="direct-agent-badge"]');
+      expect(badge).not.toBeNull();
+      expect(badge?.querySelector('svg')).not.toBeNull();
+    }
+  });
+
+  it('keeps current installation states visible alongside each Agent', () => {
+    const current = snapshot();
+    current.selection.initialSelectedItemIds = ['claude', 'cursor'];
+    current.itemStates[1] = {
+      ...current.itemStates[1],
+      currentEntry: 'copy',
+      initialSelected: true,
+      selectedEffect: 'retain',
+      unselectedEffect: 'remove',
+    };
+    renderDialog({ snapshot: current });
+
+    expect(screen.getByText('agentSelection.current.link')).toBeDefined();
+    expect(screen.getByText('agentSelection.current.copy')).toBeDefined();
+    const claudeRow = screen.getByRole('checkbox', { name: 'Claude Code' }).closest('[data-slot="agent-selection-row"]');
+    const detectedStatus = within(claudeRow as HTMLElement).getByText('agentSelection.detection.detected');
+    expect(detectedStatus.querySelector('[data-slot="agent-detection-dot"]')).not.toBeNull();
+    expect(detectedStatus.querySelector('svg')).toBeNull();
+  });
+
+  it('connects a current installation state to its pending action', async () => {
     const user = userEvent.setup();
     renderDialog();
 
-    expect(screen.getByText('Codex')).toBeDefined();
-    const more = screen.getByText(/^agentSelection.moreAgents:/);
-    await user.hover(more);
-    const tooltip = await screen.findByRole('tooltip');
-    expect(within(tooltip).getByText('agentSelection.moreAgentsDescription')).toBeDefined();
-    expect(within(tooltip).getByText('Warp')).toBeDefined();
+    const checkbox = screen.getByRole('checkbox', { name: 'Claude Code' });
+    const row = checkbox.closest('[data-slot="agent-selection-row"]');
+    await user.click(checkbox);
+
+    expect(row?.textContent).toContain('agentSelection.current.link');
+    expect(row?.textContent).toContain('→');
+    expect(row?.textContent).toContain('agentSelection.effect.remove');
+  });
+
+  it('renders Other Agents as one disclosure control', () => {
+    renderDialog();
+
+    const trigger = screen.getByRole('button', { name: /agentSelection.otherAgents/ });
+    expect(trigger.textContent).toContain('agentSelection.otherAgents');
+  });
+
+  it('keeps the Eve disclosure with its name and shows detection only on the parent', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    const toggle = screen.getByRole('button', { name: /agentSelection.toggleGroup/ });
+    const eveName = screen.getByText('Eve');
+    expect(eveName.closest('label')?.parentElement).toBe(toggle.parentElement);
+    await user.click(toggle);
+    const group = screen.getByRole('group', { name: 'Eve' });
+    const detection = within(group).getAllByText('agentSelection.detection.detected');
+    expect(detection).toHaveLength(1);
+    expect(within(group).getByText('agentSelection.copyOnly')).toBeDefined();
   });
 
   it('automatically reveals an undetected Agent whose directory entry is abnormal', () => {
@@ -207,10 +291,21 @@ describe('ManageAgentsDialog', () => {
     renderDialog({ snapshot: merged });
 
     const viewMembers = screen.getByRole('button', { name: 'agentSelection.viewMembers' });
+    const mergedCheckbox = screen.getByRole('checkbox', { name: /Cursor.*Windsurf/ });
+    const mergedRow = mergedCheckbox.closest('[data-slot="agent-selection-row"]');
+    expect(mergedRow?.querySelector('[data-slot="agent-group-glyph"]')).not.toBeNull();
+    const detectedCount = within(mergedRow as HTMLElement).getByText(/^agentSelection\.detectedCount:/);
+    expect(detectedCount.querySelector('[data-slot="agent-detection-dot"]')).not.toBeNull();
+    expect(detectedCount.querySelector('svg')).toBeNull();
+    expect(viewMembers.textContent).toContain('agentSelection.memberCount');
     act(() => viewMembers.focus());
     await user.keyboard('{Enter}');
     const membersPopover = await screen.findByRole('dialog', { name: 'agentSelection.viewMembers' });
+    expect(within(membersPopover).getByText('agentSelection.sharedPlacementDescription')).toBeDefined();
     expect(within(membersPopover).getByText('Windsurf')).toBeDefined();
+    const notDetectedStatus = within(membersPopover).getByText('agentSelection.detection.notDetected');
+    expect(notDetectedStatus.querySelector('[data-slot="agent-detection-dot"]')).not.toBeNull();
+    expect(notDetectedStatus.querySelector('svg')).toBeNull();
     await user.click(within(membersPopover).getByRole('button', { name: 'common.close' }));
     expect(document.activeElement).toBe(viewMembers);
     await user.click(screen.getByRole('button', { name: /agentSelection.toggleGroup/ }));

@@ -2,8 +2,11 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { AgentSelectionToolbar } from '@/components/agents/selection/AgentSelectionToolbar';
-import { AgentSelectionView } from '@/components/agents/selection/AgentSelectionView';
+import { AgentSelectionModeControl } from '@/components/agents/selection/AgentSelectionModeControl';
+import {
+  AgentSelectionUnavailableNotice,
+  AgentSelectionView,
+} from '@/components/agents/selection/AgentSelectionView';
 import {
   createAgentSelectionSession,
   toggleSelectionGroup,
@@ -62,18 +65,24 @@ export function OptionsStep({ state, updateState, targetOptions }: OptionsStepPr
   });
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col overflow-hidden rounded-md border bg-background">
-      {loaded.defaultSelectionWarning ? (
-        <Alert className="m-4 mb-0">
-          <AlertDescription>{t('addSkill.agents.defaultLoadWarning')}</AlertDescription>
-        </Alert>
-      ) : null}
-      <AgentSelectionToolbar
-        snapshot={loaded.selection}
-        session={session}
-        onModeChange={(mode) => updateState({ mode })}
-      />
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">
+    <div className="grid h-full min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden bg-background">
+      <div className="space-y-3 px-8 pt-5 empty:hidden">
+        {loaded.defaultSelectionWarning ? (
+          <Alert>
+            <AlertDescription>{t('addSkill.agents.defaultLoadWarning')}</AlertDescription>
+          </Alert>
+        ) : null}
+        <AgentSelectionUnavailableNotice snapshot={loaded.selection} />
+      </div>
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b px-8 py-4">
+        <h2 className="text-base font-semibold">{t('agentSelection.installTitle')}</h2>
+        <AgentSelectionModeControl
+          snapshot={loaded.selection}
+          session={session}
+          onModeChange={(mode) => updateState({ mode })}
+        />
+      </header>
+      <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-8 py-5">
         {state.selectionRequiresReconfirmation ? (
           <Alert className="mb-4" role="alert">
             <AlertDescription className="flex items-center justify-between gap-3">

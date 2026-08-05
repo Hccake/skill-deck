@@ -3,6 +3,7 @@ import type { AgentSelectionSnapshot, ManageSelectionItemState } from '@/binding
 import {
   createAgentSelectionSession,
   groupSelectionState,
+  hasUserSelectionChanges,
   refreshAgentSelectionSession,
   toggleSelectionGroup,
   toggleSelectionItem,
@@ -85,5 +86,37 @@ describe('Agent selection session', () => {
 
     expect(createAgentSelectionSession(currentSnapshot, 'symlink', states).expandedGroupIds)
       .toEqual(['eve']);
+  });
+
+  it('counts an installation-mode choice only when it applies to a selected item', () => {
+    const currentSnapshot = snapshot();
+    currentSnapshot.agents = [{ id: 'cursor', displayName: 'Cursor', detection: 'detected' }];
+    currentSnapshot.items = [{
+      id: 'cursor',
+      agentIds: ['cursor'],
+      category: 'separateInstall',
+      displayName: 'Cursor',
+      path: '/cursor',
+      groupId: null,
+      selectable: true,
+      modeConstraint: 'userSelectable',
+      disabledReason: null,
+    }];
+    currentSnapshot.groups = [];
+    currentSnapshot.requestedModeItemIds = ['cursor'];
+    currentSnapshot.initialSelectedItemIds = [];
+    const inactiveChoice = {
+      ...createAgentSelectionSession(currentSnapshot),
+      mode: 'copy' as const,
+    };
+
+    expect(hasUserSelectionChanges(inactiveChoice, currentSnapshot)).toBe(false);
+
+    currentSnapshot.initialSelectedItemIds = ['cursor'];
+    const activeChoice = {
+      ...createAgentSelectionSession(currentSnapshot),
+      mode: 'copy' as const,
+    };
+    expect(hasUserSelectionChanges(activeChoice, currentSnapshot)).toBe(true);
   });
 });

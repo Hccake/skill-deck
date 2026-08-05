@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { InstallAgentSelectionSnapshot } from '@/bindings';
@@ -115,7 +115,10 @@ describe('OptionsStep', () => {
     const user = userEvent.setup();
     const { updateState } = renderStep();
 
-    expect(screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' })).toBeDefined();
+    const title = screen.getByText('agentSelection.installTitle');
+    const header = title.closest('header');
+    expect(header?.contains(screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' }))).toBe(true);
+    expect(screen.getByRole('radio', { name: 'agentSelection.linkRecommended' })).toBeDefined();
     await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
     expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
       selectedAgentItemIds: [],
@@ -123,12 +126,23 @@ describe('OptionsStep', () => {
     }));
   });
 
+  it('allows choosing an installation mode before selecting an applicable Agent', async () => {
+    const user = userEvent.setup();
+    const { updateState } = renderStep(createState({ selectedAgentItemIds: [] }));
+
+    const copyMode = screen.getByRole('radio', { name: 'agentSelection.copy' });
+    expect(copyMode.hasAttribute('disabled')).toBe(false);
+    await user.click(copyMode);
+
+    expect(updateState).toHaveBeenCalledWith({ mode: 'copy' });
+  });
+
   it('keeps the Agent heading when no item uses a selectable installation mode', () => {
     const snapshot = selectionSnapshot();
     snapshot.selection.requestedModeItemIds = [];
     renderStep(createState({ agentSelectionSnapshot: snapshot }), controller(snapshot));
 
-    expect(screen.getByText('agentSelection.title')).toBeDefined();
+    expect(screen.getByText('agentSelection.installTitle')).toBeDefined();
     expect(screen.queryByRole('radiogroup')).toBeNull();
   });
 
@@ -148,7 +162,11 @@ describe('OptionsStep', () => {
   it('shows unknown explicit Agents as one read-only notice', () => {
     renderStep();
 
-    expect(screen.getByRole('status').textContent).toContain('old-agent');
+    const notice = screen.getByRole('status');
+    const header = screen.getByText('agentSelection.installTitle').closest('header');
+    expect(notice.textContent).toContain('old-agent');
+    expect(header).not.toBeNull();
+    expect(notice.compareDocumentPosition(header as Node) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(screen.queryByRole('checkbox', { name: 'old-agent' })).toBeNull();
   });
 
@@ -159,6 +177,37 @@ describe('OptionsStep', () => {
     expect(screen.queryByText('Cursor')).toBeNull();
     await user.click(screen.getByText(/agentSelection.otherAgents/));
     expect(updateState).toHaveBeenCalledWith(expect.objectContaining({ otherAgentsExpanded: true }));
+  });
+
+  it('shows Eve placements as copy-only choices', () => {
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents.push({ id: 'eve', displayName: 'Eve', detection: 'detected' });
+    snapshot.selection.items.push({
+      id: 'eve-root',
+      agentIds: ['eve'],
+      category: 'groupChild',
+      displayName: '主目录',
+      path: '~/.eve/skills',
+      groupId: 'eve-group',
+      selectable: true,
+      modeConstraint: 'copyOnly',
+      disabledReason: null,
+    });
+    snapshot.selection.groups.push({
+      id: 'eve-group',
+      agentId: 'eve',
+      displayName: 'Eve',
+      itemIds: ['eve-root'],
+      detection: 'detected',
+    });
+    renderStep(createState({
+      agentSelectionSnapshot: snapshot,
+      expandedAgentGroupIds: ['eve-group'],
+    }), controller(snapshot));
+
+    const group = screen.getByRole('group', { name: 'Eve' });
+    expect(within(group).getByText('agentSelection.copyOnly')).toBeDefined();
+    expect(within(group).getByText('agentSelection.copy')).toBeDefined();
   });
 
   it('allows an initially selected placement conflict to be canceled', async () => {
