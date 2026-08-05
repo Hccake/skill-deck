@@ -8,6 +8,7 @@ import type {
   RecoveryAction,
 } from '@/bindings';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { preserveOwnDirectoryOptions } from '@/lib/agent-selection-session';
 import { toAppError } from '@/utils/to-app-error';
 import { prepareInstall, type InstallPreparationOutcome } from './skill-install-preparation';
 import { runBusinessWrite } from './install-session-feedback';
@@ -110,7 +111,10 @@ export async function repairSkillSource(
       explicitAgentIds: requestedAgents,
       agentSelection: {
         revision: agentSnapshot.selection.revision,
-        selectedItemIds: agentSnapshot.selection.initialSelectedItemIds,
+        selectedOptionIds: preserveOwnDirectoryOptions(
+          agentSnapshot.selection,
+          requestedAgents,
+        ),
         requestedMode: 'copy',
       },
       acknowledgeRisk: available.riskPolicy.kind === 'require-confirmation'

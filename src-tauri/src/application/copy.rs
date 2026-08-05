@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 use specta::Type;
 
 use crate::application::agent_intent::{
-    validate_agent_intents, AgentTargetFallbackPreview, AgentWriteIntent, PrivateEntryIntent,
+    validate_agent_intents, AgentTargetFallbackPreview, AgentWriteIntent,
 };
 use crate::application::install::InstallPlanExecutor;
 use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
@@ -115,7 +115,7 @@ pub struct AgentTargetPreview {
     pub agent_id: AgentId,
     pub target_id: String,
     pub display_path: ResourceLocator,
-    pub private_entry: PrivateEntryIntent,
+    pub own_directory_selected: bool,
     pub availability: DetectionState,
     pub blocking_reason: Option<OperationErrorCode>,
 }
@@ -571,7 +571,7 @@ fn copy_target_preview(
             agent_id: agent_id.clone(),
             target_id: "canonical".to_string(),
             display_path: target.target_facts[0].destination.clone(),
-            private_entry: private_intent(request, agent_id),
+            own_directory_selected: own_directory_selected(request, agent_id),
             availability: agent.detection,
             blocking_reason: None,
         });
@@ -593,7 +593,7 @@ fn copy_target_preview(
                 agent_id: agent_id.clone(),
                 target_id: logical.target_id.clone(),
                 display_path: fact.destination.clone(),
-                private_entry: private_intent(request, agent_id),
+                own_directory_selected: own_directory_selected(request, agent_id),
                 availability: agent.detection,
                 blocking_reason: None,
             });
@@ -618,13 +618,12 @@ fn copy_target_preview(
     })
 }
 
-fn private_intent(request: &CopyRequest, agent_id: &AgentId) -> PrivateEntryIntent {
+fn own_directory_selected(request: &CopyRequest, agent_id: &AgentId) -> bool {
     request
         .agent_intents
         .iter()
         .find(|intent| &intent.agent_id == agent_id)
-        .map(|intent| intent.private_entry)
-        .unwrap_or(PrivateEntryIntent::None)
+        .is_some_and(|intent| intent.own_directory_selected)
 }
 
 fn build_copy_unit(

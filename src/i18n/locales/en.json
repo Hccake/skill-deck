@@ -20,10 +20,37 @@
     "linkRecommended": "Link (recommended)",
     "copy": "Copy",
     "copyOnly": "Copy only",
-    "directUse": "Available directly",
-    "separateInstall": "Install separately",
-    "additionalInstall": "Additional install",
-    "additionalInstallDescription": "These Agents can already use this Skill through the shared Skill directory. Select them only to keep a link or copy in their own Skill directory.",
+    "automatic": {
+      "install": {
+        "title": "Available after installation",
+        "help": "After this Skill is installed in the shared Skill directory, these Agents do not need a separate installation."
+      },
+      "manage": {
+        "title": "Available through the shared directory",
+        "help": "These Agents read the shared Skill directory containing this Skill and do not need a separate installation."
+      },
+      "copyToProject": {
+        "title": "Available after copying",
+        "help": "After this Skill is copied to the target project, these Agents do not need a separate installation."
+      }
+    },
+    "selectable": {
+      "title": "Available when selected",
+      "help": "These Agents do not read the shared Skill directory and need a separate installation to use this Skill."
+    },
+    "ownDirectory": {
+      "title": "Also write to each Agent’s own Skill directory (optional)",
+      "install": {
+        "description": "These Agents can use this Skill after installation. Select an Agent only when its own Skill directory also needs a link or copy."
+      },
+      "manage": {
+        "description": "These Agents can already use this Skill through the shared Skill directory. Selected Agents keep a link or copy in their own Skill directory."
+      },
+      "copyToProject": {
+        "description": "These Agents can use this Skill through the target project's shared Skill directory. Select an Agent only when its own Skill directory also needs a link or copy."
+      },
+      "selectedCount": "{{count}} Agents selected"
+    },
     "otherAgents": "Other selectable Agents ({{count}})",
     "moreAgents": "+ {{count}} more",
     "moreAgentsDescription": "These Agents can also read the shared Skill directory, but their detection state is not confirmed.",
@@ -60,10 +87,10 @@
       "createCopy": "Will create copy"
     },
     "error": {
-      "duplicateItem": "The Agent selection contains duplicate items. Review it and try again.",
-      "itemUnavailable": "Some Agent Skill locations are unavailable. Review the selection.",
+      "duplicateOption": "The Agent install options contain duplicates. Review them and try again.",
+      "optionUnavailable": "Some Agent install locations are unavailable. Review the selection.",
       "placementConflict": "The selected Agents have conflicting content for the same Skill location.",
-      "itemMissing": "Some Agent Skill locations have changed. Review the selection.",
+      "optionMissing": "Some Agent install locations have changed. Review the selection.",
       "resultNotAllowed": "Some Agents cannot be handled with the current selection. Review it and try again."
     }
   },

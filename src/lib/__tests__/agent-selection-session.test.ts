@@ -1,26 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentSelectionSnapshot, ManageSelectionItemState } from '@/bindings';
+import type { AgentSelectionSnapshot, ManageInstallOptionState } from '@/bindings';
 import {
   createAgentSelectionSession,
   groupSelectionState,
   hasUserSelectionChanges,
   refreshAgentSelectionSession,
   toggleSelectionGroup,
-  toggleSelectionItem,
+  toggleInstallOption,
 } from '../agent-selection-session';
 
 function snapshot(): AgentSelectionSnapshot {
   return {
-    agents: [{ id: 'eve', displayName: 'Eve', detection: 'detected' }],
-    directAgentIds: [],
-    items: [
-      { id: 'root', agentIds: ['eve'], category: 'groupChild', displayName: '根 Agent', path: '/root', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
-      { id: 'writer', agentIds: ['eve'], category: 'groupChild', displayName: 'Writer', path: '/writer', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
+    agents: [{ kind: 'grouped', id: 'eve', displayName: 'Eve', detection: 'detected', directoryAccess: null, installOptionId: null, groupId: 'eve' }],
+    installOptions: [
+      { id: 'root', kind: 'groupLocation', agentIds: ['eve'], displayName: '根 Agent', path: '/root', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
+      { id: 'writer', kind: 'groupLocation', agentIds: ['eve'], displayName: 'Writer', path: '/writer', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
     ],
-    groups: [{ id: 'eve', agentId: 'eve', displayName: 'Eve', itemIds: ['root', 'writer'], detection: 'detected' }],
-    initialSelectedItemIds: ['root'],
+    groups: [{ id: 'eve', agentId: 'eve', displayName: 'Eve', optionIds: ['root', 'writer'], detection: 'detected' }],
+    initialSelectedOptionIds: ['root'],
     unavailableExplicitAgents: [],
-    requestedModeItemIds: [],
+    userModeOptionIds: [],
     revision: 'revision-1',
   };
 }
@@ -35,7 +34,7 @@ describe('Agent selection session', () => {
     expect(selected.expandedGroupIds).toEqual(['eve']);
   });
 
-  it('retains only stable item ids when a snapshot is refreshed', () => {
+  it('retains only stable option ids when a snapshot is refreshed', () => {
     const current = toggleSelectionGroup(
       createAgentSelectionSession(snapshot()),
       snapshot(),
@@ -43,39 +42,39 @@ describe('Agent selection session', () => {
       true,
     );
     const next = snapshot();
-    next.items = next.items.filter((item) => item.id === 'root');
-    next.groups[0].itemIds = ['root'];
+    next.installOptions = next.installOptions.filter((option) => option.id === 'root');
+    next.groups[0].optionIds = ['root'];
     next.revision = 'revision-2';
 
     const refreshed = refreshAgentSelectionSession(current, next);
-    expect(refreshed.selectedItemIds).toEqual(['root']);
+    expect(refreshed.selectedOptionIds).toEqual(['root']);
     expect(refreshed.requiresReconfirmation).toBe(true);
   });
 
-  it('keeps an explicit deselection and applies defaults only to newly discovered items', () => {
-    const current = toggleSelectionItem(
+  it('keeps an explicit deselection and applies defaults only to newly discovered options', () => {
+    const current = toggleInstallOption(
       createAgentSelectionSession(snapshot()),
       snapshot(),
       'root',
       false,
     );
     const next = snapshot();
-    next.items.push({ id: 'new-target', agentIds: ['eve'], category: 'groupChild', displayName: '新目录', path: '/new', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null });
-    next.groups[0].itemIds.push('new-target');
-    next.initialSelectedItemIds = ['root', 'new-target'];
+    next.installOptions.push({ id: 'new-target', kind: 'groupLocation', agentIds: ['eve'], displayName: '新目录', path: '/new', groupId: 'eve', selectable: true, modeConstraint: 'copyOnly', disabledReason: null });
+    next.groups[0].optionIds.push('new-target');
+    next.initialSelectedOptionIds = ['root', 'new-target'];
     next.revision = 'revision-2';
 
     const refreshed = refreshAgentSelectionSession(current, next);
 
-    expect(refreshed.selectedItemIds).toEqual(['new-target']);
-    expect(refreshed.knownItemIds).toEqual(['root', 'writer', 'new-target']);
+    expect(refreshed.selectedOptionIds).toEqual(['new-target']);
+    expect(refreshed.knownOptionIds).toEqual(['root', 'writer', 'new-target']);
   });
 
   it('expands a group that contains an existing or abnormal directory entry', () => {
     const currentSnapshot = snapshot();
-    currentSnapshot.initialSelectedItemIds = [];
-    const states: ManageSelectionItemState[] = [{
-      itemId: 'writer',
+    currentSnapshot.initialSelectedOptionIds = [];
+    const states: ManageInstallOptionState[] = [{
+      optionId: 'writer',
       currentEntry: 'unrecognized',
       initialSelected: false,
       allowedResults: 'none',
@@ -88,13 +87,13 @@ describe('Agent selection session', () => {
       .toEqual(['eve']);
   });
 
-  it('counts an installation-mode choice only when it applies to a selected item', () => {
+  it('counts an installation-mode choice only when it applies to a selected option', () => {
     const currentSnapshot = snapshot();
-    currentSnapshot.agents = [{ id: 'cursor', displayName: 'Cursor', detection: 'detected' }];
-    currentSnapshot.items = [{
+    currentSnapshot.agents = [{ kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'cursor', groupId: null }];
+    currentSnapshot.installOptions = [{
       id: 'cursor',
+      kind: 'standardDirectory',
       agentIds: ['cursor'],
-      category: 'separateInstall',
       displayName: 'Cursor',
       path: '/cursor',
       groupId: null,
@@ -103,8 +102,8 @@ describe('Agent selection session', () => {
       disabledReason: null,
     }];
     currentSnapshot.groups = [];
-    currentSnapshot.requestedModeItemIds = ['cursor'];
-    currentSnapshot.initialSelectedItemIds = [];
+    currentSnapshot.userModeOptionIds = ['cursor'];
+    currentSnapshot.initialSelectedOptionIds = [];
     const inactiveChoice = {
       ...createAgentSelectionSession(currentSnapshot),
       mode: 'copy' as const,
@@ -112,7 +111,7 @@ describe('Agent selection session', () => {
 
     expect(hasUserSelectionChanges(inactiveChoice, currentSnapshot)).toBe(false);
 
-    currentSnapshot.initialSelectedItemIds = ['cursor'];
+    currentSnapshot.initialSelectedOptionIds = ['cursor'];
     const activeChoice = {
       ...createAgentSelectionSession(currentSnapshot),
       mode: 'copy' as const,

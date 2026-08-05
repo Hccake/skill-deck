@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import {
   Bot,
   ChevronDown,
+  ChevronRight,
+  CircleHelp,
   Copy,
   Info,
   Link2,
@@ -11,13 +13,13 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type {
-  AgentSelectionDisplayGroup,
-  AgentSelectionItem,
-  AgentSelectionItemId,
+  AgentInstallOption,
+  AgentInstallOptionId,
+  AgentSelectionGroup,
   AgentSelectionSnapshot,
   DetectionState,
   InstallMode,
-  ManageSelectionItemState,
+  ManageInstallOptionState,
 } from '@/bindings';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -33,15 +35,18 @@ import {
   groupSelectionState,
   type AgentSelectionSession,
 } from '@/lib/agent-selection-session';
+import { projectAgentSelectionView } from '@/lib/agent-selection-view';
+import type { AgentSelectionPresentation } from './useAgentSelectionPresentation';
 
 const ROW_GRID = 'grid-cols-[1rem_minmax(0,1fr)_minmax(7.5rem,auto)_6rem]';
 const DIRECT_AGENT_BADGE = 'inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-muted/30 px-2 text-xs font-medium';
 
 interface AgentSelectionViewProps {
+  presentation: AgentSelectionPresentation;
   snapshot: AgentSelectionSnapshot;
   session: AgentSelectionSession;
-  itemStates?: ManageSelectionItemState[];
-  onItemChange: (itemId: AgentSelectionItemId, selected: boolean) => void;
+  optionStates?: ManageInstallOptionState[];
+  onOptionChange: (optionId: AgentInstallOptionId, selected: boolean) => void;
   onGroupChange: (groupId: string, selected: boolean) => void;
   onOtherExpandedChange: (expanded: boolean) => void;
   onAdditionalExpandedChange: (expanded: boolean) => void;
@@ -51,10 +56,11 @@ interface AgentSelectionViewProps {
 }
 
 export function AgentSelectionView({
+  presentation,
   snapshot,
   session,
-  itemStates = [],
-  onItemChange,
+  optionStates = [],
+  onOptionChange,
   onGroupChange,
   onOtherExpandedChange,
   onAdditionalExpandedChange,
@@ -63,14 +69,12 @@ export function AgentSelectionView({
   emptyMessage,
 }: AgentSelectionViewProps) {
   const { t } = useTranslation();
-  const states = new Map(itemStates.map((state) => [state.itemId, state]));
-  const agents = new Map(snapshot.agents.map((agent) => [agent.id, agent]));
-  const separate = snapshot.items.filter((item) => item.category === 'separateInstall' && !item.groupId);
-  const detected = separate.filter((item) => item.agentIds.some((id) => agents.get(id)?.detection === 'detected'));
-  const other = separate.filter((item) => !detected.includes(item));
-  const additional = snapshot.items.filter((item) => item.category === 'additionalInstall');
-  const hasSelectionContent = snapshot.directAgentIds.length > 0 || snapshot.items.length > 0;
-  const commonRowProps = { snapshot, session, states, disabled, onItemChange };
+  const states = new Map(optionStates.map((state) => [state.optionId, state]));
+  const { agentsById, directAgents, separateOptions, additionalOptions } = projectAgentSelectionView(snapshot);
+  const detected = separateOptions.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected'));
+  const other = separateOptions.filter((option) => !detected.includes(option));
+  const hasSelectionContent = directAgents.length > 0 || snapshot.installOptions.length > 0;
+  const commonRowProps = { snapshot, session, states, disabled, onOptionChange };
 
   return (
     <div className="space-y-6">
@@ -78,13 +82,21 @@ export function AgentSelectionView({
         <p className="py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>
       ) : null}
 
-      <DirectAgentsSummary snapshot={snapshot} />
+      <DirectAgentsSummary
+        agents={directAgents}
+        options={additionalOptions}
+        presentation={presentation}
+        {...commonRowProps}
+        onExpandedChange={onAdditionalExpandedChange}
+      />
 
       {(detected.length > 0 || other.length > 0 || snapshot.groups.length > 0) ? (
         <section aria-labelledby="separate-install-title" className="space-y-2">
-          <h3 id="separate-install-title" className="px-1 text-sm font-semibold">
-            {t('agentSelection.separateInstall')}
-          </h3>
+          <SectionHeading
+            id="separate-install-title"
+            title={presentation.selectable.title}
+            help={presentation.selectable.help}
+          />
           <div className="space-y-1">
             {detected.map((item) => (
               <SelectionRow key={item.id} item={item} {...commonRowProps} />
@@ -113,26 +125,6 @@ export function AgentSelectionView({
         </section>
       ) : null}
 
-      {additional.length > 0 ? (
-        <Collapsible open={session.additionalInstallExpanded} onOpenChange={onAdditionalExpandedChange}>
-          <section aria-labelledby="additional-install-title" className="space-y-2">
-            <CollapsibleTrigger className="flex w-full items-start justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <span className="space-y-0.5">
-                <span id="additional-install-title" className="block text-sm font-semibold">
-                  {t('agentSelection.additionalInstall')}
-                </span>
-                <span className="block text-xs leading-5 text-muted-foreground">
-                  {t('agentSelection.additionalInstallDescription')}
-                </span>
-              </span>
-              <ChevronDown className={cn('mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform', session.additionalInstallExpanded && 'rotate-180')} aria-hidden="true" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-1">
-              {additional.map((item) => <SelectionRow key={item.id} item={item} {...commonRowProps} />)}
-            </CollapsibleContent>
-          </section>
-        </Collapsible>
-      ) : null}
     </div>
   );
 }
@@ -153,22 +145,115 @@ export function AgentSelectionUnavailableNotice({ snapshot }: { snapshot: AgentS
   );
 }
 
-function DirectAgentsSummary({ snapshot }: { snapshot: AgentSelectionSnapshot }) {
-  const { t } = useTranslation();
-  const direct = snapshot.directAgentIds.flatMap((id) => snapshot.agents.filter((agent) => agent.id === id));
-  if (direct.length === 0) return null;
-  const detected = direct.filter((agent) => agent.detection === 'detected');
-  const more = direct.filter((agent) => agent.detection !== 'detected');
+function DirectAgentsSummary({
+  agents,
+  options,
+  presentation,
+  snapshot,
+  session,
+  states,
+  disabled,
+  onOptionChange,
+  onExpandedChange,
+}: CommonRowProps & {
+  agents: AgentSelectionSnapshot['agents'];
+  options: AgentInstallOption[];
+  presentation: AgentSelectionPresentation;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
+  if (agents.length === 0) return null;
+  const detected = agents.filter((agent) => agent.detection === 'detected');
+  const more = agents.filter((agent) => agent.detection !== 'detected');
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const orderedOptions = [
+    ...options.filter((option) => option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
+    ...options.filter((option) => !option.agentIds.some((id) => agentsById.get(id)?.detection === 'detected')),
+  ];
+  const selectedIds = new Set(session.selectedOptionIds);
+  const selectedAgentCount = new Set(
+    options
+      .filter((option) => selectedIds.has(option.id))
+      .flatMap((option) => option.agentIds),
+  ).size;
   return (
     <section aria-labelledby="direct-agents-title" className="space-y-2">
-      <h3 id="direct-agents-title" className="px-1 text-sm font-semibold">{t('agentSelection.directUse')}</h3>
+      <SectionHeading
+        id="direct-agents-title"
+        title={presentation.automatic.title}
+        help={presentation.automatic.help}
+      />
       <div className="flex flex-wrap items-center gap-2 px-1">
         {detected.map((agent) => (
           <DirectAgentBadge key={agent.id} name={agent.displayName} />
         ))}
         {more.length > 0 ? <DirectAgentsMorePopover agents={more} /> : null}
       </div>
+      {orderedOptions.length > 0 ? (
+        <Collapsible
+          open={session.additionalInstallExpanded}
+          onOpenChange={onExpandedChange}
+          className="pt-1"
+        >
+          <CollapsibleTrigger
+            className="flex min-h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRight
+              className={cn(
+                'size-4 shrink-0 transition-transform',
+                session.additionalInstallExpanded && 'rotate-90',
+              )}
+              aria-hidden="true"
+            />
+            <span>{presentation.ownDirectory.title}</span>
+            {selectedAgentCount > 0 ? (
+              <span className="ml-auto pr-1 text-xs font-normal text-muted-foreground">
+                {presentation.ownDirectory.selectedCount(selectedAgentCount)}
+              </span>
+            ) : null}
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-1">
+            <p className="px-1 pl-7 text-xs leading-5 text-muted-foreground">
+              {presentation.ownDirectory.description}
+            </p>
+            <div className="mt-2 space-y-1 pl-5">
+              {orderedOptions.map((item) => (
+                <SelectionRow
+                  key={item.id}
+                  item={item}
+                  snapshot={snapshot}
+                  session={session}
+                  states={states}
+                  disabled={disabled}
+                  onOptionChange={onOptionChange}
+                />
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
     </section>
+  );
+}
+
+function SectionHeading({ id, title, help }: { id: string; title: string; help: string }) {
+  return (
+    <div className="flex items-center gap-1 px-1">
+      <h3 id={id} className="text-sm font-semibold">{title}</h3>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={help}
+          >
+            <CircleHelp className="size-3.5" aria-hidden="true" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-72 text-xs leading-5">
+          {help}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -255,9 +340,9 @@ function DirectAgentBadge({ name }: { name: string }) {
 interface CommonRowProps {
   snapshot: AgentSelectionSnapshot;
   session: AgentSelectionSession;
-  states: Map<AgentSelectionItemId, ManageSelectionItemState>;
+  states: Map<AgentInstallOptionId, ManageInstallOptionState>;
   disabled: boolean;
-  onItemChange: (itemId: AgentSelectionItemId, selected: boolean) => void;
+  onOptionChange: (optionId: AgentInstallOptionId, selected: boolean) => void;
 }
 
 function SelectionGroup({
@@ -266,21 +351,21 @@ function SelectionGroup({
   session,
   states,
   disabled,
-  onItemChange,
+  onOptionChange,
   onGroupChange,
   onGroupExpandedChange,
 }: CommonRowProps & {
-  group: AgentSelectionDisplayGroup;
+  group: AgentSelectionGroup;
   onGroupChange: (groupId: string, selected: boolean) => void;
   onGroupExpandedChange: (groupId: string, expanded: boolean) => void;
 }) {
   const { t } = useTranslation();
   const checkboxId = useId();
   const expanded = session.expandedGroupIds.includes(group.id);
-  const groupItems = group.itemIds.flatMap((id) => snapshot.items.filter((item) => item.id === id));
-  const changeableItems = groupItems.filter((item) => {
-    const state = states.get(item.id);
-    return item.selectable && (!state || state.allowedResults === 'both');
+  const groupOptions = group.optionIds.flatMap((id) => snapshot.installOptions.filter((option) => option.id === id));
+  const changeableOptions = groupOptions.filter((option) => {
+    const state = states.get(option.id);
+    return option.selectable && (!state || state.allowedResults === 'both');
   });
   const checked = groupSelectionState(session, snapshot, group.id);
   return (
@@ -296,13 +381,13 @@ function SelectionGroup({
           checked={checked}
           onCheckedChange={(value) => {
             const nextSelected = value === true;
-            if (changeableItems.length === groupItems.length) {
+            if (changeableOptions.length === groupOptions.length) {
               onGroupChange(group.id, nextSelected);
             } else {
-              changeableItems.forEach((item) => onItemChange(item.id, nextSelected));
+              changeableOptions.forEach((option) => onOptionChange(option.id, nextSelected));
             }
           }}
-          disabled={disabled || changeableItems.length === 0}
+          disabled={disabled || changeableOptions.length === 0}
           aria-label={group.displayName}
         />
         <span className="flex min-w-0 items-center gap-2">
@@ -321,15 +406,15 @@ function SelectionGroup({
         <DetectionText value={group.detection} className="justify-self-end text-right" />
       </div>
       <CollapsibleContent className="space-y-1">
-        {groupItems.map((item) => (
+        {groupOptions.map((option) => (
           <SelectionGroupChild
-            key={item.id}
-            item={item}
+            key={option.id}
+            option={option}
             snapshot={snapshot}
             session={session}
             states={states}
             disabled={disabled}
-            onItemChange={onItemChange}
+            onOptionChange={onOptionChange}
           />
         ))}
       </CollapsibleContent>
@@ -337,57 +422,57 @@ function SelectionGroup({
   );
 }
 
-function SelectionGroupChild({ item, session, states, disabled, onItemChange }: CommonRowProps & { item: AgentSelectionItem }) {
+function SelectionGroupChild({ option, session, states, disabled, onOptionChange }: CommonRowProps & { option: AgentInstallOption }) {
   const checkboxId = useId();
-  const selected = session.selectedItemIds.includes(item.id);
-  const state = states.get(item.id);
-  const readOnly = !item.selectable || (state !== undefined && state.allowedResults !== 'both');
+  const selected = session.selectedOptionIds.includes(option.id);
+  const state = states.get(option.id);
+  const readOnly = !option.selectable || (state !== undefined && state.allowedResults !== 'both');
   return (
     <div data-slot="agent-selection-group-child" className={cn('grid min-h-10 items-center gap-2 rounded-md px-2', ROW_GRID, !readOnly && 'hover:bg-muted/50')}>
       <span aria-hidden="true" />
       <span className="flex min-w-0 items-center gap-2 pl-7">
         <SelectionCheckbox
           id={checkboxId}
-          item={item}
+          option={option}
           state={state}
           selected={selected}
           disabled={disabled}
-          onItemChange={onItemChange}
+          onOptionChange={onOptionChange}
         />
-        <PathLabel id={readOnly ? undefined : checkboxId} item={item} className="text-[13px]" />
+        <PathLabel id={readOnly ? undefined : checkboxId} option={option} className="text-[13px]" />
       </span>
-      <EntryState item={item} state={state} selected={selected} mode={session.mode} />
+      <EntryState option={option} state={state} selected={selected} mode={session.mode} />
       <span aria-hidden="true" />
     </div>
   );
 }
 
-function SelectionRow({ item, snapshot, session, states, disabled, onItemChange }: CommonRowProps & { item: AgentSelectionItem }) {
+function SelectionRow({ item: option, snapshot, session, states, disabled, onOptionChange }: CommonRowProps & { item: AgentInstallOption }) {
   const { t, i18n } = useTranslation();
   const checkboxId = useId();
-  const state = states.get(item.id);
-  const selected = session.selectedItemIds.includes(item.id);
-  const members = item.agentIds.flatMap((id) => snapshot.agents.filter((agent) => agent.id === id));
+  const state = states.get(option.id);
+  const selected = session.selectedOptionIds.includes(option.id);
+  const members = option.agentIds.flatMap((id) => snapshot.agents.filter((agent) => agent.id === id));
   const detected = members.filter((agent) => agent.detection === 'detected').length;
-  const readOnly = !item.selectable || (state !== undefined && state.allowedResults !== 'both');
+  const readOnly = !option.selectable || (state !== undefined && state.allowedResults !== 'both');
   const displayName = members.length > 1
     ? mergedAgentNames(members, i18n?.resolvedLanguage ?? i18n?.language, t)
-    : item.displayName;
+    : option.displayName;
   return (
     <div data-slot="agent-selection-row" className={cn('grid min-h-11 items-center gap-2 rounded-md px-2', ROW_GRID, !readOnly && 'hover:bg-muted/50')}>
       <SelectionCheckbox
         id={checkboxId}
-        item={item}
+        option={option}
         state={state}
         selected={selected}
         disabled={disabled}
         label={displayName}
-        onItemChange={onItemChange}
+        onOptionChange={onOptionChange}
       />
       <span className="flex min-w-0 items-center gap-2">
         <PathLabel
           id={readOnly ? undefined : checkboxId}
-          item={item}
+          option={option}
           label={displayName}
           showGlyph
           glyph={members.length > 1 ? UsersRound : undefined}
@@ -395,7 +480,7 @@ function SelectionRow({ item, snapshot, session, states, disabled, onItemChange 
         />
         {members.length > 1 ? <MembersPopover members={members} /> : null}
       </span>
-      <EntryState item={item} state={state} selected={selected} mode={session.mode} />
+      <EntryState option={option} state={state} selected={selected} mode={session.mode} />
       <span className="justify-self-end text-right text-xs text-muted-foreground">
         {members.length > 1
           ? <DetectedCount members={members} detected={detected} />
@@ -405,34 +490,34 @@ function SelectionRow({ item, snapshot, session, states, disabled, onItemChange 
   );
 }
 
-function SelectionCheckbox({ id, item, state, selected, disabled, label, onItemChange }: {
+function SelectionCheckbox({ id, option, state, selected, disabled, label, onOptionChange }: {
   id: string;
-  item: AgentSelectionItem;
-  state?: ManageSelectionItemState;
+  option: AgentInstallOption;
+  state?: ManageInstallOptionState;
   selected: boolean;
   disabled: boolean;
   label?: string;
-  onItemChange: (itemId: AgentSelectionItemId, selected: boolean) => void;
+  onOptionChange: (optionId: AgentInstallOptionId, selected: boolean) => void;
 }) {
-  const accessibleLabel = label ?? item.displayName;
+  const accessibleLabel = label ?? option.displayName;
   const lockedSelected = state?.allowedResults === 'selected';
-  const readOnly = !item.selectable || (state !== undefined && state.allowedResults !== 'both');
+  const readOnly = !option.selectable || (state !== undefined && state.allowedResults !== 'both');
   if (lockedSelected) return <Checkbox id={id} checked disabled aria-label={accessibleLabel} />;
   if (readOnly) return <TriangleAlert className="size-4 text-warning" aria-hidden="true" />;
   return (
     <Checkbox
       id={id}
       checked={selected}
-      onCheckedChange={(value) => onItemChange(item.id, value === true)}
+      onCheckedChange={(value) => onOptionChange(option.id, value === true)}
       disabled={disabled}
       aria-label={accessibleLabel}
     />
   );
 }
 
-function PathLabel({ id, item, label, className, showGlyph = false, glyph, glyphSlot }: {
+function PathLabel({ id, option, label, className, showGlyph = false, glyph, glyphSlot }: {
   id?: string;
-  item: AgentSelectionItem;
+  option: AgentInstallOption;
   label?: string;
   className?: string;
   showGlyph?: boolean;
@@ -442,7 +527,7 @@ function PathLabel({ id, item, label, className, showGlyph = false, glyph, glyph
   const content = (
     <>
       {showGlyph ? <AgentGlyph icon={glyph} slot={glyphSlot} /> : null}
-      <span className="min-w-0 truncate">{label ?? item.displayName}</span>
+      <span className="min-w-0 truncate">{label ?? option.displayName}</span>
     </>
   );
   return (
@@ -458,7 +543,7 @@ function PathLabel({ id, item, label, className, showGlyph = false, glyph, glyph
           </span>
         )}
       </TooltipTrigger>
-      <TooltipContent sideOffset={6}><code translate="no">{item.path}</code></TooltipContent>
+      <TooltipContent sideOffset={6}><code translate="no">{option.path}</code></TooltipContent>
     </Tooltip>
   );
 }
@@ -492,16 +577,16 @@ function MembersPopover({ members }: { members: AgentSelectionSnapshot['agents']
   );
 }
 
-function EntryState({ item, state, selected, mode }: {
-  item: AgentSelectionItem;
-  state?: ManageSelectionItemState;
+function EntryState({ option, state, selected, mode }: {
+  option: AgentInstallOption;
+  state?: ManageInstallOptionState;
   selected: boolean;
   mode: InstallMode;
 }) {
   const { t } = useTranslation();
   const current = state ? currentEntryPresentation(state.currentEntry, t) : null;
-  const effect = state ? effectPresentation(item, state, selected, mode, t) : null;
-  const disabledReason = item.disabledReason ? t(`agentSelection.disabled.${item.disabledReason}`) : null;
+  const effect = state ? effectPresentation(option, state, selected, mode, t) : null;
+  const disabledReason = option.disabledReason ? t(`agentSelection.disabled.${option.disabledReason}`) : null;
   return (
     <span data-slot="agent-entry-state" className="flex min-w-0 items-center gap-2 whitespace-nowrap text-xs">
       {disabledReason ? <span className="text-warning">{disabledReason}</span> : null}
@@ -521,7 +606,7 @@ function EntryState({ item, state, selected, mode }: {
           {effect.label}
         </span>
       ) : null}
-      {item.modeConstraint === 'copyOnly' && !state ? (
+      {option.modeConstraint === 'copyOnly' && !state ? (
         <span className="inline-flex items-center gap-1 text-muted-foreground">
           <Copy className="size-3.5" aria-hidden="true" />
           {t('agentSelection.copy')}
@@ -587,7 +672,7 @@ function DetectionDot({ tone }: { tone: 'detected' | 'neutral' | 'warning' }) {
   );
 }
 
-function currentEntryPresentation(value: ManageSelectionItemState['currentEntry'], t: (key: string) => string) {
+function currentEntryPresentation(value: ManageInstallOptionState['currentEntry'], t: (key: string) => string) {
   if (value === 'none') return null;
   if (value === 'copy') return { label: t('agentSelection.current.copy'), Icon: Copy, warning: false };
   if (value === 'link') return { label: t('agentSelection.current.link'), Icon: Link2, warning: false };
@@ -599,8 +684,8 @@ function currentEntryPresentation(value: ManageSelectionItemState['currentEntry'
 }
 
 function effectPresentation(
-  item: AgentSelectionItem,
-  state: ManageSelectionItemState,
+  option: AgentInstallOption,
+  state: ManageInstallOptionState,
   selected: boolean,
   mode: InstallMode,
   t: (key: string) => string,
@@ -610,12 +695,12 @@ function effectPresentation(
   }
   if (!selected) return null;
   if (state.selectedEffect === 'repair') {
-    return mode === 'copy' && item.modeConstraint === 'userSelectable'
+    return mode === 'copy' && option.modeConstraint === 'userSelectable'
       ? { label: t('agentSelection.effect.createCopy'), tone: 'default' as const }
       : { label: t('agentSelection.effect.repair'), tone: 'warning' as const };
   }
   if (state.selectedEffect === 'add') {
-    if (item.modeConstraint === 'copyOnly') {
+    if (option.modeConstraint === 'copyOnly') {
       return { label: t('agentSelection.effect.copy'), tone: 'default' as const };
     }
     return {

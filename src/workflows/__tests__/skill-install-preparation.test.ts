@@ -20,7 +20,7 @@ const input: InstallPreparationInput = {
   explicitAgentIds: ['cursor'],
   agentSelection: {
     revision: 'selection-1',
-    selectedItemIds: ['cursor'],
+    selectedOptionIds: ['cursor'],
     requestedMode: 'copy',
   },
   acknowledgeRisk: true,
@@ -102,8 +102,8 @@ describe('prepareInstall', () => {
   it('reloads a complete selection snapshot when the submitted revision is stale', async () => {
     const staleSnapshot = {
       selection: {
-        agents: [], directAgentIds: [], items: [], groups: [], initialSelectedItemIds: [],
-        unavailableExplicitAgents: [], requestedModeItemIds: [], revision: 'selection-2',
+        agents: [], installOptions: [], groups: [], initialSelectedOptionIds: [],
+        unavailableExplicitAgents: [], userModeOptionIds: [], revision: 'selection-2',
       },
       defaultSelectionWarning: null,
     } as const;
@@ -111,7 +111,7 @@ describe('prepareInstall', () => {
       ...staleSnapshot,
       selection: {
         ...staleSnapshot.selection,
-        initialSelectedItemIds: ['new-item'],
+        initialSelectedOptionIds: ['new-item'],
         revision: 'selection-3',
       },
       defaultSelectionWarning: 'readFailed' as const,

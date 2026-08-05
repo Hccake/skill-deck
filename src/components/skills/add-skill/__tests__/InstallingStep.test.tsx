@@ -47,7 +47,7 @@ function makePreparedInstall(): PreparedInstall {
     skills: ['demo'],
     agentIntents: [{
       agentId: 'eve',
-      privateEntry: 'none',
+      ownDirectorySelected: false,
       adapterTargets: ['eve:root', 'eve:research'],
     }],
     requestedMode: 'copy',
@@ -136,7 +136,7 @@ describe('InstallingStep', () => {
         state={{
           ...makeState(prepared),
           selectedSkills: ['changed-after-preview'],
-          selectedAgentItemIds: [],
+          selectedAgentOptionIds: [],
         }}
         prepared={prepared}
         updateState={() => undefined}

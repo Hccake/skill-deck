@@ -69,7 +69,7 @@ function state(response: InstallResponse): WizardState {
     skillFilter: null,
     skillSearchQuery: '',
     agentSelectionSnapshot: null,
-    selectedAgentItemIds: [],
+    selectedAgentOptionIds: [],
     expandedAgentGroupIds: [],
     additionalAgentsExpanded: false,
     selectionRequiresReconfirmation: false,

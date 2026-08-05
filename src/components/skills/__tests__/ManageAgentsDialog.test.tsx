@@ -41,30 +41,29 @@ function snapshot(): ManageAgentSelectionSnapshot {
   return {
     selection: makeAgentSelectionSnapshot({
       agents: [
-        { id: 'codex', displayName: 'Codex', detection: 'detected' },
-        { id: 'warp', displayName: 'Warp', detection: 'notDetected' },
-        { id: 'claude-code', displayName: 'Claude Code', detection: 'detected' },
-        { id: 'cursor', displayName: 'Cursor', detection: 'detected' },
-        { id: 'unknown-runtime', displayName: 'Unknown Runtime', detection: 'indeterminate' },
-        { id: 'eve', displayName: 'Eve', detection: 'detected' },
+        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'warp', displayName: 'Warp', detection: 'notDetected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'claude-code', displayName: 'Claude Code', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'claude', groupId: null },
+        { kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'cursor', groupId: null },
+        { kind: 'standard', id: 'unknown-runtime', displayName: 'Unknown Runtime', detection: 'indeterminate', directoryAccess: 'privateOnly', installOptionId: 'unknown', groupId: null },
+        { kind: 'grouped', id: 'eve', displayName: 'Eve', detection: 'detected', directoryAccess: null, installOptionId: null, groupId: 'eve-group' },
       ],
-      directAgentIds: ['codex', 'warp'],
-      items: [
-        { id: 'claude', agentIds: ['claude-code'], category: 'separateInstall', displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
-        { id: 'cursor', agentIds: ['cursor'], category: 'separateInstall', displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
-        { id: 'unknown', agentIds: ['unknown-runtime'], category: 'separateInstall', displayName: 'Unknown Runtime', path: '~/.unknown/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
-        { id: 'eve-root', agentIds: ['eve'], category: 'groupChild', displayName: '主目录', path: '~/.eve/skills', groupId: 'eve-group', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
+      installOptions: [
+        { id: 'claude', kind: 'standardDirectory', agentIds: ['claude-code'], displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+        { id: 'cursor', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+        { id: 'unknown', kind: 'standardDirectory', agentIds: ['unknown-runtime'], displayName: 'Unknown Runtime', path: '~/.unknown/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+        { id: 'eve-root', kind: 'groupLocation', agentIds: ['eve'], displayName: '主目录', path: '~/.eve/skills', groupId: 'eve-group', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
       ],
-      groups: [{ id: 'eve-group', agentId: 'eve', displayName: 'Eve', itemIds: ['eve-root'], detection: 'detected' }],
-      initialSelectedItemIds: ['claude'],
+      groups: [{ id: 'eve-group', agentId: 'eve', displayName: 'Eve', optionIds: ['eve-root'], detection: 'detected' }],
+      initialSelectedOptionIds: ['claude'],
       unavailableExplicitAgents: [{ agentId: 'removed-agent', reason: 'definitionMissing' }],
-      requestedModeItemIds: ['cursor', 'unknown'],
+      userModeOptionIds: ['cursor', 'unknown'],
     }),
-    itemStates: [
-      { itemId: 'claude', currentEntry: 'link', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null },
-      { itemId: 'cursor', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
-      { itemId: 'unknown', currentEntry: 'unrecognized', initialSelected: false, allowedResults: 'none', selectedEffect: null, unselectedEffect: null, disabledReason: 'unrecognizedEntry' },
-      { itemId: 'eve-root', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+    optionStates: [
+      { optionId: 'claude', currentEntry: 'link', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null },
+      { optionId: 'cursor', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+      { optionId: 'unknown', currentEntry: 'unrecognized', initialSelected: false, allowedResults: 'none', selectedEffect: null, unselectedEffect: null, disabledReason: 'unrecognizedEntry' },
+      { optionId: 'eve-root', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
     ],
   };
 }
@@ -138,12 +137,11 @@ describe('ManageAgentsDialog', () => {
   it('shows the manage empty state with only a close action', () => {
     const empty = snapshot();
     empty.selection.agents = [];
-    empty.selection.directAgentIds = [];
-    empty.selection.items = [];
+    empty.selection.installOptions = [];
     empty.selection.groups = [];
-    empty.selection.initialSelectedItemIds = [];
-    empty.selection.requestedModeItemIds = [];
-    empty.itemStates = [];
+    empty.selection.initialSelectedOptionIds = [];
+    empty.selection.userModeOptionIds = [];
+    empty.optionStates = [];
     renderDialog({ snapshot: empty });
 
     expect(screen.getByText('agentSelection.manageEmpty')).toBeDefined();
@@ -154,8 +152,7 @@ describe('ManageAgentsDialog', () => {
   it('shows direct-use Agents as badges and reveals uncertain readers on hover', async () => {
     const user = userEvent.setup();
     const current = snapshot();
-    current.selection.agents.push({ id: 'aider', displayName: 'Aider', detection: 'indeterminate' });
-    current.selection.directAgentIds.push('aider');
+    current.selection.agents.push({ kind: 'standard', id: 'aider', displayName: 'Aider', detection: 'indeterminate', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null });
     renderDialog({ snapshot: current });
 
     const codexBadge = screen.getByText('Codex').closest('[data-slot="direct-agent-badge"]');
@@ -177,11 +174,75 @@ describe('ManageAgentsDialog', () => {
     }
   });
 
+  it('uses manage-specific guidance for automatic and selectable Agents', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    expect(screen.getByText('agentSelection.automatic.manage.title')).toBeDefined();
+    expect(screen.getByText('agentSelection.selectable.title')).toBeDefined();
+
+    const automaticHelp = screen.getByRole('button', {
+      name: 'agentSelection.automatic.manage.help',
+    });
+    await user.hover(automaticHelp);
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'agentSelection.automatic.manage.help',
+    );
+  });
+
+  it('keeps optional own-directory writes inside direct use with one disclosure level', async () => {
+    const user = userEvent.setup();
+    const current = snapshot();
+    current.selection.agents.push(
+      { kind: 'standard', id: 'zed', displayName: 'Zed', detection: 'detected', directoryAccess: 'both', installOptionId: 'zed', groupId: null },
+      { kind: 'standard', id: 'trae', displayName: 'Trae', detection: 'notDetected', directoryAccess: 'both', installOptionId: 'trae', groupId: null },
+    );
+    current.selection.installOptions.push(
+      { id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+      { id: 'trae', kind: 'standardDirectory', agentIds: ['trae'], displayName: 'Trae', path: '~/.trae/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+    );
+    current.selection.userModeOptionIds.push('zed', 'trae');
+    current.optionStates.push(
+      { optionId: 'zed', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+      { optionId: 'trae', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+    );
+    renderDialog({ snapshot: current });
+
+    const directSection = screen.getByText('agentSelection.automatic.manage.title').closest('section');
+    expect(directSection).not.toBeNull();
+    const disclosure = within(directSection as HTMLElement).getByRole('button', {
+      name: /agentSelection\.ownDirectory\.title/,
+    });
+    expect(screen.queryByRole('checkbox', { name: 'Zed' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Trae' })).toBeNull();
+
+    await user.click(disclosure);
+
+    const zed = screen.getByRole('checkbox', { name: 'Zed' });
+    const trae = screen.getByRole('checkbox', { name: 'Trae' });
+    expect(zed.compareDocumentPosition(trae) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(within(directSection as HTMLElement).getByText('agentSelection.ownDirectory.manage.description')).toBeDefined();
+    expect(within(directSection as HTMLElement).queryByRole('button', { name: /agentSelection\.otherAgents/ })).toBeNull();
+  });
+
+  it('reveals an existing own-directory installation and summarizes the selected Agents', () => {
+    const current = snapshot();
+    current.selection.agents.push({ kind: 'standard', id: 'zed', displayName: 'Zed', detection: 'notDetected', directoryAccess: 'both', installOptionId: 'zed', groupId: null });
+    current.selection.installOptions.push({ id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
+    current.selection.initialSelectedOptionIds.push('zed');
+    current.selection.userModeOptionIds.push('zed');
+    current.optionStates.push({ optionId: 'zed', currentEntry: 'link', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null });
+    renderDialog({ snapshot: current });
+
+    expect(screen.getByRole('checkbox', { name: 'Zed' }).getAttribute('data-state')).toBe('checked');
+    expect(screen.getByText('agentSelection.ownDirectory.selectedCount:{"count":1}')).toBeDefined();
+  });
+
   it('keeps current installation states visible alongside each Agent', () => {
     const current = snapshot();
-    current.selection.initialSelectedItemIds = ['claude', 'cursor'];
-    current.itemStates[1] = {
-      ...current.itemStates[1],
+    current.selection.initialSelectedOptionIds = ['claude', 'cursor'];
+    current.optionStates[1] = {
+      ...current.optionStates[1],
       currentEntry: 'copy',
       initialSelected: true,
       selectedEffect: 'retain',
@@ -239,7 +300,7 @@ describe('ManageAgentsDialog', () => {
     expect(screen.getByText('agentSelection.current.unrecognized')).toBeDefined();
   });
 
-  it('submits opaque item IDs and the selected installation mode', async () => {
+  it('submits opaque option IDs and the selected installation mode', async () => {
     const user = userEvent.setup();
     const { onSave } = renderDialog();
 
@@ -249,7 +310,7 @@ describe('ManageAgentsDialog', () => {
 
     expect(onSave).toHaveBeenCalledWith({
       revision: 'selection-revision-1',
-      selectedItemIds: ['claude', 'cursor'],
+      selectedOptionIds: ['claude', 'cursor'],
       requestedMode: 'copy',
     }, false);
   });
@@ -286,8 +347,8 @@ describe('ManageAgentsDialog', () => {
   it('shows copy-only additions and exposes every member of a merged placement', async () => {
     const user = userEvent.setup();
     const merged = snapshot();
-    merged.selection.agents.push({ id: 'windsurf', displayName: 'Windsurf', detection: 'notDetected' });
-    merged.selection.items[1].agentIds.push('windsurf');
+    merged.selection.agents.push({ kind: 'standard', id: 'windsurf', displayName: 'Windsurf', detection: 'notDetected', directoryAccess: 'privateOnly', installOptionId: 'cursor', groupId: null });
+    merged.selection.installOptions[1].agentIds.push('windsurf');
     renderDialog({ snapshot: merged });
 
     const viewMembers = screen.getByRole('button', { name: 'agentSelection.viewMembers' });
@@ -317,7 +378,7 @@ describe('ManageAgentsDialog', () => {
     const user = userEvent.setup();
     const latest = snapshot();
     latest.selection.revision = 'selection-revision-2';
-    latest.selection.initialSelectedItemIds = [];
+    latest.selection.initialSelectedOptionIds = [];
     const onSave = vi.fn().mockResolvedValue({ status: 'stale' });
     const { rerender } = render(
       <TooltipProvider>

@@ -5,14 +5,11 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::application::agent_intent::{
-    validate_agent_intents, AgentWriteIntent, PrivateEntryIntent,
-};
+use crate::application::agent_intent::{validate_agent_intents, AgentWriteIntent};
 use crate::application::agent_selection::{
-    build_agent_selection_catalog, resolve_agent_selection_submission,
-    AgentSelectionDisabledReason, AgentSelectionItemId, AgentSelectionModeConstraint,
-    AgentSelectionResolution, AgentSelectionRevision, AgentSelectionSnapshot,
-    AgentSelectionSubmission,
+    build_agent_selection_catalog, resolve_agent_selection_submission, AgentInstallOptionId,
+    AgentSelectionDisabledReason, AgentSelectionModeConstraint, AgentSelectionResolution,
+    AgentSelectionRevision, AgentSelectionSnapshot, AgentSelectionSubmission,
 };
 use crate::application::install::InstallPlanExecutor;
 use crate::application::install_planner::InstallPlanningFactSource;
@@ -29,7 +26,7 @@ use crate::application::skill_entries::{
     join_entry, link_points_to, InstalledSkillPayloadAcquirer, ObservedSkillSnapshot,
     SkillEntryObserver,
 };
-use crate::application::workflow_planner::{resolve_agent_entry_plan, AgentEntryPlan};
+use crate::application::workflow_planner::AgentEntryPlan;
 use crate::core::mutation::{CancellationSignal, MutationKind};
 use crate::core::skill_payload::PayloadId;
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind, TargetFactResolver};
@@ -142,8 +139,8 @@ pub enum ManageSelectionDisabledReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
-pub struct ManageSelectionItemState {
-    pub item_id: AgentSelectionItemId,
+pub struct ManageInstallOptionState {
+    pub option_id: AgentInstallOptionId,
     pub current_entry: ManageCurrentEntry,
     pub initial_selected: bool,
     pub allowed_results: ManageAllowedResults,
@@ -157,7 +154,7 @@ pub struct ManageSelectionItemState {
 #[specta(rename_all = "camelCase")]
 pub struct ManageAgentSelectionSnapshot {
     pub selection: AgentSelectionSnapshot,
-    pub item_states: Vec<ManageSelectionItemState>,
+    pub option_states: Vec<ManageInstallOptionState>,
 }
 
 #[derive(Serialize)]
@@ -165,6 +162,8 @@ struct ResolvedManageSelection {
     context: ContextRef,
     skill_name: String,
     add: Vec<AgentWriteIntent>,
+    #[serde(skip)]
+    add_plan: AgentEntryPlan,
     remove_entry_ids: Vec<ObservedEntryId>,
     requested_mode: InstallMode,
 }
@@ -178,22 +177,22 @@ struct LoadedManageSelection {
     public: ManageAgentSelectionSnapshot,
     catalog: crate::application::agent_selection::AgentSelectionCatalog,
     observed: ObservedSkillSnapshot,
-    observed_entry_ids: BTreeMap<AgentSelectionItemId, ObservedEntryId>,
+    observed_entry_ids: BTreeMap<AgentInstallOptionId, ObservedEntryId>,
 }
 
-fn manage_item_state(
-    item_id: &AgentSelectionItemId,
+fn manage_option_state(
+    option_id: &AgentInstallOptionId,
     fact: &ResolvedTargetFact,
     canonical: &ResolvedTargetFact,
     placement_conflict: bool,
-) -> ManageSelectionItemState {
+) -> ManageInstallOptionState {
     let recognized_link = fact
         .link_target
         .as_deref()
         .is_some_and(|target| link_points_to(fact, target, canonical));
     let mut state = match fact.entry_kind {
-        TargetEntryKind::Missing => ManageSelectionItemState {
-            item_id: item_id.clone(),
+        TargetEntryKind::Missing => ManageInstallOptionState {
+            option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::None,
             initial_selected: false,
             allowed_results: ManageAllowedResults::Both,
@@ -201,12 +200,12 @@ fn manage_item_state(
             unselected_effect: Some(ManageUnselectedEffect::KeepAbsent),
             disabled_reason: None,
         },
-        TargetEntryKind::Directory => existing_item_state(item_id, ManageCurrentEntry::Copy),
+        TargetEntryKind::Directory => existing_option_state(option_id, ManageCurrentEntry::Copy),
         TargetEntryKind::Symlink | TargetEntryKind::Junction if recognized_link => {
-            existing_item_state(item_id, ManageCurrentEntry::Link)
+            existing_option_state(option_id, ManageCurrentEntry::Link)
         }
-        TargetEntryKind::BrokenLink if recognized_link => ManageSelectionItemState {
-            item_id: item_id.clone(),
+        TargetEntryKind::BrokenLink if recognized_link => ManageInstallOptionState {
+            option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::BrokenLink,
             initial_selected: true,
             allowed_results: ManageAllowedResults::Both,
@@ -218,8 +217,8 @@ fn manage_item_state(
         | TargetEntryKind::Other
         | TargetEntryKind::Symlink
         | TargetEntryKind::Junction
-        | TargetEntryKind::BrokenLink => ManageSelectionItemState {
-            item_id: item_id.clone(),
+        | TargetEntryKind::BrokenLink => ManageInstallOptionState {
+            option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::Unrecognized,
             initial_selected: false,
             allowed_results: ManageAllowedResults::None,
@@ -237,12 +236,12 @@ fn manage_item_state(
     state
 }
 
-fn existing_item_state(
-    item_id: &AgentSelectionItemId,
+fn existing_option_state(
+    option_id: &AgentInstallOptionId,
     current_entry: ManageCurrentEntry,
-) -> ManageSelectionItemState {
-    ManageSelectionItemState {
-        item_id: item_id.clone(),
+) -> ManageInstallOptionState {
+    ManageInstallOptionState {
+        option_id: option_id.clone(),
         current_entry,
         initial_selected: true,
         allowed_results: ManageAllowedResults::Both,
@@ -252,33 +251,33 @@ fn existing_item_state(
     }
 }
 
-fn requested_manage_item_ids(
-    states: &[ManageSelectionItemState],
+fn requested_manage_option_ids(
+    states: &[ManageInstallOptionState],
     submission: &AgentSelectionSubmission,
-) -> Result<(BTreeSet<AgentSelectionItemId>, Vec<AgentSelectionItemId>), AppError> {
+) -> Result<(BTreeSet<AgentInstallOptionId>, Vec<AgentInstallOptionId>), AppError> {
     let selected = submission
-        .selected_item_ids
+        .selected_option_ids
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    if selected.len() != submission.selected_item_ids.len() {
+    if selected.len() != submission.selected_option_ids.len() {
         return Err(selection_validation(
-            AgentSelectionInvalidReason::DuplicateItem,
+            AgentSelectionInvalidReason::DuplicateOption,
         ));
     }
     let states_by_id = states
         .iter()
-        .map(|state| (&state.item_id, state))
+        .map(|state| (&state.option_id, state))
         .collect::<BTreeMap<_, _>>();
-    for item_id in &selected {
-        if !states_by_id.contains_key(item_id) {
+    for option_id in &selected {
+        if !states_by_id.contains_key(option_id) {
             return Err(selection_validation(
-                AgentSelectionInvalidReason::ItemMissing,
+                AgentSelectionInvalidReason::OptionMissing,
             ));
         }
     }
     if states.iter().any(|state| {
-        let is_selected = selected.contains(&state.item_id);
+        let is_selected = selected.contains(&state.option_id);
         matches!(
             (state.allowed_results, is_selected),
             (ManageAllowedResults::Selected, false) | (ManageAllowedResults::None, true)
@@ -290,14 +289,14 @@ fn requested_manage_item_ids(
     }
     let actionable = states
         .iter()
-        .filter(|state| selected.contains(&state.item_id))
+        .filter(|state| selected.contains(&state.option_id))
         .filter(|state| {
             matches!(
                 state.selected_effect,
                 Some(ManageSelectedEffect::Add | ManageSelectedEffect::Repair)
             )
         })
-        .map(|state| state.item_id.clone())
+        .map(|state| state.option_id.clone())
         .collect();
     Ok((selected, actionable))
 }
@@ -363,8 +362,8 @@ where
                 });
             }
         };
-        let additions = self.resolve_additions(&selection, &loaded.observed).await?;
-        let canonical_payload = if selection.add.is_empty() {
+        let additions = self.resolve_additions(&selection).await?;
+        let canonical_payload = if selection.add_plan.required_agent_roots.is_empty() {
             None
         } else {
             Some(
@@ -403,28 +402,28 @@ where
             &self.targets,
         )
         .await?;
-        let item_ids = catalog
+        let option_ids = catalog
             .snapshot
-            .items
+            .install_options
             .iter()
-            .map(|item| item.id.clone())
+            .map(|option| option.id.clone())
             .collect::<Vec<_>>();
-        let destinations = item_ids
+        let destinations = option_ids
             .iter()
-            .map(|item_id| {
-                let item = catalog
-                    .resolved_items
-                    .get(item_id)
-                    .expect("catalog item has an internal target");
-                join_entry(&item.root, skill_name)
+            .map(|option_id| {
+                let option = catalog
+                    .resolved_options
+                    .get(option_id)
+                    .expect("catalog option has an internal target");
+                join_entry(&option.root, skill_name)
             })
             .collect::<Vec<_>>();
-        let item_facts = if destinations.is_empty() {
+        let option_facts = if destinations.is_empty() {
             Vec::new()
         } else {
             self.targets.resolve(context, &destinations, None).await?
         };
-        if item_facts.len() != item_ids.len() {
+        if option_facts.len() != option_ids.len() {
             return Err(AppError::StaleTarget);
         }
 
@@ -433,24 +432,30 @@ where
             .iter()
             .map(|entry| (&entry.fact.key, &entry.public.entry_id))
             .collect::<BTreeMap<_, _>>();
-        let mut states = Vec::with_capacity(item_ids.len());
+        let mut states = Vec::with_capacity(option_ids.len());
         let mut observed_entry_ids = BTreeMap::new();
-        for (item_id, fact) in item_ids.into_iter().zip(item_facts) {
-            let placement_conflict = catalog.resolved_items.get(&item_id).is_some_and(|item| {
-                item.public.disabled_reason == Some(AgentSelectionDisabledReason::PlacementConflict)
-            });
-            let state = manage_item_state(&item_id, &fact, &observed.canonical, placement_conflict);
+        for (option_id, fact) in option_ids.into_iter().zip(option_facts) {
+            let placement_conflict =
+                catalog
+                    .resolved_options
+                    .get(&option_id)
+                    .is_some_and(|option| {
+                        option.public.disabled_reason
+                            == Some(AgentSelectionDisabledReason::PlacementConflict)
+                    });
+            let state =
+                manage_option_state(&option_id, &fact, &observed.canonical, placement_conflict);
             if state.initial_selected {
                 if let Some(entry_id) = observed_by_key.get(&fact.key) {
-                    observed_entry_ids.insert(item_id.clone(), (*entry_id).clone());
+                    observed_entry_ids.insert(option_id.clone(), (*entry_id).clone());
                 }
             }
             states.push(state);
         }
-        catalog.snapshot.initial_selected_item_ids = states
+        catalog.snapshot.initial_selected_option_ids = states
             .iter()
             .filter(|state| state.initial_selected)
-            .map(|state| state.item_id.clone())
+            .map(|state| state.option_id.clone())
             .collect();
         catalog.snapshot.revision = AgentSelectionRevision(stable_digest(&(
             "manage-agent-selection-revision-v1",
@@ -459,7 +464,7 @@ where
                 .iter()
                 .map(|state| {
                     (
-                        &state.item_id,
+                        &state.option_id,
                         state.current_entry,
                         state.initial_selected,
                         state.allowed_results,
@@ -470,7 +475,7 @@ where
                 })
                 .collect::<Vec<_>>(),
         ))?);
-        catalog.snapshot.requested_mode_item_ids = states
+        catalog.snapshot.user_mode_option_ids = states
             .iter()
             .filter(|state| {
                 matches!(
@@ -480,14 +485,14 @@ where
             })
             .filter_map(|state| {
                 catalog
-                    .resolved_items
-                    .get(&state.item_id)
-                    .filter(|item| {
-                        item.public.selectable
-                            && item.public.mode_constraint
+                    .resolved_options
+                    .get(&state.option_id)
+                    .filter(|option| {
+                        option.public.selectable
+                            && option.public.mode_constraint
                                 == AgentSelectionModeConstraint::UserSelectable
                     })
-                    .map(|_| state.item_id.clone())
+                    .map(|_| state.option_id.clone())
             })
             .collect();
 
@@ -495,7 +500,7 @@ where
             skill_name: skill_name.to_string(),
             public: ManageAgentSelectionSnapshot {
                 selection: catalog.snapshot.clone(),
-                item_states: states,
+                option_states: states,
             },
             catalog,
             observed,
@@ -508,41 +513,41 @@ where
         loaded: &LoadedManageSelection,
         submission: &AgentSelectionSubmission,
     ) -> Result<Option<ResolvedManageSelection>, AppError> {
-        let (selected, actionable_item_ids) =
-            requested_manage_item_ids(&loaded.public.item_states, submission)?;
+        let (selected, actionable_option_ids) =
+            requested_manage_option_ids(&loaded.public.option_states, submission)?;
         let actionable_submission = AgentSelectionSubmission {
             revision: submission.revision.clone(),
-            selected_item_ids: actionable_item_ids,
+            selected_option_ids: actionable_option_ids,
             requested_mode: submission.requested_mode.clone(),
         };
-        let intents =
+        let resolved =
             match resolve_agent_selection_submission(&loaded.catalog, &actionable_submission)? {
-                AgentSelectionResolution::Ready(intents) => intents,
-                AgentSelectionResolution::Stale(_) => return Ok(None),
+                AgentSelectionResolution::Ready(selection) => selection,
+                AgentSelectionResolution::Stale => return Ok(None),
             };
-        let add = intents
+        let add_plan = resolved.entry_plan(false);
+        let add = resolved
+            .intents
             .into_iter()
-            .filter(|intent| {
-                intent.private_entry != PrivateEntryIntent::None
-                    || !intent.adapter_targets.is_empty()
-            })
+            .filter(|intent| intent.own_directory_selected || !intent.adapter_targets.is_empty())
             .collect::<Vec<_>>();
         let remove_entry_ids = loaded
             .public
-            .item_states
+            .option_states
             .iter()
             .filter(|state| {
-                (state.initial_selected && !selected.contains(&state.item_id))
+                (state.initial_selected && !selected.contains(&state.option_id))
                     || (state.selected_effect == Some(ManageSelectedEffect::Repair)
-                        && selected.contains(&state.item_id))
+                        && selected.contains(&state.option_id))
             })
-            .filter_map(|state| loaded.observed_entry_ids.get(&state.item_id).cloned())
+            .filter_map(|state| loaded.observed_entry_ids.get(&state.option_id).cloned())
             .collect::<Vec<_>>();
 
         Ok(Some(ResolvedManageSelection {
             context: loaded.observed.facts.resolved_context.context.clone(),
             skill_name: loaded.skill_name.clone(),
             add,
+            add_plan,
             remove_entry_ids,
             requested_mode: submission.requested_mode.clone(),
         }))
@@ -573,8 +578,11 @@ where
                 .map(|entry| entry.public.clone())
                 .collect::<Vec<_>>(),
         )?;
-        let additions = self.resolve_additions(&selection, &snapshot).await?;
-        let canonical_lease = match (&request.canonical_payload, selection.add.is_empty()) {
+        let additions = self.resolve_additions(&selection).await?;
+        let canonical_lease = match (
+            &request.canonical_payload,
+            selection.add_plan.required_agent_roots.is_empty(),
+        ) {
             (None, true) => None,
             (Some(handle), false)
                 if same_environment_identity(&handle.environment, &request.context.environment) =>
@@ -607,13 +615,8 @@ where
     async fn resolve_additions(
         &self,
         request: &ResolvedManageSelection,
-        snapshot: &ObservedSkillSnapshot,
     ) -> Result<ResolvedAdditions, AppError> {
-        let plan = resolve_agent_entry_plan(
-            &request.context,
-            &snapshot.facts.agent_runtime,
-            &request.add,
-        )?;
+        let plan = request.add_plan.clone();
         let destinations = plan
             .required_agent_roots
             .iter()
@@ -967,7 +970,7 @@ pub fn validate_manage_execution(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::agent_intent::{AgentWriteIntent, PrivateEntryIntent};
+    use crate::application::agent_intent::AgentWriteIntent;
     use crate::core::agent_definition::AgentId;
     use crate::environment::runtime::ObservedEntryId;
 
@@ -985,7 +988,7 @@ mod tests {
     fn manage_request_rejects_duplicate_additions_and_removals() {
         let intent = AgentWriteIntent {
             agent_id: AgentId::parse("custom-agent").unwrap(),
-            private_entry: PrivateEntryIntent::Required,
+            own_directory_selected: true,
             adapter_targets: Vec::new(),
         };
         let id = ObservedEntryId::parse("entry-v1-demo").unwrap();
@@ -1016,9 +1019,9 @@ mod tests {
 
     #[test]
     fn manage_selection_rejects_a_selected_unrecognized_entry() {
-        let item_id = AgentSelectionItemId("item-unrecognized".to_string());
-        let state = ManageSelectionItemState {
-            item_id: item_id.clone(),
+        let option_id = AgentInstallOptionId("option-unrecognized".to_string());
+        let state = ManageInstallOptionState {
+            option_id: option_id.clone(),
             current_entry: ManageCurrentEntry::Unrecognized,
             initial_selected: false,
             allowed_results: ManageAllowedResults::None,
@@ -1028,36 +1031,36 @@ mod tests {
         };
         let submission = AgentSelectionSubmission {
             revision: AgentSelectionRevision("revision".to_string()),
-            selected_item_ids: vec![item_id],
+            selected_option_ids: vec![option_id],
             requested_mode: InstallMode::Copy,
         };
 
-        assert!(requested_manage_item_ids(&[state], &submission).is_err());
+        assert!(requested_manage_option_ids(&[state], &submission).is_err());
     }
 
     #[test]
-    fn manage_selection_rejects_unknown_item_ids() {
+    fn manage_selection_rejects_unknown_option_ids() {
         let submission = AgentSelectionSubmission {
             revision: AgentSelectionRevision("revision".to_string()),
-            selected_item_ids: vec![AgentSelectionItemId("missing".to_string())],
+            selected_option_ids: vec![AgentInstallOptionId("missing".to_string())],
             requested_mode: InstallMode::Copy,
         };
 
         assert!(matches!(
-            requested_manage_item_ids(&[], &submission),
+            requested_manage_option_ids(&[], &submission),
             Err(AppError::AgentSelectionInvalid {
-                reason: AgentSelectionInvalidReason::ItemMissing
+                reason: AgentSelectionInvalidReason::OptionMissing
             })
         ));
     }
 
     #[test]
-    fn manage_selection_returns_only_items_that_need_an_add_or_repair() {
-        let retained = AgentSelectionItemId("retained".to_string());
-        let added = AgentSelectionItemId("added".to_string());
+    fn manage_selection_returns_only_options_that_need_an_add_or_repair() {
+        let retained = AgentInstallOptionId("retained".to_string());
+        let added = AgentInstallOptionId("added".to_string());
         let states = vec![
-            ManageSelectionItemState {
-                item_id: retained.clone(),
+            ManageInstallOptionState {
+                option_id: retained.clone(),
                 current_entry: ManageCurrentEntry::Link,
                 initial_selected: true,
                 allowed_results: ManageAllowedResults::Both,
@@ -1065,8 +1068,8 @@ mod tests {
                 unselected_effect: Some(ManageUnselectedEffect::Remove),
                 disabled_reason: None,
             },
-            ManageSelectionItemState {
-                item_id: added.clone(),
+            ManageInstallOptionState {
+                option_id: added.clone(),
                 current_entry: ManageCurrentEntry::None,
                 initial_selected: false,
                 allowed_results: ManageAllowedResults::Both,
@@ -1077,11 +1080,11 @@ mod tests {
         ];
         let submission = AgentSelectionSubmission {
             revision: AgentSelectionRevision("revision".to_string()),
-            selected_item_ids: vec![retained.clone(), added.clone()],
+            selected_option_ids: vec![retained.clone(), added.clone()],
             requested_mode: InstallMode::Symlink,
         };
 
-        let (selected, actionable) = requested_manage_item_ids(&states, &submission).unwrap();
+        let (selected, actionable) = requested_manage_option_ids(&states, &submission).unwrap();
 
         assert_eq!(selected, BTreeSet::from([retained, added.clone()]));
         assert_eq!(actionable, vec![added]);

@@ -326,7 +326,7 @@ mod tests {
             revision: crate::application::agent_selection::AgentSelectionRevision(
                 "selection-v1-test".to_string(),
             ),
-            selected_item_ids: Vec::new(),
+            selected_option_ids: Vec::new(),
             requested_mode: mode,
         }
     }

@@ -54,13 +54,12 @@ function state(overrides: Partial<WizardState> = {}): WizardState {
   const agentSnapshot = {
     selection: makeAgentSelectionSnapshot({
       agents: [
-        { id: 'codex', displayName: 'Codex', detection: 'detected' },
-        { id: 'cursor', displayName: 'Cursor', detection: 'detected' },
+        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'cursor-item', groupId: null },
       ],
-      directAgentIds: ['codex'],
-      items: [{ id: 'cursor-item', agentIds: ['cursor'], category: 'separateInstall', displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
-      initialSelectedItemIds: ['cursor-item'],
-      requestedModeItemIds: ['cursor-item'],
+      installOptions: [{ id: 'cursor-item', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
+      initialSelectedOptionIds: ['cursor-item'],
+      userModeOptionIds: ['cursor-item'],
     }),
     defaultSelectionWarning: null,
   };
@@ -86,7 +85,7 @@ function state(overrides: Partial<WizardState> = {}): WizardState {
     skillFilter: null,
     skillSearchQuery: '',
     agentSelectionSnapshot: agentSnapshot,
-    selectedAgentItemIds: ['cursor-item'],
+    selectedAgentOptionIds: ['cursor-item'],
     expandedAgentGroupIds: [],
     additionalAgentsExpanded: false,
     selectionRequiresReconfirmation: false,
@@ -119,7 +118,7 @@ describe('ConfirmStep', () => {
       skills: ['demo'],
       agentSelection: {
         revision: 'selection-revision-1',
-        selectedItemIds: ['cursor-item'],
+        selectedOptionIds: ['cursor-item'],
         requestedMode: 'copy',
       },
     }));
@@ -132,8 +131,8 @@ describe('ConfirmStep', () => {
   it('returns to Agent selection with the latest snapshot when the revision is stale', async () => {
     const latest = state().agentSelectionSnapshot!;
     latest.selection.revision = 'selection-revision-2';
-    latest.selection.items.push({ id: 'new-item', agentIds: ['cursor'], category: 'additionalInstall', displayName: 'Cursor extra', path: '~/.cursor/extra', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
-    latest.selection.initialSelectedItemIds = ['new-item'];
+    latest.selection.installOptions.push({ id: 'new-item', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor extra', path: '~/.cursor/extra', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
+    latest.selection.initialSelectedOptionIds = ['new-item'];
     preview.mockResolvedValue({ status: 'selectionStale', snapshot: latest });
     getSelection.mockResolvedValue(latest);
     const updateState = vi.fn();
@@ -143,7 +142,7 @@ describe('ConfirmStep', () => {
     await waitFor(() => expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
       step: 'options',
       agentSelectionSnapshot: latest,
-      selectedAgentItemIds: ['cursor-item', 'new-item'],
+      selectedAgentOptionIds: ['cursor-item', 'new-item'],
       selectionRequiresReconfirmation: true,
     })));
     expect(getSelection).toHaveBeenCalledWith(state().context, []);

@@ -8,15 +8,6 @@ use crate::core::agent_definition::AgentId;
 use crate::error::AppError;
 use crate::models::InstallMode;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub enum PrivateEntryIntent {
-    None,
-    Required,
-    OptionalSelected,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(transparent)]
 pub struct AdapterTargetId(pub String);
@@ -26,7 +17,7 @@ pub struct AdapterTargetId(pub String);
 #[specta(rename_all = "camelCase")]
 pub struct AgentWriteIntent {
     pub agent_id: AgentId,
-    pub private_entry: PrivateEntryIntent,
+    pub own_directory_selected: bool,
     pub adapter_targets: Vec<AdapterTargetId>,
 }
 
@@ -75,21 +66,21 @@ mod tests {
     fn transient_agent_intent_has_no_install_mode() {
         let intent = AgentWriteIntent {
             agent_id: AgentId::parse("custom-agent").expect("agent"),
-            private_entry: PrivateEntryIntent::OptionalSelected,
+            own_directory_selected: true,
             adapter_targets: vec![AdapterTargetId("target-1".to_string())],
         };
 
         let value = serde_json::to_value(intent).expect("serialize");
 
         assert!(!value.as_object().expect("object").contains_key("mode"));
-        assert_eq!(value["privateEntry"], "optionalSelected");
+        assert_eq!(value["ownDirectorySelected"], true);
     }
 
     #[test]
     fn duplicate_agent_intents_are_rejected() {
         let duplicate = || AgentWriteIntent {
             agent_id: AgentId::parse("custom-agent").expect("agent"),
-            private_entry: PrivateEntryIntent::Required,
+            own_directory_selected: true,
             adapter_targets: Vec::new(),
         };
 

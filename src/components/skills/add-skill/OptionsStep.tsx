@@ -7,10 +7,11 @@ import {
   AgentSelectionUnavailableNotice,
   AgentSelectionView,
 } from '@/components/agents/selection/AgentSelectionView';
+import { useAgentSelectionPresentation } from '@/components/agents/selection/useAgentSelectionPresentation';
 import {
   createAgentSelectionSession,
   toggleSelectionGroup,
-  toggleSelectionItem,
+  toggleInstallOption,
 } from '@/lib/agent-selection-session';
 import type { InstallTargetOptionsController } from '@/hooks/useInstallTargetOptions';
 import type { WizardState } from './types';
@@ -23,18 +24,19 @@ interface OptionsStepProps {
 
 export function OptionsStep({ state, updateState, targetOptions }: OptionsStepProps) {
   const { t } = useTranslation();
+  const presentation = useAgentSelectionPresentation('install');
   const loaded = targetOptions.status === 'ready' ? targetOptions.snapshot : null;
   const session = useMemo(() => {
     if (!loaded) return null;
     return {
       ...createAgentSelectionSession(loaded.selection, state.mode),
-      selectedItemIds: state.selectedAgentItemIds,
+      selectedOptionIds: state.selectedAgentOptionIds,
       otherAgentsExpanded: state.otherAgentsExpanded,
       additionalInstallExpanded: state.additionalAgentsExpanded,
       expandedGroupIds: state.expandedAgentGroupIds,
       requiresReconfirmation: state.selectionRequiresReconfirmation,
     };
-  }, [loaded, state.additionalAgentsExpanded, state.expandedAgentGroupIds, state.mode, state.otherAgentsExpanded, state.selectedAgentItemIds, state.selectionRequiresReconfirmation]);
+  }, [loaded, state.additionalAgentsExpanded, state.expandedAgentGroupIds, state.mode, state.otherAgentsExpanded, state.selectedAgentOptionIds, state.selectionRequiresReconfirmation]);
 
   if (!loaded || !session) {
     return (
@@ -57,7 +59,7 @@ export function OptionsStep({ state, updateState, targetOptions }: OptionsStepPr
   }
 
   const publish = (next: typeof session) => updateState({
-    selectedAgentItemIds: next.selectedItemIds,
+    selectedAgentOptionIds: next.selectedOptionIds,
     otherAgentsExpanded: next.otherAgentsExpanded,
     additionalAgentsExpanded: next.additionalInstallExpanded,
     expandedAgentGroupIds: next.expandedGroupIds,
@@ -100,10 +102,11 @@ export function OptionsStep({ state, updateState, targetOptions }: OptionsStepPr
           </Alert>
         ) : null}
         <AgentSelectionView
+          presentation={presentation}
           snapshot={loaded.selection}
           session={session}
           emptyMessage={t('agentSelection.installEmpty')}
-          onItemChange={(itemId, selected) => publish(toggleSelectionItem(session, loaded.selection, itemId, selected))}
+          onOptionChange={(optionId, selected) => publish(toggleInstallOption(session, loaded.selection, optionId, selected))}
           onGroupChange={(groupId, selected) => publish(toggleSelectionGroup(session, loaded.selection, groupId, selected))}
           onOtherExpandedChange={(otherAgentsExpanded) => publish({ ...session, otherAgentsExpanded })}
           onAdditionalExpandedChange={(additionalInstallExpanded) => publish({ ...session, additionalInstallExpanded })}

@@ -159,7 +159,7 @@ describe('useTauriApi unwrap logic', () => {
       skills: ['demo'],
       agentSelection: {
         revision: 'selection-1',
-        selectedItemIds: ['my-agent-item'],
+        selectedOptionIds: ['my-agent-item'],
         requestedMode: 'copy',
       },
       acknowledgeRisk: true,

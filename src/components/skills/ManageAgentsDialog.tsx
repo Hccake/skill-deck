@@ -18,13 +18,14 @@ import type {
 } from '@/bindings';
 import { AgentSelectionModeControl } from '@/components/agents/selection/AgentSelectionModeControl';
 import { AgentSelectionView } from '@/components/agents/selection/AgentSelectionView';
+import { useAgentSelectionPresentation } from '@/components/agents/selection/useAgentSelectionPresentation';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import {
   createAgentSelectionSession,
   hasUserSelectionChanges,
   refreshAgentSelectionSession,
   toggleSelectionGroup,
-  toggleSelectionItem,
+  toggleInstallOption,
   type AgentSelectionSession,
 } from '@/lib/agent-selection-session';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
@@ -117,9 +118,10 @@ function ReadySession({
   requestCloseRef: MutableRefObject<() => void>;
 }) {
   const { t } = useTranslation();
+  const presentation = useAgentSelectionPresentation('manage');
   const writeBlocked = useBusinessWriteBlocked();
   const [session, setSession] = useState<AgentSelectionSession>(() => (
-    createAgentSelectionSession(snapshot.selection, 'symlink', snapshot.itemStates)
+    createAgentSelectionSession(snapshot.selection, 'symlink', snapshot.optionStates)
   ));
   const [feedback, setFeedback] = useState<ManageAgentsOutcome['status'] | null>(null);
   const [recovery, setRecovery] = useState<RecoveryAction[]>([]);
@@ -131,13 +133,13 @@ function ReadySession({
     setSession((current) => refreshAgentSelectionSession(
       current,
       snapshot.selection,
-      snapshot.itemStates,
+      snapshot.optionStates,
     ));
     setFeedback(null);
-  }, [snapshot.itemStates, snapshot.selection]);
-  const automaticRepair = useMemo(() => snapshot.itemStates.some((state) => (
+  }, [snapshot.optionStates, snapshot.selection]);
+  const automaticRepair = useMemo(() => snapshot.optionStates.some((state) => (
     state.initialSelected && state.selectedEffect === 'repair'
-  )), [snapshot.itemStates]);
+  )), [snapshot.optionStates]);
   const userModified = hasUserSelectionChanges(session, snapshot.selection);
   const hasActionableChanges = userModified || automaticRepair;
   const confirmationRequired = feedback === 'confirmationRequired';
@@ -157,7 +159,7 @@ function ReadySession({
     try {
       const outcome = await onSave({
         revision: snapshot.selection.revision,
-        selectedItemIds: session.selectedItemIds,
+        selectedOptionIds: session.selectedOptionIds,
         requestedMode: session.mode,
       }, confirmationRequired);
       setFeedback(outcome.status === 'stale' ? null : outcome.status);
@@ -208,12 +210,13 @@ function ReadySession({
           </div>
         ) : null}
         <AgentSelectionView
+          presentation={presentation}
           snapshot={snapshot.selection}
           session={session}
-          itemStates={snapshot.itemStates}
+          optionStates={snapshot.optionStates}
           emptyMessage={t('agentSelection.manageEmpty')}
           disabled={saving}
-          onItemChange={(itemId, selected) => setSession((current) => toggleSelectionItem(current, snapshot.selection, itemId, selected))}
+          onOptionChange={(optionId, selected) => setSession((current) => toggleInstallOption(current, snapshot.selection, optionId, selected))}
           onGroupChange={(groupId, selected) => setSession((current) => toggleSelectionGroup(current, snapshot.selection, groupId, selected))}
           onOtherExpandedChange={(otherAgentsExpanded) => setSession((current) => ({ ...current, otherAgentsExpanded }))}
           onAdditionalExpandedChange={(additionalInstallExpanded) => setSession((current) => ({ ...current, additionalInstallExpanded }))}
@@ -226,7 +229,7 @@ function ReadySession({
         />
       </div>
       <DialogFooter className="border-t px-6 py-4">
-        {snapshot.selection.items.length === 0 ? (
+        {snapshot.selection.installOptions.length === 0 ? (
           <Button onClick={onClose}>{t('common.close')}</Button>
         ) : (
           <>

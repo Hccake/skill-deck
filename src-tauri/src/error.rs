@@ -21,20 +21,20 @@ pub enum WslIntegrationBusyReason {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub enum AgentSelectionInvalidReason {
-    DuplicateItem,
-    ItemUnavailable,
+    DuplicateOption,
+    OptionUnavailable,
     PlacementConflict,
-    ItemMissing,
+    OptionMissing,
     ResultNotAllowed,
 }
 
 impl AgentSelectionInvalidReason {
     pub fn code(self) -> &'static str {
         match self {
-            Self::DuplicateItem => "duplicateItem",
-            Self::ItemUnavailable => "itemUnavailable",
+            Self::DuplicateOption => "duplicateOption",
+            Self::OptionUnavailable => "optionUnavailable",
             Self::PlacementConflict => "placementConflict",
-            Self::ItemMissing => "itemMissing",
+            Self::OptionMissing => "optionMissing",
             Self::ResultNotAllowed => "resultNotAllowed",
         }
     }

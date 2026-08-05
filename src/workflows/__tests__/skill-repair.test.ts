@@ -52,8 +52,8 @@ function api() {
     }),
     getInstallAgentSelection: vi.fn().mockResolvedValue({
       selection: {
-        agents: [], directAgentIds: [], items: [], groups: [], initialSelectedItemIds: [],
-        unavailableExplicitAgents: [], requestedModeItemIds: [], revision: 'selection-1',
+        agents: [], installOptions: [], groups: [], initialSelectedOptionIds: [],
+        unavailableExplicitAgents: [], userModeOptionIds: [], revision: 'selection-1',
       },
       defaultSelectionWarning: null,
     }),
@@ -90,6 +90,55 @@ describe('repairSkillSource', () => {
       response: { units: [{ unitId: 'toolkit', status: 'succeeded' }] },
     });
     expect(workflowApi.fetchAvailable).toHaveBeenCalledWith(context, 'owner/repo', 'repair-1');
+  });
+
+  it('preserves an existing extra installation for an Agent that also reads the shared directory', async () => {
+    const workflowApi = api();
+    workflowApi.getInstallAgentSelection.mockResolvedValue({
+      selection: {
+        agents: [{
+          kind: 'standard',
+          id: 'cursor',
+          displayName: 'Cursor',
+          detection: 'detected',
+          directoryAccess: 'both',
+          installOptionId: 'cursor-own-directory',
+          groupId: null,
+        }],
+        installOptions: [{
+          id: 'cursor-own-directory',
+          kind: 'standardDirectory',
+          agentIds: ['cursor'],
+          displayName: 'Cursor',
+          path: '~/.cursor/skills',
+          groupId: null,
+          selectable: true,
+          modeConstraint: 'userSelectable',
+          disabledReason: null,
+        }],
+        groups: [],
+        initialSelectedOptionIds: [],
+        unavailableExplicitAgents: [],
+        userModeOptionIds: ['cursor-own-directory'],
+        revision: 'selection-1',
+      },
+      defaultSelectionWarning: null,
+    });
+
+    await repairSkillSource({
+      ...request(),
+      agents: ['cursor'],
+      privateAdaptedAgents: [],
+      privateCopyAgents: ['cursor'],
+    }, workflowApi as never);
+
+    expect(workflowApi.prepareInstall).toHaveBeenCalledWith(expect.objectContaining({
+      agentSelection: {
+        revision: 'selection-1',
+        selectedOptionIds: ['cursor-own-directory'],
+        requestedMode: 'copy',
+      },
+    }));
   });
 
   it('returns a failed outcome when the single Skill mutation does not succeed', async () => {

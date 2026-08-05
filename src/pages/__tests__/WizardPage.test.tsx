@@ -171,7 +171,7 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     skillFilter: null,
     skillSearchQuery: '',
     agentSelectionSnapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
-    selectedAgentItemIds: [],
+    selectedAgentOptionIds: [],
     expandedAgentGroupIds: [],
     additionalAgentsExpanded: false,
     selectionRequiresReconfirmation: false,

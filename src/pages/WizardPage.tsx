@@ -69,7 +69,7 @@ function createInitialState(params: {
     skillFilter: null,
     skillSearchQuery: '',
     agentSelectionSnapshot: null,
-    selectedAgentItemIds: [],
+    selectedAgentOptionIds: [],
     expandedAgentGroupIds: [],
     additionalAgentsExpanded: false,
     selectionRequiresReconfirmation: false,
@@ -143,7 +143,7 @@ export function WizardPage() {
     context: state.context,
     preselectedAgents: state.preSelectedAgents,
     snapshot: state.agentSelectionSnapshot,
-    selectedItemIds: state.selectedAgentItemIds,
+    selectedOptionIds: state.selectedAgentOptionIds,
     mode: state.mode,
     updateState,
   });

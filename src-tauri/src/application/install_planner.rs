@@ -18,7 +18,7 @@ use crate::application::mutation::plan::{
     RuntimeRevisions,
 };
 use crate::application::payload_session::{PayloadSessionManager, PinnedPayloadLease};
-use crate::application::workflow_planner::{resolve_agent_entry_plan, AgentEntryPlan};
+use crate::application::workflow_planner::AgentEntryPlan;
 use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
 use crate::core::mutation::MutationKind;
 use crate::core::skill_payload::{validate_manifest_for_target, PayloadId, TargetPathProfile};
@@ -151,10 +151,10 @@ where
             &self.targets,
         )
         .await?;
-        let agent_intents =
+        let resolved_selection =
             match resolve_agent_selection_submission(&catalog, &request.agent_selection)? {
-                AgentSelectionResolution::Ready(intents) => intents,
-                AgentSelectionResolution::Stale(_) => {
+                AgentSelectionResolution::Ready(selection) => selection,
+                AgentSelectionResolution::Stale => {
                     return Ok(BuiltInstallOutcome::SelectionStale(
                         InstallAgentSelectionSnapshot {
                             selection: catalog.snapshot,
@@ -163,8 +163,7 @@ where
                     ));
                 }
             };
-        let agent_plan =
-            resolve_agent_entry_plan(&request.context, &facts.agent_runtime, &agent_intents)?;
+        let agent_plan = resolved_selection.entry_plan(true);
         let has_eve_targets = agent_plan
             .required_agent_roots
             .iter()
@@ -644,7 +643,7 @@ mod tests {
             &facts.agent_runtime,
             &facts.eve_targets,
             &target_resolver,
-            &["custom-both"],
+            &["custom-private"],
             InstallMode::Symlink,
         )
         .await;
@@ -688,10 +687,7 @@ mod tests {
             canonical.destination.native_path,
             canonical_root.join("demo").to_string_lossy()
         );
-        assert_eq!(
-            canonical.owner_agent_ids,
-            vec![AgentId::parse("custom-both").unwrap()]
-        );
+        assert!(canonical.owner_agent_ids.is_empty());
         assert_eq!(unit.required_agent_entries.len(), 1);
         assert_eq!(
             unit.required_agent_entries[0].destination.native_path,
@@ -993,11 +989,11 @@ mod tests {
     }
 
     fn runtime(private_root: &str) -> AgentRuntimeSnapshot {
-        let id = AgentId::parse("custom-both").unwrap();
+        let id = AgentId::parse("custom-private").unwrap();
         let scope = ResolvedAgentScope {
             enabled: true,
-            reads_shared: true,
-            shared_path: Some("unused".to_string()),
+            reads_shared: false,
+            shared_path: None,
             private_path: Some(private_root.to_string()),
             read_paths: Vec::new(),
             shared_presence: None,
@@ -1015,12 +1011,12 @@ mod tests {
                 ResolvedAgent {
                     definition: AgentDefinition {
                         id,
-                        display_name: "Custom Both".to_string(),
+                        display_name: "Custom Private".to_string(),
                         source: AgentSource::Custom,
                         aliases: Vec::new(),
                         global: ScopeDefinition {
                             enabled: true,
-                            reads_shared: true,
+                            reads_shared: false,
                             private_path: Some(PathSpec::home(".custom/skills")),
                         },
                         project: ScopeDefinition {

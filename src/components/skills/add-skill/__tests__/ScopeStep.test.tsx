@@ -49,7 +49,7 @@ function createState(): WizardState {
     skillFilter: null,
     skillSearchQuery: '',
     agentSelectionSnapshot: null,
-    selectedAgentItemIds: [],
+    selectedAgentOptionIds: [],
     expandedAgentGroupIds: [],
     additionalAgentsExpanded: false,
     selectionRequiresReconfirmation: false,

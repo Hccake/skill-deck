@@ -19,14 +19,14 @@ const context: ContextRef = {
   scope: { scope: 'global' },
 };
 
-function snapshot(revision: string, selectedItemIds = ['claude']): InstallAgentSelectionSnapshot {
+function snapshot(revision: string, selectedOptionIds = ['claude']): InstallAgentSelectionSnapshot {
   return {
     selection: makeAgentSelectionSnapshot({
       revision,
-      agents: [{ id: 'claude-code', displayName: 'Claude Code', detection: 'detected' }],
-      items: [{ id: 'claude', agentIds: ['claude-code'], category: 'separateInstall', displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
-      initialSelectedItemIds: selectedItemIds,
-      requestedModeItemIds: ['claude'],
+      agents: [{ kind: 'standard', id: 'claude-code', displayName: 'Claude Code', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'claude', groupId: null }],
+      installOptions: [{ id: 'claude', kind: 'standardDirectory', agentIds: ['claude-code'], displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
+      initialSelectedOptionIds: selectedOptionIds,
+      userModeOptionIds: ['claude'],
     }),
     defaultSelectionWarning: null,
   };
@@ -38,7 +38,7 @@ function input(updateState: (updates: Partial<WizardState>) => void) {
     context,
     preselectedAgents: [] as string[],
     snapshot: null,
-    selectedItemIds: [] as string[],
+    selectedOptionIds: [] as string[],
     mode: 'symlink' as const,
     updateState,
   };
@@ -57,7 +57,7 @@ describe('useInstallTargetOptions', () => {
     await waitFor(() => expect(result.current.status).toBe('ready'));
     expect(mocks.getSelection).toHaveBeenCalledWith(context, []);
     expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-      selectedAgentItemIds: ['claude'],
+      selectedAgentOptionIds: ['claude'],
       selectionRequiresReconfirmation: false,
     }));
   });

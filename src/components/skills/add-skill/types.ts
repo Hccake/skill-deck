@@ -73,7 +73,7 @@ export interface WizardState {
 
   // Options
   agentSelectionSnapshot: InstallAgentSelectionSnapshot | null;
-  selectedAgentItemIds: string[];
+  selectedAgentOptionIds: string[];
   expandedAgentGroupIds: string[];
   additionalAgentsExpanded: boolean;
   selectionRequiresReconfirmation: boolean;

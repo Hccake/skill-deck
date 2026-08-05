@@ -1,14 +1,15 @@
 import type {
-  AgentSelectionItemId,
+  AgentInstallOptionId,
   AgentSelectionSnapshot,
   InstallMode,
-  ManageSelectionItemState,
+  ManageInstallOptionState,
 } from '@/bindings';
+import { projectAgentSelectionView } from '@/lib/agent-selection-view';
 
 export interface AgentSelectionSession {
-  knownItemIds: AgentSelectionItemId[];
-  initialSelectedItemIds: AgentSelectionItemId[];
-  selectedItemIds: AgentSelectionItemId[];
+  knownOptionIds: AgentInstallOptionId[];
+  initialSelectedOptionIds: AgentInstallOptionId[];
+  selectedOptionIds: AgentInstallOptionId[];
   mode: InstallMode;
   initialMode: InstallMode;
   otherAgentsExpanded: boolean;
@@ -20,34 +21,35 @@ export interface AgentSelectionSession {
 export function createAgentSelectionSession(
   snapshot: AgentSelectionSnapshot,
   mode: InstallMode = 'symlink',
-  itemStates: ManageSelectionItemState[] = [],
+  optionStates: ManageInstallOptionState[] = [],
 ): AgentSelectionSession {
-  const selected = uniqueSelectable(snapshot, snapshot.initialSelectedItemIds);
+  const selected = uniqueSelectable(snapshot, snapshot.initialSelectedOptionIds);
   const selectedSet = new Set(selected);
-  const agentById = new Map(snapshot.agents.map((agent) => [agent.id, agent]));
-  const stateById = new Map(itemStates.map((state) => [state.itemId, state]));
-  const isVisibleByDefault = (itemId: AgentSelectionItemId) => {
-    const item = snapshot.items.find((candidate) => candidate.id === itemId);
-    const state = stateById.get(itemId);
-    return selectedSet.has(itemId)
-      || item?.disabledReason !== null
+  const { agentsById, additionalOptions } = projectAgentSelectionView(snapshot);
+  const stateById = new Map(optionStates.map((state) => [state.optionId, state]));
+  const isVisibleByDefault = (optionId: AgentInstallOptionId) => {
+    const option = snapshot.installOptions.find((candidate) => candidate.id === optionId);
+    const state = stateById.get(optionId);
+    return selectedSet.has(optionId)
+      || option?.disabledReason !== null
       || (state !== undefined && (state.currentEntry !== 'none' || state.disabledReason !== null));
   };
-  const hasHiddenSelection = snapshot.items.some((item) => (
-    isVisibleByDefault(item.id)
-    && item.agentIds.some((id) => agentById.get(id)?.detection !== 'detected')
+  const hasHiddenSelection = snapshot.installOptions.some((option) => (
+    option.kind === 'standardDirectory'
+    && isVisibleByDefault(option.id)
+    && option.agentIds.some((id) => agentsById.get(id)?.detection !== 'detected')
   ));
-  const additionalInstallExpanded = snapshot.items.some((item) => (
-    item.category === 'additionalInstall' && isVisibleByDefault(item.id)
+  const additionalInstallExpanded = additionalOptions.some((option) => (
+    isVisibleByDefault(option.id)
   ));
   const expandedGroupIds = snapshot.groups
-    .filter((group) => group.itemIds.some(isVisibleByDefault))
+    .filter((group) => group.optionIds.some(isVisibleByDefault))
     .map((group) => group.id);
 
   return {
-    knownItemIds: snapshot.items.map((item) => item.id),
-    initialSelectedItemIds: selected,
-    selectedItemIds: selected,
+    knownOptionIds: snapshot.installOptions.map((option) => option.id),
+    initialSelectedOptionIds: selected,
+    selectedOptionIds: selected,
     mode,
     initialMode: mode,
     otherAgentsExpanded: hasHiddenSelection,
@@ -57,18 +59,18 @@ export function createAgentSelectionSession(
   };
 }
 
-export function toggleSelectionItem(
+export function toggleInstallOption(
   session: AgentSelectionSession,
   snapshot: AgentSelectionSnapshot,
-  itemId: AgentSelectionItemId,
+  optionId: AgentInstallOptionId,
   selected: boolean,
 ): AgentSelectionSession {
-  const item = snapshot.items.find((candidate) => candidate.id === itemId);
-  if (!item?.selectable) return session;
-  const next = new Set(session.selectedItemIds);
-  if (selected) next.add(itemId);
-  else next.delete(itemId);
-  return { ...session, selectedItemIds: [...next] };
+  const option = snapshot.installOptions.find((candidate) => candidate.id === optionId);
+  if (!option?.selectable) return session;
+  const next = new Set(session.selectedOptionIds);
+  if (selected) next.add(optionId);
+  else next.delete(optionId);
+  return { ...session, selectedOptionIds: [...next] };
 }
 
 export function toggleSelectionGroup(
@@ -79,8 +81,8 @@ export function toggleSelectionGroup(
 ): AgentSelectionSession {
   const group = snapshot.groups.find((candidate) => candidate.id === groupId);
   if (!group) return session;
-  return group.itemIds.reduce(
-    (next, itemId) => toggleSelectionItem(next, snapshot, itemId, selected),
+  return group.optionIds.reduce(
+    (next, optionId) => toggleInstallOption(next, snapshot, optionId, selected),
     session,
   );
 }
@@ -91,11 +93,11 @@ export function groupSelectionState(
   groupId: string,
 ): boolean | 'indeterminate' {
   const group = snapshot.groups.find((candidate) => candidate.id === groupId);
-  const selectable = group?.itemIds.filter((itemId) => (
-    snapshot.items.some((item) => item.id === itemId && item.selectable)
+  const selectable = group?.optionIds.filter((optionId) => (
+    snapshot.installOptions.some((option) => option.id === optionId && option.selectable)
   )) ?? [];
-  const selected = new Set(session.selectedItemIds);
-  const selectedCount = selectable.filter((itemId) => selected.has(itemId)).length;
+  const selected = new Set(session.selectedOptionIds);
+  const selectedCount = selectable.filter((optionId) => selected.has(optionId)).length;
   if (selectedCount === 0) return false;
   if (selectedCount === selectable.length) return true;
   return 'indeterminate';
@@ -104,25 +106,25 @@ export function groupSelectionState(
 export function refreshAgentSelectionSession(
   session: AgentSelectionSession,
   snapshot: AgentSelectionSnapshot,
-  itemStates: ManageSelectionItemState[] = [],
+  optionStates: ManageInstallOptionState[] = [],
 ): AgentSelectionSession {
-  const currentIds = new Set(snapshot.items.map((item) => item.id));
-  const knownIds = new Set(session.knownItemIds);
-  const retained = session.selectedItemIds.filter((id) => currentIds.has(id));
+  const currentIds = new Set(snapshot.installOptions.map((option) => option.id));
+  const knownIds = new Set(session.knownOptionIds);
+  const retained = session.selectedOptionIds.filter((id) => currentIds.has(id));
   const retainedSet = new Set(retained);
-  const selectedItemIds = [
+  const selectedOptionIds = [
     ...retained,
-    ...snapshot.initialSelectedItemIds.filter((id) => (
+    ...snapshot.initialSelectedOptionIds.filter((id) => (
       !knownIds.has(id) && !retainedSet.has(id)
     )),
   ];
   const groupIds = new Set(snapshot.groups.map((group) => group.id));
-  const defaults = createAgentSelectionSession(snapshot, session.mode, itemStates);
+  const defaults = createAgentSelectionSession(snapshot, session.mode, optionStates);
   return {
     ...session,
-    knownItemIds: snapshot.items.map((item) => item.id),
-    initialSelectedItemIds: uniqueSelectable(snapshot, snapshot.initialSelectedItemIds),
-    selectedItemIds: uniqueSelectable(snapshot, selectedItemIds),
+    knownOptionIds: snapshot.installOptions.map((option) => option.id),
+    initialSelectedOptionIds: uniqueSelectable(snapshot, snapshot.initialSelectedOptionIds),
+    selectedOptionIds: uniqueSelectable(snapshot, selectedOptionIds),
     otherAgentsExpanded: session.otherAgentsExpanded || defaults.otherAgentsExpanded,
     additionalInstallExpanded: session.additionalInstallExpanded
       || defaults.additionalInstallExpanded,
@@ -138,22 +140,40 @@ export function hasUserSelectionChanges(
   session: AgentSelectionSession,
   snapshot: AgentSelectionSnapshot,
 ): boolean {
-  if (!sameSet(session.selectedItemIds, session.initialSelectedItemIds)) return true;
+  if (!sameSet(session.selectedOptionIds, session.initialSelectedOptionIds)) return true;
   if (session.mode === session.initialMode) return false;
-  const modeItemIds = new Set(snapshot.requestedModeItemIds);
-  return session.selectedItemIds.some((id) => modeItemIds.has(id));
+  const modeOptionIds = new Set(snapshot.userModeOptionIds);
+  return session.selectedOptionIds.some((id) => modeOptionIds.has(id));
 }
 
 export function shouldShowInstallMode(snapshot: AgentSelectionSnapshot): boolean {
-  return snapshot.requestedModeItemIds.length > 0;
+  return snapshot.userModeOptionIds.length > 0;
+}
+
+export function preserveOwnDirectoryOptions(
+  snapshot: AgentSelectionSnapshot,
+  agentIds: string[],
+): AgentInstallOptionId[] {
+  const requested = new Set(agentIds);
+  const selected = new Set(snapshot.initialSelectedOptionIds);
+  for (const option of snapshot.installOptions) {
+    if (
+      option.kind === 'standardDirectory'
+      && option.selectable
+      && option.agentIds.some((agentId) => requested.has(agentId))
+    ) {
+      selected.add(option.id);
+    }
+  }
+  return [...selected];
 }
 
 function uniqueSelectable(
   snapshot: AgentSelectionSnapshot,
-  ids: AgentSelectionItemId[],
-): AgentSelectionItemId[] {
+  ids: AgentInstallOptionId[],
+): AgentInstallOptionId[] {
   const selectable = new Set(
-    snapshot.items.filter((item) => item.selectable).map((item) => item.id),
+    snapshot.installOptions.filter((option) => option.selectable).map((option) => option.id),
   );
   return [...new Set(ids)].filter((id) => selectable.has(id));
 }

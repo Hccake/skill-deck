@@ -12,6 +12,7 @@ import {
   createAgentSelectionSession,
   refreshAgentSelectionSession,
 } from '@/lib/agent-selection-session';
+import { projectAgentSelectionView } from '@/lib/agent-selection-view';
 import { prepareInstall } from '@/workflows/skill-install-preparation';
 import { formatAppError } from '@/utils/format-app-error';
 import { RiskBadge } from '../RiskBadge';
@@ -54,7 +55,7 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
       explicitAgentIds: state.preSelectedAgents,
       agentSelection: {
         revision: selection.revision,
-        selectedItemIds: state.selectedAgentItemIds,
+        selectedOptionIds: state.selectedAgentOptionIds,
         requestedMode: state.mode,
       },
       acknowledgeRisk: state.riskAcknowledged,
@@ -63,7 +64,7 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
       if (outcome.status === 'selectionStale') {
         const currentSession = {
           ...createAgentSelectionSession(selection, state.mode),
-          selectedItemIds: state.selectedAgentItemIds,
+          selectedOptionIds: state.selectedAgentOptionIds,
           otherAgentsExpanded: state.otherAgentsExpanded,
           additionalInstallExpanded: state.additionalAgentsExpanded,
           expandedGroupIds: state.expandedAgentGroupIds,
@@ -75,7 +76,7 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
         updateStateRef.current({
           step: 'options',
           agentSelectionSnapshot: outcome.snapshot,
-          selectedAgentItemIds: refreshed.selectedItemIds,
+          selectedAgentOptionIds: refreshed.selectedOptionIds,
           otherAgentsExpanded: refreshed.otherAgentsExpanded,
           additionalAgentsExpanded: refreshed.additionalInstallExpanded,
           expandedAgentGroupIds: refreshed.expandedGroupIds,
@@ -97,7 +98,7 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
       updateStateRef.current({ preparation: outcome, overwrites });
     });
     return () => { cancelled = true; };
-  }, [preparationAttempt, selection, state.additionalAgentsExpanded, state.availableSkills, state.context, state.discoverySession, state.expandedAgentGroupIds, state.mode, state.otherAgentsExpanded, state.preSelectedAgents, state.riskAcknowledged, state.selectedAgentItemIds, state.selectedSkills, state.source]);
+  }, [preparationAttempt, selection, state.additionalAgentsExpanded, state.availableSkills, state.context, state.discoverySession, state.expandedAgentGroupIds, state.mode, state.otherAgentsExpanded, state.preSelectedAgents, state.riskAcknowledged, state.selectedAgentOptionIds, state.selectedSkills, state.source]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,13 +114,10 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
     [state.availableSkills],
   );
   const overwriteCount = state.selectedSkills.filter((name) => (state.overwrites[name] ?? []).length > 0).length;
-  const agentById = new Map(selection?.agents.map((agent) => [agent.id, agent]) ?? []);
-  const directAgents = selection?.directAgentIds.flatMap((id) => {
-    const agent = agentById.get(id);
-    return agent ? [agent.displayName] : [];
-  }) ?? [];
-  const selectedSet = new Set(state.selectedAgentItemIds);
-  const selectedItems = selection?.items.filter((item) => selectedSet.has(item.id)) ?? [];
+  const projected = selection ? projectAgentSelectionView(selection) : null;
+  const directAgents = projected?.directAgents.map((agent) => agent.displayName) ?? [];
+  const selectedSet = new Set(state.selectedAgentOptionIds);
+  const selectedOptions = selection?.installOptions.filter((option) => selectedSet.has(option.id)) ?? [];
   const isPreparing = state.preparation.status === 'idle' || state.preparation.status === 'preparing';
 
   return (
@@ -190,8 +188,8 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
         <h2 className="text-sm font-semibold">{t('addSkill.confirm.installPlan')}</h2>
         <div className="space-y-2">
           <PlanRow icon={Folder} title={t('addSkill.confirm.defaultLocation')} path={getSharedSkillDirectory(scope)} names={directAgents} />
-          {selectedItems.length > 0 ? (
-            <PlanRow icon={Bot} title={t('agentSelection.title')} names={selectedItems.map((item) => item.displayName)} paths={selectedItems.map((item) => item.path)} />
+          {selectedOptions.length > 0 ? (
+            <PlanRow icon={Bot} title={t('agentSelection.title')} names={selectedOptions.map((option) => option.displayName)} paths={selectedOptions.map((option) => option.path)} />
           ) : null}
         </div>
       </section>

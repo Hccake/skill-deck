@@ -25,7 +25,7 @@ export interface InstallTargetOptionsInput {
   context: ContextRef;
   preselectedAgents: AgentId[];
   snapshot: InstallAgentSelectionSnapshot | null;
-  selectedItemIds: string[];
+  selectedOptionIds: string[];
   mode: WizardState['mode'];
   updateState: (updates: Partial<WizardState>) => void;
 }
@@ -46,7 +46,7 @@ export function useInstallTargetOptions({
   context,
   preselectedAgents,
   snapshot,
-  selectedItemIds,
+  selectedOptionIds,
   mode,
   updateState,
 }: InstallTargetOptionsInput): InstallTargetOptionsController {
@@ -55,11 +55,11 @@ export function useInstallTargetOptions({
   const generationRef = useRef(0);
   const initializedKeyRef = useRef<string | null>(null);
   const loadedKeyRef = useRef<string | null>(null);
-  const latestRef = useRef({ key, context, preselectedAgents, snapshot, selectedItemIds, mode, updateState });
+  const latestRef = useRef({ key, context, preselectedAgents, snapshot, selectedOptionIds, mode, updateState });
 
   useEffect(() => {
-    latestRef.current = { key, context, preselectedAgents, snapshot, selectedItemIds, mode, updateState };
-  }, [context, key, mode, preselectedAgents, selectedItemIds, snapshot, updateState]);
+    latestRef.current = { key, context, preselectedAgents, snapshot, selectedOptionIds, mode, updateState };
+  }, [context, key, mode, preselectedAgents, selectedOptionIds, snapshot, updateState]);
 
   const load = useCallback(async () => {
     const generation = ++generationRef.current;
@@ -74,7 +74,7 @@ export function useInstallTargetOptions({
       const session = initializedKeyRef.current === current.key && current.snapshot
         ? refreshAgentSelectionSession({
           ...createAgentSelectionSession(current.snapshot.selection),
-          selectedItemIds: current.selectedItemIds,
+          selectedOptionIds: current.selectedOptionIds,
           mode: current.mode,
         }, nextSnapshot.selection)
         : createAgentSelectionSession(nextSnapshot.selection);
@@ -82,7 +82,7 @@ export function useInstallTargetOptions({
       loadedKeyRef.current = current.key;
       current.updateState({
         agentSelectionSnapshot: nextSnapshot,
-        selectedAgentItemIds: session.selectedItemIds,
+        selectedAgentOptionIds: session.selectedOptionIds,
         otherAgentsExpanded: session.otherAgentsExpanded,
         additionalAgentsExpanded: session.additionalInstallExpanded,
         expandedAgentGroupIds: session.expandedGroupIds,

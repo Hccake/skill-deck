@@ -479,26 +479,27 @@ export type AgentDeleteResult = { settings: AgentSettingsSnapshot; warnings: Age
 export type AgentDeleteScopeImpact = { scope: Scope; paths: AgentDeletePathImpact[]; defaultReferenced: boolean }
 export type AgentFieldError = { field: string; code: string }
 export type AgentId = string
+export type AgentInstallOption = { id: AgentInstallOptionId; kind: AgentInstallOptionKind; agentIds: AgentId[]; displayName: string; path: string; groupId: string | null; selectable: boolean; modeConstraint: AgentSelectionModeConstraint; disabledReason: AgentSelectionDisabledReason | null }
+export type AgentInstallOptionId = string
+export type AgentInstallOptionKind = "standardDirectory" | "groupLocation"
 export type AgentOperationWarning = { code: string }
 export type AgentRuntimeSnapshot = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; availability: EnvironmentStatus; projectPath: string | null; agents: Partial<{ [key in AgentId]: ResolvedAgent }> }
-export type AgentSelectionAgent = { id: AgentId; displayName: string; detection: DetectionState }
-export type AgentSelectionCategory = "separateInstall" | "additionalInstall" | "groupChild"
+export type AgentSelectionAgent = { kind: AgentSelectionAgentKind; id: AgentId; displayName: string; detection: DetectionState; directoryAccess: SkillDirectoryAccess | null; installOptionId: AgentInstallOptionId | null; groupId: string | null }
+export type AgentSelectionAgentKind = "standard" | "grouped"
 export type AgentSelectionDisabledReason = "placementConflict"
-export type AgentSelectionDisplayGroup = { id: string; agentId: AgentId; displayName: string; itemIds: AgentSelectionItemId[]; detection: DetectionState }
-export type AgentSelectionInvalidReason = "duplicateItem" | "itemUnavailable" | "placementConflict" | "itemMissing" | "resultNotAllowed"
-export type AgentSelectionItem = { id: AgentSelectionItemId; agentIds: AgentId[]; category: AgentSelectionCategory; displayName: string; path: string; groupId: string | null; selectable: boolean; modeConstraint: AgentSelectionModeConstraint; disabledReason: AgentSelectionDisabledReason | null }
-export type AgentSelectionItemId = string
+export type AgentSelectionGroup = { id: string; agentId: AgentId; displayName: string; optionIds: AgentInstallOptionId[]; detection: DetectionState }
+export type AgentSelectionInvalidReason = "duplicateOption" | "optionUnavailable" | "placementConflict" | "optionMissing" | "resultNotAllowed"
 export type AgentSelectionModeConstraint = "userSelectable" | "copyOnly"
 export type AgentSelectionRevision = string
-export type AgentSelectionSnapshot = { agents: AgentSelectionAgent[]; directAgentIds: AgentId[]; items: AgentSelectionItem[]; groups: AgentSelectionDisplayGroup[]; initialSelectedItemIds: AgentSelectionItemId[]; unavailableExplicitAgents: UnavailableAgentSelection[]; requestedModeItemIds: AgentSelectionItemId[]; revision: AgentSelectionRevision }
-export type AgentSelectionSubmission = { revision: AgentSelectionRevision; selectedItemIds: AgentSelectionItemId[]; requestedMode: InstallMode }
+export type AgentSelectionSnapshot = { agents: AgentSelectionAgent[]; installOptions: AgentInstallOption[]; groups: AgentSelectionGroup[]; initialSelectedOptionIds: AgentInstallOptionId[]; unavailableExplicitAgents: UnavailableAgentSelection[]; userModeOptionIds: AgentInstallOptionId[]; revision: AgentSelectionRevision }
+export type AgentSelectionSubmission = { revision: AgentSelectionRevision; selectedOptionIds: AgentInstallOptionId[]; requestedMode: InstallMode }
 export type AgentSettingsSnapshot = { registryRevision: string; activeBuiltin: AgentDefinition[]; activeCustom: ActiveCustomAgent[]; disabledConflicts: DisabledAgentConflict[]; invalidCustomRecords: InvalidCustomAgentRecord[]; currentEnvironment: EnvironmentRef; customStorageIssue: AgentStorageIssue | null }
 export type AgentSource = "builtin" | "custom"
 export type AgentStorageIssue = { code: string; message: string; readOnly: boolean }
 export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
-export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; privateEntry: PrivateEntryIntent; availability: DetectionState; blockingReason: OperationErrorCode | null }
-export type AgentWriteIntent = { agentId: AgentId; privateEntry: PrivateEntryIntent; adapterTargets: AdapterTargetId[] }
+export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
+export type AgentWriteIntent = { agentId: AgentId; ownDirectorySelected: boolean; adapterTargets: AdapterTargetId[] }
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
@@ -732,7 +733,7 @@ export type ListSkillsResult = { skills: InstalledSkill[]; agents: ResolvedAgent
  */
 pathExists: boolean }
 export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
-export type ManageAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; itemStates: ManageSelectionItemState[] }
+export type ManageAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; optionStates: ManageInstallOptionState[] }
 export type ManageAgentsConfirmation = { removesEntityDirectories: boolean }
 export type ManageAgentsPreview = { token: PreviewToken; context: ContextRef; skillName: string; canonicalPayload: AcquiredPayloadHandle | null; confirmation: ManageAgentsConfirmation | null }
 export type ManageAgentsPreviewOutcome = { status: "ready"; preview: ManageAgentsPreview } | { status: "selectionStale"; snapshot: ManageAgentSelectionSnapshot }
@@ -741,9 +742,9 @@ export type ManageAgentsRequest = { token: PreviewToken; context: ContextRef; sk
 export type ManageAgentsResponse = { units: MutationUnitResult[] }
 export type ManageAllowedResults = "selected" | "both" | "none"
 export type ManageCurrentEntry = "none" | "link" | "copy" | "brokenLink" | "unrecognized"
+export type ManageInstallOptionState = { optionId: AgentInstallOptionId; currentEntry: ManageCurrentEntry; initialSelected: boolean; allowedResults: ManageAllowedResults; selectedEffect: ManageSelectedEffect | null; unselectedEffect: ManageUnselectedEffect | null; disabledReason: ManageSelectionDisabledReason | null }
 export type ManageSelectedEffect = "retain" | "add" | "repair"
 export type ManageSelectionDisabledReason = "unrecognizedEntry"
-export type ManageSelectionItemState = { itemId: AgentSelectionItemId; currentEntry: ManageCurrentEntry; initialSelected: boolean; allowedResults: ManageAllowedResults; selectedEffect: ManageSelectedEffect | null; unselectedEffect: ManageUnselectedEffect | null; disabledReason: ManageSelectionDisabledReason | null }
 export type ManageUnselectedEffect = "keepAbsent" | "remove"
 export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "manageAgentDefinitions" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference" | "updateSettings" | "manageGithubCredential" | "resolveRecovery"
 export type MutationPhase = "preparing" | "acquiring" | "validating" | "committing" | "finishing"
@@ -765,7 +766,6 @@ export type PathSpec = { kind: "home"; relativePath: string } | { kind: "configH
 { kind: "absolute"; path: string }
 export type PhysicalIdentityComparison = "same" | "different" | "unknown"
 export type PreviewToken = { generation: string; registryRevision: string; environmentRevision: string; contextRevision: ContextSnapshotRevision }
-export type PrivateEntryIntent = "none" | "required" | "optionalSelected"
 export type ProjectBinding = { id: string; nativePath: string; displayName: string | null; order: number | null; suppressCrossStorageWarning?: boolean }
 export type ProjectInfo = { binding: ProjectBinding; storage: ProjectStorageInfo }
 export type ProjectStorageInfo = { access: StorageAccess; owner: EnvironmentRef | null }
@@ -812,6 +812,7 @@ gitCloneTimeoutSecs?: number;
  * 是否允许 Skill Deck 发现和使用 WSL Environment
  */
 wslIntegrationEnabled?: boolean; hiddenWslDistros?: string[]; lastSelectedEnvironment?: EnvironmentRef | null; lastConnectedWslUserByDistro?: Partial<{ [key in string]: string }> }
+export type SkillDirectoryAccess = "sharedOnly" | "privateOnly" | "both"
 export type SkillIdentity = { context: ContextRef; skillName: string }
 /**
  * Skill 范围

@@ -113,8 +113,8 @@ describe('RepairSourceDialog', () => {
     mocks.acquireSelectedPayloads.mockResolvedValue([]);
     mocks.getInstallAgentSelection.mockResolvedValue({
       selection: {
-        agents: [], directAgentIds: [], items: [], groups: [], initialSelectedItemIds: ['claude-item'],
-        unavailableExplicitAgents: [], requestedModeItemIds: ['claude-item'], revision: 'selection-1',
+        agents: [], installOptions: [], groups: [], initialSelectedOptionIds: ['claude-item'],
+        unavailableExplicitAgents: [], userModeOptionIds: ['claude-item'], revision: 'selection-1',
       },
       defaultSelectionWarning: null,
     });
@@ -141,7 +141,7 @@ describe('RepairSourceDialog', () => {
       skills: ['toolkit'],
       agentSelection: {
         revision: 'selection-1',
-        selectedItemIds: ['claude-item'],
+        selectedOptionIds: ['claude-item'],
         requestedMode: 'copy',
       },
     });

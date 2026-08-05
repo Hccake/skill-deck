@@ -70,10 +70,9 @@ export async function executeSkillCopy({
     if (copyContext.scope.scope !== 'project' || targetProjectIds.length === 0) {
       throw new Error('Selected projects are not available in the current environment');
     }
-    const privateSet = new Set(privateCopyAgents);
     const agentIntents = Array.from(new Set([...agents, ...privateCopyAgents])).map((agentId) => ({
       agentId,
-      privateEntry: privateSet.has(agentId) ? 'optionalSelected' as const : 'required' as const,
+      ownDirectorySelected: true,
       adapterTargets: [],
     }));
     const request = {

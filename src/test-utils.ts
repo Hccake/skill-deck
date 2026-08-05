@@ -135,12 +135,11 @@ export function makeAgentSelectionSnapshot(
 ): AgentSelectionSnapshot {
   return {
     agents: [],
-    directAgentIds: [],
-    items: [],
+    installOptions: [],
     groups: [],
-    initialSelectedItemIds: [],
+    initialSelectedOptionIds: [],
     unavailableExplicitAgents: [],
-    requestedModeItemIds: [],
+    userModeOptionIds: [],
     revision: 'selection-revision-1',
     ...overrides,
   };

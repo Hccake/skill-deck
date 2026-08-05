@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::application::agent_intent::{
-    validate_agent_intents, AgentWriteIntent, PrivateEntryIntent,
-};
+use crate::application::agent_intent::{validate_agent_intents, AgentWriteIntent};
 use crate::core::agent_definition::{AgentAdapter, AgentId};
 use crate::core::skill::sanitize_name;
 use crate::environment::agent_environment::{
@@ -111,14 +109,16 @@ fn resolve_standard(
         canonical_owner_agent_ids.push(intent.agent_id.clone());
     }
 
-    let needs_private = match (scope.reads_shared, scope.private_path.as_ref()) {
-        (true, None) if intent.private_entry == PrivateEntryIntent::None => false,
-        (true, Some(_)) if intent.private_entry == PrivateEntryIntent::None => false,
-        (true, Some(_)) if intent.private_entry == PrivateEntryIntent::OptionalSelected => true,
-        (false, Some(_)) if intent.private_entry == PrivateEntryIntent::Required => true,
+    let needs_private = match (
+        scope.reads_shared,
+        scope.private_path.as_ref(),
+        intent.own_directory_selected,
+    ) {
+        (_, None, false) | (true, Some(_), false) => false,
+        (_, Some(_), true) => true,
         _ => {
             return Err(validation(
-                "private entry intent does not match Agent scope",
+                "own directory selection does not match Agent scope",
             ))
         }
     };
@@ -146,7 +146,7 @@ fn resolve_eve(
     required: &mut BTreeMap<String, LogicalAgentEntryRoot>,
 ) -> Result<(), AppError> {
     if !matches!(context.scope, ContextScope::Project { .. })
-        || intent.private_entry != PrivateEntryIntent::None
+        || intent.own_directory_selected
         || intent.adapter_targets.is_empty()
     {
         return Err(validation(
@@ -277,7 +277,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::application::agent_intent::{AdapterTargetId, AgentWriteIntent, PrivateEntryIntent};
+    use crate::application::agent_intent::{AdapterTargetId, AgentWriteIntent};
     use crate::core::agent_definition::{
         AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, PathSpec,
         ScopeDefinition,
@@ -355,10 +355,10 @@ mod tests {
         }
     }
 
-    fn intent(id: &str, private_entry: PrivateEntryIntent) -> AgentWriteIntent {
+    fn intent(id: &str, own_directory_selected: bool) -> AgentWriteIntent {
         AgentWriteIntent {
             agent_id: AgentId::parse(id).unwrap(),
-            private_entry,
+            own_directory_selected,
             adapter_targets: Vec::new(),
         }
     }
@@ -376,7 +376,7 @@ mod tests {
         let plan = resolve_agent_entry_plan(
             &context(ContextScope::Global),
             &runtime,
-            &[intent("shared", PrivateEntryIntent::None)],
+            &[intent("shared", false)],
         )
         .unwrap();
 
@@ -400,7 +400,7 @@ mod tests {
         let plan = resolve_agent_entry_plan(
             &context(ContextScope::Global),
             &runtime,
-            &[intent("private", PrivateEntryIntent::Required)],
+            &[intent("private", true)],
         )
         .unwrap();
 
@@ -425,13 +425,13 @@ mod tests {
         let canonical_only = resolve_agent_entry_plan(
             &context(ContextScope::Global),
             &runtime,
-            &[intent("both", PrivateEntryIntent::None)],
+            &[intent("both", false)],
         )
         .unwrap();
         let with_private = resolve_agent_entry_plan(
             &context(ContextScope::Global),
             &runtime,
-            &[intent("both", PrivateEntryIntent::OptionalSelected)],
+            &[intent("both", true)],
         )
         .unwrap();
 
@@ -459,7 +459,7 @@ mod tests {
             true,
             Some("/home/alice/.standard/skills"),
         )]);
-        let intents = [intent("standard", PrivateEntryIntent::OptionalSelected)];
+        let intents = [intent("standard", true)];
 
         assert_eq!(
             resolve_agent_entry_plan(&context(ContextScope::Global), &builtin, &intents).unwrap(),
@@ -478,7 +478,7 @@ mod tests {
         )]);
         let intent = AgentWriteIntent {
             agent_id: AgentId::parse("eve").unwrap(),
-            private_entry: PrivateEntryIntent::None,
+            own_directory_selected: false,
             adapter_targets: vec![
                 AdapterTargetId("eve:root".to_string()),
                 AdapterTargetId("eve:Research Team".to_string()),
@@ -541,7 +541,7 @@ mod tests {
                 .detection = detection;
             let intent = AgentWriteIntent {
                 agent_id: AgentId::parse("eve").unwrap(),
-                private_entry: PrivateEntryIntent::None,
+                own_directory_selected: false,
                 adapter_targets: vec![AdapterTargetId("eve:root".to_string())],
             };
 

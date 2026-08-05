@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::application::agent_intent::{AgentWriteIntent, PrivateEntryIntent};
-use crate::application::agent_selection::test_submission_for_agents;
+use crate::application::agent_intent::AgentWriteIntent;
+use crate::application::agent_selection::test_submission_for_agents_and_own_directories;
 use crate::application::copy::{
     CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
 };
@@ -389,7 +389,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         executor(&execution, &environments, &facts),
     );
     let selection_facts = InstallPlanningFactSource::current(&facts, &source_context).await?;
-    let agent_selection = test_submission_for_agents(
+    let agent_selection = test_submission_for_agents_and_own_directories(
         &source_context,
         &selection_facts.agent_runtime,
         &selection_facts.eve_targets,
@@ -961,7 +961,7 @@ pub(crate) fn both_agent_intents() -> Vec<AgentWriteIntent> {
         .into_iter()
         .map(|id| AgentWriteIntent {
             agent_id: AgentId::parse(id).expect("Agent id"),
-            private_entry: PrivateEntryIntent::OptionalSelected,
+            own_directory_selected: true,
             adapter_targets: Vec::new(),
         })
         .collect()
@@ -969,17 +969,17 @@ pub(crate) fn both_agent_intents() -> Vec<AgentWriteIntent> {
 
 fn manage_submission(
     snapshot: &ManageAgentSelectionSnapshot,
-    keep: impl Fn(&crate::application::agent_selection::AgentSelectionItem) -> bool,
+    keep: impl Fn(&crate::application::agent_selection::AgentInstallOption) -> bool,
     requested_mode: InstallMode,
 ) -> crate::application::agent_selection::AgentSelectionSubmission {
     crate::application::agent_selection::AgentSelectionSubmission {
         revision: snapshot.selection.revision.clone(),
-        selected_item_ids: snapshot
+        selected_option_ids: snapshot
             .selection
-            .items
+            .install_options
             .iter()
-            .filter(|item| keep(item))
-            .map(|item| item.id.clone())
+            .filter(|option| keep(option))
+            .map(|option| option.id.clone())
             .collect(),
         requested_mode,
     }
@@ -1475,7 +1475,7 @@ mod update_lifecycle {
                 let selection_facts = InstallPlanningFactSource::current(&self.facts, &context)
                     .await
                     .expect("load lifecycle Agent selection facts");
-                let agent_selection = test_submission_for_agents(
+                let agent_selection = test_submission_for_agents_and_own_directories(
                     &context,
                     &selection_facts.agent_runtime,
                     &selection_facts.eve_targets,

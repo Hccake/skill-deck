@@ -46,7 +46,7 @@ vi.mock('@/components/skills/add-skill/SourceStep', () => ({
 vi.mock('@/components/skills/add-skill/SkillsStep', () => ({ SkillsStep: () => <div>skills-step</div> }));
 vi.mock('@/components/skills/add-skill/ConfirmStep', () => ({
   ConfirmStep: ({ state }: { state: WizardState }) => (
-    <div>confirm-items:{state.selectedAgentItemIds.join(',')}</div>
+    <div>confirm-items:{state.selectedAgentOptionIds.join(',')}</div>
   ),
 }));
 vi.mock('@/components/skills/add-skill/InstallingStep', () => ({ InstallingStep: () => null }));
@@ -59,9 +59,9 @@ describe('Wizard Agent selection journey', () => {
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
     mocks.getSelection.mockResolvedValue({
       selection: makeAgentSelectionSnapshot({
-        agents: [{ id: 'private-agent', displayName: 'Private Agent', detection: 'detected' }],
-        items: [{ id: 'private-item', agentIds: ['private-agent'], category: 'separateInstall', displayName: 'Private Agent', path: '~/.private-agent/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
-        requestedModeItemIds: ['private-item'],
+        agents: [{ kind: 'standard', id: 'private-agent', displayName: 'Private Agent', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'private-item', groupId: null }],
+        installOptions: [{ id: 'private-item', kind: 'standardDirectory', agentIds: ['private-agent'], displayName: 'Private Agent', path: '~/.private-agent/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
+        userModeOptionIds: ['private-item'],
       }),
       defaultSelectionWarning: null,
     });

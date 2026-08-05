@@ -101,12 +101,12 @@ const managePreview = {
 
 const manageSnapshot: ManageAgentSelectionSnapshot = {
   selection: makeAgentSelectionSnapshot({ revision: 'manage-selection-1' }),
-  itemStates: [],
+  optionStates: [],
 };
 
 const manageSubmission: AgentSelectionSubmission = {
   revision: 'manage-selection-1',
-  selectedItemIds: [],
+  selectedOptionIds: [],
   requestedMode: 'copy',
 };
 
