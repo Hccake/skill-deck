@@ -12,6 +12,57 @@
     "delete": "Delete",
     "retry": "Retry"
   },
+  "agentSelection": {
+    "title": "Linked Agents",
+    "modeTitle": "Install mode",
+    "link": "Link",
+    "copy": "Copy",
+    "directUse": "Available directly",
+    "separateInstall": "Install separately",
+    "additionalInstall": "Additional install",
+    "additionalInstallDescription": "These Agents can already use this Skill through the shared Skill directory. Select them only to keep a link or copy in their own Skill directory.",
+    "otherAgents": "Other Agents ({{count}})",
+    "moreAgents": "More Agents ({{count}})",
+    "moreAgentsDescription": "These Agents also support the shared Skill directory, but their current detection state cannot be confirmed.",
+    "unknownNotice": "Skill Deck has no Agent definition for {{agents}}, so they will not be processed during this installation.",
+    "selectionChanged": "Agent status has changed. Review the current selection before continuing.",
+    "confirmCurrentSelection": "Confirm current selection",
+    "installEmpty": "No Agents are currently available",
+    "manageEmpty": "No Agents are currently available to manage",
+    "memberCount": "{{count}} total",
+    "view": "View",
+    "viewMembers": "View all Agents",
+    "toggleGroup": "Expand or collapse {{agent}}",
+    "detectedCount": "{{detected}}/{{total}} detected",
+    "detection": {
+      "detected": "Detected",
+      "notDetected": "Not detected",
+      "indeterminate": "Cannot determine"
+    },
+    "disabled": {
+      "placementConflict": "Skill location conflict"
+    },
+    "current": {
+      "link": "Link",
+      "copy": "Copy",
+      "brokenLink": "Broken link",
+      "unrecognized": "Unrecognized"
+    },
+    "effect": {
+      "remove": "Will remove",
+      "repair": "Will repair",
+      "copy": "Will copy",
+      "createLink": "Will create link",
+      "createCopy": "Will create copy"
+    },
+    "error": {
+      "duplicateItem": "The Agent selection contains duplicate items. Review it and try again.",
+      "itemUnavailable": "Some Agent Skill locations are unavailable. Review the selection.",
+      "placementConflict": "The selected Agents have conflicting content for the same Skill location.",
+      "itemMissing": "Some Agent Skill locations have changed. Review the selection.",
+      "resultNotAllowed": "Some Agents cannot be handled with the current selection. Review it and try again."
+    }
+  },
   "nav": {
     "skills": "Skills",
     "discover": "Discover",
@@ -242,6 +293,11 @@
       "recoveryRequired": "This operation did not finish",
       "recoveryDescription": "Some files need to be checked. Review the recovery items below before saving again.",
       "stale": "Linked Agents changed. Review the latest settings before saving again.",
+      "confirmationRequired": "This removes copies that contain real files. Confirm to continue.",
+      "confirmRemoval": "Confirm removal",
+      "discardConfirm": "Discard unsaved changes?",
+      "discard": "Discard changes",
+      "continueEditing": "Continue editing",
       "success": "Linked Agents updated",
       "cleanupSuccess": "Extra copies removed"
     },

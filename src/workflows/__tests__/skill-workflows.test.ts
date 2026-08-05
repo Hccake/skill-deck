@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, InstalledSkill, ManageAgentsPreview, RemovePreview } from '@/bindings';
+import type { AgentSelectionSubmission, ContextRef, InstalledSkill, ManageAgentSelectionSnapshot, ManageAgentsPreview, RemovePreview } from '@/bindings';
+import { makeAgentSelectionSnapshot } from '@/test-utils';
 import { useMutationStore } from '@/stores/mutation';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   previewRemove: vi.fn(),
   removeSkill: vi.fn(),
   previewManageSkillAgents: vi.fn(),
+  getManageAgentSelection: vi.fn(),
   manageSkillAgents: vi.fn(),
   previewCopySkillToProjects: vi.fn(),
   copySkillToProjects: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   previewRemove: (...args: unknown[]) => mocks.previewRemove(...args),
   removeSkill: (...args: unknown[]) => mocks.removeSkill(...args),
   previewManageSkillAgents: (...args: unknown[]) => mocks.previewManageSkillAgents(...args),
+  getManageAgentSelection: (...args: unknown[]) => mocks.getManageAgentSelection(...args),
   manageSkillAgents: (...args: unknown[]) => mocks.manageSkillAgents(...args),
   previewCopySkillToProjects: (...args: unknown[]) => mocks.previewCopySkillToProjects(...args),
   copySkillToProjects: (...args: unknown[]) => mocks.copySkillToProjects(...args),
@@ -92,19 +95,20 @@ const managePreview = {
   token,
   context,
   skillName: skill.name,
-  availableAgents: [],
-  selectionGroups: { global: [], project: [] },
-  observedEntries: [{
-    entryId: 'shared-entry',
-    displayPath: { environment: context.environment, nativePath: '/shared-entry' },
-    kind: 'directory',
-    physicalTargetKey: 'wsl:/shared-entry',
-    owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex-private' }],
-    willBreakIfCanonicalRemoved: false,
-  }],
   canonicalPayload: null,
-  addTargets: [],
-} as ManageAgentsPreview;
+  confirmation: null,
+} satisfies ManageAgentsPreview;
+
+const manageSnapshot: ManageAgentSelectionSnapshot = {
+  selection: makeAgentSelectionSnapshot({ revision: 'manage-selection-1' }),
+  itemStates: [],
+};
+
+const manageSubmission: AgentSelectionSubmission = {
+  revision: 'manage-selection-1',
+  selectedItemIds: [],
+  requestedMode: 'copy',
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -119,6 +123,7 @@ describe('skill workflows', () => {
     vi.clearAllMocks();
     mocks.previewRemove.mockReset();
     mocks.previewManageSkillAgents.mockReset();
+    mocks.getManageAgentSelection.mockReset();
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
     useInstallWizardSessionStore.setState({
       revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
@@ -138,7 +143,8 @@ describe('skill workflows', () => {
     });
     mocks.removeSkill.mockResolvedValue({ units: [{ status: 'succeeded' }] });
     mocks.previewRemove.mockResolvedValue(removePreview);
-    mocks.previewManageSkillAgents.mockResolvedValue(managePreview);
+    mocks.getManageAgentSelection.mockResolvedValue(manageSnapshot);
+    mocks.previewManageSkillAgents.mockResolvedValue({ status: 'ready', preview: managePreview });
     mocks.manageSkillAgents.mockResolvedValue({ units: [{ status: 'succeeded', error: null }] });
     mocks.previewCopySkillToProjects.mockResolvedValue({
       status: 'ready',
@@ -297,71 +303,46 @@ describe('skill workflows', () => {
     expect(useSkillDialogStore.getState().deleteFeedback).toBe('stale');
   });
 
-  it('passes Backend-owned physical entry removals through unchanged', async () => {
+  it('submits the Backend selection expectation unchanged', async () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
-      manageAgentDetails: managePreview,
+      manageAgentDetails: manageSnapshot,
     });
 
-    await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
+    await executeManageAgentChanges(manageSubmission);
 
-    expect(mocks.previewManageSkillAgents).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.previewManageSkillAgents).toHaveBeenCalledWith({
       context,
       skillName: skill.name,
-      removeEntryIds: ['shared-entry'],
-    }));
+      agentSelection: manageSubmission,
+    });
     expect(mocks.manageSkillAgents).toHaveBeenCalledWith(expect.objectContaining({
-      removeEntryIds: ['shared-entry'],
-      confirmEntityDirectories: true,
+      context,
+      skillName: skill.name,
+      agentSelection: manageSubmission,
+      confirmEntityDirectories: false,
     }));
   });
 
-  it('returns blocked without local failure handling when installation wins Agent admission', async () => {
-    useSkillDialogStore.setState({
-      manageAgentsSkill: skill,
-      manageAgentsContext: context,
-      manageAgentDetails: managePreview,
+  it('requires structured confirmation before removing entity directories', async () => {
+    mocks.previewManageSkillAgents.mockResolvedValueOnce({
+      status: 'ready',
+      preview: { ...managePreview, confirmation: { removesEntityDirectories: true } },
     });
-    mocks.manageSkillAgents.mockRejectedValueOnce({ kind: 'installWizardActive' });
+    useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsContext: context });
 
-    await expect(executeManageAgentChanges([], ['shared-entry'], 'copy', []))
-      .resolves.toEqual({ status: 'blocked' });
-
-    expect(mocks.syncSkills).not.toHaveBeenCalled();
-  });
-
-  it('returns a failed outcome and keeps the management dialog open when execution fails', async () => {
-    useSkillDialogStore.setState({
-      manageAgentsSkill: skill,
-      manageAgentsContext: context,
-      manageAgentDetails: managePreview,
-    });
-    mocks.manageSkillAgents.mockResolvedValueOnce({
-      units: [{ status: 'failed', error: null }],
-    });
-
-    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
-
-    expect(outcome).toEqual({ status: 'failed' });
-    expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
-    expect(useSkillDialogStore.getState().manageAgentDetails).toBe(managePreview);
-    expect(mocks.syncSkills).toHaveBeenCalledWith(context, { origin: 'passive' });
+    await expect(executeManageAgentChanges(manageSubmission)).resolves.toEqual({ status: 'confirmationRequired' });
+    expect(mocks.manageSkillAgents).not.toHaveBeenCalled();
   });
 
   it('keeps a management recovery action separate from an ordinary failure', async () => {
-    useSkillDialogStore.setState({
-      manageAgentsSkill: skill,
-      manageAgentsContext: context,
-      manageAgentDetails: managePreview,
-    });
+    useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsContext: context });
     mocks.manageSkillAgents.mockResolvedValueOnce({
       units: [{ status: 'recoveryRequired', recovery: recoveryAction, error: null }],
     });
 
-    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
-
-    expect(outcome).toEqual({
+    await expect(executeManageAgentChanges(manageSubmission)).resolves.toEqual({
       status: 'recoveryRequired',
       response: { units: [{ status: 'recoveryRequired', recovery: recoveryAction, error: null }] },
       recovery: [recoveryAction],
@@ -369,95 +350,50 @@ describe('skill workflows', () => {
     expect(mocks.syncSkills).not.toHaveBeenCalled();
   });
 
-  it('returns a failed outcome when an atomic Agent change reports mixed unit results', async () => {
+  it('returns a failed outcome and keeps the management dialog open on unit failure', async () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
-      manageAgentDetails: managePreview,
+      manageAgentDetails: manageSnapshot,
     });
-    mocks.manageSkillAgents.mockResolvedValueOnce({
-      units: [
-        { status: 'succeeded', error: null },
-        { status: 'failed', error: null },
-      ],
-    });
+    mocks.manageSkillAgents.mockResolvedValueOnce({ units: [{ status: 'failed', error: null }] });
 
-    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
-
-    expect(outcome).toEqual({ status: 'failed' });
+    await expect(executeManageAgentChanges(manageSubmission)).resolves.toEqual({ status: 'failed' });
     expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
-    expect(mocks.syncSkills).toHaveBeenCalledWith(context, {
-      origin: 'selfMutation',
-      mutatedSkillNames: ['toolkit'],
-    });
+    expect(mocks.syncSkills).not.toHaveBeenCalled();
   });
 
-  it('refreshes the management preview when execution reports a stale scope', async () => {
-    const refreshedPreview = {
-      ...managePreview,
-      token: { ...token, generation: 'manage-preview-2' },
-    } as ManageAgentsPreview;
-    useSkillDialogStore.setState({
-      manageAgentsSkill: skill,
-      manageAgentsContext: context,
-      manageAgentDetails: managePreview,
-    });
-    mocks.manageSkillAgents.mockResolvedValueOnce({
-      units: [{
-        status: 'failed',
-        error: {
-          code: 'staleTarget',
-          parameters: {},
-          field: null,
-          severity: 'error',
-          retryable: true,
-          technicalDetails: null,
-          environment: context.environment,
-          context,
-          unitId: 'manage:toolkit',
-          recoveryResourceId: null,
-          displayPaths: [],
-        },
-      }],
-    });
-    mocks.previewManageSkillAgents
-      .mockResolvedValueOnce(managePreview)
-      .mockResolvedValueOnce(refreshedPreview);
+  it('publishes the latest snapshot when preview reports an expired revision', async () => {
+    const latest = { ...manageSnapshot, selection: { ...manageSnapshot.selection, revision: 'manage-selection-2' } };
+    useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsContext: context });
+    mocks.previewManageSkillAgents.mockResolvedValueOnce({ status: 'selectionStale', snapshot: latest });
 
-    const outcome = await executeManageAgentChanges([], ['shared-entry'], 'copy', []);
-
-    expect(outcome.status).toBe('stale');
-    expect(mocks.previewManageSkillAgents).toHaveBeenLastCalledWith(expect.objectContaining({
-      context,
-      skillName: skill.name,
-      add: [],
-      removeEntryIds: [],
-      requestedMode: 'copy',
-    }));
-    expect(useSkillDialogStore.getState().manageAgentDetails).toBe(refreshedPreview);
+    await expect(executeManageAgentChanges(manageSubmission)).resolves.toEqual({ status: 'stale' });
+    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(latest);
+    expect(mocks.manageSkillAgents).not.toHaveBeenCalled();
   });
 
-  it('does not let a slow Agent-management preview replace a newer dialog target', async () => {
-    const first = deferred<ManageAgentsPreview>();
-    const second = deferred<ManageAgentsPreview>();
+  it('does not let a slow Agent selection load replace a newer dialog target', async () => {
+    const first = deferred<ManageAgentSelectionSnapshot>();
+    const second = deferred<ManageAgentSelectionSnapshot>();
     const otherSkill = { ...skill, name: 'other-toolkit' };
-    const otherPreview = { ...managePreview, skillName: otherSkill.name };
-    mocks.previewManageSkillAgents
+    const otherSnapshot = { ...manageSnapshot, selection: { ...manageSnapshot.selection, revision: 'other' } };
+    mocks.getManageAgentSelection
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
 
     const firstOpen = openManageAgentChanges(skill, context, '/source');
     const secondOpen = openManageAgentChanges(otherSkill, context, '/source');
-    second.resolve(otherPreview);
+    second.resolve(otherSnapshot);
     await secondOpen;
 
     expect(useSkillDialogStore.getState().manageAgentsSkill?.name).toBe(otherSkill.name);
-    expect(useSkillDialogStore.getState().manageAgentDetails?.skillName).toBe(otherSkill.name);
+    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(otherSnapshot);
 
-    first.resolve(managePreview);
+    first.resolve(manageSnapshot);
     await firstOpen;
     expect(useSkillDialogStore.getState().manageAgentsSkill?.name).toBe(otherSkill.name);
-    expect(useSkillDialogStore.getState().manageAgentDetails?.skillName).toBe(otherSkill.name);
+    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(otherSnapshot);
   });
 
   it('copies to project IDs in one explicitly selected target Environment', async () => {
@@ -597,7 +533,7 @@ describe('skill workflows', () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
-      manageAgentDetails: managePreview,
+      manageAgentDetails: manageSnapshot,
     });
 
     await executeDuplicateCleanup(['codex']);
@@ -606,7 +542,7 @@ describe('skill workflows', () => {
       skillName: skill.name,
       agents: ['codex'],
     });
-    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(managePreview);
+    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(manageSnapshot);
     expect(mocks.syncSkills).toHaveBeenCalledWith(context, {
       origin: 'selfMutation',
       mutatedSkillNames: ['toolkit'],
@@ -617,13 +553,13 @@ describe('skill workflows', () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
-      manageAgentDetails: managePreview,
+      manageAgentDetails: manageSnapshot,
     });
     mocks.cleanupDuplicateAgentCopies.mockRejectedValueOnce({ kind: 'installWizardActive' });
 
     await executeDuplicateCleanup(['codex']);
 
-    expect(mocks.previewManageSkillAgents).not.toHaveBeenCalled();
+    expect(mocks.getManageAgentSelection).not.toHaveBeenCalled();
     expect(mocks.syncSkills).not.toHaveBeenCalled();
   });
 });

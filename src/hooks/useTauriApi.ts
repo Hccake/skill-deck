@@ -3,12 +3,10 @@
 import { commands } from '@/bindings';
 import { Channel } from '@tauri-apps/api/core';
 import type {
-  AgentId, AgentRuntimeSnapshot, AgentSelectionGroups, ListSkillsResult, SkillScope,
+  AgentId, AgentRuntimeSnapshot, ListSkillsResult, SkillScope,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
   SkillAuditData, DuplicateCleanupResult,
   InstallRiskPolicy, InstallRiskKind,
-  DefaultTargetAgents,
-  InstallTargetInfo,
   AgentDeleteImpact,
   AgentDeleteResult,
   AgentOperationWarning,
@@ -19,11 +17,13 @@ import type {
   InstallWizardSessionSnapshot, MutationSnapshot,
   ProjectBinding, ProjectInfo, ActiveMutation,
   SkillIdentity,
-  InstallRequest, InstallPreview, InstallResponse, PreviewToken,
+  InstallRequest, InstallPreview, InstallPreviewOutcome, InstallResponse,
+  InstallAgentSelectionSnapshot, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
   UpdateCheckRequest, UpdateCheckResponse,
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
-  ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
+  ManageAgentSelectionSnapshot, ManageAgentsPreviewRequest, ManageAgentsPreview,
+  ManageAgentsPreviewOutcome, ManageAgentsRequest, ManageAgentsResponse,
   CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
@@ -36,17 +36,19 @@ export type {
   AgentId, AgentRuntimeSnapshot, ListSkillsResult, SkillScope,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
   SkillAuditData, DuplicateCleanupResult,
-  InstallRiskPolicy, InstallRiskKind, DefaultTargetAgents,
-  InstallTargetInfo, ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
+  InstallRiskPolicy, InstallRiskKind,
+  ContextRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
   EnvironmentRef, AddProjectResult, InstallWizardSessionSnapshot, MutationSnapshot,
   ProjectBinding, ProjectInfo,
   ActiveMutation, AgentDeleteImpact, AgentDeleteResult, AgentOperationWarning,
   AgentSettingsSnapshot, CustomAgentDefinition, CustomAgentDraftValidation,
-  SkillIdentity, InstallRequest, InstallPreview, InstallResponse, PreviewToken,
+  SkillIdentity, InstallRequest, InstallPreview, InstallPreviewOutcome, InstallResponse,
+  InstallAgentSelectionSnapshot, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
   UpdateCheckRequest, UpdateCheckResponse,
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
-  ManageAgentsPreviewRequest, ManageAgentsPreview, ManageAgentsRequest, ManageAgentsResponse,
+  ManageAgentSelectionSnapshot, ManageAgentsPreviewRequest, ManageAgentsPreview,
+  ManageAgentsPreviewOutcome, ManageAgentsRequest, ManageAgentsResponse,
   CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
@@ -67,10 +69,6 @@ function unwrap<T, E>(result: { status: "ok"; data: T } | { status: "error"; err
  */
 export async function listAgents(context: ContextRef): Promise<AgentRuntimeSnapshot> {
   return unwrap(await commands.listAgents(context));
-}
-
-export async function listAgentSelectionGroups(context: ContextRef): Promise<AgentSelectionGroups> {
-  return unwrap(await commands.listAgentSelectionGroups(context));
 }
 
 export async function getAgentSettingsSnapshot(
@@ -159,13 +157,6 @@ export async function downloadAndInstallApplicationUpdate(
 }
 
 /**
- * 列出 Eve project 内可安装的具体目标（root agent 与 subagents）。
- */
-export async function listEveInstallTargets(context: ContextRef): Promise<InstallTargetInfo[]> {
-  return unwrap(await commands.listEveInstallTargets(context));
-}
-
-/**
  * 列出已安装的 Skills
  */
 export async function listSkills(context: ContextRef): Promise<ListSkillsResult> {
@@ -218,32 +209,6 @@ export async function clearGithubCredential(): Promise<GithubCredentialClearResu
   return unwrap(await commands.clearGithubCredential());
 }
 
-// ============ Agent 选择相关 API ============
-
-/**
- * 获取 GUI scope-aware 默认安装目标
- */
-export async function getDefaultTargetAgents(
-  context: ContextRef,
-): Promise<DefaultTargetAgents | null> {
-  return unwrap(await commands.getDefaultTargetAgents(context));
-}
-
-/**
- * 保存 GUI scope-aware 默认安装目标
- */
-export async function saveDefaultTargetAgents(
-  context: ContextRef,
-  defaults: DefaultTargetAgents,
-  expectedRegistryRevision: string,
-): Promise<void> {
-  unwrap(await commands.saveDefaultTargetAgents(
-    context,
-    defaults,
-    expectedRegistryRevision,
-  ));
-}
-
 // ============ 安装相关 API ============
 
 /**
@@ -263,8 +228,15 @@ export async function acquireSelectedPayloads(
   return unwrap(await commands.acquireSelectedPayloads(request));
 }
 
-export async function previewInstall(request: InstallRequest): Promise<InstallPreview> {
+export async function previewInstall(request: InstallRequest): Promise<InstallPreviewOutcome> {
   return unwrap(await commands.previewInstall(request));
+}
+
+export async function getInstallAgentSelection(
+  context: ContextRef,
+  explicitAgentIds: string[],
+): Promise<InstallAgentSelectionSnapshot> {
+  return unwrap(await commands.getInstallAgentSelection(context, explicitAgentIds));
 }
 
 /**
@@ -451,8 +423,15 @@ export async function focusInstallWizard(): Promise<boolean> {
  */
 export async function previewManageSkillAgents(
   request: ManageAgentsPreviewRequest,
-): Promise<ManageAgentsPreview> {
+): Promise<ManageAgentsPreviewOutcome> {
   return unwrap(await commands.previewManageSkillAgents(request));
+}
+
+export async function getManageAgentSelection(
+  context: ContextRef,
+  skillName: string,
+): Promise<ManageAgentSelectionSnapshot> {
+  return unwrap(await commands.getManageAgentSelection(context, skillName));
 }
 
 export async function manageSkillAgents(

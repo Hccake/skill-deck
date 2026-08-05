@@ -11,7 +11,6 @@ use crate::core::agent_definition::{
 };
 use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
 use crate::core::agent_settings::{AgentSettingsSnapshot, AgentStorageIssue, CustomAgentRecord};
-use crate::core::agents::AgentType;
 use crate::core::custom_agent_repository::CustomAgentRepository;
 use crate::core::mutation::MutationKind;
 use crate::core::paths::PATHS;
@@ -25,10 +24,9 @@ use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::types::{
     ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
 };
-use crate::environment::wsl::operations::eve::inspect_eve_project;
 use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
-use crate::models::{InstallTargetInfo, Scope};
+use crate::models::Scope;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
@@ -1307,78 +1305,6 @@ fn environment_revision(value_kind: &str, value: &impl Serialize) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// 列出指定项目内 Eve 可安装的具体目标：root agent 与已存在 subagents。
-pub async fn list_eve_install_targets(
-    context: ContextRef,
-    registry: &WslRuntime,
-) -> Result<Vec<InstallTargetInfo>, AppError> {
-    match &context.environment {
-        EnvironmentRef::Host => {
-            let resolved = ContextResolver::resolve_host(context)?;
-            list_host_eve_install_targets(&resolved)
-        }
-        EnvironmentRef::Wsl { distro_name } => {
-            let distro_name = distro_name.clone();
-            let retry_context = context.clone();
-            registry
-                .with_session_retry(&distro_name, move |session| {
-                    let context = retry_context.clone();
-                    async move {
-                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
-                        list_wsl_eve_install_targets(&resolved, &session).await
-                    }
-                })
-                .await
-        }
-    }
-}
-
-fn list_host_eve_install_targets(
-    context: &ResolvedContext,
-) -> Result<Vec<InstallTargetInfo>, AppError> {
-    let Some(project) = &context.project else {
-        return Ok(Vec::new());
-    };
-    Ok(crate::core::eve::eve_install_targets_for_project(
-        &project.native_path,
-    ))
-}
-
-async fn list_wsl_eve_install_targets(
-    context: &ResolvedContext,
-    session: &WslSession,
-) -> Result<Vec<InstallTargetInfo>, AppError> {
-    let Some(project) = &context.project else {
-        return Ok(Vec::new());
-    };
-    let snapshot = inspect_eve_project(session, &project.native_path).await?;
-    if !snapshot.has_eve {
-        return Ok(Vec::new());
-    }
-
-    let project_path = project.native_path.trim_end_matches('/');
-    let mut targets = vec![InstallTargetInfo {
-        target_id: crate::core::eve::eve_target_id(None),
-        agent: AgentId::parse(AgentType::Eve.to_string())
-            .expect("built-in Eve Agent ID must be valid"),
-        display_name: crate::core::eve::eve_target_label(None),
-        subagent: None,
-        path: format!("{project_path}/agent/skills"),
-    }];
-    targets.extend(snapshot.subagents.into_iter().map(|subagent| {
-        let path_name = crate::core::skill::sanitize_name(&subagent);
-        InstallTargetInfo {
-            target_id: crate::core::eve::eve_target_id(Some(&subagent)),
-            agent: AgentId::parse(AgentType::Eve.to_string())
-                .expect("built-in Eve Agent ID must be valid"),
-            display_name: crate::core::eve::eve_target_label(Some(&subagent)),
-            subagent: Some(subagent),
-            path: format!("{project_path}/agent/subagents/{path_name}/skills"),
-        }
-    }));
-    Ok(targets)
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1392,14 +1318,11 @@ mod tests {
     };
     use crate::core::agent_settings::{AgentStorageIssue, CustomAgentRecord};
     use crate::core::custom_agent_repository::{CustomAgentFile, CustomAgentRepository};
-    use crate::core::lock_repository::LockTarget;
-    use crate::core::lossless_lock::LockSchema;
     use crate::core::mutation::MutationKind;
     use crate::environment::agent_environment::{
         AgentEnvironmentResolver, DetectionState, EnvironmentContext,
     };
-    use crate::environment::lock_io::EnvironmentLockIo;
-    use crate::environment::types::{EnvironmentStatus, ProjectBinding};
+    use crate::environment::types::EnvironmentStatus;
     use serde_json::json;
 
     #[test]
@@ -1573,85 +1496,6 @@ mod tests {
             edit_error,
             AgentCommandError::StaleRegistryRevision { .. }
         ));
-    }
-
-    #[test]
-    fn list_eve_install_targets_returns_root_and_subagents() {
-        let temp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(temp.path().join("agent/subagents/research")).unwrap();
-        std::fs::write(
-            temp.path().join("package.json"),
-            r#"{"dependencies":{"eve":"^0.11.5"}}"#,
-        )
-        .unwrap();
-
-        let project = ProjectBinding {
-            id: "eve-app".to_string(),
-            native_path: temp.path().to_string_lossy().to_string(),
-            display_name: None,
-            order: None,
-            suppress_cross_storage_warning: false,
-        };
-        let resolved = ResolvedContext {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Project {
-                    project_id: project.id.clone(),
-                },
-            },
-            project: Some(project),
-            home: ResourceLocator {
-                environment: EnvironmentRef::Host,
-                native_path: temp.path().to_string_lossy().to_string(),
-            },
-            skill_root: ResourceLocator {
-                environment: EnvironmentRef::Host,
-                native_path: temp
-                    .path()
-                    .join(".agents/skills")
-                    .to_string_lossy()
-                    .to_string(),
-            },
-            lock: ResourceLocator {
-                environment: EnvironmentRef::Host,
-                native_path: temp
-                    .path()
-                    .join("skills-lock.json")
-                    .to_string_lossy()
-                    .to_string(),
-            },
-        };
-
-        let targets = list_host_eve_install_targets(&resolved).unwrap();
-
-        assert_eq!(targets.len(), 2);
-        assert_eq!(targets[0].target_id, "eve:root");
-        assert_eq!(targets[1].target_id, "eve:research");
-    }
-
-    #[test]
-    fn list_eve_install_targets_returns_none_for_global_context() {
-        let resolved = ResolvedContext {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
-            },
-            project: None,
-            home: ResourceLocator {
-                environment: EnvironmentRef::Host,
-                native_path: "/home/alice".to_string(),
-            },
-            skill_root: ResourceLocator {
-                environment: EnvironmentRef::Host,
-                native_path: "/home/alice/.agents/skills".to_string(),
-            },
-            lock: ResourceLocator {
-                environment: EnvironmentRef::Host,
-                native_path: "/home/alice/.agents/.skill-lock.json".to_string(),
-            },
-        };
-
-        assert!(list_host_eve_install_targets(&resolved).unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2735,10 +2579,10 @@ mod tests {
         assert_eq!(controller.snapshot().revision, controller_revision);
     }
 
-    #[tokio::test]
-    async fn defaults_guard_blocks_definition_save_and_delete_before_r1_commit() {
+    #[test]
+    fn settings_guard_blocks_definition_save_and_delete() {
         let source = custom_definition("source-agent", ".source-agent");
-        let (temp, repository) = repository_with_records(vec![CustomAgentRecord::valid(source)]);
+        let (_temp, repository) = repository_with_records(vec![CustomAgentRecord::valid(source)]);
         let repository_path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
         let controller = RuntimeAdmissionCoordinator::default();
@@ -2748,12 +2592,10 @@ mod tests {
         };
         let r1 = service.registry_snapshot(true);
         let repository_before = std::fs::read(&repository_path).expect("repository bytes");
-        let lock_path = temp.path().join("skill-lock.json");
-        std::fs::write(&lock_path, br#"{"version":3,"skills":{}}"#).expect("lock fixture");
         let barrier = Arc::new(Barrier::new(2));
         let guard = controller
-            .begin_mutation(MutationKind::SaveAgentDefaults, context.clone())
-            .expect("defaults guard");
+            .begin_mutation(MutationKind::UpdateSettings, context.clone())
+            .expect("settings guard");
 
         let save_error = std::thread::scope(|scope| {
             let barrier_for_save = Arc::clone(&barrier);
@@ -2792,36 +2634,6 @@ mod tests {
         assert_eq!(service.registry_snapshot(true).revision, r1.revision);
         assert_eq!(std::fs::read(&repository_path).unwrap(), repository_before);
 
-        let supplied = crate::core::skill_lock::DefaultTargetAgents {
-            global: vec!["source-agent".to_string()],
-            project: Vec::new(),
-        };
-        let effective = crate::core::skill_lock::effective_default_target_agents(&supplied, &r1);
-        let projection = crate::core::skill_lock::builtin_last_selected_projection(&effective, &r1);
-        crate::application::default_agents::commit_default_target_agents(
-            EnvironmentLockIo::Host,
-            LockTarget {
-                primary: ResourceLocator {
-                    environment: EnvironmentRef::Host,
-                    native_path: lock_path.to_string_lossy().to_string(),
-                },
-                legacy: None,
-                schema: LockSchema::Global,
-            },
-            effective,
-            projection,
-        )
-        .await
-        .expect("commit R1 defaults while guard is held");
-
-        let lock: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(lock_path).unwrap()).unwrap();
-        assert_eq!(
-            lock["defaultTargetAgents"]["global"],
-            json!(["source-agent"])
-        );
-        assert_eq!(lock["lastSelectedAgents"], json!([]));
-        assert_eq!(service.registry_snapshot(true).revision, r1.revision);
         drop(guard);
     }
 

@@ -1176,6 +1176,7 @@ mod tests {
                 br#"{"version":1,"futureRoot":true,"skills":{"demo":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo.git","ref":"main","skillPath":"skills/demo","computedHash":"old-computed","remoteHash":"old-remote","futureEntry":42}}}"#,
             )
             .unwrap(),
+            eve_targets: Vec::new(),
         };
             for index in 0..75 {
                 let missing_root = physical_root.join(format!(".missing-{index}/skills"));

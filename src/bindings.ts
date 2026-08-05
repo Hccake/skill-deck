@@ -6,17 +6,17 @@
 
 
 export const commands = {
-async acquireSelectedPayloads(request: AcquireSelectedPayloadsRequest) : Promise<Result<AcquiredPayloadHandle[], AppError>> {
+async getInstallAgentSelection(context: ContextRef, explicitAgentIds: string[]) : Promise<Result<InstallAgentSelectionSnapshot, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("acquire_selected_payloads", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_install_agent_selection", { context, explicitAgentIds }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async listAgentSelectionGroups(context: ContextRef) : Promise<Result<AgentSelectionGroups, AgentCommandError>> {
+async acquireSelectedPayloads(request: AcquireSelectedPayloadsRequest) : Promise<Result<AcquiredPayloadHandle[], AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_agent_selection_groups", { context }) };
+    return { status: "ok", data: await TAURI_INVOKE("acquire_selected_payloads", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -73,14 +73,6 @@ async previewCustomAgentDelete(context: ContextRef, id: AgentId, expectedRegistr
     else return { status: "error", error: e  as any };
 }
 },
-async listEveInstallTargets(context: ContextRef) : Promise<Result<InstallTargetInfo[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("list_eve_install_targets", { context }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async listSkills(context: ContextRef) : Promise<Result<ListSkillsResult, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_skills", { context }) };
@@ -121,22 +113,6 @@ async setWslIntegrationEnabled(enabled: boolean) : Promise<Result<EnvironmentDis
     else return { status: "error", error: e  as any };
 }
 },
-async getDefaultTargetAgents(context: ContextRef) : Promise<Result<DefaultTargetAgents | null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_default_target_agents", { context }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async saveDefaultTargetAgents(context: ContextRef, defaults: DefaultTargetAgents, expectedRegistryRevision: string) : Promise<Result<null, AgentCommandError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_default_target_agents", { context, defaults, expectedRegistryRevision }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getGithubCredentialStatus() : Promise<Result<GithubCredentialStatus, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_github_credential_status") };
@@ -169,7 +145,7 @@ async fetchAvailable(context: ContextRef, source: string, operationId: string) :
     else return { status: "error", error: e  as any };
 }
 },
-async previewInstall(request: InstallRequest) : Promise<Result<InstallPreview, AppError>> {
+async previewInstall(request: InstallRequest) : Promise<Result<InstallPreviewOutcome, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_install", { request }) };
 } catch (e) {
@@ -334,9 +310,17 @@ async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial
     else return { status: "error", error: e  as any };
 }
 },
-async previewManageSkillAgents(request: ManageAgentsPreviewRequest) : Promise<Result<ManageAgentsPreview, AppError>> {
+async previewManageSkillAgents(request: ManageAgentsPreviewRequest) : Promise<Result<ManageAgentsPreviewOutcome, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_manage_skill_agents", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getManageAgentSelection(context: ContextRef, skillName: string) : Promise<Result<ManageAgentSelectionSnapshot, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_manage_agent_selection", { context, skillName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -497,8 +481,17 @@ export type AgentFieldError = { field: string; code: string }
 export type AgentId = string
 export type AgentOperationWarning = { code: string }
 export type AgentRuntimeSnapshot = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; availability: EnvironmentStatus; projectPath: string | null; agents: Partial<{ [key in AgentId]: ResolvedAgent }> }
-export type AgentSelectionGroup = { groupId: string; agentIds: AgentId[] }
-export type AgentSelectionGroups = { global: AgentSelectionGroup[]; project: AgentSelectionGroup[] }
+export type AgentSelectionAgent = { id: AgentId; displayName: string; detection: DetectionState }
+export type AgentSelectionCategory = "separateInstall" | "additionalInstall" | "groupChild"
+export type AgentSelectionDisabledReason = "placementConflict"
+export type AgentSelectionDisplayGroup = { id: string; agentId: AgentId; displayName: string; itemIds: AgentSelectionItemId[]; detection: DetectionState }
+export type AgentSelectionInvalidReason = "duplicateItem" | "itemUnavailable" | "placementConflict" | "itemMissing" | "resultNotAllowed"
+export type AgentSelectionItem = { id: AgentSelectionItemId; agentIds: AgentId[]; category: AgentSelectionCategory; displayName: string; path: string; groupId: string | null; selectable: boolean; modeConstraint: AgentSelectionModeConstraint; disabledReason: AgentSelectionDisabledReason | null }
+export type AgentSelectionItemId = string
+export type AgentSelectionModeConstraint = "userSelectable" | "copyOnly"
+export type AgentSelectionRevision = string
+export type AgentSelectionSnapshot = { agents: AgentSelectionAgent[]; directAgentIds: AgentId[]; items: AgentSelectionItem[]; groups: AgentSelectionDisplayGroup[]; initialSelectedItemIds: AgentSelectionItemId[]; unavailableExplicitAgents: UnavailableAgentSelection[]; requestedModeItemIds: AgentSelectionItemId[]; revision: AgentSelectionRevision }
+export type AgentSelectionSubmission = { revision: AgentSelectionRevision; selectedItemIds: AgentSelectionItemId[]; requestedMode: InstallMode }
 export type AgentSettingsSnapshot = { registryRevision: string; activeBuiltin: AgentDefinition[]; activeCustom: ActiveCustomAgent[]; disabledConflicts: DisabledAgentConflict[]; invalidCustomRecords: InvalidCustomAgentRecord[]; currentEnvironment: EnvironmentRef; customStorageIssue: AgentStorageIssue | null }
 export type AgentSource = "builtin" | "custom"
 export type AgentStorageIssue = { code: string; message: string; readOnly: boolean }
@@ -511,7 +504,7 @@ export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
  */
-{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "installWizardActive" } | { kind: "installWizardSessionUnavailable" } | { kind: "applicationTerminating" } | { kind: "wslIntegrationBusy"; data: { reason: WslIntegrationBusyReason } } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "environmentChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "contextChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "externalLockChanged"; data: { target: LockConflictTarget } } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
+{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "installWizardActive" } | { kind: "installWizardSessionUnavailable" } | { kind: "applicationTerminating" } | { kind: "wslIntegrationBusy"; data: { reason: WslIntegrationBusyReason } } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "agentSelectionInvalid"; data: { reason: AgentSelectionInvalidReason } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "environmentChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "contextChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "externalLockChanged"; data: { target: LockConflictTarget } } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
 export type ApplicationUpdateInfo = { version: string; body: string | null }
 export type ApplicationUpdateProgress = { event: "started"; data: { content_length: number | null } } | { event: "progress"; data: { chunk_length: number } } | { event: "finished" }
 export type ApplicationUpdateResult = { version: string; installed: boolean }
@@ -577,10 +570,7 @@ export type CustomAgentDraftValidation = { registryRevision: string; environment
 export type CustomPathBase = "home" | "configHome" | "project"
 export type CustomPathSpec = { kind: "based"; base: CustomPathBase; relativePath: string } | { kind: "absolute"; path: string }
 export type CustomScopeDefinition = { enabled: boolean; location: ScopeLocation; privatePath: CustomPathSpec | null }
-/**
- * GUI 使用的 scope-aware 默认安装目标
- */
-export type DefaultTargetAgents = { global: string[]; project: string[] }
+export type DefaultSelectionWarning = "readFailed"
 export type DetectionReason = "projectContextRequired" | "environmentUnavailable"
 export type DetectionSpec = { kind: "anyPathExists"; paths: PathSpec[] } | { kind: "eve" }
 export type DetectionState = "detected" | "notDetected" | "indeterminate"
@@ -638,12 +628,14 @@ export type GithubCredentialSource = "keyring" | "githubTokenEnv" | "ghTokenEnv"
 export type GithubCredentialStatus = { source: GithubCredentialSource; storage: GithubCredentialStorageStatus; validation: GithubCredentialValidationStatus; account: string | null; rateLimitRemaining: number | null; rateLimitLimit: number | null; rateLimitResetAtEpochMs: number | null; retryAtEpochMs: number | null }
 export type GithubCredentialStorageStatus = "available" | "unavailable"
 export type GithubCredentialValidationStatus = "unconfigured" | "verified" | "invalid" | "rateLimited" | "unavailable"
+export type InstallAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; defaultSelectionWarning: DefaultSelectionWarning | null }
 /**
  * 安装模式
  */
 export type InstallMode = "symlink" | "copy"
 export type InstallPreview = { token: PreviewToken; skills: InstallSkillPreview[] }
-export type InstallRequest = { context: ContextRef; source: string; discoverySession: DiscoverySessionHandle; payloads: AcquiredPayloadHandle[]; skills: string[]; agentIntents: AgentWriteIntent[]; requestedMode: InstallMode; acknowledgeRisk: boolean }
+export type InstallPreviewOutcome = { status: "ready"; preview: InstallPreview } | { status: "selectionStale"; snapshot: InstallAgentSelectionSnapshot }
+export type InstallRequest = { context: ContextRef; source: string; discoverySession: DiscoverySessionHandle; payloads: AcquiredPayloadHandle[]; skills: string[]; agentSelection: AgentSelectionSubmission; acknowledgeRisk: boolean }
 export type InstallResponse = { units: MutationUnitResult[]; warnings: SourceSuppressionWarningCode[] }
 /**
  * 风险策略种类
@@ -654,10 +646,6 @@ export type InstallRiskKind = "none" | "require-confirmation"
  */
 export type InstallRiskPolicy = { kind: InstallRiskKind; code?: string | null }
 export type InstallSkillPreview = { skillName: string; payload: AcquiredPayloadHandle; overwriteTargets: string[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[] }
-/**
- * 具体安装目标展示信息，供前端确认页、完成页和目标选择使用。
- */
-export type InstallTargetInfo = { targetId: string; agent: AgentId; displayName: string; subagent?: string | null; path: string }
 export type InstallWizardSessionSnapshot = { revision: number; active: boolean }
 /**
  * 已安装的 Skill 信息
@@ -744,11 +732,20 @@ export type ListSkillsResult = { skills: InstalledSkill[]; agents: ResolvedAgent
  */
 pathExists: boolean }
 export type LockConflictTarget = { kind: "skill"; skillName: string } | { kind: "rootField"; field: string }
-export type ManageAgentsPreview = { token: PreviewToken; context: ContextRef; skillName: string; availableAgents: ResolvedAgent[]; selectionGroups: AgentSelectionGroups; observedEntries: ObservedPhysicalEntry[]; canonicalPayload: AcquiredPayloadHandle | null; addTargets: ResourceLocator[] }
-export type ManageAgentsPreviewRequest = { context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode }
-export type ManageAgentsRequest = { token: PreviewToken; context: ContextRef; skillName: string; add: AgentWriteIntent[]; removeEntryIds: ObservedEntryId[]; requestedMode: InstallMode; confirmEntityDirectories: boolean; canonicalPayload: AcquiredPayloadHandle | null }
+export type ManageAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; itemStates: ManageSelectionItemState[] }
+export type ManageAgentsConfirmation = { removesEntityDirectories: boolean }
+export type ManageAgentsPreview = { token: PreviewToken; context: ContextRef; skillName: string; canonicalPayload: AcquiredPayloadHandle | null; confirmation: ManageAgentsConfirmation | null }
+export type ManageAgentsPreviewOutcome = { status: "ready"; preview: ManageAgentsPreview } | { status: "selectionStale"; snapshot: ManageAgentSelectionSnapshot }
+export type ManageAgentsPreviewRequest = { context: ContextRef; skillName: string; agentSelection: AgentSelectionSubmission }
+export type ManageAgentsRequest = { token: PreviewToken; context: ContextRef; skillName: string; agentSelection: AgentSelectionSubmission; confirmEntityDirectories: boolean; canonicalPayload: AcquiredPayloadHandle | null }
 export type ManageAgentsResponse = { units: MutationUnitResult[] }
-export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "saveAgentDefaults" | "manageAgentDefinitions" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference" | "updateSettings" | "manageGithubCredential" | "resolveRecovery"
+export type ManageAllowedResults = "selected" | "both" | "none"
+export type ManageCurrentEntry = "none" | "link" | "copy" | "brokenLink" | "unrecognized"
+export type ManageSelectedEffect = "retain" | "add" | "repair"
+export type ManageSelectionDisabledReason = "unrecognizedEntry"
+export type ManageSelectionItemState = { itemId: AgentSelectionItemId; currentEntry: ManageCurrentEntry; initialSelected: boolean; allowedResults: ManageAllowedResults; selectedEffect: ManageSelectedEffect | null; unselectedEffect: ManageUnselectedEffect | null; disabledReason: ManageSelectionDisabledReason | null }
+export type ManageUnselectedEffect = "keepAbsent" | "remove"
+export type MutationKind = "install" | "update" | "remove" | "copy" | "manageAgents" | "duplicateCleanup" | "repair" | "manageAgentDefinitions" | "projectMigration" | "addProject" | "removeProject" | "updateProjectPreference" | "updateSettings" | "manageGithubCredential" | "resolveRecovery"
 export type MutationPhase = "preparing" | "acquiring" | "validating" | "committing" | "finishing"
 export type MutationProgress = { subject: string | null; current: number | null; total: number | null }
 export type MutationSnapshot = { revision: number; active: ActiveMutation | null }
@@ -826,6 +823,8 @@ export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
 export type SourceUpdateCheckInfo = { source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"
 export type SuggestedActionCode = "reviewChanges" | "refresh" | "openRecoveryResource" | "saveDefaultsLater"
+export type UnavailableAgentSelection = { agentId: string; reason: UnavailableAgentSelectionReason }
+export type UnavailableAgentSelectionReason = "definitionMissing"
 export type UpdateCapabilityReasonCode = "missingRemoteHash" | "missingSource" | "unsupportedSource"
 export type UpdateCheckMode = "automatic" | "force"
 export type UpdateCheckOutcome = "completed" | "partial" | "notCompleted"

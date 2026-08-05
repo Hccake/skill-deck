@@ -5,16 +5,18 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::application::agent_intent::{AdapterTargetId, AgentWriteIntent, PrivateEntryIntent};
+use crate::application::agent_intent::{AgentWriteIntent, PrivateEntryIntent};
+use crate::application::agent_selection::test_submission_for_agents;
 use crate::application::copy::{
     CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
 };
 use crate::application::copy_runtime::RuntimeCopyProjectComparator;
 use crate::application::install::{
-    InstallFuture, InstallPlanExecutor, InstallRequest, InstallService,
+    InstallFuture, InstallPlanExecutor, InstallPreviewOutcome, InstallRequest, InstallService,
 };
-use crate::application::install_planner::ConcreteInstallPlanner;
+use crate::application::install_planner::{ConcreteInstallPlanner, InstallPlanningFactSource};
 use crate::application::manage_agents::{
+    ManageAgentSelectionSnapshot, ManageAgentsPreview, ManageAgentsPreviewOutcome,
     ManageAgentsPreviewRequest, ManageAgentsRequest, ManageAgentsService,
 };
 use crate::application::mutation::coordinator::{
@@ -386,26 +388,31 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         ConcreteInstallPlanner::new(facts.clone(), targets.clone(), payloads.clone(), fixed_time),
         executor(&execution, &environments, &facts),
     );
-    let mut initial_agent_intents = both_agent_intents();
-    initial_agent_intents.push(AgentWriteIntent {
-        agent_id: AgentId::parse("eve").expect("Eve Agent id"),
-        private_entry: PrivateEntryIntent::None,
-        adapter_targets: vec![
-            AdapterTargetId("eve:root".to_string()),
-            AdapterTargetId("eve:research".to_string()),
-        ],
-    });
+    let selection_facts = InstallPlanningFactSource::current(&facts, &source_context).await?;
+    let agent_selection = test_submission_for_agents(
+        &source_context,
+        &selection_facts.agent_runtime,
+        &selection_facts.eve_targets,
+        &targets,
+        &["builtin-test", "custom-test", "eve"],
+        InstallMode::Copy,
+    )
+    .await;
     let install_request = InstallRequest {
         context: source_context.clone(),
         source: "owner/repo".to_string(),
         discovery_session: discovery_v1,
         payloads: vec![handle_v1],
         skills: vec!["demo".to_string()],
-        agent_intents: initial_agent_intents,
-        requested_mode: InstallMode::Copy,
+        agent_selection,
         acknowledge_risk: true,
     };
-    let install_preview = install.preview(&install_request).await?;
+    let InstallPreviewOutcome::Ready {
+        preview: install_preview,
+    } = install.preview(&install_request).await?
+    else {
+        panic!("expected ready install preview");
+    };
     let installed = install
         .execute(
             &install_request,
@@ -511,14 +518,14 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .map(|entry| entry.public.entry_id.clone())
         .collect::<Vec<_>>();
     assert_eq!(removed_entries.len(), 4, "four physical Agent entries");
+    let manage_selection = manage.selection(&source_context, "demo").await?;
+    let remove_all_selection = manage_submission(&manage_selection, |_| false, InstallMode::Copy);
     let manage_preview_request = ManageAgentsPreviewRequest {
         context: source_context.clone(),
         skill_name: "demo".to_string(),
-        add: Vec::new(),
-        remove_entry_ids: removed_entries.clone(),
-        requested_mode: InstallMode::Copy,
+        agent_selection: remove_all_selection.clone(),
     };
-    let manage_preview = manage.preview(&manage_preview_request).await?;
+    let manage_preview = ready_manage_preview(manage.preview(&manage_preview_request).await?);
     fs::write(
         source_project.join(".custom/skills/demo/external-change.txt"),
         b"changed after preview",
@@ -529,9 +536,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 token: manage_preview.token,
                 context: source_context.clone(),
                 skill_name: "demo".to_string(),
-                add: Vec::new(),
-                remove_entry_ids: removed_entries.clone(),
-                requested_mode: InstallMode::Copy,
+                agent_selection: remove_all_selection,
                 confirm_entity_directories: true,
                 canonical_payload: None,
             },
@@ -559,9 +564,14 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         })
         .map(|entry| entry.public.entry_id)
         .collect::<Vec<_>>();
+    assert_eq!(refreshed_entries.len(), 4);
+    let refreshed_selection = manage.selection(&source_context, "demo").await?;
+    let refreshed_submission =
+        manage_submission(&refreshed_selection, |_| false, InstallMode::Copy);
     let refreshed_preview_request = ManageAgentsPreviewRequest {
-        remove_entry_ids: refreshed_entries.clone(),
-        ..manage_preview_request
+        context: source_context.clone(),
+        skill_name: "demo".to_string(),
+        agent_selection: refreshed_submission.clone(),
     };
     let failing_manage = ManageAgentsService::new(
         SkillEntryObserver::new(facts.clone(), targets.clone()),
@@ -574,16 +584,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             recovery_root: recovery_root.clone(),
         },
     );
-    let failing_preview = failing_manage.preview(&refreshed_preview_request).await?;
+    let failing_preview =
+        ready_manage_preview(failing_manage.preview(&refreshed_preview_request).await?);
     let failed = failing_manage
         .execute(
             &ManageAgentsRequest {
                 token: failing_preview.token,
                 context: source_context.clone(),
                 skill_name: "demo".to_string(),
-                add: Vec::new(),
-                remove_entry_ids: refreshed_entries.clone(),
-                requested_mode: InstallMode::Copy,
+                agent_selection: refreshed_submission.clone(),
                 confirm_entity_directories: true,
                 canonical_payload: None,
             },
@@ -617,18 +626,18 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             attempted: Arc::clone(&lock_attempted),
         },
     );
-    let lock_failing_preview = lock_failing_manage
-        .preview(&refreshed_preview_request)
-        .await?;
+    let lock_failing_preview = ready_manage_preview(
+        lock_failing_manage
+            .preview(&refreshed_preview_request)
+            .await?,
+    );
     let lock_failed = lock_failing_manage
         .execute(
             &ManageAgentsRequest {
                 token: lock_failing_preview.token,
                 context: source_context.clone(),
                 skill_name: "demo".to_string(),
-                add: Vec::new(),
-                remove_entry_ids: refreshed_entries.clone(),
-                requested_mode: InstallMode::Copy,
+                agent_selection: refreshed_submission,
                 confirm_entity_directories: true,
                 canonical_payload: None,
             },
@@ -650,7 +659,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     assert_no_staging_leaks(root)?;
     assert_recovery_graph_is_empty(&recovery_root)?;
 
-    let research_entry_id = observer
+    let _research_entry_id = observer
         .observe(&source_context, "demo")
         .await?
         .entries
@@ -664,23 +673,26 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         })
         .map(|entry| entry.public.entry_id)
         .expect("Eve research entry");
+    let research_selection = manage.selection(&source_context, "demo").await?;
+    let remove_research_selection = manage_submission(
+        &research_selection,
+        |item| !item.path.contains("/subagents/research/"),
+        InstallMode::Copy,
+    );
     let remove_research_request = ManageAgentsPreviewRequest {
         context: source_context.clone(),
         skill_name: "demo".to_string(),
-        add: Vec::new(),
-        remove_entry_ids: vec![research_entry_id.clone()],
-        requested_mode: InstallMode::Copy,
+        agent_selection: remove_research_selection.clone(),
     };
-    let remove_research_preview = manage.preview(&remove_research_request).await?;
+    let remove_research_preview =
+        ready_manage_preview(manage.preview(&remove_research_request).await?);
     let research_removed = manage
         .execute(
             &ManageAgentsRequest {
                 token: remove_research_preview.token,
                 context: source_context.clone(),
                 skill_name: "demo".to_string(),
-                add: Vec::new(),
-                remove_entry_ids: vec![research_entry_id],
-                requested_mode: InstallMode::Copy,
+                agent_selection: remove_research_selection,
                 confirm_entity_directories: true,
                 canonical_payload: None,
             },
@@ -712,23 +724,21 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .map(|entry| entry.public.entry_id)
         .collect::<Vec<_>>();
     assert_eq!(remaining_entries.len(), 3);
+    let final_selection = manage.selection(&source_context, "demo").await?;
+    let final_submission = manage_submission(&final_selection, |_| false, InstallMode::Copy);
     let final_manage_request = ManageAgentsPreviewRequest {
         context: source_context.clone(),
         skill_name: "demo".to_string(),
-        add: Vec::new(),
-        remove_entry_ids: remaining_entries.clone(),
-        requested_mode: InstallMode::Copy,
+        agent_selection: final_submission.clone(),
     };
-    let manage_preview = manage.preview(&final_manage_request).await?;
+    let manage_preview = ready_manage_preview(manage.preview(&final_manage_request).await?);
     let managed = manage
         .execute(
             &ManageAgentsRequest {
                 token: manage_preview.token,
                 context: source_context.clone(),
                 skill_name: "demo".to_string(),
-                add: Vec::new(),
-                remove_entry_ids: remaining_entries,
-                requested_mode: InstallMode::Copy,
+                agent_selection: final_submission,
                 confirm_entity_directories: true,
                 canonical_payload: None,
             },
@@ -955,6 +965,33 @@ pub(crate) fn both_agent_intents() -> Vec<AgentWriteIntent> {
             adapter_targets: Vec::new(),
         })
         .collect()
+}
+
+fn manage_submission(
+    snapshot: &ManageAgentSelectionSnapshot,
+    keep: impl Fn(&crate::application::agent_selection::AgentSelectionItem) -> bool,
+    requested_mode: InstallMode,
+) -> crate::application::agent_selection::AgentSelectionSubmission {
+    crate::application::agent_selection::AgentSelectionSubmission {
+        revision: snapshot.selection.revision.clone(),
+        selected_item_ids: snapshot
+            .selection
+            .items
+            .iter()
+            .filter(|item| keep(item))
+            .map(|item| item.id.clone())
+            .collect(),
+        requested_mode,
+    }
+}
+
+fn ready_manage_preview(outcome: ManageAgentsPreviewOutcome) -> ManageAgentsPreview {
+    match outcome {
+        ManageAgentsPreviewOutcome::Ready { preview } => preview,
+        ManageAgentsPreviewOutcome::SelectionStale { .. } => {
+            panic!("expected ready Manage Agents preview")
+        }
+    }
 }
 
 fn metadata(computed_hash: &str, remote_hash: &str) -> PayloadPlanningMetadata {
@@ -1434,20 +1471,35 @@ mod update_lifecycle {
                 self.executor(),
             );
             for (skill_name, handle) in ["alpha", "beta"].into_iter().zip(handles) {
+                let context = self.context();
+                let selection_facts = InstallPlanningFactSource::current(&self.facts, &context)
+                    .await
+                    .expect("load lifecycle Agent selection facts");
+                let agent_selection = test_submission_for_agents(
+                    &context,
+                    &selection_facts.agent_runtime,
+                    &selection_facts.eve_targets,
+                    &self.targets,
+                    &["builtin-test", "custom-test"],
+                    InstallMode::Copy,
+                )
+                .await;
                 let request = InstallRequest {
-                    context: self.context(),
+                    context,
                     source: self.remote.source(),
                     discovery_session: discovery.discovery_session.clone(),
                     payloads: vec![handle],
                     skills: vec![skill_name.to_string()],
-                    agent_intents: both_agent_intents(),
-                    requested_mode: InstallMode::Copy,
+                    agent_selection,
                     acknowledge_risk: true,
                 };
-                let preview = install
+                let preview_outcome = install
                     .preview(&request)
                     .await
                     .expect("preview lifecycle install");
+                let InstallPreviewOutcome::Ready { preview } = preview_outcome else {
+                    panic!("expected ready lifecycle install preview");
+                };
                 let installed = install
                     .execute(&request, preview.token, CancellationSignal::default())
                     .await

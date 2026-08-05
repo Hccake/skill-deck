@@ -1,88 +1,70 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ResolvedAgent } from '@/bindings';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import type { InstallAgentSelectionSnapshot } from '@/bindings';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import type { InstallTargetOptionsController } from '@/hooks/useInstallTargetOptions';
-import { makeResolvedAgent, makeResolvedAgentScope } from '@/test-utils';
-import { canProceedForStep, shouldShowInstallModeSelection, type WizardState } from '../types';
+import { makeAgentSelectionSnapshot } from '@/test-utils';
+import { canProceedForStep, type WizardState } from '../types';
 import { OptionsStep } from '../OptionsStep';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) => (
+      values ? `${key}:${JSON.stringify(values)}` : key
+    ),
+  }),
 }));
 
-vi.mock('@/components/agents/AgentSelector', () => ({
-  AgentSelector: ({
-    selectedAgents,
-    allAgents,
-    selectionGroups,
-    unknownAgentIds,
-    onSelectionChange,
-    onRemoveUnknownAgent,
-  }: {
-    selectedAgents: string[];
-    allAgents: ResolvedAgent[];
-    selectionGroups: Array<{ groupId: string }>;
-    unknownAgentIds: string[];
-    onSelectionChange: (agents: string[]) => void;
-    onRemoveUnknownAgent?: (agentId: string) => void;
-  }) => (
-    <div>
-      <span>selected:{selectedAgents.join(',')}</span>
-      <span>agents:{allAgents.map((agent) => agent.definition.id).join(',')}</span>
-      <span>groups:{selectionGroups.map((group) => group.groupId).join(',')}</span>
-      <span>unknown:{unknownAgentIds.join(',')}</span>
-      <button type="button" onClick={() => onSelectionChange(['private-agent'])}>select-private</button>
-      {unknownAgentIds.map((id) => (
-        onRemoveUnknownAgent ? (
-          <button type="button" key={id} onClick={() => onRemoveUnknownAgent(id)}>remove:{id}</button>
-        ) : <span key={id}>blocked:{id}</span>
-      ))}
-    </div>
-  ),
-}));
-
-function privateAgent(id = 'private-agent') {
-  return makeResolvedAgent({
-    id,
-    global: makeResolvedAgentScope({
-      readsShared: false,
-      privatePath: `~/.${id}/skills`,
-      readPaths: [`~/.${id}/skills`],
+function selectionSnapshot(): InstallAgentSelectionSnapshot {
+  return {
+    selection: makeAgentSelectionSnapshot({
+      agents: [
+        { id: 'codex', displayName: 'Codex', detection: 'detected' },
+        { id: 'warp', displayName: 'Warp', detection: 'notDetected' },
+        { id: 'claude-code', displayName: 'Claude Code', detection: 'detected' },
+        { id: 'cursor', displayName: 'Cursor', detection: 'notDetected' },
+      ],
+      directAgentIds: ['codex', 'warp'],
+      items: [
+        { id: 'claude', agentIds: ['claude-code'], category: 'separateInstall', displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+        { id: 'cursor', agentIds: ['cursor'], category: 'separateInstall', displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+      ],
+      initialSelectedItemIds: ['claude'],
+      unavailableExplicitAgents: [{ agentId: 'old-agent', reason: 'definitionMissing' }],
+      requestedModeItemIds: ['claude', 'cursor'],
     }),
-  });
+    defaultSelectionWarning: null,
+  };
 }
 
 function createState(overrides: Partial<WizardState> = {}): WizardState {
+  const snapshot = selectionSnapshot();
   return {
     step: 'options',
     entryPoint: 'skills-panel',
     scope: 'global',
-    context: {
-      environment: { kind: 'host' },
-      scope: { scope: 'global' },
-    },
-    source: 'test/repo',
+    context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+    source: 'owner/repo',
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
     riskPolicy: null,
     riskAcknowledged: false,
     availableSkills: [],
-    selectedSkills: ['demo-skill'],
+    selectedSkills: ['demo'],
     skillFilter: null,
     skillSearchQuery: '',
-    selectedAgents: [],
-    privateCopyAgents: [],
-    allAgents: [],
-    availableAgentTargets: [],
-    selectedAgentTargets: [],
+    agentSelectionSnapshot: snapshot,
+    selectedAgentItemIds: ['claude'],
+    expandedAgentGroupIds: [],
+    additionalAgentsExpanded: false,
+    selectionRequiresReconfirmation: false,
     mode: 'symlink',
     otherAgentsExpanded: false,
-    privateCopyAgentsExpanded: false,
-    otherAgentsSearchQuery: '',
     overwrites: {},
     preparation: { status: 'idle' },
     preSelectedSkills: [],
@@ -92,159 +74,125 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
   };
 }
 
-function readyController(
-  allAgents: ResolvedAgent[] = [],
-  overrides: Partial<Extract<InstallTargetOptionsController, { status: 'ready' }>> = {},
-): InstallTargetOptionsController {
-  return {
-    status: 'ready',
-    inputKey: 'host/global',
-    facts: {
-      allAgents,
-      selectionGroups: [],
-      availableAgentTargets: [],
-      defaultAgents: [],
-      defaultsUnavailable: false,
-    },
-    retry: vi.fn(),
-    ...overrides,
-  };
+function controller(snapshot = selectionSnapshot()): InstallTargetOptionsController {
+  return { status: 'ready', inputKey: 'host/global', snapshot, retry: vi.fn() };
 }
 
-function renderStep({
-  state = createState(),
-  targetOptions = readyController(),
-}: {
-  state?: WizardState;
-  targetOptions?: InstallTargetOptionsController;
-} = {}) {
+function renderStep(state = createState(), targetOptions = controller()) {
   const updateState = vi.fn();
   render(
-    <OptionsStep
-      state={state}
-      updateState={updateState}
-      targetOptions={targetOptions}
-    />,
+    <TooltipProvider>
+      <OptionsStep state={state} updateState={updateState} targetOptions={targetOptions} />
+    </TooltipProvider>,
   );
   return { updateState };
 }
 
 describe('OptionsStep', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  it('only allows continuing after a current snapshot is confirmed', () => {
+    expect(canProceedForStep(createState())).toBe(true);
+    expect(canProceedForStep(createState({ selectionRequiresReconfirmation: true }))).toBe(false);
+    expect(canProceedForStep(createState({ agentSelectionSnapshot: null }))).toBe(false);
   });
 
-  it('blocks confirmation while a preselected Agent ID is still unknown', () => {
-    expect(canProceedForStep(createState({ preSelectedAgents: ['private-agent'] }))).toBe(false);
-  });
-
-  it('uses install paths when deciding whether mode selection is needed', () => {
-    const sharedCompatibleAgent = makeResolvedAgent({
-      id: 'firebender',
-      global: makeResolvedAgentScope({
-        readsShared: true,
-        sharedPath: '~/.agents/skills',
-        privatePath: '~/.firebender/skills',
-      }),
-    });
-
-    expect(shouldShowInstallModeSelection({
-      allAgents: [sharedCompatibleAgent],
-      selectedAgents: [],
-      scope: 'global',
-    })).toBe(false);
-  });
-
-  it('renders loading and exposes a retry for required fact failures', () => {
-    const retry = vi.fn().mockResolvedValue(undefined);
-    const base = {
-      inputKey: 'host/global',
-      retry,
-    };
+  it('renders loading and retry states', async () => {
+    const user = userEvent.setup();
+    const retry = vi.fn();
+    const state = createState({ agentSelectionSnapshot: null });
     const { rerender } = render(
-      <OptionsStep
-        state={createState()}
-        updateState={vi.fn()}
-        targetOptions={{ ...base, status: 'loading' }}
-      />,
+      <OptionsStep state={state} updateState={vi.fn()} targetOptions={{ status: 'loading', inputKey: 'key', retry }} />,
     );
-    expect(screen.getByRole('status').textContent).toBe('common.loading');
+    expect(screen.getByRole('status')).toBeDefined();
 
     rerender(
-      <OptionsStep
-        state={createState()}
-        updateState={vi.fn()}
-        targetOptions={{
-          ...base,
-          status: 'error',
-          error: { kind: 'custom', data: { message: 'unavailable' } },
-        }}
-      />,
+      <OptionsStep state={state} updateState={vi.fn()} targetOptions={{ status: 'error', inputKey: 'key', error: { kind: 'custom', data: { message: 'failed' } }, retry }} />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }));
-    expect(retry).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'common.retry' }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 
-  it('renders ready facts and keeps selection changes in Wizard state', () => {
-    const agent = privateAgent();
-    const { updateState } = renderStep({
-      targetOptions: readyController([agent], {
-        facts: {
-          allAgents: [agent],
-          selectionGroups: [{ groupId: 'private-group', agentIds: ['private-agent'] }],
-          availableAgentTargets: [],
-          defaultAgents: [],
-          defaultsUnavailable: false,
-        },
-      }),
-    });
+  it('keeps installation mode above the only scrolling list and publishes item IDs', async () => {
+    const user = userEvent.setup();
+    const { updateState } = renderStep();
 
-    expect(screen.getByText('agents:private-agent')).toBeDefined();
-    expect(screen.getByText('groups:private-group')).toBeDefined();
-    fireEvent.click(screen.getByRole('button', { name: 'select-private' }));
-    expect(updateState).toHaveBeenCalledWith({
-      selectedAgents: ['private-agent'],
-      selectedAgentTargets: [],
-    });
+    expect(screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' })).toBeDefined();
+    await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
+    expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+      selectedAgentItemIds: [],
+      selectionRequiresReconfirmation: false,
+    }));
   });
 
-  it('shows a non-blocking warning when only saved defaults are unavailable', () => {
-    renderStep({
-      targetOptions: readyController([], {
-        facts: {
-          allAgents: [],
-          selectionGroups: [],
-          availableAgentTargets: [],
-          defaultAgents: null,
-          defaultsUnavailable: true,
-        },
-      }),
-    });
+  it('keeps the Agent heading when no item uses a selectable installation mode', () => {
+    const snapshot = selectionSnapshot();
+    snapshot.selection.requestedModeItemIds = [];
+    renderStep(createState({ agentSelectionSnapshot: snapshot }), controller(snapshot));
+
+    expect(screen.getByText('agentSelection.title')).toBeDefined();
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+  });
+
+  it('shows the install empty state when no Agent is available', () => {
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents = [];
+    snapshot.selection.directAgentIds = [];
+    snapshot.selection.items = [];
+    snapshot.selection.groups = [];
+    snapshot.selection.initialSelectedItemIds = [];
+    snapshot.selection.requestedModeItemIds = [];
+    renderStep(createState({ agentSelectionSnapshot: snapshot }), controller(snapshot));
+
+    expect(screen.getByText('agentSelection.installEmpty')).toBeDefined();
+  });
+
+  it('shows unknown explicit Agents as one read-only notice', () => {
+    renderStep();
+
+    expect(screen.getByRole('status').textContent).toContain('old-agent');
+    expect(screen.queryByRole('checkbox', { name: 'old-agent' })).toBeNull();
+  });
+
+  it('keeps undetected separate Agents under the collapsed Other Agents section', async () => {
+    const user = userEvent.setup();
+    const { updateState } = renderStep();
+
+    expect(screen.queryByText('Cursor')).toBeNull();
+    await user.click(screen.getByText(/agentSelection.otherAgents/));
+    expect(updateState).toHaveBeenCalledWith(expect.objectContaining({ otherAgentsExpanded: true }));
+  });
+
+  it('allows an initially selected placement conflict to be canceled', async () => {
+    const user = userEvent.setup();
+    const snapshot = selectionSnapshot();
+    snapshot.selection.items[0].selectable = true;
+    snapshot.selection.items[0].disabledReason = 'placementConflict';
+    snapshot.selection.initialSelectedItemIds = ['claude'];
+    const { updateState } = renderStep(
+      createState({ agentSelectionSnapshot: snapshot, selectedAgentItemIds: ['claude'] }),
+      controller(snapshot),
+    );
+
+    expect(screen.getByText('agentSelection.disabled.placementConflict')).toBeDefined();
+    await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
+    expect(updateState).toHaveBeenCalledWith(expect.objectContaining({ selectedAgentItemIds: [] }));
+  });
+
+  it('shows a saved-default warning without blocking the selection', () => {
+    const snapshot = selectionSnapshot();
+    snapshot.defaultSelectionWarning = 'readFailed';
+    renderStep(createState({ agentSelectionSnapshot: snapshot }), controller(snapshot));
 
     expect(screen.getByText('addSkill.agents.defaultLoadWarning')).toBeDefined();
-    expect(screen.getByText('addSkill.mode.symlink')).toBeDefined();
+    expect(screen.getByRole('checkbox', { name: 'Claude Code' })).toBeDefined();
   });
 
-  it('keeps the only unknown preselected Agent blocking without exposing removal', () => {
-    renderStep({ state: createState({ preSelectedAgents: ['unknown-agent'] }) });
+  it('requires the user to confirm a refreshed Agent selection before continuing', async () => {
+    const user = userEvent.setup();
+    const { updateState } = renderStep(createState({ selectionRequiresReconfirmation: true }));
 
-    expect(screen.getByText('blocked:unknown-agent')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'remove:unknown-agent' })).toBeNull();
-    expect(canProceedForStep(createState({ preSelectedAgents: ['unknown-agent'] }))).toBe(false);
-  });
+    expect(screen.getByRole('alert').textContent).toContain('agentSelection.selectionChanged');
+    await user.click(screen.getByRole('button', { name: 'agentSelection.confirmCurrentSelection' }));
 
-  it('removes an unknown preselected Agent when another requested Agent is valid', () => {
-    const knownAgent = privateAgent('known-agent');
-    const state = createState({
-      preSelectedAgents: ['known-agent', 'unknown-agent'],
-      allAgents: [knownAgent],
-    });
-    const { updateState } = renderStep({
-      state,
-      targetOptions: readyController([knownAgent]),
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'remove:unknown-agent' }));
-    expect(updateState).toHaveBeenCalledWith({ preSelectedAgents: ['known-agent'] });
+    expect(updateState).toHaveBeenCalledWith({ selectionRequiresReconfirmation: false });
   });
 });

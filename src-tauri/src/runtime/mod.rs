@@ -18,7 +18,7 @@ use crate::application::recovery_runtime::RuntimeRecoveryService;
 use crate::application::remove_runtime::{build_runtime_remove_service, RuntimeRemoveService};
 use crate::application::resources::{build_runtime_resource_service, RuntimeResourceService};
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
-use crate::application::runtime_facts::AgentRegistrySnapshotSource;
+use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
 use crate::application::update_runtime::{
     build_runtime_source_evidence_coordinator, build_runtime_update_check_service,
     build_runtime_update_service, RuntimeUpdateCheckService, RuntimeUpdateService,
@@ -26,6 +26,7 @@ use crate::application::update_runtime::{
 use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::{GithubApiClient, GithubTokenProvider};
 use crate::environment::native::acquire::NativePayloadSessionStorage;
+use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::project_service::initialize_host_project_migration;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
@@ -53,6 +54,8 @@ pub struct RuntimeServiceGraph {
     copy: RuntimeCopyService,
     resources: RuntimeResourceService,
     github_credentials: GithubCredentialWorkflowService,
+    agent_selection_facts: RuntimePlanningFactSource,
+    agent_selection_targets: RuntimeTargetFactResolver,
 }
 
 impl RuntimeServiceGraph {
@@ -100,6 +103,9 @@ impl RuntimeServiceGraph {
             source_snapshots.clone(),
             github_token_provider,
         )?;
+        let agent_selection_facts =
+            RuntimePlanningFactSource::for_current_user(registry.clone(), wsl.clone());
+        let agent_selection_targets = RuntimeTargetFactResolver::new(wsl.clone());
         let install = build_runtime_install_service(
             payloads.clone(),
             wsl.clone(),
@@ -154,6 +160,8 @@ impl RuntimeServiceGraph {
             copy,
             resources,
             github_credentials,
+            agent_selection_facts,
+            agent_selection_targets,
         })
     }
 
@@ -227,6 +235,14 @@ impl RuntimeServiceGraph {
 
     pub fn github_credentials(&self) -> &GithubCredentialWorkflowService {
         &self.github_credentials
+    }
+
+    pub fn agent_selection_facts(&self) -> &RuntimePlanningFactSource {
+        &self.agent_selection_facts
+    }
+
+    pub fn agent_selection_targets(&self) -> &RuntimeTargetFactResolver {
+        &self.agent_selection_targets
     }
 }
 

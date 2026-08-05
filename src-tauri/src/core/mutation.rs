@@ -21,7 +21,6 @@ pub enum MutationKind {
     DuplicateCleanup,
     #[allow(dead_code)]
     Repair,
-    SaveAgentDefaults,
     ManageAgentDefinitions,
     ProjectMigration,
     AddProject,

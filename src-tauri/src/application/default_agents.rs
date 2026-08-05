@@ -1,11 +1,9 @@
-use crate::application::agents::{AgentCommandError, ManagedAgentRegistry};
-use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
+use crate::application::agents::ManagedAgentRegistry;
 use crate::application::runtime_facts::AgentRegistrySnapshotSource;
 use crate::core::agent_definition::AgentId;
 use crate::core::agent_registry::AgentRegistrySnapshot;
 use crate::core::lock_repository::{LockMutationTargets, LockRepository, LockTarget};
 use crate::core::lossless_lock::LockSchema;
-use crate::core::mutation::{MutationKind, MutationPhase};
 use crate::core::skill_lock;
 use crate::environment::context_resolver::ContextResolver;
 use crate::environment::lock_io::EnvironmentLockIo;
@@ -76,65 +74,6 @@ async fn read_effective_default_target_agents(
         .map(serde_json::from_value)
         .transpose()?;
     Ok(stored.map(|stored| skill_lock::effective_default_target_agents(&stored, snapshot)))
-}
-
-fn prepare_default_target_agents_save(
-    supplied: &skill_lock::DefaultTargetAgents,
-    expected_registry_revision: &str,
-    snapshot: &AgentRegistrySnapshot,
-) -> Result<(skill_lock::DefaultTargetAgents, Vec<String>), AgentCommandError> {
-    validate_default_target_agents_revision(expected_registry_revision, snapshot)?;
-    let effective = skill_lock::effective_default_target_agents(supplied, snapshot);
-    let last_selected = skill_lock::builtin_last_selected_projection(&effective, snapshot);
-    Ok((effective, last_selected))
-}
-
-fn validate_default_target_agents_revision(
-    expected_registry_revision: &str,
-    snapshot: &AgentRegistrySnapshot,
-) -> Result<(), AgentCommandError> {
-    if expected_registry_revision != snapshot.revision {
-        return Err(AgentCommandError::StaleRegistryRevision {
-            expected: expected_registry_revision.to_string(),
-            actual: snapshot.revision.clone(),
-        });
-    }
-    Ok(())
-}
-
-fn begin_default_target_agents_save(
-    controller: &RuntimeAdmissionCoordinator,
-    context: ContextRef,
-    expected_registry_revision: &str,
-    initial_snapshot: &AgentRegistrySnapshot,
-) -> Result<MutationPermit, AgentCommandError> {
-    validate_default_target_agents_revision(expected_registry_revision, initial_snapshot)?;
-    controller
-        .begin_mutation(MutationKind::SaveAgentDefaults, context)
-        .map_err(AgentCommandError::from)
-}
-
-pub(crate) async fn commit_default_target_agents(
-    io: EnvironmentLockIo,
-    target: LockTarget,
-    defaults: skill_lock::DefaultTargetAgents,
-    last_selected_agents: Vec<String>,
-) -> Result<(), AppError> {
-    let repository = LockRepository::new(io);
-    let mut transaction = repository
-        .begin(
-            target,
-            LockMutationTargets {
-                entries: Vec::new(),
-                default_target_agents: true,
-            },
-        )
-        .await?;
-    transaction.set_default_target_agents(
-        serde_json::to_value(defaults)?,
-        serde_json::to_value(last_selected_agents)?,
-    )?;
-    transaction.commit().await
 }
 
 pub(crate) async fn remove_default_target_agent_reference(
@@ -280,72 +219,6 @@ async fn remove_default_target_agent_reference_with_io(
     transaction.commit().await
 }
 
-pub async fn save_default_target_agents(
-    context: ContextRef,
-    defaults: skill_lock::DefaultTargetAgents,
-    expected_registry_revision: String,
-    registry: &WslRuntime,
-    agent_registry: &ManagedAgentRegistry,
-    controller: &RuntimeAdmissionCoordinator,
-) -> Result<(), AgentCommandError> {
-    ensure_global_context(&context)?;
-    let initial_snapshot = agent_registry_snapshot_for_defaults(agent_registry);
-    let guard = begin_default_target_agents_save(
-        controller,
-        context.clone(),
-        &expected_registry_revision,
-        &initial_snapshot,
-    )?;
-    let guarded_snapshot = agent_registry_snapshot_for_defaults(agent_registry);
-    let (defaults, last_selected_agents) = prepare_default_target_agents_save(
-        &defaults,
-        &expected_registry_revision,
-        &guarded_snapshot,
-    )?;
-    match &context.environment {
-        EnvironmentRef::Host => {
-            ContextResolver::resolve_host(context)?;
-            guard.transition(MutationPhase::Committing, None, false);
-            commit_default_target_agents(
-                EnvironmentLockIo::Host,
-                host_default_target_agents_lock_target(),
-                defaults,
-                last_selected_agents,
-            )
-            .await
-            .map_err(AgentCommandError::from)
-        }
-        EnvironmentRef::Wsl { distro_name } => {
-            let distro_name = distro_name.clone();
-            let retry_context = context.clone();
-            let guard = &guard;
-            registry
-                .with_session_retry(&distro_name, move |session| {
-                    let context = retry_context.clone();
-                    let defaults = defaults.clone();
-                    let last_selected_agents = last_selected_agents.clone();
-                    async move {
-                        let locator = ContextResolver::resolve_wsl(context, &session).await?.lock;
-                        guard.transition(MutationPhase::Committing, None, false);
-                        commit_default_target_agents(
-                            EnvironmentLockIo::ActiveWsl(session),
-                            LockTarget {
-                                primary: locator,
-                                legacy: None,
-                                schema: LockSchema::Global,
-                            },
-                            defaults,
-                            last_selected_agents,
-                        )
-                        .await
-                    }
-                })
-                .await
-                .map_err(AgentCommandError::from)
-        }
-    }
-}
-
 fn agent_registry_snapshot_for_defaults(registry: &ManagedAgentRegistry) -> AgentRegistrySnapshot {
     registry.snapshot().as_ref().clone()
 }
@@ -361,21 +234,6 @@ fn host_default_target_agents_lock_target() -> LockTarget {
         legacy: None,
         schema: LockSchema::Global,
     }
-}
-
-#[cfg(test)]
-async fn save_effective_default_target_agents(
-    io: EnvironmentLockIo,
-    target: LockTarget,
-    supplied: skill_lock::DefaultTargetAgents,
-    expected_registry_revision: &str,
-    snapshot: &AgentRegistrySnapshot,
-) -> Result<(), AgentCommandError> {
-    let (effective, last_selected_agents) =
-        prepare_default_target_agents_save(&supplied, expected_registry_revision, snapshot)?;
-    commit_default_target_agents(io, target, effective, last_selected_agents)
-        .await
-        .map_err(AgentCommandError::from)
 }
 
 fn ensure_global_context(context: &ContextRef) -> Result<(), AppError> {
@@ -394,7 +252,6 @@ fn ensure_global_context(context: &ContextRef) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::agents::AgentCommandError;
     use crate::core::agent_definition::{
         AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, PathSpec,
         ScopeDefinition,
@@ -450,68 +307,6 @@ mod tests {
             legacy: None,
             schema: LockSchema::Global,
         }
-    }
-
-    #[tokio::test]
-    async fn environment_default_agents_update_preserves_unknown_fields_and_projects_builtins() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let lock_path = temp.path().join("skill-lock.json");
-        let current = br#"{
-          "version": 3,
-          "customRoot": { "keep": true },
-          "skills": { "demo": { "source": "owner/repo", "future": 7 } },
-          "defaultTargetAgents": { "global": ["codex"], "project": [] },
-          "lastSelectedAgents": ["codex"]
-        }"#;
-        std::fs::write(&lock_path, current).expect("write lock");
-        let private = scope(true, false, true);
-        let snapshot = registry_snapshot(vec![
-            definition(
-                "claude-code",
-                AgentSource::Builtin,
-                private.clone(),
-                private.clone(),
-            ),
-            definition(
-                "my-custom-agent",
-                AgentSource::Custom,
-                private.clone(),
-                private,
-            ),
-        ]);
-        let supplied = skill_lock::DefaultTargetAgents {
-            global: vec![
-                "claude-code".to_string(),
-                "my-custom-agent".to_string(),
-                "deleted-agent".to_string(),
-            ],
-            project: vec!["my-custom-agent".to_string(), "claude-code".to_string()],
-        };
-
-        save_effective_default_target_agents(
-            EnvironmentLockIo::Host,
-            lock_target(&lock_path),
-            supplied,
-            "registry-revision",
-            &snapshot,
-        )
-        .await
-        .expect("update defaults losslessly");
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(lock_path).unwrap()).unwrap();
-
-        assert_eq!(value["customRoot"]["keep"], true);
-        assert_eq!(value["skills"]["demo"]["future"], 7);
-        assert_eq!(value["defaultTargetAgents"]["global"][0], "claude-code");
-        assert_eq!(value["defaultTargetAgents"]["global"][1], "my-custom-agent");
-        assert_eq!(
-            value["defaultTargetAgents"]["project"][0],
-            "my-custom-agent"
-        );
-        assert_eq!(
-            value["lastSelectedAgents"],
-            serde_json::json!(["claude-code"])
-        );
     }
 
     #[tokio::test]
@@ -619,85 +414,6 @@ mod tests {
         .expect("absent lock is a no-op");
 
         assert!(!lock_path.exists());
-    }
-
-    #[tokio::test]
-    async fn stale_registry_revision_rejects_save_without_writing() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let lock_path = temp.path().join("skill-lock.json");
-        let original = br#"{"version":3,"skills":{},"futureRoot":{"keep":true}}"#;
-        std::fs::write(&lock_path, original).expect("write lock");
-        let snapshot = registry_snapshot(vec![definition(
-            "private-agent",
-            AgentSource::Builtin,
-            scope(true, false, true),
-            scope(true, false, true),
-        )]);
-
-        let error = save_effective_default_target_agents(
-            EnvironmentLockIo::Host,
-            lock_target(&lock_path),
-            skill_lock::DefaultTargetAgents {
-                global: vec!["private-agent".to_string()],
-                project: Vec::new(),
-            },
-            "stale-revision",
-            &snapshot,
-        )
-        .await
-        .expect_err("reject stale revision");
-
-        assert_eq!(
-            error,
-            AgentCommandError::StaleRegistryRevision {
-                expected: "stale-revision".to_string(),
-                actual: "registry-revision".to_string(),
-            }
-        );
-        assert_eq!(std::fs::read(lock_path).unwrap(), original);
-    }
-
-    #[test]
-    fn guarded_recheck_rejects_registry_advance_without_writing() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let lock_path = temp.path().join("skill-lock.json");
-        let original = br#"{"version":3,"skills":{},"futureRoot":{"keep":true}}"#;
-        std::fs::write(&lock_path, original).expect("write lock");
-        let supplied = skill_lock::DefaultTargetAgents {
-            global: vec!["private-agent".to_string()],
-            project: Vec::new(),
-        };
-        let r1 = registry_snapshot(vec![definition(
-            "private-agent",
-            AgentSource::Custom,
-            scope(true, false, true),
-            scope(true, false, true),
-        )]);
-        let mut r2 = r1.clone();
-        r2.revision = "registry-revision-r2".to_string();
-        r2.active_definitions.clear();
-        let controller = RuntimeAdmissionCoordinator::default();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: crate::environment::types::ContextScope::Global,
-        };
-
-        let guard =
-            begin_default_target_agents_save(&controller, context, "registry-revision", &r1)
-                .expect("R1 is initially current");
-        let error = prepare_default_target_agents_save(&supplied, "registry-revision", &r2)
-            .expect_err("guarded recheck rejects R2");
-
-        assert_eq!(
-            error,
-            AgentCommandError::StaleRegistryRevision {
-                expected: "registry-revision".to_string(),
-                actual: "registry-revision-r2".to_string(),
-            }
-        );
-        assert_eq!(std::fs::read(lock_path).unwrap(), original);
-        drop(guard);
-        assert!(controller.active().is_none());
     }
 
     #[test]

@@ -143,6 +143,14 @@ impl ErrorReport {
                 report.field = field;
                 report
             }
+            AppError::AgentSelectionInvalid { reason } => {
+                let mut report = Self::new(OperationErrorCode::Validation);
+                report.field = Some("agentSelection".to_string());
+                report
+                    .parameters
+                    .insert("reason".to_string(), reason.code().to_string());
+                report
+            }
             AppError::InvalidSkillMd { message }
             | AppError::InvalidSource { value: message }
             | AppError::InstallRiskConfirmationRequired { code: message }

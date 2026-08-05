@@ -88,6 +88,10 @@ describe('formatAppError', () => {
       { kind: 'validation', data: { field: 'request', message: 'invalid selection' } },
       'invalid selection',
     ],
+    [
+      { kind: 'agentSelectionInvalid', data: { reason: 'placementConflict' } } as AppError,
+      'agentSelection.error.placementConflict',
+    ],
     [{ kind: 'staleContext' }, 'addSkill.error.staleState'],
     [
       {

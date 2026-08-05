@@ -17,6 +17,29 @@ pub enum WslIntegrationBusyReason {
     WslOperation,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum AgentSelectionInvalidReason {
+    DuplicateItem,
+    ItemUnavailable,
+    PlacementConflict,
+    ItemMissing,
+    ResultNotAllowed,
+}
+
+impl AgentSelectionInvalidReason {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::DuplicateItem => "duplicateItem",
+            Self::ItemUnavailable => "itemUnavailable",
+            Self::PlacementConflict => "placementConflict",
+            Self::ItemMissing => "itemMissing",
+            Self::ResultNotAllowed => "resultNotAllowed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(transparent)]
 pub struct RecoveryResourceId(String);
@@ -202,6 +225,9 @@ pub enum AppError {
 
     #[error("Invalid agent: {agent}")]
     InvalidAgent { agent: String },
+
+    #[error("Invalid Agent selection: {reason:?}")]
+    AgentSelectionInvalid { reason: AgentSelectionInvalidReason },
 
     #[error("Configuration is read-only because it uses an unsupported schema")]
     ConfigurationReadOnly,

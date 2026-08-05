@@ -30,8 +30,8 @@ mod native_workflow_integration_support;
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
+            commands::agent_selection::get_install_agent_selection,
             commands::source_acquisition::acquire_selected_payloads,
-            commands::agents::list_agent_selection_groups,
             commands::agents::list_agents,
             commands::agents::get_agent_settings_snapshot,
             commands::agents::validate_custom_agent_draft,
@@ -39,14 +39,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::agents::delete_custom_agent,
             commands::agents::delete_invalid_custom_agent,
             commands::agents::preview_custom_agent_delete,
-            commands::agents::list_eve_install_targets,
             commands::skills::list_skills,
             commands::skills::read_skill_content,
             commands::config::get_config,
             commands::config::save_config,
             commands::config::set_wsl_integration_enabled,
-            commands::config::get_default_target_agents,
-            commands::config::save_default_target_agents,
             commands::github_credentials::get_github_credential_status,
             commands::github_credentials::save_github_credential,
             commands::github_credentials::clear_github_credential,
@@ -72,6 +69,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::wizard::focus_install_wizard,
             commands::audit::check_skill_audit,
             commands::manage_agents::preview_manage_skill_agents,
+            commands::manage_agents::get_manage_agent_selection,
             commands::manage_agents::manage_skill_agents,
             commands::copy_skill::preview_copy_skill_to_projects,
             commands::copy_skill::copy_skill_to_projects,

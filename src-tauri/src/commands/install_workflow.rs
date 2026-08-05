@@ -2,7 +2,7 @@ use std::future::Future;
 
 use tauri::{State, WebviewWindow};
 
-use crate::application::install::{InstallPreview, InstallRequest, InstallResponse};
+use crate::application::install::{InstallPreviewOutcome, InstallRequest, InstallResponse};
 use crate::application::mutation::plan::PreviewToken;
 use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
 use crate::commands::window_role::WindowRole;
@@ -16,7 +16,7 @@ use crate::runtime::RuntimeServiceGraph;
 pub async fn preview_install(
     request: InstallRequest,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<InstallPreview, AppError> {
+) -> Result<InstallPreviewOutcome, AppError> {
     runtime.install().preview(&request).await
 }
 

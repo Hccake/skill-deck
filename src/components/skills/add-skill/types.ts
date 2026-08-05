@@ -7,17 +7,13 @@ import type {
   DiscoverySessionHandle,
   InstallMode,
   InstallResponse,
-  InstallTargetInfo,
   ContextRef,
-  ResolvedAgent,
+  InstallAgentSelectionSnapshot,
 } from '@/bindings';
-import type { AdapterTargetSelection } from '@/lib/install-workflow';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
 import type {
   InstallPreparationOutcome,
 } from '@/workflows/skill-install-preparation';
-import { agentId } from '@/lib/agents';
-import { getAgentInstallPath, isAutomaticAgent, isAdditionalAgent, type InstallScope } from '@/lib/agentTargets';
 
 /** 安装错误详情（UI 视图模型，由 parseInstallError 从 AppError 转换而来） */
 export interface InstallError {
@@ -50,38 +46,6 @@ export function getStepFlow(entryPoint: EntryPoint = 'skills-panel'): CoreStep[]
   return entryPoint === 'discovery' ? DISCOVERY_STEP_FLOW : CONTEXT_STEP_FLOW;
 }
 
-type InstallModeState = Pick<WizardState, 'allAgents' | 'selectedAgents' | 'mode' | 'scope'>;
-
-/** 是否需要显示安装方式选择 */
-export function shouldShowInstallModeSelection(
-  state: Pick<WizardState, 'allAgents' | 'selectedAgents'> & { scope?: InstallScope },
-): boolean {
-  if (state.allAgents.length === 0) {
-    return true;
-  }
-
-  const effectiveDirs = new Set<string>();
-  const selectedSet = new Set(state.selectedAgents);
-  const scope = state.scope ?? 'global';
-
-  for (const agent of state.allAgents) {
-    const installPath = getAgentInstallPath(agent, scope);
-    if (!installPath) continue;
-    if (isAutomaticAgent(agent, scope)) {
-      effectiveDirs.add(installPath);
-    } else if (isAdditionalAgent(agent, scope) && selectedSet.has(agentId(agent))) {
-      effectiveDirs.add(installPath);
-    }
-  }
-
-  return effectiveDirs.size > 1;
-}
-
-/** 当前安装流程实际生效的 mode */
-export function getEffectiveInstallMode(state: InstallModeState): InstallMode {
-  return shouldShowInstallModeSelection(state) ? state.mode : 'copy';
-}
-
 /** AddSkillWizard 内部状态 */
 export interface WizardState {
   step: WizardStep;
@@ -108,15 +72,13 @@ export interface WizardState {
   skillSearchQuery: string;
 
   // Options
-  selectedAgents: AgentId[];
-  privateCopyAgents: AgentId[];
-  allAgents: ResolvedAgent[];
-  availableAgentTargets: InstallTargetInfo[];
-  selectedAgentTargets: AdapterTargetSelection[];
+  agentSelectionSnapshot: InstallAgentSelectionSnapshot | null;
+  selectedAgentItemIds: string[];
+  expandedAgentGroupIds: string[];
+  additionalAgentsExpanded: boolean;
+  selectionRequiresReconfirmation: boolean;
   mode: InstallMode;
   otherAgentsExpanded: boolean;
-  privateCopyAgentsExpanded: boolean;
-  otherAgentsSearchQuery: string;
 
   // Confirm
   overwrites: Record<string, string[]>;
@@ -129,9 +91,6 @@ export interface WizardState {
   // Installing
   installResults: InstallResponse | null;
   installError?: InstallError;
-  retrySkillName?: string;
-  retryAgents?: AgentId[];
-  retryAgentTargets?: AdapterTargetSelection[];
 }
 
 export function canProceedForStep(state: WizardState): boolean {
@@ -143,8 +102,8 @@ export function canProceedForStep(state: WizardState): boolean {
     case 'skills':
       return state.selectedSkills.length > 0;
     case 'options':
-      return state.preSelectedAgents.every((preselectedId) =>
-        state.allAgents.some((agent) => agentId(agent) === preselectedId));
+      return state.agentSelectionSnapshot !== null
+        && !state.selectionRequiresReconfirmation;
     case 'confirm':
       return state.preparation.status === 'ready'
         && (state.riskPolicy?.kind !== 'require-confirmation' || state.riskAcknowledged);

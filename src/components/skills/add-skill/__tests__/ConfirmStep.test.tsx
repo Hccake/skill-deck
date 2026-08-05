@@ -1,85 +1,75 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { StrictMode } from 'react';
-import { acquireSelectedPayloads, checkSkillAudit, previewInstall } from '@/hooks/useTauriApi';
-import { makeResolvedScopeFixture, makeResolvedAgent } from '@/test-utils';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { InstallPreviewOutcome } from '@/bindings';
+import {
+  acquireSelectedPayloads,
+  checkSkillAudit,
+  getInstallAgentSelection,
+  previewInstall,
+} from '@/hooks/useTauriApi';
+import { makeAgentSelectionSnapshot } from '@/test-utils';
 import type { WizardState } from '../types';
 import { ConfirmStep } from '../ConfirmStep';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: Record<string, unknown>) => {
-      if (key === 'addSkill.confirm.summary') {
-        return `Will install ${options?.count} skills. ${options?.overwriteCount} target directories already contain matching skills and will be overwritten.`;
-      }
-      if (key === 'addSkill.confirm.summaryNoOverwrite') {
-        return `Will install ${options?.count} skills.`;
-      }
-      if (key === 'addSkill.confirm.itemsTitle') return 'Install contents';
-      if (key === 'addSkill.confirm.overwriteGroup') return '目标目录已存在';
-      if (key === 'addSkill.confirm.installDirNameChanged') return '安装目录与 Skill 名称不同';
-      if (key === 'addSkill.confirm.installDirNameChangedHint') {
-        return `Skill 名称包含不适合作为目录名的字符，安装时将使用 ${options?.installDirName}。`;
-      }
-      if (key === 'addSkill.confirm.installPlan') return 'Install plan';
-      if (key === 'addSkill.confirm.installPlanHint') {
-        return 'Review which Agents can use this Skill after install.';
-      }
-      if (key === 'addSkill.confirm.defaultLocation') return 'Shared Skill directory';
-      if (key === 'addSkill.confirm.defaultLocationHint') return 'These Agents read the shared Skill directory.';
-      if (key === 'addSkill.confirm.privateSetup') return 'Separate setup';
-      if (key === 'addSkill.confirm.privateCopies') return 'Keep separately';
-      if (key === 'addSkill.confirm.privateCopiesHint') return 'These Agents are already ready to use. This install will also keep a link or copy in their own Skill directory.';
-      if (key === 'addSkill.confirm.concreteTargets') return 'Concrete targets';
-      if (key === 'addSkill.confirm.concreteTargetsHint') return 'These project targets will receive the Skill.';
-      if (key === 'addSkill.confirm.symlinkHint') {
-        return 'Connect these Agents to the shared Skill directory with symlinks.';
-      }
-      if (key === 'addSkill.confirm.copyHint') {
-        return 'Copy the Skill into each Agent directory.';
-      }
-      return key;
-    },
+    t: (key: string, values?: Record<string, unknown>) => (
+      values ? `${key}:${JSON.stringify(values)}` : key
+    ),
   }),
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
-  acquireSelectedPayloads: vi.fn().mockResolvedValue([]),
-  previewInstall: vi.fn().mockResolvedValue({ token: {}, skills: [] }),
-  checkSkillAudit: vi.fn().mockResolvedValue(null),
+  acquireSelectedPayloads: vi.fn(),
+  previewInstall: vi.fn(),
+  getInstallAgentSelection: vi.fn(),
+  checkSkillAudit: vi.fn(),
 }));
 
-const acquireSelectedPayloadsMock = vi.mocked(acquireSelectedPayloads);
-const previewInstallMock = vi.mocked(previewInstall);
-const checkSkillAuditMock = vi.mocked(checkSkillAudit);
+const acquirePayloads = vi.mocked(acquireSelectedPayloads);
+const preview = vi.mocked(previewInstall);
+const getSelection = vi.mocked(getInstallAgentSelection);
+const audit = vi.mocked(checkSkillAudit);
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
+function readyPreview(overwriteTargets: string[] = []): InstallPreviewOutcome {
+  return {
+    status: 'ready',
+    preview: {
+      token: {
+        generation: 'preview-1',
+        registryRevision: 'registry-1',
+        environmentRevision: 'environment-1',
+        contextRevision: 'context-1',
+      },
+      skills: [{ skillName: 'demo', overwriteTargets } as never],
+    },
+  };
 }
 
-const readyPreparation: WizardState['preparation'] = {
-  status: 'ready',
-  prepared: { request: {} as never, preview: {} as never },
-};
-
-function createState(): WizardState {
+function state(overrides: Partial<WizardState> = {}): WizardState {
+  const agentSnapshot = {
+    selection: makeAgentSelectionSnapshot({
+      agents: [
+        { id: 'codex', displayName: 'Codex', detection: 'detected' },
+        { id: 'cursor', displayName: 'Cursor', detection: 'detected' },
+      ],
+      directAgentIds: ['codex'],
+      items: [{ id: 'cursor-item', agentIds: ['cursor'], category: 'separateInstall', displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
+      initialSelectedItemIds: ['cursor-item'],
+      requestedModeItemIds: ['cursor-item'],
+    }),
+    defaultSelectionWarning: null,
+  };
   return {
     step: 'confirm',
     entryPoint: 'skills-panel',
     scope: 'global',
     context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-    projectPath: undefined,
-    source: 'openclaw/community-skills',
+    source: 'owner/repo',
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
@@ -89,585 +79,119 @@ function createState(): WizardState {
       sourceFingerprint: 'source-1',
       expiresAtEpochMs: 1000,
     },
+    riskPolicy: { kind: 'none', code: null },
+    riskAcknowledged: false,
     availableSkills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null, installDirName: 'demo' }],
     selectedSkills: ['demo'],
     skillFilter: null,
     skillSearchQuery: '',
-    selectedAgents: ['codex'],
-    privateCopyAgents: [],
-    allAgents: [],
-    availableAgentTargets: [],
-    selectedAgentTargets: [],
-    mode: 'symlink',
+    agentSelectionSnapshot: agentSnapshot,
+    selectedAgentItemIds: ['cursor-item'],
+    expandedAgentGroupIds: [],
+    additionalAgentsExpanded: false,
+    selectionRequiresReconfirmation: false,
+    mode: 'copy',
     otherAgentsExpanded: false,
-    privateCopyAgentsExpanded: false,
-    otherAgentsSearchQuery: '',
     overwrites: {},
-    preparation: readyPreparation,
+    preparation: { status: 'preparing' },
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
-    installError: undefined,
-    retrySkillName: undefined,
-    retryAgents: undefined,
-    retryAgentTargets: undefined,
-    riskPolicy: { kind: 'require-confirmation', code: 'openclaw' },
-    riskAcknowledged: false,
-  };
-}
-
-function createTrustState(
-  trustFields: Record<string, unknown>,
-  source = 'https://example.com'
-): WizardState {
-  return {
-    ...createState(),
-    source,
-    riskPolicy: { kind: 'none', code: null },
-    availableSkills: [
-      {
-        name: 'demo',
-        description: 'Demo',
-        relativePath: 'demo/SKILL.md',
-        pluginName: null,
-        installDirName: 'demo',
-        ...trustFields,
-      } as never,
-    ],
+    ...overrides,
   };
 }
 
 describe('ConfirmStep', () => {
   beforeEach(() => {
-    acquireSelectedPayloadsMock.mockReset();
-    acquireSelectedPayloadsMock.mockResolvedValue([]);
-    previewInstallMock.mockReset();
-    previewInstallMock.mockResolvedValue({ token: {} as never, skills: [] });
-    checkSkillAuditMock.mockReset();
-    checkSkillAuditMock.mockReturnValue(new Promise(() => {}));
+    vi.clearAllMocks();
+    acquirePayloads.mockResolvedValue([]);
+    preview.mockResolvedValue(readyPreview());
+    audit.mockResolvedValue(null);
   });
 
-  it('checks overwrites for automatic agents when only the shared directory will be used', async () => {
+  it('previews the immutable selection submission from the Backend snapshot', async () => {
     const updateState = vi.fn();
+    render(<ConfirmStep state={state()} updateState={updateState} scope="global" />);
 
-    render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          selectedAgents: [],
-          allAgents: [makeResolvedAgent({
-            id: 'warp',
-            displayName: 'Warp',
-            global: makeResolvedScopeFixture({ automatic: true, path: '~/.agents/skills' }),
-            project: makeResolvedScopeFixture({
-                automatic: true,
-                path: '.agents/skills',
-                sharedPath: './.agents/skills',
-            }),
-          })],
-          preparation: { status: 'preparing' },
-          riskPolicy: { kind: 'none', code: null },
-        }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-        overwrites: {},
-        preparation: expect.objectContaining({ status: 'ready' }),
-      }));
-    });
-    expect(acquireSelectedPayloadsMock).toHaveBeenCalledWith({
-      discoverySession: createState().discoverySession,
+    await waitFor(() => expect(preview).toHaveBeenCalledOnce());
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({
+      context: state().context,
+      skills: ['demo'],
+      agentSelection: {
+        revision: 'selection-revision-1',
+        selectedItemIds: ['cursor-item'],
+        requestedMode: 'copy',
+      },
+    }));
+    expect(acquirePayloads).toHaveBeenCalledWith({
+      discoverySession: state().discoverySession,
       skillPaths: ['skills/demo/SKILL.md'],
     });
-    expect(previewInstallMock).toHaveBeenCalledWith(expect.objectContaining({
-      context: createState().context,
-      skills: ['demo'],
-    }));
-    expect(checkSkillAuditMock).toHaveBeenCalledWith('openclaw/community-skills', ['demo']);
   });
 
-  it('checks overwrites in the explicit target context', async () => {
-    const updateState = vi.fn();
-    const context = {
-      environment: { kind: 'wsl', distro_name: 'Ubuntu' },
-      scope: { scope: 'global' },
-    } as const;
-
-    render(
-      <ConfirmStep
-        state={{ ...createState(), context, preparation: { status: 'preparing' } }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    await waitFor(() => expect(previewInstallMock).toHaveBeenCalledWith(
-      expect.objectContaining({ context, skills: ['demo'] }),
-    ));
-  });
-
-  it('ignores stale overwrite results from an older confirmation request', async () => {
-    const firstOverwrite = deferred<Awaited<ReturnType<typeof previewInstall>>>();
-    const secondOverwrite = deferred<Awaited<ReturnType<typeof previewInstall>>>();
+  it('returns to Agent selection with the latest snapshot when the revision is stale', async () => {
+    const latest = state().agentSelectionSnapshot!;
+    latest.selection.revision = 'selection-revision-2';
+    latest.selection.items.push({ id: 'new-item', agentIds: ['cursor'], category: 'additionalInstall', displayName: 'Cursor extra', path: '~/.cursor/extra', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
+    latest.selection.initialSelectedItemIds = ['new-item'];
+    preview.mockResolvedValue({ status: 'selectionStale', snapshot: latest });
+    getSelection.mockResolvedValue(latest);
     const updateState = vi.fn();
 
-    previewInstallMock
-      .mockReturnValueOnce(firstOverwrite.promise)
-      .mockReturnValueOnce(secondOverwrite.promise);
+    render(<ConfirmStep state={state()} updateState={updateState} scope="global" />);
 
-    const { rerender } = render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          selectedSkills: ['first-skill'],
-          preparation: { status: 'preparing' },
-          riskPolicy: { kind: 'none', code: null },
-        }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    rerender(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          selectedSkills: ['second-skill'],
-          preparation: { status: 'preparing' },
-          riskPolicy: { kind: 'none', code: null },
-        }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    secondOverwrite.resolve({
-      token: {} as never,
-      skills: [{ skillName: 'second-skill', overwriteTargets: ['Codex'] } as never],
-    });
-
-    await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-        overwrites: { 'second-skill': ['Codex'] },
-        preparation: expect.objectContaining({ status: 'ready' }),
-      }));
-    });
-
-    firstOverwrite.resolve({
-      token: {} as never,
-      skills: [{ skillName: 'first-skill', overwriteTargets: ['Cursor'] } as never],
-    });
-
-    await waitFor(() => {
-      expect(updateState).not.toHaveBeenCalledWith(expect.objectContaining({
-        overwrites: { 'first-skill': ['Cursor'] },
-      }));
-    });
+    await waitFor(() => expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+      step: 'options',
+      agentSelectionSnapshot: latest,
+      selectedAgentItemIds: ['cursor-item', 'new-item'],
+      selectionRequiresReconfirmation: true,
+    })));
+    expect(getSelection).toHaveBeenCalledWith(state().context, []);
   });
 
-  it('publishes preparation as ready before a slow best-effort audit completes', async () => {
-    const audit = deferred<Awaited<ReturnType<typeof checkSkillAudit>>>();
-    checkSkillAuditMock.mockReturnValueOnce(audit.promise);
+  it('publishes overwrite facts from the accepted preview', async () => {
+    preview.mockResolvedValue(readyPreview(['/existing/demo']));
     const updateState = vi.fn();
+    render(<ConfirmStep state={state()} updateState={updateState} scope="global" />);
 
-    render(
-      <ConfirmStep
-        state={{ ...createState(), riskPolicy: { kind: 'none', code: null } }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-        preparation: expect.objectContaining({ status: 'ready' }),
-      }));
-    });
-
+    await waitFor(() => expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+      overwrites: { demo: ['/existing/demo'] },
+      preparation: expect.objectContaining({ status: 'ready' }),
+    })));
   });
 
-  it('keeps the install action blocked when payload preparation fails', async () => {
-    const error = { kind: 'stalePayload', data: {} } as never;
-    acquireSelectedPayloadsMock.mockRejectedValueOnce(error);
-    const updateState = vi.fn();
+  it('shows the shared readers and selected placement from the snapshot', async () => {
+    render(<ConfirmStep state={state()} updateState={vi.fn()} scope="global" />);
 
-    render(
-      <ConfirmStep
-        state={{ ...createState(), riskPolicy: { kind: 'none', code: null } }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-        preparation: { status: 'failed', stage: 'payload', error },
-      }));
-    });
+    await waitFor(() => expect(preview).toHaveBeenCalledOnce());
+    expect(screen.getByText('Codex')).toBeDefined();
+    expect(screen.getByText('Cursor')).toBeDefined();
+    expect(screen.getByText('~/.cursor/skills')).toBeDefined();
   });
 
-  it('reuses one preparation request when StrictMode replays the effect', async () => {
-    const firstAcquisition = deferred<Awaited<ReturnType<typeof acquireSelectedPayloads>>>();
-    const mutationBusy = { kind: 'mutationBusy', data: {} } as never;
-    acquireSelectedPayloadsMock
-      .mockImplementationOnce(() => firstAcquisition.promise)
-      .mockRejectedValueOnce(mutationBusy);
-    const updateState = vi.fn();
-
-    render(
-      <StrictMode>
-        <ConfirmStep
-          state={{ ...createState(), riskPolicy: { kind: 'none', code: null } }}
-          updateState={updateState}
-          scope="global"
-        />
-      </StrictMode>
-    );
-
-    await waitFor(() => expect(acquireSelectedPayloadsMock).toHaveBeenCalledOnce());
-
-    firstAcquisition.resolve([]);
-
-    await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-        preparation: expect.objectContaining({ status: 'ready' }),
-      }));
-    });
-  });
-
-  it('shows concrete Eve targets in the install plan', async () => {
-    const updateState = vi.fn();
-
-    render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          scope: 'project',
-          context: {
-            environment: { kind: 'host' },
-            scope: { scope: 'project', project_id: 'eve-app' },
-          },
-          projectPath: '/projects/eve-app',
-          selectedAgents: ['eve'],
-          selectedAgentTargets: [
-            {
-              targetId: 'eve:root',
-              agentId: 'eve',
-            },
-            {
-              targetId: 'eve:research',
-              agentId: 'eve',
-            },
-          ],
-          availableAgentTargets: [
-            {
-              targetId: 'eve:root',
-              agent: 'eve',
-              displayName: 'Eve (root)',
-              subagent: null,
-              path: '/projects/eve-app/agent/skills',
-            },
-            {
-              targetId: 'eve:research',
-              agent: 'eve',
-              displayName: 'Eve (research)',
-              subagent: 'research',
-              path: '/projects/eve-app/agent/subagents/research/skills',
-            },
-          ],
-          riskPolicy: { kind: 'none', code: null },
-        } as unknown as WizardState}
-        updateState={updateState}
-        scope="project"
-        projectPath="/projects/eve-app"
-      />
-    );
-
-    expect(await screen.findByText('Concrete targets')).toBeDefined();
-    expect(screen.getByText('Eve (root)')).toBeDefined();
-    expect(screen.getByText('Eve (research)')).toBeDefined();
-  });
-
-  it('checks overwrites for selected Eve concrete targets', async () => {
-    const updateState = vi.fn();
-
-    render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          scope: 'project',
-          context: {
-            environment: { kind: 'host' },
-            scope: { scope: 'project', project_id: 'eve-app' },
-          },
-          projectPath: '/projects/eve-app',
-          selectedAgents: ['eve'],
-          selectedAgentTargets: [{ agentId: 'eve', targetId: 'eve:research' }],
-          availableAgentTargets: [{
-            targetId: 'eve:research',
-            agent: 'eve',
-            displayName: 'Eve (research)',
-            subagent: 'research',
-            path: '/projects/eve-app/agent/subagents/research/skills',
-          }],
-          riskPolicy: { kind: 'none', code: null },
-        } as unknown as WizardState}
-        updateState={updateState}
-        scope="project"
-        projectPath="/projects/eve-app"
-      />
-    );
-
-    await waitFor(() => {
-      expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-        overwrites: {},
-        preparation: expect.objectContaining({ status: 'ready' }),
-      }));
-    });
-    expect(previewInstallMock).toHaveBeenCalledWith(expect.objectContaining({
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'eve-app' },
-      },
-      agentIntents: expect.arrayContaining([expect.objectContaining({
-        agentId: 'eve',
-        adapterTargets: ['eve:research'],
-      })]),
-    }));
-  });
-
-  it('summarizes the install plan and uses target-exists status only for conflicted skills', () => {
-    render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          riskPolicy: { kind: 'none', code: null },
-          availableSkills: [
-            { name: 'existing-skill', description: 'Existing', relativePath: 'skills/existing/SKILL.md', pluginName: null, installDirName: 'existing-skill' },
-            { name: 'new-skill', description: 'New', relativePath: 'skills/new/SKILL.md', pluginName: null, installDirName: 'new-skill' },
-          ],
-          selectedSkills: ['existing-skill', 'new-skill'],
-          overwrites: { 'existing-skill': ['Claude Code'] },
-        }}
-        updateState={vi.fn()}
-        scope="global"
-      />
-    );
-
-    expect(screen.getByText('Will install 2 skills. 1 target directories already contain matching skills and will be overwritten.')).toBeTruthy();
-    expect(screen.getByText('Install contents')).toBeTruthy();
-    const installContentsSection = screen.getByText('Install contents').closest('div');
-    expect(installContentsSection?.textContent).toContain('Will install 2 skills. 1 target directories already contain matching skills and will be overwritten.');
-    expect(screen.getByText('目标目录已存在')).toBeTruthy();
-    expect(screen.queryByText('将新增')).toBeNull();
-    expect(screen.queryByText('1 locations')).toBeNull();
-  });
-
-  it('does not show overwrite agent details in the summary list', async () => {
-    render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          riskPolicy: { kind: 'none', code: null },
-          availableSkills: [
-            { name: 'existing-skill', description: 'Existing', relativePath: 'skills/existing/SKILL.md', pluginName: null, installDirName: 'existing-skill' },
-          ],
-          selectedSkills: ['existing-skill'],
-          overwrites: { 'existing-skill': ['Claude Code', 'Codex', 'Cursor'] },
-        }}
-        updateState={vi.fn()}
-        scope="global"
-      />
-    );
-
-    expect(screen.queryByText('Claude Code')).toBeNull();
-    expect(screen.queryByText('Codex')).toBeNull();
-  });
-
-  it('shows the install directory note only when it differs from the Skill name', () => {
-    const updateState = vi.fn();
-    const { rerender } = render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          riskPolicy: { kind: 'none', code: null },
-          availableSkills: [
-            {
-              name: 'demo',
-              description: 'Demo',
-              relativePath: 'skills/demo/SKILL.md',
-              pluginName: null,
-              installDirName: 'demo',
-            },
-          ],
-          selectedSkills: ['demo'],
-        }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    expect(screen.queryByText('安装目录与 Skill 名称不同')).toBeNull();
-
-    rerender(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          riskPolicy: { kind: 'none', code: null },
-          availableSkills: [
-            {
-              name: '张雪峰-skill',
-              description: 'Demo',
-              relativePath: 'skills/zhangxuefeng/SKILL.md',
-              pluginName: null,
-              installDirName: 'skill',
-            },
-          ],
-          selectedSkills: ['张雪峰-skill'],
-        }}
-        updateState={updateState}
-        scope="global"
-      />
-    );
-
-    expect(screen.getByText('安装目录与 Skill 名称不同')).toBeTruthy();
-    expect(screen.getByText('Skill 名称包含不适合作为目录名的字符，安装时将使用 skill。')).toBeTruthy();
-  });
-
-  it('renders shared directory, separate setup, and keep-separately sections', () => {
-    render(
-      <ConfirmStep
-        state={{
-          ...createState(),
-          riskPolicy: { kind: 'none', code: null },
-          selectedAgents: ['cursor'],
-          privateCopyAgents: ['firebender'],
-          allAgents: [
-            makeResolvedAgent({
-              id: 'codex',
-              displayName: 'Codex',
-              global: makeResolvedScopeFixture({
-                  automatic: true,
-                  path: '~/.agents/skills',
-                  availability: 'shared-only',
-                  privatePath: null,
-              }),
-              project: makeResolvedScopeFixture({
-                  automatic: true,
-                  path: '.agents/skills',
-                  sharedPath: './.agents/skills',
-              }),
-            }),
-            makeResolvedAgent({
-              id: 'cursor',
-              displayName: 'Cursor',
-              global: makeResolvedScopeFixture({ automatic: false, path: '~/.cursor/skills' }),
-              project: makeResolvedScopeFixture({ automatic: false, path: '.cursor/skills' }),
-            }),
-            makeResolvedAgent({
-              id: 'firebender',
-              displayName: 'Firebender',
-              global: makeResolvedScopeFixture({
-                  automatic: true,
-                  path: '~/.agents/skills',
-                  availability: 'shared-compatible',
-                  privatePath: '~/.firebender/skills',
-              }),
-              project: makeResolvedScopeFixture({
-                  automatic: true,
-                  path: '.agents/skills',
-                  sharedPath: './.agents/skills',
-                  availability: 'shared-compatible',
-                  privatePath: '.firebender/skills',
-              }),
-            }),
-          ],
-        }}
-        updateState={vi.fn()}
-        scope="global"
-      />
-    );
-
-    expect(screen.getByText('Install plan')).toBeTruthy();
-    expect(screen.getByText('Review which Agents can use this Skill after install.')).toBeTruthy();
-    expect(screen.getByText('Shared Skill directory')).toBeTruthy();
-    expect(screen.getByText('Separate setup')).toBeTruthy();
-    expect(screen.getByText('Keep separately')).toBeTruthy();
-    expect(screen.getByText('These Agents read the shared Skill directory.')).toBeTruthy();
-    expect(screen.getAllByText('Connect these Agents to the shared Skill directory with symlinks.').length).toBeGreaterThan(0);
-    expect(screen.getByText('These Agents are already ready to use. This install will also keep a link or copy in their own Skill directory.')).toBeTruthy();
-    expect(screen.getByText('~/.agents/skills')).toBeTruthy();
-    expect(screen.getByText('~/.cursor/skills')).toBeTruthy();
-    expect(screen.getByText('~/.firebender/skills')).toBeTruthy();
-  });
-
-  it('renders guarded-source risk confirmation UI', () => {
-    render(
-      <ConfirmStep
-        state={createState()}
-        updateState={vi.fn()}
-        scope="global"
-      />
-    );
-
-    expect(screen.getByText('addSkill.risk.openclawTitle')).toBeTruthy();
-    expect(screen.getByText('addSkill.risk.openclawAcknowledge')).toBeTruthy();
-  });
-
-  it('toggles riskAcknowledged when the shadcn checkbox is clicked', async () => {
+  it('keeps risk acknowledgement in the wizard state', async () => {
+    const user = userEvent.setup();
     const updateState = vi.fn();
     render(
       <ConfirmStep
-        state={createState()}
+        state={state({ riskPolicy: { kind: 'require-confirmation', code: 'openclaw' } })}
         updateState={updateState}
         scope="global"
-      />
+      />,
     );
 
-    const checkbox = screen.getByRole('checkbox');
-    await userEvent.click(checkbox);
-
+    await user.click(screen.getByRole('checkbox'));
     expect(updateState).toHaveBeenCalledWith({ riskAcknowledged: true });
   });
 
-  it('shows legacy well-known trust metadata without digest verification', () => {
-    render(
-      <ConfirmStep
-        state={createTrustState({
-          wellKnownVersion: '0.1.0',
-          wellKnownEntryType: 'legacy',
-          trustReason: 'legacy',
-        })}
-        updateState={vi.fn()}
-        scope="global"
-      />
-    );
+  it('reports payload failures without attempting preview', async () => {
+    acquirePayloads.mockRejectedValue({ kind: 'stalePayload' });
+    const updateState = vi.fn();
+    render(<ConfirmStep state={state()} updateState={updateState} scope="global" />);
 
-    expect(screen.getByText('addSkill.confirm.trust.legacy')).toBeTruthy();
-    expect(screen.queryByText('addSkill.confirm.trust.digestVerified')).toBeNull();
-  });
-
-  it('shows v2 well-known artifact host, type, and digest verification', () => {
-    render(
-      <ConfirmStep
-        state={createTrustState({
-          wellKnownVersion: '0.2.0',
-          wellKnownEntryType: 'skill-md',
-          artifactUrlHost: 'assets.example.com',
-          digestVerified: true,
-          trustReason: 'digest-verified',
-        })}
-        updateState={vi.fn()}
-        scope="global"
-      />
-    );
-
-    expect(screen.getByText('addSkill.confirm.trust.skillMd')).toBeTruthy();
-    expect(screen.getByText('assets.example.com')).toBeTruthy();
-    expect(screen.getByText('addSkill.confirm.trust.digestVerified')).toBeTruthy();
+    await waitFor(() => expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+      preparation: expect.objectContaining({ status: 'failed', stage: 'payload' }),
+    })));
+    expect(preview).not.toHaveBeenCalled();
   });
 });

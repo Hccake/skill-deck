@@ -1,10 +1,9 @@
 use tauri::State;
 
+use crate::application::environment_settings;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
-use crate::application::{default_agents, environment_settings};
-use crate::commands::agents::AgentCommandError;
 use crate::core::mutation::MutationKind;
-use crate::core::{read_config, skill_lock};
+use crate::core::read_config;
 use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
 use crate::error::AppError;
 use crate::models::SkillDeckConfig;
@@ -54,34 +53,6 @@ pub async fn set_wsl_integration_enabled(
         runtime.payloads(),
     )
     .set_enabled(enabled)
-    .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_default_target_agents(
-    context: ContextRef,
-    runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
-    default_agents::get_default_target_agents(context, runtime.wsl(), runtime.agents()).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn save_default_target_agents(
-    context: ContextRef,
-    defaults: skill_lock::DefaultTargetAgents,
-    expected_registry_revision: String,
-    runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<(), AgentCommandError> {
-    default_agents::save_default_target_agents(
-        context,
-        defaults,
-        expected_registry_revision,
-        runtime.wsl(),
-        runtime.agents(),
-        runtime.admission(),
-    )
     .await
 }
 

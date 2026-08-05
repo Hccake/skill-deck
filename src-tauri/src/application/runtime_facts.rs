@@ -28,8 +28,10 @@ use crate::environment::types::{
     ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
+use crate::environment::wsl::operations::eve::inspect_eve_project;
 use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
+use crate::models::InstallTargetInfo;
 use crate::storage::atomic_document::AtomicDocumentIo;
 use crate::storage::lock_plan::load_lock_document;
 use crate::{core::lossless_lock::LockSchema, core::lossless_lock::LosslessLockDocument};
@@ -137,12 +139,18 @@ impl RuntimePlanningFactSource {
         let environment = host_environment_context(&resolved, &host);
         let targets =
             resolve_native_targets(&[resolved.skill_root.clone(), resolved.lock.clone()])?;
+        let eve_targets = resolved
+            .project
+            .as_ref()
+            .map(|project| crate::core::eve::eve_install_targets_for_project(&project.native_path))
+            .unwrap_or_default();
         build_base(
             resolved,
             environment,
             registry,
             projects.schema_version,
             targets,
+            eve_targets,
         )
     }
 }
@@ -216,6 +224,7 @@ struct CapturedBase {
     revisions: RuntimeRevisions,
     authority_revisions: RuntimeAuthorityRevisions,
     lock_schema: LockSchema,
+    eve_targets: Vec<InstallTargetInfo>,
 }
 
 async fn capture_wsl_base(
@@ -237,12 +246,24 @@ async fn capture_wsl_base(
         None,
     )
     .await?;
+    let eve_targets = match resolved.project.as_ref() {
+        Some(project) => {
+            let snapshot = inspect_eve_project(&session, &project.native_path).await?;
+            if snapshot.has_eve {
+                crate::core::eve::eve_install_targets(&project.native_path, snapshot.subagents)
+            } else {
+                Vec::new()
+            }
+        }
+        None => Vec::new(),
+    };
     build_base(
         resolved,
         environment,
         registry,
         project_schema_version,
         targets,
+        eve_targets,
     )
 }
 
@@ -280,6 +301,7 @@ fn build_base(
     registry: Arc<AgentRegistrySnapshot>,
     project_schema_version: u32,
     target_facts: Vec<crate::environment::planning::ResolvedTargetFact>,
+    eve_targets: Vec<InstallTargetInfo>,
 ) -> Result<CapturedBase, AppError> {
     if target_facts.len() != 2 {
         return Err(AppError::StaleContext);
@@ -328,6 +350,7 @@ fn build_base(
         revisions,
         authority_revisions,
         lock_schema,
+        eve_targets,
     })
 }
 
@@ -388,6 +411,7 @@ async fn install_facts_from_base(base: CapturedBase) -> Result<InstallPlanningFa
         revisions: base.revisions,
         lock_schema: base.lock_schema,
         lock_document,
+        eve_targets: base.eve_targets,
     })
 }
 

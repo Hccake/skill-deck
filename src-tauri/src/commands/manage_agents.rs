@@ -1,9 +1,11 @@
 use tauri::State;
 
 use crate::application::manage_agents::{
-    ManageAgentsPreview, ManageAgentsPreviewRequest, ManageAgentsRequest, ManageAgentsResponse,
+    ManageAgentSelectionSnapshot, ManageAgentsPreviewOutcome, ManageAgentsPreviewRequest,
+    ManageAgentsRequest, ManageAgentsResponse,
 };
 use crate::core::mutation::{MutationKind, MutationPhase};
+use crate::environment::types::ContextRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -12,8 +14,21 @@ use crate::runtime::RuntimeServiceGraph;
 pub async fn preview_manage_skill_agents(
     request: ManageAgentsPreviewRequest,
     runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<ManageAgentsPreview, AppError> {
+) -> Result<ManageAgentsPreviewOutcome, AppError> {
     runtime.manage_agents().preview(&request).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_manage_agent_selection(
+    context: ContextRef,
+    skill_name: String,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<ManageAgentSelectionSnapshot, AppError> {
+    runtime
+        .manage_agents()
+        .selection(&context, &skill_name)
+        .await
 }
 
 #[tauri::command]

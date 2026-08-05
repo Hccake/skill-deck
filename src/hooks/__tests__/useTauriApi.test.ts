@@ -6,7 +6,6 @@ const { mockCommands } = vi.hoisted(() => ({
   mockCommands: {
     listAgents: vi.fn(),
     listSkills: vi.fn(),
-    listEveInstallTargets: vi.fn(),
     readSkillContent: vi.fn(),
     previewInstall: vi.fn(),
     installSkills: vi.fn(),
@@ -17,7 +16,6 @@ const { mockCommands } = vi.hoisted(() => ({
     manageSkillAgents: vi.fn(),
     cleanupDuplicateAgentCopies: vi.fn(),
     copySkillToProjects: vi.fn(),
-    saveDefaultTargetAgents: vi.fn(),
     checkOverwrites: vi.fn(),
     checkUpdates: vi.fn(),
     updateSkillsBatch: vi.fn(),
@@ -47,14 +45,12 @@ import {
   installSkills,
   previewInstall,
   listAgents,
-  listEveInstallTargets,
   listSkills,
   mapEnvironmentPath,
   openInstallWizard,
   getInstallWizardSession,
   focusInstallWizard,
   readSkillContent,
-  saveDefaultTargetAgents,
   setEnvironmentProjectCrossStorageWarning,
   updateSkill,
   getAgentSettingsSnapshot,
@@ -118,31 +114,12 @@ describe('useTauriApi unwrap logic', () => {
 
   it('passes explicit context to context-sensitive read commands', async () => {
     mockCommands.readSkillContent.mockResolvedValue({ status: 'ok', data: '# Toolkit' });
-    mockCommands.listEveInstallTargets.mockResolvedValue({ status: 'ok', data: [] });
 
     await expect(readSkillContent({ context, skillName: 'toolkit' }))
       .resolves.toBe('# Toolkit');
-    await expect(listEveInstallTargets(context)).resolves.toEqual([]);
 
     expect(mockCommands.readSkillContent).toHaveBeenCalledWith(
       { context, skillName: 'toolkit' },
-    );
-    expect(mockCommands.listEveInstallTargets).toHaveBeenCalledWith(context);
-  });
-
-  it('saves defaults against the runtime registry revision that was displayed', async () => {
-    const defaults = { global: ['my-agent'], project: [] };
-    mockCommands.saveDefaultTargetAgents.mockResolvedValue({
-      status: 'ok',
-      data: null,
-    });
-
-    await saveDefaultTargetAgents(context, defaults, 'registry-1');
-
-    expect(mockCommands.saveDefaultTargetAgents).toHaveBeenCalledWith(
-      context,
-      defaults,
-      'registry-1',
     );
   });
 
@@ -180,15 +157,14 @@ describe('useTauriApi unwrap logic', () => {
       },
       payloads: [],
       skills: ['demo'],
-      agentIntents: [{
-        agentId: 'my-agent',
-        privateEntry: 'required',
-        adapterTargets: [],
-      }],
-      requestedMode: 'copy',
+      agentSelection: {
+        revision: 'selection-1',
+        selectedItemIds: ['my-agent-item'],
+        requestedMode: 'copy',
+      },
       acknowledgeRisk: true,
     };
-    const preview = { token: previewToken, skills: [] };
+    const preview = { status: 'ready', preview: { token: previewToken, skills: [] } } as const;
     const response = { units: [] };
     mockCommands.previewInstall.mockResolvedValue({ status: 'ok', data: preview });
     mockCommands.installSkills.mockResolvedValue({ status: 'ok', data: response });

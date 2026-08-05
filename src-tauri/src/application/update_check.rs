@@ -536,6 +536,7 @@ mod tests {
             },
             lock_schema: LockSchema::Global,
             lock_document: LosslessLockDocument::parse(lock.as_bytes()).unwrap(),
+            eve_targets: Vec::new(),
         }
     }
 

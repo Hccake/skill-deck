@@ -1,27 +1,25 @@
 import { toast } from 'sonner';
 import {
+  getManageAgentSelection,
   manageSkillAgents,
   previewManageSkillAgents,
 } from '@/hooks/useTauriApi';
-import { buildAgentWriteIntents } from '@/lib/install-workflow';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { t } from '@/stores/skills-utils';
 import type {
-  AgentId,
+  AgentSelectionSubmission,
   ContextRef,
   InstalledSkill,
-  InstallMode,
   ManageAgentsResponse,
   MutationUnitResult,
-  ObservedEntryId,
   RecoveryAction,
 } from '@/bindings';
 import { runBusinessWrite } from './install-session-feedback';
 
-let managePreviewGeneration = 0;
+let manageSelectionGeneration = 0;
 
-const STALE_MANAGE_AGENT_CODES = new Set([
+const STALE_CODES = new Set([
   'staleContext',
   'staleRegistry',
   'staleEnvironment',
@@ -34,12 +32,9 @@ export type ManageAgentsOutcome =
   | { status: 'blocked' }
   | { status: 'succeeded'; response: ManageAgentsResponse }
   | { status: 'stale' }
+  | { status: 'confirmationRequired' }
   | { status: 'recoveryRequired'; response: ManageAgentsResponse; recovery: RecoveryAction[] }
   | { status: 'failed' };
-
-function hasStaleManageAgentResult(units: MutationUnitResult[]): boolean {
-  return units.some((unit) => unit.error && STALE_MANAGE_AGENT_CODES.has(unit.error.code));
-}
 
 function recoveryActions(units: MutationUnitResult[]): RecoveryAction[] {
   const seen = new Set<string>();
@@ -51,14 +46,10 @@ function recoveryActions(units: MutationUnitResult[]): RecoveryAction[] {
   });
 }
 
-function isStaleManageAgentError(error: unknown): boolean {
-  return Boolean(
-    error
-      && typeof error === 'object'
-      && 'kind' in error
-      && typeof error.kind === 'string'
-      && (STALE_MANAGE_AGENT_CODES.has(error.kind) || error.kind === 'staleAgentRuntime'),
-  );
+function isStaleError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'kind' in error
+    && typeof error.kind === 'string'
+    && (STALE_CODES.has(error.kind) || error.kind === 'staleAgentRuntime'));
 }
 
 export async function openManageAgentChanges(
@@ -66,111 +57,81 @@ export async function openManageAgentChanges(
   context: ContextRef,
   projectPath?: string,
 ): Promise<void> {
-  const requestGeneration = ++managePreviewGeneration;
-  const dialogs = useSkillDialogStore.getState();
-  dialogs.openManageAgents(skill, context, projectPath);
+  const generation = ++manageSelectionGeneration;
+  useSkillDialogStore.getState().openManageAgents(skill, context, projectPath);
   try {
-    const preview = await previewManageSkillAgents({
-      context,
-      skillName: skill.name,
-      add: [],
-      removeEntryIds: [],
-      requestedMode: 'copy',
-    });
+    const snapshot = await getManageAgentSelection(context, skill.name);
     const current = useSkillDialogStore.getState();
-    if (requestGeneration !== managePreviewGeneration || current.manageAgentsSkill !== skill) return;
-    current.setManageAgentDetails(preview);
+    if (generation !== manageSelectionGeneration || current.manageAgentsSkill !== skill) return;
+    current.setManageAgentDetails(snapshot);
   } catch (error) {
-    if (requestGeneration === managePreviewGeneration) {
-      console.warn('Failed to preview Agent management:', error);
+    if (generation === manageSelectionGeneration) {
+      console.warn('Failed to load Agent management selection:', error);
     }
   } finally {
     const current = useSkillDialogStore.getState();
-    if (requestGeneration === managePreviewGeneration && current.manageAgentsSkill === skill) {
+    if (generation === manageSelectionGeneration && current.manageAgentsSkill === skill) {
       current.setManageAgentLoading(false);
     }
   }
 }
 
 export async function executeManageAgentChanges(
-  addAgents: AgentId[],
-  removeEntryIds: ObservedEntryId[],
-  mode: InstallMode,
-  addOptionalAgents: AgentId[],
+  agentSelection: AgentSelectionSubmission,
+  confirmEntityDirectories = false,
 ): Promise<ManageAgentsOutcome> {
   if (isBusinessWriteBlocked()) return { status: 'blocked' };
   const {
     manageAgentsSkill,
     manageAgentsContext,
     manageAgentsProjectPath,
-    manageAgentDetails,
   } = useSkillDialogStore.getState();
-  if (!manageAgentsSkill || !manageAgentsContext || !manageAgentDetails) {
-    return { status: 'blocked' };
-  }
+  if (!manageAgentsSkill || !manageAgentsContext) return { status: 'blocked' };
 
-  const context = manageAgentsContext;
   try {
-    const add = buildAgentWriteIntents({
-      agents: manageAgentDetails.availableAgents,
-      scope: context.scope.scope,
-      selectedAgents: addAgents,
-      privateCopyAgents: addOptionalAgents,
-      adapterTargets: [],
-    });
-    const preview = await previewManageSkillAgents({
-      context,
+    const previewOutcome = await previewManageSkillAgents({
+      context: manageAgentsContext,
       skillName: manageAgentsSkill.name,
-      add,
-      removeEntryIds,
-      requestedMode: mode,
+      agentSelection,
     });
-    const outcome = await runBusinessWrite(() => manageSkillAgents({
-      token: preview.token,
-      context,
-      skillName: manageAgentsSkill.name,
-      add,
-      removeEntryIds,
-      requestedMode: mode,
-      confirmEntityDirectories: manageAgentDetails.observedEntries.some(
-        (entry) => removeEntryIds.includes(entry.entryId) && entry.kind === 'directory',
-      ),
-      canonicalPayload: preview.canonicalPayload,
-    }));
-    if (outcome.status === 'notRun') return { status: 'blocked' };
-    const result = outcome.value;
-    const failedUnits = result.units.filter((unit) => unit.status !== 'succeeded');
-
-    if (hasStaleManageAgentResult(failedUnits)) {
-      await openManageAgentChanges(manageAgentsSkill, context, manageAgentsProjectPath);
+    if (previewOutcome.status === 'selectionStale') {
+      useSkillDialogStore.getState().setManageAgentDetails(previewOutcome.snapshot);
       return { status: 'stale' };
     }
-
-    const recoveries = recoveryActions(result.units);
-    if (recoveries.length > 0) {
-      return { status: 'recoveryRequired', response: result, recovery: recoveries };
+    const preview = previewOutcome.preview;
+    if (preview.confirmation?.removesEntityDirectories && !confirmEntityDirectories) {
+      return { status: 'confirmationRequired' };
     }
-
-    if (failedUnits.length > 0) {
-      const { useSkillsDataStore } = await import('@/stores/skills-data');
-      const hasSucceededUnit = result.units.some((unit) => unit.status === 'succeeded');
-      await useSkillsDataStore.getState().syncSkills(context, hasSucceededUnit
-        ? { origin: 'selfMutation', mutatedSkillNames: [manageAgentsSkill.name] }
-        : { origin: 'passive' });
-      return { status: 'failed' };
+    const execution = await runBusinessWrite(() => manageSkillAgents({
+      token: preview.token,
+      context: manageAgentsContext,
+      skillName: manageAgentsSkill.name,
+      agentSelection,
+      confirmEntityDirectories,
+      canonicalPayload: preview.canonicalPayload,
+    }));
+    if (execution.status === 'notRun') return { status: 'blocked' };
+    const result = execution.value;
+    const failedUnits = result.units.filter((unit) => unit.status !== 'succeeded');
+    if (failedUnits.some((unit) => unit.error && STALE_CODES.has(unit.error.code))) {
+      await openManageAgentChanges(manageAgentsSkill, manageAgentsContext, manageAgentsProjectPath);
+      return { status: 'stale' };
     }
+    const recovery = recoveryActions(result.units);
+    if (recovery.length > 0) return { status: 'recoveryRequired', response: result, recovery };
+    if (failedUnits.length > 0) return { status: 'failed' };
 
     toast.success(t('skills.manageAgents.success'));
     useSkillDialogStore.getState().closeManageAgents();
     const { useSkillsDataStore } = await import('@/stores/skills-data');
-    await useSkillsDataStore.getState().syncSkills(context, {
+    await useSkillsDataStore.getState().syncSkills(manageAgentsContext, {
       origin: 'selfMutation',
       mutatedSkillNames: [manageAgentsSkill.name],
     });
     return { status: 'succeeded', response: result };
   } catch (error) {
-    if (isStaleManageAgentError(error)) {
-      await openManageAgentChanges(manageAgentsSkill, context, manageAgentsProjectPath);
+    if (isStaleError(error)) {
+      await openManageAgentChanges(manageAgentsSkill, manageAgentsContext, manageAgentsProjectPath);
       return { status: 'stale' };
     }
     console.error('[executeManageAgentChanges] Failed:', error);

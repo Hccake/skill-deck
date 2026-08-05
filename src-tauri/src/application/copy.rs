@@ -1179,6 +1179,7 @@ mod tests {
             },
             lock_schema: LockSchema::Project,
             lock_document,
+            eve_targets: Vec::new(),
         }
     }
 

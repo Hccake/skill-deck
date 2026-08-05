@@ -1,7 +1,6 @@
-import { fetchAvailable, installSkills } from '@/hooks/useTauriApi';
+import { fetchAvailable, getInstallAgentSelection, installSkills } from '@/hooks/useTauriApi';
 import type {
   AgentId,
-  AgentWriteIntent,
   AppError,
   ContextRef,
   FetchResult,
@@ -43,26 +42,18 @@ export interface RepairWorkflowApi {
   fetchAvailable: typeof fetchAvailable;
   prepareInstall: typeof prepareInstall;
   installSkills: typeof installSkills;
+  getInstallAgentSelection: typeof getInstallAgentSelection;
 }
 
 const defaultApi: RepairWorkflowApi = {
   fetchAvailable,
   prepareInstall,
   installSkills,
+  getInstallAgentSelection,
 };
 
 function uniqueAgentIds(agents: AgentId[] | undefined): AgentId[] {
   return Array.from(new Set(agents ?? []));
-}
-
-function buildAgentIntents(request: RepairSkillSourceRequest): AgentWriteIntent[] {
-  const required = uniqueAgentIds(request.privateAdaptedAgents ?? request.agents);
-  const copies = new Set(uniqueAgentIds(request.privateCopyAgents));
-  return uniqueAgentIds([...required, ...copies]).map((agentId) => ({
-    agentId,
-    privateEntry: copies.has(agentId) ? 'optionalSelected' : 'required',
-    adapterTargets: [],
-  }));
 }
 
 function isSuccessful(response: InstallResponse): boolean {
@@ -105,14 +96,23 @@ export async function repairSkillSource(
   let preparation: InstallPreparationOutcome;
   request.onPhase?.('preparing');
   try {
+    const requestedAgents = uniqueAgentIds([
+      ...(request.privateAdaptedAgents ?? request.agents ?? []),
+      ...(request.privateCopyAgents ?? []),
+    ]);
+    const agentSnapshot = await api.getInstallAgentSelection(request.context, requestedAgents);
     preparation = await api.prepareInstall({
       context: request.context,
       source: request.source.trim(),
       discoverySession: available.discoverySession,
       skillPaths: [skill.relativePath],
       skills: [request.skillName],
-      agentIntents: buildAgentIntents(request),
-      requestedMode: 'copy',
+      explicitAgentIds: requestedAgents,
+      agentSelection: {
+        revision: agentSnapshot.selection.revision,
+        selectedItemIds: agentSnapshot.selection.initialSelectedItemIds,
+        requestedMode: 'copy',
+      },
       acknowledgeRisk: available.riskPolicy.kind === 'require-confirmation'
         ? request.acknowledgeRisk
         : true,
@@ -123,6 +123,9 @@ export async function repairSkillSource(
   if (request.stopRequested()) return { status: 'stopped' };
   if (preparation.status === 'failed') {
     return { status: 'failed', stage: 'preparation', error: preparation.error };
+  }
+  if (preparation.status === 'selectionStale') {
+    return { status: 'failed', stage: 'preparation', error: { kind: 'staleTarget' } };
   }
 
   let response: InstallResponse;

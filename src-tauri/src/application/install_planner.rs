@@ -4,8 +4,13 @@ use std::sync::Arc;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+use crate::application::agent_selection::{
+    build_agent_selection_catalog, resolve_agent_selection_submission, AgentSelectionResolution,
+    InstallAgentSelectionSnapshot,
+};
 use crate::application::install::{
-    InstallFuture, InstallPlanner, InstallPreview, InstallRequest, InstallSkillPreview,
+    InstallFuture, InstallPlanner, InstallPreview, InstallPreviewOutcome, InstallRequest,
+    InstallSkillPreview,
 };
 use crate::application::mutation::plan::{
     group_physical_mutations, preview_token, stable_digest, ExecutionUnit, ExpectedTargetEntry,
@@ -26,6 +31,7 @@ use crate::environment::types::{
 };
 use crate::error::AppError;
 use crate::models::InstallMode;
+use crate::models::InstallTargetInfo;
 use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
 
 #[derive(Clone)]
@@ -35,6 +41,7 @@ pub struct InstallPlanningFacts {
     pub revisions: RuntimeRevisions,
     pub lock_schema: LockSchema,
     pub lock_document: LosslessLockDocument,
+    pub eve_targets: Vec<InstallTargetInfo>,
 }
 
 pub trait InstallPlanningFactSource: Send + Sync {
@@ -76,10 +83,16 @@ where
         &'a self,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
-    ) -> InstallFuture<'a, Result<InstallPreview, AppError>> {
+    ) -> InstallFuture<'a, Result<InstallPreviewOutcome, AppError>> {
         Box::pin(async move {
-            let built = self.build(request, payloads, false).await?;
-            Ok(built.preview)
+            match self.build(request, payloads, false).await? {
+                BuiltInstallOutcome::Ready(built) => Ok(InstallPreviewOutcome::Ready {
+                    preview: built.preview,
+                }),
+                BuiltInstallOutcome::SelectionStale(snapshot) => {
+                    Ok(InstallPreviewOutcome::SelectionStale { snapshot })
+                }
+            }
         })
     }
 
@@ -89,7 +102,10 @@ where
         payloads: Vec<PinnedPayloadLease>,
     ) -> InstallFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
         Box::pin(async move {
-            let built = self.build(request, payloads, true).await?;
+            let BuiltInstallOutcome::Ready(built) = self.build(request, payloads, true).await?
+            else {
+                return Err(AppError::StaleTarget);
+            };
             Ok((
                 built.preview.token,
                 built.plan.expect("execute build produces a plan"),
@@ -101,6 +117,11 @@ where
 struct BuiltInstall {
     preview: InstallPreview,
     plan: Option<MutationPlan>,
+}
+
+enum BuiltInstallOutcome {
+    Ready(BuiltInstall),
+    SelectionStale(InstallAgentSelectionSnapshot),
 }
 
 struct SkillSeed {
@@ -120,18 +141,34 @@ where
         request: &InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
         include_plan: bool,
-    ) -> Result<BuiltInstall, AppError> {
+    ) -> Result<BuiltInstallOutcome, AppError> {
         let facts = self.facts.current(&request.context).await?;
         validate_facts(request, &facts, &payloads)?;
-        let agent_plan = resolve_agent_entry_plan(
+        let catalog = build_agent_selection_catalog(
             &request.context,
             &facts.agent_runtime,
-            &request.agent_intents,
-        )?;
+            &facts.eve_targets,
+            &self.targets,
+        )
+        .await?;
+        let agent_intents =
+            match resolve_agent_selection_submission(&catalog, &request.agent_selection)? {
+                AgentSelectionResolution::Ready(intents) => intents,
+                AgentSelectionResolution::Stale(_) => {
+                    return Ok(BuiltInstallOutcome::SelectionStale(
+                        InstallAgentSelectionSnapshot {
+                            selection: catalog.snapshot,
+                            default_selection_warning: None,
+                        },
+                    ));
+                }
+            };
+        let agent_plan =
+            resolve_agent_entry_plan(&request.context, &facts.agent_runtime, &agent_intents)?;
         let has_eve_targets = agent_plan
             .required_agent_roots
             .iter()
-            .any(|target| target.target_id.starts_with("eve:"));
+            .any(|target| target.content.uses_eve_payload());
 
         let canonical_payload_count = payloads.len();
         let mut payloads = payloads;
@@ -233,7 +270,7 @@ where
                 .collect::<BTreeMap<PayloadId, PinnedPayloadLease>>(),
             units,
         });
-        Ok(BuiltInstall { preview, plan })
+        Ok(BuiltInstallOutcome::Ready(BuiltInstall { preview, plan }))
     }
 }
 
@@ -280,8 +317,8 @@ async fn validate_payload_targets(
         {
             let payload = if offset > 0
                 && agent_plan.required_agent_roots[offset - 1]
-                    .target_id
-                    .starts_with("eve:")
+                    .content
+                    .uses_eve_payload()
             {
                 eve.as_ref().ok_or(AppError::StalePayload)?
             } else {
@@ -327,7 +364,7 @@ fn build_unit(
             key: target.key.clone(),
             destination: target.destination.clone(),
             action: PreparedEntryAction::Replace {
-                payload_id: if logical.target_id.starts_with("eve:") {
+                payload_id: if logical.content.uses_eve_payload() {
                     eve_payload
                         .expect("Eve target planning pins a derived payload")
                         .manifest()
@@ -336,7 +373,11 @@ fn build_unit(
                 } else {
                     payload_id.clone()
                 },
-                requested_mode: request.requested_mode.clone(),
+                requested_mode: if logical.content.uses_eve_payload() {
+                    InstallMode::Copy
+                } else {
+                    request.agent_selection.requested_mode.clone()
+                },
             },
             owner_agent_ids: logical.owner_agent_ids.clone(),
         })
@@ -423,8 +464,8 @@ fn lock_mutation(
             let eve_subagents = agent_plan
                 .required_agent_roots
                 .iter()
-                .filter_map(|target| target.target_id.strip_prefix("eve:"))
-                .map(|target| if target == "root" { "" } else { target })
+                .filter_map(|target| target.content.eve_subagent())
+                .map(|subagent| subagent.unwrap_or(""))
                 .collect::<BTreeSet<_>>();
             if eve_subagents.iter().any(|target| !target.is_empty()) {
                 entry.insert("subagents".to_string(), json!(eve_subagents));
@@ -493,7 +534,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::application::agent_intent::{AdapterTargetId, AgentWriteIntent, PrivateEntryIntent};
+    use crate::application::agent_selection::test_submission_for_agents;
     use crate::application::install::{InstallPlanner, InstallRequest};
     use crate::application::mutation::plan::RuntimeRevisions;
     use crate::application::payload_session::{
@@ -595,10 +636,21 @@ mod tests {
             },
             lock_schema: LockSchema::Global,
             lock_document: LosslessLockDocument::empty(LockSchema::Global),
+            eve_targets: Vec::new(),
         };
+        let target_resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
+        let agent_selection = test_submission_for_agents(
+            &context,
+            &facts.agent_runtime,
+            &facts.eve_targets,
+            &target_resolver,
+            &["custom-both"],
+            InstallMode::Symlink,
+        )
+        .await;
         let planner = ConcreteInstallPlanner::new(
             Facts(facts),
-            RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            target_resolver,
             Arc::clone(&manager),
             || "2026-07-18T00:00:00.000Z".to_string(),
         );
@@ -608,12 +660,7 @@ mod tests {
             discovery_session: discovery,
             payloads: vec![handle.clone()],
             skills: vec!["demo".to_string()],
-            agent_intents: vec![AgentWriteIntent {
-                agent_id: AgentId::parse("custom-both").unwrap(),
-                private_entry: PrivateEntryIntent::OptionalSelected,
-                adapter_targets: Vec::new(),
-            }],
-            requested_mode: InstallMode::Symlink,
+            agent_selection,
             acknowledge_risk: true,
         };
 
@@ -628,6 +675,9 @@ mod tests {
             .await
             .unwrap();
 
+        let InstallPreviewOutcome::Ready { preview } = preview else {
+            panic!("expected ready preview");
+        };
         assert_eq!(preview.token, token);
         assert_eq!(preview.skills.len(), 1);
         assert_eq!(plan.payloads.len(), 1);
@@ -739,10 +789,27 @@ mod tests {
             },
             lock_schema: LockSchema::Project,
             lock_document: LosslessLockDocument::empty(LockSchema::Project),
+            eve_targets: vec![InstallTargetInfo {
+                target_id: "eve:root".to_string(),
+                agent: AgentId::parse("eve").unwrap(),
+                display_name: "Eve (root)".to_string(),
+                subagent: None,
+                path: project.join("agent/skills").to_string_lossy().into_owned(),
+            }],
         };
+        let target_resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
+        let agent_selection = test_submission_for_agents(
+            &context,
+            &facts.agent_runtime,
+            &facts.eve_targets,
+            &target_resolver,
+            &["eve"],
+            InstallMode::Symlink,
+        )
+        .await;
         let planner = ConcreteInstallPlanner::new(
             Facts(facts),
-            RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            target_resolver,
             Arc::clone(&manager),
             || "2026-07-18T00:00:00.000Z".to_string(),
         );
@@ -752,12 +819,7 @@ mod tests {
             discovery_session: discovery,
             payloads: vec![handle.clone()],
             skills: vec!["demo".to_string()],
-            agent_intents: vec![AgentWriteIntent {
-                agent_id: AgentId::parse("eve").unwrap(),
-                private_entry: PrivateEntryIntent::None,
-                adapter_targets: vec![AdapterTargetId("eve:root".to_string())],
-            }],
-            requested_mode: InstallMode::Copy,
+            agent_selection,
             acknowledge_risk: true,
         };
 
@@ -770,6 +832,9 @@ mod tests {
             .await
             .unwrap();
 
+        let InstallPreviewOutcome::Ready { preview } = preview else {
+            panic!("expected ready preview");
+        };
         assert_eq!(preview.token, token);
         assert_eq!(plan.payloads.len(), 2);
         let unit = &plan.units[0];
@@ -850,6 +915,7 @@ mod tests {
             },
             lock_schema: LockSchema::Project,
             lock_document: LosslessLockDocument::empty(LockSchema::Project),
+            eve_targets: Vec::new(),
         };
         let metadata = PayloadPlanningMetadata {
             skill_name: "demo".to_string(),
@@ -863,11 +929,15 @@ mod tests {
             computed_hash: "computed".to_string(),
             upstream_revision: Some("remote".to_string()),
         };
-        let root = |target_id: &str| crate::application::workflow_planner::LogicalAgentEntryRoot {
-            target_id: target_id.to_string(),
-            root: locator(temp.path()),
-            owner_agent_ids: Vec::new(),
-        };
+        let root =
+            |subagent: Option<&str>| crate::application::workflow_planner::LogicalAgentEntryRoot {
+                target_id: crate::core::eve::eve_target_id(subagent),
+                root: locator(temp.path()),
+                owner_agent_ids: Vec::new(),
+                content: crate::application::workflow_planner::AgentEntryContent::EveDerived {
+                    subagent: subagent.map(str::to_string),
+                },
+            };
 
         let no_targets = AgentEntryPlan {
             canonical_owner_agent_ids: Vec::new(),
@@ -881,7 +951,7 @@ mod tests {
 
         let root_only = AgentEntryPlan {
             canonical_owner_agent_ids: Vec::new(),
-            required_agent_roots: vec![root("eve:root")],
+            required_agent_roots: vec![root(None)],
         };
         let root_only = lock_mutation(&facts, &metadata, &root_only, "now".to_string())
             .unwrap()
@@ -891,7 +961,7 @@ mod tests {
 
         let named_and_root = AgentEntryPlan {
             canonical_owner_agent_ids: Vec::new(),
-            required_agent_roots: vec![root("eve:builder"), root("eve:root"), root("eve:builder")],
+            required_agent_roots: vec![root(Some("builder")), root(None), root(Some("builder"))],
         };
         let named_and_root = lock_mutation(&facts, &metadata, &named_and_root, "now".to_string())
             .unwrap()

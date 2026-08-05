@@ -12,6 +12,57 @@
     "delete": "删除",
     "retry": "重试"
   },
+  "agentSelection": {
+    "title": "关联 Agent",
+    "modeTitle": "安装方式",
+    "link": "链接",
+    "copy": "复制",
+    "directUse": "可直接使用",
+    "separateInstall": "单独安装",
+    "additionalInstall": "额外安装",
+    "additionalInstallDescription": "这些 Agent 已可通过通用 Skill 目录使用此 Skill；仅当还需要在各自的 Skill 目录中保留链接或副本时选择。",
+    "otherAgents": "其他 Agent（{{count}}）",
+    "moreAgents": "更多 Agents（{{count}}）",
+    "moreAgentsDescription": "这些 Agent 同样支持读取通用 Skill 目录，但当前无法正常检测。",
+    "unknownNotice": "Skill Deck 没有 {{agents}} 的 Agent 定义，本次安装不会处理这些 Agent。",
+    "selectionChanged": "Agent 状态已发生变化，请检查当前选择后继续。",
+    "confirmCurrentSelection": "确认当前选择",
+    "installEmpty": "当前没有可用的 Agent",
+    "manageEmpty": "当前没有可管理的 Agent",
+    "memberCount": "共 {{count}} 个",
+    "view": "查看",
+    "viewMembers": "查看全部 Agent",
+    "toggleGroup": "展开或收起 {{agent}}",
+    "detectedCount": "{{detected}}/{{total}} 已检测",
+    "detection": {
+      "detected": "已检测",
+      "notDetected": "未检测",
+      "indeterminate": "暂时无法判断"
+    },
+    "disabled": {
+      "placementConflict": "Skill 存放位置冲突"
+    },
+    "current": {
+      "link": "链接",
+      "copy": "副本",
+      "brokenLink": "链接失效",
+      "unrecognized": "无法识别"
+    },
+    "effect": {
+      "remove": "将移除",
+      "repair": "将修复",
+      "copy": "将复制",
+      "createLink": "将创建链接",
+      "createCopy": "将创建副本"
+    },
+    "error": {
+      "duplicateItem": "Agent 选择中存在重复项，请检查后重试。",
+      "itemUnavailable": "部分 Agent 存放位置当前不可用，请重新检查选择。",
+      "placementConflict": "所选 Agent 的 Skill 存放位置存在内容冲突。",
+      "itemMissing": "部分 Agent 存放位置已发生变化，请重新检查选择。",
+      "resultNotAllowed": "部分 Agent 无法按当前选择处理，请重新检查。"
+    }
+  },
   "nav": {
     "skills": "Skills",
     "discover": "发现",
@@ -242,6 +293,11 @@
       "recoveryRequired": "本次操作未完成",
       "recoveryDescription": "相关文件需要检查。请先处理下方恢复项，再决定是否重新保存。",
       "stale": "关联 Agent 已发生变化，请检查最新设置后重新保存。",
+      "confirmationRequired": "将移除包含实际文件的副本，请确认后继续。",
+      "confirmRemoval": "确认移除",
+      "discardConfirm": "放弃尚未保存的更改？",
+      "discard": "放弃更改",
+      "continueEditing": "继续编辑",
       "success": "关联 Agent 已更新",
       "cleanupSuccess": "额外副本已移除"
     },

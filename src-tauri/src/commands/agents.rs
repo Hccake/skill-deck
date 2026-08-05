@@ -1,6 +1,5 @@
 use tauri::State;
 
-use crate::application::agent_selection::{resolve_agent_selection_groups, AgentSelectionGroups};
 use crate::application::agents::{
     self, AgentDeleteImpact, AgentDeleteResult, CustomAgentDraftValidation,
 };
@@ -8,9 +7,7 @@ pub use crate::application::agents::{AgentCommandError, ManagedAgentRegistry};
 use crate::core::agent_definition::{AgentId, CustomAgentDefinition};
 use crate::core::agent_settings::AgentSettingsSnapshot;
 use crate::environment::agent_environment::AgentRuntimeSnapshot;
-use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::ContextRef;
-use crate::models::InstallTargetInfo;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
@@ -20,20 +17,6 @@ pub async fn list_agents(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<AgentRuntimeSnapshot, AgentCommandError> {
     agents::list_agents(context, runtime.wsl(), runtime.agents()).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn list_agent_selection_groups(
-    context: ContextRef,
-    runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<AgentSelectionGroups, AgentCommandError> {
-    let agent_runtime =
-        agents::list_agents(context.clone(), runtime.wsl(), runtime.agents()).await?;
-    let targets = RuntimeTargetFactResolver::new(runtime.wsl_arc());
-    resolve_agent_selection_groups(&context, &agent_runtime, &targets)
-        .await
-        .map_err(AgentCommandError::from)
 }
 
 #[tauri::command]
@@ -127,13 +110,4 @@ pub async fn preview_custom_agent_delete(
         runtime.wsl(),
     )
     .await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn list_eve_install_targets(
-    context: ContextRef,
-    runtime: State<'_, RuntimeServiceGraph>,
-) -> Result<Vec<InstallTargetInfo>, crate::error::AppError> {
-    agents::list_eve_install_targets(context, runtime.wsl()).await
 }

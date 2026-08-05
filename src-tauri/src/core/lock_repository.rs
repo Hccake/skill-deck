@@ -64,6 +64,7 @@ impl LockRepository {
         }
     }
 
+    #[cfg(test)]
     pub async fn begin(
         &self,
         target: LockTarget,

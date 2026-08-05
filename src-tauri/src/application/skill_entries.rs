@@ -200,27 +200,19 @@ where
                 && agent.project.enabled
                 && agent.detection == DetectionState::Detected
         }) {
-            if let Some(project) = facts.agent_runtime.project_path.as_deref() {
-                for target_id in eve_target_ids(&facts, skill_name)? {
-                    let relative = if target_id == "eve:root" {
-                        "agent/skills".to_string()
-                    } else {
-                        format!(
-                            "agent/subagents/{}/skills",
-                            target_id.trim_start_matches("eve:")
-                        )
-                    };
+            if !facts.eve_targets.is_empty() {
+                for target in &facts.eve_targets {
                     destinations.push(join_entry(
                         &ResourceLocator {
                             environment: context.environment.clone(),
-                            native_path: project.to_string(),
+                            native_path: target.path.clone(),
                         },
-                        &relative,
+                        skill_name,
                     ));
                     owners.push(ObservedEntryOwner {
                         agent_id: eve_id.clone(),
                         display_name: eve.definition.display_name.clone(),
-                        logical_target_id: target_id,
+                        logical_target_id: target.target_id.clone(),
                     });
                 }
             }
@@ -245,10 +237,7 @@ where
     }
 }
 
-fn eve_target_ids(facts: &InstallPlanningFacts, skill_name: &str) -> Result<Vec<String>, AppError> {
-    eve_target_ids_from_lock_entry(facts.lock_document.entry_snapshot(skill_name).value())
-}
-
+#[cfg(test)]
 fn eve_target_ids_from_lock_entry(
     entry: Option<&serde_json::Value>,
 ) -> Result<Vec<String>, AppError> {
@@ -377,7 +366,7 @@ pub fn observed_entry_kind(kind: TargetEntryKind) -> ObservedEntryKind {
     }
 }
 
-fn link_points_to(
+pub(crate) fn link_points_to(
     link: &ResolvedTargetFact,
     raw_target: &str,
     canonical: &ResolvedTargetFact,

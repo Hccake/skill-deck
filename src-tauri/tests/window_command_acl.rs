@@ -24,18 +24,13 @@ fn acquire_selected_payloads() -> &'static str {
 }
 
 #[tauri::command]
-fn get_default_target_agents() -> &'static str {
-    "get-default-target-agents"
+fn get_install_agent_selection() -> &'static str {
+    "get-install-agent-selection"
 }
 
 #[tauri::command]
-fn list_agent_selection_groups() -> &'static str {
-    "list-agent-selection-groups"
-}
-
-#[tauri::command]
-fn list_eve_install_targets() -> &'static str {
-    "list-eve-install-targets"
+fn get_manage_agent_selection() -> &'static str {
+    "get-manage-agent-selection"
 }
 
 #[tauri::command]
@@ -131,9 +126,8 @@ fn test_app() -> App<MockRuntime> {
             save_custom_agent,
             fetch_available,
             acquire_selected_payloads,
-            get_default_target_agents,
-            list_agent_selection_groups,
-            list_eve_install_targets,
+            get_install_agent_selection,
+            get_manage_agent_selection,
             check_skill_audit,
             list_environment_projects,
             get_active_mutation,
@@ -330,6 +324,14 @@ fn main_window_allows_skill_repair_commands() {
         Ok(Value::from("install-skills"))
     );
     assert_eq!(
+        invoke(&main, "get_install_agent_selection"),
+        Ok(Value::from("get-install-agent-selection"))
+    );
+    assert_eq!(
+        invoke(&main, "get_manage_agent_selection"),
+        Ok(Value::from("get-manage-agent-selection"))
+    );
+    assert_eq!(
         invoke(&main, "get_install_wizard_session"),
         Ok(Value::from("get-install-wizard-session"))
     );
@@ -349,20 +351,8 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
         Ok(Value::from("fetch-available"))
     );
     assert_eq!(
-        invoke(&wizard, "list_agents"),
-        Ok(Value::from("list-agents"))
-    );
-    assert_eq!(
-        invoke(&wizard, "get_default_target_agents"),
-        Ok(Value::from("get-default-target-agents"))
-    );
-    assert_eq!(
-        invoke(&wizard, "list_agent_selection_groups"),
-        Ok(Value::from("list-agent-selection-groups"))
-    );
-    assert_eq!(
-        invoke(&wizard, "list_eve_install_targets"),
-        Ok(Value::from("list-eve-install-targets"))
+        invoke(&wizard, "get_install_agent_selection"),
+        Ok(Value::from("get-install-agent-selection"))
     );
     assert_eq!(
         invoke(&wizard, "acquire_selected_payloads"),
@@ -377,6 +367,11 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
         Ok(Value::from("install-skills"))
     );
     assert_denied(invoke(&wizard, "save_custom_agent"), "save_custom_agent");
+    assert_denied(invoke(&wizard, "list_agents"), "list_agents");
+    assert_denied(
+        invoke(&wizard, "get_manage_agent_selection"),
+        "get_manage_agent_selection",
+    );
     assert_denied(
         invoke(&wizard, "list_recovery_resources"),
         "list_recovery_resources",

@@ -1,13 +1,13 @@
 import {
   acquireSelectedPayloads,
+  getInstallAgentSelection,
   previewInstall,
 } from '@/hooks/useTauriApi';
 import type {
-  AgentWriteIntent,
+  AgentSelectionSubmission,
   AppError,
   ContextRef,
   DiscoverySessionHandle,
-  InstallMode,
   InstallPreview,
   InstallRequest,
 } from '@/bindings';
@@ -19,8 +19,8 @@ export interface InstallPreparationInput {
   discoverySession: DiscoverySessionHandle;
   skillPaths: string[];
   skills: string[];
-  agentIntents: AgentWriteIntent[];
-  requestedMode: InstallMode;
+  explicitAgentIds: import('@/bindings').AgentId[];
+  agentSelection: AgentSelectionSubmission;
   acknowledgeRisk: boolean;
 }
 
@@ -32,15 +32,18 @@ export interface PreparedInstall {
 export interface InstallPreparationApi {
   acquireSelectedPayloads: typeof acquireSelectedPayloads;
   previewInstall: typeof previewInstall;
+  getInstallAgentSelection: typeof getInstallAgentSelection;
 }
 
 export type InstallPreparationOutcome =
   | { status: 'ready'; prepared: PreparedInstall }
+  | { status: 'selectionStale'; snapshot: import('@/bindings').InstallAgentSelectionSnapshot }
   | { status: 'failed'; stage: 'payload' | 'preview'; error: AppError };
 
 const defaultApi: InstallPreparationApi = {
   acquireSelectedPayloads,
   previewInstall,
+  getInstallAgentSelection,
 };
 
 /**
@@ -67,14 +70,17 @@ export async function prepareInstall(
     discoverySession: input.discoverySession,
     payloads,
     skills: input.skills,
-    agentIntents: input.agentIntents,
-    requestedMode: input.requestedMode,
+    agentSelection: input.agentSelection,
     acknowledgeRisk: input.acknowledgeRisk,
   };
 
   try {
-    const preview = await api.previewInstall(request);
-    return { status: 'ready', prepared: { request, preview } };
+    const outcome = await api.previewInstall(request);
+    if (outcome.status === 'selectionStale') {
+      const snapshot = await api.getInstallAgentSelection(input.context, input.explicitAgentIds);
+      return { status: 'selectionStale', snapshot };
+    }
+    return { status: 'ready', prepared: { request, preview: outcome.preview } };
   } catch (error) {
     return { status: 'failed', stage: 'preview', error: toAppError(error) };
   }

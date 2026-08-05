@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   acquireSelectedPayloads: vi.fn(),
   previewInstall: vi.fn(),
   installSkills: vi.fn(),
+  getInstallAgentSelection: vi.fn(),
   markSourceRepairSucceeded: vi.fn(),
   syncSkills: vi.fn(),
   toastSuccess: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   acquireSelectedPayloads: (...args: unknown[]) => mocks.acquireSelectedPayloads(...args),
   previewInstall: (...args: unknown[]) => mocks.previewInstall(...args),
   installSkills: (...args: unknown[]) => mocks.installSkills(...args),
+  getInstallAgentSelection: (...args: unknown[]) => mocks.getInstallAgentSelection(...args),
 }));
 
 vi.mock('@/components/recovery/RecoveryActions', () => ({
@@ -109,7 +111,14 @@ describe('RepairSourceDialog', () => {
       }],
     });
     mocks.acquireSelectedPayloads.mockResolvedValue([]);
-    mocks.previewInstall.mockResolvedValue({ token, skills: [] });
+    mocks.getInstallAgentSelection.mockResolvedValue({
+      selection: {
+        agents: [], directAgentIds: [], items: [], groups: [], initialSelectedItemIds: ['claude-item'],
+        unavailableExplicitAgents: [], requestedModeItemIds: ['claude-item'], revision: 'selection-1',
+      },
+      defaultSelectionWarning: null,
+    });
+    mocks.previewInstall.mockResolvedValue({ status: 'ready', preview: { token, skills: [] } });
     mocks.installSkills.mockResolvedValue({
       units: [{ unitId: 'toolkit', status: 'succeeded' }],
     });
@@ -130,12 +139,11 @@ describe('RepairSourceDialog', () => {
       context,
       source: 'owner/repo',
       skills: ['toolkit'],
-      agentIntents: [{
-        agentId: 'claude-code',
-        privateEntry: 'required',
-        adapterTargets: [],
-      }],
-      requestedMode: 'copy',
+      agentSelection: {
+        revision: 'selection-1',
+        selectedItemIds: ['claude-item'],
+        requestedMode: 'copy',
+      },
     });
     expect(mocks.installSkills).toHaveBeenCalledWith(request, token);
     expect(mocks.markSourceRepairSucceeded).toHaveBeenCalledWith(context, 'toolkit');

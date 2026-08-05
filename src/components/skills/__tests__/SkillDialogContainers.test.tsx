@@ -25,10 +25,10 @@ vi.mock('@/workflows/skill-copy', () => ({
 
 vi.mock('../ManageAgentsDialog', () => ({
   ManageAgentsDialog: (props: {
-    previewFailed?: boolean;
+    loadFailed?: boolean;
     onRetry?: () => void;
   }) => (
-    <div data-testid="manage-container-dialog" data-preview-failed={String(props.previewFailed)}>
+    <div data-testid="manage-container-dialog" data-load-failed={String(props.loadFailed)}>
       <button type="button" onClick={props.onRetry}>retry</button>
     </div>
   ),
@@ -100,7 +100,7 @@ describe('Skill dialog containers', () => {
 
     render(<ManageAgentsDialogContainer />);
 
-    expect(screen.getByTestId('manage-container-dialog').dataset.previewFailed).toBe('true');
+    expect(screen.getByTestId('manage-container-dialog').dataset.loadFailed).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'retry' }));
     expect(mocks.openManageAgentChanges).toHaveBeenCalledWith(skill, context, '/project');
   });

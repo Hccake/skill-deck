@@ -8,6 +8,7 @@ import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/ty
 import type { WizardState } from '@/components/skills/add-skill/types';
 import { parseWizardContext } from '@/components/skills/add-skill/wizard-context';
 import { useMutationStore } from '@/stores/mutation';
+import { makeAgentSelectionSnapshot } from '@/test-utils';
 import { WizardPage } from '../WizardPage';
 
 const mocks = vi.hoisted(() => ({
@@ -30,15 +31,8 @@ vi.mock('@/hooks/useInstallTargetOptions', () => ({
   useInstallTargetOptions: () => ({
     status: 'ready',
     inputKey: 'host/global',
-    facts: {
-      allAgents: [],
-      selectionGroups: [],
-      availableAgentTargets: [],
-      defaultAgents: [],
-      defaultsUnavailable: false,
-    },
+    snapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
     retry: vi.fn(),
-    acceptConfiguredAgent: vi.fn(),
   }),
 }));
 
@@ -80,7 +74,8 @@ vi.mock('@/components/skills/add-skill/SourceStep', () => ({
           pluginName: null,
         }],
         selectedSkills: ['demo'],
-        selectedAgents: ['codex'],
+        agentSelectionSnapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
+        selectionRequiresReconfirmation: false,
         preparation: {
           status: 'ready',
           prepared: { request: {} as never, preview: {} as never },
@@ -175,11 +170,13 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     selectedSkills: ['demo'],
     skillFilter: null,
     skillSearchQuery: '',
-    selectedAgents: ['codex'],
-    allAgents: [],
+    agentSelectionSnapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
+    selectedAgentItemIds: [],
+    expandedAgentGroupIds: [],
+    additionalAgentsExpanded: false,
+    selectionRequiresReconfirmation: false,
     mode: 'symlink',
     otherAgentsExpanded: false,
-    otherAgentsSearchQuery: '',
     overwrites: {},
     preparation: {
       status: 'ready',
@@ -189,15 +186,9 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     preSelectedAgents: [],
     installResults: null,
     installError: undefined,
-    retrySkillName: undefined,
-    retryAgents: undefined,
     riskPolicy: { kind: 'require-confirmation', code: 'openclaw' },
     riskAcknowledged: false,
     ...overrides,
-    privateCopyAgents: overrides.privateCopyAgents ?? [],
-    privateCopyAgentsExpanded: overrides.privateCopyAgentsExpanded ?? false,
-    availableAgentTargets: overrides.availableAgentTargets ?? [],
-    selectedAgentTargets: overrides.selectedAgentTargets ?? [],
   };
 }
 

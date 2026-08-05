@@ -1,758 +1,246 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ManageAgentsDialog } from '../ManageAgentsDialog';
+import type {
+  InstalledSkill,
+  ManageAgentSelectionSnapshot,
+} from '@/bindings';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import type { InstalledSkill, ResolvedAgent, ManageAgentsPreview } from '@/bindings';
-import { makeResolvedAgent } from '@/test-utils';
+import { makeAgentSelectionSnapshot } from '@/test-utils';
 import { useMutationStore } from '@/stores/mutation';
-import type { ManageAgentsOutcome } from '@/workflows/skill-manage-agents';
+import { ManageAgentsDialog } from '../ManageAgentsDialog';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, values?: Record<string, string>) =>
-      values?.name ? `${key}:${values.name}` : values?.path ? `${key}:${values.path}` : key,
+    t: (key: string, values?: Record<string, unknown>) => (
+      values ? `${key}:${JSON.stringify(values)}` : key
+    ),
   }),
 }));
 
 vi.mock('@/components/recovery/RecoveryActions', () => ({
-  RecoveryActions: ({ recovery, onResolved }: {
-    recovery: { resourceId: string };
-    onResolved?: () => void;
-  }) => (
-    <button type="button" onClick={onResolved}>recovery-actions:{recovery.resourceId}</button>
+  RecoveryActions: ({ recovery }: { recovery: { resourceId: string } }) => (
+    <span>recovery:{recovery.resourceId}</span>
   ),
 }));
 
-function makeAgent(agent: {
-  id: string;
-  name: string;
-  detected: boolean;
-  skillsDir: string;
-  globalSkillsDir: string;
-  globalAutomatic?: boolean;
-  projectAutomatic?: boolean;
-}): ResolvedAgent {
-  return makeResolvedAgent({
-    id: agent.id,
-    displayName: agent.name,
-    detection: agent.detected ? 'detected' : 'notDetected',
-    global: {
-      readsShared: agent.globalAutomatic ?? false,
-      privatePath: agent.globalAutomatic ? null : agent.globalSkillsDir,
-    },
-    project: {
-      readsShared: agent.projectAutomatic ?? false,
-      sharedPath: './.agents/skills',
-      privatePath: agent.projectAutomatic ? null : agent.skillsDir,
-    },
-  });
-}
-
-const allAgents: ResolvedAgent[] = [
-  makeAgent({
-    id: 'claude-code',
-    name: 'Claude Code',
-    skillsDir: '.claude/skills',
-    globalSkillsDir: '~/.claude/skills',
-    detected: true,
-  }),
-  makeAgent({
-    id: 'cursor',
-    name: 'Cursor',
-    skillsDir: '.cursor/skills',
-    globalSkillsDir: '~/.cursor/skills',
-    detected: true,
-  }),
-];
-
 const skill: InstalledSkill = {
-  name: 'agent-toolkit',
-  description: 'Agent toolkit',
-  path: '/skills/agent-toolkit',
-  canonicalPath: '/canonical/agent-toolkit',
-  scope: 'project',
+  name: 'frontend-design',
+  description: 'Design skill',
+  path: '/skills/frontend-design',
+  canonicalPath: '/canonical/frontend-design',
+  scope: 'global',
   agents: ['claude-code'],
   associatedAgents: ['claude-code'],
 };
+
+function snapshot(): ManageAgentSelectionSnapshot {
+  return {
+    selection: makeAgentSelectionSnapshot({
+      agents: [
+        { id: 'codex', displayName: 'Codex', detection: 'detected' },
+        { id: 'warp', displayName: 'Warp', detection: 'notDetected' },
+        { id: 'claude-code', displayName: 'Claude Code', detection: 'detected' },
+        { id: 'cursor', displayName: 'Cursor', detection: 'detected' },
+        { id: 'unknown-runtime', displayName: 'Unknown Runtime', detection: 'indeterminate' },
+        { id: 'eve', displayName: 'Eve', detection: 'detected' },
+      ],
+      directAgentIds: ['codex', 'warp'],
+      items: [
+        { id: 'claude', agentIds: ['claude-code'], category: 'separateInstall', displayName: 'Claude Code', path: '~/.claude/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+        { id: 'cursor', agentIds: ['cursor'], category: 'separateInstall', displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+        { id: 'unknown', agentIds: ['unknown-runtime'], category: 'separateInstall', displayName: 'Unknown Runtime', path: '~/.unknown/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null },
+        { id: 'eve-root', agentIds: ['eve'], category: 'groupChild', displayName: '主目录', path: '~/.eve/skills', groupId: 'eve-group', selectable: true, modeConstraint: 'copyOnly', disabledReason: null },
+      ],
+      groups: [{ id: 'eve-group', agentId: 'eve', displayName: 'Eve', itemIds: ['eve-root'], detection: 'detected' }],
+      initialSelectedItemIds: ['claude'],
+      unavailableExplicitAgents: [{ agentId: 'removed-agent', reason: 'definitionMissing' }],
+      requestedModeItemIds: ['cursor', 'unknown'],
+    }),
+    itemStates: [
+      { itemId: 'claude', currentEntry: 'link', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null },
+      { itemId: 'cursor', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+      { itemId: 'unknown', currentEntry: 'unrecognized', initialSelected: false, allowedResults: 'none', selectedEffect: null, unselectedEffect: null, disabledReason: 'unrecognizedEntry' },
+      { itemId: 'eve-root', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
+    ],
+  };
+}
+
+function renderDialog(props: Partial<React.ComponentProps<typeof ManageAgentsDialog>> = {}) {
+  const onClose = vi.fn();
+  const onSave = vi.fn().mockResolvedValue({ status: 'succeeded', response: { units: [] } });
+  render(
+    <TooltipProvider>
+      <ManageAgentsDialog
+        skill={skill}
+        snapshot={snapshot()}
+        onClose={onClose}
+        onSave={onSave}
+        {...props}
+      />
+    </TooltipProvider>,
+  );
+  return { onClose, onSave };
+}
 
 describe('ManageAgentsDialog', () => {
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
-  it('shows a lightweight loading shell before mounting the Agent selector', () => {
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        loadingAgentDetails
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
+  it('uses a fixed header and footer with the Agent list as the only scroll area', () => {
+    renderDialog();
 
     const dialog = screen.getByRole('dialog');
-    const body = screen.getByTestId('manage-agents-dialog-body');
-    expect(dialog.className).toContain('h-[min(38rem,calc(100dvh-2rem))]');
     expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
-    expect(body.className).toContain('min-h-0');
-    expect(body.className).toContain('overflow-y-auto');
-    expect(body.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
-    expect(screen.getByRole('status').textContent).toBe('common.loading');
-    expect(screen.queryByText('Cursor')).toBeNull();
-    expect(screen.getByRole('button', { name: 'common.cancel' })).not.toBeNull();
+    expect(screen.getByTestId('manage-agents-dialog-body').className).toContain('overflow-y-auto');
+    expect(screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' })).toBeDefined();
   });
 
-  it('keeps the dialog open and offers retry when the preview fails', () => {
-    const onRetry = vi.fn();
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        previewFailed
-        onRetry={onRetry}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.getByRole('alert').textContent).toBe('skills.manageAgents.previewError');
-    fireEvent.click(screen.getByRole('button', { name: 'skills.manageAgents.retryPreview' }));
-    expect(onRetry).toHaveBeenCalledOnce();
-    expect(screen.getByRole('dialog')).not.toBeNull();
-  });
-
-  it('disables saving changes while another mutation is active', async () => {
+  it('renders loading and retry states without mounting a stale selection', async () => {
     const user = userEvent.setup();
-    useMutationStore.setState({
-      activeMutation: {
-        kind: 'update',
-        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
-        id: 'mutation-1',
-        phase: 'preparing',
-        progress: null,
-        cancelable: true,
-      },
-    });
-
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    await user.click(screen.getByText('Cursor'));
-    expect((screen.getByRole('button', { name: 'skills.manageAgents.save' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('resets selected separate locations when agent metadata changes', () => {
-    const automaticCursor: ResolvedAgent = makeAgent({
-      id: 'cursor',
-      name: 'Cursor',
-      skillsDir: '.agents/skills',
-      globalSkillsDir: '~/.cursor/skills',
-      detected: true,
-      projectAutomatic: true,
-    });
-    const skillWithCursor: InstalledSkill = {
-      ...skill,
-      agents: ['cursor'],
-    };
-
+    const onRetry = vi.fn();
     const { rerender } = render(
-      <ManageAgentsDialog
-        skill={skillWithCursor}
-        scope="project"
-        allAgents={[]}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
+      <TooltipProvider>
+        <ManageAgentsDialog skill={skill} loading onClose={vi.fn()} onSave={vi.fn()} />
+      </TooltipProvider>,
     );
+    expect(screen.getByRole('status')).toBeDefined();
 
     rerender(
-      <ManageAgentsDialog
-        skill={skillWithCursor}
-        scope="project"
-        allAgents={[automaticCursor]}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByText('skills.manageAgents.modeTitle')).toBeNull();
-    const saveButton = screen.getByRole('button', {
-      name: 'skills.manageAgents.save',
-    }) as HTMLButtonElement;
-    expect(saveButton.disabled).toBe(true);
-  });
-
-  it('hides the install method until a separate agent location is added', () => {
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByText('skills.manageAgents.modeTitle')).toBeNull();
-  });
-
-  it('checks existing separate Agent integrations without rendering physical entries', () => {
-    const details = {
-      token: {
-        generation: 'existing-agent', registryRevision: 'registry-1',
-        environmentRevision: 'environment-1', contextRevision: 'context-1',
-      },
-      context: { environment: { kind: 'host' }, scope: { scope: 'project', project_id: 'project-1' } },
-      skillName: skill.name,
-      availableAgents: allAgents,
-      selectionGroups: { global: [], project: [] },
-      observedEntries: [{
-        entryId: 'physical-entry',
-        displayPath: { environment: { kind: 'host' }, nativePath: '/private/agent-toolkit' },
-        kind: 'directory',
-        physicalTargetKey: 'host:/private/agent-toolkit',
-        owners: [{ agentId: 'claude-code', displayName: 'Claude Code', logicalTargetId: 'claude-private' }],
-        willBreakIfCanonicalRemoved: false,
-      }],
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
-
-    render(
-      <ManageAgentsDialog
-        skill={{ ...skill, privateAdaptedAgents: ['claude-code'] }}
-        scope="project"
-        allAgents={allAgents}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByText('skills.manageAgents.existingEntriesTitle')).toBeNull();
-    expect(screen.queryByText('/private/agent-toolkit')).toBeNull();
-    expect(screen.getByRole('checkbox', { name: /Claude Code/i }).getAttribute('aria-checked')).toBe('true');
-  });
-
-  it('submits Backend entry IDs when an existing separate integration is unchecked', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const details = {
-      token: {
-        generation: 'remove-existing', registryRevision: 'registry-1',
-        environmentRevision: 'environment-1', contextRevision: 'context-1',
-      },
-      context: { environment: { kind: 'host' }, scope: { scope: 'project', project_id: 'project-1' } },
-      skillName: skill.name,
-      availableAgents: allAgents,
-      selectionGroups: { global: [], project: [] },
-      observedEntries: [{
-        entryId: 'claude-entry',
-        displayPath: { environment: { kind: 'host' }, nativePath: '/private/agent-toolkit' },
-        kind: 'directory',
-        physicalTargetKey: 'host:/private/agent-toolkit',
-        owners: [{ agentId: 'claude-code', displayName: 'Claude Code', logicalTargetId: 'claude-private' }],
-        willBreakIfCanonicalRemoved: false,
-      }],
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
-
-    render(
-      <ManageAgentsDialog
-        skill={{ ...skill, privateAdaptedAgents: ['claude-code'] }}
-        scope="project"
-        allAgents={allAgents}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
-    );
-
-    await user.click(screen.getByRole('checkbox', { name: /Claude Code/i }));
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(onSave).toHaveBeenCalledWith([], ['claude-entry'], 'symlink', []);
-  });
-
-  it('shows an undetected user-defined Agent from the current Registry preview', () => {
-    const customAgent = makeResolvedAgent({
-      id: 'my-custom-agent',
-      displayName: 'My Custom Agent',
-      source: 'custom',
-      detection: 'notDetected',
-      global: {
-        readsShared: true,
-        sharedPath: '~/.agents/skills',
-        privatePath: '~/.my-custom-agent/skills',
-      },
-      project: {
-        readsShared: true,
-        sharedPath: './.agents/skills',
-        privatePath: './.my-custom-agent/skills',
-      },
-    });
-
-    render(
       <TooltipProvider>
-        <ManageAgentsDialog
-          skill={skill}
-          scope="project"
-          allAgents={[]}
-          agentDetails={{
-            token: {
-              generation: 'manage-custom',
-              registryRevision: 'registry-1',
-              environmentRevision: 'environment-1',
-              contextRevision: 'context-1',
-            },
-            context: { environment: { kind: 'host' }, scope: { scope: 'project', project_id: 'app' } },
-            skillName: skill.name,
-            availableAgents: [customAgent],
-            selectionGroups: { global: [], project: [] },
-            observedEntries: [],
-            canonicalPayload: null,
-            addTargets: [],
-          }}
-          onClose={vi.fn()}
-          onSave={vi.fn()}
-        />
-      </TooltipProvider>
+        <ManageAgentsDialog skill={skill} loadFailed onRetry={onRetry} onClose={vi.fn()} onSave={vi.fn()} />
+      </TooltipProvider>,
     );
-
-    expect(screen.getByText('My Custom Agent')).toBeDefined();
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.retryPreview' }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 
-  it('passes selected mode when saving newly added agents', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
+  it('shows the manage empty state with only a close action', () => {
+    const empty = snapshot();
+    empty.selection.agents = [];
+    empty.selection.directAgentIds = [];
+    empty.selection.items = [];
+    empty.selection.groups = [];
+    empty.selection.initialSelectedItemIds = [];
+    empty.selection.requestedModeItemIds = [];
+    empty.itemStates = [];
+    renderDialog({ snapshot: empty });
 
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
-    );
-
-    await user.click(screen.getByText('Cursor'));
-    await user.click(screen.getByText('addSkill.mode.copy'));
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(onSave).toHaveBeenCalledWith(['cursor'], [], 'copy', []);
-  });
-
-  it('keeps the dialog open and shows inline feedback when saving fails', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue({
-      status: 'failed',
-    } satisfies ManageAgentsOutcome);
-
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
-    );
-
-    await user.click(screen.getByText('Cursor'));
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.failed');
-    expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.failedDescription');
-    expect(screen.getByRole('dialog')).not.toBeNull();
-    expect(screen.getByRole('button', { name: 'skills.manageAgents.retrySave' })).not.toBeNull();
-  });
-
-  it('exits ordinary save flow after recovery is required', async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    const onSave = vi.fn().mockResolvedValue({
-      status: 'recoveryRequired',
-      response: { units: [] },
-      recovery: [{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }],
-    } satisfies ManageAgentsOutcome);
-
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        onClose={onClose}
-        onSave={onSave}
-      />
-    );
-
-    await user.click(screen.getByText('Cursor'));
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(screen.getByText('recovery-actions:recovery-1')).not.toBeNull();
+    expect(screen.getByText('agentSelection.manageEmpty')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'common.cancel' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'skills.manageAgents.save' })).toBeNull();
-    expect(screen.getAllByRole('button', { name: 'common.close' }).length).toBeGreaterThan(0);
-    await user.click(screen.getByRole('button', { name: 'recovery-actions:recovery-1' }));
+  });
+
+  it('shows direct-use Agents compactly and keeps uncertain readers in a tooltip', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    expect(screen.getByText('Codex')).toBeDefined();
+    const more = screen.getByText(/^agentSelection.moreAgents:/);
+    await user.hover(more);
+    const tooltip = await screen.findByRole('tooltip');
+    expect(within(tooltip).getByText('agentSelection.moreAgentsDescription')).toBeDefined();
+    expect(within(tooltip).getByText('Warp')).toBeDefined();
+  });
+
+  it('automatically reveals an undetected Agent whose directory entry is abnormal', () => {
+    renderDialog();
+
+    expect(screen.getByText('Unknown Runtime')).toBeDefined();
+    expect(screen.queryByRole('checkbox', { name: 'Unknown Runtime' })).toBeNull();
+    expect(screen.getByText('agentSelection.current.unrecognized')).toBeDefined();
+  });
+
+  it('submits opaque item IDs and the selected installation mode', async () => {
+    const user = userEvent.setup();
+    const { onSave } = renderDialog();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Cursor' }));
+    await user.click(screen.getByRole('radio', { name: 'agentSelection.copy' }));
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
+
+    expect(onSave).toHaveBeenCalledWith({
+      revision: 'selection-revision-1',
+      selectedItemIds: ['claude', 'cursor'],
+      requestedMode: 'copy',
+    }, false);
+  });
+
+  it('requires an explicit second save when entity directories will be removed', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn()
+      .mockResolvedValueOnce({ status: 'confirmationRequired' })
+      .mockResolvedValueOnce({ status: 'succeeded', response: { units: [] } });
+    renderDialog({ onSave });
+
+    await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.confirmRemoval' }));
+
+    expect(onSave).toHaveBeenNthCalledWith(1, expect.any(Object), false);
+    expect(onSave).toHaveBeenNthCalledWith(2, expect.any(Object), true);
+  });
+
+  it('discards from Cancel but confirms unsaved changes for the window close action', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderDialog();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Cursor' }));
+    await user.click(screen.getByRole('button', { name: 'common.close' }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('skills.manageAgents.discardConfirm');
+
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.continueEditing' }));
+    await user.click(screen.getByRole('button', { name: 'common.cancel' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('groups shared owners into one checkbox and removes the whole physical group', async () => {
+  it('shows copy-only additions and exposes every member of a merged placement', async () => {
     const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const details = {
-      token: {
-        generation: 'preview-1',
-        registryRevision: 'registry-1',
-        environmentRevision: 'environment-1',
-        contextRevision: 'context-1',
-      },
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'project-1' },
-      },
-      skillName: skill.name,
-      availableAgents: allAgents,
-      selectionGroups: { global: [], project: [] },
-      observedEntries: [{
-        entryId: 'shared-physical-entry',
-        displayPath: {
-          environment: { kind: 'host' },
-          nativePath: '/private/agent-toolkit',
-        },
-        kind: 'directory',
-        physicalTargetKey: 'host:/private/agent-toolkit',
-        owners: [
-          { agentId: 'claude-code', displayName: 'Claude Code', logicalTargetId: 'claude-private' },
-          { agentId: 'cursor', displayName: 'Cursor', logicalTargetId: 'cursor-private' },
-        ],
-        willBreakIfCanonicalRemoved: false,
-      }],
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
+    const merged = snapshot();
+    merged.selection.agents.push({ id: 'windsurf', displayName: 'Windsurf', detection: 'notDetected' });
+    merged.selection.items[1].agentIds.push('windsurf');
+    renderDialog({ snapshot: merged });
 
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
-    );
-
-    expect(screen.queryByText('/private/agent-toolkit')).toBeNull();
-    expect(screen.queryByText('./.claude/skills')).toBeNull();
-    const ownerGroup = screen.getByRole('checkbox', { name: /Claude Code.*Cursor/i });
-    expect(ownerGroup.getAttribute('aria-checked')).toBe('true');
-    expect(screen.queryByRole('checkbox', { name: /^Claude Code$/i })).toBeNull();
-    expect(screen.queryByRole('checkbox', { name: /^Cursor$/i })).toBeNull();
-
-    await user.click(ownerGroup);
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(onSave).toHaveBeenCalledWith([], ['shared-physical-entry'], 'symlink', []);
+    const viewMembers = screen.getByRole('button', { name: 'agentSelection.viewMembers' });
+    act(() => viewMembers.focus());
+    await user.keyboard('{Enter}');
+    const membersPopover = await screen.findByRole('dialog', { name: 'agentSelection.viewMembers' });
+    expect(within(membersPopover).getByText('Windsurf')).toBeDefined();
+    await user.click(within(membersPopover).getByRole('button', { name: 'common.close' }));
+    expect(document.activeElement).toBe(viewMembers);
+    await user.click(screen.getByRole('button', { name: /agentSelection.toggleGroup/ }));
+    await user.click(screen.getByRole('checkbox', { name: '主目录' }));
+    expect(screen.getByText('agentSelection.effect.copy')).toBeDefined();
   });
 
-  it('removes a mixed required and optional owner group with one checkbox', async () => {
+  it('keeps the current choice and asks for confirmation when the selection snapshot changes', async () => {
     const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const optionalAgent = makeResolvedAgent({
-      id: 'firebender',
-      displayName: 'Firebender',
-      global: {
-        readsShared: true,
-        sharedPath: '~/.agents/skills',
-        privatePath: '~/.firebender/skills',
-      },
-      project: {
-        readsShared: true,
-        sharedPath: './.agents/skills',
-        privatePath: '.firebender/skills',
-      },
-    });
-    const availableAgents = [allAgents[0], optionalAgent];
-    const details = {
-      token: {
-        generation: 'mixed-owner-group', registryRevision: 'registry-1',
-        environmentRevision: 'environment-1', contextRevision: 'context-1',
-      },
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'project-1' },
-      },
-      skillName: skill.name,
-      availableAgents,
-      selectionGroups: {
-        global: [],
-        project: [{
-          groupId: 'mixed-owner-target',
-          agentIds: ['claude-code', 'firebender'],
-        }],
-      },
-      observedEntries: [{
-        entryId: 'mixed-owner-entry',
-        displayPath: { environment: { kind: 'host' }, nativePath: '/private/mixed-owner' },
-        kind: 'directory',
-        physicalTargetKey: 'host:/private/mixed-owner',
-        owners: [
-          { agentId: 'claude-code', displayName: 'Claude Code', logicalTargetId: 'claude-private' },
-          { agentId: 'firebender', displayName: 'Firebender', logicalTargetId: 'firebender-private' },
-        ],
-        willBreakIfCanonicalRemoved: false,
-      }],
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
-
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={availableAgents}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
+    const latest = snapshot();
+    latest.selection.revision = 'selection-revision-2';
+    latest.selection.initialSelectedItemIds = [];
+    const onSave = vi.fn().mockResolvedValue({ status: 'stale' });
+    const { rerender } = render(
+      <TooltipProvider>
+        <ManageAgentsDialog skill={skill} snapshot={snapshot()} onClose={vi.fn()} onSave={onSave} />
+      </TooltipProvider>,
     );
 
-    const group = screen.getByRole('checkbox', { name: /Claude Code.*Firebender/i });
-    expect(screen.getAllByRole('checkbox')).toHaveLength(1);
-    await user.click(group);
+    await user.click(screen.getByRole('checkbox', { name: 'Cursor' }));
     await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(onSave).toHaveBeenCalledWith([], ['mixed-owner-entry'], 'symlink', []);
-  });
-
-  it('merges multiple physical entries owned by the same Agent into one removal choice', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const details = {
-      token: {
-        generation: 'multi-entry', registryRevision: 'registry-1',
-        environmentRevision: 'environment-1', contextRevision: 'context-1',
-      },
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'project-1' },
-      },
-      skillName: skill.name,
-      availableAgents: allAgents,
-      selectionGroups: { global: [], project: [] },
-      observedEntries: ['entry-a', 'entry-b'].map((entryId) => ({
-        entryId,
-        displayPath: { environment: { kind: 'host' } as const, nativePath: `/private/${entryId}` },
-        kind: 'directory' as const,
-        physicalTargetKey: `host:/private/${entryId}`,
-        owners: [{ agentId: 'claude-code', displayName: 'Claude Code', logicalTargetId: `${entryId}:claude` }],
-        willBreakIfCanonicalRemoved: false,
-      })),
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
-
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
+    rerender(
+      <TooltipProvider>
+        <ManageAgentsDialog skill={skill} snapshot={latest} onClose={vi.fn()} onSave={onSave} />
+      </TooltipProvider>,
     );
 
-    const checkbox = screen.getByRole('checkbox', { name: /Claude Code/i });
-    expect(screen.getAllByRole('checkbox', { name: /Claude Code/i })).toHaveLength(1);
-
-    await user.click(checkbox);
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(onSave).toHaveBeenCalledWith([], ['entry-a', 'entry-b'], 'symlink', []);
-  });
-
-  it('keeps an existing optional Agent directory entry checked in Extra retain', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const sharedCompatibleAgent = makeResolvedAgent({
-      id: 'firebender',
-      displayName: 'Firebender',
-      global: {
-          readsShared: true,
-          sharedPath: '~/.agents/skills',
-          privatePath: '~/.firebender/skills',
-      },
-      project: {
-          readsShared: true,
-          sharedPath: './.agents/skills',
-          privatePath: '.firebender/skills',
-      },
-    });
-    const details = {
-      token: {
-        generation: 'preview-firebender', registryRevision: 'registry-1',
-        environmentRevision: 'environment-1', contextRevision: 'context-1',
-      },
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'project-1' },
-      },
-      skillName: skill.name,
-      availableAgents: [sharedCompatibleAgent],
-      selectionGroups: { global: [], project: [] },
-      observedEntries: [{
-        entryId: 'firebender-private-entry',
-        displayPath: { environment: { kind: 'host' }, nativePath: '/private/agent-toolkit' },
-        kind: 'directory',
-        physicalTargetKey: 'host:/private/agent-toolkit',
-        owners: [{
-          agentId: 'firebender', displayName: 'Firebender', logicalTargetId: 'firebender-private',
-        }],
-        willBreakIfCanonicalRemoved: false,
-      }],
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
-
-    render(
-      <ManageAgentsDialog
-        skill={{ ...skill, agents: ['firebender'], privateCopyAgents: ['firebender'] }}
-        scope="project"
-        allAgents={[sharedCompatibleAgent]}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
-    );
-
-    expect(screen.getByText('addSkill.agents.privateCopyTitle')).toBeDefined();
-    const checkbox = screen.getByRole('checkbox', { name: /Firebender/i });
-    expect(checkbox.getAttribute('aria-checked')).toBe('true');
-    expect(screen.queryByText('/private/agent-toolkit')).toBeNull();
-
-    await user.click(checkbox);
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(onSave).toHaveBeenCalledWith([], ['firebender-private-entry'], 'symlink', []);
-  });
-
-  it('adds a new optional Agent directory entry from Extra retain', async () => {
-    const user = userEvent.setup();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const sharedCompatibleAgent = makeResolvedAgent({
-      id: 'firebender',
-      displayName: 'Firebender',
-      global: {
-          readsShared: true,
-          sharedPath: '~/.agents/skills',
-          privatePath: '~/.firebender/skills',
-      },
-      project: {
-          readsShared: true,
-          sharedPath: './.agents/skills',
-          privatePath: '.firebender/skills',
-      },
-    });
-    const details = {
-      token: {
-        generation: 'preview-owner-filter', registryRevision: 'registry-1',
-        environmentRevision: 'environment-1', contextRevision: 'context-1',
-      },
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'project-1' },
-      },
-      skillName: skill.name,
-      availableAgents: [sharedCompatibleAgent],
-      selectionGroups: { global: [], project: [] },
-      observedEntries: [],
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
-
-    render(
-      <ManageAgentsDialog
-        skill={{ ...skill, agents: ['firebender'] }}
-        scope="project"
-        allAgents={[sharedCompatibleAgent]}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={onSave}
-      />
-    );
-
-    await user.click(screen.getByText('addSkill.agents.privateCopyTitle'));
-    await user.click(screen.getByRole('checkbox', { name: /Firebender/i }));
-    await user.click(screen.getByText('addSkill.mode.copy'));
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-
-    expect(onSave).toHaveBeenCalledWith([], [], 'copy', ['firebender']);
-  });
-
-  it('keeps content constrained inside the dialog when long paths are present', () => {
-    const longPath = '/Users/example/projects/very/long/path/that/should/not/push/dialog/width/.claude/skills';
-    const details = {
-      token: {
-        generation: 'preview-long-path', registryRevision: 'registry-1',
-        environmentRevision: 'environment-1', contextRevision: 'context-1',
-      },
-      context: {
-        environment: { kind: 'host' },
-        scope: { scope: 'project', project_id: 'project-1' },
-      },
-      skillName: skill.name,
-      availableAgents: allAgents,
-      selectionGroups: { global: [], project: [] },
-      observedEntries: [{
-        entryId: 'long-path-entry',
-        displayPath: { environment: { kind: 'host' }, nativePath: longPath },
-        kind: 'directory',
-        physicalTargetKey: `host:${longPath}`,
-        owners: [{
-          agentId: 'claude-code', displayName: 'Claude Code', logicalTargetId: 'claude-private',
-        }],
-        willBreakIfCanonicalRemoved: false,
-      }],
-      canonicalPayload: null,
-      addTargets: [],
-    } satisfies ManageAgentsPreview;
-
-    render(
-      <ManageAgentsDialog
-        skill={skill}
-        scope="project"
-        allAgents={allAgents}
-        agentDetails={details}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.className).toContain('min-w-0');
-    expect(dialog.className).toContain('max-w-[calc(100vw-2rem)]');
-
-    const body = screen.getByTestId('manage-agents-dialog-body');
-    expect(body.className).toContain('min-w-0');
-    expect(body.className).toContain('max-w-full');
-
-    expect(screen.queryByText(longPath)).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Cursor' }).getAttribute('data-state')).toBe('checked');
+    expect(screen.getByRole('alert').textContent).toContain('agentSelection.selectionChanged');
+    await user.click(screen.getByRole('button', { name: 'agentSelection.confirmCurrentSelection' }));
+    expect(screen.queryByText('agentSelection.selectionChanged')).toBeNull();
   });
 });

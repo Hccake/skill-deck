@@ -18,6 +18,26 @@ pub struct LogicalAgentEntryRoot {
     pub target_id: String,
     pub root: ResourceLocator,
     pub owner_agent_ids: Vec<AgentId>,
+    pub content: AgentEntryContent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentEntryContent {
+    Canonical,
+    EveDerived { subagent: Option<String> },
+}
+
+impl AgentEntryContent {
+    pub fn uses_eve_payload(&self) -> bool {
+        matches!(self, Self::EveDerived { .. })
+    }
+
+    pub fn eve_subagent(&self) -> Option<Option<&str>> {
+        match self {
+            Self::Canonical => None,
+            Self::EveDerived { subagent } => Some(subagent.as_deref()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +133,7 @@ fn resolve_standard(
             format!("agent:{}:private", agent.definition.id.as_str()),
             root,
             intent.agent_id.clone(),
+            AgentEntryContent::Canonical,
         );
     }
     Ok(())
@@ -144,8 +165,15 @@ fn resolve_eve(
         .as_deref()
         .ok_or_else(|| validation("Eve requires Project Context"))?;
     for target in &intent.adapter_targets {
-        let (target_id, root) = eve_target(project, &target.0, &context.environment)?;
-        insert_required_root(required, context, target_id, &root, intent.agent_id.clone());
+        let (target_id, root, subagent) = eve_target(project, &target.0, &context.environment)?;
+        insert_required_root(
+            required,
+            context,
+            target_id,
+            &root,
+            intent.agent_id.clone(),
+            AgentEntryContent::EveDerived { subagent },
+        );
     }
     Ok(())
 }
@@ -154,11 +182,12 @@ fn eve_target(
     project: &str,
     target_id: &str,
     environment: &EnvironmentRef,
-) -> Result<(String, String), AppError> {
+) -> Result<(String, String, Option<String>), AppError> {
     if target_id == "eve:root" {
         return Ok((
             target_id.to_string(),
             join_target_path(environment, project, "agent/skills"),
+            None,
         ));
     }
     let subagent = target_id
@@ -176,6 +205,7 @@ fn eve_target(
             project,
             &format!("agent/subagents/{normalized}/skills"),
         ),
+        Some(normalized),
     ))
 }
 
@@ -185,6 +215,7 @@ fn insert_required_root(
     target_id: String,
     root: &str,
     owner: AgentId,
+    content: AgentEntryContent,
 ) {
     let key = logical_root_key(&context.environment, root);
     required
@@ -197,6 +228,7 @@ fn insert_required_root(
                 native_path: root.to_string(),
             },
             owner_agent_ids: vec![owner],
+            content,
         });
 }
 
@@ -464,6 +496,16 @@ mod tests {
 
         assert!(plan.canonical_owner_agent_ids.is_empty());
         assert_eq!(plan.required_agent_roots.len(), 2);
+        assert_eq!(
+            plan.required_agent_roots[0].content,
+            AgentEntryContent::EveDerived { subagent: None }
+        );
+        assert_eq!(
+            plan.required_agent_roots[1].content,
+            AgentEntryContent::EveDerived {
+                subagent: Some("research-team".to_string())
+            }
+        );
         assert_eq!(
             plan.required_agent_roots[0].root.native_path,
             std::path::Path::new("/work/app")

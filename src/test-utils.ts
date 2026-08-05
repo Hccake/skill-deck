@@ -2,6 +2,7 @@
 // Mock @tauri-apps/api/core to prevent Tauri runtime errors in test environment
 import { vi } from 'vitest';
 import type {
+  AgentSelectionSnapshot,
   AgentRuntimeSnapshot,
   AgentSource,
   DetectionState,
@@ -22,6 +23,14 @@ vi.mock('@/i18n', () => ({
     changeLanguage: vi.fn(),
   },
 }));
+
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
 
 export function makeResolvedAgentScope(
   target: Partial<ResolvedAgentScope> = {},
@@ -118,5 +127,21 @@ export function makeAgentRuntimeSnapshot(
     agents: Object.fromEntries(
       agents.map((agent) => [agent.definition.id, agent]),
     ),
+  };
+}
+
+export function makeAgentSelectionSnapshot(
+  overrides: Partial<AgentSelectionSnapshot> = {},
+): AgentSelectionSnapshot {
+  return {
+    agents: [],
+    directAgentIds: [],
+    items: [],
+    groups: [],
+    initialSelectedItemIds: [],
+    unavailableExplicitAgents: [],
+    requestedModeItemIds: [],
+    revision: 'selection-revision-1',
+    ...overrides,
   };
 }

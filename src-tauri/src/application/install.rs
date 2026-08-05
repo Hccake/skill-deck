@@ -6,8 +6,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::application::agent_intent::{
-    validate_agent_intents, AgentTargetFallbackPreview, AgentWriteIntent,
+use crate::application::agent_intent::AgentTargetFallbackPreview;
+use crate::application::agent_selection::{
+    AgentSelectionSubmission, InstallAgentSelectionSnapshot,
 };
 use crate::application::mutation::coordinator::MutationUnitObserver;
 use crate::application::mutation::plan::{MutationPlan, PreviewToken};
@@ -23,7 +24,7 @@ use crate::core::{
 };
 use crate::environment::types::{same_environment_identity, ContextRef, EnvironmentRef};
 use crate::error::AppError;
-use crate::models::{InstallMode, SourceType};
+use crate::models::SourceType;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -34,8 +35,7 @@ pub struct InstallRequest {
     pub discovery_session: DiscoverySessionHandle,
     pub payloads: Vec<AcquiredPayloadHandle>,
     pub skills: Vec<String>,
-    pub agent_intents: Vec<AgentWriteIntent>,
-    pub requested_mode: InstallMode,
+    pub agent_selection: AgentSelectionSubmission,
     pub acknowledge_risk: bool,
 }
 
@@ -45,6 +45,22 @@ pub struct InstallRequest {
 pub struct InstallPreview {
     pub token: PreviewToken,
     pub skills: Vec<InstallSkillPreview>,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "status", rename_all = "camelCase")]
+#[specta(tag = "status", rename_all = "camelCase")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "IPC 结果直接携带最新选择快照，调用侧无需额外读取"
+)]
+pub enum InstallPreviewOutcome {
+    Ready {
+        preview: InstallPreview,
+    },
+    SelectionStale {
+        snapshot: InstallAgentSelectionSnapshot,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -73,7 +89,7 @@ pub trait InstallPlanner: Send + Sync {
         &'a self,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
-    ) -> InstallFuture<'a, Result<InstallPreview, AppError>>;
+    ) -> InstallFuture<'a, Result<InstallPreviewOutcome, AppError>>;
 
     fn rebuild<'a>(
         &'a self,
@@ -131,7 +147,10 @@ where
         self
     }
 
-    pub async fn preview(&self, request: &InstallRequest) -> Result<InstallPreview, AppError> {
+    pub async fn preview(
+        &self,
+        request: &InstallRequest,
+    ) -> Result<InstallPreviewOutcome, AppError> {
         validate_install_request(request)?;
         let payloads = self.pin_request_payloads(request, None).await?;
         self.planner.preview(request, payloads).await
@@ -272,7 +291,7 @@ pub fn validate_install_request(request: &InstallRequest) -> Result<(), AppError
     {
         return Err(validation("invalid or duplicate Skill selection"));
     }
-    validate_agent_intents(&request.agent_intents)
+    Ok(())
 }
 
 fn validation(message: &str) -> AppError {
@@ -302,6 +321,16 @@ mod tests {
     use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
     use crate::models::InstallMode;
 
+    fn selection(mode: InstallMode) -> AgentSelectionSubmission {
+        AgentSelectionSubmission {
+            revision: crate::application::agent_selection::AgentSelectionRevision(
+                "selection-v1-test".to_string(),
+            ),
+            selected_item_ids: Vec::new(),
+            requested_mode: mode,
+        }
+    }
+
     #[test]
     fn request_requires_one_environment_and_unique_skills() {
         let request = InstallRequest {
@@ -318,8 +347,7 @@ mod tests {
             },
             payloads: Vec::new(),
             skills: vec!["demo".to_string(), "demo".to_string()],
-            agent_intents: Vec::new(),
-            requested_mode: InstallMode::Copy,
+            agent_selection: selection(InstallMode::Copy),
             acknowledge_risk: true,
         };
         assert!(validate_install_request(&request).is_err());
@@ -348,8 +376,7 @@ mod tests {
             },
             payloads: Vec::new(),
             skills: vec!["demo".to_string()],
-            agent_intents: Vec::new(),
-            requested_mode: InstallMode::Copy,
+            agent_selection: selection(InstallMode::Copy),
             acknowledge_risk: false,
         };
 
@@ -374,8 +401,12 @@ mod tests {
             &'a self,
             _request: &'a InstallRequest,
             _payloads: Vec<PinnedPayloadLease>,
-        ) -> InstallFuture<'a, Result<InstallPreview, AppError>> {
-            Box::pin(async move { Ok(self.preview.clone()) })
+        ) -> InstallFuture<'a, Result<InstallPreviewOutcome, AppError>> {
+            Box::pin(async move {
+                Ok(InstallPreviewOutcome::Ready {
+                    preview: self.preview.clone(),
+                })
+            })
         }
 
         fn rebuild<'a>(
@@ -487,8 +518,7 @@ mod tests {
             discovery_session: discovery,
             payloads: vec![handle.clone()],
             skills: vec!["demo".to_string()],
-            agent_intents: Vec::new(),
-            requested_mode: InstallMode::Copy,
+            agent_selection: selection(InstallMode::Copy),
             acknowledge_risk: true,
         };
         let rebuilds = Arc::new(AtomicUsize::new(0));
@@ -519,7 +549,11 @@ mod tests {
             })
         }));
 
-        assert_eq!(service.preview(&request).await.unwrap().token, token);
+        let InstallPreviewOutcome::Ready { preview } = service.preview(&request).await.unwrap()
+        else {
+            panic!("expected ready preview");
+        };
+        assert_eq!(preview.token, token);
         let response = service
             .execute(&request, token, CancellationSignal::default())
             .await

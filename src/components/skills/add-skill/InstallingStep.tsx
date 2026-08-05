@@ -86,9 +86,6 @@ export function InstallingStep({ state, prepared, updateState }: InstallingStepP
 
         updateStateRef.current({
           installResults: results,
-          retrySkillName: undefined,
-          retryAgents: undefined,
-          retryAgentTargets: undefined,
           step: hasFailedMutationUnits(results) ? 'error' : 'complete',
         });
       } catch (error) {
@@ -108,9 +105,6 @@ export function InstallingStep({ state, prepared, updateState }: InstallingStepP
             units: [],
             warnings: [],
           },
-          retrySkillName: undefined,
-          retryAgents: undefined,
-          retryAgentTargets: undefined,
           installError,
           step: 'error',
         });

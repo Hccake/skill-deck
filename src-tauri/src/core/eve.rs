@@ -78,6 +78,22 @@ pub fn eve_target_id(subagent: Option<&str>) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EveTargetRef<'a> {
+    Root,
+    Subagent(&'a str),
+}
+
+pub fn parse_eve_target_id(target_id: &str) -> Option<EveTargetRef<'_>> {
+    if target_id == "eve:root" {
+        return Some(EveTargetRef::Root);
+    }
+    target_id
+        .strip_prefix("eve:")
+        .filter(|subagent| !subagent.is_empty())
+        .map(EveTargetRef::Subagent)
+}
+
 pub fn eve_target_label(subagent: Option<&str>) -> String {
     match subagent {
         Some(name) if !name.is_empty() => format!("Eve ({})", name),
@@ -101,25 +117,34 @@ pub fn eve_install_targets_for_project(cwd: &str) -> Vec<InstallTargetInfo> {
         return Vec::new();
     }
 
+    eve_install_targets(cwd, list_eve_subagents(cwd))
+}
+
+pub fn eve_install_targets(
+    project_path: &str,
+    subagents: impl IntoIterator<Item = String>,
+) -> Vec<InstallTargetInfo> {
+    let project_path = project_path.trim_end_matches(['/', '\\']);
+
     let mut targets = vec![InstallTargetInfo {
         target_id: eve_target_id(None),
         agent: AgentId::parse(AgentType::Eve.to_string())
             .expect("built-in Eve Agent ID must be valid"),
         display_name: eve_target_label(None),
         subagent: None,
-        path: eve_skills_dir_for_target(cwd, None)
+        path: eve_skills_dir_for_target(project_path, None)
             .to_string_lossy()
             .to_string(),
     }];
 
-    targets.extend(list_eve_subagents(cwd).into_iter().map(|subagent| {
+    targets.extend(subagents.into_iter().map(|subagent| {
         let subagent = lock_subagent_value(Some(&subagent));
         InstallTargetInfo {
             target_id: eve_target_id(Some(&subagent)),
             agent: AgentId::parse(AgentType::Eve.to_string())
                 .expect("built-in Eve Agent ID must be valid"),
             display_name: eve_target_label(Some(&subagent)),
-            path: eve_skills_dir_for_target(cwd, Some(&subagent))
+            path: eve_skills_dir_for_target(project_path, Some(&subagent))
                 .to_string_lossy()
                 .to_string(),
             subagent: Some(subagent),
@@ -336,6 +361,12 @@ mod tests {
         assert_eq!(eve_target_label(Some("research")), "Eve (research)");
         assert_eq!(lock_subagent_value(None), "");
         assert_eq!(lock_subagent_value(Some("research")), "research");
+        assert_eq!(parse_eve_target_id("eve:root"), Some(EveTargetRef::Root));
+        assert_eq!(
+            parse_eve_target_id("eve:research"),
+            Some(EveTargetRef::Subagent("research"))
+        );
+        assert_eq!(parse_eve_target_id("cursor:root"), None);
     }
 
     #[test]

@@ -18,7 +18,7 @@ import type {
   InstalledSkill,
   SkillScope,
   ContextRef,
-  ManageAgentsPreview,
+  ManageAgentSelectionSnapshot,
   RemovePreview,
 } from '@/bindings';
 import { formatWorkflowError } from '@/workflows/mutation-presentation';
@@ -35,7 +35,7 @@ interface SkillDialogState {
   manageAgentsScope: SkillScope;
   manageAgentsProjectPath?: string;
   manageAgentsContext?: ContextRef;
-  manageAgentDetails: ManageAgentsPreview | null;
+  manageAgentDetails: ManageAgentSelectionSnapshot | null;
   loadingManageAgentDetails: boolean;
 
   // Copy to project dialog
@@ -60,7 +60,7 @@ interface SkillDialogState {
   ) => void;
   closeRepairSource: () => void;
   openManageAgents: (skill: InstalledSkill, context: ContextRef, projectPath?: string) => void;
-  setManageAgentDetails: (preview: ManageAgentsPreview | null) => void;
+  setManageAgentDetails: (snapshot: ManageAgentSelectionSnapshot | null) => void;
   setManageAgentLoading: (loading: boolean) => void;
   closeManageAgents: () => void;
   openCopyToProject: (skill: InstalledSkill, context: ContextRef) => void;

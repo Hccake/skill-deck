@@ -101,9 +101,6 @@ function makeState(prepared = makePreparedInstall()): WizardState {
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
-    retrySkillName: undefined,
-    retryAgents: undefined,
-    retryAgentTargets: undefined,
   } as unknown as WizardState;
 }
 
@@ -139,7 +136,7 @@ describe('InstallingStep', () => {
         state={{
           ...makeState(prepared),
           selectedSkills: ['changed-after-preview'],
-          selectedAgentTargets: [],
+          selectedAgentItemIds: [],
         }}
         prepared={prepared}
         updateState={() => undefined}

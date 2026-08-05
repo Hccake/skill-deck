@@ -1,7 +1,7 @@
 import { toast } from 'sonner';
 import {
   cleanupDuplicateAgentCopies,
-  previewManageSkillAgents,
+  getManageAgentSelection,
 } from '@/hooks/useTauriApi';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
@@ -39,13 +39,7 @@ export async function executeDuplicateCleanup(agents: AgentId[]): Promise<void> 
     }
 
     const [details] = await Promise.all([
-      previewManageSkillAgents({
-        context,
-        skillName: manageAgentsSkill.name,
-        add: [],
-        removeEntryIds: [],
-        requestedMode: 'copy',
-      }),
+      getManageAgentSelection(context, manageAgentsSkill.name),
       import('@/stores/skills-data').then(({ useSkillsDataStore }) => (
         useSkillsDataStore.getState().syncSkills(context, results.some((result) => result.success)
           ? { origin: 'selfMutation', mutatedSkillNames: [manageAgentsSkill.name] }

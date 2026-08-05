@@ -67,23 +67,18 @@ function createInitialState(params: {
     selectedSkills: [],
     skillFilter: null,
     skillSearchQuery: '',
-    selectedAgents: [],
-    privateCopyAgents: [],
-    allAgents: [],
-    availableAgentTargets: [],
-    selectedAgentTargets: [],
+    agentSelectionSnapshot: null,
+    selectedAgentItemIds: [],
+    expandedAgentGroupIds: [],
+    additionalAgentsExpanded: false,
+    selectionRequiresReconfirmation: false,
     mode: 'symlink',
     otherAgentsExpanded: false,
-    privateCopyAgentsExpanded: false,
-    otherAgentsSearchQuery: '',
     overwrites: {},
     preparation: { status: 'idle' },
     preSelectedSkills: [],
     preSelectedAgents: [],
     installResults: null,
-    retrySkillName: undefined,
-    retryAgents: undefined,
-    retryAgentTargets: undefined,
   };
 }
 
@@ -145,14 +140,10 @@ export function WizardPage() {
   const targetOptions = useInstallTargetOptions({
     active: state.step === 'options',
     context: state.context,
-    scope: state.scope,
     preselectedAgents: state.preSelectedAgents,
-    selection: {
-      selectedAgents: state.selectedAgents,
-      privateCopyAgents: state.privateCopyAgents,
-      selectedAgentTargets: state.selectedAgentTargets,
-      mode: state.mode,
-    },
+    snapshot: state.agentSelectionSnapshot,
+    selectedItemIds: state.selectedAgentItemIds,
+    mode: state.mode,
     updateState,
   });
 
@@ -187,9 +178,6 @@ export function WizardPage() {
     updateState({
       installResults: null,
       installError: undefined,
-      retrySkillName: undefined,
-      retryAgents: undefined,
-      retryAgentTargets: undefined,
       preparation: { status: 'idle' },
       step: 'confirm',
     });

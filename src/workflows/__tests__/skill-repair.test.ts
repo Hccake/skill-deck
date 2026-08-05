@@ -3,13 +3,14 @@ import { repairSkillSource } from '../skill-repair';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useMutationStore } from '@/stores/mutation';
 
-const mocks = vi.hoisted(() => ({ getInstallWizardSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getInstallWizardSession: vi.fn(), getInstallAgentSelection: vi.fn() }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
   fetchAvailable: vi.fn(),
   installSkills: vi.fn(),
   acquireSelectedPayloads: vi.fn(),
   previewInstall: vi.fn(),
+  getInstallAgentSelection: (...args: unknown[]) => mocks.getInstallAgentSelection(...args),
   getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
@@ -48,6 +49,13 @@ function api() {
     }),
     installSkills: vi.fn().mockResolvedValue({
       units: [{ unitId: 'toolkit', status: 'succeeded' }],
+    }),
+    getInstallAgentSelection: vi.fn().mockResolvedValue({
+      selection: {
+        agents: [], directAgentIds: [], items: [], groups: [], initialSelectedItemIds: [],
+        unavailableExplicitAgents: [], requestedModeItemIds: [], revision: 'selection-1',
+      },
+      defaultSelectionWarning: null,
     }),
   };
 }

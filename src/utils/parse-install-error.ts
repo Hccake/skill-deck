@@ -111,6 +111,12 @@ export function parseInstallError(
         ],
       };
 
+    case 'agentSelectionInvalid':
+      return {
+        message: t(`agentSelection.error.${error.data.reason}`),
+        suggestions: [t('addSkill.error.suggestion.reselectAgents')],
+      };
+
     case 'invalidSource':
       return {
         message: t('addSkill.error.invalidSource', { value: error.data.value }),
