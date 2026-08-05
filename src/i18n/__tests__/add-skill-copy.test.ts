@@ -37,17 +37,15 @@ describe('add skill copy', () => {
 });
 
 describe('copy to project copy', () => {
-  it('explains version limitations before copy without implying copy failure in Chinese', () => {
-    expect(zhCN.skills.copyToProject.metadataWarning).toBe(
-      '当前 Skill 缺少用于自动检查更新的版本信息。复制到其他项目后，仍无法自动检查更新。'
-    );
-    expect('metadataIncomplete' in zhCN.skills.copyToProject).toBe(false);
+  it('keeps source maintenance messaging out of the Chinese copy flow', () => {
+    expect('metadataWarning' in zhCN.skills.copyToProject).toBe(false);
+    expect('sourceRepairRequired' in zhCN.skills.copyToProject).toBe(false);
+    expect('repairSource' in zhCN.skills.copyToProject).toBe(false);
   });
 
-  it('keeps the English fallback focused on version limitations before copy', () => {
-    expect(en.skills.copyToProject.metadataWarning).toBe(
-      "This Skill is missing version details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically."
-    );
-    expect('metadataIncomplete' in en.skills.copyToProject).toBe(false);
+  it('keeps source maintenance messaging out of the English copy flow', () => {
+    expect('metadataWarning' in en.skills.copyToProject).toBe(false);
+    expect('sourceRepairRequired' in en.skills.copyToProject).toBe(false);
+    expect('repairSource' in en.skills.copyToProject).toBe(false);
   });
 });

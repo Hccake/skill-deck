@@ -33,6 +33,7 @@ permissions = [
   "allow-focus-install-wizard",
   "allow-get-agent-settings-snapshot",
   "allow-get-config",
+  "allow-get-copy-agent-selection",
   "allow-get-github-credential-status",
   "allow-get-install-wizard-session",
   "allow-get-manage-agent-selection",

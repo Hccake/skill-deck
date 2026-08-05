@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use specta::Type;
 use uuid::Uuid;
 
+use crate::application::agent_intent::AgentWriteIntent;
 use crate::application::mutation::plan::RuntimeRevisions;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{SkillPayload, SkillPayloadManifest};
@@ -118,6 +119,8 @@ pub struct CopySourceSnapshot {
     pub revisions: RuntimeRevisions,
     pub lock_entry: Option<Value>,
     pub project_identity: ResolvedTargetFact,
+    pub canonical_identity: ResolvedTargetFact,
+    pub agent_intents: Vec<AgentWriteIntent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1467,6 +1470,24 @@ mod tests {
                 entry_kind: TargetEntryKind::Directory,
                 link_target: None,
             },
+            canonical_identity: ResolvedTargetFact {
+                key: PhysicalTargetKey {
+                    backend: ExecutionBackend::NativeUnix,
+                    physical_parent: PhysicalParentIdentity::Unix {
+                        device: 1,
+                        inode: 3,
+                    },
+                    normalized_final_child_name: "demo".to_string(),
+                },
+                destination: ResourceLocator {
+                    environment: EnvironmentRef::Host,
+                    native_path: "/source/.agents/skills/demo".to_string(),
+                },
+                fingerprint: EntryFingerprint("entry-v1-demo".to_string()),
+                entry_kind: TargetEntryKind::Directory,
+                link_target: None,
+            },
+            agent_intents: Vec::new(),
         }
     }
 

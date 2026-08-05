@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   removeSkill: vi.fn(),
   previewManageSkillAgents: vi.fn(),
   getManageAgentSelection: vi.fn(),
+  getCopyAgentSelection: vi.fn(),
   manageSkillAgents: vi.fn(),
   previewCopySkillToProjects: vi.fn(),
   copySkillToProjects: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   removeSkill: (...args: unknown[]) => mocks.removeSkill(...args),
   previewManageSkillAgents: (...args: unknown[]) => mocks.previewManageSkillAgents(...args),
   getManageAgentSelection: (...args: unknown[]) => mocks.getManageAgentSelection(...args),
+  getCopyAgentSelection: (...args: unknown[]) => mocks.getCopyAgentSelection(...args),
   manageSkillAgents: (...args: unknown[]) => mocks.manageSkillAgents(...args),
   previewCopySkillToProjects: (...args: unknown[]) => mocks.previewCopySkillToProjects(...args),
   copySkillToProjects: (...args: unknown[]) => mocks.copySkillToProjects(...args),
@@ -124,6 +126,7 @@ describe('skill workflows', () => {
     mocks.previewRemove.mockReset();
     mocks.previewManageSkillAgents.mockReset();
     mocks.getManageAgentSelection.mockReset();
+    mocks.getCopyAgentSelection.mockReset();
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
     useInstallWizardSessionStore.setState({
       revision: 0, active: false, loading: false, hasConfirmedSnapshot: false,
@@ -144,6 +147,9 @@ describe('skill workflows', () => {
     mocks.removeSkill.mockResolvedValue({ units: [{ status: 'succeeded' }] });
     mocks.previewRemove.mockResolvedValue(removePreview);
     mocks.getManageAgentSelection.mockResolvedValue(manageSnapshot);
+    mocks.getCopyAgentSelection.mockResolvedValue({
+      selection: makeAgentSelectionSnapshot({ revision: manageSubmission.revision }),
+    });
     mocks.previewManageSkillAgents.mockResolvedValue({ status: 'ready', preview: managePreview });
     mocks.manageSkillAgents.mockResolvedValue({ units: [{ status: 'succeeded', error: null }] });
     mocks.previewCopySkillToProjects.mockResolvedValue({
@@ -405,13 +411,18 @@ describe('skill workflows', () => {
       }],
     });
 
-    const outcome = await executeSkillCopy({ environment: { kind: 'host' }, projectIds: ['host-target'] });
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['host-target'],
+      agentSelection: manageSubmission,
+    });
 
     expect(outcome.status).toBe('succeeded');
     expect(mocks.previewCopySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({
       source: context,
       targetEnvironment: { kind: 'host' },
       targetProjectIds: ['host-target'],
+      agentSelection: manageSubmission,
     }));
     expect(mocks.copySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({ token }));
     expect(mocks.refreshContext).toHaveBeenCalledWith({
@@ -427,29 +438,66 @@ describe('skill workflows', () => {
     await expect(executeSkillCopy({
       environment: { kind: 'host' },
       projectIds: ['host-target'],
+      agentSelection: manageSubmission,
     })).resolves.toEqual({ status: 'blocked' });
 
     expect(mocks.refreshContext).not.toHaveBeenCalled();
   });
 
-  it('returns source repair guidance without starting copy execution', async () => {
+  it('returns the latest Agent selection without starting copy execution', async () => {
     useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    const selection = makeAgentSelectionSnapshot({ revision: 'copy-selection-2' });
     mocks.previewCopySkillToProjects.mockResolvedValue({
-      status: 'sourceRepairRequired',
-      reason: 'missingMetadata',
+      status: 'selectionStale',
+      snapshot: { selection },
     });
 
-    const outcome = await executeSkillCopy({
+    await expect(executeSkillCopy({
       environment: { kind: 'host' },
       projectIds: ['host-target'],
-    });
-
-    expect(outcome).toEqual({
-      status: 'sourceRepairRequired',
-      reason: 'missingMetadata',
+      agentSelection: manageSubmission,
+    })).resolves.toEqual({
+      status: 'selectionStale',
+      snapshot: { selection },
     });
     expect(mocks.copySkillToProjects).not.toHaveBeenCalled();
   });
+
+  it('loads the latest Agent selection when execution discovers that the preview is stale', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    const selection = makeAgentSelectionSnapshot({ revision: 'copy-selection-new' });
+    mocks.copySkillToProjects.mockRejectedValueOnce({ kind: 'staleContext' });
+    mocks.getCopyAgentSelection.mockResolvedValueOnce({ selection });
+
+    await expect(executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['host-target'],
+      agentSelection: manageSubmission,
+    })).resolves.toEqual({
+      status: 'selectionStale',
+      snapshot: { selection },
+    });
+    expect(mocks.getCopyAgentSelection).toHaveBeenCalledWith(context, 'toolkit');
+  });
+
+  it.each(['staleRegistry', 'staleEnvironment'] as const)(
+    'checks the latest Agent selection after a %s execution error',
+    async (kind) => {
+      useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+      const selection = makeAgentSelectionSnapshot({ revision: `copy-selection-${kind}` });
+      mocks.copySkillToProjects.mockRejectedValueOnce({ kind });
+      mocks.getCopyAgentSelection.mockResolvedValueOnce({ selection });
+
+      await expect(executeSkillCopy({
+        environment: { kind: 'host' },
+        projectIds: ['host-target'],
+        agentSelection: manageSubmission,
+      })).resolves.toEqual({
+        status: 'selectionStale',
+        snapshot: { selection },
+      });
+    },
+  );
 
   it('returns retryable project IDs for partial copy outcomes without closing the dialog', async () => {
     useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
@@ -463,6 +511,7 @@ describe('skill workflows', () => {
     const outcome = await executeSkillCopy({
       environment: { kind: 'host' },
       projectIds: ['project-b', 'project-c'],
+      agentSelection: manageSubmission,
     });
 
     expect(outcome).toMatchObject({
@@ -476,6 +525,25 @@ describe('skill workflows', () => {
       scope: { scope: 'project', project_id: 'project-b' },
     }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] });
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);
+  });
+
+  it('preserves a single project mutation result without converting its error report', async () => {
+    useSkillDialogStore.setState({ copySkill: skill, copyContext: context });
+    const failedUnit = {
+      status: 'failed' as const,
+      retryable: false,
+      error: { code: 'configurationCorrupted' },
+      target: { scope: { scope: 'project' as const, project_id: 'project-c' } },
+    };
+    mocks.copySkillToProjects.mockResolvedValue({ units: [failedUnit] });
+
+    const outcome = await executeSkillCopy({
+      environment: { kind: 'host' },
+      projectIds: ['project-c'],
+      agentSelection: manageSubmission,
+    });
+
+    expect(outcome).toEqual({ status: 'failed', unit: failedUnit });
   });
 
   it('returns recoveryRequired directly for a single project', async () => {
@@ -492,6 +560,7 @@ describe('skill workflows', () => {
     const outcome = await executeSkillCopy({
       environment: { kind: 'host' },
       projectIds: ['project-c'],
+      agentSelection: manageSubmission,
     });
 
     expect(outcome).toMatchObject({
@@ -518,11 +587,13 @@ describe('skill workflows', () => {
     const outcome = await executeSkillCopy({
       environment: { kind: 'host' },
       projectIds: ['project-b', 'project-c'],
+      agentSelection: manageSubmission,
     });
 
     expect(outcome).toMatchObject({
       status: 'partial',
       succeededProjectIds: ['project-b'],
+      failedProjectIds: ['project-c'],
       retryableProjectIds: [],
       recovery: [recoveryAction],
     });

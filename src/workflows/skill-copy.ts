@@ -1,14 +1,15 @@
 import {
   copySkillToProjects,
+  getCopyAgentSelection,
   previewCopySkillToProjects,
 } from '@/hooks/useTauriApi';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
-import { getSkillOperationAgents } from '@/stores/skills-utils';
 import { toAppError } from '@/utils/to-app-error';
 import type {
+  AgentSelectionSubmission,
   AppError,
-  CopySourceRepairReason,
+  CopyAgentSelectionSnapshot,
   CopyResponse,
   EnvironmentRef,
   MutationUnitResult,
@@ -19,12 +20,14 @@ import { runBusinessWrite } from './install-session-feedback';
 export interface SkillCopySelection {
   environment: EnvironmentRef;
   projectIds: string[];
+  agentSelection: AgentSelectionSubmission;
 }
 
 export type CopyOutcome =
   | { status: 'blocked' }
-  | { status: 'sourceRepairRequired'; reason: CopySourceRepairReason }
-  | { status: 'failed'; error: AppError }
+  | { status: 'selectionStale'; snapshot: CopyAgentSelectionSnapshot }
+  | { status: 'failed'; error: AppError; unit?: never }
+  | { status: 'failed'; unit: MutationUnitResult; error?: never }
   | { status: 'succeeded'; response: CopyResponse; succeededProjectIds: string[] }
   | {
     status: 'recoveryRequired';
@@ -59,32 +62,25 @@ function recoveryActions(units: MutationUnitResult[]): RecoveryAction[] {
 export async function executeSkillCopy({
   environment: targetEnvironment,
   projectIds: targetProjectIds,
+  agentSelection,
 }: SkillCopySelection): Promise<CopyOutcome> {
   if (isBusinessWriteBlocked()) return { status: 'blocked' };
   const { copySkill, copyContext } = useSkillDialogStore.getState();
   if (!copySkill || !copyContext) return { status: 'blocked' };
 
   try {
-    const agents = copySkill.privateAdaptedAgents ?? getSkillOperationAgents(copySkill);
-    const privateCopyAgents = copySkill.privateCopyAgents ?? [];
     if (copyContext.scope.scope !== 'project' || targetProjectIds.length === 0) {
       throw new Error('Selected projects are not available in the current environment');
     }
-    const agentIntents = Array.from(new Set([...agents, ...privateCopyAgents])).map((agentId) => ({
-      agentId,
-      ownDirectorySelected: true,
-      adapterTargets: [],
-    }));
     const request = {
       skillName: copySkill.name,
       source: copyContext,
       targetEnvironment,
       targetProjectIds,
-      requestedMode: 'copy' as const,
-      agentIntents,
+      agentSelection,
     };
     const previewOutcome = await previewCopySkillToProjects(request);
-    if (previewOutcome.status === 'sourceRepairRequired') {
+    if (previewOutcome.status === 'selectionStale') {
       return previewOutcome;
     }
     const preview = previewOutcome.preview;
@@ -122,7 +118,7 @@ export async function executeSkillCopy({
         recovery: recoveries,
       };
     }
-    const failedProjectIds = ordinaryFailed
+    const failedProjectIds = failed
       .map(projectIdOf)
       .filter((projectId): projectId is string => projectId !== null);
     const retryableProjectIds = ordinaryFailed
@@ -130,9 +126,10 @@ export async function executeSkillCopy({
       .map(projectIdOf)
       .filter((projectId): projectId is string => projectId !== null);
     if (targetProjectIds.length === 1) {
+      const unit = ordinaryFailed[0] ?? failed[0];
       return {
         status: 'failed',
-        error: toAppError(ordinaryFailed[0]?.error ?? new Error('Copy mutation failed')),
+        unit,
       };
     }
     return {
@@ -144,6 +141,21 @@ export async function executeSkillCopy({
       recovery: recoveries,
     };
   } catch (error) {
-    return { status: 'failed', error: toAppError(error) };
+    const appError = toAppError(error);
+    if (
+      appError.kind === 'staleContext'
+      || appError.kind === 'staleRegistry'
+      || appError.kind === 'staleEnvironment'
+    ) {
+      try {
+        const snapshot = await getCopyAgentSelection(copyContext, copySkill.name);
+        if (snapshot.selection.revision !== agentSelection.revision) {
+          return { status: 'selectionStale', snapshot };
+        }
+      } catch {
+        // 保留触发执行失败的原始错误，刷新失败不应覆盖它。
+      }
+    }
+    return { status: 'failed', error: appError };
   }
 }

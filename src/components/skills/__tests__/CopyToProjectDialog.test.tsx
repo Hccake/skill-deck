@@ -1,12 +1,19 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { fireEvent, render as testingLibraryRender, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CopyToProjectDialog } from '../CopyToProjectDialog';
-import type { InstalledSkill } from '@/bindings';
+import type { InstalledSkill, MutationUnitResult } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
 import type { CopyOutcome } from '@/workflows/skill-copy';
+import { makeAgentSelectionSnapshot } from '@/test-utils';
+import { TooltipProvider } from '@/components/ui/tooltip';
+
+function render(ui: ReactElement) {
+  return testingLibraryRender(ui, { wrapper: TooltipProvider });
+}
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -60,6 +67,44 @@ const defaultCopyProps = {
     })),
   },
   onLoadProjects: vi.fn(async () => undefined),
+  agentSelection: {
+    status: 'ready' as const,
+    snapshot: {
+      selection: makeAgentSelectionSnapshot({ revision: 'copy-selection-1' }),
+    },
+    retry: vi.fn(async () => undefined),
+  },
+};
+
+const selectableAgentState = {
+  status: 'ready' as const,
+  snapshot: {
+    selection: makeAgentSelectionSnapshot({
+      revision: 'copy-selection-2',
+      agents: [{
+        kind: 'standard' as const,
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        detection: 'detected' as const,
+        directoryAccess: 'privateOnly' as const,
+        installOptionId: 'claude',
+        groupId: null,
+      }],
+      installOptions: [{
+        id: 'claude',
+        kind: 'standardDirectory' as const,
+        agentIds: ['claude-code'],
+        displayName: 'Claude Code',
+        path: '~/.claude/skills',
+        groupId: null,
+        selectable: true,
+        modeConstraint: 'userSelectable' as const,
+        disabledReason: null,
+      }],
+      userModeOptionIds: ['claude'],
+    }),
+  },
+  retry: vi.fn(async () => undefined),
 };
 
 function deferred<T>() {
@@ -72,13 +117,46 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function failedCopyUnit(projectId: string, retryable = true): MutationUnitResult {
+  return {
+    unitId: `copy:toolkit:${projectId}`,
+    skillName: 'toolkit',
+    source: defaultCopyProps.sourceContext,
+    target: {
+      environment: { kind: 'host' },
+      scope: { scope: 'project', project_id: projectId },
+    },
+    status: 'failed',
+    retryable,
+    lockCommitted: false,
+    actualMode: null,
+    fallbackReason: null,
+    agentTargets: [],
+    warnings: [],
+    error: {
+      code: 'configurationCorrupted',
+      parameters: {},
+      field: null,
+      severity: 'error',
+      retryable,
+      technicalDetails: 'private diagnostic',
+      environment: { kind: 'host' },
+      context: null,
+      unitId: `copy:toolkit:${projectId}`,
+      recoveryResourceId: null,
+      displayPaths: [],
+    },
+    recovery: null,
+  };
+}
+
 describe('CopyToProjectDialog', () => {
   beforeEach(() => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it('keeps a stable dialog frame while target projects are loading', () => {
+  it('keeps a stable dialog frame with independently scrolling project and Agent areas', () => {
     const projectLoad = deferred<void>();
     render(
       <CopyToProjectDialog
@@ -92,10 +170,18 @@ describe('CopyToProjectDialog', () => {
 
     const dialog = screen.getByRole('dialog');
     const body = screen.getByTestId('copy-to-project-dialog-body');
-    expect(dialog.className).toContain('h-[min(32rem,calc(100dvh-2rem))]');
+    const projectScrollArea = screen.getByTestId('copy-target-projects-scroll');
+    const agentScrollArea = screen.getByTestId('copy-agent-settings-scroll');
+    expect(dialog.className).toContain('h-[min(42rem,calc(100dvh-2rem))]');
     expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
     expect(body.className).toContain('min-h-0');
-    expect(body.className).toContain('overflow-y-auto');
+    expect(body.className).toContain('overflow-hidden');
+    expect(body.className).not.toContain('overflow-y-auto');
+    expect(projectScrollArea).not.toBe(agentScrollArea);
+    expect(projectScrollArea.className).toContain('min-h-0');
+    expect(projectScrollArea.className).toContain('overflow-y-auto');
+    expect(agentScrollArea.className).toContain('min-h-0');
+    expect(agentScrollArea.className).toContain('overflow-y-auto');
     expect(body.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'common.cancel' })).not.toBeNull();
   });
@@ -122,6 +208,99 @@ describe('CopyToProjectDialog', () => {
 
     fireEvent.click(await screen.findByText('/project-b'));
     expect((screen.getByRole('button', { name: 'skills.copyToProject.copy' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps project and Agent configuration independent until copy is confirmed', async () => {
+    const onCopy = vi.fn(async () => ({
+      status: 'succeeded' as const,
+      response: { units: [] },
+      succeededProjectIds: ['project-b'],
+    }));
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        agentSelection={selectableAgentState}
+        onClose={vi.fn()}
+        onCopy={onCopy}
+      />
+    );
+
+    expect(screen.queryByRole('combobox', {
+      name: 'skills.copyToProject.targetEnvironment',
+    })).toBeNull();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Claude Code' }));
+    fireEvent.click(screen.getByText('agentSelection.copy'));
+    fireEvent.click(await screen.findByText('/project-b'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
+
+    await waitFor(() => expect(onCopy).toHaveBeenCalledWith({
+      environment: { kind: 'host' },
+      projectIds: ['project-b'],
+      agentSelection: {
+        revision: 'copy-selection-2',
+        selectedOptionIds: ['claude'],
+        requestedMode: 'copy',
+      },
+    }));
+  });
+
+  it('keeps target projects selected and requires confirmation when Agent status changes', async () => {
+    const refreshedSelection = makeAgentSelectionSnapshot({
+      revision: 'copy-selection-3',
+      agents: selectableAgentState.snapshot.selection.agents,
+      installOptions: selectableAgentState.snapshot.selection.installOptions,
+      initialSelectedOptionIds: ['claude'],
+      userModeOptionIds: ['claude'],
+    });
+    const onCopy = vi.fn()
+      .mockResolvedValueOnce({
+        status: 'selectionStale' as const,
+        snapshot: { selection: refreshedSelection },
+      })
+      .mockResolvedValueOnce({
+        status: 'succeeded' as const,
+        response: { units: [] },
+        succeededProjectIds: ['project-b'],
+      });
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        agentSelection={selectableAgentState}
+        onClose={vi.fn()}
+        onCopy={onCopy}
+      />
+    );
+
+    fireEvent.click(await screen.findByText('/project-b'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
+
+    const confirm = await screen.findByRole('button', {
+      name: 'agentSelection.confirmCurrentSelection',
+    });
+    expect((screen.getByRole('button', {
+      name: 'skills.copyToProject.copy',
+    }) as HTMLButtonElement).disabled).toBe(true);
+    const selectedProjectCheckbox = screen.getByText('/project-b')
+      .closest('label')
+      ?.querySelector<HTMLButtonElement>('[role="checkbox"]');
+    expect(selectedProjectCheckbox?.dataset.state).toBe('checked');
+
+    fireEvent.click(confirm);
+    const copy = screen.getByRole('button', { name: 'skills.copyToProject.copy' });
+    expect((copy as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(copy);
+
+    await waitFor(() => expect(onCopy).toHaveBeenLastCalledWith({
+      environment: { kind: 'host' },
+      projectIds: ['project-b'],
+      agentSelection: {
+        revision: 'copy-selection-3',
+        selectedOptionIds: [],
+        requestedMode: 'symlink',
+      },
+    }));
   });
 
   it('selects exactly one target environment and submits project IDs from that environment', async () => {
@@ -157,6 +336,7 @@ describe('CopyToProjectDialog', () => {
             storage: { access: 'native', owner: null },
           }],
         }}
+        agentSelection={defaultCopyProps.agentSelection}
         onLoadProjects={vi.fn(async () => undefined)}
         onClose={vi.fn()}
         onCopy={onCopy}
@@ -172,6 +352,11 @@ describe('CopyToProjectDialog', () => {
       expect(onCopy).toHaveBeenCalledWith({
         environment: { kind: 'host' },
         projectIds: ['host-target'],
+        agentSelection: {
+          revision: 'copy-selection-1',
+          selectedOptionIds: [],
+          requestedMode: 'symlink',
+        },
       });
       expect((screen.getByRole('button', {
         name: 'skills.copyToProject.copy',
@@ -182,7 +367,7 @@ describe('CopyToProjectDialog', () => {
   it('keeps partial copy results in the dialog and excludes completed projects from retry', async () => {
     const onCopy = vi.fn(async () => ({
       status: 'partial' as const,
-      response: { units: [] },
+      response: { units: [failedCopyUnit('project-c')] },
       succeededProjectIds: ['project-b'],
       failedProjectIds: ['project-c'],
       retryableProjectIds: ['project-c'],
@@ -215,6 +400,8 @@ describe('CopyToProjectDialog', () => {
     expect((await screen.findByRole('alert')).textContent)
       .toContain('skills.copyToProject.partialError');
     expect(screen.queryByText('/project-b')).toBeNull();
+    expect(screen.getByText('mutation.result.errors.configurationCorrupted')).toBeDefined();
+    expect(screen.queryByText('private diagnostic')).toBeNull();
     expect((screen.getByRole('checkbox') as HTMLButtonElement).dataset.state).toBe('checked');
     expect(screen.getByRole('button', { name: 'skills.copyToProject.retryFailed' })).toBeDefined();
   });
@@ -267,7 +454,7 @@ describe('CopyToProjectDialog', () => {
     expect(screen.queryByText('skills.copyToProject.metadataWarning')).toBeNull();
   });
 
-  it('shows a lightweight source note when source skill has incomplete update metadata', async () => {
+  it('does not show update metadata warnings in the copy flow', async () => {
     render(
       <CopyToProjectDialog
         skill={skill({
@@ -282,9 +469,7 @@ describe('CopyToProjectDialog', () => {
     );
 
     await screen.findByText('/project-b');
-    const note = screen.getByRole('note');
-    expect(note.textContent).toContain('skills.copyToProject.metadataWarning');
-    expect(note.querySelector('.text-warning')).toBeNull();
+    expect(screen.queryByRole('note')).toBeNull();
   });
 
   it('does not add a copy-specific warning for a local source', async () => {
@@ -305,7 +490,6 @@ describe('CopyToProjectDialog', () => {
 
     await screen.findByText('/project-b');
     expect(screen.queryByRole('note')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'skills.copyToProject.repairSource' })).toBeNull();
   });
 
   it('does not show the source note for temporary update check failures', async () => {
@@ -324,47 +508,6 @@ describe('CopyToProjectDialog', () => {
 
     await screen.findByText('/project-b');
     expect(screen.queryByText('skills.copyToProject.metadataWarning')).toBeNull();
-  });
-
-  it('asks Backend first and offers source repair only after Backend requires it', async () => {
-    const onRepairSource = vi.fn();
-    const onCopy = vi.fn(async () => ({
-      status: 'sourceRepairRequired' as const,
-      reason: 'missingMetadata' as const,
-    } satisfies CopyOutcome));
-    render(
-      <CopyToProjectDialog
-        skill={skill({
-          source: null,
-          sourceUrl: null,
-          canRunUpdate: null,
-          canCheckForUpdates: null,
-          updateReason: null,
-        })}
-        {...defaultCopyProps}
-        onClose={vi.fn()}
-        onCopy={onCopy}
-        onRepairSource={onRepairSource}
-      />
-    );
-
-    await screen.findByText('/project-b');
-    fireEvent.click(screen.getByRole('checkbox'));
-    const copy = screen.getByRole('button', { name: 'skills.copyToProject.copy' });
-    expect((copy as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.queryByRole('button', {
-      name: 'skills.copyToProject.repairSource',
-    })).toBeNull();
-
-    fireEvent.click(copy);
-
-    await waitFor(() => expect(onCopy).toHaveBeenCalledTimes(1));
-    const note = screen.getByRole('note');
-    expect(note.textContent).toContain('skills.copyToProject.sourceRepairRequired');
-    const repair = screen.getByRole('button', { name: 'skills.copyToProject.repairSource' });
-    expect(repair).toBeDefined();
-    fireEvent.click(repair);
-    expect(onRepairSource).toHaveBeenCalledTimes(1);
   });
 
   it('keeps ordinary copy failures as retryable copy feedback', async () => {
@@ -386,9 +529,29 @@ describe('CopyToProjectDialog', () => {
 
     expect((await screen.findByRole('alert')).textContent)
       .toContain('skills.copyToProject.copyError');
-    expect(screen.queryByRole('button', {
-      name: 'skills.copyToProject.repairSource',
-    })).toBeNull();
+  });
+
+  it('shows the structured reason and clears automatic retry for a non-retryable project failure', async () => {
+    const onCopy = vi.fn(async () => ({
+      status: 'failed' as const,
+      unit: failedCopyUnit('project-b', false),
+    } satisfies CopyOutcome));
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={onCopy}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('mutation.result.errors.configurationCorrupted');
+    expect((screen.getByRole('checkbox') as HTMLButtonElement).dataset.state).toBe('unchecked');
+    expect(screen.queryByRole('button', { name: 'skills.copyToProject.retryFailed' })).toBeNull();
   });
 
   it('shows a recoverable error when target projects cannot be loaded', async () => {
@@ -467,6 +630,7 @@ describe('CopyToProjectDialog', () => {
             storage: { access: 'native', owner: { kind: 'wsl' as const, distro_name: 'Ubuntu' } },
           }],
         }}
+        agentSelection={defaultCopyProps.agentSelection}
         onLoadProjects={vi.fn(async () => undefined)}
         checkExistence={checkExistence}
         onClose={vi.fn()}

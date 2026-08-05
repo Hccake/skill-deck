@@ -71,6 +71,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::manage_agents::preview_manage_skill_agents,
             commands::manage_agents::get_manage_agent_selection,
             commands::manage_agents::manage_skill_agents,
+            commands::copy_skill::get_copy_agent_selection,
             commands::copy_skill::preview_copy_skill_to_projects,
             commands::copy_skill::copy_skill_to_projects,
             commands::environments::list_environments,

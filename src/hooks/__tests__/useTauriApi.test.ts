@@ -14,6 +14,7 @@ const { mockCommands } = vi.hoisted(() => ({
     removeSkill: vi.fn(),
     getSkillAgentDetails: vi.fn(),
     manageSkillAgents: vi.fn(),
+    getCopyAgentSelection: vi.fn(),
     cleanupDuplicateAgentCopies: vi.fn(),
     copySkillToProjects: vi.fn(),
     checkOverwrites: vi.fn(),
@@ -63,6 +64,7 @@ import {
   confirmRecoveryResourceResolved,
   openRecoveryResource,
   checkUpdates,
+  getCopyAgentSelection,
 } from '../useTauriApi';
 
 const context = {
@@ -174,6 +176,15 @@ describe('useTauriApi unwrap logic', () => {
 
     expect(mockCommands.previewInstall).toHaveBeenCalledWith(request);
     expect(mockCommands.installSkills).toHaveBeenCalledWith(request, previewToken);
+  });
+
+  it('loads copy Agent selection for the source Skill', async () => {
+    const snapshot = { selection: { revision: 'copy-selection-1' } };
+    mockCommands.getCopyAgentSelection.mockResolvedValue({ status: 'ok', data: snapshot });
+
+    await expect(getCopyAgentSelection(context, 'toolkit')).resolves.toEqual(snapshot);
+
+    expect(mockCommands.getCopyAgentSelection).toHaveBeenCalledWith(context, 'toolkit');
   });
 
   it('maps host picker paths through the selected environment', async () => {

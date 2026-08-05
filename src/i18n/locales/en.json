@@ -15,7 +15,9 @@
   "agentSelection": {
     "title": "Linked Agents",
     "installTitle": "Select Agents",
+    "copyTitle": "Associated Agents",
     "modeTitle": "Install mode",
+    "modeHelp": "Used when adding or repairing an Agent’s own Skill directory. Copy-only Agents are not affected by this setting.",
     "link": "Link",
     "linkRecommended": "Link (recommended)",
     "copy": "Copy",
@@ -26,8 +28,8 @@
         "help": "After this Skill is installed in the shared Skill directory, these Agents do not need a separate installation."
       },
       "manage": {
-        "title": "Available through the shared directory",
-        "help": "These Agents read the shared Skill directory containing this Skill and do not need a separate installation."
+        "title": "Available without selection",
+        "help": "This Skill is installed in the shared Skill directory. These Agents can read it without a separate installation."
       },
       "copyToProject": {
         "title": "Available after copying",
@@ -333,21 +335,21 @@
       "cleanupSuccess": "Extra copies removed"
     },
     "copyToProject": {
-      "title": "Copy to Project",
+      "title": "Copy “{{name}}” to Other Projects",
       "description": "Copy \"{{name}}\" to other projects",
+      "ariaDescription": "Configure target projects, associated Agents, and the installation method.",
+      "targetProjects": "Target projects",
+      "selectedProjects": "{{count}} selected",
       "targetEnvironment": "Target environment",
       "noProjects": "No other projects available",
       "installed": "Installed",
       "unknown": "Unknown",
       "projectsLoadError": "Could not load projects in the selected environment.",
+      "agentsLoadError": "Could not load Agent settings.",
       "presenceUnknown": "Could not verify whether this Skill is already installed. Existing files may be overwritten.",
       "copy": "Copy to {{count}} project(s)",
       "overwriteWarning": "{{count}} selected project(s) already have this skill — they will be overwritten",
-      "metadataWarning": "This Skill is missing version details needed for automatic update checks. Copies in other projects won't be able to check for updates automatically.",
-      "sourceRepairRequired": "This Skill's source record is incomplete and cannot be copied yet. Repair the source first.",
-      "repairSource": "Repair source",
       "success": "Copied to {{count}} project(s) successfully",
-      "skippedAgents": "Copied to the shared Skill directory. Some Agents were not connected separately because their project directory was not found: {{agents}}",
       "partialError": "{{success}} project(s) copied. {{fail}} project(s) still need attention.",
       "copyError": "Copy could not be completed. The selected projects are still available to retry.",
       "recoveryDescription": "This operation did not finish. Some files need to be checked before retrying.",

@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type MutableRefObject,
-  type ReactNode,
 } from 'react';
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -173,18 +172,11 @@ function ReadySession({
 
   return (
     <>
-      <ManageDialogHeader
-        skillName={skillName}
-        modeControl={(
-          <AgentSelectionModeControl
-            snapshot={snapshot.selection}
-            session={session}
-            onModeChange={(mode) => setSession((current) => ({ ...current, mode }))}
-            disabled={saving}
-          />
-        )}
-      />
-      <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-5">
+      <ManageDialogHeader skillName={skillName} />
+      <div
+        data-slot="manage-agents-scroll-content"
+        className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-5"
+      >
         {session.requiresReconfirmation ? (
           <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-sm">
             <span>{t('agentSelection.selectionChanged')}</span>
@@ -209,6 +201,15 @@ function ReadySession({
             </span>
           </div>
         ) : null}
+        <div data-slot="agent-selection-mode-bar" className="mb-7 empty:hidden">
+          <AgentSelectionModeControl
+            snapshot={snapshot.selection}
+            session={session}
+            onModeChange={(mode) => setSession((current) => ({ ...current, mode }))}
+            disabled={saving}
+            className="flex-col items-start gap-2"
+          />
+        </div>
         <AgentSelectionView
           presentation={presentation}
           snapshot={snapshot.selection}
@@ -257,24 +258,17 @@ function ReadySession({
   );
 }
 
-function ManageDialogHeader({ skillName, modeControl }: { skillName?: string; modeControl?: ReactNode }) {
+function ManageDialogHeader({ skillName }: { skillName?: string }) {
   const { t } = useTranslation();
   const title = t('skills.manageAgents.title', { name: skillName });
   return (
-    <DialogHeader
-      className="grid min-w-0 grid-cols-1 items-center gap-x-5 gap-y-3 border-b px-6 py-4 pr-14 text-left sm:grid-cols-[minmax(0,1fr)_auto]"
-    >
-      <DialogTitle className="min-w-0 truncate self-center" title={title}>
+    <DialogHeader className="min-w-0 border-b px-6 py-4 pr-14 text-left">
+      <DialogTitle className="min-w-0 truncate" title={title}>
         {title}
       </DialogTitle>
       <DialogDescription className="sr-only">
         {t('skills.manageAgents.description', { name: skillName })}
       </DialogDescription>
-      {modeControl ? (
-        <div className="min-w-0 sm:justify-self-end">
-          {modeControl}
-        </div>
-      ) : null}
     </DialogHeader>
   );
 }

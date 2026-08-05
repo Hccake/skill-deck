@@ -24,7 +24,7 @@ import type {
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
   ManageAgentSelectionSnapshot, ManageAgentsPreviewRequest, ManageAgentsPreview,
   ManageAgentsPreviewOutcome, ManageAgentsRequest, ManageAgentsResponse,
-  CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
+  CopyAgentSelectionSnapshot, CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   RecoveryResourceId, RecoveryResourceStatus,
@@ -49,7 +49,7 @@ export type {
   UpdateRequest, UpdatePreview, UpdateExecutionRequest, UpdateResponse,
   ManageAgentSelectionSnapshot, ManageAgentsPreviewRequest, ManageAgentsPreview,
   ManageAgentsPreviewOutcome, ManageAgentsRequest, ManageAgentsResponse,
-  CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
+  CopyAgentSelectionSnapshot, CopyRequest, CopyPreviewOutcome, CopyExecutionRequest, CopyResponse,
   ConfigResourceKind,
   AcquireSelectedPayloadsRequest, AcquiredPayloadHandle,
   RecoveryResourceId, RecoveryResourceStatus,
@@ -452,6 +452,13 @@ export async function cleanupDuplicateAgentCopies(
 }
 
 // ============ 复制 Skill API ============
+
+export async function getCopyAgentSelection(
+  source: ContextRef,
+  skillName: string,
+): Promise<CopyAgentSelectionSnapshot> {
+  return unwrap(await commands.getCopyAgentSelection(source, skillName));
+}
 
 /**
  * 复制项目级 skill 到其他项目

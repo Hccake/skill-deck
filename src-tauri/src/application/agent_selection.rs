@@ -168,6 +168,15 @@ pub(crate) struct ResolvedAgentInstallOption {
     content: AgentSelectionContent,
 }
 
+impl ResolvedAgentInstallOption {
+    pub(crate) fn target_id(&self) -> String {
+        self.adapter_target_ids
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("agent-install-option:{}", self.public.id.0))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 enum AgentSelectionContent {
     Canonical,
@@ -194,6 +203,10 @@ pub(crate) struct ResolvedAgentSelection {
 }
 
 impl ResolvedAgentSelection {
+    pub(crate) fn intents(&self) -> &[AgentWriteIntent] {
+        &self.intents
+    }
+
     pub fn entry_plan(&self, include_all_direct_agents: bool) -> AgentEntryPlan {
         let selected_agent_ids = self
             .selected_options
@@ -212,11 +225,7 @@ impl ResolvedAgentSelection {
             .selected_options
             .iter()
             .map(|option| LogicalAgentEntryRoot {
-                target_id: option
-                    .adapter_target_ids
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| format!("agent-install-option:{}", option.public.id.0)),
+                target_id: option.target_id(),
                 root: option.root.clone(),
                 owner_agent_ids: option.public.agent_ids.clone(),
                 content: match &option.content {
@@ -233,6 +242,52 @@ impl ResolvedAgentSelection {
             canonical_owner_agent_ids,
             required_agent_roots,
         }
+    }
+}
+
+pub(crate) fn map_agent_intents_to_submission(
+    catalog: &AgentSelectionCatalog,
+    intents: &[AgentWriteIntent],
+    requested_mode: InstallMode,
+) -> AgentSelectionSubmission {
+    let intents_by_agent = intents
+        .iter()
+        .map(|intent| (&intent.agent_id, intent))
+        .collect::<BTreeMap<_, _>>();
+    let access_by_agent = catalog
+        .snapshot
+        .agents
+        .iter()
+        .map(|agent| (&agent.id, agent.directory_access))
+        .collect::<BTreeMap<_, _>>();
+    let selected_option_ids = catalog
+        .resolved_options
+        .values()
+        .filter(|option| option.public.selectable)
+        .filter(|option| match option.public.kind {
+            AgentInstallOptionKind::StandardDirectory => option.public.agent_ids.iter().any(|id| {
+                intents_by_agent.get(id).is_some_and(|intent| {
+                    intent.own_directory_selected
+                        || access_by_agent.get(id) == Some(&Some(SkillDirectoryAccess::PrivateOnly))
+                })
+            }),
+            AgentInstallOptionKind::GroupLocation => option.public.agent_ids.iter().any(|id| {
+                intents_by_agent.get(id).is_some_and(|intent| {
+                    option.adapter_target_ids.iter().any(|target_id| {
+                        intent
+                            .adapter_targets
+                            .iter()
+                            .any(|requested| requested.0 == *target_id)
+                    })
+                })
+            }),
+        })
+        .map(|option| option.public.id.clone())
+        .collect();
+    AgentSelectionSubmission {
+        revision: catalog.snapshot.revision.clone(),
+        selected_option_ids,
+        requested_mode,
     }
 }
 

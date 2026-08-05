@@ -90,18 +90,31 @@ describe('ManageAgentsDialog', () => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
-  it('uses a compact, wider header with the Skill name and installation mode', () => {
+  it('places installation mode at the start of the scrolling content', async () => {
+    const user = userEvent.setup();
     renderDialog();
 
     const title = screen.getByText('skills.manageAgents.title:{"name":"frontend-design"}');
     const header = title.closest('[data-slot="dialog-header"]');
     const description = screen.getByText(/^skills\.manageAgents\.description:/);
     const mode = screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' });
+    const modeBar = mode.closest('[data-slot="agent-selection-mode-bar"]');
+    const scrollContent = mode.closest('[data-slot="manage-agents-scroll-content"]');
+    const firstAgentGroup = screen.getByText('agentSelection.automatic.manage.title');
     const dialog = screen.getByRole('dialog', { name: 'skills.manageAgents.title:{"name":"frontend-design"}' });
-    expect(header?.contains(mode)).toBe(true);
+    expect(header?.contains(mode)).toBe(false);
+    expect(scrollContent).not.toBeNull();
+    expect(modeBar?.className).toContain('mb-7');
+    expect(mode.compareDocumentPosition(firstAgentGroup) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(description.parentElement).toBe(header);
     expect(description.className).toContain('sr-only');
     expect(dialog.className).toContain('sm:max-w-3xl');
+
+    const help = screen.getByRole('button', { name: 'agentSelection.modeHelp' });
+    expect(screen.getByText('agentSelection.modeTitle').className).toContain('font-medium');
+    expect(firstAgentGroup.className).toContain('font-semibold');
+    await user.hover(help);
+    expect((await screen.findByRole('tooltip')).textContent).toContain('agentSelection.modeHelp');
   });
 
   it('allows choosing the mode first without treating an inactive choice as a saved change', async () => {

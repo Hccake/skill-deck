@@ -44,6 +44,7 @@ pub struct AgentEntryPlan {
     pub required_agent_roots: Vec<LogicalAgentEntryRoot>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn resolve_agent_entry_plan(
     context: &ContextRef,
     runtime: &AgentRuntimeSnapshot,

@@ -49,6 +49,13 @@ pub trait InstallPlanningFactSource: Send + Sync {
         &'a self,
         context: &'a ContextRef,
     ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>>;
+
+    fn current_for_copy_source<'a>(
+        &'a self,
+        context: &'a ContextRef,
+    ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
+        self.current(context)
+    }
 }
 
 pub struct ConcreteInstallPlanner<F, T> {

@@ -1,6 +1,7 @@
 import { listSkills } from '@/hooks/useTauriApi';
 import { contextKey, environmentKey } from '@/lib/context';
 import { useEnvironmentStore } from '@/stores/environment';
+import { useCopyAgentSelection } from '@/hooks/useCopyAgentSelection';
 import { useProjectStore } from '@/stores/projects';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillCopy } from '@/workflows/skill-copy';
@@ -70,24 +71,19 @@ function OpenCopyToProjectDialog({
   const environments = useEnvironmentStore((state) => state.environments);
   const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
   const closeCopyToProject = useSkillDialogStore((state) => state.closeCopyToProject);
-  const openRepairSource = useSkillDialogStore((state) => state.openRepairSource);
-  const repairSourceOpen = useSkillDialogStore((state) => state.repairSourceTarget !== null);
-
-  const handleRepairSource = (targetSkill: InstalledSkill, context: ContextRef) => {
-    openRepairSource(targetSkill, context);
-  };
+  const agentSelection = useCopyAgentSelection(sourceContext, skill.name);
 
   return (
     <CopyToProjectDialog
-      open={!repairSourceOpen}
+      open
       skill={skill}
       sourceContext={sourceContext}
       environments={environments}
       projectsByEnvironment={projectsByEnvironment}
+      agentSelection={agentSelection}
       onLoadProjects={loadTargetProjects}
       checkExistence={checkTargetExistence}
       onClose={closeCopyToProject}
-      onRepairSource={handleRepairSource}
       onCopy={executeSkillCopy}
     />
   );

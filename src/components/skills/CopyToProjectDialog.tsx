@@ -1,7 +1,7 @@
 // src/components/skills/CopyToProjectDialog.tsx
-import { useState, useCallback, useMemo, useEffect, memo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Folder, Info, Loader2 } from 'lucide-react';
+import { AlertTriangle, Folder, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -18,14 +18,38 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { environmentKey, sameEnvironment } from '@/lib/context';
-import type { ContextRef, EnvironmentInfo, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import { formatMutationError } from '@/lib/mutation-results';
+import type {
+  AgentSelectionSubmission,
+  ContextRef,
+  EnvironmentInfo,
+  EnvironmentRef,
+  InstalledSkill,
+  ProjectInfo,
+} from '@/bindings';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type { CopyOutcome } from '@/workflows/skill-copy';
+import type { CopyAgentSelectionState } from '@/hooks/useCopyAgentSelection';
+import { AgentSelectionModeControl } from '@/components/agents/selection/AgentSelectionModeControl';
+import {
+  AgentSelectionUnavailableNotice,
+  AgentSelectionView,
+} from '@/components/agents/selection/AgentSelectionView';
+import { useAgentSelectionPresentation } from '@/components/agents/selection/useAgentSelectionPresentation';
+import {
+  createAgentSelectionSession,
+  refreshAgentSelectionSession,
+  toggleInstallOption,
+  toggleSelectionGroup,
+  type AgentSelectionSession,
+} from '@/lib/agent-selection-session';
+import type { AgentSelectionSnapshot } from '@/bindings';
 
 export interface CopyTargetSelection {
   environment: EnvironmentRef;
   projectIds: string[];
+  agentSelection: AgentSelectionSubmission;
 }
 
 interface CopyToProjectDialogProps {
@@ -34,6 +58,7 @@ interface CopyToProjectDialogProps {
   sourceContext: ContextRef;
   environments: EnvironmentInfo[];
   projectsByEnvironment: Record<string, ProjectInfo[]>;
+  agentSelection: CopyAgentSelectionState & { retry: () => Promise<void> };
   onLoadProjects: (environment: EnvironmentRef) => Promise<void>;
   /** 检查 skill 在目标项目中是否已存在 */
   checkExistence?: (
@@ -42,11 +67,9 @@ interface CopyToProjectDialogProps {
     projectIds: string[],
   ) => Promise<Array<{ projectId: string; hasSkill: boolean }>>;
   onClose: () => void;
-  onRepairSource?: (skill: InstalledSkill, context: ContextRef) => void;
   onCopy: (selection: CopyTargetSelection) => Promise<CopyOutcome>;
 }
 
-const SOURCE_INFO_LIMIT_REASONS = new Set(['missingRemoteHash']);
 type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
 type PresenceState = 'idle' | 'loading' | 'ready' | 'error';
 type ProjectPresence = 'installed' | 'absent' | 'unknown';
@@ -81,13 +104,14 @@ function CopyToProjectDialogSession({
   sourceContext,
   environments,
   projectsByEnvironment,
+  agentSelection,
   onLoadProjects,
   checkExistence,
   onClose,
-  onRepairSource,
   onCopy,
 }: CopyToProjectDialogProps) {
   const { t } = useTranslation();
+  const presentation = useAgentSelectionPresentation('copyToProject');
   const writeBlocked = useBusinessWriteBlocked();
   const [copying, setCopying] = useState(false);
   const [projectLoadState, setProjectLoadState] = useState<ProjectLoadState>('idle');
@@ -102,6 +126,20 @@ function CopyToProjectDialogSession({
   );
   const [completedProjectIds, setCompletedProjectIds] = useState<Set<string>>(new Set());
   const [copyOutcome, setCopyOutcome] = useState<CopyOutcome | null>(null);
+  const [selectionSnapshot, setSelectionSnapshot] = useState<AgentSelectionSnapshot | null>(null);
+  const [agentSession, setAgentSession] = useState<AgentSelectionSession | null>(null);
+  const loadedSelectionRevisionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (agentSelection.status !== 'ready') return;
+    const nextSnapshot = agentSelection.snapshot.selection;
+    if (loadedSelectionRevisionRef.current === nextSnapshot.revision) return;
+    loadedSelectionRevisionRef.current = nextSnapshot.revision;
+    setSelectionSnapshot(nextSnapshot);
+    setAgentSession((session) => session
+      ? refreshAgentSelectionSession(session, nextSnapshot)
+      : createAgentSelectionSession(nextSnapshot));
+  }, [agentSelection]);
 
   const targetEnvironment = environments.find(
     (entry) => environmentKey(entry.environment) === targetEnvironmentKey,
@@ -174,13 +212,18 @@ function CopyToProjectDialogSession({
     return count;
   }, [presenceByProject, selected]);
 
-  const sourceNeedsRepair = copyOutcome?.status === 'sourceRepairRequired';
-  const showSourceInfoNote = useMemo(
-    () => Boolean(
-      skill && (sourceNeedsRepair || SOURCE_INFO_LIMIT_REASONS.has(skill.updateReason ?? ''))
-    ),
-    [skill, sourceNeedsRepair],
-  );
+  const hasWorkflowFeedback = copyOutcome !== null;
+  const failedUnitByProjectId = useMemo(() => {
+    const failedUnits = copyOutcome?.status === 'partial'
+      ? copyOutcome.response.units.filter((unit) => unit.status !== 'succeeded')
+      : copyOutcome?.status === 'failed' && copyOutcome.unit
+        ? [copyOutcome.unit]
+        : [];
+    return new Map(failedUnits.flatMap((unit) => {
+      if (unit.target.scope.scope !== 'project') return [];
+      return [[unit.target.scope.project_id, unit] as const];
+    }));
+  }, [copyOutcome]);
 
   const toggleProject = useCallback((projectId: string) => {
     setSelected((prev) => {
@@ -195,16 +238,31 @@ function CopyToProjectDialogSession({
   }, []);
 
   const handleCopy = useCallback(async () => {
+    if (!selectionSnapshot || !agentSession) return;
     setCopying(true);
     setCopyOutcome(null);
     try {
-      const outcome = await onCopy({ environment: targetEnvironment, projectIds: Array.from(selected) });
+      const outcome = await onCopy({
+        environment: targetEnvironment,
+        projectIds: Array.from(selected),
+        agentSelection: {
+          revision: selectionSnapshot.revision,
+          selectedOptionIds: agentSession.selectedOptionIds,
+          requestedMode: agentSession.mode,
+        },
+      });
       if (!outcome || outcome.status === 'succeeded') {
         onClose();
         return;
       }
       setCopyOutcome(outcome);
-      if (outcome.status === 'partial') {
+      if (outcome.status === 'selectionStale') {
+        loadedSelectionRevisionRef.current = outcome.snapshot.selection.revision;
+        setSelectionSnapshot(outcome.snapshot.selection);
+        setAgentSession((session) => session
+          ? refreshAgentSelectionSession(session, outcome.snapshot.selection)
+          : createAgentSelectionSession(outcome.snapshot.selection));
+      } else if (outcome.status === 'partial') {
         setCompletedProjectIds((previous) => new Set([
           ...previous,
           ...outcome.succeededProjectIds,
@@ -212,11 +270,13 @@ function CopyToProjectDialogSession({
         setSelected(new Set(outcome.retryableProjectIds));
       } else if (outcome.status === 'recoveryRequired') {
         setSelected(new Set());
+      } else if (outcome.status === 'failed' && outcome.unit && !outcome.unit.retryable) {
+        setSelected(new Set());
       }
     } finally {
       setCopying(false);
     }
-  }, [onClose, onCopy, selected, targetEnvironment]);
+  }, [agentSession, onClose, onCopy, selected, selectionSnapshot, targetEnvironment]);
 
   return (
     <Dialog
@@ -224,198 +284,311 @@ function CopyToProjectDialogSession({
       onOpenChange={(nextOpen) => !nextOpen && open && !copying && onClose()}
     >
       <DialogContent
-        className="h-[min(32rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-md"
+        className="grid h-[min(42rem,calc(100dvh-2rem))] w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-5xl"
         dismissible={!copying}
         closeLabel={t('common.close')}
-        aria-busy={projectLoadState === 'loading' || copying}
+        aria-busy={projectLoadState === 'loading' || agentSelection.status === 'loading' || copying}
       >
         <DialogHeader className="border-b px-6 pt-6 pb-4">
-          <DialogTitle>{t('skills.copyToProject.title')}</DialogTitle>
-          <DialogDescription>
-            {t('skills.copyToProject.description', { name: skill?.name })}
+          <DialogTitle>{t('skills.copyToProject.title', { name: skill?.name })}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {t('skills.copyToProject.ariaDescription')}
           </DialogDescription>
         </DialogHeader>
 
         <div
           data-testid="copy-to-project-dialog-body"
-          className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-6 py-4"
+          className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden"
         >
-        {copyOutcome?.status === 'partial' ? (
-          <Alert role="alert" variant="destructive">
-            <AlertDescription>
-              {t('skills.copyToProject.partialError', {
-                success: copyOutcome.succeededProjectIds.length,
-                fail: copyOutcome.failedProjectIds.length,
-              })}
-            </AlertDescription>
-          </Alert>
-        ) : copyOutcome?.status === 'recoveryRequired' ? (
-          <Alert role="alert" variant="destructive">
-            <AlertDescription>
-              <p>{t('skills.copyToProject.recoveryDescription')}</p>
-              {copyOutcome.recovery.map((action) => (
-                <RecoveryActions key={action.resourceId} recovery={action} />
-              ))}
-            </AlertDescription>
-          </Alert>
-        ) : copyOutcome?.status === 'failed' ? (
-          <Alert role="alert" variant="destructive">
-            <AlertDescription>{t('skills.copyToProject.copyError')}</AlertDescription>
-          </Alert>
-        ) : null}
-        {copyOutcome?.status === 'partial' && copyOutcome.recovery?.length ? (
-          <div className="space-y-2" role="status">
-            <p className="text-sm text-destructive">{t('skills.copyToProject.recoveryDescription')}</p>
-            {copyOutcome.recovery.map((action) => (
-              <RecoveryActions key={action.resourceId} recovery={action} />
-            ))}
+          <div className={hasWorkflowFeedback ? 'space-y-3 px-6 pt-4' : ''}>
+            {copyOutcome?.status === 'partial' ? (
+              <Alert role="alert" variant="destructive">
+                <AlertDescription>
+                  {t('skills.copyToProject.partialError', {
+                    success: copyOutcome.succeededProjectIds.length,
+                    fail: copyOutcome.failedProjectIds.length,
+                  })}
+                </AlertDescription>
+              </Alert>
+            ) : copyOutcome?.status === 'recoveryRequired' ? (
+              <Alert role="alert" variant="destructive">
+                <AlertDescription>
+                  <p>{t('skills.copyToProject.recoveryDescription')}</p>
+                  {copyOutcome.recovery.map((action) => (
+                    <RecoveryActions key={action.resourceId} recovery={action} />
+                  ))}
+                </AlertDescription>
+              </Alert>
+            ) : copyOutcome?.status === 'selectionStale' ? (
+              <Alert role="alert">
+                <AlertDescription className="flex items-center justify-between gap-3">
+                  <span>{t('agentSelection.selectionChanged')}</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setAgentSession((current) => current
+                        ? { ...current, requiresReconfirmation: false }
+                        : current);
+                      setCopyOutcome(null);
+                    }}
+                  >
+                    {t('agentSelection.confirmCurrentSelection')}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : copyOutcome?.status === 'failed' ? (
+              <Alert role="alert" variant="destructive">
+                <AlertDescription>
+                  {copyOutcome.unit?.error
+                    ? formatMutationError(copyOutcome.unit.error, t)
+                    : t('skills.copyToProject.copyError')}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {copyOutcome?.status === 'partial' && copyOutcome.recovery?.length ? (
+              <div className="space-y-2" role="status">
+                <p className="text-sm text-destructive">
+                  {t('skills.copyToProject.recoveryDescription')}
+                </p>
+                {copyOutcome.recovery.map((action) => (
+                  <RecoveryActions key={action.resourceId} recovery={action} />
+                ))}
+              </div>
+            ) : null}
           </div>
-        ) : null}
-        {showSourceInfoNote ? (
-          <div
-            role="note"
-            className={`flex items-start gap-1.5 rounded-md px-2.5 py-2 ${
-              sourceNeedsRepair ? 'bg-warning/10' : 'bg-muted/40'
-            }`}
-          >
-            <Info className="h-3.5 w-3.5 shrink-0 mt-px text-muted-foreground" />
-            <div className="min-w-0 space-y-1">
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                {t(sourceNeedsRepair
-                  ? 'skills.copyToProject.sourceRepairRequired'
-                  : 'skills.copyToProject.metadataWarning')}
-              </p>
-              {sourceNeedsRepair && onRepairSource && skill ? (
-                <Button
-                  variant="link"
-                  size="sm"
-                  className="h-auto p-0 text-xs"
-                  onClick={() => onRepairSource(skill, sourceContext)}
-                >
-                  {t('skills.copyToProject.repairSource')}
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
 
-        <div className="space-y-1.5">
-          <Label>{t('skills.copyToProject.targetEnvironment')}</Label>
-          <Select
-            value={targetEnvironmentKey}
-            onValueChange={(value) => {
-              setTargetEnvironmentKey(value);
-              setSelected(new Set());
-              setCompletedProjectIds(new Set());
-              setCopyOutcome(null);
-              setProjectLoadState('loading');
-              setPresenceState('idle');
-              setPresenceByProject(new Map());
-            }}
-          >
-            <SelectTrigger aria-label={t('skills.copyToProject.targetEnvironment')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {environments.map((environment) => (
-                <SelectItem
-                  key={environmentKey(environment.environment)}
-                  value={environmentKey(environment.environment)}
-                >
-                  {environment.displayName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+          <div className="grid min-h-0 min-w-0 grid-rows-[minmax(10rem,0.85fr)_minmax(12rem,1.15fr)] gap-4 px-6 py-4 md:grid-cols-[minmax(16rem,0.8fr)_minmax(24rem,1.2fr)] md:grid-rows-1 md:gap-8">
+            <section
+              className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] border-b pb-4 md:border-r md:border-b-0 md:pb-0 md:pr-8"
+              aria-labelledby="copy-target-projects-title"
+            >
+              <div className="space-y-4 pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 id="copy-target-projects-title" className="text-sm font-semibold">
+                    {t('skills.copyToProject.targetProjects')}
+                  </h2>
+                  {selected.size > 0 ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t('skills.copyToProject.selectedProjects', { count: selected.size })}
+                    </span>
+                  ) : null}
+                </div>
 
-        <div className="space-y-1.5">
-          {projectLoadState === 'loading' || projectLoadState === 'idle' ? (
-            <div role="status" aria-live="polite" className="space-y-2">
-              <span className="sr-only">{t('common.loading')}</span>
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-12 w-4/5" />
-            </div>
-          ) : projectLoadState === 'error' ? (
-            <Alert>
-              <AlertDescription>
-                <p>{t('skills.copyToProject.projectsLoadError')}</p>
-                <Button
-                  variant="link"
-                  size="sm"
-                  className="h-auto p-0"
-                  onClick={() => setProjectLoadAttempt((attempt) => attempt + 1)}
-                >
-                  {t('common.retry')}
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : availableProjects.length > 0 ? (
-            <>
-              {presenceState === 'error' ? (
-                <div
-                  role="status"
-                  aria-label={t('skills.copyToProject.presenceUnknown')}
-                  className="mb-2"
-                >
+                {environments.length > 1 ? (
+                  <div className="space-y-1.5">
+                    <Label>{t('skills.copyToProject.targetEnvironment')}</Label>
+                    <Select
+                      value={targetEnvironmentKey}
+                      onValueChange={(value) => {
+                        setTargetEnvironmentKey(value);
+                        setSelected(new Set());
+                        setCompletedProjectIds(new Set());
+                        setCopyOutcome(null);
+                        setProjectLoadState('loading');
+                        setPresenceState('idle');
+                        setPresenceByProject(new Map());
+                      }}
+                    >
+                      <SelectTrigger aria-label={t('skills.copyToProject.targetEnvironment')}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {environments.map((environment) => (
+                          <SelectItem
+                            key={environmentKey(environment.environment)}
+                            value={environmentKey(environment.environment)}
+                          >
+                            {environment.displayName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+              </div>
+
+              <div
+                data-testid="copy-target-projects-scroll"
+                className="min-h-0 space-y-1.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
+              >
+                {projectLoadState === 'loading' || projectLoadState === 'idle' ? (
+                  <div role="status" aria-live="polite" className="space-y-2">
+                    <span className="sr-only">{t('common.loading')}</span>
+                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-12 w-4/5" />
+                  </div>
+                ) : projectLoadState === 'error' ? (
                   <Alert>
                     <AlertDescription>
-                      {t('skills.copyToProject.presenceUnknown')}
+                      <p>{t('skills.copyToProject.projectsLoadError')}</p>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0"
+                        onClick={() => setProjectLoadAttempt((attempt) => attempt + 1)}
+                      >
+                        {t('common.retry')}
+                      </Button>
                     </AlertDescription>
                   </Alert>
-                </div>
-              ) : null}
-              {availableProjects.map((project) => {
-                const projectId = project.binding.id;
-                const presence = presenceByProject.get(projectId);
-                return (
-                  <label
-                    key={projectId}
-                    className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
-                  >
-                    <Checkbox
-                      checked={selected.has(projectId)}
-                      onCheckedChange={() => toggleProject(projectId)}
-                    />
-                    <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">
-                        {project.binding.displayName || project.binding.nativePath}
-                      </span>
-                      {project.binding.displayName ? (
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {project.binding.nativePath}
-                        </span>
-                      ) : null}
-                    </span>
-                    {presence === 'installed' ? (
-                      <Badge variant="outline" className="text-xs text-warning shrink-0">
-                        {t('skills.copyToProject.installed')}
-                      </Badge>
-                    ) : presenceState === 'error' && presence === 'unknown' ? (
-                      <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">
-                        {t('skills.copyToProject.unknown')}
-                      </Badge>
+                ) : availableProjects.length > 0 ? (
+                  <>
+                    {presenceState === 'error' ? (
+                      <div
+                        role="status"
+                        aria-label={t('skills.copyToProject.presenceUnknown')}
+                        className="mb-2"
+                      >
+                        <Alert>
+                          <AlertDescription>
+                            {t('skills.copyToProject.presenceUnknown')}
+                          </AlertDescription>
+                        </Alert>
+                      </div>
                     ) : null}
-                  </label>
-                );
-              })}
-              {selectedExistingCount > 0 ? (
-                <div className="flex items-start gap-1.5 rounded-md bg-warning/10 px-2.5 py-2 mt-2">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px text-warning" />
-                  <p className="text-xs text-warning leading-relaxed">
-                    {t('skills.copyToProject.overwriteWarning', { count: selectedExistingCount })}
+                    {availableProjects.map((project) => {
+                      const projectId = project.binding.id;
+                      const presence = presenceByProject.get(projectId);
+                      const failedUnit = failedUnitByProjectId.get(projectId);
+                      return (
+                        <label
+                          key={projectId}
+                          className="flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-muted/50"
+                        >
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={selected.has(projectId)}
+                            onCheckedChange={() => toggleProject(projectId)}
+                          />
+                          <Folder className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm">
+                              {project.binding.displayName || project.binding.nativePath}
+                            </span>
+                            {project.binding.displayName ? (
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {project.binding.nativePath}
+                              </span>
+                            ) : null}
+                            {failedUnit ? (
+                              <span className="mt-0.5 block text-xs text-destructive">
+                                {failedUnit.error
+                                  ? formatMutationError(failedUnit.error, t)
+                                  : t('skills.copyToProject.copyError')}
+                              </span>
+                            ) : null}
+                          </span>
+                          {presence === 'installed' ? (
+                            <Badge variant="outline" className="shrink-0 text-xs text-warning">
+                              {t('skills.copyToProject.installed')}
+                            </Badge>
+                          ) : presenceState === 'error' && presence === 'unknown' ? (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 text-xs text-muted-foreground"
+                            >
+                              {t('skills.copyToProject.unknown')}
+                            </Badge>
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                    {selectedExistingCount > 0 ? (
+                      <div className="mt-2 flex items-start gap-1.5 rounded-md bg-warning/10 px-2.5 py-2">
+                        <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-warning" />
+                        <p className="text-xs leading-relaxed text-warning">
+                          {t('skills.copyToProject.overwriteWarning', {
+                            count: selectedExistingCount,
+                          })}
+                        </p>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="py-4 text-center text-sm text-muted-foreground">
+                    {t('skills.copyToProject.noProjects')}
                   </p>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              {t('skills.copyToProject.noProjects')}
-            </p>
-          )}
-        </div>
+                )}
+              </div>
+            </section>
+
+            <section
+              className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]"
+              aria-labelledby="copy-agent-settings-title"
+            >
+              <h2 id="copy-agent-settings-title" className="pb-3 text-sm font-semibold">
+                {t('agentSelection.copyTitle')}
+              </h2>
+              <div
+                data-testid="copy-agent-settings-scroll"
+                className="min-h-0 space-y-6 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
+              >
+                {agentSelection.status === 'error' ? (
+                  <Alert>
+                    <AlertDescription className="flex items-center justify-between gap-3">
+                      <span>{t('skills.copyToProject.agentsLoadError')}</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void agentSelection.retry()}
+                      >
+                        {t('common.retry')}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : agentSelection.status === 'loading' || !selectionSnapshot || !agentSession ? (
+                  <div role="status" aria-live="polite" className="space-y-3">
+                    <span className="sr-only">{t('common.loading')}</span>
+                    <Skeleton className="h-10 w-72 max-w-full" />
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-32 w-full" />
+                  </div>
+                ) : (
+                  <>
+                    <AgentSelectionModeControl
+                      snapshot={selectionSnapshot}
+                      session={agentSession}
+                      onModeChange={(mode) => setAgentSession((current) => current
+                        ? { ...current, mode }
+                        : current)}
+                      disabled={copying}
+                      className="flex-col items-start gap-2"
+                    />
+                    <AgentSelectionUnavailableNotice snapshot={selectionSnapshot} />
+                    <AgentSelectionView
+                      presentation={presentation}
+                      snapshot={selectionSnapshot}
+                      session={agentSession}
+                      disabled={copying}
+                      emptyMessage={t('agentSelection.installEmpty')}
+                      onOptionChange={(optionId, checked) => setAgentSession((current) => current
+                        ? toggleInstallOption(current, selectionSnapshot, optionId, checked)
+                        : current)}
+                      onGroupChange={(groupId, checked) => setAgentSession((current) => current
+                        ? toggleSelectionGroup(current, selectionSnapshot, groupId, checked)
+                        : current)}
+                      onOtherExpandedChange={(otherAgentsExpanded) => setAgentSession((current) => current
+                        ? { ...current, otherAgentsExpanded }
+                        : current)}
+                      onAdditionalExpandedChange={(additionalInstallExpanded) => setAgentSession((current) => current
+                        ? { ...current, additionalInstallExpanded }
+                        : current)}
+                      onGroupExpandedChange={(groupId, expanded) => setAgentSession((current) => current ? {
+                        ...current,
+                        expandedGroupIds: expanded
+                          ? [...new Set([...current.expandedGroupIds, groupId])]
+                          : current.expandedGroupIds.filter((id) => id !== groupId),
+                      } : current)}
+                    />
+                  </>
+                )}
+              </div>
+            </section>
+          </div>
         </div>
 
         <DialogFooter className="border-t px-6 py-4">
@@ -429,6 +602,10 @@ function CopyToProjectDialogSession({
               || copying
               || projectLoadState !== 'ready'
               || selected.size === 0
+              || !selectionSnapshot
+              || !agentSession
+              || agentSelection.status !== 'ready'
+              || agentSession.requiresReconfirmation
             }
           >
             {copying ? (
@@ -437,7 +614,7 @@ function CopyToProjectDialogSession({
                 {t('common.loading')}
               </>
             ) : (
-              copyOutcome?.status === 'partial'
+              copyOutcome?.status === 'partial' && copyOutcome.retryableProjectIds.length > 0
                 ? t('skills.copyToProject.retryFailed')
                 : t('skills.copyToProject.copy', { count: selected.size })
             )}

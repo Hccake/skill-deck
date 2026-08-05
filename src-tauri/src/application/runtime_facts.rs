@@ -85,7 +85,14 @@ impl RuntimePlanningFactSource {
         &self,
         context: &ContextRef,
     ) -> Result<InstallPlanningFacts, AppError> {
-        install_facts_from_base(self.capture_context_base(context).await?).await
+        install_facts_from_base(self.capture_context_base(context).await?, false).await
+    }
+
+    async fn capture_copy_source(
+        &self,
+        context: &ContextRef,
+    ) -> Result<InstallPlanningFacts, AppError> {
+        install_facts_from_base(self.capture_context_base(context).await?, true).await
     }
 
     async fn capture_context_base(&self, context: &ContextRef) -> Result<CapturedBase, AppError> {
@@ -161,6 +168,13 @@ impl InstallPlanningFactSource for RuntimePlanningFactSource {
         context: &'a ContextRef,
     ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
         Box::pin(async move { self.capture_install(context).await })
+    }
+
+    fn current_for_copy_source<'a>(
+        &'a self,
+        context: &'a ContextRef,
+    ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
+        Box::pin(async move { self.capture_copy_source(context).await })
     }
 }
 
@@ -394,7 +408,10 @@ fn context_authority_revision(
     stable_digest(&projection)
 }
 
-async fn install_facts_from_base(base: CapturedBase) -> Result<InstallPlanningFacts, AppError> {
+async fn install_facts_from_base(
+    base: CapturedBase,
+    tolerate_invalid_source_lock: bool,
+) -> Result<InstallPlanningFacts, AppError> {
     let project_path = base
         .resolved_context
         .project
@@ -404,7 +421,15 @@ async fn install_facts_from_base(base: CapturedBase) -> Result<InstallPlanningFa
         AgentEnvironmentResolver::from_environment(base.environment_context.clone())
             .resolve_registry(&base.registry, project_path)
             .await?;
-    let lock_document = load_current_lock(&base).await?;
+    let lock_document = match load_current_lock(&base).await {
+        Ok(document) => document,
+        Err(AppError::Json { .. } | AppError::ConfigurationCorrupted { .. })
+            if tolerate_invalid_source_lock =>
+        {
+            LosslessLockDocument::empty(base.lock_schema)
+        }
+        Err(error) => return Err(error),
+    };
     Ok(InstallPlanningFacts {
         resolved_context: base.resolved_context,
         agent_runtime,
@@ -720,6 +745,56 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(execute_revisions.context, after_selected_change.context);
+    }
+
+    #[tokio::test]
+    async fn copy_source_tolerates_a_corrupted_project_lock_without_relaxing_normal_reads() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let selected = temp.path().join("selected");
+        let unrelated = temp.path().join("unrelated");
+        let projects_path = temp.path().join("state/projects.json");
+        let global_lock_path = temp.path().join("state/global-lock.json");
+        for path in [&home, &selected, &unrelated] {
+            fs::create_dir_all(path).unwrap();
+        }
+        fs::create_dir_all(projects_path.parent().unwrap()).unwrap();
+        fs::write(
+            &projects_path,
+            projects_json(&selected.to_string_lossy(), &unrelated.to_string_lossy()),
+        )
+        .unwrap();
+        fs::write(selected.join("skills-lock.json"), b"{not-json").unwrap();
+
+        let source = RuntimePlanningFactSource::with_host_snapshot(
+            Arc::new(StaticRegistry(Arc::new(registry_snapshot()))),
+            Arc::new(WslRuntime::default()),
+            HostRuntimeSnapshot {
+                home,
+                config_home: temp.path().join("config"),
+                projects_path,
+                global_lock_path,
+                environment_variables: BTreeMap::new(),
+            },
+        );
+        let context = ContextRef {
+            environment: EnvironmentRef::Host,
+            scope: ContextScope::Project {
+                project_id: "selected".to_string(),
+            },
+        };
+
+        assert!(matches!(
+            InstallPlanningFactSource::current(&source, &context).await,
+            Err(AppError::Json { .. })
+        ));
+
+        let copy_facts = source.current_for_copy_source(&context).await.unwrap();
+        assert!(copy_facts
+            .lock_document
+            .entry_snapshot("demo")
+            .value()
+            .is_none());
     }
 
     #[tokio::test]

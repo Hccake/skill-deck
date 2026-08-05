@@ -15,7 +15,9 @@
   "agentSelection": {
     "title": "关联 Agent",
     "installTitle": "选择 Agent",
+    "copyTitle": "关联 Agent",
     "modeTitle": "安装方式",
+    "modeHelp": "用于新增或修复 Agent 自己的 Skill 目录；仅支持复制的 Agent 不受此设置影响。",
     "link": "链接",
     "linkRecommended": "链接（推荐）",
     "copy": "复制",
@@ -26,8 +28,8 @@
         "help": "此 Skill 安装到通用 Skill 目录后，这些 Agent 无需单独安装。"
       },
       "manage": {
-        "title": "可通过通用目录使用",
-        "help": "这些 Agent 会读取当前 Skill 所在的通用 Skill 目录，无需单独安装。"
+        "title": "无需选择即可使用",
+        "help": "当前 Skill 已安装在通用 Skill 目录中，这些 Agent 可以正常读取，无需单独安装。"
       },
       "copyToProject": {
         "title": "复制后可直接使用",
@@ -333,21 +335,21 @@
       "cleanupSuccess": "额外副本已移除"
     },
     "copyToProject": {
-      "title": "复制到项目",
+      "title": "复制「{{name}}」到其他项目",
       "description": "将 \"{{name}}\" 复制到其他项目",
+      "ariaDescription": "配置目标项目、关联 Agent 和安装方式。",
+      "targetProjects": "目标项目",
+      "selectedProjects": "已选择 {{count}} 个",
       "targetEnvironment": "目标环境",
       "noProjects": "没有其他可用项目",
       "installed": "已安装",
       "unknown": "未知",
       "projectsLoadError": "无法加载所选环境中的项目。",
+      "agentsLoadError": "无法加载 Agent 配置。",
       "presenceUnknown": "无法确认这些项目是否已安装当前 Skill，已有文件可能会被覆盖。",
       "copy": "复制到 {{count}} 个项目",
       "overwriteWarning": "{{count}} 个选中的项目已安装此 skill，将被覆盖",
-      "metadataWarning": "当前 Skill 缺少用于自动检查更新的版本信息。复制到其他项目后，仍无法自动检查更新。",
-      "sourceRepairRequired": "当前 Skill 的来源记录不完整，暂时不能复制。请先修复来源。",
-      "repairSource": "修复来源",
       "success": "已成功复制到 {{count}} 个项目",
-      "skippedAgents": "已复制到通用 Skill 目录。部分 Agent 因目标项目目录不存在，未单独接入：{{agents}}",
       "partialError": "已复制 {{success}} 个项目，仍有 {{fail}} 个项目需要处理。",
       "copyError": "复制未完成，已选择的项目仍可重试。",
       "recoveryDescription": "本次操作未完成，相关文件需要检查。请先处理下方恢复项。",

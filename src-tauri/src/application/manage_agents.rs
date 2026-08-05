@@ -172,12 +172,12 @@ struct ResolvedManageExecution {
     selection: ResolvedManageSelection,
 }
 
-struct LoadedManageSelection {
-    skill_name: String,
-    public: ManageAgentSelectionSnapshot,
-    catalog: crate::application::agent_selection::AgentSelectionCatalog,
-    observed: ObservedSkillSnapshot,
-    observed_entry_ids: BTreeMap<AgentInstallOptionId, ObservedEntryId>,
+pub(crate) struct LoadedManageSelection {
+    pub(crate) skill_name: String,
+    pub(crate) public: ManageAgentSelectionSnapshot,
+    pub(crate) catalog: crate::application::agent_selection::AgentSelectionCatalog,
+    pub(crate) observed: ObservedSkillSnapshot,
+    pub(crate) observed_entry_ids: BTreeMap<AgentInstallOptionId, ObservedEntryId>,
 }
 
 fn manage_option_state(
@@ -394,118 +394,7 @@ where
         context: &ContextRef,
         skill_name: &str,
     ) -> Result<LoadedManageSelection, AppError> {
-        let observed = self.observer.observe(context, skill_name).await?;
-        let mut catalog = build_agent_selection_catalog(
-            context,
-            &observed.facts.agent_runtime,
-            &observed.facts.eve_targets,
-            &self.targets,
-        )
-        .await?;
-        let option_ids = catalog
-            .snapshot
-            .install_options
-            .iter()
-            .map(|option| option.id.clone())
-            .collect::<Vec<_>>();
-        let destinations = option_ids
-            .iter()
-            .map(|option_id| {
-                let option = catalog
-                    .resolved_options
-                    .get(option_id)
-                    .expect("catalog option has an internal target");
-                join_entry(&option.root, skill_name)
-            })
-            .collect::<Vec<_>>();
-        let option_facts = if destinations.is_empty() {
-            Vec::new()
-        } else {
-            self.targets.resolve(context, &destinations, None).await?
-        };
-        if option_facts.len() != option_ids.len() {
-            return Err(AppError::StaleTarget);
-        }
-
-        let observed_by_key = observed
-            .entries
-            .iter()
-            .map(|entry| (&entry.fact.key, &entry.public.entry_id))
-            .collect::<BTreeMap<_, _>>();
-        let mut states = Vec::with_capacity(option_ids.len());
-        let mut observed_entry_ids = BTreeMap::new();
-        for (option_id, fact) in option_ids.into_iter().zip(option_facts) {
-            let placement_conflict =
-                catalog
-                    .resolved_options
-                    .get(&option_id)
-                    .is_some_and(|option| {
-                        option.public.disabled_reason
-                            == Some(AgentSelectionDisabledReason::PlacementConflict)
-                    });
-            let state =
-                manage_option_state(&option_id, &fact, &observed.canonical, placement_conflict);
-            if state.initial_selected {
-                if let Some(entry_id) = observed_by_key.get(&fact.key) {
-                    observed_entry_ids.insert(option_id.clone(), (*entry_id).clone());
-                }
-            }
-            states.push(state);
-        }
-        catalog.snapshot.initial_selected_option_ids = states
-            .iter()
-            .filter(|state| state.initial_selected)
-            .map(|state| state.option_id.clone())
-            .collect();
-        catalog.snapshot.revision = AgentSelectionRevision(stable_digest(&(
-            "manage-agent-selection-revision-v1",
-            &catalog.snapshot.revision,
-            states
-                .iter()
-                .map(|state| {
-                    (
-                        &state.option_id,
-                        state.current_entry,
-                        state.initial_selected,
-                        state.allowed_results,
-                        state.selected_effect,
-                        state.unselected_effect,
-                        state.disabled_reason,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        ))?);
-        catalog.snapshot.user_mode_option_ids = states
-            .iter()
-            .filter(|state| {
-                matches!(
-                    state.selected_effect,
-                    Some(ManageSelectedEffect::Add | ManageSelectedEffect::Repair)
-                )
-            })
-            .filter_map(|state| {
-                catalog
-                    .resolved_options
-                    .get(&state.option_id)
-                    .filter(|option| {
-                        option.public.selectable
-                            && option.public.mode_constraint
-                                == AgentSelectionModeConstraint::UserSelectable
-                    })
-                    .map(|_| state.option_id.clone())
-            })
-            .collect();
-
-        Ok(LoadedManageSelection {
-            skill_name: skill_name.to_string(),
-            public: ManageAgentSelectionSnapshot {
-                selection: catalog.snapshot.clone(),
-                option_states: states,
-            },
-            catalog,
-            observed,
-            observed_entry_ids,
-        })
+        load_observed_agent_selection(&self.observer, &self.targets, context, skill_name).await
     }
 
     fn resolve_requested_selection(
@@ -634,6 +523,156 @@ where
         }
         Ok(ResolvedAdditions { plan, facts })
     }
+}
+
+pub(crate) async fn load_observed_agent_selection<F, T>(
+    observer: &SkillEntryObserver<F, T>,
+    targets: &T,
+    context: &ContextRef,
+    skill_name: &str,
+) -> Result<LoadedManageSelection, AppError>
+where
+    F: InstallPlanningFactSource,
+    T: TargetFactResolver + Clone,
+{
+    let observed = observer.observe(context, skill_name).await?;
+    build_observed_agent_selection(targets, context, skill_name, observed).await
+}
+
+pub(crate) async fn load_observed_agent_selection_for_copy<F, T>(
+    observer: &SkillEntryObserver<F, T>,
+    targets: &T,
+    context: &ContextRef,
+    skill_name: &str,
+) -> Result<LoadedManageSelection, AppError>
+where
+    F: InstallPlanningFactSource,
+    T: TargetFactResolver + Clone,
+{
+    let observed = observer
+        .observe_for_copy_source(context, skill_name)
+        .await?;
+    build_observed_agent_selection(targets, context, skill_name, observed).await
+}
+
+async fn build_observed_agent_selection<T>(
+    targets: &T,
+    context: &ContextRef,
+    skill_name: &str,
+    observed: ObservedSkillSnapshot,
+) -> Result<LoadedManageSelection, AppError>
+where
+    T: TargetFactResolver + Clone,
+{
+    let mut catalog = build_agent_selection_catalog(
+        context,
+        &observed.facts.agent_runtime,
+        &observed.facts.eve_targets,
+        targets,
+    )
+    .await?;
+    let option_ids = catalog
+        .snapshot
+        .install_options
+        .iter()
+        .map(|option| option.id.clone())
+        .collect::<Vec<_>>();
+    let destinations = option_ids
+        .iter()
+        .map(|option_id| {
+            let option = catalog
+                .resolved_options
+                .get(option_id)
+                .expect("catalog option has an internal target");
+            join_entry(&option.root, skill_name)
+        })
+        .collect::<Vec<_>>();
+    let option_facts = if destinations.is_empty() {
+        Vec::new()
+    } else {
+        targets.resolve(context, &destinations, None).await?
+    };
+    if option_facts.len() != option_ids.len() {
+        return Err(AppError::StaleTarget);
+    }
+
+    let observed_by_key = observed
+        .entries
+        .iter()
+        .map(|entry| (&entry.fact.key, &entry.public.entry_id))
+        .collect::<BTreeMap<_, _>>();
+    let mut states = Vec::with_capacity(option_ids.len());
+    let mut observed_entry_ids = BTreeMap::new();
+    for (option_id, fact) in option_ids.into_iter().zip(option_facts) {
+        let placement_conflict = catalog
+            .resolved_options
+            .get(&option_id)
+            .is_some_and(|option| {
+                option.public.disabled_reason
+                    == Some(AgentSelectionDisabledReason::PlacementConflict)
+            });
+        let state = manage_option_state(&option_id, &fact, &observed.canonical, placement_conflict);
+        if state.initial_selected {
+            if let Some(entry_id) = observed_by_key.get(&fact.key) {
+                observed_entry_ids.insert(option_id.clone(), (*entry_id).clone());
+            }
+        }
+        states.push(state);
+    }
+    catalog.snapshot.initial_selected_option_ids = states
+        .iter()
+        .filter(|state| state.initial_selected)
+        .map(|state| state.option_id.clone())
+        .collect();
+    catalog.snapshot.revision = AgentSelectionRevision(stable_digest(&(
+        "manage-agent-selection-revision-v1",
+        &catalog.snapshot.revision,
+        states
+            .iter()
+            .map(|state| {
+                (
+                    &state.option_id,
+                    state.current_entry,
+                    state.initial_selected,
+                    state.allowed_results,
+                    state.selected_effect,
+                    state.unselected_effect,
+                    state.disabled_reason,
+                )
+            })
+            .collect::<Vec<_>>(),
+    ))?);
+    catalog.snapshot.user_mode_option_ids = states
+        .iter()
+        .filter(|state| {
+            matches!(
+                state.selected_effect,
+                Some(ManageSelectedEffect::Add | ManageSelectedEffect::Repair)
+            )
+        })
+        .filter_map(|state| {
+            catalog
+                .resolved_options
+                .get(&state.option_id)
+                .filter(|option| {
+                    option.public.selectable
+                        && option.public.mode_constraint
+                            == AgentSelectionModeConstraint::UserSelectable
+                })
+                .map(|_| state.option_id.clone())
+        })
+        .collect();
+
+    Ok(LoadedManageSelection {
+        skill_name: skill_name.to_string(),
+        public: ManageAgentSelectionSnapshot {
+            selection: catalog.snapshot.clone(),
+            option_states: states,
+        },
+        catalog,
+        observed,
+        observed_entry_ids,
+    })
 }
 
 struct ResolvedAdditions {
@@ -842,18 +881,6 @@ fn manage_lock_mutation(
             message: "Eve targets require Project Context".to_string(),
         });
     }
-    let raw = snapshot
-        .facts
-        .lock_document
-        .entry_snapshot(&request.skill_name)
-        .value()
-        .cloned()
-        .ok_or_else(|| AppError::InvalidSource {
-            value: format!(
-                "Skill '{}' is missing from the project lock",
-                request.skill_name
-            ),
-        })?;
     let mut subagents = snapshot
         .entries
         .iter()
@@ -877,20 +904,18 @@ fn manage_lock_mutation(
                     .map(crate::core::eve::lock_subagent_value)
             }),
     );
-    let mut replacement = raw;
-    {
-        let replacement =
-            replacement
-                .as_object_mut()
-                .ok_or_else(|| AppError::ConfigurationCorrupted {
-                    message: "project lock entry must be an object".to_string(),
-                })?;
-        if subagents.iter().any(|target| !target.is_empty()) {
-            replacement.insert("subagents".to_string(), serde_json::json!(subagents));
-        } else {
-            replacement.remove("subagents");
-        }
-    }
+    let Some(replacement) = eve_lock_replacement(
+        snapshot
+            .facts
+            .lock_document
+            .entry_snapshot(&request.skill_name)
+            .value()
+            .cloned(),
+        &subagents,
+    )?
+    else {
+        return Ok(None);
+    };
     Ok(Some(PreparedLockMutation {
         target: snapshot.facts.resolved_context.lock.clone(),
         legacy_target: None,
@@ -904,6 +929,29 @@ fn manage_lock_mutation(
             std::iter::empty::<&str>(),
         ),
     }))
+}
+
+fn eve_lock_replacement(
+    raw: Option<serde_json::Value>,
+    subagents: &BTreeSet<String>,
+) -> Result<Option<serde_json::Value>, AppError> {
+    let Some(mut replacement) = raw else {
+        return Ok(None);
+    };
+    {
+        let replacement =
+            replacement
+                .as_object_mut()
+                .ok_or_else(|| AppError::ConfigurationCorrupted {
+                    message: "project lock entry must be an object".to_string(),
+                })?;
+        if subagents.iter().any(|target| !target.is_empty()) {
+            replacement.insert("subagents".to_string(), serde_json::json!(subagents));
+        } else {
+            replacement.remove("subagents");
+        }
+    }
+    Ok(Some(replacement))
 }
 
 fn validate_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
@@ -973,6 +1021,14 @@ mod tests {
     use crate::application::agent_intent::AgentWriteIntent;
     use crate::core::agent_definition::AgentId;
     use crate::environment::runtime::ObservedEntryId;
+
+    #[test]
+    fn eve_management_without_a_lock_entry_skips_lock_mutation() {
+        assert_eq!(
+            eve_lock_replacement(None, &BTreeSet::from(["builder".to_string()])).unwrap(),
+            None
+        );
+    }
 
     #[test]
     fn manage_preview_selection_accepts_an_empty_baseline() {

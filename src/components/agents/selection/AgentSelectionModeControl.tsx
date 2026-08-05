@@ -1,9 +1,10 @@
-import { Copy, Link2 } from 'lucide-react';
+import { CircleHelp, Copy, Link2 } from 'lucide-react';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { AgentSelectionSnapshot, InstallMode } from '@/bindings';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   shouldShowInstallMode,
@@ -33,8 +34,24 @@ export function AgentSelectionModeControl({
 
   return (
     <div className={cn('flex min-w-0 flex-wrap items-center gap-3', className)}>
-      <span className="shrink-0 text-xs font-medium text-muted-foreground">
-        {t('agentSelection.modeTitle')}
+      <span className="flex shrink-0 items-center gap-1">
+        <span className="text-sm font-medium text-foreground">
+          {t('agentSelection.modeTitle')}
+        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={t('agentSelection.modeHelp')}
+            >
+              <CircleHelp className="size-3.5" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-72 text-xs leading-5">
+            {t('agentSelection.modeHelp')}
+          </TooltipContent>
+        </Tooltip>
       </span>
       <RadioGroup
         value={session.mode}

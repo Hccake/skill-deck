@@ -6,7 +6,8 @@ use crate::application::install_planner::{InstallPlanningFactSource, InstallPlan
 use crate::application::mutation::plan::stable_digest;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySourceDescriptor, DiscoverySourceLocation,
-    PayloadPlanningMetadata, PayloadSessionManager, PayloadStorageKey, RetainedDiscoverySource,
+    PayloadPlanningMetadata, PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey,
+    RetainedDiscoverySource,
 };
 use crate::application::remove::{ObservedEntryKind, ObservedEntryOwner, ObservedPhysicalEntry};
 use crate::core::agent_definition::AgentAdapter;
@@ -135,6 +136,40 @@ impl InstalledSkillPayloadAcquirer {
             }
         }
     }
+
+    pub async fn current_manifest_hash(
+        &self,
+        context: &ContextRef,
+        skill_name: &str,
+        canonical: &ResolvedTargetFact,
+    ) -> Result<String, AppError> {
+        if canonical.entry_kind != TargetEntryKind::Directory
+            || !same_environment_identity(&canonical.destination.environment, &context.environment)
+        {
+            return Err(AppError::StaleTarget);
+        }
+        match &context.environment {
+            EnvironmentRef::Host => Ok(crate::core::skill_payload::build_skill_payload(
+                Path::new(&canonical.destination.native_path),
+            )?
+            .manifest()
+            .payload_root_hash),
+            EnvironmentRef::Wsl { distro_name } => {
+                let workspace = self.environments.workspace(distro_name)?;
+                let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+                let session_id = format!("copy-source-check-{}", uuid::Uuid::new_v4().simple());
+                let key = PayloadStorageKey::new(&session_id, skill_name);
+                let acquired = storage
+                    .acquire_from_path(&key, &canonical.destination.native_path, None)
+                    .await;
+                let cleanup = storage.remove_session(&session_id).await;
+                match (acquired, cleanup) {
+                    (Ok(acquired), Ok(())) => Ok(acquired.manifest.payload_root_hash),
+                    (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+                }
+            }
+        }
+    }
 }
 
 fn installed_metadata(skill_name: &str, computed_hash: String) -> PayloadPlanningMetadata {
@@ -169,6 +204,24 @@ where
         skill_name: &str,
     ) -> Result<ObservedSkillSnapshot, AppError> {
         let facts = self.facts.current(context).await?;
+        self.observe_with_facts(context, skill_name, facts).await
+    }
+
+    pub async fn observe_for_copy_source(
+        &self,
+        context: &ContextRef,
+        skill_name: &str,
+    ) -> Result<ObservedSkillSnapshot, AppError> {
+        let facts = self.facts.current_for_copy_source(context).await?;
+        self.observe_with_facts(context, skill_name, facts).await
+    }
+
+    async fn observe_with_facts(
+        &self,
+        context: &ContextRef,
+        skill_name: &str,
+        facts: InstallPlanningFacts,
+    ) -> Result<ObservedSkillSnapshot, AppError> {
         let mut destinations = vec![join_entry(&facts.resolved_context.skill_root, skill_name)];
         let mut owners = Vec::new();
         for (agent_id, agent) in &facts.agent_runtime.agents {

@@ -6,6 +6,8 @@ describe('Agent selection copy', () => {
   it('keeps installation-mode wording in the Agent selection namespace', () => {
     expect(zhCN.agentSelection.linkRecommended).toBe('链接（推荐）');
     expect(zhCN.agentSelection.copyOnly).toBe('仅支持复制');
+    expect(zhCN.agentSelection.modeHelp)
+      .toBe('用于新增或修复 Agent 自己的 Skill 目录；仅支持复制的 Agent 不受此设置影响。');
     expect(en.agentSelection.linkRecommended).toBe('Link (recommended)');
     expect(en.agentSelection.copyOnly).toBe('Copy only');
   });
@@ -34,9 +36,9 @@ describe('Agent selection copy', () => {
     expect(zhCN.agentSelection.automatic.install.title).toBe('安装后可直接使用');
     expect(zhCN.agentSelection.automatic.install.help)
       .toBe('此 Skill 安装到通用 Skill 目录后，这些 Agent 无需单独安装。');
-    expect(zhCN.agentSelection.automatic.manage.title).toBe('可通过通用目录使用');
+    expect(zhCN.agentSelection.automatic.manage.title).toBe('无需选择即可使用');
     expect(zhCN.agentSelection.automatic.manage.help)
-      .toBe('这些 Agent 会读取当前 Skill 所在的通用 Skill 目录，无需单独安装。');
+      .toBe('当前 Skill 已安装在通用 Skill 目录中，这些 Agent 可以正常读取，无需单独安装。');
     expect(zhCN.agentSelection.automatic.copyToProject.title).toBe('复制后可直接使用');
     expect(zhCN.agentSelection.automatic.copyToProject.help)
       .toBe('此 Skill 复制到目标项目后，这些 Agent 无需单独安装。');

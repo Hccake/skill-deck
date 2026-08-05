@@ -334,6 +334,14 @@ async manageSkillAgents(request: ManageAgentsRequest) : Promise<Result<ManageAge
     else return { status: "error", error: e  as any };
 }
 },
+async getCopyAgentSelection(source: ContextRef, skillName: string) : Promise<Result<CopyAgentSelectionSnapshot, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_copy_agent_selection", { source, skillName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async previewCopySkillToProjects(request: CopyRequest) : Promise<Result<CopyPreviewOutcome, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_copy_skill_to_projects", { request }) };
@@ -467,7 +475,6 @@ export type AcquiredPayloadHandle = { sessionId: string; skillPath: string; envi
 export type ActiveCustomAgent = { definition: CustomAgentDefinition; raw: unknown }
 export type ActiveLifecycleLease = { id: string; kind: LifecycleLeaseKind; cancelable: boolean }
 export type ActiveMutation = { id: string; kind: MutationKind; context: ContextRef; phase: MutationPhase; progress: MutationProgress | null; cancelable: boolean }
-export type AdapterTargetId = string
 export type AddProjectResult = { project: ProjectInfo; created: boolean }
 export type AgentAdapter = "standard" | "eve"
 export type AgentCommandError = { kind: "application"; error: AppError } | { kind: "invalidDraft"; errors: AgentFieldError[] } | { kind: "staleRegistryRevision"; expected: string; actual: string }
@@ -499,7 +506,6 @@ export type AgentStorageIssue = { code: string; message: string; readOnly: boole
 export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
 export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
-export type AgentWriteIntent = { agentId: AgentId; ownDirectorySelected: boolean; adapterTargets: AdapterTargetId[] }
 export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
@@ -559,12 +565,12 @@ export type ConfigResourceKind = "contextRoot" | "canonicalSkillsRoot"
 export type ContextRef = { environment: EnvironmentRef; scope: ContextScope }
 export type ContextScope = { scope: "global" } | { scope: "project"; project_id: string }
 export type ContextSnapshotRevision = string
+export type CopyAgentSelectionSnapshot = { selection: AgentSelectionSnapshot }
 export type CopyExecutionRequest = { request: CopyRequest; token: PreviewToken; payload: AcquiredPayloadHandle }
 export type CopyPreview = { token: PreviewToken; payload: AcquiredPayloadHandle; source: ContextRef; targetEnvironment: EnvironmentRef; targets: CopyTargetPreview[] }
-export type CopyPreviewOutcome = { status: "ready"; preview: CopyPreview } | { status: "sourceRepairRequired"; reason: CopySourceRepairReason }
-export type CopyRequest = { skillName: string; source: ContextRef; targetEnvironment: EnvironmentRef; targetProjectIds: string[]; requestedMode: InstallMode; agentIntents: AgentWriteIntent[] }
+export type CopyPreviewOutcome = { status: "ready"; preview: CopyPreview } | { status: "selectionStale"; snapshot: CopyAgentSelectionSnapshot }
+export type CopyRequest = { skillName: string; source: ContextRef; targetEnvironment: EnvironmentRef; targetProjectIds: string[]; agentSelection: AgentSelectionSubmission }
 export type CopyResponse = { units: MutationUnitResult[] }
-export type CopySourceRepairReason = "missingMetadata" | "invalidMetadata"
 export type CopyTargetPreview = { projectId: string; displayName: string; storageAccess: StorageAccess; physicalIdentity: PhysicalIdentityComparison; agentTargets: AgentTargetPreview[]; fallbackForecasts: AgentTargetFallbackPreview[]; blockingReasons: OperationErrorCode[] }
 export type CustomAgentDefinition = { id: AgentId; displayName: string; global: CustomScopeDefinition; project: CustomScopeDefinition; detectionPaths: CustomPathSpec[] }
 export type CustomAgentDraftValidation = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; resolved: ResolvedAgent }

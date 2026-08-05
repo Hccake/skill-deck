@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::application::agent_intent::AgentWriteIntent;
 use crate::application::agent_selection::test_submission_for_agents_and_own_directories;
 use crate::application::copy::{
     CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyService,
@@ -809,20 +808,32 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         executor(&execution, &environments, &facts),
         RuntimeCopyProjectComparator::new(environments.clone()),
     );
+    let copy_selection = copy.selection(&source_context, "demo").await?.selection;
     let copy_request = CopyRequest {
         skill_name: "demo".to_string(),
         source: source_context.clone(),
         target_environment: EnvironmentRef::Host,
         target_project_ids: vec!["target".to_string()],
-        requested_mode: InstallMode::Copy,
-        agent_intents: both_agent_intents(),
+        agent_selection: crate::application::agent_selection::AgentSelectionSubmission {
+            revision: copy_selection.revision,
+            selected_option_ids: copy_selection
+                .install_options
+                .iter()
+                .filter(|option| {
+                    option
+                        .agent_ids
+                        .iter()
+                        .any(|agent| matches!(agent.as_str(), "builtin-test" | "custom-test"))
+                })
+                .map(|option| option.id.clone())
+                .collect(),
+            requested_mode: InstallMode::Copy,
+        },
     };
     let copy_preview = match copy.preview(&copy_request).await? {
         CopyPreviewOutcome::Ready { preview } => preview,
-        CopyPreviewOutcome::SourceRepairRequired { reason } => {
-            return Err(AppError::Custom {
-                message: format!("native workflow source metadata required repair: {reason:?}"),
-            });
+        CopyPreviewOutcome::SelectionStale { .. } => {
+            return Err(AppError::StaleTarget);
         }
     };
     let copied = copy
@@ -954,17 +965,6 @@ fn disabled_scope() -> ScopeDefinition {
         reads_shared: false,
         private_path: None,
     }
-}
-
-pub(crate) fn both_agent_intents() -> Vec<AgentWriteIntent> {
-    ["builtin-test", "custom-test"]
-        .into_iter()
-        .map(|id| AgentWriteIntent {
-            agent_id: AgentId::parse(id).expect("Agent id"),
-            own_directory_selected: true,
-            adapter_targets: Vec::new(),
-        })
-        .collect()
 }
 
 fn manage_submission(

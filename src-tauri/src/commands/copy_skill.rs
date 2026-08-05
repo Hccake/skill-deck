@@ -1,11 +1,22 @@
 use tauri::State;
 
 use crate::application::copy::{
-    CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyResponse,
+    CopyAgentSelectionSnapshot, CopyExecutionRequest, CopyPreviewOutcome, CopyRequest, CopyResponse,
 };
 use crate::core::mutation::{MutationKind, MutationPhase};
+use crate::environment::types::ContextRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_copy_agent_selection(
+    source: ContextRef,
+    skill_name: String,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<CopyAgentSelectionSnapshot, AppError> {
+    runtime.copy().selection(&source, &skill_name).await
+}
 
 #[tauri::command]
 #[specta::specta]

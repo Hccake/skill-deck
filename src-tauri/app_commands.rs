@@ -18,6 +18,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "get_active_mutation",
     "get_agent_settings_snapshot",
     "get_config",
+    "get_copy_agent_selection",
     "get_install_agent_selection",
     "get_manage_agent_selection",
     "get_github_credential_status",
