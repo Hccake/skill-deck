@@ -73,8 +73,21 @@ interface CopyToProjectDialogProps {
 }
 
 type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
+type ProjectLoadFailure = 'environment' | 'catalog' | null;
 type PresenceState = 'idle' | 'loading' | 'ready' | 'error';
 type ProjectPresence = 'installed' | 'absent' | 'unknown';
+type TargetEnvironmentSelection =
+  | { kind: 'valid'; key: string }
+  | { kind: 'missing'; key: string };
+
+function classifyProjectLoadFailure(error: unknown): Exclude<ProjectLoadFailure, null> {
+  return error != null
+    && typeof error === 'object'
+    && 'failureSource' in error
+    && error.failureSource === 'environment'
+    ? 'environment'
+    : 'catalog';
+}
 
 export const CopyToProjectDialog = memo(function CopyToProjectDialog({
   open = true,
@@ -117,11 +130,17 @@ function CopyToProjectDialogSession({
   const writeBlocked = useBusinessWriteBlocked();
   const [copying, setCopying] = useState(false);
   const [projectLoadState, setProjectLoadState] = useState<ProjectLoadState>('idle');
+  const [projectLoadFailure, setProjectLoadFailure] = useState<ProjectLoadFailure>(null);
   const [projectLoadAttempt, setProjectLoadAttempt] = useState(0);
   const [presenceState, setPresenceState] = useState<PresenceState>('idle');
-  const [targetEnvironmentKey, setTargetEnvironmentKey] = useState(
-    environmentKey(sourceContext.environment),
-  );
+  const [targetEnvironmentSelection, setTargetEnvironmentSelection] = useState<
+    TargetEnvironmentSelection
+  >(() => {
+    const key = environmentKey(sourceContext.environment);
+    return environments.some((entry) => environmentKey(entry.environment) === key)
+      ? { kind: 'valid', key }
+      : { kind: 'missing', key };
+  });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [presenceByProject, setPresenceByProject] = useState<Map<string, ProjectPresence>>(
     () => new Map(),
@@ -131,6 +150,16 @@ function CopyToProjectDialogSession({
   const [selectionSnapshot, setSelectionSnapshot] = useState<AgentSelectionSnapshot | null>(null);
   const [agentSession, setAgentSession] = useState<AgentSelectionSession | null>(null);
   const loadedSelectionRevisionRef = useRef<string | null>(null);
+
+  const clearTargetProjectState = useCallback(() => {
+    setSelected(new Set());
+    setCompletedProjectIds(new Set());
+    setCopyOutcome(null);
+    setProjectLoadState('idle');
+    setProjectLoadFailure(null);
+    setPresenceState('idle');
+    setPresenceByProject(new Map());
+  }, []);
 
   useEffect(() => {
     if (agentSelection.status !== 'ready') return;
@@ -143,38 +172,56 @@ function CopyToProjectDialogSession({
       : createAgentSelectionSession(nextSnapshot));
   }, [agentSelection]);
 
-  const targetEnvironment = environments.find(
-    (entry) => environmentKey(entry.environment) === targetEnvironmentKey,
-  )?.environment ?? sourceContext.environment;
+  const targetEnvironmentEntry = targetEnvironmentSelection.kind === 'valid'
+    ? environments.find(
+      (entry) => environmentKey(entry.environment) === targetEnvironmentSelection.key,
+    )
+    : undefined;
+  const targetEnvironment = targetEnvironmentEntry?.environment ?? null;
+  const targetEnvironmentKey = targetEnvironmentSelection.key;
+
+  useEffect(() => {
+    if (targetEnvironmentSelection.kind !== 'valid' || targetEnvironmentEntry) return;
+    setTargetEnvironmentSelection((current) => (
+      current.kind === 'valid' && current.key === targetEnvironmentSelection.key
+        ? { kind: 'missing', key: current.key }
+        : current
+    ));
+    clearTargetProjectState();
+  }, [clearTargetProjectState, targetEnvironmentEntry, targetEnvironmentSelection]);
 
   const availableProjects = useMemo(
-    () => getCopyableProjects({
+    () => targetEnvironment ? getCopyableProjects({
       targetEnvironment,
       sourceContext,
       projects: projectsByEnvironment[targetEnvironmentKey] ?? [],
       completedProjectIds,
-    }),
+    }) : [],
     [completedProjectIds, projectsByEnvironment, sourceContext, targetEnvironment, targetEnvironmentKey],
   );
 
   useEffect(() => {
-    if (!skill) return;
+    if (!skill || !targetEnvironment) return;
     let cancelled = false;
     setProjectLoadState('loading');
+    setProjectLoadFailure(null);
     setPresenceState('idle');
     setPresenceByProject(new Map());
     void onLoadProjects(targetEnvironment)
       .then(() => {
         if (!cancelled) setProjectLoadState('ready');
       })
-      .catch(() => {
-        if (!cancelled) setProjectLoadState('error');
+      .catch((error) => {
+        if (!cancelled) {
+          setProjectLoadFailure(classifyProjectLoadFailure(error));
+          setProjectLoadState('error');
+        }
       });
     return () => { cancelled = true; };
   }, [onLoadProjects, projectLoadAttempt, skill, targetEnvironment]);
 
   useEffect(() => {
-    if (!skill || projectLoadState !== 'ready') return;
+    if (!skill || !targetEnvironment || projectLoadState !== 'ready') return;
     if (!checkExistence || availableProjects.length === 0) {
       setPresenceState('idle');
       setPresenceByProject(new Map());
@@ -241,7 +288,7 @@ function CopyToProjectDialogSession({
   }, []);
 
   const handleCopy = useCallback(async () => {
-    if (!selectionSnapshot || !agentSession) return;
+    if (!selectionSnapshot || !agentSession || !targetEnvironment) return;
     setCopying(true);
     setCopyOutcome(null);
     try {
@@ -379,23 +426,26 @@ function CopyToProjectDialogSession({
                   ) : null}
                 </div>
 
-                {environments.length > 1 ? (
+                {environments.length > 1 || targetEnvironmentSelection.kind === 'missing' ? (
                   <div className="space-y-1.5">
                     <Label>{t('skills.copyToProject.targetEnvironment')}</Label>
                     <Select
-                      value={targetEnvironmentKey}
+                      value={targetEnvironmentSelection.kind === 'valid'
+                        ? targetEnvironmentSelection.key
+                        : ''}
                       onValueChange={(value) => {
-                        setTargetEnvironmentKey(value);
-                        setSelected(new Set());
-                        setCompletedProjectIds(new Set());
-                        setCopyOutcome(null);
+                        if (!environments.some(
+                          (entry) => environmentKey(entry.environment) === value,
+                        )) return;
+                        setTargetEnvironmentSelection({ kind: 'valid', key: value });
+                        clearTargetProjectState();
                         setProjectLoadState('loading');
-                        setPresenceState('idle');
-                        setPresenceByProject(new Map());
                       }}
                     >
                       <SelectTrigger aria-label={t('skills.copyToProject.targetEnvironment')}>
-                        <SelectValue />
+                        <SelectValue
+                          placeholder={t('skills.copyToProject.targetEnvironmentMissing')}
+                        />
                       </SelectTrigger>
                       <SelectContent>
                         {environments.map((environment) => (
@@ -416,7 +466,13 @@ function CopyToProjectDialogSession({
                 data-testid="copy-target-projects-scroll"
                 className="min-h-0 space-y-1.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
               >
-                {projectLoadState === 'loading' || projectLoadState === 'idle' ? (
+                {!targetEnvironment ? (
+                  <Alert>
+                    <AlertDescription>
+                      {t('skills.copyToProject.targetEnvironmentMissing')}
+                    </AlertDescription>
+                  </Alert>
+                ) : projectLoadState === 'loading' || projectLoadState === 'idle' ? (
                   <div role="status" aria-live="polite" className="space-y-2">
                     <span className="sr-only">{t('common.loading')}</span>
                     <Skeleton className="h-12 w-full" />
@@ -426,7 +482,9 @@ function CopyToProjectDialogSession({
                 ) : projectLoadState === 'error' ? (
                   <Alert>
                     <AlertDescription>
-                      <p>{t('skills.copyToProject.projectsLoadError')}</p>
+                      <p>{t(projectLoadFailure === 'environment'
+                        ? 'skills.copyToProject.targetEnvironmentConnectionError'
+                        : 'skills.copyToProject.projectsLoadError')}</p>
                       <Button
                         variant="link"
                         size="sm"
@@ -600,6 +658,7 @@ function CopyToProjectDialogSession({
             disabled={
               writeBlocked
               || copying
+              || !targetEnvironment
               || projectLoadState !== 'ready'
               || selected.size === 0
               || !selectionSnapshot

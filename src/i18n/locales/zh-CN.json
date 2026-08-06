@@ -342,6 +342,8 @@
       "targetProjects": "目标项目",
       "selectedProjects": "已选择 {{count}} 个",
       "targetEnvironment": "目标环境",
+      "targetEnvironmentMissing": "所选目标 Environment 已不可用。恢复后请重新选择。",
+      "targetEnvironmentConnectionError": "无法连接所选 Environment。",
       "noProjects": "没有其他可用项目",
       "installed": "已安装",
       "unknown": "未知",

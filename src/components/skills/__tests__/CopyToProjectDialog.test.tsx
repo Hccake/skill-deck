@@ -364,6 +364,78 @@ describe('CopyToProjectDialog', () => {
     });
   });
 
+  it('requires an explicit reselect after the target Environment disappears', async () => {
+    const ubuntuEnvironment = {
+      environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
+      displayName: 'Ubuntu',
+      status: 'available' as const,
+      revision: 1,
+      error: null,
+    };
+    const ubuntuProject = {
+      binding: {
+        id: 'ubuntu-target',
+        nativePath: '/home/me/target',
+        displayName: null,
+        order: null,
+        suppressCrossStorageWarning: false,
+      },
+      storage: {
+        access: 'native' as const,
+        owner: ubuntuEnvironment.environment,
+      },
+    };
+    const props = {
+      skill: skill(),
+      ...defaultCopyProps,
+      environments: [...defaultCopyProps.environments, ubuntuEnvironment],
+      projectsByEnvironment: {
+        ...defaultCopyProps.projectsByEnvironment,
+        'wsl:ubuntu': [ubuntuProject],
+      },
+      agentSelection: selectableAgentState,
+      onLoadProjects: vi.fn(async () => undefined),
+      onClose: vi.fn(),
+      onCopy: vi.fn(),
+    };
+    const view = render(<CopyToProjectDialog {...props} />);
+
+    fireEvent.click(screen.getByRole('combobox', {
+      name: 'skills.copyToProject.targetEnvironment',
+    }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Ubuntu' }));
+    fireEvent.click(await screen.findByText('/home/me/target'));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
+
+    view.rerender(
+      <CopyToProjectDialog {...props} environments={defaultCopyProps.environments} />,
+    );
+
+    expect((await screen.findAllByText('skills.copyToProject.targetEnvironmentMissing')).length)
+      .toBeGreaterThan(0);
+    expect(screen.queryByText('/home/me/target')).toBeNull();
+    expect((screen.getByRole('checkbox', { name: 'Claude Code' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+    expect((screen.getByRole('button', {
+      name: 'skills.copyToProject.copy',
+    }) as HTMLButtonElement).disabled).toBe(true);
+
+    view.rerender(
+      <CopyToProjectDialog {...props} />,
+    );
+    expect(screen.getAllByText('skills.copyToProject.targetEnvironmentMissing').length)
+      .toBeGreaterThan(0);
+    expect(screen.queryByText('/home/me/target')).toBeNull();
+
+    fireEvent.click(screen.getByRole('combobox', {
+      name: 'skills.copyToProject.targetEnvironment',
+    }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Ubuntu' }));
+    expect(await screen.findByText('/home/me/target')).toBeDefined();
+    expect((screen.getByRole('checkbox', { name: 'Claude Code' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+  });
+
   it('keeps partial copy results in the dialog and excludes completed projects from retry', async () => {
     const onCopy = vi.fn(async () => ({
       status: 'partial' as const,
@@ -588,6 +660,30 @@ describe('CopyToProjectDialog', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }));
     await waitFor(() => expect(onLoadProjects).toHaveBeenCalledTimes(2));
+  });
+
+  it('distinguishes target Environment connection failure from project loading failure', async () => {
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        onLoadProjects={vi.fn().mockRejectedValue({
+          status: 'failed',
+          failureSource: 'environment',
+          error: {
+            kind: 'environmentUnavailable',
+            data: { environment: { kind: 'host' }, message: 'unavailable' },
+          },
+        })}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'skills.copyToProject.targetEnvironmentConnectionError',
+    );
+    expect(screen.queryByText('skills.copyToProject.projectsLoadError')).toBeNull();
   });
 
   it('shows unknown presence instead of treating a failed check as absent', async () => {

@@ -342,6 +342,8 @@
       "targetProjects": "Target projects",
       "selectedProjects": "{{count}} selected",
       "targetEnvironment": "Target environment",
+      "targetEnvironmentMissing": "The selected target environment is no longer available. Select it again after it returns.",
+      "targetEnvironmentConnectionError": "Could not connect to the selected environment.",
       "noProjects": "No other projects available",
       "installed": "Installed",
       "unknown": "Unknown",
