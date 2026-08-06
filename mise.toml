@@ -1,0 +1,5 @@
+[tools]
+node = "24"
+
+[settings]
+lockfile = true
