@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TFunction } from 'i18next';
+import type { ProjectInfo } from '@/bindings';
 import { useEnvironmentStore } from '@/stores/environment';
-import { useProjectStore } from '@/stores/projects';
+import { projectWorkspace } from '@/stores/projects';
 import {
   appendCrossStorageFailureGuidance,
   getCrossStorageFailureGuidance,
@@ -15,7 +16,47 @@ const t = ((key: string, values?: Record<string, unknown>) => {
 }) as TFunction;
 
 describe('cross-storage failure guidance', () => {
+  let projectsByEnvironment: Record<string, ProjectInfo[]>;
+
   beforeEach(() => {
+    vi.restoreAllMocks();
+    projectsByEnvironment = {
+      host: [{
+        binding: {
+          id: 'wsl-project',
+          nativePath: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\app',
+          displayName: 'app',
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        storage: {
+          access: 'crossStorage',
+          owner: { kind: 'wsl', distro_name: 'Ubuntu' },
+        },
+      }],
+      'wsl:ubuntu': [{
+        binding: {
+          id: 'windows-project',
+          nativePath: '/mnt/c/Code/app',
+          displayName: 'app',
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        storage: { access: 'crossStorage', owner: { kind: 'host' } },
+      }],
+    };
+    vi.spyOn(projectWorkspace, 'getSnapshot').mockImplementation((environment) => ({
+      environment,
+      phase: 'ready',
+      projects: projectsByEnvironment[environment.kind === 'host' ? 'host' : 'wsl:ubuntu'] ?? [],
+      error: null,
+      completeness: 'complete',
+      environmentRevision: 1,
+      lastAttemptAt: 1,
+      lastSuccessAt: 1,
+      freshUntil: 300_001,
+      version: 1,
+    }));
     useEnvironmentStore.setState({
       environments: [
         { environment: { kind: 'host' }, displayName: 'Windows', status: 'available', revision: 1, error: null },
@@ -27,33 +68,6 @@ describe('cross-storage failure guidance', () => {
           error: null,
         },
       ],
-    });
-    useProjectStore.setState({
-      projectsByEnvironment: {
-        host: [{
-          binding: {
-            id: 'wsl-project',
-            nativePath: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\app',
-            displayName: 'app',
-            order: null,
-            suppressCrossStorageWarning: false,
-          },
-          storage: {
-            access: 'crossStorage',
-            owner: { kind: 'wsl', distro_name: 'Ubuntu' },
-          },
-        }],
-        'wsl:ubuntu': [{
-          binding: {
-            id: 'windows-project',
-            nativePath: '/mnt/c/Code/app',
-            displayName: 'app',
-            order: null,
-            suppressCrossStorageWarning: false,
-          },
-          storage: { access: 'crossStorage', owner: { kind: 'host' } },
-        }],
-      },
     });
   });
 
@@ -81,9 +95,8 @@ describe('cross-storage failure guidance', () => {
       scope: { scope: 'global' },
     }, 'delete', t)).toBeNull();
 
-    useProjectStore.setState({
-      projectsByEnvironment: {
-        'wsl:ubuntu': [{
+    projectsByEnvironment = {
+      'wsl:ubuntu': [{
           binding: {
             id: 'native-project',
             nativePath: '/home/alice/app',
@@ -95,9 +108,8 @@ describe('cross-storage failure guidance', () => {
             access: 'native',
             owner: null,
           },
-        }],
-      },
-    });
+      }],
+    };
     const context = {
       environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
       scope: { scope: 'project' as const, project_id: 'native-project' },

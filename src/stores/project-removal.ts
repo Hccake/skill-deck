@@ -1,6 +1,6 @@
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
-import { sameEnvironment } from '@/lib/context';
-import { useProjectStore } from './projects';
+import { sameContext } from '@/lib/context';
+import { projectWorkspace } from './projects';
 import { useWorkspaceContextStore } from './workspace-context';
 import { projectDisplayName } from '@/lib/projects/presentation';
 
@@ -25,16 +25,28 @@ export function captureProjectRemoval(
 }
 
 export async function confirmProjectRemoval(request: ProjectRemovalRequest): Promise<boolean> {
-  const result = await useProjectStore.getState().remove(request.environment, request.projectId);
-  if (!result) return false;
-
+  const result = await projectWorkspace.execute({
+    kind: 'remove',
+    environment: request.environment,
+    projectId: request.projectId,
+    expectedContext: {
+      context: {
+        environment: request.environment,
+        scope: { scope: 'project', project_id: request.projectId },
+      },
+      revision: request.contextRevision,
+    },
+  });
+  if (result.status === 'failed') throw result.error;
+  if (result.status === 'notRun') return false;
   const workspace = useWorkspaceContextStore.getState();
-  const stillSelected = workspace.contextRevision === request.contextRevision
-    && sameEnvironment(workspace.selectedContext.environment, request.environment)
-    && workspace.selectedContext.scope.scope === 'project'
-    && workspace.selectedContext.scope.project_id === request.projectId;
-  if (stillSelected) {
-    workspace.selectGlobal();
-  }
+  const expectedContext = {
+    environment: request.environment,
+    scope: { scope: 'project' as const, project_id: request.projectId },
+  };
+  if (
+    workspace.contextRevision === request.contextRevision
+    && sameContext(workspace.selectedContext, expectedContext)
+  ) workspace.selectGlobal();
   return true;
 }

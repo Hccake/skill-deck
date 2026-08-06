@@ -40,9 +40,10 @@ vi.mock('@/lifecycle/useWindowLifecycle', () => ({
   useWindowLifecycle: () => ({ requestAction: mocks.requestAction }),
 }));
 
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: { refresh: typeof mocks.refreshProjects }) => unknown) =>
-    selector({ refresh: mocks.refreshProjects }),
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: (environment: unknown) => ({
+    refresh: () => mocks.refreshProjects(environment),
+  }),
 }));
 
 vi.mock('@/components/skills/add-skill/StepIndicator', () => ({
@@ -259,7 +260,7 @@ describe('WizardPage mutation guard', () => {
     });
   });
 
-  it('loads projects for the environment frozen in the wizard URL', async () => {
+  it('does not start a project refresh from the wizard page', () => {
     const context = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
@@ -273,9 +274,7 @@ describe('WizardPage mutation guard', () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => {
-      expect(mocks.refreshProjects).toHaveBeenCalledWith(context.environment);
-    });
+    expect(mocks.refreshProjects).not.toHaveBeenCalled();
   });
 
   it('disables starting installation while another mutation is active', async () => {

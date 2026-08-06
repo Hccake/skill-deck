@@ -66,8 +66,11 @@ vi.mock('@/stores/environment', () => ({
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector(mocks.environmentState),
 }));
 
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: unknown) => unknown) => selector(mocks.projectState),
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
+    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
+  },
 }));
 
 vi.mock('@/stores/install-wizard-session', async (importOriginal) => ({

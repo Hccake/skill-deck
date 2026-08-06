@@ -13,7 +13,6 @@ const render = (ui: Parameters<typeof testingRender>[0]) => (
 
 const ubuntu = { kind: 'wsl', distro_name: 'Ubuntu' } as const;
 const mockRefreshProjects = vi.fn();
-let projectLoadState: 'idle' | 'ready' = 'ready';
 
 vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
@@ -21,10 +20,14 @@ vi.mock('@/stores/workspace-context', () => ({
   }),
 }));
 
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: unknown) => unknown) => selector({
-    loadStateByEnvironment: { 'wsl:ubuntu': projectLoadState },
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: () => ({
+    projects: [],
+    hasCompleteSnapshot: true,
+    error: null,
+    status: 'available',
     refresh: mockRefreshProjects,
+    add: vi.fn(),
   }),
 }));
 
@@ -51,12 +54,9 @@ vi.mock('react-i18next', () => ({
 describe('SettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    projectLoadState = 'ready';
   });
 
   it('does not load inactive Settings section data', async () => {
-    projectLoadState = 'idle';
-
     render(
       <MemoryRouter initialEntries={['/settings']}>
         <SettingsPage />

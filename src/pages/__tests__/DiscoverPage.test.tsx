@@ -35,7 +35,6 @@ const mocks = vi.hoisted(() => ({
   },
   projectState: {
     projectsByEnvironment: {} as Record<string, unknown[]>,
-    loadStateByEnvironment: {} as Record<string, string>,
     refresh: vi.fn().mockResolvedValue([]),
   },
   resizable: {
@@ -57,9 +56,14 @@ vi.mock('@/stores/workspace-context', () => ({
     selector(mocks.workspaceContextState),
 }));
 
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: typeof mocks.projectState) => unknown) =>
-    selector(mocks.projectState),
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
+    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    return {
+      projects: mocks.projectState.projectsByEnvironment[key] ?? [],
+      refresh: mocks.projectState.refresh,
+    };
+  },
 }));
 
 vi.mock('@/components/skills/discover/DiscoverListPanel', () => ({
@@ -97,7 +101,6 @@ describe('DiscoverPage', () => {
       scope: { scope: 'global' },
     };
     mocks.projectState.projectsByEnvironment = {};
-    mocks.projectState.loadStateByEnvironment = { host: 'ready' };
     mocks.projectState.refresh.mockReset();
     mocks.projectState.refresh.mockResolvedValue([]);
     mocks.resizable.groups.length = 0;
@@ -126,6 +129,7 @@ describe('DiscoverPage', () => {
       defaultSize: '70%',
       minSize: '30%',
     });
+    expect(mocks.projectState.refresh).not.toHaveBeenCalled();
   });
 
   it('refreshes context-keyed install locations for the committed environment', () => {
@@ -148,8 +152,6 @@ describe('DiscoverPage', () => {
         },
       }],
     };
-    mocks.projectState.loadStateByEnvironment = { 'wsl:ubuntu': 'ready' };
-
     render(<DiscoverPage />);
 
     expect(mocks.skillsDataState.refreshContext).toHaveBeenCalledWith({

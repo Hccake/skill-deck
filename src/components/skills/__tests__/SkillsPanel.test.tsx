@@ -125,9 +125,11 @@ vi.mock('@/stores/workspace-context', () => ({
     selector(mocks.workspaceContextState),
 }));
 
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: typeof mocks.projectState) => unknown) =>
-    selector(mocks.projectState),
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
+    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
+  },
 }));
 
 vi.mock('@/stores/skills-data', () => ({

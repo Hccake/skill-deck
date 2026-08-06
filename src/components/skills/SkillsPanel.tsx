@@ -3,7 +3,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useDeferred
 import { useTranslation } from 'react-i18next';
 import { RefreshCw } from 'lucide-react';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { useProjectStore } from '@/stores/projects';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import {
   sourceDiagnosticsForEnvironment,
   useSkillsDataStore,
@@ -20,7 +20,7 @@ import { RepairSourceDialog } from './RepairSourceDialog';
 import { GlobalEmptyState, ProjectEmptyState, SkillFilterEmptyState } from './EmptyStates';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { contextKey, globalContext } from '@/lib/context';
 import { agentDisplayName, agentId } from '@/lib/agents';
 import { formatAppError } from '@/utils/format-app-error';
 import { openSkillRemoval } from '@/workflows/skill-remove';
@@ -46,7 +46,6 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   error: null,
   requestId: 0,
 };
-const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 const EMPTY_SKILL_NAMES: string[] = [];
 
 function hasCommittedComparison(snapshot: ContextSkillSnapshot): boolean {
@@ -66,9 +65,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const globalContextKey = contextKey(selectedGlobalContext);
   const isProjectSelected = selectedContext.scope.scope === 'project';
   const projectContextKey = isProjectSelected ? selectedContextKey : null;
-  const projects = useProjectStore((state) => (
-    state.projectsByEnvironment[environmentKey(selectedContext.environment)] ?? EMPTY_PROJECTS
-  ));
+  const { projects } = useProjectWorkspace(selectedContext.environment);
   const selectedScope = selectedContext.scope;
   const selectedProject = selectedScope.scope === 'project'
     ? projects.find((project) => project.binding.id === selectedScope.project_id)

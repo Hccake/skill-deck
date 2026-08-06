@@ -1,6 +1,6 @@
 import type { ContextRef } from '@/bindings';
 import { useEnvironmentStore } from '@/stores/environment';
-import { useProjectStore } from '@/stores/projects';
+import { projectSnapshotFor } from '@/stores/projects';
 import { environmentKey } from '@/lib/context';
 
 export type CrossStorageOperation =
@@ -22,10 +22,9 @@ export function getCrossStorageFailureGuidance(
   if (!context || context.scope.scope !== 'project') return null;
   const projectId = context.scope.project_id;
 
-  const projects = useProjectStore.getState().projectsByEnvironment[
-    environmentKey(context.environment)
-  ] ?? [];
-  const project = projects.find((entry) => entry.binding.id === projectId);
+  const project = projectSnapshotFor(context.environment).projects.find(
+    (entry) => entry.binding.id === projectId,
+  );
   if (!project) return null;
 
   const owner = project.storage.owner;

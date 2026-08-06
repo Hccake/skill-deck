@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Globe, Folder, FolderOpen, Trash2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -12,8 +13,7 @@ import {
 } from '@/components/ui/context-menu';
 import { RemoveProjectDialog } from '@/components/projects/RemoveProjectDialog';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { useProjectStore } from '@/stores/projects';
-import { useEnvironmentProjects } from '@/hooks/useEnvironmentProjects';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import {
   captureProjectRemoval,
   type ProjectRemovalRequest,
@@ -175,8 +175,6 @@ export function ContextSidebar() {
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const transitionActive = useWorkspaceContextStore((state) => state.transition.kind !== 'idle');
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
-  const selectGlobal = useWorkspaceContextStore((state) => state.selectGlobal);
-  const add = useProjectStore((state) => state.add);
   const [removalRequest, setRemovalRequest] = useState<ProjectRemovalRequest | null>(null);
   const globalButtonRef = useRef<HTMLButtonElement>(null);
   const projectButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -184,22 +182,19 @@ export function ContextSidebar() {
   const environment = selectedContext.environment;
   const {
     projects,
-    loadState,
+    hasCompleteSnapshot,
     error: loadError,
     status: selectedStatus,
     refresh,
-  } = useEnvironmentProjects(environment, { transitionActive });
-  const selectedProjectId = selectedContext.scope.scope === 'project'
-    ? selectedContext.scope.project_id
-    : null;
-  useEffect(() => {
-    if (!selectedProjectId || loadState !== 'ready' || transitionActive) return;
-    if (projects.some((entry) => entry.binding.id === selectedProjectId)) return;
-    selectGlobal();
-  }, [loadState, projects, selectGlobal, selectedProjectId, transitionActive]);
+    add,
+  } = useProjectWorkspace(environment);
+  const environmentStatusMessage = selectedStatus === 'connecting'
+    ? t('context.environmentConnecting')
+    : selectedStatus === 'unavailable' || selectedStatus === 'error'
+      ? t('context.environmentUnavailable')
+      : null;
 
   const addProject = async () => {
-    const targetEnvironment = environment;
     try {
       const selected = await open({
         directory: true,
@@ -207,9 +202,11 @@ export function ContextSidebar() {
         title: t('context.addProject'),
       });
       if (!selected || typeof selected !== 'string') return;
-      await add(targetEnvironment, selected);
+      const result = await add(selected);
+      if (result.status === 'failed') toast.error(t('context.addProjectError'));
     } catch (error) {
       console.error('Failed to add project:', error);
+      toast.error(t('context.addProjectError'));
     }
   };
 
@@ -246,7 +243,16 @@ export function ContextSidebar() {
           {t('context.sectionProjects')}
         </h3>
         <div data-testid="context-sidebar-scroll" className="min-h-0 flex-1 overflow-y-auto">
-          {loadError ? (
+          {hasCompleteSnapshot && environmentStatusMessage ? (
+            <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
+              {environmentStatusMessage}
+            </p>
+          ) : null}
+          {!hasCompleteSnapshot && environmentStatusMessage ? (
+            <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
+              {environmentStatusMessage}
+            </p>
+          ) : !hasCompleteSnapshot && loadError ? (
             <div className="px-4 py-2 text-xs text-muted-foreground">
               <p>{t('context.projectsLoadError')}</p>
               <button
@@ -257,26 +263,42 @@ export function ContextSidebar() {
                 {t('context.environmentRetry')}
               </button>
             </div>
-          ) : loadState !== 'ready' ? (
+          ) : !hasCompleteSnapshot ? (
             <p className="px-4 py-2 text-xs text-muted-foreground">{t('common.loading')}</p>
-          ) : projects.length === 0 ? (
-            <p className="px-4 py-2 text-xs text-muted-foreground">{t('context.noProjects')}</p>
           ) : (
-            <div className="space-y-0.5">
-              {projects.map((project) => (
-                <ProjectContextItem
-                  key={project.binding.id}
-                  environment={environment}
-                  project={project}
-                  onRequestRemove={requestRemoval}
-                  writeBlocked={writeBlocked}
-                  selectionRef={(element) => {
-                    if (element) projectButtonRefs.current.set(project.binding.id, element);
-                    else projectButtonRefs.current.delete(project.binding.id);
-                  }}
-                />
-              ))}
-            </div>
+            <>
+              {loadError ? (
+                <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground">
+                  <p>{t('context.projectsLoadError')}</p>
+                  <button
+                    type="button"
+                    className="flex-shrink-0 text-primary hover:underline cursor-pointer"
+                    onClick={() => void refresh().catch(() => undefined)}
+                  >
+                    {t('context.environmentRetry')}
+                  </button>
+                </div>
+              ) : null}
+              {projects.length === 0 ? (
+                <p className="px-4 py-2 text-xs text-muted-foreground">{t('context.noProjects')}</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {projects.map((project) => (
+                    <ProjectContextItem
+                      key={project.binding.id}
+                      environment={environment}
+                      project={project}
+                      onRequestRemove={requestRemoval}
+                      writeBlocked={writeBlocked}
+                      selectionRef={(element) => {
+                        if (element) projectButtonRefs.current.set(project.binding.id, element);
+                        else projectButtonRefs.current.delete(project.binding.id);
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -287,7 +309,12 @@ export function ContextSidebar() {
           className="w-full flex items-center justify-start gap-1.5 px-3 py-2 rounded-md hover:bg-foreground/[0.04] transition-colors text-muted-foreground hover:text-foreground font-semibold text-sm cursor-pointer"
           onClick={() => void addProject()}
           aria-label={t('context.addProject')}
-          disabled={writeBlocked || transitionActive || selectedStatus !== 'available'}
+          disabled={
+            writeBlocked
+            || transitionActive
+            || selectedStatus !== 'available'
+            || !hasCompleteSnapshot
+          }
         >
           <Plus className="h-4 w-4" />
           {t('context.addProject')}

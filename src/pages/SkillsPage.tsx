@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useGroupRef } from 'react-resizable-panels';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { contextKey, environmentKey, globalContext } from '@/lib/context';
-import { useProjectStore } from '@/stores/projects';
+import { contextKey, globalContext } from '@/lib/context';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import {
   sourceDiagnosticsForEnvironment,
   useSkillsDataStore,
@@ -31,7 +31,6 @@ const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   error: null,
   requestId: 0,
 };
-const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 const EMPTY_SKILL_NAMES: string[] = [];
 const EMPTY_SCOPE_KEYS = new Set<string>();
 
@@ -52,9 +51,7 @@ export function SkillsPage() {
   const projectContextKey = selectedContext.scope.scope === 'project'
     ? selectedContextKey
     : null;
-  const projects = useProjectStore((state) => (
-    state.projectsByEnvironment[environmentKey(selectedContext.environment)] ?? EMPTY_PROJECTS
-  ));
+  const { projects } = useProjectWorkspace(selectedContext.environment);
   const selectedScope = selectedContext.scope;
   const selectedProject = selectedScope.scope === 'project'
     ? projects.find((project) => project.binding.id === selectedScope.project_id)

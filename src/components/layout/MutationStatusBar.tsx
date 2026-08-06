@@ -3,7 +3,7 @@ import { LoaderCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { environmentKey, useEnvironmentStore } from '@/stores/environment';
-import { useProjectStore } from '@/stores/projects';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { useMutationStore } from '@/stores/mutation';
 import {
   selectInstallWizardSessionBlocksWrites,
@@ -26,7 +26,8 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
     selectInstallWizardSessionBlocksWrites,
   );
   const environments = useEnvironmentStore((state) => state.environments);
-  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
+  const mutationEnvironment = activeMutation?.context.environment ?? { kind: 'host' as const };
+  const { projects } = useProjectWorkspace(mutationEnvironment);
 
   useMutationMonitor(pollIntervalMs);
 
@@ -47,14 +48,14 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
     }
 
     const projectId = activeMutation.context.scope.project_id;
-    const project = projectsByEnvironment[key]?.find(
+    const project = projects.find(
       (entry) => entry.binding.id === projectId,
     );
     return {
       environmentLabel,
       scopeLabel: project ? projectDisplayName(project) : projectId,
     };
-  }, [activeMutation, environments, projectsByEnvironment, t]);
+  }, [activeMutation, environments, projects, t]);
 
   if (!activeMutation || !labels) return null;
 

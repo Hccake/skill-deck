@@ -1,16 +1,13 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe, Folder } from 'lucide-react';
-import { useProjectStore } from '@/stores/projects';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
-import { environmentKey } from '@/lib/context';
 import type { ContextRef, SkillScope } from '@/bindings';
 import type { WizardState } from './types';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { projectBindingDisplayName } from '@/lib/projects/presentation';
-
-const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 
 type ScopeOption = {
   scope: SkillScope;
@@ -29,9 +26,7 @@ interface ScopeStepProps {
 export function ScopeStep({ state, updateState }: ScopeStepProps) {
   const { t } = useTranslation();
   const environment = state.context.environment;
-  const environmentProjects = useProjectStore((store) => (
-    store.projectsByEnvironment[environmentKey(environment)] ?? EMPTY_PROJECTS
-  ));
+  const { projects: environmentProjects } = useProjectWorkspace(environment);
 
   const globalOption: ScopeOption = {
     scope: 'global' as SkillScope,

@@ -3,7 +3,7 @@ import type { AppError, ContextRef, EnvironmentRef } from '@/bindings';
 import { globalContext, sameContext, sameEnvironment } from '@/lib/context';
 import { toAppError } from '@/utils/to-app-error';
 import { useEnvironmentStore } from './environment';
-import { useProjectStore } from './projects';
+import { projectWorkspace, registerProjectCatalogObserver } from './projects';
 
 export type WorkspaceTransition =
   | { kind: 'idle' }
@@ -67,7 +67,7 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
         contextRevision: state.contextRevision + 1,
       }));
     }
-    void useProjectStore.getState().refresh(target).catch(() => undefined);
+    void projectWorkspace.execute({ kind: 'refresh', environment: target, reason: 'reconnect' });
   };
 
   return {
@@ -160,4 +160,26 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
       }));
     },
   };
+});
+
+registerProjectCatalogObserver({
+  captureContext: () => {
+    const state = useWorkspaceContextStore.getState();
+    return {
+      context: state.selectedContext,
+      revision: state.contextRevision,
+    };
+  },
+  onCompleteSnapshot: ({ environment, projects, expectedContext }) => {
+    const state = useWorkspaceContextStore.getState();
+    if (
+      state.contextRevision !== expectedContext.revision
+      || !sameContext(state.selectedContext, expectedContext.context)
+      || !sameEnvironment(state.selectedContext.environment, environment)
+      || state.selectedContext.scope.scope !== 'project'
+    ) return;
+    const projectId = state.selectedContext.scope.project_id;
+    if (projects.some((project) => project.binding.id === projectId)) return;
+    state.selectGlobal();
+  },
 });

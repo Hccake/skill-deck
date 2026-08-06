@@ -18,7 +18,7 @@ import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { useMutationStore } from '@/stores/mutation';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { useEnvironmentStore } from '@/stores/environment';
-import { useProjectStore } from '@/stores/projects';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { presentMutationUnit } from '@/workflows/mutation-presentation';
 import {
   formatFallbackReason,
@@ -34,10 +34,11 @@ import type {
   UpdateSkillResult,
 } from '@/bindings';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
-import { contextKey } from '@/lib/context';
+import { contextKey, environmentKey } from '@/lib/context';
 import { formatAppError } from '@/utils/format-app-error';
 
 const EMPTY_RESULTS: UpdateSkillResult[] = [];
+const HOST_ENVIRONMENT = { kind: 'host' as const };
 
 interface UpdatePlanDialogProps {
   open: boolean;
@@ -210,7 +211,11 @@ export function UpdatePlanDialog({
   const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
   const businessWriteBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
-  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
+  const projectEnvironment = context?.environment ?? HOST_ENVIRONMENT;
+  const { projects } = useProjectWorkspace(projectEnvironment);
+  const projectsByEnvironment = useMemo(() => ({
+    [environmentKey(projectEnvironment)]: [...projects],
+  }), [projectEnvironment, projects]);
   const displayResults = result?.skills ?? EMPTY_RESULTS;
   const batch = skillNames.length > 1;
   const executing = phase === 'executing';

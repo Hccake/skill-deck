@@ -1,178 +1,73 @@
-import { create } from 'zustand';
+import * as tauriApi from '@/hooks/useTauriApi';
+import type { EnvironmentRef } from '@/bindings';
+import { environmentKey, globalContext, sameEnvironment } from '@/lib/context';
 import {
-  addEnvironmentProject,
-  listEnvironmentProjects,
-  removeEnvironmentProject,
-  setEnvironmentProjectCrossStorageWarning,
-} from '@/hooks/useTauriApi';
-import type {
-  AddProjectResult,
-  AppError,
-  EnvironmentRef,
-  ProjectInfo,
-} from '@/bindings';
-import { environmentKey } from '@/lib/context';
-import { toAppError } from '@/utils/to-app-error';
+  createProjectWorkspace,
+  type ProjectCatalogObserver,
+  type ProjectWorkspaceSnapshot,
+} from '@/lib/projects/workspace';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { runBusinessWrite } from '@/workflows/install-session-feedback';
+import { useEnvironmentStore } from './environment';
 
-export type ProjectLoadState = 'idle' | 'loading' | 'ready' | 'error';
+const HOST: EnvironmentRef = { kind: 'host' };
 
-interface ProjectState {
-  projectsByEnvironment: Record<string, ProjectInfo[]>;
-  loadStateByEnvironment: Record<string, ProjectLoadState>;
-  errorsByEnvironment: Record<string, AppError | null>;
-  refresh: (environment: EnvironmentRef) => Promise<ProjectInfo[]>;
-  add: (environment: EnvironmentRef, nativePath: string) => Promise<AddProjectResult | null>;
-  remove: (environment: EnvironmentRef, projectId: string) => Promise<ProjectInfo[] | null>;
-  setCrossStorageWarning: (
-    environment: EnvironmentRef,
-    projectId: string,
-    suppressed: boolean,
-  ) => Promise<ProjectInfo | null>;
+let catalogObserver: ProjectCatalogObserver = {
+  captureContext: () => ({ context: globalContext(HOST), revision: 0 }),
+  onCompleteSnapshot: () => undefined,
+};
+
+export function registerProjectCatalogObserver(observer: ProjectCatalogObserver): void {
+  catalogObserver = observer;
 }
 
-const refreshGenerations = new Map<string, number>();
-
-function nextRefreshGeneration(key: string): number {
-  const generation = (refreshGenerations.get(key) ?? 0) + 1;
-  refreshGenerations.set(key, generation);
-  return generation;
+function environmentIsAvailable(environment: EnvironmentRef): boolean {
+  if (environment.kind === 'host') return true;
+  return useEnvironmentStore.getState().environments.some((entry) => (
+    sameEnvironment(entry.environment, environment) && entry.status === 'available'
+  ));
 }
 
-function isCurrentRefresh(key: string, generation: number): boolean {
-  return refreshGenerations.get(key) === generation;
+function environmentRevision(environment: EnvironmentRef): number {
+  const state = useEnvironmentStore.getState();
+  const key = environmentKey(environment);
+  return state.runtimeByEnvironment[key]?.revision
+    ?? state.environments.find((entry) => environmentKey(entry.environment) === key)?.revision
+    ?? 0;
 }
 
-function requireWriteAvailable(): void {
-  if (isBusinessWriteBlocked()) {
-    throw new Error('Another write operation is already running');
-  }
-}
-
-function upsertProject(projects: ProjectInfo[], project: ProjectInfo): ProjectInfo[] {
-  const existing = projects.findIndex((entry) => entry.binding.id === project.binding.id);
-  if (existing < 0) return [...projects, project];
-  return projects.map((entry, index) => index === existing ? project : entry);
-}
-
-export const useProjectStore = create<ProjectState>()((set) => ({
-  projectsByEnvironment: {},
-  loadStateByEnvironment: {},
-  errorsByEnvironment: {},
-
-  refresh: async (environment) => {
-    const key = environmentKey(environment);
-    const generation = nextRefreshGeneration(key);
-    set((state) => ({
-      loadStateByEnvironment: {
-        ...state.loadStateByEnvironment,
-        [key]: 'loading',
-      },
-      errorsByEnvironment: {
-        ...state.errorsByEnvironment,
-        [key]: null,
-      },
-    }));
-    try {
-      const projects = await listEnvironmentProjects(environment);
-      if (isCurrentRefresh(key, generation)) {
-        set((state) => ({
-          projectsByEnvironment: {
-            ...state.projectsByEnvironment,
-            [key]: projects,
-          },
-          loadStateByEnvironment: {
-            ...state.loadStateByEnvironment,
-            [key]: 'ready',
-          },
-        }));
-      }
-      return projects;
-    } catch (error) {
-      if (isCurrentRefresh(key, generation)) {
-        set((state) => ({
-          loadStateByEnvironment: {
-            ...state.loadStateByEnvironment,
-            [key]: 'error',
-          },
-          errorsByEnvironment: {
-            ...state.errorsByEnvironment,
-            [key]: toAppError(error),
-          },
-        }));
-      }
-      throw error;
-    }
+export const projectWorkspace = createProjectWorkspace({
+  backend: {
+    list: (environment) => tauriApi.listEnvironmentProjects(environment),
+    add: (environment, nativePath) => tauriApi.addEnvironmentProject(environment, nativePath),
+    remove: (environment, projectId) => tauriApi.removeEnvironmentProject(environment, projectId),
+    setCrossStorageWarning: (environment, projectId, suppressed) => (
+      tauriApi.setEnvironmentProjectCrossStorageWarning(environment, projectId, suppressed)
+    ),
   },
-
-  add: async (environment, nativePath) => {
-    requireWriteAvailable();
-    const key = environmentKey(environment);
-    const outcome = await runBusinessWrite(() => addEnvironmentProject(environment, nativePath));
-    if (outcome.status === 'notRun') return null;
-    const result = outcome.value;
-    nextRefreshGeneration(key);
-    set((state) => ({
-      projectsByEnvironment: {
-        ...state.projectsByEnvironment,
-        [key]: upsertProject(state.projectsByEnvironment[key] ?? [], result.project),
-      },
-      loadStateByEnvironment: {
-        ...state.loadStateByEnvironment,
-        [key]: 'ready',
-      },
-      errorsByEnvironment: {
-        ...state.errorsByEnvironment,
-        [key]: null,
-      },
-    }));
-    return result;
+  environment: {
+    isAvailable: environmentIsAvailable,
+    revision: environmentRevision,
+    ensureAvailable: async (environment) => {
+      if (environmentIsAvailable(environment)) return;
+      await useEnvironmentStore.getState().connect(environment);
+    },
   },
-
-  remove: async (environment, projectId) => {
-    requireWriteAvailable();
-    const key = environmentKey(environment);
-    const outcome = await runBusinessWrite(() => removeEnvironmentProject(environment, projectId));
-    if (outcome.status === 'notRun') return null;
-    const projects = outcome.value;
-    nextRefreshGeneration(key);
-    set((state) => ({
-      projectsByEnvironment: {
-        ...state.projectsByEnvironment,
-        [key]: projects,
-      },
-      loadStateByEnvironment: {
-        ...state.loadStateByEnvironment,
-        [key]: 'ready',
-      },
-      errorsByEnvironment: {
-        ...state.errorsByEnvironment,
-        [key]: null,
-      },
-    }));
-    return projects;
+  catalogObserver: {
+    captureContext: () => catalogObserver.captureContext(),
+    onCompleteSnapshot: (completion) => catalogObserver.onCompleteSnapshot(completion),
   },
-
-  setCrossStorageWarning: async (environment, projectId, suppressed) => {
-    requireWriteAvailable();
-    const key = environmentKey(environment);
-    const outcome = await runBusinessWrite(() => setEnvironmentProjectCrossStorageWarning(
-      environment, projectId, suppressed,
-    ));
-    if (outcome.status === 'notRun') return null;
-    const project = outcome.value;
-    nextRefreshGeneration(key);
-    set((state) => ({
-      projectsByEnvironment: {
-        ...state.projectsByEnvironment,
-        [key]: upsertProject(state.projectsByEnvironment[key] ?? [], project),
-      },
-      errorsByEnvironment: {
-        ...state.errorsByEnvironment,
-        [key]: null,
-      },
-    }));
-    return project;
+  write: {
+    run: async (operation) => {
+      if (isBusinessWriteBlocked()) return { status: 'notRun' };
+      const outcome = await runBusinessWrite(operation);
+      return outcome.status === 'completed'
+        ? { status: 'succeeded', value: outcome.value }
+        : { status: 'notRun' };
+    },
   },
-}));
+});
+
+export function projectSnapshotFor(environment: EnvironmentRef): ProjectWorkspaceSnapshot {
+  return projectWorkspace.getSnapshot(environment);
+}

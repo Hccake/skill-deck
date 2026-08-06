@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EnvironmentRef, ProjectInfo } from '@/bindings';
+import type { EnvironmentRef } from '@/bindings';
+import * as tauriApi from '@/hooks/useTauriApi';
 import { useEnvironmentStore } from '../environment';
-import { useProjectStore } from '../projects';
+import { projectWorkspace } from '../projects';
 import { selectPendingEnvironment, useWorkspaceContextStore } from '../workspace-context';
 
 const host: EnvironmentRef = { kind: 'host' };
@@ -46,10 +47,10 @@ describe('useWorkspaceContextStore', () => {
 
   it('commits the environment as soon as connection finishes', async () => {
     const connecting = deferred<void>();
-    const refreshing = deferred<ProjectInfo[]>();
+    const refreshing = deferred<Awaited<ReturnType<typeof projectWorkspace.execute>>>();
     const connect = vi.spyOn(useEnvironmentStore.getState(), 'connect')
       .mockReturnValue(connecting.promise);
-    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh')
+    const execute = vi.spyOn(projectWorkspace, 'execute')
       .mockReturnValue(refreshing.promise);
 
     const switching = useWorkspaceContextStore.getState().switchEnvironment(ubuntu);
@@ -60,13 +61,21 @@ describe('useWorkspaceContextStore', () => {
       .rejects.toThrow('Workspace transition already in progress');
 
     connecting.resolve();
-    await vi.waitFor(() => expect(refresh).toHaveBeenCalledWith(ubuntu));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith({
+      kind: 'refresh',
+      environment: ubuntu,
+      reason: 'reconnect',
+    }));
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
       transition: { kind: 'idle' },
       contextRevision: 1,
     });
-    refreshing.resolve([]);
+    refreshing.resolve({
+      status: 'succeeded',
+      snapshot: projectWorkspace.getSnapshot(ubuntu),
+      value: [],
+    });
     await switching;
 
     expect(connect).toHaveBeenCalledWith(ubuntu);
@@ -75,7 +84,12 @@ describe('useWorkspaceContextStore', () => {
   it('keeps the committed environment when project refresh fails', async () => {
     const error = new Error('project registry unavailable');
     vi.spyOn(useEnvironmentStore.getState(), 'connect').mockResolvedValue(undefined);
-    vi.spyOn(useProjectStore.getState(), 'refresh').mockRejectedValue(error);
+    vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
+      status: 'failed',
+      failureSource: 'catalog',
+      error: { kind: 'custom', data: { message: error.message } },
+      snapshot: projectWorkspace.getSnapshot(ubuntu),
+    });
 
     await useWorkspaceContextStore.getState().switchEnvironment(ubuntu);
 
@@ -89,12 +103,12 @@ describe('useWorkspaceContextStore', () => {
   it('preserves the previous context and clears pending state after failure', async () => {
     const error = new Error('distribution unavailable');
     vi.spyOn(useEnvironmentStore.getState(), 'connect').mockRejectedValue(error);
-    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh');
+    const execute = vi.spyOn(projectWorkspace, 'execute');
 
     await expect(useWorkspaceContextStore.getState().switchEnvironment(ubuntu))
       .rejects.toThrow('distribution unavailable');
 
-    expect(refresh).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: host, scope: { scope: 'global' } },
       transition: { kind: 'idle' },
@@ -112,13 +126,20 @@ describe('useWorkspaceContextStore', () => {
     });
     const connect = vi.spyOn(useEnvironmentStore.getState(), 'connect')
       .mockResolvedValue(undefined);
-    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh')
-      .mockResolvedValue([]);
+    const execute = vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
+      status: 'succeeded',
+      snapshot: projectWorkspace.getSnapshot(host),
+      value: [],
+    });
 
     await useWorkspaceContextStore.getState().switchEnvironment(host);
 
     expect(connect).toHaveBeenCalledWith(host);
-    expect(refresh).toHaveBeenCalledWith(host);
+    expect(execute).toHaveBeenCalledWith({
+      kind: 'refresh',
+      environment: host,
+      reason: 'reconnect',
+    });
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: {
         environment: host,
@@ -139,12 +160,12 @@ describe('useWorkspaceContextStore', () => {
       contextRevision: 4,
     });
     vi.spyOn(useEnvironmentStore.getState(), 'connect').mockRejectedValue(error);
-    const refresh = vi.spyOn(useProjectStore.getState(), 'refresh');
+    const execute = vi.spyOn(projectWorkspace, 'execute');
 
     await expect(useWorkspaceContextStore.getState().switchEnvironment(host))
       .rejects.toThrow('host runtime unavailable');
 
-    expect(refresh).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: {
         environment: host,
@@ -152,6 +173,35 @@ describe('useWorkspaceContextStore', () => {
       },
       transition: { kind: 'idle' },
       contextRevision: 4,
+    });
+  });
+
+  it('ignores a complete catalog captured before the user changes Context', async () => {
+    const listing = deferred<Awaited<ReturnType<typeof tauriApi.listEnvironmentProjects>>>();
+    vi.spyOn(tauriApi, 'listEnvironmentProjects').mockReturnValue(listing.promise);
+    useWorkspaceContextStore.setState({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'removed' },
+      },
+      contextRevision: 7,
+    });
+
+    const refresh = projectWorkspace.execute({
+      kind: 'refresh',
+      environment: host,
+      reason: 'manual',
+    });
+    useWorkspaceContextStore.getState().selectProject('new-selection');
+    listing.resolve([]);
+    await refresh;
+
+    expect(useWorkspaceContextStore.getState()).toMatchObject({
+      selectedContext: {
+        environment: host,
+        scope: { scope: 'project', project_id: 'new-selection' },
+      },
+      contextRevision: 8,
     });
   });
 
@@ -164,7 +214,11 @@ describe('useWorkspaceContextStore', () => {
     vi.spyOn(useEnvironmentStore.getState(), 'connect').mockReturnValue(connecting.promise);
     const setEnabled = vi.spyOn(useEnvironmentStore.getState(), 'setWslIntegrationEnabled')
       .mockReturnValue(persisting.promise);
-    vi.spyOn(useProjectStore.getState(), 'refresh').mockResolvedValue([]);
+    vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
+      status: 'succeeded',
+      snapshot: projectWorkspace.getSnapshot(host),
+      value: [],
+    });
 
     const disabling = useWorkspaceContextStore.getState().changeWslIntegration(false);
     expect(useWorkspaceContextStore.getState().transition).toEqual({

@@ -3,7 +3,6 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { RotateCw } from 'lucide-react';
-import { useProjectStore } from '@/stores/projects';
 import { emit } from '@tauri-apps/api/event';
 import { Button } from '@/components/ui/button';
 import { StepIndicator } from '@/components/skills/add-skill/StepIndicator';
@@ -108,13 +107,6 @@ export function WizardPage() {
       prefillSkillName: searchParams.get('prefillSkillName') ?? undefined,
     };
   }, [searchParams]);
-
-  const refreshProjects = useProjectStore((store) => store.refresh);
-  useEffect(() => {
-    if (wizardParams.entryPoint === 'discovery') {
-      void refreshProjects(wizardParams.context.environment);
-    }
-  }, [refreshProjects, wizardParams.context.environment, wizardParams.entryPoint]);
 
   const [state, setState] = useState<WizardState>(() =>
     createInitialState(wizardParams)

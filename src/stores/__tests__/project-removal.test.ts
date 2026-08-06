@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
-import { useProjectStore } from '../projects';
+import { projectWorkspace } from '../projects';
 import { useWorkspaceContextStore } from '../workspace-context';
 import { captureProjectRemoval, confirmProjectRemoval } from '../project-removal';
 
@@ -47,11 +47,26 @@ describe('project removal coordinator', () => {
   });
 
   it('returns to Global when the removed project is still the committed context', async () => {
-    const remove = vi.spyOn(useProjectStore.getState(), 'remove').mockResolvedValue([]);
+    const execute = vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
+      status: 'succeeded',
+      snapshot: projectWorkspace.getSnapshot(ubuntu),
+      value: [],
+    });
 
     await confirmProjectRemoval(captureProjectRemoval(ubuntu, project, 4));
 
-    expect(remove).toHaveBeenCalledWith(ubuntu, 'project-a');
+    expect(execute).toHaveBeenCalledWith({
+      kind: 'remove',
+      environment: ubuntu,
+      projectId: 'project-a',
+      expectedContext: {
+        context: {
+          environment: ubuntu,
+          scope: { scope: 'project', project_id: 'project-a' },
+        },
+        revision: 4,
+      },
+    });
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
       contextRevision: 5,
@@ -59,12 +74,16 @@ describe('project removal coordinator', () => {
   });
 
   it('does not overwrite a context change made while removal is running', async () => {
-    const pendingRemoval = deferred<ProjectInfo[]>();
-    vi.spyOn(useProjectStore.getState(), 'remove').mockReturnValue(pendingRemoval.promise);
+    const pendingRemoval = deferred<Awaited<ReturnType<typeof projectWorkspace.execute>>>();
+    vi.spyOn(projectWorkspace, 'execute').mockReturnValue(pendingRemoval.promise);
     const removal = confirmProjectRemoval(captureProjectRemoval(ubuntu, project, 4));
 
     useWorkspaceContextStore.getState().selectProject('project-b');
-    pendingRemoval.resolve([]);
+    pendingRemoval.resolve({
+      status: 'succeeded',
+      snapshot: projectWorkspace.getSnapshot(ubuntu),
+      value: [],
+    });
     await removal;
 
     expect(useWorkspaceContextStore.getState()).toMatchObject({
@@ -77,10 +96,29 @@ describe('project removal coordinator', () => {
   });
 
   it('keeps the selected project when removal was not executed', async () => {
-    vi.spyOn(useProjectStore.getState(), 'remove').mockResolvedValue(null);
+    vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
+      status: 'notRun',
+      reason: 'writeBlocked',
+    });
 
     await expect(confirmProjectRemoval(captureProjectRemoval(ubuntu, project, 4)))
       .resolves.toBe(false);
+
+    expect(useWorkspaceContextStore.getState().selectedContext.scope)
+      .toEqual({ scope: 'project', project_id: 'project-a' });
+  });
+
+  it('surfaces a failed removal to the dialog', async () => {
+    const error = { kind: 'custom' as const, data: { message: 'remove failed' } };
+    vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
+      status: 'failed',
+      failureSource: 'command',
+      error,
+      snapshot: projectWorkspace.getSnapshot(ubuntu),
+    });
+
+    await expect(confirmProjectRemoval(captureProjectRemoval(ubuntu, project, 4)))
+      .rejects.toEqual(error);
 
     expect(useWorkspaceContextStore.getState().selectedContext.scope)
       .toEqual({ scope: 'project', project_id: 'project-a' });

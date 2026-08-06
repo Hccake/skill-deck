@@ -17,6 +17,7 @@ import { ContextSidebar } from '../ContextSidebar';
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   openConfigResource: vi.fn(),
+  useProjectWorkspace: vi.fn(),
   selectGlobal: vi.fn(),
   selectProject: vi.fn(),
   refresh: vi.fn(),
@@ -25,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   environments: [{
     environment: { kind: 'host' as const },
     displayName: 'Windows',
-    status: 'available' as const,
+    status: 'available' as 'available' | 'connecting' | 'unavailable' | 'error' | undefined,
   }] as EnvironmentInfo[],
   workspace: {
     selectedContext: {
@@ -35,10 +36,11 @@ const mocks = vi.hoisted(() => ({
     transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
     contextRevision: 0,
   },
-  projects: {
-    projectsByEnvironment: { host: [] } as Record<string, ProjectInfo[]>,
-    loadStateByEnvironment: { host: 'ready' as const } as Record<string, 'idle' | 'loading' | 'ready' | 'error'>,
-    errorsByEnvironment: {} as Record<string, unknown>,
+  projectView: {
+    projects: [] as ProjectInfo[],
+    hasCompleteSnapshot: true,
+    error: null as unknown,
+    status: 'available' as 'available' | 'connecting' | 'unavailable' | 'error' | undefined,
   },
 }));
 
@@ -55,12 +57,15 @@ vi.mock('@/stores/environment', () => ({
     selector({ environments: mocks.environments })
   ),
 }));
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: unknown) => unknown) => selector({
-    ...mocks.projects,
-    refresh: mocks.refresh,
-    add: mocks.add,
-  }),
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: (environment: EnvironmentRef) => {
+    mocks.useProjectWorkspace(environment);
+    return {
+      ...mocks.projectView,
+      refresh: mocks.refresh,
+      add: mocks.add,
+    };
+  },
 }));
 vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
@@ -107,6 +112,7 @@ const project = (id: string): ProjectInfo => ({
 describe('ContextSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.refresh.mockResolvedValue({ status: 'succeeded' });
     Element.prototype.scrollIntoView = vi.fn();
     mocks.environments = [{
       environment: { kind: 'host' },
@@ -121,9 +127,10 @@ describe('ContextSidebar', () => {
     };
     mocks.workspace.transition = { kind: 'idle' };
     mocks.workspace.contextRevision = 0;
-    mocks.projects.projectsByEnvironment = { host: [] };
-    mocks.projects.loadStateByEnvironment = { host: 'ready' };
-    mocks.projects.errorsByEnvironment = {};
+    mocks.projectView.projects = [];
+    mocks.projectView.hasCompleteSnapshot = true;
+    mocks.projectView.error = null;
+    mocks.projectView.status = 'available';
     mocks.captureProjectRemoval.mockImplementation((
       environment: EnvironmentRef,
       target: ProjectInfo,
@@ -150,30 +157,12 @@ describe('ContextSidebar', () => {
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();
   });
 
-  it('returns to Global only after a ready project snapshot confirms the project is gone', async () => {
+  it('leaves missing-project reconciliation to ProjectWorkspace', () => {
     mocks.workspace.selectedContext = {
       environment: { kind: 'host' },
       scope: { scope: 'project', project_id: 'missing-project' },
     };
-    mocks.projects.projectsByEnvironment = { host: [project('another-project')] };
-    mocks.projects.loadStateByEnvironment = { host: 'ready' };
-
-    render(<ContextSidebar />);
-
-    await waitFor(() => expect(mocks.selectGlobal).toHaveBeenCalledTimes(1));
-  });
-
-  it.each([
-    ['loading snapshot', 'loading' as const, []],
-    ['failed snapshot', 'error' as const, []],
-    ['snapshot containing the selected project', 'ready' as const, [project('project-a')]],
-  ])('keeps the selected project for a %s', (_label, loadState, projects) => {
-    mocks.workspace.selectedContext = {
-      environment: { kind: 'host' },
-      scope: { scope: 'project', project_id: 'project-a' },
-    };
-    mocks.projects.projectsByEnvironment = { host: projects };
-    mocks.projects.loadStateByEnvironment = { host: loadState };
+    mocks.projectView.projects = [project('another-project')];
 
     render(<ContextSidebar />);
 
@@ -181,7 +170,7 @@ describe('ContextSidebar', () => {
   });
 
   it('renders every project in one scrollable list and selects by stable ID', () => {
-    mocks.projects.projectsByEnvironment = { host: [project('a'), project('b'), project('c')] };
+    mocks.projectView.projects = [project('a'), project('b'), project('c')];
     const { container } = render(<ContextSidebar />);
 
     fireEvent.click(screen.getByText('C:\\Code\\b'));
@@ -195,7 +184,7 @@ describe('ContextSidebar', () => {
 
   it('keeps Global fixed while only projects scroll', () => {
     mocks.environments = [mocks.environments[0], ubuntu];
-    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    mocks.projectView.projects = [project('a')];
     const { container } = render(<ContextSidebar />);
 
     const projectScroll = screen.getByTestId('context-sidebar-scroll');
@@ -206,7 +195,7 @@ describe('ContextSidebar', () => {
   });
 
   it('uses sibling buttons, full-text tooltips, and large-list containment for project rows', () => {
-    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    mocks.projectView.projects = [project('a')];
     const { container } = render(<ContextSidebar />);
 
     const row = container.querySelector('[data-project-id="a"]');
@@ -221,7 +210,7 @@ describe('ContextSidebar', () => {
   });
 
   it('opens a project through its backend-owned context resource', () => {
-    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    mocks.projectView.projects = [project('a')];
     const { container } = render(<ContextSidebar />);
 
     const row = container.querySelector('[data-project-id="a"]') as HTMLElement;
@@ -234,7 +223,7 @@ describe('ContextSidebar', () => {
   });
 
   it('restores focus to the next project, then Global when no project remains', async () => {
-    mocks.projects.projectsByEnvironment = { host: [project('a'), project('b'), project('c')] };
+    mocks.projectView.projects = [project('a'), project('b'), project('c')];
     const firstView = render(<ContextSidebar />);
     const rowB = firstView.container.querySelector('[data-project-id="b"]') as HTMLElement;
 
@@ -247,7 +236,7 @@ describe('ContextSidebar', () => {
     });
     firstView.unmount();
 
-    mocks.projects.projectsByEnvironment = { host: [project('only')] };
+    mocks.projectView.projects = [project('only')];
     const secondView = render(<ContextSidebar />);
     const onlyRow = secondView.container.querySelector('[data-project-id="only"]') as HTMLElement;
     fireEvent.click(within(onlyRow).getByRole('button', { name: 'context.remove' }));
@@ -258,22 +247,53 @@ describe('ContextSidebar', () => {
     });
   });
 
-  it('passes the raw picker path and captured environment to ProjectStore', async () => {
+  it('passes the raw picker path and captured environment to ProjectWorkspace', async () => {
     const rawPath = '\\\\wsl.localhost\\Ubuntu\\home\\me\\app';
     mocks.environments = [mocks.environments[0], ubuntu];
     mocks.workspace.selectedContext = {
       environment: ubuntu.environment,
       scope: { scope: 'global' },
     };
-    mocks.projects.projectsByEnvironment = { 'wsl:ubuntu': [] };
-    mocks.projects.loadStateByEnvironment = { 'wsl:ubuntu': 'ready' };
+    mocks.projectView.projects = [];
     mocks.open.mockResolvedValue(rawPath);
     mocks.add.mockResolvedValue({ created: true });
     render(<ContextSidebar />);
 
     fireEvent.click(screen.getByRole('button', { name: 'context.addProject' }));
 
-    await waitFor(() => expect(mocks.add).toHaveBeenCalledWith(ubuntu.environment, rawPath));
+    await waitFor(() => expect(mocks.add).toHaveBeenCalledWith(rawPath));
+    expect(mocks.useProjectWorkspace).toHaveBeenCalledWith(ubuntu.environment);
+  });
+
+  it('disables project registration until the first complete snapshot is available', () => {
+    mocks.projectView.hasCompleteSnapshot = false;
+
+    render(<ContextSidebar />);
+
+    expect((screen.getByRole('button', { name: 'context.addProject' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+  });
+
+  it('keeps a complete project list visible when background refresh fails', () => {
+    mocks.projectView.projects = [project('a')];
+    mocks.projectView.hasCompleteSnapshot = true;
+    mocks.projectView.error = { kind: 'custom', data: { message: 'refresh failed' } };
+
+    render(<ContextSidebar />);
+
+    expect(screen.getByText('C:\\Code\\a')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'context.environmentRetry' }));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a complete project list visible while its Environment is unavailable', () => {
+    mocks.projectView.projects = [project('a')];
+    mocks.projectView.status = 'unavailable';
+
+    render(<ContextSidebar />);
+
+    expect(screen.getByText('context.environmentUnavailable')).toBeDefined();
+    expect(screen.getByText('C:\\Code\\a')).toBeDefined();
   });
 
   it('disables project writes while the global Environment control owns switching', () => {
@@ -296,7 +316,7 @@ describe('ContextSidebar', () => {
   });
 
   it('keeps Context selection available while the wizard blocks project writes', () => {
-    mocks.projects.projectsByEnvironment = { host: [project('a')] };
+    mocks.projectView.projects = [project('a')];
     useInstallWizardSessionStore.setState({ revision: 1, active: true });
     render(<ContextSidebar />);
 

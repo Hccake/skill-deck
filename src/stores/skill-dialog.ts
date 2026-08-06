@@ -11,8 +11,7 @@ import {
 import {
   openInstallWizard,
 } from '@/hooks/useTauriApi';
-import { useProjectStore } from './projects';
-import { environmentKey } from '@/lib/context';
+import { projectSnapshotFor } from './projects';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type {
   InstalledSkill,
@@ -70,10 +69,9 @@ interface SkillDialogState {
 function projectPathForContext(context: ContextRef): string | undefined {
   const scope = context.scope;
   if (scope.scope !== 'project') return undefined;
-  const projects = useProjectStore.getState().projectsByEnvironment[
-    environmentKey(context.environment)
-  ] ?? [];
-  return projects.find((project) => project.binding.id === scope.project_id)?.binding.nativePath;
+  return projectSnapshotFor(context.environment).projects.find(
+    (project) => project.binding.id === scope.project_id,
+  )?.binding.nativePath;
 }
 
 export const useSkillDialogStore = create<SkillDialogState>()((set) => ({

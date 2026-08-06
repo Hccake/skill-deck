@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import { useSkillsDataStore, type ContextSkillSnapshot } from '@/stores/skills-data';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { contextKey, environmentKey, globalContext } from '@/lib/context';
-import { useProjectStore } from '@/stores/projects';
+import { contextKey, globalContext } from '@/lib/context';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { DiscoverListPanel } from '@/components/skills/discover/DiscoverListPanel';
 import { DiscoverDetailPanel } from '@/components/skills/discover/DiscoverDetailPanel';
@@ -14,7 +14,6 @@ import { getSkillInstallLocations } from '@/lib/discover-utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import type { ContextRef } from '@/bindings';
 
-const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
   agents: [],
@@ -39,12 +38,7 @@ const DISCOVER_PANEL_LAYOUT = {
 export function DiscoverPage() {
   const { t } = useTranslation();
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
-  const selectedEnvironmentKey = environmentKey(selectedContext.environment);
-  const projects = useProjectStore((state) => (
-    state.projectsByEnvironment[selectedEnvironmentKey] ?? EMPTY_PROJECTS
-  ));
-  const projectLoadState = useProjectStore((state) => state.loadStateByEnvironment[selectedEnvironmentKey]);
-  const refreshProjects = useProjectStore((state) => state.refresh);
+  const { projects } = useProjectWorkspace(selectedContext.environment);
   const globalSkillContext = useMemo(
     () => globalContext(selectedContext.environment),
     [selectedContext.environment],
@@ -68,12 +62,6 @@ export function DiscoverPage() {
 
   const [activeTab, setActiveTab] = useState<DiscoverTab>('popular');
   const [selectedSkill, setSelectedSkill] = useState<DiscoverSkillSummary | null>(null);
-
-  useEffect(() => {
-    if (projectLoadState !== 'ready' && projectLoadState !== 'loading') {
-      void refreshProjects(selectedContext.environment);
-    }
-  }, [projectLoadState, refreshProjects, selectedContext.environment]);
 
   useEffect(() => {
     void Promise.all([

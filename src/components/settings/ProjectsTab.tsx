@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOpen, Trash2, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { RemoveProjectDialog } from '@/components/projects/RemoveProjectDialog';
-import { useProjectStore } from '@/stores/projects';
-import { useEnvironmentProjects } from '@/hooks/useEnvironmentProjects';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import {
   captureProjectRemoval,
@@ -57,19 +57,23 @@ export function ProjectsTab() {
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const transitionActive = useWorkspaceContextStore((state) => state.transition.kind !== 'idle');
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
-  const add = useProjectStore((state) => state.add);
   const [removalRequest, setRemovalRequest] = useState<ProjectRemovalRequest | null>(null);
   const environment = selectedContext.environment;
   const {
     projects,
-    loadState,
+    hasCompleteSnapshot,
     error: loadError,
     status: selectedStatus,
     refresh,
-  } = useEnvironmentProjects(environment, { transitionActive });
+    add,
+  } = useProjectWorkspace(environment);
+  const environmentStatusMessage = selectedStatus === 'connecting'
+    ? t('context.environmentConnecting')
+    : selectedStatus === 'unavailable' || selectedStatus === 'error'
+      ? t('context.environmentUnavailable')
+      : null;
 
   const addProject = async () => {
-    const targetEnvironment = environment;
     try {
       const selected = await open({
         directory: true,
@@ -77,9 +81,11 @@ export function ProjectsTab() {
         title: t('settings.addProject'),
       });
       if (!selected || typeof selected !== 'string') return;
-      await add(targetEnvironment, selected);
+      const result = await add(selected);
+      if (result.status === 'failed') toast.error(t('settings.addProjectError'));
     } catch (error) {
       console.error('Failed to add project:', error);
+      toast.error(t('settings.addProjectError'));
     }
   };
 
@@ -97,7 +103,12 @@ export function ProjectsTab() {
           className="h-8 cursor-pointer gap-1.5 px-3 text-xs font-medium"
           onClick={() => void addProject()}
           aria-label={t('settings.addProject')}
-          disabled={writeBlocked || transitionActive || selectedStatus !== 'available'}
+          disabled={
+            writeBlocked
+            || transitionActive
+            || selectedStatus !== 'available'
+            || !hasCompleteSnapshot
+          }
         >
           <Plus className="h-3.5 w-3.5" />
           {t('settings.addProject')}
@@ -105,7 +116,19 @@ export function ProjectsTab() {
       </header>
 
       <section className="overflow-hidden rounded-lg border border-border/60 bg-background">
-        {loadError ? (
+        {hasCompleteSnapshot && environmentStatusMessage ? (
+          <div
+            role="status"
+            className="border-b border-border/50 px-4 py-2 text-xs text-muted-foreground"
+          >
+            {environmentStatusMessage}
+          </div>
+        ) : null}
+        {!hasCompleteSnapshot && environmentStatusMessage ? (
+          <div role="status" className="px-6 py-10 text-center text-sm text-muted-foreground">
+            {environmentStatusMessage}
+          </div>
+        ) : !hasCompleteSnapshot && loadError ? (
           <div className="flex flex-col items-center px-6 py-10 text-center">
             <p className="text-sm text-muted-foreground">{t('context.projectsLoadError')}</p>
             <Button
@@ -116,35 +139,52 @@ export function ProjectsTab() {
               {t('context.environmentRetry')}
             </Button>
           </div>
-        ) : loadState !== 'ready' ? (
+        ) : !hasCompleteSnapshot ? (
           <div className="px-6 py-10 text-center text-sm text-muted-foreground">
             {t('common.loading')}
           </div>
-        ) : projects.length === 0 ? (
-          <div className="flex flex-col items-center px-6 py-10 text-center">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
-              <FolderOpen className="h-5 w-5" />
-            </div>
-            <p className="mb-1 text-sm font-medium text-foreground">{t('settings.projectsEmpty')}</p>
-            <p className="max-w-[260px] text-xs leading-5 text-muted-foreground">
-              {t('settings.projectsEmptyHint')}
-            </p>
-          </div>
         ) : (
-          <div className="divide-y divide-border/50">
-            {projects.map((project) => (
-              <ProjectRow
-                key={project.binding.id}
-                project={project}
-                onRemove={(target) => setRemovalRequest(captureProjectRemoval(
-                  environment,
-                  target,
-                  contextRevision,
+          <>
+            {loadError ? (
+              <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-2 text-xs text-muted-foreground">
+                <p>{t('context.projectsLoadError')}</p>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={() => void refresh().catch(() => undefined)}
+                >
+                  {t('context.environmentRetry')}
+                </Button>
+              </div>
+            ) : null}
+            {projects.length === 0 ? (
+              <div className="flex flex-col items-center px-6 py-10 text-center">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
+                  <FolderOpen className="h-5 w-5" />
+                </div>
+                <p className="mb-1 text-sm font-medium text-foreground">{t('settings.projectsEmpty')}</p>
+                <p className="max-w-[260px] text-xs leading-5 text-muted-foreground">
+                  {t('settings.projectsEmptyHint')}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border/50">
+                {projects.map((project) => (
+                  <ProjectRow
+                    key={project.binding.id}
+                    project={project}
+                    onRemove={(target) => setRemovalRequest(captureProjectRemoval(
+                      environment,
+                      target,
+                      contextRevision,
+                    ))}
+                    writeBlocked={writeBlocked}
+                  />
                 ))}
-                writeBlocked={writeBlocked}
-              />
-            ))}
-          </div>
+              </div>
+            )}
+          </>
         )}
       </section>
 

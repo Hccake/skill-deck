@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextRef, InstalledSkill } from '@/bindings';
 import { contextKey, globalContext } from '@/lib/context';
-import { useProjectStore } from '../projects';
+import { projectWorkspace } from '../projects';
 import { useSkillsDataStore } from '../skills-data';
 import { useWorkspaceContextStore } from '../workspace-context';
 import { useSkillDetailStore } from '../skill-detail';
@@ -43,21 +43,28 @@ const globalToolkit: InstalledSkill = {
 
 describe('Skill detail workspace context', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
     useWorkspaceContextStore.setState({ selectedContext: projectContext });
-    useProjectStore.setState({
-      projectsByEnvironment: {
-        'wsl:ubuntu': [{
-          binding: {
-            id: 'project-a',
-            nativePath: '/home/me/project-a',
-            displayName: null,
-            order: null,
-            suppressCrossStorageWarning: false,
-          },
-          storage: { access: 'native', owner: projectContext.environment },
-        }],
-      },
+    vi.spyOn(projectWorkspace, 'getSnapshot').mockReturnValue({
+      environment: projectContext.environment,
+      phase: 'ready',
+      projects: [{
+        binding: {
+          id: 'project-a',
+          nativePath: '/home/me/project-a',
+          displayName: null,
+          order: null,
+          suppressCrossStorageWarning: false,
+        },
+        storage: { access: 'native', owner: projectContext.environment },
+      }],
+      error: null,
+      completeness: 'complete',
+      environmentRevision: 1,
+      lastAttemptAt: 1,
+      lastSuccessAt: 1,
+      freshUntil: 300_001,
+      version: 1,
     });
     useSkillsDataStore.setState({
       snapshots: {

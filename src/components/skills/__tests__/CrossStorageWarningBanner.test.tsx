@@ -64,10 +64,12 @@ vi.mock('@/stores/environment', () => ({
   }),
 }));
 
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: unknown) => unknown) => selector({
-    projectsByEnvironment: { 'wsl:ubuntu': mocks.projects },
-    setCrossStorageWarning: mocks.setCrossStorageWarning,
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: () => ({
+    projects: mocks.projects,
+    setCrossStorageWarning: (projectId: string, suppressed: boolean) => (
+      mocks.setCrossStorageWarning(mocks.context.environment, projectId, suppressed)
+    ),
   }),
 }));
 

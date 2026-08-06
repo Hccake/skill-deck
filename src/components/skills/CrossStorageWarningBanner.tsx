@@ -5,12 +5,9 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { useEnvironmentStore } from '@/stores/environment';
-import { useProjectStore } from '@/stores/projects';
-import { environmentKey, sameEnvironment } from '@/lib/context';
+import { sameEnvironment } from '@/lib/context';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
-import type { ProjectInfo } from '@/bindings';
-
-const EMPTY_PROJECTS: ProjectInfo[] = [];
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 
 export function CrossStorageWarningBanner() {
   const { t } = useTranslation();
@@ -19,10 +16,10 @@ export function CrossStorageWarningBanner() {
   const switchEnvironment = useWorkspaceContextStore((state) => state.switchEnvironment);
   const environments = useEnvironmentStore((state) => state.environments);
   const environment = selectedContext.environment;
-  const environmentProjects = useProjectStore((state) => (
-    state.projectsByEnvironment[environmentKey(environment)] ?? EMPTY_PROJECTS
-  ));
-  const setCrossStorageWarning = useProjectStore((state) => state.setCrossStorageWarning);
+  const {
+    projects: environmentProjects,
+    setCrossStorageWarning,
+  } = useProjectWorkspace(environment);
   const writeBlocked = useBusinessWriteBlocked();
   const [dismissing, setDismissing] = useState(false);
 
@@ -58,7 +55,8 @@ export function CrossStorageWarningBanner() {
   const handleDismiss = async () => {
     setDismissing(true);
     try {
-      await setCrossStorageWarning(environment, project.binding.id, true);
+      const result = await setCrossStorageWarning(project.binding.id, true);
+      if (result.status === 'failed') throw result.error;
     } catch (error) {
       console.error('Failed to suppress cross-storage warning:', error);
       toast.error(t('crossStorage.dismissFailed'));

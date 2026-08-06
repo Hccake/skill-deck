@@ -21,9 +21,10 @@ const project: ProjectInfo = {
 };
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
-  switchEnvironment: vi.fn(),
+  useProjectWorkspace: vi.fn(),
   refresh: vi.fn(),
   add: vi.fn(),
+  toastError: vi.fn(),
   captureProjectRemoval: vi.fn(),
   environments: [
     { environment: { kind: 'host' as const }, displayName: 'Windows', status: 'available' as const },
@@ -37,10 +38,11 @@ const mocks = vi.hoisted(() => ({
     transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
     contextRevision: 2,
   },
-  projects: {
-    projectsByEnvironment: { 'wsl:ubuntu': [] } as Record<string, ProjectInfo[]>,
-    loadStateByEnvironment: { 'wsl:ubuntu': 'ready' as const },
-    errorsByEnvironment: {},
+  projectView: {
+    projects: [] as ProjectInfo[],
+    hasCompleteSnapshot: true,
+    error: null as unknown,
+    status: 'available' as 'available' | 'connecting' | 'unavailable' | 'error' | undefined,
   },
 }));
 
@@ -48,25 +50,25 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open }));
+vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }));
 vi.mock('@/stores/environment', () => ({
-  environmentKey: (environment: { kind: string; distro_name?: string }) => (
-    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
-  ),
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
     environments: mocks.environments,
   }),
 }));
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: unknown) => unknown) => selector({
-    ...mocks.projects,
-    refresh: mocks.refresh,
-    add: mocks.add,
-  }),
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: (environment: EnvironmentRef) => {
+    mocks.useProjectWorkspace(environment);
+    return {
+      ...mocks.projectView,
+      refresh: mocks.refresh,
+      add: mocks.add,
+    };
+  },
 }));
 vi.mock('@/stores/workspace-context', () => ({
   useWorkspaceContextStore: (selector: (state: unknown) => unknown) => selector({
     ...mocks.workspace,
-    switchEnvironment: mocks.switchEnvironment,
   }),
 }));
 vi.mock('@/stores/project-removal', () => ({
@@ -81,12 +83,13 @@ vi.mock('@/components/projects/RemoveProjectDialog', () => ({
 describe('ProjectsTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.switchEnvironment.mockResolvedValue(undefined);
+    mocks.refresh.mockResolvedValue({ status: 'succeeded' });
     mocks.workspace.transition = { kind: 'idle' };
     mocks.workspace.contextRevision = 2;
-    mocks.projects.projectsByEnvironment = { 'wsl:ubuntu': [project] };
-    mocks.projects.loadStateByEnvironment = { 'wsl:ubuntu': 'ready' };
-    mocks.projects.errorsByEnvironment = {};
+    mocks.projectView.projects = [project];
+    mocks.projectView.hasCompleteSnapshot = true;
+    mocks.projectView.error = null;
+    mocks.projectView.status = 'available';
     useMutationStore.setState({
       revision: 0,
       activeMutation: null,
@@ -104,7 +107,52 @@ describe('ProjectsTab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.addProject' }));
 
-    await waitFor(() => expect(mocks.add).toHaveBeenCalledWith(ubuntu, rawPath));
+    await waitFor(() => expect(mocks.add).toHaveBeenCalledWith(rawPath));
+    expect(mocks.useProjectWorkspace).toHaveBeenCalledWith(ubuntu);
+  });
+
+  it('disables project registration until the first complete snapshot is available', () => {
+    mocks.projectView.hasCompleteSnapshot = false;
+
+    render(<ProjectsTab />);
+
+    expect((screen.getByRole('button', { name: 'settings.addProject' }) as HTMLButtonElement).disabled)
+      .toBe(true);
+  });
+
+  it('shows Environment unavailability instead of project loading', () => {
+    mocks.projectView.hasCompleteSnapshot = false;
+    mocks.projectView.status = 'unavailable';
+
+    render(<ProjectsTab />);
+
+    expect(screen.getByText('context.environmentUnavailable')).toBeDefined();
+    expect(screen.queryByText('common.loading')).toBeNull();
+  });
+
+  it('keeps the complete project list visible when a background refresh fails', () => {
+    mocks.projectView.hasCompleteSnapshot = true;
+    mocks.projectView.error = { kind: 'custom', data: { message: 'refresh failed' } };
+
+    render(<ProjectsTab />);
+
+    expect(screen.getByText('/home/me/app')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'context.environmentRetry' }));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an add failure without replacing the project catalog', async () => {
+    mocks.open.mockResolvedValue('/home/me/new-app');
+    mocks.add.mockResolvedValue({
+      status: 'failed',
+      error: { kind: 'custom', data: { message: 'add failed' } },
+    });
+
+    render(<ProjectsTab />);
+    fireEvent.click(screen.getByRole('button', { name: 'settings.addProject' }));
+
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('settings.addProjectError'));
+    expect(screen.getByText('/home/me/app')).toBeDefined();
   });
 
   it('captures removal identity and revision before opening the shared dialog', () => {

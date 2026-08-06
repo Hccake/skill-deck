@@ -13,8 +13,9 @@ import type { MutationUnitResult } from '@/bindings';
 import type { WizardState } from './types';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { useEnvironmentStore } from '@/stores/environment';
-import { useProjectStore } from '@/stores/projects';
+import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { presentMutationUnit } from '@/workflows/mutation-presentation';
+import { environmentKey } from '@/lib/context';
 import {
   collectMutationDiagnostics,
   formatFallbackReason,
@@ -84,7 +85,10 @@ export function CompleteStep({ state }: CompleteStepProps) {
   const units = state.installResults?.units ?? EMPTY_MUTATION_UNITS;
   const warnings = state.installResults?.warnings ?? [];
   const environments = useEnvironmentStore((store) => store.environments);
-  const projectsByEnvironment = useProjectStore((store) => store.projectsByEnvironment);
+  const { projects } = useProjectWorkspace(state.context.environment);
+  const projectsByEnvironment = useMemo(() => ({
+    [environmentKey(state.context.environment)]: [...projects],
+  }), [projects, state.context.environment]);
   const presentations = useMemo(
     () => new Map(units.map((unit) => [
       unit.unitId,

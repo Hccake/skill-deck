@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   recoveryCenter: vi.fn(),
   checkForUpdate: vi.fn(),
   shouldAutoCheck: vi.fn(() => false),
+  projectWorkspaceExecute: vi.fn().mockResolvedValue({ status: 'succeeded' }),
   wizardResultHandler: null as null | ((event: {
     payload: { context: { environment: { kind: 'wsl'; distro_name: string }; scope: { scope: 'project'; project_id: string } }; mutatedSkillNames?: string[] };
   }) => void),
@@ -67,6 +68,20 @@ vi.mock('@/stores/skills-data', () => ({
   useSkillsDataStore: (selector: (state: { refreshWorkspace: typeof mocks.refreshWorkspace }) => unknown) =>
     selector({ refreshWorkspace: mocks.refreshWorkspace }),
 }));
+vi.mock('@/stores/projects', () => ({
+  projectWorkspace: { execute: (...args: unknown[]) => mocks.projectWorkspaceExecute(...args) },
+}));
+vi.mock('@/stores/environment', () => ({
+  useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
+    environments: [{
+      environment: { kind: 'host' },
+      displayName: 'Windows',
+      status: 'available',
+      revision: 1,
+      error: null,
+    }],
+  }),
+}));
 vi.mock('@/stores/updater', () => ({
   useUpdaterStore: Object.assign((selector: (state: unknown) => unknown) => selector({
     status: 'idle',
@@ -75,16 +90,23 @@ vi.mock('@/stores/updater', () => ({
     shouldAutoCheck: mocks.shouldAutoCheck,
   }), { getState: () => ({ error: null }) }),
 }));
-vi.mock('@/stores/workspace-context', () => ({
-  useWorkspaceContextStore: {
-    getState: () => ({
+vi.mock('@/stores/workspace-context', () => {
+  const state = {
       selectedContext: {
         environment: { kind: 'host' },
         scope: { scope: 'global' },
       },
-    }),
-  },
-}));
+      transition: { kind: 'idle' },
+    };
+  const useWorkspaceContextStore = Object.assign(
+    (selector: (current: typeof state) => unknown) => selector(state),
+    { getState: () => state },
+  );
+  return {
+    useWorkspaceContextStore,
+    selectWorkspaceTransitionActive: (current: typeof state) => current.transition.kind !== 'idle',
+  };
+});
 
 describe('App', () => {
   beforeEach(() => {
@@ -94,6 +116,7 @@ describe('App', () => {
     mocks.monitorInstallWizardSession.mockClear();
     mocks.recoveryCenter.mockClear();
     mocks.checkForUpdate.mockClear();
+    mocks.projectWorkspaceExecute.mockClear();
     mocks.shouldAutoCheck.mockReset();
     mocks.shouldAutoCheck.mockReturnValue(false);
     mocks.wizardResultHandler = null;

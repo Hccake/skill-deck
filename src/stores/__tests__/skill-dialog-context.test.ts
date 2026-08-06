@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContextRef, InstalledSkill } from '@/bindings';
 import { useMutationStore } from '../mutation';
-import { useProjectStore } from '../projects';
+import { projectWorkspace } from '../projects';
 import { useSkillDialogStore } from '../skill-dialog';
 import { useInstallWizardSessionStore } from '../install-wizard-session';
 
@@ -61,7 +61,7 @@ const token = {
 
 describe('Skill dialog context capture', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
     useMutationStore.setState({ activeMutation: null, loading: false, cancelling: false });
     useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
     useSkillDialogStore.setState({
@@ -70,13 +70,20 @@ describe('Skill dialog context capture', () => {
       deleteFeedback: null,
       loadingAgentDetails: false,
     });
-    useProjectStore.setState({
-      projectsByEnvironment: {
-        'wsl:ubuntu': [
-          { binding: { id: 'source', nativePath: '/source', displayName: null, order: null }, storage: { access: 'native', owner: context.environment } },
-          { binding: { id: 'target', nativePath: '/target', displayName: null, order: null }, storage: { access: 'native', owner: context.environment } },
-        ],
-      },
+    vi.spyOn(projectWorkspace, 'getSnapshot').mockReturnValue({
+      environment: context.environment,
+      phase: 'ready',
+      projects: [
+        { binding: { id: 'source', nativePath: '/source', displayName: null, order: null }, storage: { access: 'native', owner: context.environment } },
+        { binding: { id: 'target', nativePath: '/target', displayName: null, order: null }, storage: { access: 'native', owner: context.environment } },
+      ],
+      error: null,
+      completeness: 'complete',
+      environmentRevision: 1,
+      lastAttemptAt: 1,
+      lastSuccessAt: 1,
+      freshUntil: 300_001,
+      version: 1,
     });
     mocks.previewRemove.mockResolvedValue({
       token,

@@ -143,6 +143,7 @@
     "globalSubtitle": "Available in every project",
     "projects": "Projects",
     "addProject": "Add Project",
+    "addProjectError": "The project could not be added. Try again.",
     "manageInSettings": "Manage in Settings",
     "sectionGlobal": "Global",
     "sectionProjects": "Projects",
@@ -976,6 +977,7 @@
     "projectsEmpty": "No projects added",
     "projectsEmptyHint": "Add a project to manage project-level skills",
     "addProject": "Add Project",
+    "addProjectError": "The project could not be added. Try again.",
     "removeProject": "Remove Project",
     "about": "About",
     "aboutSections": {

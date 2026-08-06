@@ -143,6 +143,7 @@
     "globalSubtitle": "所有项目可用",
     "projects": "项目",
     "addProject": "添加项目",
+    "addProjectError": "无法添加此项目，请重试。",
     "manageInSettings": "在设置中管理",
     "sectionGlobal": "全局",
     "sectionProjects": "项目",
@@ -976,6 +977,7 @@
     "projectsEmpty": "暂无已添加的项目",
     "projectsEmptyHint": "添加项目以管理项目级 Skills",
     "addProject": "添加项目",
+    "addProjectError": "无法添加此项目，请重试。",
     "removeProject": "移除项目",
     "about": "关于",
     "aboutSections": {

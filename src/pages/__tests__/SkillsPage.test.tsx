@@ -116,11 +116,31 @@ vi.mock('@/stores/workspace-context', () => ({
     selector(mocks.workspaceContextState),
 }));
 
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
+    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    return {
+      projects: mocks.projectState.projectsByEnvironment[key] ?? [],
+      hasCompleteSnapshot: true,
+      error: null,
+      status: 'available',
+      refresh: mocks.projectState.refresh,
+      add: vi.fn(),
+      remove: vi.fn(),
+      setCrossStorageWarning: vi.fn(),
+    };
+  },
+  useProjectCatalog: () => mocks.projectState.projectsByEnvironment,
+}));
+
 vi.mock('@/stores/projects', () => ({
-  useProjectStore: Object.assign(
-    (selector: (state: typeof mocks.projectState) => unknown) => selector(mocks.projectState),
-    { getState: () => mocks.projectState },
-  ),
+  projectWorkspace: {
+    execute: vi.fn().mockResolvedValue({ status: 'succeeded' }),
+    getSnapshot: (environment: { kind: string; distro_name?: string }) => {
+      const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+      return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
+    },
+  },
 }));
 
 vi.mock('@/stores/environment', () => ({

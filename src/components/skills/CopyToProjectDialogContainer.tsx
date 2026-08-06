@@ -1,22 +1,25 @@
+import { useMemo } from 'react';
 import { listSkills } from '@/hooks/useTauriApi';
-import { contextKey, environmentKey } from '@/lib/context';
+import { contextKey } from '@/lib/context';
 import { useEnvironmentStore } from '@/stores/environment';
 import { useCopyAgentSelection } from '@/hooks/useCopyAgentSelection';
-import { useProjectStore } from '@/stores/projects';
+import { projectWorkspace } from '@/stores/projects';
+import { useProjectCatalog } from '@/hooks/useProjectWorkspace';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillCopy } from '@/workflows/skill-copy';
 import { CopyToProjectDialog } from './CopyToProjectDialog';
-import type { ContextRef, EnvironmentRef, InstalledSkill } from '@/bindings';
+import type { ContextRef, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
 
 async function loadTargetProjects(environment: EnvironmentRef) {
-  const environmentState = useEnvironmentStore.getState();
-  const environmentInfo = environmentState.environments.find(
-    (entry) => environmentKey(entry.environment) === environmentKey(environment),
-  );
-  if (environment.kind === 'wsl' && environmentInfo?.status !== 'available') {
-    await environmentState.connect(environment);
-  }
-  await useProjectStore.getState().refresh(environment);
+  const result = await projectWorkspace.execute({
+    kind: 'prepareCopyTarget',
+    environment,
+  });
+  if (result.status === 'failed') throw result;
+}
+
+function projectsForEnvironment(environment: EnvironmentRef): readonly ProjectInfo[] {
+  return projectWorkspace.getSnapshot(environment).projects;
 }
 
 async function checkTargetExistence(
@@ -24,8 +27,7 @@ async function checkTargetExistence(
   environment: EnvironmentRef,
   projectIds: string[],
 ) {
-  const targetProjects = useProjectStore.getState()
-    .projectsByEnvironment[environmentKey(environment)] ?? [];
+  const targetProjects = projectsForEnvironment(environment);
   const projectsById = new Map(
     targetProjects.map((project) => [project.binding.id, project]),
   );
@@ -69,7 +71,11 @@ function OpenCopyToProjectDialog({
   sourceContext: ContextRef;
 }) {
   const environments = useEnvironmentStore((state) => state.environments);
-  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
+  const projectEnvironments = useMemo(
+    () => environments.map((entry) => entry.environment),
+    [environments],
+  );
+  const projectsByEnvironment = useProjectCatalog(projectEnvironments);
   const closeCopyToProject = useSkillDialogStore((state) => state.closeCopyToProject);
   const agentSelection = useCopyAgentSelection(sourceContext, skill.name);
 

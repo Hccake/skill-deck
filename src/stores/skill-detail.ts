@@ -2,8 +2,8 @@
 import { create } from 'zustand';
 import { readSkillContent as apiReadSkillContent } from '@/hooks/useTauriApi';
 import { useWorkspaceContextStore } from './workspace-context';
-import { useProjectStore } from './projects';
-import { contextKey, environmentKey, globalContext } from '@/lib/context';
+import { projectSnapshotFor } from './projects';
+import { contextKey, globalContext } from '@/lib/context';
 import {
   findSkillByIdentity,
   getSkillIdentity,
@@ -35,10 +35,9 @@ function getContextualSelectionKey(
 function projectPathForContext(context: ContextRef): string | undefined {
   const scope = context.scope;
   if (scope.scope !== 'project') return undefined;
-  const projects = useProjectStore.getState().projectsByEnvironment[
-    environmentKey(context.environment)
-  ] ?? [];
-  return projects.find((project) => project.binding.id === scope.project_id)?.binding.nativePath;
+  return projectSnapshotFor(context.environment).projects.find(
+    (project) => project.binding.id === scope.project_id,
+  )?.binding.nativePath;
 }
 
 function getSelectionIdentity(skill: InstalledSkill, context: ContextRef): SkillIdentity {

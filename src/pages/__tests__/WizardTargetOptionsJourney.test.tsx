@@ -20,10 +20,8 @@ vi.mock('@/hooks/useMutationMonitor', () => ({ useMutationMonitor: vi.fn() }));
 vi.mock('@/lifecycle/useWindowLifecycle', () => ({
   useWindowLifecycle: () => ({ requestAction: vi.fn() }),
 }));
-vi.mock('@/stores/projects', () => ({
-  useProjectStore: (selector: (state: { refresh: () => Promise<never[]> }) => unknown) => (
-    selector({ refresh: vi.fn().mockResolvedValue([]) })
-  ),
+vi.mock('@/hooks/useProjectWorkspace', () => ({
+  useProjectWorkspace: () => ({ refresh: vi.fn().mockResolvedValue([]) }),
 }));
 vi.mock('@/hooks/useTauriApi', () => ({
   getInstallAgentSelection: (context: unknown, agents: unknown) => mocks.getSelection(context, agents),
