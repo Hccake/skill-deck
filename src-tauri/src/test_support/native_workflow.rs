@@ -673,9 +673,14 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .map(|entry| entry.public.entry_id)
         .expect("Eve research entry");
     let research_selection = manage.selection(&source_context, "demo").await?;
+    let research_skill_path = source_project
+        .join("agent")
+        .join("subagents")
+        .join("research")
+        .join("skills");
     let remove_research_selection = manage_submission(
         &research_selection,
-        |item| !item.path.contains("/subagents/research/"),
+        |item| Path::new(&item.path) != research_skill_path,
         InstallMode::Copy,
     );
     let remove_research_request = ManageAgentsPreviewRequest {
