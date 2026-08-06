@@ -454,6 +454,20 @@ describe('CopyToProjectDialog', () => {
     expect(screen.queryByText('skills.copyToProject.metadataWarning')).toBeNull();
   });
 
+  it('uses the shared project name fallback and keeps the full path visible', async () => {
+    render(
+      <CopyToProjectDialog
+        skill={skill()}
+        {...defaultCopyProps}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText('project-b')).toBeDefined();
+    expect(screen.getByText('/project-b')).toBeDefined();
+  });
+
   it('does not show update metadata warnings in the copy flow', async () => {
     render(
       <CopyToProjectDialog

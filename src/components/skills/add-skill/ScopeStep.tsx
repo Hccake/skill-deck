@@ -8,6 +8,7 @@ import type { ContextRef, SkillScope } from '@/bindings';
 import type { WizardState } from './types';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { projectBindingDisplayName } from '@/lib/projects/presentation';
 
 const EMPTY_PROJECTS: ReturnType<typeof useProjectStore.getState>['projectsByEnvironment'][string] = [];
 
@@ -19,12 +20,6 @@ type ScopeOption = {
   hint: string;
   icon: typeof Globe;
 };
-
-/** 从完整路径中提取项目名称 */
-function getProjectName(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/');
-  return parts[parts.length - 1] || path;
-}
 
 interface ScopeStepProps {
   state: WizardState;
@@ -52,7 +47,7 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
     return environmentProjects.map(({ binding: project }) => ({
       scope: 'project' as SkillScope,
       projectPath: project.nativePath,
-      label: project.displayName ?? getProjectName(project.nativePath),
+      label: projectBindingDisplayName(project),
       hint: project.nativePath,
       icon: Folder,
       context: {

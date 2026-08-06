@@ -1,19 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOpen, Trash2, Plus } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Button } from '@/components/ui/button';
 import { RemoveProjectDialog } from '@/components/projects/RemoveProjectDialog';
-import { useEnvironmentStore } from '@/stores/environment';
 import { useProjectStore } from '@/stores/projects';
+import { useEnvironmentProjects } from '@/hooks/useEnvironmentProjects';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import {
   captureProjectRemoval,
   type ProjectRemovalRequest,
 } from '@/stores/project-removal';
-import { environmentKey, sameEnvironment } from '@/lib/context';
 import type { ProjectInfo } from '@/bindings';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { ProjectIdentity } from '@/components/projects/ProjectIdentity';
 
 interface ProjectRowProps {
   project: ProjectInfo;
@@ -23,10 +23,6 @@ interface ProjectRowProps {
 
 function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
   const { t } = useTranslation();
-  const basename = project.binding.displayName
-    ?? project.binding.nativePath.split(/[/\\]/).pop()
-    ?? project.binding.nativePath;
-
   return (
     <div className="group flex items-center justify-between px-4 py-3 my-0.5 mx-1.5 rounded-md transition-colors hover:bg-muted/30">
       <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
@@ -34,10 +30,11 @@ function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
           <FolderOpen className="h-4 w-4" />
         </div>
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-semibold text-foreground truncate">{basename}</span>
-          <span className="text-[10px] font-mono text-muted-foreground truncate opacity-80 mt-0.5">
-            {project.binding.nativePath}
-          </span>
+          <ProjectIdentity
+            project={project}
+            nameClassName="text-sm font-semibold text-foreground"
+            pathClassName="text-[10px] font-mono text-muted-foreground opacity-80 mt-0.5"
+          />
         </div>
       </div>
       <Button
@@ -57,30 +54,19 @@ function ProjectRow({ project, onRemove, writeBlocked }: ProjectRowProps) {
 export function ProjectsTab() {
   const { t } = useTranslation();
   const writeBlocked = useBusinessWriteBlocked();
-  const environments = useEnvironmentStore((state) => state.environments);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const transitionActive = useWorkspaceContextStore((state) => state.transition.kind !== 'idle');
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
-  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
-  const loadStateByEnvironment = useProjectStore((state) => state.loadStateByEnvironment);
-  const errorsByEnvironment = useProjectStore((state) => state.errorsByEnvironment);
-  const refresh = useProjectStore((state) => state.refresh);
   const add = useProjectStore((state) => state.add);
   const [removalRequest, setRemovalRequest] = useState<ProjectRemovalRequest | null>(null);
   const environment = selectedContext.environment;
-  const key = environmentKey(environment);
-  const projects = projectsByEnvironment[key] ?? [];
-  const loadState = loadStateByEnvironment[key] ?? 'idle';
-  const loadError = errorsByEnvironment[key];
-  const selectedStatus = environments.find(
-    (entry) => sameEnvironment(entry.environment, environment),
-  )?.status;
-
-  useEffect(() => {
-    if (loadState === 'idle' && !transitionActive && selectedStatus === 'available') {
-      void refresh(environment).catch(() => undefined);
-    }
-  }, [environment, loadState, refresh, selectedStatus, transitionActive]);
+  const {
+    projects,
+    loadState,
+    error: loadError,
+    status: selectedStatus,
+    refresh,
+  } = useEnvironmentProjects(environment, { transitionActive });
 
   const addProject = async () => {
     const targetEnvironment = environment;
@@ -125,7 +111,7 @@ export function ProjectsTab() {
             <Button
               variant="link"
               size="sm"
-              onClick={() => void refresh(environment).catch(() => undefined)}
+              onClick={() => void refresh().catch(() => undefined)}
             >
               {t('context.environmentRetry')}
             </Button>

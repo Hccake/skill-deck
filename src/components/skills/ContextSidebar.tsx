@@ -12,25 +12,18 @@ import {
 } from '@/components/ui/context-menu';
 import { RemoveProjectDialog } from '@/components/projects/RemoveProjectDialog';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
-import { useEnvironmentStore } from '@/stores/environment';
 import { useProjectStore } from '@/stores/projects';
+import { useEnvironmentProjects } from '@/hooks/useEnvironmentProjects';
 import {
   captureProjectRemoval,
   type ProjectRemovalRequest,
 } from '@/stores/project-removal';
-import { environmentKey, sameEnvironment } from '@/lib/context';
+import { sameEnvironment } from '@/lib/context';
 import { openConfigResource } from '@/hooks/useTauriApi';
 import type { EnvironmentRef, ProjectInfo } from '@/bindings';
 import { cn } from '@/lib/utils';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
-
-const EMPTY_PROJECTS: ProjectInfo[] = [];
-
-function getProjectName(project: ProjectInfo): string {
-  if (project.binding.displayName) return project.binding.displayName;
-  const parts = project.binding.nativePath.replace(/\\/g, '/').split('/');
-  return parts.at(-1) || project.binding.nativePath;
-}
+import { ProjectIdentity } from '@/components/projects/ProjectIdentity';
 
 interface GlobalContextItemProps {
   buttonRef: React.Ref<HTMLButtonElement>;
@@ -90,7 +83,6 @@ function ProjectContextItem({
   const isSelected = sameEnvironment(selectedContext.environment, environment)
     && selectedContext.scope.scope === 'project'
     && selectedContext.scope.project_id === project.binding.id;
-  const projectName = getProjectName(project);
 
   const openProject = async (event?: React.MouseEvent) => {
     event?.stopPropagation();
@@ -122,18 +114,11 @@ function ProjectContextItem({
       >
         <Folder className={cn('h-4 w-4 flex-shrink-0', isSelected ? 'text-primary' : 'text-muted-foreground')} />
         <span className="min-w-0 flex-1">
-          <span
-            title={projectName}
-            className={cn('block truncate text-sm', isSelected ? 'font-bold' : 'font-medium')}
-          >
-            {projectName}
-          </span>
-          <span
-            title={project.binding.nativePath}
-            className={cn('block truncate text-[10px]', isSelected ? 'opacity-70' : 'opacity-60')}
-          >
-            {project.binding.nativePath}
-          </span>
+          <ProjectIdentity
+            project={project}
+            nameClassName={cn('text-sm', isSelected ? 'font-bold' : 'font-medium')}
+            pathClassName={cn('text-[10px]', isSelected ? 'opacity-70' : 'opacity-60')}
+          />
         </span>
       </button>
       <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
@@ -187,38 +172,26 @@ function ProjectContextItem({
 export function ContextSidebar() {
   const { t } = useTranslation();
   const writeBlocked = useBusinessWriteBlocked();
-  const environments = useEnvironmentStore((state) => state.environments);
   const selectedContext = useWorkspaceContextStore((state) => state.selectedContext);
   const transitionActive = useWorkspaceContextStore((state) => state.transition.kind !== 'idle');
   const contextRevision = useWorkspaceContextStore((state) => state.contextRevision);
   const selectGlobal = useWorkspaceContextStore((state) => state.selectGlobal);
-  const projectsByEnvironment = useProjectStore((state) => state.projectsByEnvironment);
-  const loadStateByEnvironment = useProjectStore((state) => state.loadStateByEnvironment);
-  const errorsByEnvironment = useProjectStore((state) => state.errorsByEnvironment);
-  const refresh = useProjectStore((state) => state.refresh);
   const add = useProjectStore((state) => state.add);
   const [removalRequest, setRemovalRequest] = useState<ProjectRemovalRequest | null>(null);
   const globalButtonRef = useRef<HTMLButtonElement>(null);
   const projectButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const focusAfterRemovalRef = useRef<string | null>(null);
   const environment = selectedContext.environment;
-  const key = environmentKey(environment);
-  const projects = projectsByEnvironment[key] ?? EMPTY_PROJECTS;
-  const loadState = loadStateByEnvironment[key] ?? 'idle';
-  const loadError = errorsByEnvironment[key];
+  const {
+    projects,
+    loadState,
+    error: loadError,
+    status: selectedStatus,
+    refresh,
+  } = useEnvironmentProjects(environment, { transitionActive });
   const selectedProjectId = selectedContext.scope.scope === 'project'
     ? selectedContext.scope.project_id
     : null;
-  const selectedStatus = environments.find(
-    (entry) => sameEnvironment(entry.environment, environment),
-  )?.status;
-
-  useEffect(() => {
-    if (loadState === 'idle' && !transitionActive && selectedStatus === 'available') {
-      void refresh(environment).catch(() => undefined);
-    }
-  }, [environment, loadState, refresh, selectedStatus, transitionActive]);
-
   useEffect(() => {
     if (!selectedProjectId || loadState !== 'ready' || transitionActive) return;
     if (projects.some((entry) => entry.binding.id === selectedProjectId)) return;
@@ -279,7 +252,7 @@ export function ContextSidebar() {
               <button
                 type="button"
                 className="mt-2 text-primary hover:underline cursor-pointer"
-                onClick={() => void refresh(environment).catch(() => undefined)}
+                onClick={() => void refresh().catch(() => undefined)}
               >
                 {t('context.environmentRetry')}
               </button>

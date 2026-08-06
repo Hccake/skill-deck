@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { environmentKey, sameEnvironment } from '@/lib/context';
+import { environmentKey } from '@/lib/context';
 import { formatMutationError } from '@/lib/mutation-results';
 import type {
   AgentSelectionSubmission,
@@ -28,6 +28,7 @@ import type {
   ProjectInfo,
 } from '@/bindings';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
+import { ProjectIdentity } from '@/components/projects/ProjectIdentity';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type { CopyOutcome } from '@/workflows/skill-copy';
 import type { CopyAgentSelectionState } from '@/hooks/useCopyAgentSelection';
@@ -45,6 +46,7 @@ import {
   type AgentSelectionSession,
 } from '@/lib/agent-selection-session';
 import type { AgentSelectionSnapshot } from '@/bindings';
+import { getCopyableProjects } from '@/lib/projects/copy-targets';
 
 export interface CopyTargetSelection {
   environment: EnvironmentRef;
@@ -146,11 +148,12 @@ function CopyToProjectDialogSession({
   )?.environment ?? sourceContext.environment;
 
   const availableProjects = useMemo(
-    () => (projectsByEnvironment[targetEnvironmentKey] ?? []).filter((project) => !completedProjectIds.has(project.binding.id) && !(
-      sameEnvironment(targetEnvironment, sourceContext.environment)
-      && sourceContext.scope.scope === 'project'
-      && project.binding.id === sourceContext.scope.project_id
-    )),
+    () => getCopyableProjects({
+      targetEnvironment,
+      sourceContext,
+      projects: projectsByEnvironment[targetEnvironmentKey] ?? [],
+      completedProjectIds,
+    }),
     [completedProjectIds, projectsByEnvironment, sourceContext, targetEnvironment, targetEnvironmentKey],
   );
 
@@ -465,14 +468,11 @@ function CopyToProjectDialogSession({
                           />
                           <Folder className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm">
-                              {project.binding.displayName || project.binding.nativePath}
-                            </span>
-                            {project.binding.displayName ? (
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {project.binding.nativePath}
-                              </span>
-                            ) : null}
+                            <ProjectIdentity
+                              project={project}
+                              nameClassName="text-sm"
+                              pathClassName="text-xs text-muted-foreground"
+                            />
                             {failedUnit ? (
                               <span className="mt-0.5 block text-xs text-destructive">
                                 {failedUnit.error

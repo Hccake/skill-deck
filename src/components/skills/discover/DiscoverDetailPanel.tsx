@@ -24,6 +24,7 @@ import type { DiscoverSkillDetail } from '@/lib/discover/api';
 import type { DiscoverAuditRisk, DiscoverSecurityAudit, DiscoverSkillSummary } from '@/lib/discover/types';
 import { delay } from '@/lib/discover-utils';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
+import { projectPathBasename } from '@/lib/projects/presentation';
 
 const PROSE_WITH_LISTS_CLASS_NAME = 'skill-prose skill-prose-with-lists';
 
@@ -89,12 +90,6 @@ function getAuditTone(status: DiscoverSecurityAudit['status']) {
     dotClassName: 'bg-border',
     statusClassName: 'text-muted-foreground',
   };
-}
-
-/** 从完整路径中提取项目名称（最后一个目录名） */
-function getProjectName(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/');
-  return parts[parts.length - 1] || path;
 }
 
 function createFallbackDetail(skill: DiscoverSkillSummary): DiscoverSkillDetail {
@@ -366,7 +361,7 @@ export function DiscoverDetailPanel({
                               <span className="text-foreground/88">{t('context.global')}</span>
                             ) : (
                               <div className="min-w-0">
-                                <div className="truncate text-foreground/88">{getProjectName(location)}</div>
+                                <div className="truncate text-foreground/88">{projectPathBasename(location)}</div>
                                 <div className="truncate text-[10px] text-muted-foreground/60">{location}</div>
                               </div>
                             )}

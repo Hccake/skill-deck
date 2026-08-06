@@ -3,17 +3,12 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe, Folder } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { projectPathBasename } from '@/lib/projects/presentation';
 
 interface ScopeBadgeProps {
   scope: 'global' | 'project';
   projectPath?: string;
   onClick?: () => void;
-}
-
-/** 从路径提取项目名 */
-function getProjectName(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/');
-  return parts[parts.length - 1] || path;
 }
 
 export const ScopeBadge = memo(function ScopeBadge({
@@ -37,7 +32,7 @@ export const ScopeBadge = memo(function ScopeBadge({
       ) : (
         <>
           <Folder className="w-3 h-3 mr-1" />
-          {getProjectName(projectPath ?? '')}
+          {projectPathBasename(projectPath ?? '')}
         </>
       )}
     </Badge>

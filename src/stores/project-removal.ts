@@ -2,18 +2,13 @@ import type { EnvironmentRef, ProjectInfo } from '@/bindings';
 import { sameEnvironment } from '@/lib/context';
 import { useProjectStore } from './projects';
 import { useWorkspaceContextStore } from './workspace-context';
+import { projectDisplayName } from '@/lib/projects/presentation';
 
 export interface ProjectRemovalRequest {
   environment: EnvironmentRef;
   projectId: string;
   projectName: string;
   contextRevision: number;
-}
-
-function projectName(project: ProjectInfo): string {
-  if (project.binding.displayName) return project.binding.displayName;
-  const segments = project.binding.nativePath.replace(/\\/g, '/').split('/');
-  return segments.at(-1) || project.binding.nativePath;
 }
 
 export function captureProjectRemoval(
@@ -24,7 +19,7 @@ export function captureProjectRemoval(
   return {
     environment: { ...environment },
     projectId: project.binding.id,
-    projectName: projectName(project),
+    projectName: projectDisplayName(project),
     contextRevision,
   };
 }

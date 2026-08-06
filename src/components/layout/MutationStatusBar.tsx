@@ -11,14 +11,10 @@ import {
 } from '@/stores/install-wizard-session';
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { formatMutationStatus } from '@/lib/mutationStatus';
+import { projectDisplayName } from '@/lib/projects/presentation';
 
 interface MutationStatusBarProps {
   pollIntervalMs?: number;
-}
-
-function projectName(nativePath: string): string {
-  const parts = nativePath.replace(/\\/g, '/').split('/');
-  return parts[parts.length - 1] || nativePath;
 }
 
 export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarProps) {
@@ -56,8 +52,7 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
     );
     return {
       environmentLabel,
-      scopeLabel: project?.binding.displayName
-        ?? (project ? projectName(project.binding.nativePath) : projectId),
+      scopeLabel: project ? projectDisplayName(project) : projectId,
     };
   }, [activeMutation, environments, projectsByEnvironment, t]);
 
