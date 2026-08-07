@@ -77,6 +77,37 @@ pub struct ResourceLocator {
     pub native_path: String,
 }
 
+pub fn display_locator(locator: &ResourceLocator) -> ResourceLocator {
+    let native_path = if let Some(suffix) = locator.native_path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{suffix}")
+    } else if let Some(suffix) = locator
+        .native_path
+        .strip_prefix(r"\\?\")
+        .or_else(|| locator.native_path.strip_prefix(r"\??\"))
+    {
+        suffix.to_string()
+    } else {
+        locator.native_path.clone()
+    };
+    ResourceLocator {
+        environment: locator.environment.clone(),
+        native_path,
+    }
+}
+
+pub fn parent_locator(locator: &ResourceLocator) -> Option<ResourceLocator> {
+    let index = locator.native_path.rfind(['/', '\\'])?;
+    let native_path = if index == 0 {
+        locator.native_path[..=index].to_string()
+    } else {
+        locator.native_path[..index].to_string()
+    };
+    Some(ResourceLocator {
+        environment: locator.environment.clone(),
+        native_path,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]

@@ -1196,6 +1196,7 @@ mod tests {
                 Ok((
                     self.token.clone(),
                     MutationPlan {
+                        kind: crate::core::mutation::MutationKind::Update,
                         operation_id: "update-1".to_string(),
                         payloads: payloads
                             .into_iter()
@@ -1303,6 +1304,7 @@ mod tests {
                             .unwrap(),
                     },
                     MutationPlan {
+                        kind: crate::core::mutation::MutationKind::Update,
                         operation_id: "update-1".to_string(),
                         payloads: payloads
                             .into_iter()

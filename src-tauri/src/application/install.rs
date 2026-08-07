@@ -419,6 +419,7 @@ mod tests {
                 Ok((
                     self.preview.token.clone(),
                     MutationPlan {
+                        kind: crate::core::mutation::MutationKind::Install,
                         operation_id: "operation-1".to_string(),
                         payloads: payloads
                             .into_iter()

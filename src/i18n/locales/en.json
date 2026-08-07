@@ -114,26 +114,44 @@
   "recovery": {
     "title": "Recovery required",
     "center": {
-      "title": "Issues requiring attention",
-      "description": "Review recovery data that needs attention.",
+      "title": "Operations Requiring Attention",
+      "description": "Skill Deck could not confirm the file state for these operations. Finish reviewing them before running the original operation again.",
       "open": "View issues requiring attention",
       "loadError": "Recovery items could not be loaded",
-      "show": "Show recovery items"
+      "show": "Show recovery items",
+      "refreshAll": "Recheck All"
     },
+    "itemTitle": {
+      "install": "{{skillName}} installation was not completed",
+      "update": "{{skillName}} update was not completed",
+      "remove": "{{skillName}} removal was not completed",
+      "copy": "{{skillName}} copy was not completed",
+      "manageAgents": "{{skillName}} Agent changes were not completed",
+      "duplicateCleanup": "{{skillName}} duplicate cleanup was not completed",
+      "repair": "{{skillName}} source repair was not completed",
+      "generic": "{{skillName}} operation was not completed"
+    },
+    "projectScope": "Project",
     "loading": "Checking recovery state...",
-    "open": "Open recovery data",
+    "openDirectory": "Open Review Folder",
+    "openRecordDirectory": "Open Diagnostic Folder",
     "refresh": "Refresh",
-    "cleanup": "Remove recovery data",
+    "cleanup": "Finish Review",
     "refreshError": "Recovery state could not be refreshed. The recovery data has been preserved.",
-    "openError": "The recovery directory could not be opened. Try again later.",
-    "cleanupTitle": "Remove recovery data?",
-    "cleanupDescription": "Only recovery data is removed. This is available after Skill Deck verifies that the target is consistent.",
-    "confirmCleanup": "Remove recovery data",
+    "openError": "The review folder could not be opened. Try again later.",
+    "cleanupTitle": "Delete the backup and finish?",
+    "cleanupDescription": "This deletes the backup retained by this operation and its review record. Files at the current target are not deleted.",
+    "confirmCleanup": "Delete Backup & Finish",
+    "path": {
+      "current": "Current Files",
+      "backup": "Pre-operation Backup",
+      "record": "Review Record"
+    },
     "state": {
-      "needsAttention": "Review the recovery data and target files before continuing.",
-      "consistentCanCleanup": "The target is consistent. Recovery data can now be removed.",
-      "environmentUnavailable": "The Environment is unavailable. Recovery data has been preserved.",
-      "invalid": "The recovery record is invalid. You can open its directory, but it will not be removed automatically.",
+      "needsAttention": "Skill Deck could not confirm that the current files match the operation record. Review the current files and backup, keep the version you need, then recheck.",
+      "consistentCanCleanup": "The file state is consistent. Finishing removes the backup retained by this operation and its review record.",
+      "environmentUnavailable": "The Environment is unavailable. Reconnect it before rechecking; the related files remain in place.",
+      "invalid": "The review record is invalid. Open the diagnostic folder to inspect it; Skill Deck will not remove it automatically.",
       "missing": "Recovery data is no longer present."
     }
   },

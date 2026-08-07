@@ -51,7 +51,7 @@ export function RecoveryCenter() {
         </Button>
       </DialogTrigger>
       <DialogContent
-        className="max-h-[min(80vh,42rem)] overflow-hidden p-0 sm:max-w-xl"
+        className="max-h-[min(82vh,44rem)] overflow-hidden p-0 sm:max-w-2xl"
         closeLabel={t('common.close')}
       >
         <DialogHeader className="border-b px-5 pb-4 pt-5 pr-12">
@@ -59,8 +59,9 @@ export function RecoveryCenter() {
           <DialogDescription>{t('recovery.center.description')}</DialogDescription>
         </DialogHeader>
 
-        <div className="overflow-y-auto px-5 pb-5">
-          <div className="flex justify-end py-3">
+        <div className="overflow-y-auto overscroll-contain px-5 py-4">
+          {resources.length > 1 ? (
+            <div className="mb-3 flex justify-end">
             <Button
               type="button"
               variant="outline"
@@ -68,14 +69,18 @@ export function RecoveryCenter() {
               disabled={state === 'loading'}
               onClick={() => void load()}
             >
-              <RefreshCw className={state === 'loading' ? 'animate-spin' : undefined} />
-              {t('recovery.refresh')}
+              <RefreshCw
+                className={state === 'loading' ? 'animate-spin motion-reduce:animate-none' : undefined}
+                aria-hidden="true"
+              />
+              {t('recovery.center.refreshAll')}
             </Button>
-          </div>
+            </div>
+          ) : null}
 
-          <div className="space-y-4">
+          <div className="space-y-3">
             {error ? (
-              <section className="border-b pb-4">
+              <section className="rounded-md border border-destructive/30 bg-destructive/5 p-3" role="alert">
                 <h3 className="text-sm font-medium">{t('recovery.center.loadError')}</h3>
                 <p className="mt-1 text-xs text-muted-foreground">{formatAppError(error, t)}</p>
               </section>

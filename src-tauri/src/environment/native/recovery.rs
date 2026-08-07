@@ -296,6 +296,14 @@ mod tests {
             environment: EnvironmentRef::Host,
             operation_id: "operation-1".to_string(),
             unit_id: "unit-1".to_string(),
+            subject: Some(crate::environment::recovery::RecoverySubject {
+                operation_kind: crate::core::mutation::MutationKind::Install,
+                skill_name: "demo".to_string(),
+                context: crate::environment::types::ContextRef {
+                    environment: EnvironmentRef::Host,
+                    scope: crate::environment::types::ContextScope::Global,
+                },
+            }),
             created_at_epoch_ms: 1_000,
             entries: vec![RecoveryMarkerEntry {
                 physical_target_digest: "target-digest".to_string(),

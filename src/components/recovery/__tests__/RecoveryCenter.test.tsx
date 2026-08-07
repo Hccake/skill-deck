@@ -54,7 +54,8 @@ function resource(
     revision: `revision-${resourceId}`,
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     createdAtEpochMs: 1,
-    displayPaths: [],
+    subject: null,
+    paths: [],
     diagnostic: null,
   };
 }
@@ -102,6 +103,24 @@ describe('RecoveryCenter', () => {
       expect.objectContaining({ resourceId: 'attention', state: 'needsAttention' }),
       expect.objectContaining({ resourceId: 'offline', state: 'environmentUnavailable' }),
     ]);
+  });
+
+  it('shows a bulk recheck only when multiple operations need attention', () => {
+    mocks.resources = [resource('attention', 'needsAttention')];
+    const { unmount } = render(<RecoveryCenter />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.open' }));
+    expect(screen.queryByRole('button', { name: 'recovery.center.refreshAll' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'recovery.refresh' })).toBeNull();
+
+    unmount();
+    mocks.resources = [
+      resource('attention', 'needsAttention'),
+      resource('offline', 'environmentUnavailable'),
+    ];
+    render(<RecoveryCenter />);
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.center.open' }));
+    expect(screen.getByRole('button', { name: 'recovery.center.refreshAll' })).toBeDefined();
   });
 
   it('refreshes on initial load and window focus', async () => {

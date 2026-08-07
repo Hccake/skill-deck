@@ -327,7 +327,7 @@ describe('useTauriApi unwrap logic', () => {
   it('uses opaque Recovery IDs and revisioned cleanup confirmation', async () => {
     const status = {
       resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-      environment: context.environment, displayPaths: [],
+      environment: context.environment, subject: null, paths: [], diagnostic: null,
     };
     mockCommands.getRecoveryResourceStatus.mockResolvedValue({ status: 'ok', data: status });
     mockCommands.confirmRecoveryResourceResolved.mockResolvedValue({ status: 'ok', data: null });

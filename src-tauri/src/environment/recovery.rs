@@ -2,11 +2,42 @@ use std::future::Future;
 use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
-use crate::environment::types::{same_environment_identity, EnvironmentRef, ResourceLocator};
+use crate::core::mutation::MutationKind;
+use crate::environment::types::{
+    same_environment_identity, ContextRef, EnvironmentRef, ResourceLocator,
+};
 use crate::error::{AppError, RecoveryResourceId};
 
-pub const RECOVERY_MARKER_SCHEMA_VERSION: u32 = 1;
+pub const RECOVERY_MARKER_SCHEMA_VERSION: u32 = 2;
+const LEGACY_RECOVERY_MARKER_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct RecoverySubject {
+    pub operation_kind: MutationKind,
+    pub skill_name: String,
+    pub context: ContextRef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum RecoveryResourcePathKind {
+    Current,
+    Backup,
+    Record,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct RecoveryResourcePath {
+    pub kind: RecoveryResourcePathKind,
+    pub location: ResourceLocator,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +89,8 @@ pub struct RecoveryMarker {
     pub environment: EnvironmentRef,
     pub operation_id: String,
     pub unit_id: String,
+    #[serde(default)]
+    pub subject: Option<RecoverySubject>,
     pub created_at_epoch_ms: u64,
     pub entries: Vec<RecoveryMarkerEntry>,
 }
@@ -116,7 +149,10 @@ pub trait RecoveryMarkerStore: Send + Sync {
 }
 
 pub fn validate_recovery_marker(marker: &RecoveryMarker) -> Result<(), AppError> {
-    if marker.schema_version != RECOVERY_MARKER_SCHEMA_VERSION {
+    if !matches!(
+        marker.schema_version,
+        LEGACY_RECOVERY_MARKER_SCHEMA_VERSION | RECOVERY_MARKER_SCHEMA_VERSION
+    ) {
         return Err(AppError::ConfigurationCorrupted {
             message: "unsupported recovery marker schema".to_string(),
         });
@@ -125,6 +161,20 @@ pub fn validate_recovery_marker(marker: &RecoveryMarker) -> Result<(), AppError>
         return Err(AppError::ConfigurationCorrupted {
             message: "recovery marker is incomplete".to_string(),
         });
+    }
+    if marker.schema_version == RECOVERY_MARKER_SCHEMA_VERSION {
+        let Some(subject) = &marker.subject else {
+            return Err(AppError::ConfigurationCorrupted {
+                message: "current recovery marker is missing its subject".to_string(),
+            });
+        };
+        if subject.skill_name.is_empty()
+            || !same_environment_identity(&subject.context.environment, &marker.environment)
+        {
+            return Err(AppError::ConfigurationCorrupted {
+                message: "recovery subject does not match its Environment".to_string(),
+            });
+        }
     }
     for entry in &marker.entries {
         if entry.physical_target_digest.is_empty()
@@ -161,4 +211,43 @@ fn parent_path(path: &str) -> Option<String> {
 fn final_name(path: &str) -> Option<&str> {
     path.rsplit(['/', '\\'])
         .find(|component| !component.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn legacy_marker_without_subject_remains_readable() {
+        let value = json!({
+            "schemaVersion": 1,
+            "resourceId": "legacy-recovery",
+            "kind": "recoveryRequired",
+            "environment": { "kind": "host" },
+            "operationId": "operation-1",
+            "unitId": "update:demo",
+            "createdAtEpochMs": 1,
+            "entries": [{
+                "physicalTargetDigest": "target-1",
+                "destination": {
+                    "environment": { "kind": "host" },
+                    "nativePath": "/work/.agents/skills/demo"
+                },
+                "backup": {
+                    "environment": { "kind": "host" },
+                    "nativePath": "/work/.agents/skills/.skill-deck-backup-demo"
+                },
+                "expectedState": "present",
+                "originalFingerprint": "entry-v1-original",
+                "phase": "restoreFailed"
+            }]
+        });
+
+        let marker: RecoveryMarker = serde_json::from_value(value).expect("legacy marker");
+
+        assert!(marker.subject.is_none());
+        validate_recovery_marker(&marker).expect("legacy marker remains valid");
+    }
 }

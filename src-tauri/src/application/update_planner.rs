@@ -355,6 +355,7 @@ where
             return Err(AppError::StaleTarget);
         }
         let plan = MutationPlan {
+            kind: MutationKind::Update,
             operation_id: Uuid::new_v4().simple().to_string(),
             payloads: payloads
                 .into_iter()

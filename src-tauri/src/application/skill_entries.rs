@@ -16,7 +16,8 @@ use crate::environment::planning::TargetFactResolver;
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
 use crate::environment::runtime::{observed_entry_id, PhysicalTargetKey};
 use crate::environment::types::{
-    same_environment_identity, ContextRef, ContextScope, EnvironmentRef, ResourceLocator,
+    display_locator, same_environment_identity, ContextRef, ContextScope, EnvironmentRef,
+    ResourceLocator,
 };
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::WslRuntime;
@@ -388,24 +389,6 @@ pub fn group_observed_entries(
             .dedup_by(|left, right| left.agent_id == right.agent_id);
     }
     Ok(grouped.into_values().collect())
-}
-
-fn display_locator(locator: &ResourceLocator) -> ResourceLocator {
-    let native_path = if let Some(suffix) = locator.native_path.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{suffix}")
-    } else if let Some(suffix) = locator
-        .native_path
-        .strip_prefix(r"\\?\")
-        .or_else(|| locator.native_path.strip_prefix(r"\??\"))
-    {
-        suffix.to_string()
-    } else {
-        locator.native_path.clone()
-    };
-    ResourceLocator {
-        environment: locator.environment.clone(),
-        native_path,
-    }
 }
 
 pub fn observed_entry_kind(kind: TargetEntryKind) -> ObservedEntryKind {

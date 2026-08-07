@@ -4,7 +4,10 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::application::mutation::result::ErrorReport;
-use crate::environment::types::{EnvironmentRef, ResourceLocator};
+use crate::environment::recovery::{
+    RecoveryResourcePath, RecoveryResourcePathKind, RecoverySubject,
+};
+use crate::environment::types::{display_locator, parent_locator, EnvironmentRef, ResourceLocator};
 use crate::error::{AppError, RecoveryResourceId};
 use crate::storage::recovery_repository::{
     RecoveryAssessmentState, RecoveryConsistencyChecker, RecoveryRepository,
@@ -30,7 +33,8 @@ pub struct RecoveryResourceStatus {
     pub revision: String,
     pub environment: Option<EnvironmentRef>,
     pub created_at_epoch_ms: u64,
-    pub display_paths: Vec<ResourceLocator>,
+    pub subject: Option<RecoverySubject>,
+    pub paths: Vec<RecoveryResourcePath>,
     pub diagnostic: Option<ErrorReport>,
 }
 
@@ -62,7 +66,8 @@ where
                     revision: String::new(),
                     environment: None,
                     created_at_epoch_ms: 0,
-                    display_paths: Vec::new(),
+                    subject: None,
+                    paths: Vec::new(),
                     diagnostic: None,
                 })
             }
@@ -107,15 +112,26 @@ where
     }
 
     pub(crate) fn open_target(&self, id: &RecoveryResourceId) -> Result<ResourceLocator, AppError> {
+        if let Some(recovery) = self.repository.resolve(id) {
+            self.repository
+                .validate_managed_root(&recovery.marker_ref.managed_root)?;
+            let destination = &recovery
+                .marker
+                .entries
+                .first()
+                .ok_or_else(|| AppError::ConfigurationCorrupted {
+                    message: "recovery marker has no target entry".to_string(),
+                })?
+                .destination;
+            return parent_locator(destination).ok_or_else(|| AppError::UnsafePath {
+                path: destination.native_path.clone(),
+                reason: "recovery target has no parent directory".to_string(),
+            });
+        }
         let target = self
             .repository
-            .resolve(id)
-            .map(|recovery| recovery.marker_ref.managed_root)
-            .or_else(|| {
-                self.repository
-                    .resolve_invalid(id)
-                    .map(|recovery| recovery.managed_root)
-            })
+            .resolve_invalid(id)
+            .map(|recovery| recovery.managed_root)
             .ok_or_else(|| AppError::PathNotFound {
                 path: id.as_str().to_string(),
             })?;
@@ -141,20 +157,33 @@ fn status_from_assessment(
             RecoveryResourceState::EnvironmentUnavailable
         }
     };
-    let mut display_paths = Vec::new();
+    let mut paths = Vec::new();
     for entry in &assessment.recovery.marker.entries {
-        display_paths.push(entry.destination.clone());
-        display_paths.extend(entry.backup.clone());
+        paths.push(RecoveryResourcePath {
+            kind: RecoveryResourcePathKind::Current,
+            location: display_locator(&entry.destination),
+        });
+        if let Some(backup) = &entry.backup {
+            paths.push(RecoveryResourcePath {
+                kind: RecoveryResourcePathKind::Backup,
+                location: display_locator(backup),
+            });
+        }
     }
-    display_paths.sort_by(|left, right| left.native_path.cmp(&right.native_path));
-    display_paths.dedup();
+    let mut unique_paths = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !unique_paths.contains(&path) {
+            unique_paths.push(path);
+        }
+    }
     RecoveryResourceStatus {
         resource_id: assessment.recovery.marker.resource_id.clone(),
         state,
         revision: assessment.revision.as_str().to_string(),
         environment: Some(assessment.recovery.marker.environment.clone()),
         created_at_epoch_ms: assessment.recovery.marker.created_at_epoch_ms,
-        display_paths,
+        subject: assessment.recovery.marker.subject.clone(),
+        paths: unique_paths,
         diagnostic: None,
     }
 }
@@ -171,7 +200,11 @@ fn status_from_invalid(
         revision: String::new(),
         environment: Some(recovery.environment),
         created_at_epoch_ms: 0,
-        display_paths: vec![recovery.managed_root],
+        subject: None,
+        paths: vec![RecoveryResourcePath {
+            kind: RecoveryResourcePathKind::Record,
+            location: display_locator(&recovery.managed_root),
+        }],
         diagnostic: Some(diagnostic),
     }
 }
@@ -185,12 +218,14 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::core::mutation::MutationKind;
     use crate::environment::native::recovery::NativeRecoveryMarkerStore;
     use crate::environment::recovery::{
         RecoveryEntryPhase, RecoveryFuture, RecoveryMarker, RecoveryMarkerEntry,
-        RecoveryMarkerKind, RecoveryMarkerStore, RECOVERY_MARKER_SCHEMA_VERSION,
+        RecoveryMarkerKind, RecoveryMarkerStore, RecoveryResourcePathKind, RecoverySubject,
+        RECOVERY_MARKER_SCHEMA_VERSION,
     };
-    use crate::environment::types::{EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
     use crate::error::{AppError, RecoveryResourceId};
     use crate::storage::recovery_repository::{
         RecoveryConsistency, RecoveryConsistencyChecker, RecoveryRepository,
@@ -293,6 +328,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn status_identifies_the_operation_and_labels_safe_display_paths() {
+        let temp = tempdir().unwrap();
+        let store: Arc<dyn RecoveryMarkerStore> =
+            Arc::new(NativeRecoveryMarkerStore::new(temp.path()).expect("store"));
+        let checker = Arc::new(Checker(Mutex::new(RecoveryConsistency::Inconsistent)));
+        let repository = Arc::new(RecoveryRepository::new(vec![store], checker));
+        let mut value = marker("recovery-update");
+        value.subject = Some(RecoverySubject {
+            operation_kind: MutationKind::Update,
+            skill_name: "skill-deck".to_string(),
+            context: ContextRef {
+                environment: EnvironmentRef::Host,
+                scope: ContextScope::Global,
+            },
+        });
+        value.entries[0].destination = locator(r"\\?\C:\Users\cheng\.agents\skills\skill-deck");
+        value.entries[0].backup = Some(locator(
+            r"\\?\C:\Users\cheng\.agents\skills\.skill-deck-backup-update",
+        ));
+        repository
+            .record_in_progress(value.clone())
+            .await
+            .expect("record");
+
+        let service = RecoveryService::new(repository);
+        let status = service.status(&value.resource_id).await.expect("status");
+
+        assert_eq!(status.subject, value.subject);
+        assert_eq!(status.paths.len(), 2);
+        assert_eq!(status.paths[0].kind, RecoveryResourcePathKind::Current);
+        assert_eq!(
+            status.paths[0].location.native_path,
+            r"C:\Users\cheng\.agents\skills\skill-deck"
+        );
+        assert_eq!(status.paths[1].kind, RecoveryResourcePathKind::Backup);
+        assert_eq!(
+            status.paths[1].location.native_path,
+            r"C:\Users\cheng\.agents\skills\.skill-deck-backup-update"
+        );
+        assert_eq!(
+            service
+                .open_target(&value.resource_id)
+                .expect("open processing directory")
+                .native_path,
+            r"\\?\C:\Users\cheng\.agents\skills"
+        );
+    }
+
+    #[tokio::test]
     async fn invalid_marker_is_visible_openable_stable_and_never_confirmable() {
         let temp = tempdir().unwrap();
         let physical_root = fs::canonicalize(temp.path()).unwrap();
@@ -370,6 +454,14 @@ mod tests {
             environment: EnvironmentRef::Host,
             operation_id: "operation-1".to_string(),
             unit_id: "unit-1".to_string(),
+            subject: Some(RecoverySubject {
+                operation_kind: MutationKind::Update,
+                skill_name: "demo".to_string(),
+                context: ContextRef {
+                    environment: EnvironmentRef::Host,
+                    scope: ContextScope::Global,
+                },
+            }),
             created_at_epoch_ms: 1_000,
             entries: vec![RecoveryMarkerEntry {
                 physical_target_digest: "target-1".to_string(),

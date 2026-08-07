@@ -176,6 +176,7 @@ where
             ),
         });
         let plan = MutationPlan {
+            kind: MutationKind::Remove,
             operation_id: Uuid::new_v4().simple().to_string(),
             payloads: BTreeMap::new(),
             units: vec![ExecutionUnit {

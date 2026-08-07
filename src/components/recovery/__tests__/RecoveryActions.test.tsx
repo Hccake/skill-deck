@@ -21,7 +21,12 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) => (
+      values ? `${key}:${JSON.stringify(values)}` : key
+    ),
+    i18n: { language: 'zh-CN' },
+  }),
 }));
 
 describe('RecoveryActions', () => {
@@ -44,13 +49,13 @@ describe('RecoveryActions', () => {
   it('opens opaque recovery data and confirms cleanup with the displayed revision', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-      environment: { kind: 'host' }, displayPaths: [], diagnostic: null,
+      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
     });
     const onResolved = vi.fn();
     render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} onResolved={onResolved} />);
 
     await screen.findByText('recovery.state.consistentCanCleanup');
-    fireEvent.click(screen.getByRole('button', { name: 'recovery.open' }));
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.openDirectory' }));
     expect(mocks.open).toHaveBeenCalledWith('recovery-1');
 
     fireEvent.click(screen.getByRole('button', { name: 'recovery.cleanup' }));
@@ -62,7 +67,7 @@ describe('RecoveryActions', () => {
   it('never offers cleanup while recovery still needs attention', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'needsAttention', revision: 'revision-1',
-      environment: { kind: 'host' }, displayPaths: [], diagnostic: null,
+      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
     });
     render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} />);
 
@@ -75,7 +80,7 @@ describe('RecoveryActions', () => {
       recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }}
       initialStatus={{
         resourceId: 'recovery-1', state: 'needsAttention', revision: 'revision-1',
-        environment: { kind: 'host' }, createdAtEpochMs: 1, displayPaths: [], diagnostic: null,
+        environment: { kind: 'host' }, createdAtEpochMs: 1, subject: null, paths: [], diagnostic: null,
       }}
     />);
 
@@ -83,15 +88,63 @@ describe('RecoveryActions', () => {
     expect(mocks.getStatus).not.toHaveBeenCalled();
   });
 
+  it('identifies an interrupted update and labels the current and backup paths', () => {
+    render(<RecoveryActions
+      recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }}
+      initialStatus={{
+        resourceId: 'recovery-1',
+        state: 'needsAttention',
+        revision: 'revision-1',
+        environment: { kind: 'host' },
+        createdAtEpochMs: 1_786_080_000_000,
+        subject: {
+          operationKind: 'update',
+          skillName: 'skill-deck',
+          context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        },
+        paths: [
+          {
+            kind: 'current',
+            location: {
+              environment: { kind: 'host' },
+              nativePath: 'C:\\Users\\cheng\\.agents\\skills\\skill-deck',
+            },
+          },
+          {
+            kind: 'backup',
+            location: {
+              environment: { kind: 'host' },
+              nativePath: 'C:\\Users\\cheng\\.agents\\skills\\.skill-deck-backup-update',
+            },
+          },
+        ],
+        diagnostic: null,
+      }}
+    />);
+
+    expect(screen.getByRole('heading', {
+      name: 'recovery.itemTitle.update:{"skillName":"skill-deck"}',
+    })).toBeDefined();
+    expect(screen.getByText('recovery.path.current')).toBeDefined();
+    expect(screen.getByText('C:\\Users\\cheng\\.agents\\skills\\skill-deck')).toBeDefined();
+    expect(screen.getByText('recovery.path.backup')).toBeDefined();
+    expect(screen.getByText('C:\\Users\\cheng\\.agents\\skills\\.skill-deck-backup-update'))
+      .toBeDefined();
+    expect(screen.getByRole('button', { name: 'recovery.openDirectory' })).toBeDefined();
+    expect(document.querySelector('[aria-live="assertive"]')).toBeNull();
+    expect(screen.getByText('recovery.state.needsAttention').parentElement?.getAttribute('aria-live'))
+      .toBe('polite');
+  });
+
   it('keeps the recovery action visible and refreshes status when cleanup fails', async () => {
     mocks.getStatus
       .mockResolvedValueOnce({
         resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-        environment: { kind: 'host' }, displayPaths: [],
+        environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
       })
       .mockResolvedValueOnce({
         resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-2',
-        environment: { kind: 'host' }, displayPaths: [],
+        environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
       });
     mocks.confirm.mockRejectedValue(new Error('cleanup failed'));
     const onResolved = vi.fn();
@@ -109,7 +162,7 @@ describe('RecoveryActions', () => {
   it('keeps cleanup local feedback clear when the install flow wins the race', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-      environment: { kind: 'host' }, displayPaths: [], diagnostic: null,
+      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
     });
     mocks.confirm.mockRejectedValue({ kind: 'installWizardActive' });
     const onResolved = vi.fn();
@@ -132,14 +185,16 @@ describe('RecoveryActions', () => {
   it('reports an open failure instead of leaving an unhandled rejection', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'invalid', revision: '',
-      environment: { kind: 'host' }, displayPaths: [{ environment: { kind: 'host' }, nativePath: '/tmp/recovery' }],
+      environment: { kind: 'host' }, subject: null, paths: [{
+        kind: 'record', location: { environment: { kind: 'host' }, nativePath: '/tmp/recovery' },
+      }],
       diagnostic: null,
     });
     mocks.open.mockRejectedValue(new Error('open failed'));
 
     render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} />);
     await screen.findByText('recovery.state.invalid');
-    fireEvent.click(screen.getByRole('button', { name: 'recovery.open' }));
+    fireEvent.click(screen.getByRole('button', { name: 'recovery.openRecordDirectory' }));
 
     await waitFor(() => expect(screen.getByText('recovery.openError')).toBeDefined());
   });
@@ -148,13 +203,13 @@ describe('RecoveryActions', () => {
     useInstallWizardSessionStore.setState({ revision: 1, active: true });
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-      environment: { kind: 'host' }, displayPaths: [], diagnostic: null,
+      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
     });
 
     render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} />);
     await screen.findByText('recovery.state.consistentCanCleanup');
 
-    expect((screen.getByRole('button', { name: 'recovery.open' }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: 'recovery.openDirectory' }) as HTMLButtonElement).disabled)
       .toBe(false);
     expect((screen.getByRole('button', { name: 'recovery.refresh' }) as HTMLButtonElement).disabled)
       .toBe(false);

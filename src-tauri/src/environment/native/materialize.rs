@@ -20,7 +20,7 @@ use crate::environment::native::entry::{
 };
 use crate::environment::recovery::{
     RecoveryEntryPhase, RecoveryMarker, RecoveryMarkerEntry, RecoveryMarkerKind, RecoveryMarkerRef,
-    RecoveryMarkerStore, RECOVERY_MARKER_SCHEMA_VERSION,
+    RecoveryMarkerStore, RecoverySubject, RECOVERY_MARKER_SCHEMA_VERSION,
 };
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{EnvironmentRef, ResourceLocator};
@@ -37,18 +37,35 @@ pub struct NativePreparedEntrySet {
 pub struct NativePreparedEntryExecutor {
     backend: ExecutionBackend,
     operation_id: String,
+    operation_kind: crate::core::mutation::MutationKind,
     recovery_store: Arc<dyn RecoveryMarkerStore>,
 }
 
 impl NativePreparedEntryExecutor {
+    #[cfg(test)]
     pub fn new(
         backend: ExecutionBackend,
         operation_id: impl Into<String>,
         recovery_store: Arc<dyn RecoveryMarkerStore>,
     ) -> Self {
+        Self::for_operation(
+            backend,
+            operation_id,
+            crate::core::mutation::MutationKind::Install,
+            recovery_store,
+        )
+    }
+
+    pub fn for_operation(
+        backend: ExecutionBackend,
+        operation_id: impl Into<String>,
+        operation_kind: crate::core::mutation::MutationKind,
+        recovery_store: Arc<dyn RecoveryMarkerStore>,
+    ) -> Self {
         Self {
             backend,
             operation_id: operation_id.into(),
+            operation_kind,
             recovery_store,
         }
     }
@@ -102,8 +119,17 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
             let entries = tokio::task::spawn_blocking(move || stage_entry_set(&intents))
                 .await
                 .map_err(native_task_error)??;
-            let marker =
-                native_recovery_marker(&self.operation_id, &unit.id, &entries, now_epoch_ms())?;
+            let marker = native_recovery_marker(
+                &self.operation_id,
+                &unit.id,
+                RecoverySubject {
+                    operation_kind: self.operation_kind,
+                    skill_name: unit.skill_name.clone(),
+                    context: unit.target.clone(),
+                },
+                &entries,
+                now_epoch_ms(),
+            )?;
             let recovery_ref = match self.recovery_store.create(&marker).await {
                 Ok(marker_ref) => marker_ref,
                 Err(error) => {
@@ -272,6 +298,7 @@ impl NativePreparedEntrySet {
 fn native_recovery_marker(
     operation_id: &str,
     unit_id: &str,
+    subject: RecoverySubject,
     entries: &NativeEntrySet,
     created_at_epoch_ms: u64,
 ) -> Result<RecoveryMarker, AppError> {
@@ -305,6 +332,7 @@ fn native_recovery_marker(
         environment: EnvironmentRef::Host,
         operation_id: operation_id.to_string(),
         unit_id: unit_id.to_string(),
+        subject: Some(subject),
         created_at_epoch_ms,
         entries: marker_entries,
     })
@@ -563,9 +591,10 @@ mod tests {
         let recovery_store = Arc::new(
             NativeRecoveryMarkerStore::new(temp.path().join("recovery")).expect("recovery store"),
         );
-        let executor = NativePreparedEntryExecutor::new(
+        let executor = NativePreparedEntryExecutor::for_operation(
             native_backend(),
             "operation-1",
+            crate::core::mutation::MutationKind::Update,
             recovery_store.clone(),
         );
 
@@ -582,6 +611,10 @@ mod tests {
             loads.as_slice(),
             [RecoveryMarkerLoad::Valid { marker, .. }]
                 if marker.kind == RecoveryMarkerKind::InProgress
+                    && marker.subject.as_ref().is_some_and(|subject| {
+                        subject.operation_kind == crate::core::mutation::MutationKind::Update
+                            && subject.skill_name == "demo"
+                    })
                     && marker.entries.iter().all(|entry| {
                         entry.phase == RecoveryEntryPhase::Staged
                             && entry.backup.as_ref().is_some_and(|backup| {

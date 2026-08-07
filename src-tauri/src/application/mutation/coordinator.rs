@@ -741,6 +741,7 @@ mod tests {
 
     fn plan(units: Vec<ExecutionUnit>) -> MutationPlan {
         MutationPlan {
+            kind: crate::core::mutation::MutationKind::Install,
             operation_id: "operation-1".to_string(),
             payloads: BTreeMap::new(),
             units,

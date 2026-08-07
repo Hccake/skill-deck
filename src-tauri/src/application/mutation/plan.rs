@@ -58,6 +58,7 @@ pub struct ExecutionUnit {
 }
 
 pub struct MutationPlan {
+    pub kind: MutationKind,
     pub operation_id: String,
     pub payloads: BTreeMap<PayloadId, PinnedPayloadLease>,
     pub units: Vec<ExecutionUnit>,

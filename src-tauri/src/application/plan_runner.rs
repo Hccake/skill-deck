@@ -155,9 +155,10 @@ impl RuntimePlanExecutor {
                 if let Err(error) = validate_entry_backends(&plan, &backend) {
                     return failed_plan(&plan, error);
                 }
-                let entries = NativePreparedEntryExecutor::new(
+                let entries = NativePreparedEntryExecutor::for_operation(
                     backend,
                     plan.operation_id.clone(),
+                    plan.kind,
                     Arc::clone(&self.native_recovery),
                 );
                 MutationCoordinator::new(
@@ -204,15 +205,17 @@ impl RuntimePlanExecutor {
                             let entries = match &recovery_graph {
                                 Some(graph) => {
                                     let store = graph.active_wsl_store(session.clone())?;
-                                    WslPreparedEntryExecutor::with_recovery_store(
+                                    WslPreparedEntryExecutor::with_recovery_store_for_operation(
                                         session,
                                         plan.operation_id.clone(),
+                                        plan.kind,
                                         store,
                                     )
                                 }
-                                None => WslPreparedEntryExecutor::new(
+                                None => WslPreparedEntryExecutor::for_operation(
                                     session,
                                     plan.operation_id.clone(),
+                                    plan.kind,
                                 ),
                             };
                             let results = MutationCoordinator::new(
@@ -495,6 +498,7 @@ mod tests {
             owner_agent_ids: Vec::new(),
         };
         let plan = MutationPlan {
+            kind: crate::core::mutation::MutationKind::Install,
             operation_id: "operation-native-runner".to_string(),
             payloads: BTreeMap::from([(payload_id, lease)]),
             units: vec![ExecutionUnit {

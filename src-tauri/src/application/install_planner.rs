@@ -269,6 +269,7 @@ where
             skills: preview_skills,
         };
         let plan = include_plan.then(|| MutationPlan {
+            kind: MutationKind::Install,
             operation_id: Uuid::new_v4().simple().to_string(),
             payloads: payloads
                 .into_iter()

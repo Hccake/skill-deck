@@ -16,7 +16,8 @@ function resource(state: RecoveryResourceStatus['state']): RecoveryResourceStatu
     revision: `revision-${state}`,
     environment: { kind: 'wsl', distro_name: 'Ubuntu' },
     createdAtEpochMs: 123,
-    displayPaths: [],
+    subject: null,
+    paths: [],
     diagnostic: null,
   };
 }

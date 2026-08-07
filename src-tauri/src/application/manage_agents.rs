@@ -833,6 +833,7 @@ async fn build_manage_plan(
         })
         .collect();
     Ok(MutationPlan {
+        kind: MutationKind::ManageAgents,
         operation_id: Uuid::new_v4().simple().to_string(),
         payloads: payloads
             .into_iter()

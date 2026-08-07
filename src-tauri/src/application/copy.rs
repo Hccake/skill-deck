@@ -622,6 +622,7 @@ where
                 payloads.push(eve);
             }
             Some(MutationPlan {
+                kind: MutationKind::Copy,
                 operation_id: Uuid::new_v4().simple().to_string(),
                 payloads: payloads
                     .into_iter()

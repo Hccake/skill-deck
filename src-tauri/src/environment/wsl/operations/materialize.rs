@@ -16,7 +16,8 @@ use crate::core::skill_payload::{PayloadEntryKind, PayloadId, SkillPayloadManife
 use crate::environment::content_manifest::ContentManifestHash;
 use crate::environment::recovery::{
     RecoveryEntryPhase, RecoveryExpectedEntryState, RecoveryMarker, RecoveryMarkerEntry,
-    RecoveryMarkerKind, RecoveryMarkerRef, RecoveryMarkerStore, RECOVERY_MARKER_SCHEMA_VERSION,
+    RecoveryMarkerKind, RecoveryMarkerRef, RecoveryMarkerStore, RecoverySubject,
+    RECOVERY_MARKER_SCHEMA_VERSION,
 };
 use crate::environment::runtime::posix_relative_target;
 use crate::environment::runtime::{EntryFingerprint, ExecutionBackend};
@@ -309,6 +310,7 @@ pub fn recovery_marker_for_entry_set(
     unit_id: &str,
     resource_id: &str,
     environment: &EnvironmentRef,
+    subject: RecoverySubject,
     entries: &[WslEntryMutation],
     created_at_epoch_ms: u64,
 ) -> Result<RecoveryMarker, AppError> {
@@ -364,6 +366,7 @@ pub fn recovery_marker_for_entry_set(
         environment: environment.clone(),
         operation_id: operation_id.to_string(),
         unit_id: unit_id.to_string(),
+        subject: Some(subject),
         created_at_epoch_ms,
         entries: marker_entries,
     })
@@ -399,13 +402,31 @@ pub struct WslPreparedEntrySet {
 pub struct WslPreparedEntryExecutor {
     session: WslSession,
     operation_id: String,
+    operation_kind: crate::core::mutation::MutationKind,
     recovery_store: Arc<dyn RecoveryMarkerStore>,
 }
 
 impl WslPreparedEntryExecutor {
     pub fn new(session: WslSession, operation_id: impl Into<String>) -> Self {
+        Self::for_operation(
+            session,
+            operation_id,
+            crate::core::mutation::MutationKind::Install,
+        )
+    }
+
+    pub fn for_operation(
+        session: WslSession,
+        operation_id: impl Into<String>,
+        operation_kind: crate::core::mutation::MutationKind,
+    ) -> Self {
         let recovery_store = Arc::new(WslRecoveryMarkerStore::from_active_session(session.clone()));
-        Self::with_recovery_store(session, operation_id, recovery_store)
+        Self::with_recovery_store_for_operation(
+            session,
+            operation_id,
+            operation_kind,
+            recovery_store,
+        )
     }
 
     pub fn with_recovery_store(
@@ -413,9 +434,24 @@ impl WslPreparedEntryExecutor {
         operation_id: impl Into<String>,
         recovery_store: Arc<dyn RecoveryMarkerStore>,
     ) -> Self {
+        Self::with_recovery_store_for_operation(
+            session,
+            operation_id,
+            crate::core::mutation::MutationKind::Install,
+            recovery_store,
+        )
+    }
+
+    pub fn with_recovery_store_for_operation(
+        session: WslSession,
+        operation_id: impl Into<String>,
+        operation_kind: crate::core::mutation::MutationKind,
+        recovery_store: Arc<dyn RecoveryMarkerStore>,
+    ) -> Self {
         Self {
             session,
             operation_id: operation_id.into(),
+            operation_kind,
             recovery_store,
         }
     }
@@ -448,6 +484,11 @@ impl PreparedEntryExecutor for WslPreparedEntryExecutor {
                 &self.session,
                 &self.operation_id,
                 &unit.id,
+                RecoverySubject {
+                    operation_kind: self.operation_kind,
+                    skill_name: unit.skill_name.clone(),
+                    context: unit.target.clone(),
+                },
                 mutations,
                 cancellation,
                 Arc::clone(&self.recovery_store),
@@ -490,6 +531,7 @@ pub async fn stage_entry_set(
     session: &WslSession,
     operation_id: &str,
     unit_id: &str,
+    subject: RecoverySubject,
     entries: Vec<WslEntryMutation>,
     cancellation: CancellationSignal,
     recovery_store: Arc<dyn RecoveryMarkerStore>,
@@ -520,6 +562,7 @@ pub async fn stage_entry_set(
         &EnvironmentRef::Wsl {
             distro_name: session.distro_name.clone(),
         },
+        subject,
         &entries,
         now_epoch_ms(),
     )?;
@@ -776,6 +819,17 @@ mod tests {
     use crate::environment::wsl::operations::entry::{parse_entry_states, ENTRY_STATE_SCRIPT};
     use crate::models::InstallMode;
 
+    fn recovery_subject(environment: EnvironmentRef) -> RecoverySubject {
+        RecoverySubject {
+            operation_kind: crate::core::mutation::MutationKind::Install,
+            skill_name: "demo".to_string(),
+            context: ContextRef {
+                environment,
+                scope: ContextScope::Global,
+            },
+        }
+    }
+
     fn payload_fixture(root: &std::path::Path) -> (SkillPayload, std::path::PathBuf) {
         let source = root.join("source");
         fs::create_dir_all(source.join("scripts")).unwrap();
@@ -907,6 +961,9 @@ mod tests {
             &test_session(),
             "oversized-operation",
             "oversized-unit",
+            recovery_subject(EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            }),
             vec![WslEntryMutation {
                 physical_target_digest: "target-v1-oversized".to_string(),
                 destination,
@@ -1333,6 +1390,7 @@ mod tests {
             "unit-1",
             "recovery-id",
             &environment,
+            recovery_subject(environment.clone()),
             &mapped,
             123,
         )
