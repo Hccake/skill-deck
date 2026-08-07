@@ -166,6 +166,12 @@ jobs:
             --commit "${{ needs.validate.outputs.commit_sha }}" \
             --repository "${{ github.repository }}" \
             --output latest.json
+      - name: Extract Release notes from changelog
+        run: |
+          node .release-tooling/scripts/extract-release-notes.mjs \
+            --changelog CHANGELOG.md \
+            --version "${{ needs.validate.outputs.version }}" \
+            --output release-notes.md
       - name: Inspect Release state before mutation
         id: state
         env:
@@ -202,7 +208,27 @@ jobs:
             --draft \
             "${PRERELEASE_ARGS[@]}" \
             --title "Skill Deck ${TAG}" \
-            --generate-notes
+            --notes-file release-notes.md
+      - name: Update existing draft Release notes
+        if: steps.state.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          gh release edit "$TAG" \
+            --title "Skill Deck ${TAG}" \
+            --notes-file release-notes.md
+      - name: Verify Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_NOTES="$(gh release view "$TAG" --json body --jq .body)"
+          printf '%s\n' "$REMOTE_NOTES" > remote-release-notes.md
+          cmp --silent release-notes.md remote-release-notes.md \
+            || { echo "::error::Remote Release notes do not match CHANGELOG.md"; exit 1; }
       - name: Upload validated installers and signatures
         env:
           GH_TOKEN: ${{ github.token }}

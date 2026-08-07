@@ -190,12 +190,36 @@ test("release mutation is fail-closed, idempotent for drafts, and publishes late
   assert.match(aggregate, /isDraft/);
   assert.match(verifier, /published Release/i);
   assert.match(aggregate, /gh release create/);
+  assert.match(aggregate, /gh release edit/);
   assert.match(aggregate, /gh release upload[\s\S]*--clobber/);
   assert.match(
     aggregate,
     /Verify remote assets[\s\S]*Upload latest\.json last/,
   );
   assert.doesNotMatch(aggregate, /gh release upload[^\n]*metadata/i);
+});
+
+test("release body is synchronized from the tagged changelog section", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const aggregate = workflow.match(/\n  aggregate:[\s\S]*/)?.[0] ?? "";
+
+  assert.match(
+    aggregate,
+    /node \.release-tooling\/scripts\/extract-release-notes\.mjs[\s\S]*--changelog CHANGELOG\.md[\s\S]*--version "\$\{\{ needs\.validate\.outputs\.version \}\}"[\s\S]*--output release-notes\.md/,
+  );
+  assert.doesNotMatch(aggregate, /--generate-notes/);
+  assert.match(
+    aggregate,
+    /gh release create[\s\S]*--notes-file release-notes\.md/,
+  );
+  assert.match(
+    aggregate,
+    /gh release edit[\s\S]*--notes-file release-notes\.md/,
+  );
+  assert.match(
+    aggregate,
+    /Verify Release notes[\s\S]*gh release view[\s\S]*--json body[\s\S]*cmp --silent release-notes\.md/,
+  );
 });
 
 test("release aggregation uses tested scripts instead of inline Node heredocs", async () => {
