@@ -407,14 +407,6 @@ pub struct WslPreparedEntryExecutor {
 }
 
 impl WslPreparedEntryExecutor {
-    pub fn new(session: WslSession, operation_id: impl Into<String>) -> Self {
-        Self::for_operation(
-            session,
-            operation_id,
-            crate::core::mutation::MutationKind::Install,
-        )
-    }
-
     pub fn for_operation(
         session: WslSession,
         operation_id: impl Into<String>,
@@ -425,19 +417,6 @@ impl WslPreparedEntryExecutor {
             session,
             operation_id,
             operation_kind,
-            recovery_store,
-        )
-    }
-
-    pub fn with_recovery_store(
-        session: WslSession,
-        operation_id: impl Into<String>,
-        recovery_store: Arc<dyn RecoveryMarkerStore>,
-    ) -> Self {
-        Self::with_recovery_store_for_operation(
-            session,
-            operation_id,
-            crate::core::mutation::MutationKind::Install,
             recovery_store,
         )
     }
