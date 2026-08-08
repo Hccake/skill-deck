@@ -46,6 +46,7 @@ jobs:
           workspaces: './src-tauri -> target'
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:scripts
+      - run: pnpm docs:check
       - run: pnpm bindings:check
       - run: pnpm lint
       - run: pnpm test

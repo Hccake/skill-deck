@@ -165,6 +165,9 @@ importers:
       eslint-plugin-react-refresh:
         specifier: ^0.4.24
         version: 0.4.26(eslint@9.39.2(jiti@2.6.1))
+      github-slugger:
+        specifier: ^2.0.0
+        version: 2.0.0
       globals:
         specifier: ^16.5.0
         version: 16.5.0
@@ -177,6 +180,9 @@ importers:
       lint-staged:
         specifier: ^16.2.7
         version: 16.2.7
+      mdast-util-from-markdown:
+        specifier: ^2.0.3
+        version: 2.0.3
       shadcn:
         specifier: ^3.8.4
         version: 3.8.4(@types/node@24.10.12)(typescript@5.9.3)
@@ -2445,6 +2451,9 @@ packages:
   get-stream@9.0.1:
     resolution: {integrity: sha512-kVCxPF3vQM/N0B1PmoqVUqgHP+EeVjmZSQn+1oCRPxd2P21P2F19lIgbR3HBosbB1PUhOAoctJnfEn2GbN2eZA==}
     engines: {node: '>=18'}
+
+  github-slugger@2.0.0:
+    resolution: {integrity: sha512-IaOQ9puYtjrkq7Y0Ygl9KDZnrf/aiUJYUpVf89y8kyaxbRG7Y1SrX/jaumrv81vc61+kiMempujsM3Yw7w5qcw==}
 
   glob-parent@5.1.2:
     resolution: {integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==}
@@ -6228,6 +6237,8 @@ snapshots:
     dependencies:
       '@sec-ant/readable-stream': 0.4.1
       is-stream: 4.0.1
+
+  github-slugger@2.0.0: {}
 
   glob-parent@5.1.2:
     dependencies:

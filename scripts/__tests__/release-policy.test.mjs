@@ -111,16 +111,20 @@ test("quality workflow separates portable formatting, static checks, and tests",
   assert.equal(workflow.jobs["quality-gate"].if, "${{ always() }}");
 });
 
-test("quality workflow validates GitHub Actions syntax", async () => {
+test("quality workflow validates GitHub Actions syntax and documentation", async () => {
   const workflow = await readWorkflow(qualityWorkflowUrl);
   const lintJob = workflow.jobs["workflow-lint"];
-
   assert.equal(lintJob["runs-on"], "ubuntu-22.04");
   assert.ok(
     lintJob.steps.some(
       (step) => step.uses === "docker://rhysd/actionlint:1.7.12",
     ),
   );
+
+  const frontendCommands = workflow.jobs.frontend.steps
+    .map((step) => step.run ?? "")
+    .filter(Boolean);
+  assert.ok(frontendCommands.includes("pnpm docs:check"));
 });
 
 test("release workflow keeps platform jobs artifact-only and uses one aggregator", async () => {

@@ -1,43 +1,24 @@
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+## 项目协作规则
 
-This project is indexed by GitNexus as **skill-deck** (2734 symbols, 6942 relationships, 233 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+- 与用户沟通和编写长期文档时，默认使用符合中文语境的陈述体。Agent、Skill、Environment、Context、Backend、WSL 等专业术语可以保留英文。
+- 开始任务时先阅读[文档地图](./docs/README.md)，按照任务路由找到唯一主文档。`AGENTS.md` 只保留协作规则，不复制产品、架构或领域正文。
+- 当前工作区可能包含尚未提交的用户改动。只修改本任务需要的文件，不回退、不覆盖、不顺带整理无关内容。
+- 新的 spec、ticket、设计过程和阶段性评审统一保存在 `.scratch/**`。这些过程文件不属于受版本控制的正式文档，不得加入暂存区或提交。
+- 代码变更遵循测试先行（test-first），并按[贡献指南](./CONTRIBUTING.md)同步实际受影响的类型绑定（bindings）、窗口权限、国际化文案和长期文档。
+- 完成前运行与改动范围相符的验证，并依据最新输出报告结果。
+- Agent 创建的跨平台验证副本和构建输出统一放在仓库外的固定验证目录；每次验证开始前清理旧目录，结束后清理当前目录，不在源码工作区或随机 `/tmp` 路径留下可被后续任务误识别为源码的副本。
+- 仓库只保留这一份共享的 Agent 指令文件。不要创建目录级 `AGENTS.md` 或 `CLAUDE.md`；工具专属入口只引用本文件。
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+## Agent Skill
 
-## Always Do
+### Issue 管理
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
+Issue 和 spec 在仓库内以 Local Markdown 文件管理。参见 `docs/agents/issue-tracker.md`。
 
-## Never Do
+### Triage 标签
 
-- NEVER edit a function, class, or method without first running `impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+Triage 使用五个默认角色标签。参见 `docs/agents/triage-labels.md`。
 
-## Resources
+### 领域文档
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/skill-deck/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/skill-deck/clusters` | All functional areas |
-| `gitnexus://repo/skill-deck/processes` | All execution flows |
-| `gitnexus://repo/skill-deck/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
+修改领域术语、概念边界或 ADR 前，先按 `docs/agents/domain.md` 读取相应领域资料。

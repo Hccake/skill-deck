@@ -1,9 +1,9 @@
-# Changelog
+# 更新日志
 
-All notable changes to Skill Deck will be documented in this file.
+本文件记录 Skill Deck 各版本中值得关注的变化。
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
+版本号遵循[语义化版本](https://semver.org/lang/zh-CN/spec/v2.0.0.html)。
 
 ## [Unreleased]
 
@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **将 WSL 集成改为按需启用** — Windows 上的 WSL 集成现在默认关闭，启用后才会显示和使用 WSL Environment。从 `1.7.0-beta.1` 或 `1.7.0-beta.2` 升级时，需要在 `设置 > 通用` 中重新启用；已保存的 WSL 项目和设置会继续保留。
+- **将 WSL 支持改为按需启用** — Windows 上的 WSL 支持现在默认关闭，启用后才会显示和使用 WSL Environment。从 `1.7.0-beta.1` 或 `1.7.0-beta.2` 升级时，需要在 `设置 > 通用` 中重新启用；已保存的 WSL 项目和设置会继续保留。
 - **调整 Environment 切换入口** — Environment 切换入口移至顶部导航，选择结果会在主窗口的所有页面中生效。
 - **调整安装向导与主窗口的协作方式** — 安装向导打开后，主窗口仍可浏览内容，但会暂停修改操作；用户可以通过顶部入口随时返回正在进行的安装。
 - **调整 Agent 管理与选择方式** — 自定义 Agent 使用独立编辑页面，可以创建、编辑和删除。每次安装 Skill 时直接选择需要使用的 Agent，不再单独维护默认安装目标。
@@ -39,48 +39,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Environment 稳定性** — 刷新或重连失败时保留当前列表和 Context；Windows 后台任务不再弹出终端窗口。
 - **跨 Environment 复制** — Skill 准备完成后不再依赖来源 Environment。
-- **Eve 目标一致性** — 安装和更新会保持原先选择的 root 或 subagent。
+- **Eve 目标一致性** — 安装和更新会保留原先选择的根 Agent 或子 Agent。
 - **安装向导操作** — 修复部分检查、安装和停止操作被错误拒绝的问题。
 
 ## [1.7.0-beta.1] - 2026-07-24
 
 ### Added
 
-- **新增 Custom Agent 管理功能** — `Settings > Agents` 支持创建、编辑、复制和删除 Custom Agent，并可将其用于安装、默认目标、Detection 和 Skill 管理。
-- **新增 Windows/WSL Environment 支持** — Windows 可以在 Host 与多个 WSL 发行版之间切换，并分别管理 Global/Project Context、Project、Skill 和 Agent 状态。
-- **新增 Recovery Center** — 写操作无法自动恢复时保留恢复数据，并提供查看、刷新和清理入口。
+- **新增用户 Agent 管理功能** — `Settings > Agents` 支持创建、编辑、复制和删除用户添加的 Agent，并可将其用于安装、默认目标、检测和 Skill 管理。
+- **新增 Windows/WSL Environment 支持** — Windows 可以在 Host 与多个 WSL 发行版之间切换，并分别管理全局 Context、项目 Context、项目、Skill 和 Agent 状态。
+- **新增恢复中心** — 写操作无法自动恢复时保留恢复数据，并提供查看、刷新和清理入口。
 
 ### Changed
 
-- **重构 Skill 生命周期管理代码** — 安装、更新、移除、Manage Agents 和项目复制改为先生成变更预览，再按 Skill 或项目返回执行结果。
-- **调整 Skill 目录内容处理方式** — 安装、更新和复制会保留 `SKILL.md`、scripts、references、assets、metadata、嵌套目录及其他有效文件。
+- **重构 Skill 生命周期管理代码** — 安装、更新、移除、`Manage Agents` 和项目复制改为先生成变更预览，再按 Skill 或项目返回执行结果。
+- **调整 Skill 目录内容处理方式** — 安装、更新和复制会保留 `SKILL.md`、`scripts`、`references`、`assets`、`metadata`、嵌套目录及其他有效文件。
 - **调整更新检查和来源维护流程** — 更新检查区分有更新、已是最新、检查失败、来源不可达、信息不足和上游已删除，并支持重新选择来源。
-- **调整更新时的 copy 处理方式** — link 和未修改的 copy 随更新同步；存在本地修改的独立 copy 由用户决定是否覆盖。
+- **调整更新时的复制处理方式** — 链接和未经修改的副本会随更新同步；存在本地修改的独立副本由用户决定是否覆盖。
 - **调整 Project Skill 复制流程** — 复制时支持选择目标 Environment，并在该 Environment 中选择目标项目。
-- **调整 Agent 解析和分组规则** — 安装、默认目标和 Manage Agents 按实际目录分组；Skill 页面只展示实际能够读取该 Skill 的 Agent。
+- **调整 Agent 解析和分组规则** — 安装、默认目标和 `Manage Agents` 按实际目录分组；Skill 页面只展示实际能够读取该 Skill 的 Agent。
 - **调整安装确认流程** — 确认页固定已选择的 Skill 内容并生成变更预览，准备失败时保留当前步骤并显示原因。
-- **调整 Skill 删除流程** — 从 Skill Card 删除时展示通用 Skill 目录和全部 Agent 软连接或副本，确认后完整删除；只调整部分 Agent 时继续使用 Manage Agents，删除范围变化或执行失败时可以重新确认或重试。
+- **调整 Skill 删除流程** — 从 Skill 卡片删除时展示通用 Skill 目录和全部 Agent 符号链接或副本，确认后完整删除；只调整部分 Agent 时继续使用 `Manage Agents`，删除范围变化或执行失败时可以重新确认或重试。
 - **调整应用更新失败处理** — 更新检查或安装失败后在更新对话框中显示错误，并提供重试入口。
 
 ### Fixed
 
-- **修复安装目标状态丢失问题** — 切换安装步骤、重新准备或完成 Custom Agent 配置后，保留已选择的 Agent、adapter target 和安装方式。
+- **修复安装目标状态丢失问题** — 切换安装步骤、重新准备或完成用户 Agent 配置后，保留已选择的 Agent、Adapter 目标和安装方式。
 - **修复启动偏好恢复时机** — 主窗口和安装向导在首次渲染前应用已保存的主题和语言。
 
 ## [1.6.2] - 2026-07-07
 
 ### Added
 
-- **Eve 项目支持** — 可识别 Eve 项目，并支持将 Skill 安装到 Eve root agent 或指定 subagent。
-- **项目内目标选择** — 安装项目级 Skill 时，可以选择具体的项目内目标，例如 Eve root 或 subagent；确认页会展示实际写入位置。
+- **Eve 项目支持** — 可识别 Eve 项目，并支持将 Skill 安装到 Eve 根 Agent 或指定子 Agent。
+- **项目内目标选择** — 安装项目级 Skill 时，可以选择具体的项目内目标，例如 Eve 根 Agent 或子 Agent；确认页会展示实际写入位置。
 - **安装目录提示** — 当 Skill 名称包含不适合作为目录名的字符时，确认页会显示实际安装目录，避免安装后目录名与预期不一致。
 - **复制 Skill 时保留更新来源** — 将远程安装的 Skill 复制到其他项目时，会尽量保留自动检查更新所需的来源信息；源 Skill 缺少相关信息时，会在复制前给出轻量提示。
 
 ### Changed
 
 - **安装确认更贴近实际写入结果** — 覆盖提示、目标分组和完成页文案改为围绕“目标目录”表达，减少 Agent 检测状态和 Skill 写入状态之间的歧义。
-- **Eve Skill 的更新和删除范围更明确** — 对安装到 Eve root 或 subagent 的 Skill，更新和删除会按实际目标处理，用户可以更清楚地控制影响范围。
-- **Skill 卡片展示完整 Agent 信息** — SkillCard 不再折叠 Agent 标签，会直接展示当前 Skill 关联的全部 Agent。
+- **Eve Skill 的更新和删除范围更明确** — 对安装到 Eve 根 Agent 或子 Agent 的 Skill，更新和删除会按实际目标处理，用户可以更清楚地控制影响范围。
+- **Skill 卡片展示完整 Agent 信息** — Skill 卡片不再折叠 Agent 标签，会直接展示当前 Skill 关联的全部 Agent。
 
 ## [1.6.1] - 2026-06-24
 
@@ -164,14 +164,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Manage Agents 弹窗重设计** — 新增 Agent 的安装方式选项改为 card-style radio（整行点击、选中态高亮），字号体系统一 AgentSelector（13px/11px），通过顶部分隔线与 Agent 列表区分层级；始终渲染且无新增 Agent 时置灰，消除选中/取消 Agent 时弹窗的高度抖动
-- **AgentSelector 中文文案本地化优化** — 调整若干中文术语使其更贴合用户心智：通用目录区标题「基准目录」→「通用目录」、Badge「默认支持的 Agent」→「自动支持」、独立目录区标题「独立目录的 Agent」→「独立目录」；在独立目录标题旁以小字统一解释"已检测"含义，避免多处 Tooltip 堆积
-- **「已检测」Badge 语义明确化** — 独立目录 Agent 的检测标识由「已安装」/"Installed" 改为「已检测」/"Detected"，避免与"skill 已安装到该 Agent"产生歧义（检测仅根据 Agent skills 目录是否存在反推）
+- **`Manage Agents` 弹窗重设计** — 新增 Agent 的安装方式选项改为卡片式单选控件，整行均可点击并突出显示选中状态；字号与 `AgentSelector` 保持一致，通过顶部分隔线区分安装方式和 Agent 列表。选项区域始终保留，无可新增的 Agent 时置灰，避免选择变化引起弹窗高度抖动
+- **`AgentSelector` 中文文案优化** — 调整若干中文术语，使其更符合用户的理解方式：通用目录区标题由“基准目录”改为“通用目录”，徽标“默认支持的 Agent”改为“自动支持”，独立目录区标题由“独立目录的 Agent”改为“独立目录”；在独立目录标题旁统一解释“已检测”的含义，避免重复显示提示
+- **“已检测”徽标语义更明确** — 独立目录 Agent 的检测标识由“已安装”/“Installed”改为“已检测”/“Detected”，避免与“Skill 已安装到该 Agent”混淆。检测状态仅根据 Agent Skill 目录是否存在判断
 - **GeneralTab 空状态判定修正** — 默认 Agent 设置的空状态判定由 `hasNonUniversalAgents` 改为 `hasAgents`，只检测到 Universal Agent 时不再误显示空状态
 
 ### Fixed
 
-- **AgentSelector 路径标签渲染** — `scope` 为 undefined 时不再显示默认路径字符串，避免非 global/project 场景下渲染错位路径
+- **`AgentSelector` 路径标签渲染** — `scope` 为 `undefined` 时不再显示默认路径字符串，避免在非全局或项目场景中显示错位的路径
 
 ### Removed
 
@@ -182,13 +182,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **GitNexus 项目指引** — 新增 `AGENTS.md`，并在 `CLAUDE.md` 中加入 GitNexus 代码智能工具的使用规范、风险检查流程和索引刷新说明；`.gitignore` 忽略 `.gitnexus` 本地索引目录
-- **Manage Agents 安装模式选择** — 管理已安装 Skill 的 Agent 支持时，可为新增 Agent 选择 Symlink 或 Copy 模式，并在前端弹窗中明确展示两种投放方式
+- **`Manage Agents` 安装方式选择** — 管理已安装 Skill 的 Agent 支持时，可为新增 Agent 选择符号链接或复制，并在前端弹窗中明确展示两种安装方式
 
 ### Fixed
 
-- **Copy 模式保留 canonical 目录** — `copy` 安装不再跳过 `.agents/skills/<skill>`，而是先写入 canonical，再复制到目标 Agent 目录，避免后续管理 Agent 时找不到源目录
-- **Manage Agents 不再静默降级** — 通过 Manage Agents 添加 Agent 时，用户选择 `symlink` 后若链接创建失败会返回明确错误，不再自动 fallback 成 copy
-- **更新流程保留 per-agent 模式** — 单个更新和批量更新改为按 Agent 独立检测并应用原有模式，避免用第一个 Agent 的模式覆盖所有 Agent
+- **复制方式保留基准目录** — 采用 `copy` 安装时不再跳过 `.agents/skills/<skill>`，而是先写入基准目录，再复制到目标 Agent 目录，避免后续管理 Agent 时找不到来源目录
+- **`Manage Agents` 不再静默回退** — 通过 `Manage Agents` 添加 Agent 时，用户选择 `symlink` 后若链接创建失败，系统会返回明确错误，不再自动改用 `copy`
+- **更新流程保留各 Agent 的安装方式** — 单个更新和批量更新改为按 Agent 独立检测并沿用原有安装方式，避免用第一个 Agent 的设置覆盖其他 Agent
 
 ## [1.1.0] - 2026-04-07
 
@@ -235,7 +235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **对齐 vercel-skills CLI v1.4.7** — 完成与上游 23 个 commit（`7022ad3..HEAD`）的兼容性适配
-- **Well-Known 路径迁移** — 优先探测 `.well-known/agent-skills`，fallback 到旧的 `.well-known/skills`；`build_index_urls()` 为每个 well-known 路径生成候选 URL
+- **Well-Known 路径迁移** — 优先探测 `.well-known/agent-skills`，找不到时再尝试旧路径 `.well-known/skills`；`build_index_urls()` 会为每个 Well-Known 路径生成候选 URL
 - **Discovery 搜索路径清理** — 移除已废弃的 `.agent/skills`（单数）搜索路径，仅保留 `.agents/skills`
 
 ### Added
@@ -243,7 +243,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Branch ref `#fragment` 语法** — source 输入支持 `owner/repo#branch`、`owner/repo#branch@skill-name` 格式；source parser 新增 `parse_fragment_ref()` + `looks_like_git_source()` 判定逻辑；含 `/` 的分支名、tag、`github:`/`gitlab:` 前缀递归附加等场景全覆盖（10 个新测试）
 - **Lock 文件 `ref` 字段** — `SkillLockEntry` 和 `LocalSkillLockEntry` 新增 `ref_name: Option<String>`（serde rename `ref`），install/update 命令全链路传递；更新检测按 `(source, ref)` 分组，同仓库不同分支互不干扰
 - **新增 Agent：Bob (IBM) 和 Firebender** — agent 总数 43 → 45；Bob 使用 `.bob/skills` 目录，Firebender 使用 `.agents/skills` + `~/.firebender/skills`
-- **前端 ref badge** — SourceStep 输入框下方展示 branch/skill-filter Badge；SkillCard 已安装 skill 卡片在 source 信息行展示分支标签；新增 en/zh-CN 双语 i18n key
+- **前端 `ref` 徽标** — `SourceStep` 输入框下方展示分支或 Skill 筛选条件；`SkillCard` 在已安装 Skill 的来源信息中展示分支标签；新增中英文国际化键
 
 ### Fixed
 
@@ -265,7 +265,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`update_skills_batch` 命令** — 新增批量更新后端命令，按 source 分组后每组只 clone 一次仓库，从同一 clone 中安装所有同源 skills
 - **`fetch_skill_folder_hashes_batch` API** — 批量获取同源多个 skill 文件夹的 hash，单次 GitHub Trees API 请求即可比对所有 skills
-- **SkillCard 更新状态 Badge** — 新增 done/failed 独立 Badge 标识（`updateDone`/`updateFailed` i18n key），替代底部色条的单一信号
+- **`SkillCard` 更新状态徽标** — 新增完成和失败两种独立徽标（国际化键为 `updateDone` 和 `updateFailed`），替代仅靠底部色条表达状态
 
 ### Fixed
 
@@ -295,15 +295,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Updater Store 重写** — 新增并发保护（仅 idle/error 可触发检查）、下载中止（dismiss 设置 abortFlag）、错误退避（失败后 4h 重试 vs 正常 24h 间隔）、Release Notes 和 lastCheckTime 字段
 - **Settings 更新状态完善** — 覆盖全部 7 种状态（idle/checking/available/downloading/ready/error/idle+lastCheckTime），idle 状态展示相对时间「上次检查：5 分钟前」
 - 移除自动下载行为，改为用户在 Dialog 中确认后再开始下载
-- **update_skill 结构化响应** — `update_skill` 命令返回 `UpdateSkillResponse`（含 per-skill 状态 success/partial/failed/skipped、per-agent 结果、warnings、耗时），前端根据状态展示差异化 toast（成功/部分成功/跳过/失败 + 告警）
+- **`update_skill` 结构化响应** — `update_skill` 命令返回 `UpdateSkillResponse`，其中包含每个 Skill 的 `success`、`partial`、`failed` 或 `skipped` 状态、各 Agent 的结果、警告和耗时；前端根据状态显示相应的短暂通知
 - **Lock 文件原子写入** — `skill_lock` 和 `local_lock` 的写入改用 `tempfile::persist` 原子操作，避免写入中断导致文件损坏；统一追加尾部换行符
 - **Uninstaller 简化** — 提取 `resolve_agents_to_remove` 辅助函数，移除冗余的 `detect_installed` 中间回退逻辑
 - **CompleteStep 重构** — 统一为 skill 分组卡片展示，显示 agent 覆盖率统计（如 2/3 agents），失败明细可折叠展开
 - **安装重试行为分离** — 提取 `InstallBehavior` 结构体，重试模式下跳过 Universal Agent 自动填充和 agent 持久化
 - **Install/Update 共享核心** — 提取 `install_skill_to_agents()` 共享函数，install 和 update 命令复用同一安装逻辑；`PerAgentInstallResult` 携带完整 path/canonical_path/mode 数据
 - **Update 文件系统检测** — 更新命令通过 `detect_installed_agents_for_skill()` 扫描文件系统确定目标 agents（非 lock 元数据），通过 `detect_install_mode()` 检测 symlink/junction vs copy 模式
-- **Skills Store 状态重设计** — `updatingSkill: string | null` 升级为 `updatingSkills: Map<string, status>` 支持批量并行状态追踪；新增 `checkingUpdateScopes: Set<string>` 实现 per-scope 独立检测状态
-- **更新检测缓存** — 新增 scope 级 TTL 缓存（5 分钟），切换 scope 时避免重复网络请求；stale context guard 防止异步写入过期数据
+- **Skills 状态模块重设计** — 将 `updatingSkill: string | null` 改为 `updatingSkills: Map<string, status>`，以跟踪批量并行更新；新增 `checkingUpdateScopes: Set<string>`，分别记录各位置的检查状态
+- **更新检查缓存** — 新增按位置保存的 TTL 缓存（5 分钟），切换位置时避免重复发起网络请求；通过过期 Context 检查防止异步结果写入已经切换的状态
 - **SkillsPanel selector 优化** — `checkingUpdateScopes` 从整个 Set 订阅改为派生 boolean selector（`rerender-derived-state` 规则），减少无关重渲染
 
 ### Added
@@ -316,7 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **11 个新增测试** — 6 个 Rust 测试（derive_skill_status 边界、summarize_results、InstallBehavior、serde 序列化）+ 2 个 CompleteStep 组件测试 + 2 个 useTauriApi 测试 + 1 个 skills store 测试
 - **Section 级 Update All** — SkillsSection 标题栏新增「全部更新」按钮，支持批量串行更新（queued → updating → done/failed），进度计数器和取消按钮
 - **SkillCard 内联进度条** — 更新时展示 phase-based 进度条（cloning 35% → installing 70% → writing_lock 90%），监听 `update-progress` Tauri 事件
-- **手动检查更新** — 每个 Section 新增 Check 按钮，调用 `forceCheckUpdates()` 强制刷新指定 scope 的更新检测（绕过 TTL 缓存）
+- **手动检查更新** — 每个区域新增检查按钮，调用 `forceCheckUpdates()` 强制刷新指定位置的更新状态，并跳过 TTL 缓存
 - **Update 进度事件** — 后端 `update_skill` 在 clone/install/lock-write 阶段发送 `update-progress` 事件，前端 SkillCard 响应并展示阶段标签
 
 ### Removed
@@ -343,18 +343,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Header 导航栏优化** — 导航标签改为 pill 圆角胶囊样式，放大 logo 和品牌名，导航图标始终可见（移除 `sm:hidden`），主题/语言按钮增大触控区域
 - **ContextSidebar 侧边栏精简** — 移除标题栏、分区标题和底部「在设置中管理」按钮；去掉图标外层包裹容器；选中/悬停状态改为更柔和的 `foreground` 透明度样式；全局上下文新增副标题说明
-- **remove_skill 命令增强** — 新增 `agents` 和 `full_removal` 参数，支持完全删除和部分移除两种模式；部分移除时仅删除指定 agent 的 symlink，不清理 canonical 目录和 lock file
+- **`remove_skill` 命令增强** — 新增 `agents` 和 `full_removal` 参数，支持完全删除和部分移除；部分移除时只删除指定 Agent 的符号链接，不清理基准目录和 lock 文件
 - **DeleteSkillDialog 重构** — 从简单的 AlertDialog 升级为完整的 Dialog，包含 Skill 信息横幅、共享目录区（含级联全选和警告提示）、独立安装区（Checkbox 逐项选择）、加载骨架屏
 - **Cline Agent 路径迁移** — skill 目录从 `.cline/skills` 迁移到 `.agents/skills`（对齐 skills CLI v1.4.2）
 - **SkillsStep 安装向导** — 当 skill 来源包含 plugin 时，按 plugin 分组展示可选 skill 列表
 - **ConfirmStep 确认页面** — 选中的 skills 按 plugin 分组展示，未归属 plugin 的归入「通用」分组
-- **SkillCard 卡片** — 当 skill 属于某个 plugin 时，显示 plugin 名称 Badge
+- **`SkillCard` 卡片** — Skill 属于某个 plugin 时，显示带有 plugin 名称的徽标
 
 ## [0.6.0] - 2026-02-26
 
 ### Changed
 
-- **重构 ConfirmStep 确认页面** — 移除冗余的 Scope 信息卡片和重复的路径前缀、agent badges、mode label，新增集中覆盖警告条与行内 Tooltip 标记，新增安装信息区展示安装方式和安装目录列表
+- **重构 `ConfirmStep` 确认页面** — 移除冗余的安装范围信息卡片，以及重复的路径前缀、Agent 徽标和安装方式标签；新增统一的覆盖警告条和行内提示，并在安装信息区展示安装方式和安装目录列表
 - **优化安装进度展示** — 安装过程新增细粒度进度状态反馈，提升安装体验
 - 搜索安装 skill 时窗口自适应高度
 - 移除安装步骤中内容区域多余的 padding top
@@ -397,7 +397,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- 卸载 skill 时增加安全检查，避免误删被多个 Agent 共享的 canonical 目录
+- 卸载 Skill 时增加安全检查，避免误删被多个 Agent 共享的基准目录
 - 移除 Antigravity 的 `cwd/.agent` 检测，减少误判（对齐 CLI v1.4.1）
 - 移除 GitHub Copilot 的 `cwd/.github` 检测，`.github` 是仓库标记而非 Copilot 安装标记（对齐 CLI v1.4.1）
 - Git 克隆时设置 `GIT_TERMINAL_PROMPT=0`，防止私有仓库弹出凭据提示导致进程挂起
@@ -448,9 +448,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 支持 38+ AI Agent（Claude Code、Cursor、Windsurf、Copilot 等）
 - 多来源支持：GitHub shorthand、URL、本地路径、安装命令解析
 - 安装模式：符号链接（推荐）和复制
-- Global / Project 双层 scope 管理
-- Agent 过滤和 Display Name 展示
-- 国际化支持（English / 简体中文）
+- 全局和项目两级管理
+- Agent 筛选和显示名称
+- 国际化支持（英语 / 简体中文）
 - 深色/浅色主题切换
 - GitHub Actions CI/CD 构建流水线（Windows / macOS / Ubuntu）
 

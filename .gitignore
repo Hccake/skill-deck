@@ -30,6 +30,7 @@ vercel-skills
 /.worktrees
 /docs/plans
 /docs/superpowers
+/.scratch/
 /skills-lock.json
 .gitnexus
 .pnpm-store
