@@ -161,7 +161,7 @@ Once installed, open the project in the corresponding editor. The Skill will be 
 
 ## 📄 License
 
-[MIT License](LICENSE)
+[Apache License](LICENSE)
 
 ---
 

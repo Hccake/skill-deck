@@ -160,7 +160,7 @@ npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 
 ## 📄 许可证
 
-[MIT License](LICENSE)
+[Apache License 2.0](LICENSE)
 
 ---
 
