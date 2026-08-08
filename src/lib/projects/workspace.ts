@@ -1,7 +1,7 @@
 import type {
   AddProjectResult,
   AppError,
-  ContextRef,
+  SkillLocationRef,
   EnvironmentRef,
   ProjectInfo,
 } from '@/bindings';
@@ -79,7 +79,7 @@ export interface ProjectEnvironmentAccess {
 }
 
 export interface ProjectContextCapture {
-  context: ContextRef;
+  context: SkillLocationRef;
   revision: number;
 }
 

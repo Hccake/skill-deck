@@ -270,6 +270,14 @@ fn permission_sets_do_not_export_removed_agent_definition_duplication() {
 }
 
 #[test]
+fn main_permission_set_uses_the_native_project_migration_command() {
+    let permission_sets = include_str!("../permissions/window-command-sets.toml");
+
+    assert!(permission_sets.contains("allow-retry-native-project-migration"));
+    assert!(!permission_sets.contains("allow-retry-host-project-migration"));
+}
+
+#[test]
 fn main_window_allows_skill_repair_commands() {
     let app = test_app();
     let main = window(&app, "main");

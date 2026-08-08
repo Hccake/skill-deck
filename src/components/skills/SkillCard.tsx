@@ -36,7 +36,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { AgentId, InstalledSkill, RiskLevel, SkillScope } from '@/bindings';
+import type { AgentId, InstalledSkill, RiskLevel, InstalledSkillLocation } from '@/bindings';
 import {
   hasIncompleteUpdateCheck,
   hasCommittedUpdateComparison,
@@ -58,7 +58,7 @@ const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
 interface SkillCardProps {
   skill: SkillListItem;
   /** 当前显示的 scope（用于决定图标） */
-  displayScope: SkillScope;
+  displayScope: InstalledSkillLocation;
   /** 是否存在冲突（同时在 project 和 global 安装） */
   hasConflict?: boolean;
   /** 更新状态（由 workflow operation 投影） */

@@ -10,8 +10,8 @@ vi.mock('@/hooks/useTauriApi', () => api);
 
 import { useEnvironmentStore } from '../environment';
 
-const host: EnvironmentInfo = {
-  environment: { kind: 'host' },
+const native: EnvironmentInfo = {
+  environment: { kind: 'native' },
   displayName: 'Windows',
   status: 'available',
   revision: 1,
@@ -42,8 +42,8 @@ describe('Environment revision convergence', () => {
 
   it('rejects runtime events from an earlier WSL enable cycle', () => {
     useEnvironmentStore.setState({
-      environments: [host, ubuntu],
-      runtimeByEnvironment: { host, 'wsl:ubuntu': ubuntu },
+      environments: [native, ubuntu],
+      runtimeByEnvironment: { native, 'wsl:ubuntu': ubuntu },
     });
     const staleCycle: EnvironmentRuntimeEvent = {
       capabilityRevision: 2,
@@ -60,7 +60,7 @@ describe('Environment revision convergence', () => {
 
   it('rejects older events and older discovery snapshots per Environment', async () => {
     api.listEnvironments.mockResolvedValue({
-      environments: [host, ubuntu],
+      environments: [native, ubuntu],
       error: null,
       wslIntegrationSupported: true,
       wslIntegrationEnabled: true,
@@ -82,7 +82,7 @@ describe('Environment revision convergence', () => {
     useEnvironmentStore.getState().applyRuntimeEvent({ ...newer, revision: 6, status: 'available', error: null });
 
     api.listEnvironments.mockResolvedValue({
-      environments: [host, { ...ubuntu, revision: 6 }],
+      environments: [native, { ...ubuntu, revision: 6 }],
       error: null,
       wslIntegrationSupported: true,
       wslIntegrationEnabled: true,
@@ -108,7 +108,7 @@ describe('Environment revision convergence', () => {
     };
     useEnvironmentStore.getState().applyRuntimeEvent(event);
     api.listEnvironments.mockResolvedValue({
-      environments: [host, ubuntu],
+      environments: [native, ubuntu],
       error: null,
       wslIntegrationSupported: true,
       wslIntegrationEnabled: true,

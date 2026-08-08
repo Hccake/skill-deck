@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::core::agent_definition::{
-    AgentDefinition, AgentId, DetectionSpec, LegacyPath, LegacyPathScope, PathSpec, ScopeDefinition,
+    AgentAdapter, AgentDefinition, AgentId, DetectionSpec, LegacyPath, LegacyPathScope, PathSpec,
+    ScopeDefinition,
 };
 use crate::core::agent_registry::AgentRegistrySnapshot;
 use crate::environment::types::{same_environment_identity, EnvironmentRef, EnvironmentStatus};
@@ -70,11 +71,11 @@ pub enum DirectoryPresenceState {
 #[specta(rename_all = "camelCase")]
 pub struct ResolvedAgentScope {
     pub enabled: bool,
-    pub reads_shared: bool,
-    pub shared_path: Option<String>,
+    pub reads_standard: bool,
+    pub standard_path: Option<String>,
     pub private_path: Option<String>,
     pub read_paths: Vec<String>,
-    pub shared_presence: Option<DirectoryPresenceState>,
+    pub standard_presence: Option<DirectoryPresenceState>,
     pub private_presence: Option<DirectoryPresenceState>,
     pub legacy_paths: Vec<ResolvedPathPresence>,
 }
@@ -83,11 +84,11 @@ impl ResolvedAgentScope {
     fn disabled() -> Self {
         Self {
             enabled: false,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: None,
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         }
@@ -166,7 +167,7 @@ type MetadataQuery =
     Arc<dyn Fn(&[PathQuery]) -> Result<BTreeMap<String, PathMetadata>, AppError> + Send + Sync>;
 
 enum MetadataBackend {
-    Host,
+    Native,
     Wsl(WslWorkspace),
     ActiveWsl(WslSession),
     Unavailable,
@@ -360,28 +361,14 @@ impl AgentEnvironmentResolver {
         project_path: Option<&str>,
         queries: &mut BTreeMap<String, PathQuery>,
     ) {
-        match &definition.detection {
-            DetectionSpec::AnyPathExists { paths } => {
-                for path in paths {
-                    self.collect_path_spec_queries(path, project_path, false, queries);
-                }
-            }
-            DetectionSpec::Eve => {
-                if let Some(project_path) = project_path {
-                    insert_query(
-                        queries,
-                        join_resolved(project_path, "agent", &self.environment_context),
-                        false,
-                        &self.environment_context,
-                    );
-                    insert_query(
-                        queries,
-                        join_resolved(project_path, "package.json", &self.environment_context),
-                        true,
-                        &self.environment_context,
-                    );
-                }
-            }
+        let DetectionSpec::AnyPathExists { paths } = &definition.detection;
+        for path in paths {
+            let inspect_eve_package = definition.adapter == AgentAdapter::Eve
+                && matches!(
+                    path,
+                    PathSpec::Project { relative_path } if relative_path == "package.json"
+                );
+            self.collect_path_spec_queries(path, project_path, inspect_eve_package, queries);
         }
     }
 
@@ -395,8 +382,8 @@ impl AgentEnvironmentResolver {
         if !scope.enabled {
             return;
         }
-        if let Some(shared_path) = self.shared_path(is_global, project_path) {
-            insert_query(queries, shared_path, false, &self.environment_context);
+        if let Some(standard_path) = self.standard_path(is_global, project_path) {
+            insert_query(queries, standard_path, false, &self.environment_context);
         }
         if let Some(private_path) = &scope.private_path {
             self.collect_path_spec_queries(private_path, project_path, false, queries);
@@ -481,7 +468,7 @@ impl AgentEnvironmentResolver {
             return Ok(BTreeMap::new());
         }
         let metadata = match &self.metadata_backend {
-            MetadataBackend::Host => query_host_metadata(queries),
+            MetadataBackend::Native => query_native_metadata(queries),
             MetadataBackend::Wsl(workspace) => query_wsl_metadata(workspace, queries).await,
             MetadataBackend::ActiveWsl(session) => {
                 query_active_wsl_metadata(session, queries).await
@@ -503,19 +490,15 @@ impl AgentEnvironmentResolver {
         metadata: &BTreeMap<String, PathMetadata>,
         environment_available: bool,
     ) -> (DetectionState, Option<DetectionReason>) {
-        let project_context_required = match &definition.detection {
-            DetectionSpec::Eve => project_path.is_none(),
-            DetectionSpec::AnyPathExists { paths } => {
-                project_path.is_none()
-                    && !paths.is_empty()
-                    && paths.iter().all(|path| {
-                        matches!(
-                            self.resolve_detection_path(path, project_path, metadata),
-                            PathResolution::ProjectNotSelected
-                        )
-                    })
-            }
-        };
+        let DetectionSpec::AnyPathExists { paths } = &definition.detection;
+        let project_context_required = project_path.is_none()
+            && !paths.is_empty()
+            && paths.iter().all(|path| {
+                matches!(
+                    self.resolve_detection_path(path, project_path, metadata),
+                    PathResolution::ProjectNotSelected
+                )
+            });
         if project_context_required {
             return (
                 DetectionState::Indeterminate,
@@ -528,8 +511,8 @@ impl AgentEnvironmentResolver {
                 Some(DetectionReason::EnvironmentUnavailable),
             );
         }
-        match &definition.detection {
-            DetectionSpec::AnyPathExists { paths } => {
+        match definition.adapter {
+            AgentAdapter::Standard => {
                 let mut indeterminate = false;
                 let mut environment_unavailable = false;
                 let mut project_context_required = false;
@@ -579,7 +562,7 @@ impl AgentEnvironmentResolver {
                     (DetectionState::NotDetected, None)
                 }
             }
-            DetectionSpec::Eve => {
+            AgentAdapter::Eve => {
                 let Some(project_path) = project_path else {
                     return (
                         DetectionState::Indeterminate,
@@ -699,7 +682,7 @@ impl AgentEnvironmentResolver {
         if !scope.enabled {
             return ResolvedAgentScope::disabled();
         }
-        let shared_resolution = match self.shared_path(is_global, project_path) {
+        let standard_resolution = match self.standard_path(is_global, project_path) {
             Some(path) => PathResolution::Resolved(path),
             None => PathResolution::ProjectNotSelected,
         };
@@ -707,14 +690,14 @@ impl AgentEnvironmentResolver {
             .private_path
             .as_ref()
             .map(|path| self.resolve_path(path, project_path, metadata));
-        let shared_path = shared_resolution.path().map(ToString::to_string);
+        let standard_path = standard_resolution.path().map(ToString::to_string);
         let private_path = private_resolution
             .as_ref()
             .and_then(PathResolution::path)
             .map(ToString::to_string);
         let mut read_paths = Vec::new();
-        if scope.reads_shared {
-            if let Some(path) = &shared_path {
+        if scope.reads_standard {
+            if let Some(path) = &standard_path {
                 read_paths.push(path.clone());
             }
         }
@@ -743,12 +726,12 @@ impl AgentEnvironmentResolver {
             .collect();
         ResolvedAgentScope {
             enabled: true,
-            reads_shared: scope.reads_shared,
-            shared_path,
+            reads_standard: scope.reads_standard,
+            standard_path,
             private_path,
             read_paths,
-            shared_presence: Some(path_presence(
-                &shared_resolution,
+            standard_presence: Some(path_presence(
+                &standard_resolution,
                 metadata,
                 environment_available,
                 &self.environment_context,
@@ -765,7 +748,7 @@ impl AgentEnvironmentResolver {
         }
     }
 
-    fn shared_path(&self, is_global: bool, project_path: Option<&str>) -> Option<String> {
+    fn standard_path(&self, is_global: bool, project_path: Option<&str>) -> Option<String> {
         if is_global {
             Some(join_resolved(
                 &self.environment_context.home,
@@ -888,7 +871,7 @@ fn metadata_backend(context: &EnvironmentContext) -> MetadataBackend {
         return MetadataBackend::Unavailable;
     }
     match &context.environment {
-        EnvironmentRef::Host => MetadataBackend::Host,
+        EnvironmentRef::Native => MetadataBackend::Native,
         EnvironmentRef::Wsl { distro_name } => context
             .wsl_workspace
             .as_ref()
@@ -924,7 +907,9 @@ fn insert_query(
         });
 }
 
-fn query_host_metadata(queries: &[PathQuery]) -> Result<BTreeMap<String, PathMetadata>, AppError> {
+fn query_native_metadata(
+    queries: &[PathQuery],
+) -> Result<BTreeMap<String, PathMetadata>, AppError> {
     Ok(queries
         .iter()
         .map(|query| {
@@ -1106,7 +1091,7 @@ fn normalize_path(path: &str, _context: &EnvironmentContext) -> String {
 
 fn path_key(path: &str, context: &EnvironmentContext) -> String {
     let normalized = normalize_path(path, context);
-    if matches!(context.environment, EnvironmentRef::Host) && cfg!(windows) {
+    if matches!(context.environment, EnvironmentRef::Native) && cfg!(windows) {
         normalized.to_ascii_lowercase()
     } else {
         normalized
@@ -1116,8 +1101,8 @@ fn path_key(path: &str, context: &EnvironmentContext) -> String {
 fn absolute_path_is_compatible(path: &str, context: &EnvironmentContext) -> bool {
     match context.environment {
         EnvironmentRef::Wsl { .. } => is_posix_absolute(path),
-        EnvironmentRef::Host if cfg!(windows) => is_windows_absolute(path),
-        EnvironmentRef::Host => is_posix_absolute(path),
+        EnvironmentRef::Native if cfg!(windows) => is_windows_absolute(path),
+        EnvironmentRef::Native => is_posix_absolute(path),
     }
 }
 
@@ -1175,10 +1160,14 @@ mod tests {
     use crate::core::custom_agent_repository::CustomAgentRepository;
     use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
 
-    fn scope(enabled: bool, reads_shared: bool, private_path: Option<PathSpec>) -> ScopeDefinition {
+    fn scope(
+        enabled: bool,
+        reads_standard: bool,
+        private_path: Option<PathSpec>,
+    ) -> ScopeDefinition {
         ScopeDefinition {
             enabled,
-            reads_shared,
+            reads_standard,
             private_path,
         }
     }
@@ -1283,7 +1272,7 @@ mod tests {
             .collect();
         let resolver = AgentEnvironmentResolver::with_metadata_query(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1318,7 +1307,7 @@ mod tests {
     async fn resolves_scope_locations_independently_for_each_definition() {
         let definitions = vec![
             definition(
-                "global-shared-project-private",
+                "global-standard-project-private",
                 scope(true, true, None),
                 scope(true, false, Some(PathSpec::project(".private/skills"))),
                 vec![PathSpec::home(".one")],
@@ -1330,7 +1319,7 @@ mod tests {
                 vec![PathSpec::home(".two")],
             ),
             definition(
-                "global-both-project-shared",
+                "global-both-project-standard",
                 scope(true, true, Some(PathSpec::home(".three/skills"))),
                 scope(true, true, None),
                 vec![PathSpec::home(".three")],
@@ -1339,7 +1328,7 @@ mod tests {
         let snapshot = registry("registry-1", definitions);
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1353,7 +1342,7 @@ mod tests {
 
         let first = resolved
             .agents
-            .get(&AgentId::parse("global-shared-project-private").unwrap())
+            .get(&AgentId::parse("global-standard-project-private").unwrap())
             .unwrap();
         assert_eq!(first.global.read_paths, vec!["/home/alice/.agents/skills"]);
         assert_eq!(first.project.read_paths, vec!["/work/app/.private/skills"]);
@@ -1370,7 +1359,7 @@ mod tests {
 
         let third = resolved
             .agents
-            .get(&AgentId::parse("global-both-project-shared").unwrap())
+            .get(&AgentId::parse("global-both-project-standard").unwrap())
             .unwrap();
         assert_eq!(
             third.global.read_paths,
@@ -1392,7 +1381,7 @@ mod tests {
         );
         let (resolver, calls) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1406,7 +1395,7 @@ mod tests {
         let agent = resolved.agents.values().next().unwrap();
 
         assert!(!agent.global.enabled);
-        assert!(agent.global.shared_path.is_none());
+        assert!(agent.global.standard_path.is_none());
         assert!(agent.global.private_path.is_none());
         assert!(agent.global.read_paths.is_empty());
         assert!(!calls.lock().unwrap()[0]
@@ -1435,7 +1424,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1470,7 +1459,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1503,7 +1492,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Unavailable,
                 "environment-1",
             ),
@@ -1532,12 +1521,12 @@ mod tests {
             display_name: "Persisted Project Agent".to_string(),
             global: CustomScopeDefinition {
                 enabled: true,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             project: CustomScopeDefinition {
                 enabled: true,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             detection_paths: vec![CustomPathSpec::based(
@@ -1571,7 +1560,7 @@ mod tests {
         let snapshot = registry("registry-1", vec![runtime_definition]);
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1595,10 +1584,10 @@ mod tests {
             Some(super::DetectionReason::ProjectContextRequired)
         );
         assert_eq!(
-            without_project_agent.global.shared_path.as_deref(),
+            without_project_agent.global.standard_path.as_deref(),
             Some("/home/alice/.agents/skills")
         );
-        assert!(without_project_agent.project.shared_path.is_none());
+        assert!(without_project_agent.project.standard_path.is_none());
 
         let with_project = resolver
             .resolve_registry(&snapshot, Some("/work/persisted"))
@@ -1614,7 +1603,7 @@ mod tests {
         );
         assert_eq!(with_project_agent.detection_reason, None);
         assert_eq!(
-            with_project_agent.project.shared_path.as_deref(),
+            with_project_agent.project.standard_path.as_deref(),
             Some("/work/persisted/.agents/skills")
         );
     }
@@ -1632,7 +1621,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1668,7 +1657,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1705,7 +1694,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1738,7 +1727,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -1955,11 +1944,11 @@ mod tests {
 
         assert_eq!(agent.detection, super::DetectionState::Indeterminate);
         assert_eq!(
-            agent.global.shared_presence,
+            agent.global.standard_presence,
             Some(DirectoryPresenceState::EnvironmentUnavailable)
         );
         assert_eq!(
-            agent.project.shared_presence,
+            agent.project.standard_presence,
             Some(DirectoryPresenceState::EnvironmentUnavailable)
         );
         assert!(calls.lock().unwrap().is_empty());
@@ -1981,7 +1970,7 @@ mod tests {
         let snapshot = registry("registry-1", definitions);
         let (resolver, calls) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2032,7 +2021,7 @@ mod tests {
         let second = registry("registry-2", vec![definition.clone()]);
         let (mut resolver, calls) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2051,7 +2040,7 @@ mod tests {
         assert_eq!(calls.lock().unwrap().len(), 3);
 
         resolver.replace_environment_context(runtime_context(
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             EnvironmentStatus::Available,
             "environment-2",
         ));
@@ -2114,7 +2103,7 @@ mod tests {
         );
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2158,12 +2147,12 @@ mod tests {
             scope: LegacyPathScope::Global,
             path: PathSpec::home(".legacy-agent/old-skills"),
             behavior: LegacyPathBehavior::OfferMigration,
-            migration_target: LegacyMigrationTarget::SharedCanonical,
+            migration_target: LegacyMigrationTarget::StandardCanonical,
         });
         let snapshot = registry("registry-1", vec![legacy_agent]);
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2208,7 +2197,7 @@ mod tests {
         );
         let resolver = AgentEnvironmentResolver::with_metadata_query(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2285,7 +2274,7 @@ mod tests {
         );
         let resolver = AgentEnvironmentResolver::with_metadata_query(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2372,7 +2361,7 @@ mod tests {
             Some(super::DetectionReason::EnvironmentUnavailable)
         );
         assert_eq!(
-            agent.global.shared_presence,
+            agent.global.standard_presence,
             Some(DirectoryPresenceState::EnvironmentUnavailable)
         );
     }
@@ -2386,12 +2375,17 @@ mod tests {
             vec![PathSpec::home("unused")],
         );
         eve.source = AgentSource::Builtin;
-        eve.detection = DetectionSpec::Eve;
+        eve.detection = DetectionSpec::AnyPathExists {
+            paths: vec![
+                PathSpec::project("agent"),
+                PathSpec::project("package.json"),
+            ],
+        };
         eve.adapter = AgentAdapter::Eve;
         let snapshot = registry("registry-1", vec![eve]);
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2417,12 +2411,17 @@ mod tests {
             vec![PathSpec::home("unused")],
         );
         eve.source = AgentSource::Builtin;
-        eve.detection = DetectionSpec::Eve;
+        eve.detection = DetectionSpec::AnyPathExists {
+            paths: vec![
+                PathSpec::project("agent"),
+                PathSpec::project("package.json"),
+            ],
+        };
         eve.adapter = AgentAdapter::Eve;
         let snapshot = registry("registry-1", vec![eve]);
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Unavailable,
                 "environment-1",
             ),
@@ -2448,12 +2447,17 @@ mod tests {
             vec![PathSpec::home("unused")],
         );
         eve.source = AgentSource::Builtin;
-        eve.detection = DetectionSpec::Eve;
+        eve.detection = DetectionSpec::AnyPathExists {
+            paths: vec![
+                PathSpec::project("agent"),
+                PathSpec::project("package.json"),
+            ],
+        };
         eve.adapter = AgentAdapter::Eve;
         let snapshot = registry("registry-1", vec![eve]);
         let (resolver, _) = resolver_with_present_paths(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Unavailable,
                 "environment-1",
             ),
@@ -2482,14 +2486,19 @@ mod tests {
             vec![PathSpec::home("unused")],
         );
         eve.source = AgentSource::Builtin;
-        eve.detection = DetectionSpec::Eve;
+        eve.detection = DetectionSpec::AnyPathExists {
+            paths: vec![
+                PathSpec::project("agent"),
+                PathSpec::project("package.json"),
+            ],
+        };
         eve.adapter = AgentAdapter::Eve;
         let snapshot = registry("registry-1", vec![eve]);
         let calls = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
         let recorded_calls = Arc::clone(&calls);
         let resolver = AgentEnvironmentResolver::with_metadata_query(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2547,12 +2556,17 @@ mod tests {
             vec![PathSpec::home("unused")],
         );
         eve.source = AgentSource::Builtin;
-        eve.detection = DetectionSpec::Eve;
+        eve.detection = DetectionSpec::AnyPathExists {
+            paths: vec![
+                PathSpec::project("agent"),
+                PathSpec::project("package.json"),
+            ],
+        };
         eve.adapter = AgentAdapter::Eve;
         let snapshot = registry("registry-1", vec![eve]);
         let resolver = AgentEnvironmentResolver::with_metadata_query(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),
@@ -2628,7 +2642,12 @@ mod tests {
             vec![PathSpec::home("unused")],
         );
         eve.source = AgentSource::Builtin;
-        eve.detection = DetectionSpec::Eve;
+        eve.detection = DetectionSpec::AnyPathExists {
+            paths: vec![
+                PathSpec::project("agent"),
+                PathSpec::project("package.json"),
+            ],
+        };
         eve.adapter = AgentAdapter::Eve;
         let other = definition(
             "other-agent",
@@ -2639,7 +2658,7 @@ mod tests {
         let snapshot = registry("registry-1", vec![eve, other]);
         let resolver = AgentEnvironmentResolver::with_metadata_query(
             runtime_context(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 EnvironmentStatus::Available,
                 "environment-1",
             ),

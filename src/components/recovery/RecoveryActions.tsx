@@ -28,6 +28,11 @@ import type {
 } from '@/bindings';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { runBusinessWrite } from '@/workflows/install-session-feedback';
+import { environmentKey, useEnvironmentStore } from '@/stores/environment';
+import {
+  environmentDisplayName,
+  environmentRefDisplayName,
+} from '@/lib/environments/presentation';
 
 const OPERATION_TITLE_KINDS = new Set<MutationKind>([
   'install',
@@ -58,6 +63,7 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
   onResolved?: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const environments = useEnvironmentStore((store) => store.environments);
   const titleId = useId();
   const writeBlocked = useBusinessWriteBlocked();
   const [status, setStatus] = useState<RecoveryResourceStatus | null>(() => (
@@ -125,9 +131,17 @@ export function RecoveryActions({ recovery, initialStatus, onResolved }: {
         { skillName: subject.skillName },
       )
     : t('recovery.title');
-  const environmentLabel = subject?.context.environment.kind === 'wsl'
-    ? subject.context.environment.distro_name
-    : t('mutation.host');
+  const subjectEnvironment = subject?.context.environment;
+  const environment = subjectEnvironment
+    ? environments.find((entry) => (
+      environmentKey(entry.environment) === environmentKey(subjectEnvironment)
+    ))
+    : undefined;
+  const environmentLabel = subjectEnvironment
+    ? environment
+      ? environmentDisplayName(environment, t)
+      : environmentRefDisplayName(subjectEnvironment, undefined, t)
+    : '';
   const scopeLabel = subject?.context.scope.scope === 'project'
     ? t('recovery.projectScope')
     : t('context.global');

@@ -28,13 +28,13 @@ vi.mock('@/hooks/useTauriApi', () => ({
 
 vi.mock('@tauri-apps/api/event', () => eventMocks);
 
-const hostGlobal = {
-  environment: { kind: 'host' },
+const nativeGlobal = {
+  environment: { kind: 'native' },
   scope: { scope: 'global' },
 } as const;
 const discoverySession = {
   sessionId: 'discovery-1',
-  environment: hostGlobal.environment,
+  environment: nativeGlobal.environment,
   sourceFingerprint: 'source-1',
   expiresAtEpochMs: 1000,
 } as const;
@@ -96,7 +96,7 @@ function createState(): WizardState {
     step: 'source',
     entryPoint: 'skills-panel',
     scope: 'global',
-    context: hostGlobal,
+    context: nativeGlobal,
     projectPath: undefined,
     source: '',
     fetchStatus: 'idle',
@@ -160,7 +160,7 @@ describe('SourceStep', () => {
     for (const key of Object.keys(skillSnapshots)) delete skillSnapshots[key];
   });
 
-  it('stores risk policy from fetchAvailable for Host Global', async () => {
+  it('stores risk policy from fetchAvailable for Native Global', async () => {
     const onNext = vi.fn();
 
     fetchAvailableMock.mockResolvedValue({
@@ -188,7 +188,7 @@ describe('SourceStep', () => {
       expect(screen.getByTestId('discovery-session').textContent).toBe('discovery-1');
     });
     expect(fetchAvailableMock).toHaveBeenCalledWith(
-      hostGlobal,
+      nativeGlobal,
       'openclaw/community-skills',
       expect.any(String),
     );
@@ -214,7 +214,7 @@ describe('SourceStep', () => {
     await user.click(await screen.findByText('install search result'));
 
     expect(fetchAvailableMock).toHaveBeenCalledWith(
-      hostGlobal,
+      nativeGlobal,
       'openclaw/community-skills@demo',
       expect.any(String),
     );
@@ -353,8 +353,8 @@ describe('SourceStep', () => {
       environment: { kind: 'wsl', distro_name: 'Debian' },
       scope: { scope: 'global' },
     } as const;
-    skillSnapshots[contextKey(hostGlobal)] = {
-      skills: [{ name: 'host-skill', source: 'owner/host' }],
+    skillSnapshots[contextKey(nativeGlobal)] = {
+      skills: [{ name: 'native-skill', source: 'owner/native' }],
     };
     skillSnapshots[contextKey(otherContext)] = {
       skills: [{ name: 'debian-skill', source: 'owner/debian' }],
@@ -363,6 +363,6 @@ describe('SourceStep', () => {
     render(<Harness onNext={() => undefined} />);
     await userEvent.click(screen.getByRole('tab', { name: 'addSkill.source.tabs.search' }));
 
-    expect(screen.getByTestId('installed-skill-keys').textContent).toBe('owner/host::host-skill');
+    expect(screen.getByTestId('installed-skill-keys').textContent).toBe('owner/native::native-skill');
   });
 });

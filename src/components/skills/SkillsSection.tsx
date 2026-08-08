@@ -9,7 +9,7 @@ import { SkillCard } from './SkillCard';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
-import type { AgentId, InstalledSkill, SkillAuditData, SkillScope, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
+import type { AgentId, InstalledSkill, SkillAuditData, InstalledSkillLocation, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
 import {
   buildUpdatePlan,
   isSkillUpdateActive,
@@ -36,7 +36,7 @@ interface SkillsSectionProps {
   skills: SkillListItem[];
   /** 当前 Environment 的完整来源诊断，不受列表筛选影响。 */
   sourceDiagnostics?: SourceUpdateCheckInfo[];
-  scope: SkillScope;
+  scope: InstalledSkillLocation;
   conflictSkillNames?: Set<string>;
   /** 项目目录是否存在（仅 project scope） */
   pathExists?: boolean;

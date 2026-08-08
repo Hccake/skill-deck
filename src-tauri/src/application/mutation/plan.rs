@@ -48,8 +48,8 @@ pub struct ExpectedTargetEntry {
 pub struct ExecutionUnit {
     pub id: String,
     pub skill_name: String,
-    pub source: Option<crate::environment::types::ContextRef>,
-    pub target: crate::environment::types::ContextRef,
+    pub source: Option<crate::environment::types::SkillLocationRef>,
+    pub target: crate::environment::types::SkillLocationRef,
     pub expected_revisions: RuntimeRevisions,
     pub canonical_entry: Option<PreparedEntryMutation>,
     pub required_agent_entries: Vec<PreparedEntryMutation>,
@@ -176,7 +176,7 @@ mod tests {
 
     fn destination(path: &str) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string(),
         }
     }

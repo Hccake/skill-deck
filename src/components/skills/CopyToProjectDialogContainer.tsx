@@ -8,7 +8,7 @@ import { useProjectCatalog } from '@/hooks/useProjectWorkspace';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillCopy } from '@/workflows/skill-copy';
 import { CopyToProjectDialog } from './CopyToProjectDialog';
-import type { ContextRef, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import type { SkillLocationRef, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
 
 async function loadTargetProjects(environment: EnvironmentRef) {
   const result = await projectWorkspace.execute({
@@ -36,7 +36,7 @@ async function checkTargetExistence(
     if (!project) {
       throw new Error(`Copy target project is no longer available: ${projectId}`);
     }
-    const context: ContextRef = {
+    const context: SkillLocationRef = {
       environment,
       scope: { scope: 'project', project_id: project.binding.id },
     };
@@ -68,7 +68,7 @@ function OpenCopyToProjectDialog({
   sourceContext,
 }: {
   skill: InstalledSkill;
-  sourceContext: ContextRef;
+  sourceContext: SkillLocationRef;
 }) {
   const environments = useEnvironmentStore((state) => state.environments);
   const projectEnvironments = useMemo(

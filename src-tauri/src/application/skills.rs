@@ -13,7 +13,7 @@ use crate::environment::context_resolver::{ContextResolver, ResolvedContext};
 use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::native::inspection::NativeInspector;
 use crate::environment::read_service::ReadService;
-use crate::environment::types::{ContextRef, EnvironmentRef, ResourceLocator};
+use crate::environment::types::{EnvironmentRef, ResourceLocator, SkillLocationRef};
 use crate::environment::wsl::operations::inspection::WslInspector;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
@@ -105,13 +105,13 @@ fn enrich_environment_skills_from_lock(
 mod environment_tests {
     use super::{enrich_environment_skills_from_lock, LockKind};
     use crate::core::agent_definition::AgentId;
-    use crate::core::skill::{InstalledSkill, SkillScope};
+    use crate::core::skill::{InstalledSkill, InstalledSkillLocation};
 
     fn installed_skill(
         name: &str,
         description: &str,
         canonical_path: &str,
-        scope: SkillScope,
+        scope: InstalledSkillLocation,
         agents: Vec<AgentId>,
     ) -> InstalledSkill {
         InstalledSkill {
@@ -150,12 +150,12 @@ mod environment_tests {
             "toolkit",
             "",
             "/work/app/.agents/skills/toolkit",
-            SkillScope::Project,
+            InstalledSkillLocation::Project,
             Vec::new(),
         );
 
         assert_eq!(skill.name, "toolkit");
-        assert_eq!(skill.scope, SkillScope::Project);
+        assert_eq!(skill.scope, InstalledSkillLocation::Project);
         assert!(skill.agents.is_empty());
         assert_eq!(skill.source, None);
     }
@@ -166,7 +166,7 @@ mod environment_tests {
             "toolkit",
             "Shared toolkit",
             "/home/alice/.agents/skills/toolkit",
-            SkillScope::Global,
+            InstalledSkillLocation::Global,
             vec![AgentId::parse("codex").unwrap()],
         );
         let lock = br#"{
@@ -212,7 +212,7 @@ mod environment_tests {
             "toolkit",
             "Toolkit",
             "/work/app/.agents/skills/toolkit",
-            SkillScope::Project,
+            InstalledSkillLocation::Project,
             Vec::new(),
         );
         let lock = br#"{
@@ -235,7 +235,7 @@ mod environment_tests {
 }
 
 pub async fn list_skills(
-    context: ContextRef,
+    context: SkillLocationRef,
     environment_registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
 ) -> Result<ListSkillsResult, AppError> {
@@ -247,15 +247,15 @@ pub async fn list_skills(
     .await
     .map_err(agent_command_error)?;
     match &context.environment {
-        EnvironmentRef::Host => {
-            let resolved = ContextResolver::resolve_host(context)?;
+        EnvironmentRef::Native => {
+            let resolved = ContextResolver::resolve_native(context)?;
             let eve_targets = discover_eve_skill_targets(&resolved, &runtime, None).await?;
             let plan = build_skill_read_plan(&resolved, &runtime, &eve_targets)?;
             let read_service =
-                ReadService::new(vec![Arc::new(NativeInspector::new(EnvironmentRef::Host))]);
+                ReadService::new(vec![Arc::new(NativeInspector::new(EnvironmentRef::Native))]);
             let snapshot = read_service.execute(&plan.read_plan).await?;
             let result = project_skill_snapshot(&plan, snapshot, &runtime)?;
-            enrich_from_context_lock(result, &resolved, EnvironmentLockIo::Host).await
+            enrich_from_context_lock(result, &resolved, EnvironmentLockIo::Native).await
         }
         EnvironmentRef::Wsl { distro_name } => {
             let distro_name = distro_name.clone();

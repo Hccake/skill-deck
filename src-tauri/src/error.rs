@@ -217,7 +217,7 @@ pub enum AppError {
         environment: EnvironmentRef,
     },
 
-    #[error("Host project migration failed: {message}")]
+    #[error("Native project migration failed: {message}")]
     ProjectMigrationFailed { message: String },
 
     #[error("{target}")]

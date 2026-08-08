@@ -15,7 +15,7 @@ use crate::environment::agent_environment::{
 use crate::environment::planning::{ResolvedTargetFact, TargetFactResolver};
 use crate::environment::runtime::PhysicalTargetKey;
 use crate::environment::types::{
-    same_environment_identity, ContextRef, ContextScope, ResourceLocator,
+    same_environment_identity, ResourceLocator, SkillLocation, SkillLocationRef,
 };
 use crate::error::{AgentSelectionInvalidReason, AppError};
 use crate::models::{InstallMode, InstallTargetInfo};
@@ -32,7 +32,7 @@ pub struct AgentSelectionRevision(pub String);
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub enum SkillDirectoryAccess {
-    SharedOnly,
+    StandardOnly,
     PrivateOnly,
     Both,
 }
@@ -339,7 +339,7 @@ pub(crate) fn resolve_agent_selection_submission(
     let direct_agents = catalog.snapshot.agents.iter().filter(|agent| {
         matches!(
             agent.directory_access,
-            Some(SkillDirectoryAccess::SharedOnly | SkillDirectoryAccess::Both)
+            Some(SkillDirectoryAccess::StandardOnly | SkillDirectoryAccess::Both)
         )
     });
     let direct_agent_ids = direct_agents
@@ -465,11 +465,11 @@ struct CatalogCandidate {
     display_name: String,
     path: String,
     destination: ResourceLocator,
-    shared_destination: Option<ResourceLocator>,
+    standard_destination: Option<ResourceLocator>,
 }
 
 pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     eve_targets: &[InstallTargetInfo],
     targets: &T,
@@ -489,13 +489,13 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
             AgentAdapter::Standard => AgentSelectionAgentKind::Standard,
             AgentAdapter::Eve => AgentSelectionAgentKind::Grouped,
         };
-        let reads_shared = scope.reads_shared && scope.shared_path.is_some();
+        let reads_standard = scope.reads_standard && scope.standard_path.is_some();
         let directory_access = match (
             agent.definition.adapter,
-            reads_shared,
+            reads_standard,
             scope.private_path.is_some(),
         ) {
-            (AgentAdapter::Standard, true, false) => Some(SkillDirectoryAccess::SharedOnly),
+            (AgentAdapter::Standard, true, false) => Some(SkillDirectoryAccess::StandardOnly),
             (AgentAdapter::Standard, false, true) => Some(SkillDirectoryAccess::PrivateOnly),
             (AgentAdapter::Standard, true, true) => Some(SkillDirectoryAccess::Both),
             _ => None,
@@ -523,8 +523,8 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
                 environment: context.environment.clone(),
                 native_path: path,
             },
-            shared_destination: scope
-                .shared_path
+            standard_destination: scope
+                .standard_path
                 .clone()
                 .map(|native_path| ResourceLocator {
                     environment: context.environment.clone(),
@@ -545,33 +545,35 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
     if facts.len() != destinations.len() {
         return Err(AppError::StaleTarget);
     }
-    let shared_destinations = candidates
+    let standard_destinations = candidates
         .iter()
-        .filter_map(|candidate| candidate.shared_destination.clone())
+        .filter_map(|candidate| candidate.standard_destination.clone())
         .collect::<Vec<_>>();
-    let shared_facts = if shared_destinations.is_empty() {
+    let standard_facts = if standard_destinations.is_empty() {
         Vec::new()
     } else {
-        targets.resolve(context, &shared_destinations, None).await?
+        targets
+            .resolve(context, &standard_destinations, None)
+            .await?
     };
-    if shared_facts.len() != shared_destinations.len() {
+    if standard_facts.len() != standard_destinations.len() {
         return Err(AppError::StaleTarget);
     }
 
     let mut by_physical_key =
         BTreeMap::<PhysicalTargetKey, Vec<(CatalogCandidate, ResolvedTargetFact)>>::new();
-    let mut shared_facts = shared_facts.into_iter();
+    let mut standard_facts = standard_facts.into_iter();
     for (candidate, fact) in candidates.into_iter().zip(facts) {
-        let duplicates_shared = candidate.shared_destination.is_some()
-            && shared_facts
+        let duplicates_standard = candidate.standard_destination.is_some()
+            && standard_facts
                 .next()
-                .is_some_and(|shared_fact| shared_fact.key == fact.key);
-        if duplicates_shared {
+                .is_some_and(|standard_fact| standard_fact.key == fact.key);
+        if duplicates_standard {
             if let Some(agent) = agents
                 .iter_mut()
                 .find(|agent| agent.id == candidate.agent_id)
             {
-                agent.directory_access = Some(SkillDirectoryAccess::SharedOnly);
+                agent.directory_access = Some(SkillDirectoryAccess::StandardOnly);
             }
             continue;
         }
@@ -784,19 +786,19 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
 }
 
 fn selected_scope<'a>(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     global: &'a ResolvedAgentScope,
     project: &'a ResolvedAgentScope,
 ) -> &'a ResolvedAgentScope {
     match context.scope {
-        ContextScope::Global => global,
-        ContextScope::Project { .. } => project,
+        SkillLocation::Global => global,
+        SkillLocation::Project { .. } => project,
     }
 }
 
 #[cfg(test)]
 pub(crate) async fn test_submission_for_agents<T: TargetFactResolver>(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     eve_targets: &[InstallTargetInfo],
     targets: &T,
@@ -822,7 +824,7 @@ pub(crate) async fn test_submission_for_agents<T: TargetFactResolver>(
 
 #[cfg(test)]
 pub(crate) async fn test_submission_for_agents_and_own_directories<T: TargetFactResolver>(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     eve_targets: &[InstallTargetInfo],
     targets: &T,
@@ -878,7 +880,7 @@ mod tests {
         EntryFingerprint, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
     use crate::environment::types::{
-        ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
+        EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
     };
     use crate::models::InstallMode;
 
@@ -890,12 +892,12 @@ mod tests {
     };
 
     #[derive(Clone)]
-    struct SharedTargetResolver;
+    struct StandardTargetResolver;
 
-    impl TargetFactResolver for SharedTargetResolver {
+    impl TargetFactResolver for StandardTargetResolver {
         fn resolve<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
             logical_destinations: &'a [ResourceLocator],
             _cancellation: Option<crate::core::mutation::CancellationSignal>,
         ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, crate::error::AppError>> {
@@ -931,7 +933,7 @@ mod tests {
     impl TargetFactResolver for DistinctTargetResolver {
         fn resolve<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
             logical_destinations: &'a [ResourceLocator],
             _cancellation: Option<crate::core::mutation::CancellationSignal>,
         ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, crate::error::AppError>> {
@@ -962,28 +964,28 @@ mod tests {
         }
     }
 
-    fn scope(reads_shared: bool, private_path: &str) -> ScopeDefinition {
+    fn scope(reads_standard: bool, private_path: &str) -> ScopeDefinition {
         ScopeDefinition {
             enabled: true,
-            reads_shared,
+            reads_standard,
             private_path: Some(PathSpec::home(private_path)),
         }
     }
 
-    fn resolved_scope(reads_shared: bool, private_path: &str) -> ResolvedAgentScope {
+    fn resolved_scope(reads_standard: bool, private_path: &str) -> ResolvedAgentScope {
         ResolvedAgentScope {
             enabled: true,
-            reads_shared,
-            shared_path: Some("/home/alice/.agents/skills".to_string()),
+            reads_standard,
+            standard_path: Some("/home/alice/.agents/skills".to_string()),
             private_path: Some(private_path.to_string()),
             read_paths: vec![private_path.to_string()],
-            shared_presence: Some(DirectoryPresenceState::Missing),
+            standard_presence: Some(DirectoryPresenceState::Missing),
             private_presence: Some(DirectoryPresenceState::Missing),
             legacy_paths: Vec::new(),
         }
     }
 
-    fn agent(id: &str, reads_shared: bool, private_path: &str) -> (AgentId, ResolvedAgent) {
+    fn agent(id: &str, reads_standard: bool, private_path: &str) -> (AgentId, ResolvedAgent) {
         let id = AgentId::parse(id).unwrap();
         (
             id.clone(),
@@ -993,10 +995,10 @@ mod tests {
                     display_name: "Agent".to_string(),
                     source: AgentSource::Builtin,
                     aliases: Vec::new(),
-                    global: scope(reads_shared, private_path),
+                    global: scope(reads_standard, private_path),
                     project: ScopeDefinition {
                         enabled: false,
-                        reads_shared: false,
+                        reads_standard: false,
                         private_path: None,
                     },
                     detection: DetectionSpec::AnyPathExists {
@@ -1007,14 +1009,14 @@ mod tests {
                 },
                 detection: DetectionState::Detected,
                 detection_reason: None,
-                global: resolved_scope(reads_shared, private_path),
+                global: resolved_scope(reads_standard, private_path),
                 project: ResolvedAgentScope {
                     enabled: false,
-                    reads_shared: false,
-                    shared_path: None,
+                    reads_standard: false,
+                    standard_path: None,
                     private_path: None,
                     read_paths: Vec::new(),
-                    shared_presence: None,
+                    standard_presence: None,
                     private_presence: None,
                     legacy_paths: Vec::new(),
                 },
@@ -1026,31 +1028,31 @@ mod tests {
         let (id, mut agent) = agent(id, false, "/unused/global/skills");
         agent.definition.global = ScopeDefinition {
             enabled: false,
-            reads_shared: false,
+            reads_standard: false,
             private_path: None,
         };
         agent.global = ResolvedAgentScope {
             enabled: false,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: None,
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
         agent.definition.project = ScopeDefinition {
             enabled: true,
-            reads_shared: false,
+            reads_standard: false,
             private_path: Some(PathSpec::project(private_path)),
         };
         agent.project = ResolvedAgentScope {
             enabled: true,
-            reads_shared: false,
-            shared_path: Some("./.agents/skills".to_string()),
+            reads_standard: false,
+            standard_path: Some("./.agents/skills".to_string()),
             private_path: None,
             read_paths: vec![private_path.to_string()],
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
@@ -1061,7 +1063,7 @@ mod tests {
         AgentRuntimeSnapshot {
             registry_revision: "registry-1".to_string(),
             environment_revision: "environment-1".to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             availability: EnvironmentStatus::Available,
             project_path: None,
             agents: agents.into_iter().collect::<BTreeMap<_, _>>(),
@@ -1070,9 +1072,9 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_classifies_direct_separate_and_additional_agents() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let (codex_id, mut codex) = agent("codex", true, "/logical/codex/skills");
         codex.definition.global.private_path = None;
@@ -1096,7 +1098,7 @@ mod tests {
             .iter()
             .map(|agent| (agent.id.as_str(), agent.directory_access))
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(access["codex"], Some(SkillDirectoryAccess::SharedOnly));
+        assert_eq!(access["codex"], Some(SkillDirectoryAccess::StandardOnly));
         assert_eq!(
             access["claude-code"],
             Some(SkillDirectoryAccess::PrivateOnly)
@@ -1115,9 +1117,9 @@ mod tests {
 
     #[tokio::test]
     async fn initial_selection_does_not_select_an_optional_private_directory() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let mut catalog = build_agent_selection_catalog(
             &context,
@@ -1135,12 +1137,12 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_normalizes_a_private_only_agent_when_its_directory_is_the_shared_directory() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let mut duplicate = agent("cursor", false, "/home/alice/.agents/skills").1;
-        duplicate.global.shared_path = Some("/home/alice/.agents/skills".to_string());
+        duplicate.global.standard_path = Some("/home/alice/.agents/skills".to_string());
         let catalog = build_agent_selection_catalog(
             &context,
             &runtime(vec![(AgentId::parse("cursor").unwrap(), duplicate)]),
@@ -1152,7 +1154,7 @@ mod tests {
 
         assert_eq!(
             catalog.snapshot.agents[0].directory_access,
-            Some(SkillDirectoryAccess::SharedOnly)
+            Some(SkillDirectoryAccess::StandardOnly)
         );
         assert!(catalog.snapshot.install_options.is_empty());
 
@@ -1176,9 +1178,9 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_merges_shared_standard_placements_into_one_option() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let catalog = build_agent_selection_catalog(
             &context,
@@ -1187,7 +1189,7 @@ mod tests {
                 agent("cursor", true, "/logical/cursor/skills"),
             ]),
             &[],
-            &SharedTargetResolver,
+            &StandardTargetResolver,
         )
         .await
         .unwrap();
@@ -1227,9 +1229,9 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_exposes_eve_targets_as_copy_only_group_children() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
@@ -1274,9 +1276,9 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_marks_and_rejects_selected_placements_that_require_different_content() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
@@ -1297,7 +1299,7 @@ mod tests {
         }];
 
         let catalog =
-            build_agent_selection_catalog(&context, &runtime, &targets, &SharedTargetResolver)
+            build_agent_selection_catalog(&context, &runtime, &targets, &StandardTargetResolver)
                 .await
                 .unwrap();
 
@@ -1326,9 +1328,9 @@ mod tests {
 
     #[tokio::test]
     async fn submission_resolves_selected_options_and_direct_agents_to_internal_intents() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let (codex_id, mut codex) = agent("codex", true, "/logical/codex/skills");
         codex.definition.global.private_path = None;
@@ -1380,9 +1382,9 @@ mod tests {
 
     #[tokio::test]
     async fn stale_submission_returns_the_latest_snapshot_without_intents() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let catalog = build_agent_selection_catalog(
             &context,
@@ -1408,9 +1410,9 @@ mod tests {
 
     #[tokio::test]
     async fn revision_tracks_submit_semantics_but_ignores_display_and_detection() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let (id, mut direct) = agent("codex", true, "/logical/codex/skills");
         direct.definition.global.private_path = None;
@@ -1436,8 +1438,8 @@ mod tests {
         .unwrap();
         assert_eq!(original.snapshot.revision, display_only.snapshot.revision);
 
-        direct.definition.global.reads_shared = false;
-        direct.global.reads_shared = false;
+        direct.definition.global.reads_standard = false;
+        direct.global.reads_standard = false;
         let changed_semantics = build_agent_selection_catalog(
             &context,
             &runtime(vec![(id, direct)]),

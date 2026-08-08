@@ -30,7 +30,7 @@ vi.mock('@/hooks/useMutationMonitor', () => ({
 vi.mock('@/hooks/useInstallTargetOptions', () => ({
   useInstallTargetOptions: () => ({
     status: 'ready',
-    inputKey: 'host/global',
+    inputKey: 'native/global',
     snapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
     retry: vi.fn(),
   }),
@@ -160,7 +160,7 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     scope: 'global',
     projectPath: undefined,
     context: {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     },
     source: 'openclaw/community-skills',
@@ -282,7 +282,7 @@ describe('WizardPage mutation guard', () => {
       activeMutation: {
         kind: 'update',
         context: {
-          environment: { kind: 'host' },
+          environment: { kind: 'native' },
           scope: { scope: 'global' },
         },
         id: 'mutation-1',
@@ -335,7 +335,7 @@ describe('WizardPage mutation guard', () => {
       expect(mocks.emit).toHaveBeenCalledWith('wizard-result', {
         action: 'refresh',
         context: {
-          environment: { kind: 'host' },
+          environment: { kind: 'native' },
           scope: { scope: 'global' },
         },
         mutatedSkillNames: ['demo'],
@@ -384,7 +384,7 @@ describe('WizardPage mutation guard', () => {
       expect(mocks.emit).toHaveBeenCalledWith('wizard-result', {
         action: 'refresh',
         context: {
-          environment: { kind: 'host' },
+          environment: { kind: 'native' },
           scope: { scope: 'global' },
         },
         mutatedSkillNames: ['demo'],

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::sync::Notify;
 
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 
 pub const MUTATION_STATE_CHANGED_EVENT: &str = "mutation-state-changed";
 
@@ -58,7 +58,7 @@ pub struct MutationProgress {
 pub struct ActiveMutation {
     pub id: String,
     pub kind: MutationKind,
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub phase: MutationPhase,
     pub progress: Option<MutationProgress>,
     pub cancelable: bool,

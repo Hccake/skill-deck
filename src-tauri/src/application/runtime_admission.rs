@@ -7,7 +7,7 @@ use crate::core::mutation::{
     LifecycleLeaseKind, MutationKind, MutationPhase, MutationProgress, MutationSnapshot,
     TerminationAdmission,
 };
-use crate::environment::types::{same_environment_identity, ContextRef, EnvironmentRef};
+use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +137,7 @@ impl RuntimeAdmissionCoordinator {
     pub fn begin_mutation(
         &self,
         kind: MutationKind,
-        context: ContextRef,
+        context: SkillLocationRef,
     ) -> Result<MutationPermit, AppError> {
         let state = self.lock_state();
         self.denial_for(&state, AdmissionIntent::Mutation)
@@ -147,7 +147,7 @@ impl RuntimeAdmissionCoordinator {
 
     pub fn begin_install_from_active_wizard(
         &self,
-        context: ContextRef,
+        context: SkillLocationRef,
     ) -> Result<MutationPermit, AppError> {
         let state = self.lock_state();
         if let Some(denied) = self.denial_for(&state, AdmissionIntent::InstallWizardMutation) {
@@ -169,7 +169,7 @@ impl RuntimeAdmissionCoordinator {
         &self,
         mut state: std::sync::MutexGuard<'_, AdmissionState>,
         kind: MutationKind,
-        context: ContextRef,
+        context: SkillLocationRef,
         owner: MutationOwner,
     ) -> MutationPermit {
         let token = next_token(&mut state);
@@ -780,12 +780,12 @@ impl Drop for WizardReservation {
 mod tests {
     use super::*;
     use crate::core::mutation::{LifecycleLeaseKind, MutationKind};
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 
-    fn host_global() -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+    fn native_global() -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         }
     }
 
@@ -793,7 +793,7 @@ mod tests {
     fn setting_change_conflicts_with_mutation_and_lifecycle() {
         let admission = RuntimeAdmissionCoordinator::default();
         let mutation = admission
-            .begin_mutation(MutationKind::Install, host_global())
+            .begin_mutation(MutationKind::Install, native_global())
             .expect("mutation admitted");
         assert_eq!(
             admission.begin_wsl_integration_change().unwrap_err(),
@@ -842,7 +842,7 @@ mod tests {
         reservation.activate("wizard-1".to_string());
 
         let install = admission
-            .begin_install_from_active_wizard(host_global())
+            .begin_install_from_active_wizard(native_global())
             .expect("wizard install admitted");
 
         assert_eq!(
@@ -853,14 +853,14 @@ mod tests {
 
         assert_eq!(
             admission
-                .begin_install_from_active_wizard(host_global())
+                .begin_install_from_active_wizard(native_global())
                 .unwrap_err(),
             AppError::MutationBusy
         );
         drop(install);
 
         let retry = admission
-            .begin_install_from_active_wizard(host_global())
+            .begin_install_from_active_wizard(native_global())
             .expect("wizard install retry admitted");
         drop(retry);
     }
@@ -871,17 +871,17 @@ mod tests {
 
         assert_eq!(
             admission
-                .begin_install_from_active_wizard(host_global())
+                .begin_install_from_active_wizard(native_global())
                 .unwrap_err(),
             AppError::InstallWizardSessionUnavailable
         );
 
         let external_mutation = admission
-            .begin_mutation(MutationKind::Remove, host_global())
+            .begin_mutation(MutationKind::Remove, native_global())
             .expect("external mutation admitted");
         assert_eq!(
             admission
-                .begin_install_from_active_wizard(host_global())
+                .begin_install_from_active_wizard(native_global())
                 .unwrap_err(),
             AppError::InstallWizardSessionUnavailable
         );
@@ -895,7 +895,7 @@ mod tests {
         };
         assert_eq!(
             admission
-                .begin_install_from_active_wizard(host_global())
+                .begin_install_from_active_wizard(native_global())
                 .unwrap_err(),
             AppError::InstallWizardSessionUnavailable
         );
@@ -913,7 +913,7 @@ mod tests {
 
         assert_eq!(
             admission
-                .begin_mutation(MutationKind::Install, host_global())
+                .begin_mutation(MutationKind::Install, native_global())
                 .unwrap_err(),
             AppError::InstallWizardActive
         );
@@ -927,7 +927,7 @@ mod tests {
         reservation.activate("wizard-1".to_string());
         assert_eq!(
             admission
-                .begin_mutation(MutationKind::Remove, host_global())
+                .begin_mutation(MutationKind::Remove, native_global())
                 .unwrap_err(),
             AppError::InstallWizardActive
         );
@@ -936,7 +936,7 @@ mod tests {
             .expect("runtime maintenance admitted");
         assert_eq!(
             admission
-                .begin_mutation(MutationKind::Remove, host_global())
+                .begin_mutation(MutationKind::Remove, native_global())
                 .unwrap_err(),
             AppError::InstallWizardActive
         );
@@ -947,7 +947,7 @@ mod tests {
     fn active_business_work_blocks_a_new_wizard_session() {
         let admission = RuntimeAdmissionCoordinator::default();
         let mutation = admission
-            .begin_mutation(MutationKind::Install, host_global())
+            .begin_mutation(MutationKind::Install, native_global())
             .expect("mutation admitted");
         assert_eq!(
             admission
@@ -1027,7 +1027,7 @@ mod tests {
 
         let result = admission.with_idle(|| {
             assert!(matches!(
-                admission.begin_mutation(MutationKind::Install, host_global()),
+                admission.begin_mutation(MutationKind::Install, native_global()),
                 Err(AppError::MutationBusy)
             ));
             admission.mutation_snapshot().revision
@@ -1036,7 +1036,7 @@ mod tests {
         assert_eq!(result, Ok(1));
         assert_eq!(admission.mutation_snapshot().revision, 2);
         admission
-            .begin_mutation(MutationKind::Install, host_global())
+            .begin_mutation(MutationKind::Install, native_global())
             .expect("exclusive action released admission");
     }
 

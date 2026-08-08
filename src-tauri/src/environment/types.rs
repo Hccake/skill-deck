@@ -7,21 +7,24 @@ use crate::error::AppError;
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[specta(tag = "kind", rename_all = "camelCase")]
 pub enum EnvironmentRef {
-    Host,
-    Wsl { distro_name: String },
+    #[serde(alias = "host")]
+    Native,
+    Wsl {
+        distro_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum EnvironmentKey {
-    Host,
+    Native,
     Wsl(String),
 }
 
 impl EnvironmentKey {
     pub fn from_ref(environment: &EnvironmentRef) -> Self {
         match environment {
-            EnvironmentRef::Host => Self::Host,
+            EnvironmentRef::Native => Self::Native,
             EnvironmentRef::Wsl { distro_name } => {
                 Self::Wsl(normalized_wsl_distro_name(distro_name))
             }
@@ -44,7 +47,7 @@ pub fn same_environment_identity(left: &EnvironmentRef, right: &EnvironmentRef) 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(tag = "scope", rename_all = "camelCase")]
 #[specta(tag = "scope", rename_all = "camelCase")]
-pub enum ContextScope {
+pub enum SkillLocation {
     Global,
     Project { project_id: String },
 }
@@ -52,15 +55,15 @@ pub enum ContextScope {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
-pub struct ContextRef {
+pub struct SkillLocationRef {
     pub environment: EnvironmentRef,
-    pub scope: ContextScope,
+    pub scope: SkillLocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
-pub struct ProjectBinding {
+pub struct RegisteredProject {
     pub id: String,
     pub native_path: String,
     pub display_name: Option<String>,
@@ -130,7 +133,7 @@ pub struct ProjectStorageInfo {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct ProjectInfo {
-    pub binding: ProjectBinding,
+    pub binding: RegisteredProject,
     pub storage: ProjectStorageInfo,
 }
 
@@ -166,14 +169,14 @@ pub struct EnvironmentRuntimeEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        same_environment_identity, AddProjectResult, ContextRef, ContextScope, EnvironmentKey,
-        EnvironmentRef, ProjectBinding, ProjectInfo, ProjectStorageInfo, StorageAccess,
+        same_environment_identity, AddProjectResult, EnvironmentKey, EnvironmentRef, ProjectInfo,
+        ProjectStorageInfo, RegisteredProject, SkillLocation, SkillLocationRef, StorageAccess,
     };
 
     #[test]
-    fn environment_ref_round_trips_host_and_wsl() {
+    fn environment_ref_round_trips_native_and_wsl() {
         for environment in [
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             EnvironmentRef::Wsl {
                 distro_name: "Ubuntu-24.04".to_string(),
             },
@@ -183,6 +186,19 @@ mod tests {
                 serde_json::from_str(&json).expect("deserialize environment");
             assert_eq!(decoded, environment);
         }
+    }
+
+    #[test]
+    fn environment_ref_writes_native_and_reads_legacy_host() {
+        assert_eq!(
+            serde_json::to_value(EnvironmentRef::Native).expect("serialize native environment"),
+            serde_json::json!({ "kind": "native" })
+        );
+        assert_eq!(
+            serde_json::from_value::<EnvironmentRef>(serde_json::json!({ "kind": "host" }))
+                .expect("deserialize legacy host environment"),
+            EnvironmentRef::Native
+        );
     }
 
     #[test]
@@ -215,44 +231,45 @@ mod tests {
 
         assert!(same_environment_identity(&ubuntu, &ubuntu_upper));
         assert!(!same_environment_identity(&ubuntu, &debian));
-        assert!(!same_environment_identity(&EnvironmentRef::Host, &ubuntu));
+        assert!(!same_environment_identity(&EnvironmentRef::Native, &ubuntu));
     }
 
     #[test]
     fn context_ref_round_trips_global_and_project() {
         for scope in [
-            ContextScope::Global,
-            ContextScope::Project {
+            SkillLocation::Global,
+            SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         ] {
-            let context = ContextRef {
+            let context = SkillLocationRef {
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
                 scope,
             };
             let json = serde_json::to_string(&context).expect("serialize context");
-            let decoded: ContextRef = serde_json::from_str(&json).expect("deserialize context");
+            let decoded: SkillLocationRef =
+                serde_json::from_str(&json).expect("deserialize context");
             assert_eq!(decoded, context);
         }
     }
 
     #[test]
     fn same_project_id_in_different_distros_is_not_same_context() {
-        let ubuntu = ContextRef {
+        let ubuntu = SkillLocationRef {
             environment: EnvironmentRef::Wsl {
                 distro_name: "Ubuntu".to_string(),
             },
-            scope: ContextScope::Project {
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
-        let debian = ContextRef {
+        let debian = SkillLocationRef {
             environment: EnvironmentRef::Wsl {
                 distro_name: "Debian".to_string(),
             },
-            scope: ContextScope::Project {
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
@@ -264,7 +281,7 @@ mod tests {
     fn project_info_keeps_runtime_storage_outside_the_persisted_binding() {
         let result = AddProjectResult {
             project: ProjectInfo {
-                binding: ProjectBinding {
+                binding: RegisteredProject {
                     id: "project-1".to_string(),
                     native_path: "/work/app".to_string(),
                     display_name: None,

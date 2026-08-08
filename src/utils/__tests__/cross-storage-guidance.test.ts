@@ -21,7 +21,7 @@ describe('cross-storage failure guidance', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     projectsByEnvironment = {
-      host: [{
+      native: [{
         binding: {
           id: 'wsl-project',
           nativePath: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\app',
@@ -42,13 +42,13 @@ describe('cross-storage failure guidance', () => {
           order: null,
           suppressCrossStorageWarning: false,
         },
-        storage: { access: 'crossStorage', owner: { kind: 'host' } },
+        storage: { access: 'crossStorage', owner: { kind: 'native' } },
       }],
     };
     vi.spyOn(projectWorkspace, 'getSnapshot').mockImplementation((environment) => ({
       environment,
       phase: 'ready',
-      projects: projectsByEnvironment[environment.kind === 'host' ? 'host' : 'wsl:ubuntu'] ?? [],
+      projects: projectsByEnvironment[environment.kind === 'native' ? 'native' : 'wsl:ubuntu'] ?? [],
       error: null,
       completeness: 'complete',
       environmentRevision: 1,
@@ -59,7 +59,7 @@ describe('cross-storage failure guidance', () => {
     }));
     useEnvironmentStore.setState({
       environments: [
-        { environment: { kind: 'host' }, displayName: 'Windows', status: 'available', revision: 1, error: null },
+        { environment: { kind: 'native' }, displayName: 'Windows', status: 'available', revision: 1, error: null },
         {
           environment: { kind: 'wsl', distro_name: 'Ubuntu' },
           displayName: 'Ubuntu 24.04',
@@ -71,7 +71,7 @@ describe('cross-storage failure guidance', () => {
     });
   });
 
-  it('suggests the host environment for a Windows project managed from WSL', () => {
+  it('suggests the native environment for a Windows project managed from WSL', () => {
     const guidance = getCrossStorageFailureGuidance({
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'project', project_id: 'windows-project' },
@@ -80,9 +80,9 @@ describe('cross-storage failure guidance', () => {
     expect(guidance).toBe('crossStorage.operation.update -> Windows');
   });
 
-  it('suggests the owning distro for a WSL project managed from the host', () => {
+  it('suggests the owning distro for a WSL project managed from the native', () => {
     const guidance = getCrossStorageFailureGuidance({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'wsl-project' },
     }, 'install', t);
 
@@ -91,7 +91,7 @@ describe('cross-storage failure guidance', () => {
 
   it('does not change errors for global or native project operations', () => {
     expect(getCrossStorageFailureGuidance({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     }, 'delete', t)).toBeNull();
 

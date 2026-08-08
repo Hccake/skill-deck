@@ -74,7 +74,7 @@ vi.mock('@/stores/projects', () => ({
 vi.mock('@/stores/environment', () => ({
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
     environments: [{
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       displayName: 'Windows',
       status: 'available',
       revision: 1,
@@ -93,7 +93,7 @@ vi.mock('@/stores/updater', () => ({
 vi.mock('@/stores/workspace-context', () => {
   const state = {
       selectedContext: {
-        environment: { kind: 'host' },
+        environment: { kind: 'native' },
         scope: { scope: 'global' },
       },
       transition: { kind: 'idle' },
@@ -130,7 +130,7 @@ describe('App', () => {
     window.history.replaceState({}, '', '/');
   });
 
-  it('refreshes the committed Host Global workspace after the wizard completes', async () => {
+  it('refreshes the committed Native Global workspace after the wizard completes', async () => {
     mocks.refreshWorkspace.mockResolvedValue(undefined);
 
     render(<App />);

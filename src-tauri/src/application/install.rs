@@ -22,7 +22,7 @@ use crate::core::{
     ensure_install_risk_acknowledged, parse_source, source_risk_policy, NormalizedUpdateMetadata,
     SourceIdentity,
 };
-use crate::environment::types::{same_environment_identity, ContextRef, EnvironmentRef};
+use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
 use crate::error::AppError;
 use crate::models::SourceType;
 
@@ -30,7 +30,7 @@ use crate::models::SourceType;
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct InstallRequest {
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub source: String,
     pub discovery_session: DiscoverySessionHandle,
     pub payloads: Vec<AcquiredPayloadHandle>,
@@ -318,7 +318,7 @@ mod tests {
     use crate::core::skill_payload::build_skill_payload;
     use crate::core::{NormalizedRef, SourceProvider};
     use crate::environment::runtime::ContextSnapshotRevision;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
     use crate::models::InstallMode;
 
     fn selection(mode: InstallMode) -> AgentSelectionSubmission {
@@ -334,14 +334,14 @@ mod tests {
     #[test]
     fn request_requires_one_environment_and_unique_skills() {
         let request = InstallRequest {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             source: "owner/repo".to_string(),
             discovery_session: DiscoverySessionHandle {
                 session_id: "session-1".to_string(),
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 source_fingerprint: "source-1".to_string(),
                 expires_at_epoch_ms: 10_000,
             },
@@ -363,14 +363,14 @@ mod tests {
     #[test]
     fn guarded_source_requires_explicit_risk_acknowledgement() {
         let request = InstallRequest {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             source: "openclaw/community-skills".to_string(),
             discovery_session: DiscoverySessionHandle {
                 session_id: "session-1".to_string(),
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 source_fingerprint: "source-1".to_string(),
                 expires_at_epoch_ms: 10_000,
             },
@@ -447,9 +447,9 @@ mod tests {
                     unit_id: "demo".to_string(),
                     skill_name: "demo".to_string(),
                     source: None,
-                    target: ContextRef {
-                        environment: EnvironmentRef::Host,
-                        scope: ContextScope::Global,
+                    target: SkillLocationRef {
+                        environment: EnvironmentRef::Native,
+                        scope: SkillLocation::Global,
                     },
                     status: crate::application::mutation::result::MutationUnitStatus::Succeeded,
                     retryable: false,
@@ -497,7 +497,7 @@ mod tests {
             || 1_000,
         ));
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-1")
+            .discover(EnvironmentRef::Native, "source-1")
             .await
             .unwrap();
         let handle = manager
@@ -511,9 +511,9 @@ mod tests {
             context_revision: ContextSnapshotRevision::parse("context-v1-demo").unwrap(),
         };
         let request = InstallRequest {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             source: "owner/repo".to_string(),
             discovery_session: discovery,

@@ -6,7 +6,7 @@ import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { appendCrossStorageFailureGuidance } from '@/utils/cross-storage-guidance';
 import { t, type DeleteTarget } from '@/stores/skills-utils';
-import type { ContextRef, InstalledSkill, RecoveryAction } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill, RecoveryAction } from '@/bindings';
 import { formatWorkflowError, presentMutationResults } from './mutation-presentation';
 import { runBusinessWrite } from './install-session-feedback';
 
@@ -51,7 +51,7 @@ async function reloadSkillRemoval(target: DeleteTarget): Promise<void> {
 
 export async function openSkillRemoval(
   skill: InstalledSkill,
-  context: ContextRef,
+  context: SkillLocationRef,
   projectPath?: string,
 ): Promise<void> {
   const requestGeneration = ++removalPreviewGeneration;

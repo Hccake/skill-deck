@@ -63,7 +63,9 @@ mod tests {
     use crate::core::agent_definition::AgentId;
     use crate::environment::inspection::*;
     use crate::environment::runtime::ContextSnapshotRevision;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
 
     struct FakeInspector {
         environment: EnvironmentRef,
@@ -113,10 +115,10 @@ mod tests {
         }
     }
 
-    fn context(environment: EnvironmentRef) -> ContextRef {
-        ContextRef {
+    fn context(environment: EnvironmentRef) -> SkillLocationRef {
+        SkillLocationRef {
             environment,
-            scope: ContextScope::Global,
+            scope: SkillLocation::Global,
         }
     }
 
@@ -138,7 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_hundred_agents_sharing_one_root_produce_one_root_and_one_scan() {
-        let environment = EnvironmentRef::Host;
+        let environment = EnvironmentRef::Native;
         let mut builder = builder(environment.clone());
         for index in 0..100 {
             builder
@@ -200,7 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_an_inspector_that_exceeds_the_read_plan_byte_contract() {
-        let environment = EnvironmentRef::Host;
+        let environment = EnvironmentRef::Native;
         let mut builder = builder(environment.clone());
         builder
             .add_root(

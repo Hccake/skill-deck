@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  ContextRef,
+  SkillLocationRef,
   MutationUnitResult,
   SkillUpdateInfo,
   SourceUpdateCheckInfo,
@@ -29,8 +29,8 @@ vi.mock('@/hooks/useTauriApi', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }));
 
-const context: ContextRef = {
-  environment: { kind: 'host' },
+const context: SkillLocationRef = {
+  environment: { kind: 'native' },
   scope: { scope: 'global' },
 };
 
@@ -241,7 +241,7 @@ describe('skills data store', () => {
   });
 
   it('checks each Context once and does not repeat when revisiting either Context', async () => {
-    const ubuntuContext: ContextRef = {
+    const ubuntuContext: SkillLocationRef = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
@@ -283,11 +283,11 @@ describe('skills data store', () => {
   });
 
   it('checks Global and each Project once across Context round trips', async () => {
-    const projectA: ContextRef = {
+    const projectA: SkillLocationRef = {
       environment: context.environment,
       scope: { scope: 'project', project_id: 'project-a' },
     };
-    const projectB: ContextRef = {
+    const projectB: SkillLocationRef = {
       environment: context.environment,
       scope: { scope: 'project', project_id: 'project-b' },
     };
@@ -658,8 +658,8 @@ describe('skills data store', () => {
     ]);
   });
 
-  it('clears only Host GitHub provider cooldown after credential maintenance succeeds', async () => {
-    const hostCooldown = sourceInfo('github.com/owner/repo', {
+  it('clears only Native GitHub provider cooldown after credential maintenance succeeds', async () => {
+    const nativeCooldown = sourceInfo('github.com/owner/repo', {
       freshness: 'coolingDown',
       lastAttempt: {
         checkedAtEpochMs: 100,
@@ -671,20 +671,20 @@ describe('skills data store', () => {
         },
       },
     });
-    const wslContext: ContextRef = {
+    const wslContext: SkillLocationRef = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
     useSkillsDataStore.setState({
       snapshots: {
         [contextKey(context)]: {
-          skills: [skill({ skillPath: 'skills/toolkit', updateEvidence: hostCooldown })],
-          updateCheck: { outcome: 'notCompleted', sources: [hostCooldown], skillFreshness: {}, checkedAt: 100 },
+          skills: [skill({ skillPath: 'skills/toolkit', updateEvidence: nativeCooldown })],
+          updateCheck: { outcome: 'notCompleted', sources: [nativeCooldown], skillFreshness: {}, checkedAt: 100 },
           agents: [], pathExists: true, loading: false, error: null, requestId: 1,
         },
         [contextKey(wslContext)]: {
-          skills: [skill({ updateEvidence: hostCooldown })],
-          updateCheck: { outcome: 'notCompleted', sources: [hostCooldown], skillFreshness: {}, checkedAt: 100 },
+          skills: [skill({ updateEvidence: nativeCooldown })],
+          updateCheck: { outcome: 'notCompleted', sources: [nativeCooldown], skillFreshness: {}, checkedAt: 100 },
           agents: [], pathExists: true, loading: false, error: null, requestId: 1,
         },
       },
@@ -694,7 +694,7 @@ describe('skills data store', () => {
         source: 'owner/repo',
         freshness: 'coolingDown',
       })],
-      sources: [hostCooldown],
+      sources: [nativeCooldown],
       checkedAt: 100,
       completeness: 'complete',
       outcome: 'notCompleted',
@@ -705,7 +705,7 @@ describe('skills data store', () => {
       pathExists: true,
     });
 
-    useSkillsDataStore.getState().clearHostGithubProviderCooldown();
+    useSkillsDataStore.getState().clearNativeGithubProviderCooldown();
     await useSkillsDataStore.getState().refreshContext(context);
 
     expect(useSkillsDataStore.getState().snapshots[contextKey(context)]
@@ -718,11 +718,11 @@ describe('skills data store', () => {
   });
 
   it('collects source diagnostics across Contexts in only the selected Environment', () => {
-    const hostProject: ContextRef = {
-      environment: { kind: 'host' },
+    const nativeProject: SkillLocationRef = {
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'project-a' },
     };
-    const wslContext: ContextRef = {
+    const wslContext: SkillLocationRef = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
@@ -738,11 +738,11 @@ describe('skills data store', () => {
     });
     const snapshots = {
       [contextKey(context)]: snapshot('github.com/owner/global'),
-      [contextKey(hostProject)]: snapshot('github.com/owner/project'),
+      [contextKey(nativeProject)]: snapshot('github.com/owner/project'),
       [contextKey(wslContext)]: snapshot('github.com/owner/wsl'),
     };
 
-    expect(sourceDiagnosticsForEnvironment(snapshots, { kind: 'host' }).map((item) => item.source))
+    expect(sourceDiagnosticsForEnvironment(snapshots, { kind: 'native' }).map((item) => item.source))
       .toEqual(['github.com/owner/global', 'github.com/owner/project']);
   });
 
@@ -826,7 +826,7 @@ describe('skills data store', () => {
     });
 
     await (useSkillsDataStore.getState() as unknown as {
-      syncSkills: (context: ContextRef, options: { origin: 'passive' }) => Promise<void>;
+      syncSkills: (context: SkillLocationRef, options: { origin: 'passive' }) => Promise<void>;
     }).syncSkills(context, { origin: 'passive' });
 
     expect(mocks.checkUpdates).toHaveBeenCalledWith({
@@ -941,7 +941,7 @@ describe('skills data store', () => {
   });
 
   it('checks only the selected project Context automatically', async () => {
-    const projectContext: ContextRef = {
+    const projectContext: SkillLocationRef = {
       environment: context.environment,
       scope: { scope: 'project', project_id: 'project-a' },
     };
@@ -1315,7 +1315,7 @@ describe('skills data store', () => {
 
   it('applies succeeded workflow results to the matching Context snapshot', () => {
     setSkills([skill()]);
-    (useSkillsDataStore.getState() as unknown as { applyUpdateResult: (context: ContextRef, result: UpdateResponse) => void })
+    (useSkillsDataStore.getState() as unknown as { applyUpdateResult: (context: SkillLocationRef, result: UpdateResponse) => void })
       .applyUpdateResult(context, updateResponse('succeeded'));
     expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]).toMatchObject({
       hasUpdate: false, updateStatus: 'upToDate', updateReason: null,
@@ -1324,7 +1324,7 @@ describe('skills data store', () => {
 
   it('keeps the update display when the workflow reports a failed unit', () => {
     setSkills([skill()]);
-    (useSkillsDataStore.getState() as unknown as { applyUpdateResult: (context: ContextRef, result: UpdateResponse) => void })
+    (useSkillsDataStore.getState() as unknown as { applyUpdateResult: (context: SkillLocationRef, result: UpdateResponse) => void })
       .applyUpdateResult(context, updateResponse('failed'));
     expect(useSkillsDataStore.getState().snapshots[contextKey(context)]?.skills[0]?.hasUpdate).toBe(true);
   });

@@ -18,6 +18,9 @@ vi.mock('react-i18next', () => ({
       if (key === 'addSkill.scopeSelect.globalHint') {
         return `Global hint: ${String(options?.path ?? '')}`;
       }
+      if (key === 'context.environmentWslName') {
+        return `WSL · ${String(options?.environment ?? '')}`;
+      }
       return key;
     },
   }),
@@ -25,7 +28,7 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/hooks/useProjectWorkspace', () => ({
   useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
-    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    const key = environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`;
     return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
   },
 }));
@@ -37,7 +40,7 @@ function createState(): WizardState {
     scope: 'global',
     projectPath: undefined,
     context: {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     },
     source: '',
@@ -72,7 +75,7 @@ describe('ScopeStep', () => {
     mocks.projectState.projectsByEnvironment = {};
   });
 
-  it('uses the normalized shared directory path in the global option', () => {
+  it('uses the normalized standard directory path in the global option', () => {
     render(<ScopeStep state={createState()} updateState={vi.fn()} />);
 
     expect(screen.getByRole('radiogroup', {
@@ -85,7 +88,7 @@ describe('ScopeStep', () => {
     expect(screen.queryByText('Global hint: ~/.agents/skills/')).toBeNull();
   });
 
-  it('reads projects from the captured environment and updates the project ContextRef', () => {
+  it('reads projects from the captured environment and updates the project SkillLocationRef', () => {
     const state = createState();
     state.entryPoint = 'discovery';
     state.context = {
@@ -108,6 +111,8 @@ describe('ScopeStep', () => {
     const updateState = vi.fn();
 
     render(<ScopeStep state={state} updateState={updateState} />);
+
+    expect(screen.getByText('WSL · Ubuntu')).toBeDefined();
 
     fireEvent.click(screen.getByRole('radio', { name: /\/home\/me\/app/ }));
 

@@ -4,7 +4,7 @@ import { contextKey } from '@/lib/context';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { UpdatePlanDialog } from './UpdatePlanDialog';
-import type { ContextRef, ResolvedAgent } from '@/bindings';
+import type { SkillLocationRef, ResolvedAgent } from '@/bindings';
 
 const EMPTY_AGENTS: ResolvedAgent[] = [];
 
@@ -27,7 +27,7 @@ function OpenUpdatePlanDialog({
   context,
   skillNames,
 }: {
-  context: ContextRef;
+  context: SkillLocationRef;
   skillNames: string[];
 }) {
   const agents = useSkillsDataStore((state) => (

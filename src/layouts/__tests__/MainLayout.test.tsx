@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   listen: vi.fn().mockResolvedValue(vi.fn()),
   environmentState: {
     environments: [{
-      environment: { kind: 'host' as const },
+      environment: { kind: 'native' as const },
       displayName: 'Windows',
       status: 'available' as const,
       revision: 1,
@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
   },
   workspaceState: {
     selectedContext: {
-      environment: { kind: 'host' as const },
+      environment: { kind: 'native' as const },
       scope: { scope: 'global' as const },
     },
     transition: { kind: 'idle' as const },
@@ -85,7 +85,7 @@ describe('MainLayout project catalog lifecycle', () => {
       },
       catalogObserver: {
         captureContext: () => ({
-          context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+          context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
           revision: 0,
         }),
         onCompleteSnapshot: () => undefined,
@@ -104,9 +104,9 @@ describe('MainLayout project catalog lifecycle', () => {
     const view = render(<MainLayout />);
 
     await vi.waitFor(() => expect(mocks.backendList).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(mocks.workspace.getSnapshot({ kind: 'host' }).completeness)
+    await vi.waitFor(() => expect(mocks.workspace.getSnapshot({ kind: 'native' }).completeness)
       .toBe('complete'));
-    expect(mocks.backendList).toHaveBeenCalledWith({ kind: 'host' });
+    expect(mocks.backendList).toHaveBeenCalledWith({ kind: 'native' });
     view.rerender(<MainLayout />);
     expect(mocks.backendList).toHaveBeenCalledOnce();
 

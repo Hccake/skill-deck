@@ -7,7 +7,7 @@ use crate::core::lossless_lock::LockSchema;
 use crate::core::skill_lock;
 use crate::environment::context_resolver::ContextResolver;
 use crate::environment::lock_io::EnvironmentLockIo;
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+use crate::environment::types::{EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef};
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 
@@ -16,23 +16,23 @@ pub async fn get_default_target_agents_host(
     snapshot: &AgentRegistrySnapshot,
 ) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
     read_effective_default_target_agents(
-        EnvironmentLockIo::Host,
-        &host_default_target_agents_lock_target(),
+        EnvironmentLockIo::Native,
+        &native_default_target_agents_lock_target(),
         snapshot,
     )
     .await
 }
 
 pub async fn get_default_target_agents(
-    context: ContextRef,
+    context: SkillLocationRef,
     registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
 ) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
     ensure_global_context(&context)?;
     let snapshot = agent_registry_snapshot_for_defaults(agent_registry);
     match &context.environment {
-        EnvironmentRef::Host => {
-            ContextResolver::resolve_host(context)?;
+        EnvironmentRef::Native => {
+            ContextResolver::resolve_native(context)?;
             get_default_target_agents_host(&snapshot).await
         }
         EnvironmentRef::Wsl { distro_name } => {
@@ -77,20 +77,20 @@ async fn read_effective_default_target_agents(
 }
 
 pub(crate) async fn remove_default_target_agent_reference(
-    context: ContextRef,
+    context: SkillLocationRef,
     id: &AgentId,
     environment_registry: &WslRuntime,
     post_delete_registry: &AgentRegistrySnapshot,
 ) -> Result<(), AppError> {
-    let global_context = ContextRef {
+    let global_context = SkillLocationRef {
         environment: context.environment.clone(),
-        scope: ContextScope::Global,
+        scope: SkillLocation::Global,
     };
     match &global_context.environment {
-        EnvironmentRef::Host => {
-            let resolved = ContextResolver::resolve_host(global_context)?;
+        EnvironmentRef::Native => {
+            let resolved = ContextResolver::resolve_native(global_context)?;
             remove_default_target_agent_reference_with_io(
-                EnvironmentLockIo::Host,
+                EnvironmentLockIo::Native,
                 global_lock_target(resolved.lock),
                 id,
                 post_delete_registry,
@@ -121,18 +121,18 @@ pub(crate) async fn remove_default_target_agent_reference(
 }
 
 pub(crate) async fn read_raw_default_target_agents(
-    context: ContextRef,
+    context: SkillLocationRef,
     environment_registry: &WslRuntime,
 ) -> Result<Option<skill_lock::DefaultTargetAgents>, AppError> {
-    let global_context = ContextRef {
+    let global_context = SkillLocationRef {
         environment: context.environment.clone(),
-        scope: ContextScope::Global,
+        scope: SkillLocation::Global,
     };
     match &global_context.environment {
-        EnvironmentRef::Host => {
-            let resolved = ContextResolver::resolve_host(global_context)?;
+        EnvironmentRef::Native => {
+            let resolved = ContextResolver::resolve_native(global_context)?;
             read_raw_default_target_agents_with_io(
-                EnvironmentLockIo::Host,
+                EnvironmentLockIo::Native,
                 global_lock_target(resolved.lock),
             )
             .await
@@ -223,10 +223,10 @@ fn agent_registry_snapshot_for_defaults(registry: &ManagedAgentRegistry) -> Agen
     registry.snapshot().as_ref().clone()
 }
 
-fn host_default_target_agents_lock_target() -> LockTarget {
+fn native_default_target_agents_lock_target() -> LockTarget {
     LockTarget {
         primary: ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: crate::core::skill_lock::get_skill_lock_path()
                 .to_string_lossy()
                 .to_string(),
@@ -236,10 +236,10 @@ fn host_default_target_agents_lock_target() -> LockTarget {
     }
 }
 
-fn ensure_global_context(context: &ContextRef) -> Result<(), AppError> {
+fn ensure_global_context(context: &SkillLocationRef) -> Result<(), AppError> {
     if matches!(
         context.scope,
-        crate::environment::types::ContextScope::Global
+        crate::environment::types::SkillLocation::Global
     ) {
         Ok(())
     } else {
@@ -259,10 +259,10 @@ mod tests {
     use crate::core::agent_registry::AgentRegistrySnapshot;
     use std::collections::BTreeMap;
 
-    fn scope(enabled: bool, reads_shared: bool, private_path: bool) -> ScopeDefinition {
+    fn scope(enabled: bool, reads_standard: bool, private_path: bool) -> ScopeDefinition {
         ScopeDefinition {
             enabled,
-            reads_shared,
+            reads_standard,
             private_path: private_path.then(|| PathSpec::home(".agent/skills")),
         }
     }
@@ -301,7 +301,7 @@ mod tests {
     fn lock_target(path: &std::path::Path) -> LockTarget {
         LockTarget {
             primary: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: path.to_string_lossy().to_string(),
             },
             legacy: None,
@@ -332,7 +332,7 @@ mod tests {
         )]);
 
         let effective = read_effective_default_target_agents(
-            EnvironmentLockIo::Host,
+            EnvironmentLockIo::Native,
             &lock_target(&lock_path),
             &snapshot,
         )
@@ -375,7 +375,7 @@ mod tests {
         )]);
 
         remove_default_target_agent_reference_with_io(
-            EnvironmentLockIo::Host,
+            EnvironmentLockIo::Native,
             lock_target(&lock_path),
             &AgentId::parse("deleted-agent").unwrap(),
             &snapshot,
@@ -405,7 +405,7 @@ mod tests {
         let snapshot = registry_snapshot(Vec::new());
 
         remove_default_target_agent_reference_with_io(
-            EnvironmentLockIo::Host,
+            EnvironmentLockIo::Native,
             lock_target(&lock_path),
             &AgentId::parse("deleted-agent").unwrap(),
             &snapshot,
@@ -418,9 +418,9 @@ mod tests {
 
     #[test]
     fn default_agent_settings_reject_project_context() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: crate::environment::types::ContextScope::Project {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: crate::environment::types::SkillLocation::Project {
                 project_id: "app".to_string(),
             },
         };

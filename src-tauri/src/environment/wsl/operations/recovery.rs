@@ -438,9 +438,9 @@ mod tests {
             subject: Some(crate::environment::recovery::RecoverySubject {
                 operation_kind: crate::core::mutation::MutationKind::Install,
                 skill_name: "demo".to_string(),
-                context: crate::environment::types::ContextRef {
+                context: crate::environment::types::SkillLocationRef {
                     environment: environment.clone(),
-                    scope: crate::environment::types::ContextScope::Global,
+                    scope: crate::environment::types::SkillLocation::Global,
                 },
             }),
             created_at_epoch_ms: 1,

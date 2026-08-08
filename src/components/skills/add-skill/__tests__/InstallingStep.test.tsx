@@ -33,13 +33,13 @@ const installSkillsMock = vi.mocked(installSkills);
 function makePreparedInstall(): PreparedInstall {
   const request = {
     context: {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'eve-app' },
     },
     source: 'owner/repo',
     discoverySession: {
       sessionId: 'discovery-1',
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       sourceFingerprint: 'source-1',
       expiresAtEpochMs: 1000,
     },
@@ -72,7 +72,7 @@ function makeState(prepared = makePreparedInstall()): WizardState {
     scope: 'project',
     projectPath: '/projects/eve-app',
     context: {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'eve-app' },
     },
     source: 'owner/repo',

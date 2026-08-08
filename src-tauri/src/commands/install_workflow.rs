@@ -7,7 +7,7 @@ use crate::application::mutation::plan::PreviewToken;
 use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
 use crate::commands::window_role::WindowRole;
 use crate::core::mutation::{MutationKind, MutationPhase};
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -47,7 +47,7 @@ pub async fn install_skills(
 async fn execute_install_for_window<T, Execute, ExecuteFuture>(
     admission: &RuntimeAdmissionCoordinator,
     role: WindowRole,
-    context: ContextRef,
+    context: SkillLocationRef,
     execute: Execute,
 ) -> Result<T, AppError>
 where
@@ -61,7 +61,7 @@ where
 fn begin_install_for_window(
     admission: &RuntimeAdmissionCoordinator,
     role: WindowRole,
-    context: ContextRef,
+    context: SkillLocationRef,
 ) -> Result<MutationPermit, AppError> {
     match role {
         WindowRole::Main => admission.begin_mutation(MutationKind::Install, context),
@@ -80,13 +80,13 @@ mod tests {
         RuntimeAdmissionCoordinator, WizardAdmission, WizardWindowPresence,
     };
     use crate::commands::window_role::WindowRole;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn host_global() -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+    fn native_global() -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         }
     }
 
@@ -105,7 +105,7 @@ mod tests {
         execute_install_for_window(
             &admission,
             WindowRole::InstallWizard,
-            host_global(),
+            native_global(),
             |_| async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(())
@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         assert_eq!(
-            execute_install_for_window(&admission, WindowRole::Main, host_global(), |_| async {
+            execute_install_for_window(&admission, WindowRole::Main, native_global(), |_| async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             })
@@ -128,7 +128,7 @@ mod tests {
             execute_install_for_window(
                 &admission,
                 WindowRole::Unknown,
-                host_global(),
+                native_global(),
                 |_| async {
                     calls.fetch_add(1, Ordering::SeqCst);
                     Ok(())
@@ -145,7 +145,7 @@ mod tests {
             execute_install_for_window(
                 &unavailable_admission,
                 WindowRole::InstallWizard,
-                host_global(),
+                native_global(),
                 |_| async {
                     calls.fetch_add(1, Ordering::SeqCst);
                     Ok(())

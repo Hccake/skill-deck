@@ -255,12 +255,12 @@ describe('AgentDefinitionForm', () => {
     expect(status.firstChild).not.toBe(firstAnnouncement);
   });
 
-  it('restores the ID-derived private path when a shared scope becomes private', () => {
+  it('restores the ID-derived private path when a standard scope becomes private', () => {
     const onChange = vi.fn();
     renderForm({
       draft: {
         ...draft,
-        global: { enabled: true, location: 'shared', privatePath: null },
+        global: { enabled: true, location: 'standard', privatePath: null },
       },
       onChange,
     });

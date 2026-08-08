@@ -56,18 +56,21 @@ impl RuntimeMaintenanceTasks {
         }
     }
 
-    async fn run_host(&self) -> MaintenanceTaskOutcome {
-        if self.mutation.active_for_environment(&EnvironmentRef::Host) {
+    async fn run_native(&self) -> MaintenanceTaskOutcome {
+        if self
+            .mutation
+            .active_for_environment(&EnvironmentRef::Native)
+        {
             return MaintenanceTaskOutcome {
                 payload: Err(AppError::MutationBusy),
                 recovery: Err(AppError::MutationBusy),
             };
         }
-        let payload = match self.payloads.protected_session_ids(&EnvironmentRef::Host) {
+        let payload = match self.payloads.protected_session_ids(&EnvironmentRef::Native) {
             Ok(protected) => self.native_payload_storage.sweep_orphans(&protected).await,
             Err(error) => Err(error),
         };
-        let recovery = self.recovery.reindex_host().await;
+        let recovery = self.recovery.reindex_native().await;
         MaintenanceTaskOutcome { payload, recovery }
     }
 
@@ -120,7 +123,7 @@ impl RuntimeMaintenanceBackend for RuntimeMaintenanceTasks {
                 }
             };
             match environment {
-                EnvironmentRef::Host => self.run_host().await,
+                EnvironmentRef::Native => self.run_native().await,
                 EnvironmentRef::Wsl { distro_name } => self.run_wsl(environment, distro_name).await,
             }
         })
@@ -430,8 +433,8 @@ mod tests {
         let backend = Arc::new(FakeBackend::new([]));
         let coordinator = RuntimeMaintenanceCoordinator::new(payloads.clone(), backend.clone());
 
-        let first = coordinator.start(EnvironmentRef::Host, 0).await.unwrap();
-        let second = coordinator.start(EnvironmentRef::Host, 0).await.unwrap();
+        let first = coordinator.start(EnvironmentRef::Native, 0).await.unwrap();
+        let second = coordinator.start(EnvironmentRef::Native, 0).await.unwrap();
 
         assert_eq!(first.state, RuntimeMaintenanceState::Ready);
         assert_eq!(second.state, RuntimeMaintenanceState::Ready);
@@ -444,7 +447,7 @@ mod tests {
         let backend = Arc::new(FakeBackend::new([0]));
         let coordinator = RuntimeMaintenanceCoordinator::new(payloads.clone(), backend.clone());
 
-        let failed = coordinator.start(EnvironmentRef::Host, 0).await.unwrap();
+        let failed = coordinator.start(EnvironmentRef::Native, 0).await.unwrap();
         assert_eq!(failed.state, RuntimeMaintenanceState::Failed);
         assert_eq!(
             failed.issues,
@@ -454,11 +457,11 @@ mod tests {
             ]
         );
         assert!(payloads
-            .discover(EnvironmentRef::Host, "blocked")
+            .discover(EnvironmentRef::Native, "blocked")
             .await
             .is_err());
 
-        let repeated = coordinator.start(EnvironmentRef::Host, 0).await.unwrap();
+        let repeated = coordinator.start(EnvironmentRef::Native, 0).await.unwrap();
         assert_eq!(repeated.state, RuntimeMaintenanceState::Ready);
         assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     }
@@ -469,13 +472,13 @@ mod tests {
         let backend = Arc::new(FakeBackend::new([0]));
         let coordinator = RuntimeMaintenanceCoordinator::new(payloads.clone(), backend.clone());
 
-        let failed = coordinator.start(EnvironmentRef::Host, 0).await.unwrap();
+        let failed = coordinator.start(EnvironmentRef::Native, 0).await.unwrap();
         assert_eq!(failed.state, RuntimeMaintenanceState::Failed);
 
-        let ready = coordinator.start(EnvironmentRef::Host, 1).await.unwrap();
+        let ready = coordinator.start(EnvironmentRef::Native, 1).await.unwrap();
         assert_eq!(ready.state, RuntimeMaintenanceState::Ready);
         payloads
-            .discover(EnvironmentRef::Host, "ready")
+            .discover(EnvironmentRef::Native, "ready")
             .await
             .expect("payload gate reopened");
     }
@@ -529,12 +532,12 @@ mod tests {
         ));
         let first_coordinator = coordinator.clone();
         let first =
-            tokio::spawn(async move { first_coordinator.start(EnvironmentRef::Host, 3).await });
+            tokio::spawn(async move { first_coordinator.start(EnvironmentRef::Native, 3).await });
         backend.wait_for_calls(1).await;
 
         let second_coordinator = coordinator.clone();
         let second =
-            tokio::spawn(async move { second_coordinator.start(EnvironmentRef::Host, 4).await });
+            tokio::spawn(async move { second_coordinator.start(EnvironmentRef::Native, 4).await });
         backend.release_one();
         backend.wait_for_calls(2).await;
         backend.release_one();

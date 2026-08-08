@@ -3,7 +3,7 @@ import type {
   AgentRuntimeSnapshot,
   AgentSettingsSnapshot,
   AgentDeleteImpact,
-  ContextRef,
+  SkillLocationRef,
   CustomAgentDefinition,
   CustomAgentDraftValidation,
   EnvironmentRef,
@@ -24,17 +24,17 @@ vi.mock('@/hooks/useTauriApi', () => api);
 
 import { createAgentRegistryStore } from '../agent-registry';
 
-const host: EnvironmentRef = { kind: 'host' };
-const hostGlobal: ContextRef = {
-  environment: host,
+const native: EnvironmentRef = { kind: 'native' };
+const nativeGlobal: SkillLocationRef = {
+  environment: native,
   scope: { scope: 'global' },
 };
-const ubuntuProject: ContextRef = {
+const ubuntuProject: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   scope: { scope: 'project', project_id: 'project-1' },
 };
 
-function runtimeSnapshot(context: ContextRef): AgentRuntimeSnapshot {
+function runtimeSnapshot(context: SkillLocationRef): AgentRuntimeSnapshot {
   return {
     registryRevision: 'registry-1',
     environmentRevision: 'environment-1',
@@ -52,7 +52,7 @@ function settingsSnapshot(revision: string): AgentSettingsSnapshot {
     activeCustom: [],
     disabledConflicts: [],
     invalidCustomRecords: [],
-    currentEnvironment: host,
+    currentEnvironment: native,
     customStorageIssue: null,
   };
 }
@@ -71,7 +71,7 @@ function validation(revision: string): CustomAgentDraftValidation {
   return {
     registryRevision: revision,
     environmentRevision: `environment-${revision}`,
-    environment: host,
+    environment: native,
     resolved: {} as CustomAgentDraftValidation['resolved'],
   };
 }
@@ -104,12 +104,12 @@ describe('agent registry store', () => {
   });
 
   it('keeps runtime snapshots isolated by ContextKey', async () => {
-    api.listAgents.mockImplementation(async (context: ContextRef) => runtimeSnapshot(context));
+    api.listAgents.mockImplementation(async (context: SkillLocationRef) => runtimeSnapshot(context));
     const store = createAgentRegistryStore();
 
-    await Promise.all([store.getState().loadRuntime(hostGlobal), store.getState().loadRuntime(ubuntuProject)]);
+    await Promise.all([store.getState().loadRuntime(nativeGlobal), store.getState().loadRuntime(ubuntuProject)]);
 
-    expect(store.getState().runtimeByContext[contextKey(hostGlobal)].data?.environment).toEqual(host);
+    expect(store.getState().runtimeByContext[contextKey(nativeGlobal)].data?.environment).toEqual(native);
     expect(store.getState().runtimeByContext[contextKey(ubuntuProject)].data?.environment)
       .toEqual({ kind: 'wsl', distro_name: 'Ubuntu' });
   });
@@ -120,13 +120,13 @@ describe('agent registry store', () => {
     api.getAgentSettingsSnapshot.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     const store = createAgentRegistryStore();
 
-    const a = store.getState().loadSettings(hostGlobal);
-    const b = store.getState().loadSettings(hostGlobal);
+    const a = store.getState().loadSettings(nativeGlobal);
+    const b = store.getState().loadSettings(nativeGlobal);
     second.resolve(settingsSnapshot('new'));
     first.resolve(settingsSnapshot('old'));
     await Promise.all([a, b]);
 
-    expect(store.getState().settingsByEnvironment.host.data?.registryRevision).toBe('new');
+    expect(store.getState().settingsByEnvironment.native.data?.registryRevision).toBe('new');
   });
 
   it('drops a stale runtime error after a newer request succeeds', async () => {
@@ -135,14 +135,14 @@ describe('agent registry store', () => {
     api.listAgents.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     const store = createAgentRegistryStore();
 
-    const oldLoad = store.getState().loadRuntime(hostGlobal);
-    const newLoad = store.getState().loadRuntime(hostGlobal);
-    second.resolve(runtimeSnapshot(hostGlobal));
+    const oldLoad = store.getState().loadRuntime(nativeGlobal);
+    const newLoad = store.getState().loadRuntime(nativeGlobal);
+    second.resolve(runtimeSnapshot(nativeGlobal));
     await newLoad;
     first.reject(new Error('stale failure'));
     await oldLoad;
 
-    expect(store.getState().runtimeByContext[contextKey(hostGlobal)]).toMatchObject({
+    expect(store.getState().runtimeByContext[contextKey(nativeGlobal)]).toMatchObject({
       state: 'ready',
       error: null,
     });
@@ -156,8 +156,8 @@ describe('agent registry store', () => {
       .mockReturnValueOnce(latestValidation.promise);
     const store = createAgentRegistryStore();
 
-    const oldRequest = store.getState().validateDraft(hostGlobal, draft('old-agent'));
-    const latestRequest = store.getState().validateDraft(hostGlobal, draft('latest-agent'));
+    const oldRequest = store.getState().validateDraft(nativeGlobal, draft('old-agent'));
+    const latestRequest = store.getState().validateDraft(nativeGlobal, draft('latest-agent'));
     latestValidation.resolve(validation('latest'));
     await expect(latestRequest).resolves.toEqual(validation('latest'));
     oldValidation.resolve(validation('old'));
@@ -169,14 +169,14 @@ describe('agent registry store', () => {
   it('returns null from a stale validation error without rejecting', async () => {
     const oldValidation = deferred<CustomAgentDraftValidation>();
     const latestValidation = deferred<CustomAgentDraftValidation>();
-    const staleError = { kind: 'environmentUnavailable', data: { environment: host, message: 'old' } };
+    const staleError = { kind: 'environmentUnavailable', data: { environment: native, message: 'old' } };
     api.validateCustomAgentDraft
       .mockReturnValueOnce(oldValidation.promise)
       .mockReturnValueOnce(latestValidation.promise);
     const store = createAgentRegistryStore();
 
-    const oldRequest = store.getState().validateDraft(hostGlobal, draft('old-agent'));
-    const latestRequest = store.getState().validateDraft(hostGlobal, draft('latest-agent'));
+    const oldRequest = store.getState().validateDraft(nativeGlobal, draft('old-agent'));
+    const latestRequest = store.getState().validateDraft(nativeGlobal, draft('latest-agent'));
     latestValidation.resolve(validation('latest'));
     await expect(latestRequest).resolves.toEqual(validation('latest'));
     oldValidation.reject(staleError);
@@ -194,12 +194,12 @@ describe('agent registry store', () => {
     const store = createAgentRegistryStore();
 
     const backgroundRequest = store.getState().validateDraft(
-      hostGlobal,
+      nativeGlobal,
       draft('background-agent'),
       'background',
     );
     const submitRequest = store.getState().validateDraft(
-      hostGlobal,
+      nativeGlobal,
       draft('submitted-agent'),
       'submit',
     );
@@ -213,8 +213,8 @@ describe('agent registry store', () => {
     api.previewCustomAgentDelete.mockResolvedValue(deleteImpact('registry-1'));
     const store = createAgentRegistryStore();
 
-    await store.getState().loadDeleteImpact(hostGlobal, 'my-agent', 'registry-1');
-    await store.getState().loadDeleteImpact(hostGlobal, 'my-agent', 'registry-2');
+    await store.getState().loadDeleteImpact(nativeGlobal, 'my-agent', 'registry-1');
+    await store.getState().loadDeleteImpact(nativeGlobal, 'my-agent', 'registry-2');
 
     expect(store.getState()).not.toHaveProperty('deleteImpactByKey');
     expect(api.previewCustomAgentDelete).toHaveBeenCalledTimes(2);
@@ -228,8 +228,8 @@ describe('agent registry store', () => {
       .mockReturnValueOnce(newImpact.promise);
     const store = createAgentRegistryStore();
 
-    const oldRequest = store.getState().loadDeleteImpact(hostGlobal, 'my-agent', 'registry-1');
-    const newRequest = store.getState().loadDeleteImpact(hostGlobal, 'my-agent', 'registry-2');
+    const oldRequest = store.getState().loadDeleteImpact(nativeGlobal, 'my-agent', 'registry-1');
+    const newRequest = store.getState().loadDeleteImpact(nativeGlobal, 'my-agent', 'registry-2');
     newImpact.resolve(deleteImpact('registry-2'));
     await expect(newRequest).resolves.toEqual(deleteImpact('registry-2'));
     oldImpact.resolve(deleteImpact('registry-1'));
@@ -241,15 +241,15 @@ describe('agent registry store', () => {
   it('returns null from a stale delete-impact error while the latest error stays authoritative', async () => {
     const oldImpact = deferred<AgentDeleteImpact>();
     const latestImpact = deferred<AgentDeleteImpact>();
-    const latestError = { kind: 'environmentUnavailable', data: { environment: host, message: 'latest' } };
-    const staleError = { kind: 'environmentUnavailable', data: { environment: host, message: 'old' } };
+    const latestError = { kind: 'environmentUnavailable', data: { environment: native, message: 'latest' } };
+    const staleError = { kind: 'environmentUnavailable', data: { environment: native, message: 'old' } };
     api.previewCustomAgentDelete
       .mockReturnValueOnce(oldImpact.promise)
       .mockReturnValueOnce(latestImpact.promise);
     const store = createAgentRegistryStore();
 
-    const oldRequest = store.getState().loadDeleteImpact(hostGlobal, 'my-agent', 'registry-1');
-    const latestRequest = store.getState().loadDeleteImpact(hostGlobal, 'my-agent', 'registry-2');
+    const oldRequest = store.getState().loadDeleteImpact(nativeGlobal, 'my-agent', 'registry-1');
+    const latestRequest = store.getState().loadDeleteImpact(nativeGlobal, 'my-agent', 'registry-2');
     latestImpact.reject(latestError);
     await expect(latestRequest).rejects.toEqual(latestError);
     oldImpact.reject(staleError);

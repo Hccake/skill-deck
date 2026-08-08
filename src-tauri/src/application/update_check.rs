@@ -412,7 +412,7 @@ mod tests {
     use crate::environment::context_resolver::ResolvedContext;
     use crate::environment::runtime::ContextSnapshotRevision;
     use crate::environment::types::{
-        ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
+        EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
     };
 
     struct Facts {
@@ -422,7 +422,7 @@ mod tests {
     impl InstallPlanningFactSource for Facts {
         fn current<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
         ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
             Box::pin(async move {
                 let mut values = self.values.lock().unwrap();
@@ -495,10 +495,10 @@ mod tests {
         }
     }
 
-    fn context() -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+    fn context() -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         }
     }
 
@@ -509,22 +509,22 @@ mod tests {
                 context: context.clone(),
                 project: None,
                 home: ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: "/tmp".to_string(),
                 },
                 skill_root: ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: "/tmp/.agents/skills".to_string(),
                 },
                 lock: ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: "/tmp/skills-lock.json".to_string(),
                 },
             },
             agent_runtime: AgentRuntimeSnapshot {
                 registry_revision: "registry".to_string(),
                 environment_revision: "environment".to_string(),
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 availability: EnvironmentStatus::Available,
                 project_path: None,
                 agents: BTreeMap::new(),

@@ -46,7 +46,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "remove_environment_project",
     "remove_skill",
     "request_cancel_active_mutation",
-    "retry_host_project_migration",
+    "retry_native_project_migration",
     "save_config",
     "save_custom_agent",
     "save_github_credential",

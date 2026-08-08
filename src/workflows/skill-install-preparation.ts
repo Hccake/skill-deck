@@ -6,7 +6,7 @@ import {
 import type {
   AgentSelectionSubmission,
   AppError,
-  ContextRef,
+  SkillLocationRef,
   DiscoverySessionHandle,
   InstallPreview,
   InstallRequest,
@@ -14,7 +14,7 @@ import type {
 import { toAppError } from '@/utils/to-app-error';
 
 export interface InstallPreparationInput {
-  context: ContextRef;
+  context: SkillLocationRef;
   source: string;
   discoverySession: DiscoverySessionHandle;
   skillPaths: string[];

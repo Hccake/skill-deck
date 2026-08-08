@@ -7,6 +7,10 @@ import {
 import type { MutationUnitResult } from '@/bindings';
 import type { AppError, EnvironmentInfo, ProjectInfo } from '@/bindings';
 import { environmentKey } from '@/lib/context';
+import {
+  environmentDisplayName,
+  environmentRefDisplayName,
+} from '@/lib/environments/presentation';
 import { formatAppError } from '@/utils/format-app-error';
 
 type Translate = (key: string, parameters?: Partial<Record<string, string>>) => string;
@@ -40,12 +44,11 @@ export function presentMutationUnit(
   catalog?: MutationPresentationCatalog,
 ): SkillOperationPresentation {
   const key = environmentKey(unit.target.environment);
-  const environmentLabel = catalog?.environments
-    .find((item) => environmentKey(item.environment) === key)
-    ?.displayName
-    ?? (unit.target.environment.kind === 'host'
-      ? t('mutation.host')
-      : unit.target.environment.distro_name);
+  const environment = catalog?.environments
+    .find((item) => environmentKey(item.environment) === key);
+  const environmentLabel = environment
+    ? environmentDisplayName(environment, t)
+    : environmentRefDisplayName(unit.target.environment, undefined, t);
   let scopeLabel = t('context.global');
   if (unit.target.scope.scope === 'project') {
     const projectId = unit.target.scope.project_id;

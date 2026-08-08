@@ -135,12 +135,12 @@ mod tests {
             aliases: Vec::new(),
             global: ScopeDefinition {
                 enabled: true,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             },
             project: ScopeDefinition {
                 enabled: false,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             },
             detection: DetectionSpec::AnyPathExists {
@@ -157,12 +157,12 @@ mod tests {
             display_name: "Custom".to_string(),
             global: CustomScopeDefinition {
                 enabled: true,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             project: CustomScopeDefinition {
                 enabled: false,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             detection_paths: vec![CustomPathSpec::based(CustomPathBase::Home, ".custom")],
@@ -214,7 +214,7 @@ mod tests {
             invalid_custom_records: vec![invalid.clone()],
         };
 
-        let snapshot = records.snapshot("abc123", EnvironmentRef::Host);
+        let snapshot = records.snapshot("abc123", EnvironmentRef::Native);
 
         assert_eq!(snapshot.registry_revision, "abc123");
         assert_eq!(snapshot.active_builtin, vec![builtin]);
@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(snapshot.disabled_conflicts, vec![conflict]);
         assert_eq!(snapshot.disabled_conflicts[0].raw.0, conflict_raw);
         assert_eq!(snapshot.invalid_custom_records, vec![invalid]);
-        assert_eq!(snapshot.current_environment, EnvironmentRef::Host);
+        assert_eq!(snapshot.current_environment, EnvironmentRef::Native);
         assert_eq!(snapshot.custom_storage_issue, None);
     }
 }

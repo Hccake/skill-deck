@@ -27,7 +27,7 @@ use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::{GithubApiClient, GithubTokenProvider};
 use crate::environment::native::acquire::NativePayloadSessionStorage;
 use crate::environment::planning::RuntimeTargetFactResolver;
-use crate::environment::project_service::initialize_host_project_migration;
+use crate::environment::project_service::initialize_native_project_migration;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::storage::github_credentials::KeyringGithubCredentialStore;
@@ -140,12 +140,14 @@ impl RuntimeServiceGraph {
         let update_evidence_for_credentials = update_evidence.clone();
         let github_credentials = GithubCredentialWorkflowService::new(
             github_credentials,
-            Arc::new(move || update_evidence_for_credentials.clear_host_github_auth_suppression()),
+            Arc::new(move || {
+                update_evidence_for_credentials.clear_native_github_auth_suppression()
+            }),
         );
         Ok(Self {
             wsl,
             agents,
-            projects: initialize_host_project_migration(),
+            projects: initialize_native_project_migration(),
             admission,
             install_wizard,
             duplicate_cleanup: DuplicateCleanupService,

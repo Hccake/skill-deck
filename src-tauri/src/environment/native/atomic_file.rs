@@ -17,7 +17,7 @@ impl AtomicDocumentIo for NativeAtomicDocumentIo {
         target: &'a ResourceLocator,
     ) -> IoFuture<'a, Result<Option<Vec<u8>>, AppError>> {
         Box::pin(async move {
-            let path = host_path(target)?;
+            let path = native_path(target)?;
             match fs::read(path) {
                 Ok(bytes) => Ok(Some(bytes)),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -31,7 +31,7 @@ impl AtomicDocumentIo for NativeAtomicDocumentIo {
         target: &'a ResourceLocator,
         bytes: Vec<u8>,
     ) -> IoFuture<'a, Result<(), AppError>> {
-        Box::pin(async move { write_native_atomic(host_path(target)?, &bytes) })
+        Box::pin(async move { write_native_atomic(native_path(target)?, &bytes) })
     }
 }
 
@@ -63,8 +63,8 @@ pub(crate) fn backup_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-fn host_path(locator: &ResourceLocator) -> Result<&Path, AppError> {
-    if locator.environment != EnvironmentRef::Host {
+fn native_path(locator: &ResourceLocator) -> Result<&Path, AppError> {
+    if locator.environment != EnvironmentRef::Native {
         return Err(AppError::StorageUnsupported {
             path: locator.native_path.clone(),
         });
@@ -95,7 +95,7 @@ mod tests {
 
     fn locator(path: &Path) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string_lossy().into_owned(),
         }
     }

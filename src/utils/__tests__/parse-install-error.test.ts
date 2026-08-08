@@ -112,7 +112,7 @@ describe('parseInstallError', () => {
       undefined,
     ],
     [
-      { kind: 'payloadStorageRequiresCleanup', data: { environment: { kind: 'host' } } },
+      { kind: 'payloadStorageRequiresCleanup', data: { environment: { kind: 'native' } } },
       'addSkill.error.payloadStorageRequiresCleanup',
       undefined,
     ],

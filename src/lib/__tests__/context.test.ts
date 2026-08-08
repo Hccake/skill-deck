@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ContextRef, EnvironmentRef } from '@/bindings';
+import type { SkillLocationRef, EnvironmentRef } from '@/bindings';
 import {
   contextKey,
   environmentKey,
@@ -8,14 +8,14 @@ import {
   sameEnvironment,
 } from '../context';
 
-const host: EnvironmentRef = { kind: 'host' };
+const native: EnvironmentRef = { kind: 'native' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu 24.04/dev' };
 
 describe('context identity', () => {
   it('builds stable encoded environment and context keys', () => {
-    expect(environmentKey(host)).toBe('host');
+    expect(environmentKey(native)).toBe('native');
     expect(environmentKey(ubuntu)).toBe('wsl:ubuntu%2024.04%2Fdev');
-    expect(contextKey(globalContext(host))).toBe('host/global');
+    expect(contextKey(globalContext(native))).toBe('native/global');
     expect(contextKey({
       environment: ubuntu,
       scope: { scope: 'project', project_id: 'team/app:frontend' },
@@ -30,7 +30,7 @@ describe('context identity', () => {
   });
 
   it('compares environments and contexts by their domain identity', () => {
-    const project: ContextRef = {
+    const project: SkillLocationRef = {
       environment: ubuntu,
       scope: { scope: 'project', project_id: 'project-a' },
     };

@@ -25,7 +25,7 @@ use crate::environment::runtime::{
     PhysicalProjectIdentity,
 };
 use crate::environment::types::{
-    ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
+    EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
 use crate::environment::wsl::operations::eve::inspect_eve_project;
@@ -41,7 +41,7 @@ pub trait AgentRegistrySnapshotSource: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct HostRuntimeSnapshot {
+pub struct NativeRuntimeSnapshot {
     pub home: PathBuf,
     pub config_home: PathBuf,
     pub projects_path: PathBuf,
@@ -53,7 +53,7 @@ pub struct HostRuntimeSnapshot {
 pub struct RuntimePlanningFactSource {
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     environments: Arc<WslRuntime>,
-    host: Arc<dyn HostRuntimeSource>,
+    native: Arc<dyn NativeRuntimeSource>,
 }
 
 impl RuntimePlanningFactSource {
@@ -64,41 +64,44 @@ impl RuntimePlanningFactSource {
         Self {
             registry,
             environments,
-            host: Arc::new(SystemHostRuntimeSource),
+            native: Arc::new(SystemNativeRuntimeSource),
         }
     }
 
     #[cfg(test)]
-    pub fn with_host_snapshot(
+    pub fn with_native_snapshot(
         registry: Arc<dyn AgentRegistrySnapshotSource>,
         environments: Arc<WslRuntime>,
-        host: HostRuntimeSnapshot,
+        native: NativeRuntimeSnapshot,
     ) -> Self {
         Self {
             registry,
             environments,
-            host: Arc::new(StaticHostRuntimeSource(host)),
+            native: Arc::new(StaticNativeRuntimeSource(native)),
         }
     }
 
     async fn capture_install(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
     ) -> Result<InstallPlanningFacts, AppError> {
         install_facts_from_base(self.capture_context_base(context).await?, false).await
     }
 
     async fn capture_copy_source(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
     ) -> Result<InstallPlanningFacts, AppError> {
         install_facts_from_base(self.capture_context_base(context).await?, true).await
     }
 
-    async fn capture_context_base(&self, context: &ContextRef) -> Result<CapturedBase, AppError> {
+    async fn capture_context_base(
+        &self,
+        context: &SkillLocationRef,
+    ) -> Result<CapturedBase, AppError> {
         let registry = self.registry.snapshot();
         match &context.environment {
-            EnvironmentRef::Host => self.capture_host_base(context, registry).await,
+            EnvironmentRef::Native => self.capture_native_base(context, registry).await,
             EnvironmentRef::Wsl { distro_name } => {
                 let context = context.clone();
                 let registry = Arc::clone(&registry);
@@ -117,33 +120,36 @@ impl RuntimePlanningFactSource {
         }
     }
 
-    async fn capture_revisions(&self, context: &ContextRef) -> Result<RuntimeRevisions, AppError> {
+    async fn capture_revisions(
+        &self,
+        context: &SkillLocationRef,
+    ) -> Result<RuntimeRevisions, AppError> {
         Ok(self.capture_context_base(context).await?.revisions)
     }
 
-    async fn capture_host_base(
+    async fn capture_native_base(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         registry: Arc<AgentRegistrySnapshot>,
     ) -> Result<CapturedBase, AppError> {
-        let host = self.host.snapshot()?;
+        let native = self.native.snapshot()?;
         let io = NativeAtomicDocumentIo;
         let projects = load_projects(
             &io,
             &ResourceLocator {
-                environment: EnvironmentRef::Host,
-                native_path: host.projects_path.to_string_lossy().into_owned(),
+                environment: EnvironmentRef::Native,
+                native_path: native.projects_path.to_string_lossy().into_owned(),
             },
-            ProjectPathSemantics::host(),
+            ProjectPathSemantics::native(),
         )
         .await?;
-        let resolved = ContextResolver::resolve_host_from(
+        let resolved = ContextResolver::resolve_native_from(
             context.clone(),
-            host.home.clone(),
-            host.global_lock_path.clone(),
+            native.home.clone(),
+            native.global_lock_path.clone(),
             projects.projects.clone(),
         )?;
-        let environment = host_environment_context(&resolved, &host);
+        let environment = native_environment_context(&resolved, &native);
         let targets =
             resolve_native_targets(&[resolved.skill_root.clone(), resolved.lock.clone()])?;
         let eve_targets = resolved
@@ -165,14 +171,14 @@ impl RuntimePlanningFactSource {
 impl InstallPlanningFactSource for RuntimePlanningFactSource {
     fn current<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
         Box::pin(async move { self.capture_install(context).await })
     }
 
     fn current_for_copy_source<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
         Box::pin(async move { self.capture_copy_source(context).await })
     }
@@ -181,14 +187,14 @@ impl InstallPlanningFactSource for RuntimePlanningFactSource {
 impl RuntimeRevisionSource for RuntimePlanningFactSource {
     fn current<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> BoxFuture<'a, Result<RuntimeRevisions, AppError>> {
         Box::pin(async move { self.capture_revisions(context).await })
     }
 
     fn snapshot<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> BoxFuture<'a, Result<RuntimeRevisionSnapshot, AppError>> {
         Box::pin(async move {
             let base = self.capture_context_base(context).await?;
@@ -200,18 +206,18 @@ impl RuntimeRevisionSource for RuntimePlanningFactSource {
     }
 }
 
-trait HostRuntimeSource: Send + Sync {
-    fn snapshot(&self) -> Result<HostRuntimeSnapshot, AppError>;
+trait NativeRuntimeSource: Send + Sync {
+    fn snapshot(&self) -> Result<NativeRuntimeSnapshot, AppError>;
 }
 
-struct SystemHostRuntimeSource;
+struct SystemNativeRuntimeSource;
 
-impl HostRuntimeSource for SystemHostRuntimeSource {
-    fn snapshot(&self) -> Result<HostRuntimeSnapshot, AppError> {
+impl NativeRuntimeSource for SystemNativeRuntimeSource {
+    fn snapshot(&self) -> Result<NativeRuntimeSnapshot, AppError> {
         let home = dirs::home_dir().ok_or_else(|| AppError::Path {
             message: "cannot resolve home directory".to_string(),
         })?;
-        Ok(HostRuntimeSnapshot {
+        Ok(NativeRuntimeSnapshot {
             home,
             config_home: PATHS.config_home.clone(),
             projects_path: get_config_path()?.with_file_name("projects.json"),
@@ -222,11 +228,11 @@ impl HostRuntimeSource for SystemHostRuntimeSource {
 }
 
 #[cfg(test)]
-struct StaticHostRuntimeSource(HostRuntimeSnapshot);
+struct StaticNativeRuntimeSource(NativeRuntimeSnapshot);
 
 #[cfg(test)]
-impl HostRuntimeSource for StaticHostRuntimeSource {
-    fn snapshot(&self) -> Result<HostRuntimeSnapshot, AppError> {
+impl NativeRuntimeSource for StaticNativeRuntimeSource {
+    fn snapshot(&self) -> Result<NativeRuntimeSnapshot, AppError> {
         Ok(self.0.clone())
     }
 }
@@ -242,7 +248,7 @@ struct CapturedBase {
 }
 
 async fn capture_wsl_base(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     registry: Arc<AgentRegistrySnapshot>,
     session: WslSession,
     workspace: crate::environment::wsl::WslWorkspace,
@@ -283,7 +289,7 @@ async fn capture_wsl_base(
 
 async fn resolve_wsl_context_from_io<I>(
     io: &I,
-    context: &ContextRef,
+    context: &SkillLocationRef,
     session: &WslSession,
 ) -> Result<(ResolvedContext, u32), AppError>
 where
@@ -354,8 +360,8 @@ fn build_base(
         context: context_authority_revision(&resolved_context, project_schema_version)?,
     };
     let lock_schema = match resolved_context.context.scope {
-        ContextScope::Global => LockSchema::Global,
-        ContextScope::Project { .. } => LockSchema::Project,
+        SkillLocation::Global => LockSchema::Global,
+        SkillLocation::Project { .. } => LockSchema::Project,
     };
     Ok(CapturedBase {
         resolved_context,
@@ -383,7 +389,7 @@ fn context_authority_revision(
     #[serde(rename_all = "camelCase")]
     struct AuthorityProjection<'a> {
         format_version: u32,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
         selected_project: Option<SelectedProject<'a>>,
         project_schema_version: u32,
         path_semantics: &'static str,
@@ -442,7 +448,7 @@ async fn install_facts_from_base(
 
 async fn load_current_lock(base: &CapturedBase) -> Result<LosslessLockDocument, AppError> {
     match &base.resolved_context.context.environment {
-        EnvironmentRef::Host => {
+        EnvironmentRef::Native => {
             load_lock_document(
                 &NativeAtomicDocumentIo,
                 &base.resolved_context.lock,
@@ -492,23 +498,23 @@ where
     Ok(parsed)
 }
 
-fn host_environment_context(
+fn native_environment_context(
     resolved: &ResolvedContext,
-    host: &HostRuntimeSnapshot,
+    native: &NativeRuntimeSnapshot,
 ) -> EnvironmentContext {
     let revision = environment_revision(
-        "host",
+        "native",
         &(
             &resolved.home.native_path,
-            host.config_home.to_string_lossy(),
-            &host.environment_variables,
+            native.config_home.to_string_lossy(),
+            &native.environment_variables,
         ),
     );
     EnvironmentContext {
-        environment: EnvironmentRef::Host,
+        environment: EnvironmentRef::Native,
         home: resolved.home.native_path.clone(),
-        config_home: host.config_home.to_string_lossy().into_owned(),
-        environment_variables: host.environment_variables.clone(),
+        config_home: native.config_home.to_string_lossy().into_owned(),
+        environment_variables: native.environment_variables.clone(),
         availability: EnvironmentStatus::Available,
         revision,
         wsl_workspace: None,
@@ -544,8 +550,8 @@ fn environment_revision(value_kind: &str, value: &impl Serialize) -> String {
 
 fn path_semantics(environment: &EnvironmentRef) -> &'static str {
     match environment {
-        EnvironmentRef::Host if cfg!(windows) => "native-windows-v1",
-        EnvironmentRef::Host => "native-unix-v1",
+        EnvironmentRef::Native if cfg!(windows) => "native-windows-v1",
+        EnvironmentRef::Native => "native-unix-v1",
         EnvironmentRef::Wsl { .. } => "wsl-posix-v1",
     }
 }
@@ -566,7 +572,7 @@ mod tests {
         ScopeDefinition,
     };
     use crate::core::agent_registry::AgentRegistrySnapshot;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
     use crate::environment::wsl::{WslRuntime, WslSession};
     use crate::storage::atomic_document::{AtomicDocumentIo, IoFuture};
 
@@ -616,12 +622,12 @@ mod tests {
                     aliases: Vec::new(),
                     global: ScopeDefinition {
                         enabled: true,
-                        reads_shared: true,
+                        reads_standard: true,
                         private_path: None,
                     },
                     project: ScopeDefinition {
                         enabled: true,
-                        reads_shared: true,
+                        reads_standard: true,
                         private_path: None,
                     },
                     detection: DetectionSpec::AnyPathExists {
@@ -658,7 +664,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_planning_and_execute_revisions_share_one_scoped_fact_model() {
+    async fn native_planning_and_execute_revisions_share_one_scoped_fact_model() {
         let temp = tempdir().unwrap();
         let home = temp.path().join("home");
         let selected = temp.path().join("selected");
@@ -682,10 +688,10 @@ mod tests {
         .unwrap();
 
         let registry = Arc::new(StaticRegistry(Arc::new(registry_snapshot())));
-        let source = RuntimePlanningFactSource::with_host_snapshot(
+        let source = RuntimePlanningFactSource::with_native_snapshot(
             registry,
             Arc::new(WslRuntime::default()),
-            HostRuntimeSnapshot {
+            NativeRuntimeSnapshot {
                 home: home.clone(),
                 config_home: temp.path().join("config"),
                 projects_path: projects_path.clone(),
@@ -693,9 +699,9 @@ mod tests {
                 environment_variables: BTreeMap::new(),
             },
         );
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
                 project_id: "selected".to_string(),
             },
         };
@@ -766,10 +772,10 @@ mod tests {
         .unwrap();
         fs::write(selected.join("skills-lock.json"), b"{not-json").unwrap();
 
-        let source = RuntimePlanningFactSource::with_host_snapshot(
+        let source = RuntimePlanningFactSource::with_native_snapshot(
             Arc::new(StaticRegistry(Arc::new(registry_snapshot()))),
             Arc::new(WslRuntime::default()),
-            HostRuntimeSnapshot {
+            NativeRuntimeSnapshot {
                 home,
                 config_home: temp.path().join("config"),
                 projects_path,
@@ -777,9 +783,9 @@ mod tests {
                 environment_variables: BTreeMap::new(),
             },
         );
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
                 project_id: "selected".to_string(),
             },
         };
@@ -803,11 +809,11 @@ mod tests {
             bytes: projects_json("/work/app", "/work/other").into_bytes(),
             reads: Mutex::new(Vec::new()),
         };
-        let context = ContextRef {
+        let context = SkillLocationRef {
             environment: EnvironmentRef::Wsl {
                 distro_name: "Ubuntu".to_string(),
             },
-            scope: ContextScope::Project {
+            scope: SkillLocation::Project {
                 project_id: "selected".to_string(),
             },
         };

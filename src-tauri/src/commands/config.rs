@@ -4,7 +4,7 @@ use crate::application::environment_settings;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::core::mutation::MutationKind;
 use crate::core::read_config;
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::error::AppError;
 use crate::models::SkillDeckConfig;
 use crate::runtime::RuntimeServiceGraph;
@@ -33,9 +33,9 @@ fn save_config_with_admission(
 ) -> Result<(), AppError> {
     let _permit = admission.begin_mutation(
         MutationKind::UpdateSettings,
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         },
     )?;
     persist(config)

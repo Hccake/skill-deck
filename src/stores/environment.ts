@@ -60,27 +60,27 @@ function runtimeInfo(event: EnvironmentRuntimeEvent, previous?: EnvironmentInfo)
   return {
     environment: event.environment,
     displayName: previous?.displayName
-      ?? (event.environment.kind === 'host' ? 'Host' : event.environment.distro_name),
+      ?? (event.environment.kind === 'native' ? 'Native' : event.environment.distro_name),
     status: event.status,
     revision: event.revision,
     error: event.error,
   };
 }
 
-const FALLBACK_HOST_ENVIRONMENT: EnvironmentInfo = {
-  environment: { kind: 'host' },
-  displayName: 'Host',
+const FALLBACK_NATIVE_ENVIRONMENT: EnvironmentInfo = {
+  environment: { kind: 'native' },
+  displayName: 'Native',
   status: 'available',
   revision: 0,
   error: null,
 };
 
-function withHostFallback(
+function withNativeFallback(
   environments: EnvironmentInfo[],
   runtimeByEnvironment: Record<string, EnvironmentInfo>,
 ): EnvironmentInfo[] {
-  if (environments.some((entry) => entry.environment.kind === 'host')) return environments;
-  return [runtimeByEnvironment.host ?? FALLBACK_HOST_ENVIRONMENT, ...environments];
+  if (environments.some((entry) => entry.environment.kind === 'native')) return environments;
+  return [runtimeByEnvironment.native ?? FALLBACK_NATIVE_ENVIRONMENT, ...environments];
 }
 
 const DISCOVERY_COOLDOWN_MS = 30_000;
@@ -139,7 +139,7 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
               ...discovered.map((entry) => [environmentKey(entry.environment), entry] as const),
             ]).values());
           const nextEnvironments = snapshot.error
-            ? withHostFallback(retainedEnvironments, state.runtimeByEnvironment)
+            ? withNativeFallback(retainedEnvironments, state.runtimeByEnvironment)
             : discovered;
           const nextByKey = Object.fromEntries(
             nextEnvironments.map((entry) => [environmentKey(entry.environment), entry]),
@@ -162,15 +162,15 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
       } catch (error) {
         set((state) => {
           if (sequence !== environmentRequestSequence) return state;
-          const environments = withHostFallback(
+          const environments = withNativeFallback(
             state.environments,
             state.runtimeByEnvironment,
           );
-          const host = environments.find((entry) => entry.environment.kind === 'host');
+          const native = environments.find((entry) => entry.environment.kind === 'native');
           return {
             environments,
-            runtimeByEnvironment: host
-              ? { ...state.runtimeByEnvironment, host }
+            runtimeByEnvironment: native
+              ? { ...state.runtimeByEnvironment, native }
               : state.runtimeByEnvironment,
             discoveryState: 'error',
             discoveryError: toAppError(error),
@@ -226,7 +226,7 @@ export const useEnvironmentStore = create<EnvironmentStoreState>()((set, get) =>
   },
 
   connect: async (environment) => {
-    if (environment.kind === 'host') {
+    if (environment.kind === 'native') {
       set((state) => ({
         environments: updateEnvironment(state.environments, environment, {
           status: 'available',

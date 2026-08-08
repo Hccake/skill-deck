@@ -229,7 +229,7 @@ export const DeleteSkillDialog = memo(function DeleteSkillDialog() {
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-start justify-between gap-3">
                           <span className="min-w-0 flex-1 break-words text-sm font-medium">
-                            {t('skills.deleteConfirm.sharedDirSection')}
+                            {t('skills.deleteConfirm.standardDirSection')}
                           </span>
                           <span className="shrink-0 text-xs text-muted-foreground">
                             {t('skills.deleteConfirm.mainDirectory')}

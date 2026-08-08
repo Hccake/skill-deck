@@ -10,7 +10,7 @@ const snapshot: AgentSelectionSnapshot = {
       displayName: 'Claude Code',
       detection: 'detected',
       directoryAccess: 'privateOnly',
-      installOptionId: 'shared-private',
+      installOptionId: 'standard-private',
       groupId: null,
     },
     {
@@ -19,7 +19,7 @@ const snapshot: AgentSelectionSnapshot = {
       displayName: 'Cursor',
       detection: 'detected',
       directoryAccess: 'both',
-      installOptionId: 'shared-private',
+      installOptionId: 'standard-private',
       groupId: null,
     },
     {
@@ -34,11 +34,11 @@ const snapshot: AgentSelectionSnapshot = {
   ],
   installOptions: [
     {
-      id: 'shared-private',
+      id: 'standard-private',
       kind: 'standardDirectory',
       agentIds: ['claude-code', 'cursor'],
       displayName: 'Claude Code',
-      path: '/shared/private',
+      path: '/standard/private',
       groupId: null,
       selectable: true,
       modeConstraint: 'userSelectable',
@@ -59,16 +59,16 @@ const snapshot: AgentSelectionSnapshot = {
   groups: [],
   initialSelectedOptionIds: [],
   unavailableExplicitAgents: [],
-  userModeOptionIds: ['shared-private', 'codex-private'],
+  userModeOptionIds: ['standard-private', 'codex-private'],
   revision: 'selection-v2',
 };
 
 describe('Agent selection view projection', () => {
-  it('shows a mixed shared directory once while preserving direct-use Agents', () => {
+  it('shows a mixed standard directory once while preserving direct-use Agents', () => {
     const projected = projectAgentSelectionView(snapshot);
 
     expect(projected.directAgents.map((agent) => agent.id)).toEqual(['cursor', 'codex']);
-    expect(projected.separateOptions.map((option) => option.id)).toEqual(['shared-private']);
+    expect(projected.separateOptions.map((option) => option.id)).toEqual(['standard-private']);
     expect(projected.additionalOptions.map((option) => option.id)).toEqual(['codex-private']);
   });
 });

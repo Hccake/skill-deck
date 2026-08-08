@@ -36,7 +36,7 @@ describe('skill empty states', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'update',
-        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
         id: 'mutation-1',
         phase: 'preparing',
         progress: null,

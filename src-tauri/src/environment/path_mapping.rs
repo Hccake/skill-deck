@@ -25,7 +25,7 @@ pub(crate) fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WindowsStorageOwner {
-    Host,
+    Windows,
     Wsl { distro_name: String },
     Unknown,
 }
@@ -37,14 +37,14 @@ pub(crate) fn windows_storage_owner(path: &str) -> WindowsStorageOwner {
     let normalized = path.trim().replace('/', "\\");
     let bytes = normalized.as_bytes();
     if bytes.len() >= 3 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() && bytes[2] == b'\\' {
-        return WindowsStorageOwner::Host;
+        return WindowsStorageOwner::Windows;
     }
     if let Some(remainder) = normalized.strip_prefix("\\\\") {
         let mut components = remainder
             .split('\\')
             .filter(|component| !component.is_empty());
         if components.next().is_some() && components.next().is_some() {
-            return WindowsStorageOwner::Host;
+            return WindowsStorageOwner::Windows;
         }
     }
     WindowsStorageOwner::Unknown

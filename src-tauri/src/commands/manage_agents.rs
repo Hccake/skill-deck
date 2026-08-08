@@ -5,7 +5,7 @@ use crate::application::manage_agents::{
     ManageAgentsRequest, ManageAgentsResponse,
 };
 use crate::core::mutation::{MutationKind, MutationPhase};
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -21,7 +21,7 @@ pub async fn preview_manage_skill_agents(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_manage_agent_selection(
-    context: ContextRef,
+    context: SkillLocationRef,
     skill_name: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<ManageAgentSelectionSnapshot, AppError> {

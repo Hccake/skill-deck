@@ -16,7 +16,7 @@ export function projectAgentSelectionView(
 ): AgentSelectionViewProjection {
   const agentsById = new Map(snapshot.agents.map((agent) => [agent.id, agent]));
   const directAgents = snapshot.agents.filter((agent) => (
-    agent.directoryAccess === 'sharedOnly' || agent.directoryAccess === 'both'
+    agent.directoryAccess === 'standardOnly' || agent.directoryAccess === 'both'
   ));
   const standardOptions = snapshot.installOptions.filter((option) => (
     option.kind === 'standardDirectory' && option.groupId === null

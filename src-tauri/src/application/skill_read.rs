@@ -9,7 +9,7 @@ use crate::core::agent_availability::{
     availability_for_resolved_scope, resolved_agent_presence_from_paths, AgentAvailabilityKind,
 };
 use crate::core::agent_definition::{AgentAdapter, AgentId};
-use crate::core::skill::{InstalledSkill, SkillFrontmatter, SkillScope};
+use crate::core::skill::{InstalledSkill, InstalledSkillLocation, SkillFrontmatter};
 use crate::environment::agent_environment::{AgentRuntimeSnapshot, DetectionState, ResolvedAgent};
 use crate::environment::context_resolver::ResolvedContext;
 use crate::environment::inspection::{
@@ -17,7 +17,7 @@ use crate::environment::inspection::{
 };
 use crate::environment::runtime::ContextSnapshotRevision;
 use crate::environment::types::{
-    same_environment_identity, ContextScope, EnvironmentRef, ResourceLocator,
+    same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocation,
 };
 use crate::environment::wsl::operations::eve::inspect_eve_project;
 use crate::environment::wsl::WslSession;
@@ -77,7 +77,7 @@ pub async fn discover_eve_skill_targets(
         return Ok(Vec::new());
     };
     match (&context.context.environment, wsl_session) {
-        (EnvironmentRef::Host, None) => Ok(crate::core::eve::eve_install_targets_for_project(
+        (EnvironmentRef::Native, None) => Ok(crate::core::eve::eve_install_targets_for_project(
             &project.native_path,
         )
         .into_iter()
@@ -150,7 +150,7 @@ pub fn build_skill_read_plan(
         SkillReadOwner::Canonical,
         None,
     )?;
-    let is_global = matches!(context.context.scope, ContextScope::Global);
+    let is_global = matches!(context.context.scope, SkillLocation::Global);
     for (agent_id, resolved) in &runtime.agents {
         let scope = if is_global {
             &resolved.global
@@ -221,7 +221,7 @@ pub fn project_skill_snapshot(
             message: "Skill read snapshot belongs to another Environment".to_string(),
         });
     }
-    let is_global = matches!(plan.read_plan.context.scope, ContextScope::Global);
+    let is_global = matches!(plan.read_plan.context.scope, SkillLocation::Global);
     let mut directory_kinds = BTreeMap::<(u32, String), FilesystemEntryKind>::new();
     let mut path_exists = false;
     for fact in &snapshot.facts {
@@ -393,7 +393,7 @@ fn join_native_path(environment: &EnvironmentRef, root: &str, relative: &str) ->
         EnvironmentRef::Wsl { .. } => {
             format!("{}/{}", root.trim_end_matches('/'), relative)
         }
-        EnvironmentRef::Host => PathBuf::from(root)
+        EnvironmentRef::Native => PathBuf::from(root)
             .join(relative)
             .to_string_lossy()
             .into_owned(),
@@ -432,7 +432,7 @@ fn project_candidate(
             && scope
                 .private_path
                 .as_ref()
-                .is_some_and(|private_path| scope.shared_path.as_ref() == Some(private_path));
+                .is_some_and(|private_path| scope.standard_path.as_ref() == Some(private_path));
         let presence = resolved_agent_presence_from_paths(
             agent_id,
             resolved,
@@ -455,7 +455,7 @@ fn project_candidate(
             AgentSkillPresence::PrivateOnly => {
                 private_only_agents.push(agent_id.clone());
                 if availability_for_resolved_scope(scope).kind
-                    == AgentAvailabilityKind::SharedCompatible
+                    == AgentAvailabilityKind::StandardCompatible
                 {
                     private_copy_agents.push(agent_id.clone());
                 } else {
@@ -493,9 +493,9 @@ fn project_candidate(
         path: candidate.canonical_path.clone(),
         canonical_path: candidate.canonical_path,
         scope: if is_global {
-            SkillScope::Global
+            InstalledSkillLocation::Global
         } else {
-            SkillScope::Project
+            InstalledSkillLocation::Project
         },
         agents,
         associated_agents,
@@ -540,18 +540,18 @@ mod tests {
     #[cfg(unix)]
     use crate::environment::native::inspection::NativeInspector;
     use crate::environment::types::{
-        ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ProjectBinding,
-        ResourceLocator,
+        EnvironmentRef, EnvironmentStatus, RegisteredProject, ResourceLocator, SkillLocation,
+        SkillLocationRef,
     };
 
-    fn resolved_scope(shared_root: &str, private_root: Option<&str>) -> ResolvedAgentScope {
+    fn resolved_scope(standard_root: &str, private_root: Option<&str>) -> ResolvedAgentScope {
         ResolvedAgentScope {
             enabled: true,
-            reads_shared: true,
-            shared_path: Some(shared_root.to_string()),
+            reads_standard: true,
+            standard_path: Some(standard_root.to_string()),
             private_path: private_root.map(str::to_string),
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         }
@@ -559,7 +559,7 @@ mod tests {
 
     fn runtime(environment: EnvironmentRef) -> AgentRuntimeSnapshot {
         let id = AgentId::parse("custom-both").unwrap();
-        let shared_root = "/work/app/.agents/skills";
+        let standard_root = "/work/app/.agents/skills";
         let private_root = "/work/app/.custom/skills";
         let resolved = ResolvedAgent {
             definition: AgentDefinition {
@@ -569,12 +569,12 @@ mod tests {
                 aliases: Vec::new(),
                 global: ScopeDefinition {
                     enabled: false,
-                    reads_shared: false,
+                    reads_standard: false,
                     private_path: None,
                 },
                 project: ScopeDefinition {
                     enabled: true,
-                    reads_shared: true,
+                    reads_standard: true,
                     private_path: Some(PathSpec::project(".custom/skills")),
                 },
                 detection: DetectionSpec::AnyPathExists {
@@ -587,15 +587,15 @@ mod tests {
             detection_reason: None,
             global: ResolvedAgentScope {
                 enabled: false,
-                reads_shared: false,
-                shared_path: None,
+                reads_standard: false,
+                standard_path: None,
                 private_path: None,
                 read_paths: Vec::new(),
-                shared_presence: None,
+                standard_presence: None,
                 private_presence: None,
                 legacy_paths: Vec::new(),
             },
-            project: resolved_scope(shared_root, Some(private_root)),
+            project: resolved_scope(standard_root, Some(private_root)),
         };
         AgentRuntimeSnapshot {
             registry_revision: "registry-v1".to_string(),
@@ -609,13 +609,13 @@ mod tests {
 
     fn context(environment: EnvironmentRef) -> ResolvedContext {
         ResolvedContext {
-            context: ContextRef {
+            context: SkillLocationRef {
                 environment: environment.clone(),
-                scope: ContextScope::Project {
+                scope: SkillLocation::Project {
                     project_id: "project-1".to_string(),
                 },
             },
-            project: Some(ProjectBinding {
+            project: Some(RegisteredProject {
                 id: "project-1".to_string(),
                 native_path: "/work/app".to_string(),
                 display_name: None,
@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn skill_snapshot_returns_the_scope_agents_used_for_projection() {
-        let environment = EnvironmentRef::Host;
+        let environment = EnvironmentRef::Native;
         let context = context(environment.clone());
         let runtime = runtime(environment.clone());
         let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
@@ -773,7 +773,7 @@ mod tests {
         .unwrap();
         symlink(&canonical_skill, agent_root.join("toolkit")).unwrap();
 
-        let environment = EnvironmentRef::Host;
+        let environment = EnvironmentRef::Native;
         let mut context = context(environment.clone());
         context.project.as_mut().unwrap().native_path = project_root.to_string_lossy().into_owned();
         context.skill_root.native_path = canonical_root.to_string_lossy().into_owned();
@@ -784,8 +784,8 @@ mod tests {
 
         let mut runtime = runtime(environment.clone());
         let resolved = runtime.agents.values_mut().next().unwrap();
-        resolved.project.reads_shared = false;
-        resolved.project.shared_path = Some(canonical_root.to_string_lossy().into_owned());
+        resolved.project.reads_standard = false;
+        resolved.project.standard_path = Some(canonical_root.to_string_lossy().into_owned());
         resolved.project.private_path = Some(agent_root.to_string_lossy().into_owned());
         let plan = build_skill_read_plan(&context, &runtime, &[]).unwrap();
         let snapshot = NativeInspector::new(environment)

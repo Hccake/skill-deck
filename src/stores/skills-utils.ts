@@ -3,11 +3,11 @@ import i18n from '@/i18n';
 import { contextKey } from '@/lib/context';
 import type {
   AgentId,
-  ContextRef,
+  SkillLocationRef,
   EvidenceFailureReason,
   EvidenceFreshness,
   InstalledSkill,
-  SkillScope,
+  InstalledSkillLocation,
   SkillUpdateCheckStatus,
   SkillUpdateInfo,
   SourceUpdateCheckInfo,
@@ -154,7 +154,7 @@ export const updateInfoCache = new Map<string, {
 /** 清除缓存中指定 skill 的 hasUpdate 标记 — 更新成功后调用，防止 syncSkills 恢复旧标记 */
 export function clearUpdateCacheForSkill(
   skillName: string,
-  scope: SkillScope,
+  scope: InstalledSkillLocation,
   projectPath?: string,
   options: { clearCannotCheck?: boolean } = {},
 ) {
@@ -172,7 +172,7 @@ export function clearUpdateCacheForSkill(
 
 export function clearUpdateCacheForContextSkill(
   skillName: string,
-  context: ContextRef,
+  context: SkillLocationRef,
   options: { clearCannotCheck?: boolean } = {},
 ) {
   const cached = updateInfoCache.get(contextKey(context));
@@ -377,15 +377,15 @@ export function resolveUpdateHintI18nKey(reason: string | null | undefined): str
 
 export interface DeleteTarget {
   skill: SkillListItem;
-  scope: SkillScope;
+  scope: InstalledSkillLocation;
   projectPath?: string;
-  context: ContextRef;
+  context: SkillLocationRef;
 }
 
 export interface AddDialogPrefill {
   source: string;
   skillName: string;
-  scope?: SkillScope;
+  scope?: InstalledSkillLocation;
   projectPath?: string;
   gitRef?: string | null;
 }
@@ -393,14 +393,14 @@ export interface AddDialogPrefill {
 export interface RepairSourceDraft {
   source: string;
   skillName: string;
-  scope: SkillScope;
+  scope: InstalledSkillLocation;
   projectPath?: string;
   gitRef?: string | null;
   agents: AgentId[];
   defaultAvailableAgents?: AgentId[];
   privateAdaptedAgents?: AgentId[];
   privateCopyAgents?: AgentId[];
-  context: ContextRef;
+  context: SkillLocationRef;
 }
 
 export function getSkillOperationAgents(
@@ -457,7 +457,7 @@ export function resolveSkillMaintenanceAction(
 
 export function createSkillRepairPrefill(
   skill: Pick<InstalledSkill, 'name' | 'source' | 'sourceUrl'> & { gitRef?: string | null },
-  scope: SkillScope,
+  scope: InstalledSkillLocation,
   projectPath?: string
 ): AddDialogPrefill | null {
   const source = buildRepairSource(skill);
@@ -482,7 +482,7 @@ export function createSkillRepairDraft(
     | 'privateAdaptedAgents'
     | 'privateCopyAgents'
   > & { gitRef?: string | null },
-  context: ContextRef,
+  context: SkillLocationRef,
   projectPath?: string,
 ): RepairSourceDraft {
   const source = buildRepairSource(skill) ?? '';
@@ -527,7 +527,7 @@ interface UpdatePlanGroup {
 }
 
 export interface UpdatePlan {
-  scope: SkillScope;
+  scope: InstalledSkillLocation;
   projectPath?: string;
   total: number;
   updatableCount: number;
@@ -542,7 +542,7 @@ export interface UpdatePlan {
 
 export function buildUpdatePlan(
   skills: SkillListItem[],
-  scope: SkillScope,
+  scope: InstalledSkillLocation,
   projectPath?: string
 ): UpdatePlan {
   const groups = new Map<string, UpdatePlanGroup>();

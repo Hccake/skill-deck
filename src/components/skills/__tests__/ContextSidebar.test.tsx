@@ -4,7 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type {
-  ContextRef,
+  SkillLocationRef,
   EnvironmentInfo,
   EnvironmentRef,
   ProjectInfo,
@@ -24,15 +24,15 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   captureProjectRemoval: vi.fn(),
   environments: [{
-    environment: { kind: 'host' as const },
+    environment: { kind: 'native' as const },
     displayName: 'Windows',
     status: 'available' as 'available' | 'connecting' | 'unavailable' | 'error' | undefined,
   }] as EnvironmentInfo[],
   workspace: {
     selectedContext: {
-      environment: { kind: 'host' as const },
+      environment: { kind: 'native' as const },
       scope: { scope: 'global' as const },
-    } as ContextRef,
+    } as SkillLocationRef,
     transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
     contextRevision: 0,
   },
@@ -51,7 +51,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open }));
 vi.mock('@/hooks/useTauriApi', () => ({ openConfigResource: mocks.openConfigResource }));
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: EnvironmentRef) => (
-    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name}`
+    environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name}`
   ),
   useEnvironmentStore: (selector: (state: { environments: EnvironmentInfo[] }) => unknown) => (
     selector({ environments: mocks.environments })
@@ -106,7 +106,7 @@ const project = (id: string): ProjectInfo => ({
     order: null,
     suppressCrossStorageWarning: false,
   },
-  storage: { access: 'native', owner: { kind: 'host' } },
+  storage: { access: 'native', owner: { kind: 'native' } },
 });
 
 describe('ContextSidebar', () => {
@@ -115,14 +115,14 @@ describe('ContextSidebar', () => {
     mocks.refresh.mockResolvedValue({ status: 'succeeded' });
     Element.prototype.scrollIntoView = vi.fn();
     mocks.environments = [{
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       displayName: 'Windows',
       status: 'available',
       revision: 1,
       error: null,
     }];
     mocks.workspace.selectedContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     };
     mocks.workspace.transition = { kind: 'idle' };
@@ -159,7 +159,7 @@ describe('ContextSidebar', () => {
 
   it('leaves missing-project reconciliation to ProjectWorkspace', () => {
     mocks.workspace.selectedContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'missing-project' },
     };
     mocks.projectView.projects = [project('another-project')];
@@ -217,7 +217,7 @@ describe('ContextSidebar', () => {
     fireEvent.click(within(row).getByRole('button', { name: 'context.openInExplorer' }));
 
     expect(mocks.openConfigResource).toHaveBeenCalledWith({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'a' },
     }, 'contextRoot');
   });
@@ -301,7 +301,7 @@ describe('ContextSidebar', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'install',
-        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
         id: 'mutation-1',
         phase: 'preparing',
         progress: null,

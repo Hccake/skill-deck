@@ -20,9 +20,12 @@ pub fn open_authorized_resource(target: &ResourceLocator) -> Result<(), AppError
 
 fn open_command(target: &ResourceLocator) -> Result<(&'static str, String), AppError> {
     match &target.environment {
-        EnvironmentRef::Host => {
+        EnvironmentRef::Native => {
             if !Path::new(&target.native_path).is_absolute() {
-                return Err(unsafe_target(target, "Host resource path is not absolute"));
+                return Err(unsafe_target(
+                    target,
+                    "Native resource path is not absolute",
+                ));
             }
             #[cfg(target_os = "windows")]
             return Ok(("explorer.exe", target.native_path.clone()));

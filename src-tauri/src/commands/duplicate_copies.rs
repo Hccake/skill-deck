@@ -2,14 +2,14 @@ use tauri::State;
 
 pub use crate::application::duplicate_cleanup::DuplicateCleanupResult;
 use crate::core::agent_definition::AgentId;
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn cleanup_duplicate_agent_copies(
-    context: ContextRef,
+    context: SkillLocationRef,
     skill_name: String,
     agents: Vec<AgentId>,
     runtime: State<'_, RuntimeServiceGraph>,

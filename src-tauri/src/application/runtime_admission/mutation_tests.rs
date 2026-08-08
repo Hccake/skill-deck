@@ -5,13 +5,13 @@ use crate::core::mutation::{
     LifecycleLeaseKind, MutationKind, MutationPhase, MutationProgress, MutationSnapshot,
     TerminationAdmission,
 };
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::error::AppError;
 
-fn host_global() -> ContextRef {
-    ContextRef {
-        environment: EnvironmentRef::Host,
-        scope: ContextScope::Global,
+fn native_global() -> SkillLocationRef {
+    SkillLocationRef {
+        environment: EnvironmentRef::Native,
+        scope: SkillLocation::Global,
     }
 }
 
@@ -23,7 +23,7 @@ fn lifecycle_and_mutation_are_mutually_exclusive() {
         .expect("begin lifecycle");
     assert_eq!(admission.activity_snapshot().revision, 1);
     assert!(matches!(
-        admission.begin_mutation(MutationKind::Install, host_global()),
+        admission.begin_mutation(MutationKind::Install, native_global()),
         Err(AppError::MutationBusy)
     ));
     assert!(matches!(
@@ -35,7 +35,7 @@ fn lifecycle_and_mutation_are_mutually_exclusive() {
     assert_eq!(admission.activity_snapshot().revision, 2);
 
     let mutation = admission
-        .begin_mutation(MutationKind::Install, host_global())
+        .begin_mutation(MutationKind::Install, native_global())
         .expect("begin mutation");
     assert!(matches!(
         admission.begin_lifecycle(LifecycleLeaseKind::RuntimeMaintenance),
@@ -56,7 +56,7 @@ fn snapshot_revision_tracks_the_mutation_lifecycle() {
     );
 
     let permit = admission
-        .begin_mutation(MutationKind::Install, host_global())
+        .begin_mutation(MutationKind::Install, native_global())
         .expect("begin mutation");
     assert_eq!(admission.snapshot().revision, 1);
     permit.transition(
@@ -83,11 +83,11 @@ fn snapshot_revision_tracks_the_mutation_lifecycle() {
 fn rejected_mutation_does_not_advance_snapshot_revision() {
     let admission = RuntimeAdmissionCoordinator::default();
     let _permit = admission
-        .begin_mutation(MutationKind::Install, host_global())
+        .begin_mutation(MutationKind::Install, native_global())
         .expect("begin mutation");
 
     assert!(admission
-        .begin_mutation(MutationKind::Remove, host_global())
+        .begin_mutation(MutationKind::Remove, native_global())
         .is_err());
     assert_eq!(admission.snapshot().revision, 1);
 }
@@ -105,7 +105,7 @@ fn mutation_changes_publish_complete_snapshots() {
     });
 
     let permit = admission
-        .begin_mutation(MutationKind::Install, host_global())
+        .begin_mutation(MutationKind::Install, native_global())
         .expect("begin mutation");
     permit.transition(MutationPhase::Committing, None, false);
     drop(permit);
@@ -125,10 +125,10 @@ fn mutation_permit_releases_the_single_active_slot() {
     let admission = RuntimeAdmissionCoordinator::default();
     {
         let _permit = admission
-            .begin_mutation(MutationKind::Install, host_global())
+            .begin_mutation(MutationKind::Install, native_global())
             .expect("begin mutation");
         assert!(admission
-            .begin_mutation(MutationKind::Remove, host_global())
+            .begin_mutation(MutationKind::Remove, native_global())
             .is_err());
         assert_eq!(
             admission.active().expect("active mutation").kind,
@@ -137,7 +137,7 @@ fn mutation_permit_releases_the_single_active_slot() {
     }
     assert!(admission.active().is_none());
     admission
-        .begin_mutation(MutationKind::Update, host_global())
+        .begin_mutation(MutationKind::Update, native_global())
         .expect("begin update after release");
 }
 
@@ -153,7 +153,7 @@ fn transition_publishes_progress_and_controls_cancellation() {
             .push(snapshot);
     });
     let permit = admission
-        .begin_mutation(MutationKind::Install, host_global())
+        .begin_mutation(MutationKind::Install, native_global())
         .expect("begin mutation");
     assert!(!admission.active().expect("active mutation").cancelable);
     observed.lock().expect("observed snapshots lock").clear();
@@ -188,7 +188,7 @@ fn transition_publishes_progress_and_controls_cancellation() {
 fn termination_blocks_active_work_and_rejects_new_work_after_admission() {
     let admission = RuntimeAdmissionCoordinator::default();
     let permit = admission
-        .begin_mutation(MutationKind::Install, host_global())
+        .begin_mutation(MutationKind::Install, native_global())
         .expect("begin mutation");
     assert!(matches!(
         admission.request_termination(),
@@ -207,7 +207,7 @@ fn termination_blocks_active_work_and_rejects_new_work_after_admission() {
     );
     assert_eq!(admission.activity_snapshot().revision, 3);
     assert!(matches!(
-        admission.begin_mutation(MutationKind::Update, host_global()),
+        admission.begin_mutation(MutationKind::Update, native_global()),
         Err(AppError::ApplicationTerminating)
     ));
 }
@@ -216,7 +216,7 @@ fn termination_blocks_active_work_and_rejects_new_work_after_admission() {
 fn idle_action_is_blocked_by_active_mutation() {
     let admission = RuntimeAdmissionCoordinator::default();
     let permit = admission
-        .begin_mutation(MutationKind::Remove, host_global())
+        .begin_mutation(MutationKind::Remove, native_global())
         .expect("begin mutation");
     let mut performed = false;
 

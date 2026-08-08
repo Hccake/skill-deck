@@ -407,14 +407,15 @@ impl From<PersistedNormalizedRef> for NormalizedRef {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 enum PersistedEnvironmentKey {
-    Host,
+    #[serde(alias = "host")]
+    Native,
     Wsl(String),
 }
 
 impl From<&EnvironmentKey> for PersistedEnvironmentKey {
     fn from(value: &EnvironmentKey) -> Self {
         match value {
-            EnvironmentKey::Host => Self::Host,
+            EnvironmentKey::Native => Self::Native,
             EnvironmentKey::Wsl(value) => Self::Wsl(value.clone()),
         }
     }
@@ -423,7 +424,7 @@ impl From<&EnvironmentKey> for PersistedEnvironmentKey {
 impl From<PersistedEnvironmentKey> for EnvironmentKey {
     fn from(value: PersistedEnvironmentKey) -> Self {
         match value {
-            PersistedEnvironmentKey::Host => Self::Host,
+            PersistedEnvironmentKey::Native => Self::Native,
             PersistedEnvironmentKey::Wsl(value) => Self::wsl(&value),
         }
     }
@@ -958,13 +959,13 @@ impl SourceEvidenceCoordinator {
         }
     }
 
-    /// 凭据成功变更后，只解除 Host GitHub 的认证类失败和服务商限流冷却期。
+    /// 凭据成功变更后，只解除 Native GitHub 的认证类失败和服务商限流冷却期。
     /// 成功的远端证据、其他 Environment 以及非认证失败保持不变。
-    pub fn clear_host_github_auth_suppression(&self) -> Result<(), AppError> {
-        let host = EnvironmentKey::from_ref(&EnvironmentRef::Host);
+    pub fn clear_native_github_auth_suppression(&self) -> Result<(), AppError> {
+        let native = EnvironmentKey::from_ref(&EnvironmentRef::Native);
         update_persisted_state(&self.inner, |state| {
             state.attempts.retain(|key, attempt| {
-                if key.environment != host
+                if key.environment != native
                     || key.evidence.remote.provider() != &SourceProvider::Github
                 {
                     return true;
@@ -979,7 +980,7 @@ impl SourceEvidenceCoordinator {
                 })
             });
             state.provider_cooldowns.retain(|key, _| {
-                key.environment != host || key.throttle.provider != SourceProvider::Github
+                key.environment != native || key.throttle.provider != SourceProvider::Github
             });
         })
     }
@@ -1868,7 +1869,7 @@ mod tests {
         mode: EvidenceCheckMode,
         skill_path: &str,
     ) -> EvidenceCheckRequest {
-        request_for_path_in_environment(repository, mode, skill_path, EnvironmentRef::Host)
+        request_for_path_in_environment(repository, mode, skill_path, EnvironmentRef::Native)
     }
 
     fn request_in_environment(
@@ -2042,7 +2043,7 @@ mod tests {
     async fn force_respects_provider_cooldown() {
         let detector = Arc::new(ScriptedDetector::new([modified("revision-1", [])]));
         let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
-        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 2_000);
+        coordinator.record_provider_cooldown(&EnvironmentRef::Native, throttle_key(), 2_000);
 
         let result = coordinator
             .check(
@@ -2069,7 +2070,7 @@ mod tests {
             )
             .await
             .unwrap();
-        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 5_000);
+        coordinator.record_provider_cooldown(&EnvironmentRef::Native, throttle_key(), 5_000);
 
         let result = coordinator
             .check(
@@ -2094,7 +2095,7 @@ mod tests {
             [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
         )]));
         let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
-        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 2_000);
+        coordinator.record_provider_cooldown(&EnvironmentRef::Native, throttle_key(), 2_000);
 
         let wsl = coordinator
             .check(
@@ -2278,7 +2279,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn credential_change_clears_only_host_github_auth_suppression_and_cooldown() {
+    async fn credential_change_clears_only_native_github_auth_suppression_and_cooldown() {
         let detector = Arc::new(ScriptedDetector::new([
             EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {
                 reason: EvidenceFailureReason::AuthenticationRequired,
@@ -2303,13 +2304,14 @@ mod tests {
             )
             .await
             .unwrap();
-        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 60_000);
+        coordinator.record_provider_cooldown(&EnvironmentRef::Native, throttle_key(), 60_000);
 
-        coordinator.clear_host_github_auth_suppression().unwrap();
+        coordinator.clear_native_github_auth_suppression().unwrap();
 
-        let auth_key = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/private"));
-        let network_key = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/network"));
-        let throttle = EnvironmentThrottleKey::new(&EnvironmentRef::Host, &throttle_key());
+        let auth_key = EnvironmentEvidenceKey::new(&EnvironmentRef::Native, &key("acme/private"));
+        let network_key =
+            EnvironmentEvidenceKey::new(&EnvironmentRef::Native, &key("acme/network"));
+        let throttle = EnvironmentThrottleKey::new(&EnvironmentRef::Native, &throttle_key());
         let state = state(&coordinator.inner).unwrap();
         assert!(!state.attempts.contains_key(&auth_key));
         assert!(state.attempts.contains_key(&network_key));
@@ -2367,7 +2369,7 @@ mod tests {
             .expect("state file")
             .set_write_failure(true);
 
-        assert!(coordinator.clear_host_github_auth_suppression().is_err());
+        assert!(coordinator.clear_native_github_auth_suppression().is_err());
         coordinator
             .inner
             .state_file
@@ -2469,21 +2471,21 @@ mod tests {
             )
             .await
             .unwrap();
-        coordinator.record_provider_cooldown(&EnvironmentRef::Host, throttle_key(), 60_000);
+        coordinator.record_provider_cooldown(&EnvironmentRef::Native, throttle_key(), 60_000);
 
         coordinator
-            .clear_source_suppression(&EnvironmentRef::Host, &key("acme/first"))
+            .clear_source_suppression(&EnvironmentRef::Native, &key("acme/first"))
             .unwrap();
 
-        let first = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/first"));
-        let second = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/second"));
+        let first = EnvironmentEvidenceKey::new(&EnvironmentRef::Native, &key("acme/first"));
+        let second = EnvironmentEvidenceKey::new(&EnvironmentRef::Native, &key("acme/second"));
         let wsl_first = EnvironmentEvidenceKey::new(
             &EnvironmentRef::Wsl {
                 distro_name: "Ubuntu".to_string(),
             },
             &key("acme/first"),
         );
-        let throttle = EnvironmentThrottleKey::new(&EnvironmentRef::Host, &throttle_key());
+        let throttle = EnvironmentThrottleKey::new(&EnvironmentRef::Native, &throttle_key());
         let state = state(&coordinator.inner).unwrap();
         assert!(!state.attempts.contains_key(&first));
         assert!(!state.network_backoff.contains_key(&first));
@@ -2529,7 +2531,7 @@ mod tests {
             .set_write_failure(true);
 
         assert!(coordinator
-            .clear_source_suppression(&EnvironmentRef::Host, &key("acme/tools"))
+            .clear_source_suppression(&EnvironmentRef::Native, &key("acme/tools"))
             .is_err());
         coordinator
             .inner
@@ -2712,12 +2714,12 @@ mod tests {
         ]));
         let coordinator = coordinator(detector.clone(), Arc::new(AtomicU64::new(1_000)));
 
-        let host = coordinator
+        let native = coordinator
             .check(
                 request_in_environment(
                     "acme/tools",
                     EvidenceCheckMode::Force,
-                    EnvironmentRef::Host,
+                    EnvironmentRef::Native,
                 ),
                 CancellationSignal::default(),
             )
@@ -2737,7 +2739,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(host.freshness, EvidenceFreshness::Unavailable);
+        assert_eq!(native.freshness, EvidenceFreshness::Unavailable);
         assert_eq!(wsl.freshness, EvidenceFreshness::Fresh);
         assert_eq!(detector.calls(), 2);
     }
@@ -2756,7 +2758,7 @@ mod tests {
             Arc::new(AtomicU64::new(1_000)),
         ));
 
-        let host = {
+        let native = {
             let coordinator = coordinator.clone();
             tokio::spawn(async move {
                 coordinator
@@ -2764,7 +2766,7 @@ mod tests {
                         request_in_environment(
                             "acme/tools",
                             EvidenceCheckMode::Force,
-                            EnvironmentRef::Host,
+                            EnvironmentRef::Native,
                         ),
                         CancellationSignal::default(),
                     )
@@ -2782,7 +2784,7 @@ mod tests {
             CancellationSignal::default(),
         );
 
-        assert!(host.await.unwrap().is_ok());
+        assert!(native.await.unwrap().is_ok());
         assert!(wsl.await.is_ok());
         assert_eq!(detector.calls(), 2);
     }
@@ -2800,7 +2802,7 @@ mod tests {
                 request_in_environment(
                     "acme/tools",
                     EvidenceCheckMode::Automatic,
-                    EnvironmentRef::Host,
+                    EnvironmentRef::Native,
                 ),
                 CancellationSignal::default(),
             )
@@ -3172,7 +3174,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(detector.calls(), 4);
-        let operation_key = EnvironmentEvidenceKey::new(&EnvironmentRef::Host, &key("acme/tools"));
+        let operation_key =
+            EnvironmentEvidenceKey::new(&EnvironmentRef::Native, &key("acme/tools"));
         assert_eq!(
             state(&coordinator.inner)
                 .unwrap()
@@ -3797,7 +3800,7 @@ mod tests {
                 snapshot_facts: Some(SourceSnapshotFacts {
                     discovery_session: DiscoverySessionHandle {
                         session_id: "session-1".to_string(),
-                        environment: EnvironmentRef::Host,
+                        environment: EnvironmentRef::Native,
                         source_fingerprint: "source-1".to_string(),
                         expires_at_epoch_ms: 60_000,
                     },
@@ -3838,11 +3841,11 @@ mod tests {
         coordinator
             .record_acquisition(
                 RemoteEvidenceKey::from_identity(&identity),
-                PayloadAcquisitionKey::from_identity(&identity, &EnvironmentRef::Host),
+                PayloadAcquisitionKey::from_identity(&identity, &EnvironmentRef::Native),
                 SourceSnapshotFacts {
                     discovery_session: DiscoverySessionHandle {
                         session_id: "session-1".to_string(),
-                        environment: EnvironmentRef::Host,
+                        environment: EnvironmentRef::Native,
                         source_fingerprint: "source-1".to_string(),
                         expires_at_epoch_ms: 60_000,
                     },
@@ -3882,7 +3885,7 @@ mod tests {
         .unwrap();
         let evidence_key = RemoteEvidenceKey::from_identity(&identity);
         let acquisition_key =
-            PayloadAcquisitionKey::from_identity(&identity, &EnvironmentRef::Host);
+            PayloadAcquisitionKey::from_identity(&identity, &EnvironmentRef::Native);
         let facts = |session_id: &str,
                      commit_revision: &str,
                      catalog: BTreeSet<String>|
@@ -3890,7 +3893,7 @@ mod tests {
             SourceSnapshotFacts {
                 discovery_session: DiscoverySessionHandle {
                     session_id: session_id.to_string(),
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     source_fingerprint: format!("source-{session_id}"),
                     expires_at_epoch_ms: 60_000,
                 },
@@ -3974,7 +3977,7 @@ mod tests {
     #[test]
     fn provider_cooldown_never_shrinks_across_repositories() {
         let mut state = CoordinatorState::default();
-        let environment = EnvironmentRef::Host;
+        let environment = EnvironmentRef::Native;
         let throttle = EnvironmentThrottleKey::new(&environment, &throttle_key());
         let alpha = EnvironmentEvidenceKey::new(&environment, &key("acme/alpha"));
         let beta = EnvironmentEvidenceKey::new(&environment, &key("acme/beta"));

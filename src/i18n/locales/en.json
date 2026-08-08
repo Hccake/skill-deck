@@ -16,8 +16,8 @@
     "title": "Linked Agents",
     "installTitle": "Select Agents",
     "copyTitle": "Associated Agents",
-    "modeTitle": "Install mode",
-    "modeHelp": "Used when adding or repairing an Agent’s own Skill directory. Copy-only Agents are not affected by this setting.",
+    "modeTitle": "Installation method",
+    "modeHelp": "Choose how to install this Skill in the selected Agent directories. Copy-only Agents are not affected.",
     "link": "Link",
     "linkRecommended": "Link (recommended)",
     "copy": "Copy",
@@ -25,38 +25,38 @@
     "automatic": {
       "install": {
         "title": "Available after installation",
-        "help": "After this Skill is installed in the shared Skill directory, these Agents do not need a separate installation."
+        "help": "This Skill is installed in the common Skill directory. These Agents can read it directly with no additional configuration."
       },
       "manage": {
         "title": "Available without selection",
-        "help": "This Skill is installed in the shared Skill directory. These Agents can read it without a separate installation."
+        "help": "This Skill is already installed in the common Skill directory. These Agents can read it directly and do not need to be selected."
       },
       "copyToProject": {
         "title": "Available after copying",
-        "help": "After this Skill is copied to the target project, these Agents do not need a separate installation."
+        "help": "This Skill is copied to the target Project's common Skill directory. These Agents can read it directly with no additional configuration."
       }
     },
     "selectable": {
       "title": "Available when selected",
-      "help": "These Agents do not read the shared Skill directory and need a separate installation to use this Skill."
+      "help": "These Agents do not read the common Skill directory. Select an Agent to create a link or copy in its Skill directory."
     },
     "ownDirectory": {
-      "title": "Also write to each Agent’s own Skill directory (optional)",
+      "title": "Also install in each Agent’s own Skill directory (optional)",
       "install": {
-        "description": "These Agents can use this Skill after installation. Select an Agent only when its own Skill directory also needs a link or copy."
+        "description": "These Agents can read this Skill from the common Skill directory after installation. Select an Agent only when its own Skill directory also needs a link or copy."
       },
       "manage": {
-        "description": "These Agents can already use this Skill through the shared Skill directory. Selected Agents keep a link or copy in their own Skill directory."
+        "description": "These Agents can already read this Skill from the common Skill directory. Selected Agents keep a link or copy in their own Skill directory."
       },
       "copyToProject": {
-        "description": "These Agents can use this Skill through the target project's shared Skill directory. Select an Agent only when its own Skill directory also needs a link or copy."
+        "description": "After copying, these Agents can read this Skill from the target Project's common Skill directory. Select an Agent only when its own Skill directory also needs a link or copy."
       },
       "selectedCount": "{{count}} Agents selected"
     },
     "otherAgents": "Other selectable Agents ({{count}})",
     "moreAgents": "+ {{count}} more",
-    "moreAgentsDescription": "These Agents can also read the shared Skill directory, but their detection state is not confirmed.",
-    "unknownNotice": "Skill Deck has no Agent definition for {{agents}}, so they will not be processed during this installation.",
+    "moreAgentsDescription": "These Agents also read the common Skill directory, but their detection state is not confirmed.",
+    "unknownNotice": "Skill Deck has no read or detection information for {{agents}}, so they will not be processed during this installation.",
     "selectionChanged": "Agent status has changed. Review the current selection before continuing.",
     "confirmCurrentSelection": "Confirm current selection",
     "installEmpty": "No Agents are currently available",
@@ -89,10 +89,10 @@
       "createCopy": "Will create copy"
     },
     "error": {
-      "duplicateOption": "The Agent install options contain duplicates. Review them and try again.",
-      "optionUnavailable": "Some Agent install locations are unavailable. Review the selection.",
+      "duplicateOption": "The Agent selection contains duplicates. Review it and try again.",
+      "optionUnavailable": "Some Agent Skill directories are unavailable. Review the selection.",
       "placementConflict": "The selected Agents have conflicting content for the same Skill location.",
-      "optionMissing": "Some Agent install locations have changed. Review the selection.",
+      "optionMissing": "Some Agent Skill directories have changed. Review the selection.",
       "resultNotAllowed": "Some Agents cannot be handled with the current selection. Review it and try again."
     }
   },
@@ -150,7 +150,7 @@
     "state": {
       "needsAttention": "Skill Deck could not confirm that the current files match the operation record. Review the current files and backup, keep the version you need, then recheck.",
       "consistentCanCleanup": "The file state is consistent. Finishing removes the backup retained by this operation and its review record.",
-      "environmentUnavailable": "The Environment is unavailable. Reconnect it before rechecking; the related files remain in place.",
+      "environmentUnavailable": "The target system is unavailable. Reconnect it before rechecking; the related files remain in place.",
       "invalid": "The review record is invalid. Open the diagnostic folder to inspect it; Skill Deck will not remove it automatically.",
       "missing": "Recovery data is no longer present."
     }
@@ -166,8 +166,8 @@
     "sectionGlobal": "Global",
     "sectionProjects": "Projects",
     "noProjects": "No projects",
-    "environmentLabel": "Environment",
-    "environmentMenuLabel": "Environment: {{environment}}",
+    "environmentLabel": "System",
+    "environmentMenuLabel": "System: {{environment}}",
     "environmentWslName": "WSL · {{environment}}",
     "environmentConnecting": "Connecting",
     "environmentUnavailable": "Unavailable",
@@ -176,7 +176,7 @@
     "environmentConnectingTo": "Connecting to {{environment}}…",
     "environmentDiscoveryFailed": "WSL environments could not be refreshed. Windows remains available.",
     "environmentConnectionFailed": "Could not connect to {{environment}}. Retry when the distribution is available.",
-    "projectsLoadError": "Could not load projects in this environment",
+    "projectsLoadError": "Could not load projects on this system",
     "openInExplorer": "Open in Explorer",
     "remove": "Remove",
     "removeConfirm": {
@@ -273,24 +273,23 @@
       "alsoInProject": "Also installed in this project"
     },
     "projectUnavailableTitle": "Project skills unavailable",
-    "projectUnavailableDescription": "This Environment cannot access the project. Check its location, or switch to an Environment where the project has been added.",
+    "projectUnavailableDescription": "The current system cannot access this project. Check its location, or switch to a system where the project has been added.",
     "updateCheckIncompleteCount": "{{count}} checks incomplete",
     "card": {
-      "extraCopies": "Extra setup items",
-      "extraCopiesHint": "Some Agent directories still keep a link or copy for this Skill. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" to adjust them."
+      "extraCopies": "Some Agent directories still contain links or copies",
+      "extraCopiesHint": "Some Agent Skill directories still contain a link or copy for this Skill. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" to adjust them."
     },
     "detail": {
       "title": "Skill Details",
       "description": "Description",
       "source": "Source",
       "path": "Source Path",
-      "pathHint": "Source files in the shared Skill directory. Agents that need separate setup use them through a link or copy.",
+      "pathHint": "The complete Skill content in the common Skill directory. Other Agents can use it through links or copies.",
       "installed": "Installed",
       "updated": "Updated",
       "installPath": "Install Path",
       "agents": "Associated Agents",
       "defaultAvailableCount": "Ready to use {{count}}",
-      "privateAdaptedCount": "Separate setup {{count}}",
       "privateCopyCount": "Kept separately {{count}}",
       "syncedAgents": "Installed To",
       "noSource": "Manually added",
@@ -299,24 +298,21 @@
       "loadError": "Failed to load skill content",
       "emptyContent": "This skill has no content",
       "retry": "Retry",
-      "duplicateCopiesTitle": "Extra setup items found",
-      "extraCopiesHint": "These Agents can already use this Skill through the shared Skill directory, but their own directories still keep a link or copy. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to adjust them.",
-      "extraCopiesNamedHint": "still keep a link or copy for this Skill in their own directory. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to adjust it.",
+      "extraCopiesHint": "These Agents can already use this Skill, but their own directories still contain links or copies. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" in the top right to adjust them.",
+      "extraCopiesNamedHint": "still contain a link or copy for this Skill in their own directory. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" in the top right to adjust them.",
       "extraCopiesAgentSummaryMore": "{{agents}} and {{count}} Agents total",
-      "extraCopiesCountHint": "{{count}} extra setup items found. Copied files may not update with the shared Skill. Use \"Manage linked Agents\" in the top right to review and adjust them.",
-      "duplicateCopiesHint": "These links or copies in Agent directories may no longer be needed. Keep the shared Skill directory version when possible.",
-      "manageDuplicates": "View setup items"
+      "extraCopiesCountHint": "{{count}} Agent Skill directories still contain links or copies. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" in the top right to review them."
     },
     "deleteConfirm": {
       "title": "Delete Skill",
-      "description": "This deletes the shared “{{name}}” Skill directory and its corresponding Skill directories under each Agent.",
+      "description": "This deletes “{{name}}” from the common Skill directory and removes its corresponding links or copies from Agent directories.",
       "scopeLabel": "Deletion list",
       "scopeCount": "{{count}} locations",
       "pathDisplayMode": "Path display mode",
       "relativePaths": "Relative paths",
       "fullPaths": "Full paths",
-      "sharedDirSection": "Shared Skill directory",
-      "mainDirectory": "Main directory",
+      "standardDirSection": "Common Skill directory",
+      "mainDirectory": "Skill directory",
       "linkMode": "Link",
       "copyMode": "Copy",
       "copyWarning": "Some Agent directories contain independent copies of this Skill. This operation will delete them as well.",
@@ -332,9 +328,9 @@
       "action": "Manage linked Agents",
       "title": "Manage Agents Linked to “{{name}}”",
       "description": "Choose which Agents can use \"{{name}}\".",
-      "modeTitle": "Skill install method",
-      "symlinkHint": "Link to the shared Skill directory so future updates use one source",
-      "copyHint": "Copy files into the agent directory for environments without link support",
+      "modeTitle": "Installation method",
+      "symlinkHint": "Create a link to this Skill in the common Skill directory so future updates keep using the same content",
+      "copyHint": "Create an independent copy for systems that do not support links",
       "save": "Save Changes",
       "retrySave": "Retry Save",
       "previewError": "Linked Agents are temporarily unavailable. Try again.",
@@ -359,13 +355,13 @@
       "ariaDescription": "Configure target projects, associated Agents, and the installation method.",
       "targetProjects": "Target projects",
       "selectedProjects": "{{count}} selected",
-      "targetEnvironment": "Target environment",
-      "targetEnvironmentMissing": "The selected target environment is no longer available. Select it again after it returns.",
-      "targetEnvironmentConnectionError": "Could not connect to the selected environment.",
+      "targetEnvironment": "Target system",
+      "targetEnvironmentMissing": "The selected target system is no longer available. Select it again after it returns.",
+      "targetEnvironmentConnectionError": "Could not connect to the selected target system.",
       "noProjects": "No other projects available",
       "installed": "Installed",
       "unknown": "Unknown",
-      "projectsLoadError": "Could not load projects in the selected environment.",
+      "projectsLoadError": "Could not load projects on the selected system.",
       "agentsLoadError": "Could not load Agent settings.",
       "presenceUnknown": "Could not verify whether this Skill is already installed. Existing files may be overwritten.",
       "copy": "Copy to {{count}} project(s)",
@@ -513,7 +509,7 @@
       "skipped": "Skipped",
       "readyTitle": "Update {{count}} Skill(s)",
       "singleTitle": "Update “{{skillName}}”",
-      "readyDescription": "Review the actual update scope. Modified separate copies are preserved by default.",
+      "readyDescription": "Review what this update will change. Modified copies are preserved by default.",
       "executingTitle": "Updating “{{skillName}}”",
       "executingBatchTitle": "Updating Skills",
       "executionDescription": "Fetching, validating, and writing the latest content.",
@@ -522,10 +518,10 @@
       "skillCount": "{{count}} Skill(s)",
       "source": "Install source",
       "blocked": "Cannot update yet",
-      "sharedSkillAction": "Update the shared Skill",
-      "cleanCopiesAction": "Sync {{count}} separate copy/copies automatically",
-      "adapterTargetsAction": "Update separate access for {{agents}}",
-      "conflictingCopies": "Modified separate copies found",
+      "standardSkillAction": "Update the Skill in the common Skill directory",
+      "cleanCopiesAction": "Sync unchanged copies ({{count}})",
+      "adapterTargetsAction": "Sync project-local Skills used by {{agents}}",
+      "conflictingCopies": "Modified copies found",
       "preserveConflictDefault": "Preserved by default; select to overwrite with the latest content",
       "confirm": "Start update",
       "stop": "Stop update",
@@ -542,7 +538,7 @@
       "deletedUpstreamActionKeep": "Keep installed",
       "targetAgents": "Target agents",
       "privateCopiesTitle": "Optional private-copy updates",
-      "privateCopiesDescription": "Select only the separate Agent copies that should be overwritten. Linked entries follow the canonical Skill automatically.",
+      "privateCopiesDescription": "Select only the separate Agent copies that should be overwritten. Links update with the Skill in the common Skill directory.",
       "cleanCopyCount": "{{count}} separate copies will update automatically.",
       "cleanCopyCountForSkill": "{{skillName}}: {{count}} copies will update automatically.",
       "progress": "{{current}} of {{total}} Skills processed.",
@@ -627,31 +623,31 @@
     },
     "general": {
       "title": "General",
-      "description": "Manage appearance, language, and platform integrations.",
+      "description": "Manage appearance, language, and platform features.",
       "appearanceTitle": "Theme",
       "appearanceDescription": "Choose the display style that fits your current workspace.",
       "languageTitle": "Language",
       "languageDescription": "Choose the interface language.",
-      "wslTitle": "WSL Environment",
+      "wslTitle": "WSL support",
       "wslDescription": "Discover installed WSL distributions and allow switching between Windows and WSL.",
-      "wslSaving": "Updating WSL integration",
-      "wslSaveError": "WSL integration could not be updated. Try again.",
+      "wslSaving": "Updating WSL settings",
+      "wslSaveError": "WSL settings could not be updated. Try again.",
       "wslBusyMutation": "Another change is in progress. Try again after it finishes.",
       "wslBusyLifecycle": "The app is updating or performing maintenance. Try again shortly.",
-      "wslBusyInstallWizard": "The install wizard is using the current environment. Finish or close it first.",
+      "wslBusyInstallWizard": "The install wizard is using the current system. Finish or close it first.",
       "wslBusyOperation": "A WSL operation is still running. Try again shortly.",
-      "wslDisableTitle": "Disable WSL Environment?",
-      "wslDisableDescription": "Skill Deck will switch to Windows and stop discovering or using WSL environments. Saved WSL projects and settings will be kept.",
-      "wslDisableAfterHostDescription": "The current Environment is already Windows. Disabling WSL will stop discovering or using WSL environments. Saved WSL projects and settings will be kept.",
+      "wslDisableTitle": "Disable WSL support?",
+      "wslDisableDescription": "Skill Deck will switch to Windows and stop discovering or using WSL distributions. Saved WSL projects and settings will be kept.",
+      "wslDisableAfterNativeDescription": "The app is already using Windows. Disabling WSL support will stop discovering or using WSL distributions. Saved WSL projects and settings will be kept.",
       "wslDisableConfirm": "Switch to Windows and disable",
-      "wslDisableOnlyConfirm": "Disable WSL integration",
-      "wslSwitchingHost": "Switching to Windows",
-      "wslDisabling": "Disabling WSL integration"
+      "wslDisableOnlyConfirm": "Disable WSL support",
+      "wslSwitchingNative": "Switching to Windows",
+      "wslDisabling": "Disabling WSL support"
     },
     "agents": {
       "title": "Agents",
-      "description": "Review the Skill directories and installation detection rules for built-in Agents, and manage Custom Agents.",
-      "add": "Create Custom Agent",
+      "description": "Review which Skill directories each Agent reads and where Skill Deck detects it. You can also add information for Agents that are not yet included.",
+      "add": "Add Agent information",
       "backToList": "Back to Agent list",
       "edit": "Edit Agent",
       "editNamed": "Edit {{name}}",
@@ -660,99 +656,99 @@
       "copyPath": "Copy path",
       "pathRule": "Path rule",
       "listLabel": "Agent list",
-      "registryToolbar": "Agent registry controls",
+      "registryToolbar": "Agent list controls",
       "inspectorLabel": "Agent details",
-      "pathUnavailable": "Unavailable in this Environment",
+      "pathUnavailable": "Unavailable on this system",
       "pathLoading": "Resolving…",
       "pathFallback": "fallback",
       "form": {
         "title": {
-          "create": "Create Custom Agent",
-          "edit": "Edit Custom Agent"
+          "create": "Add Agent information",
+          "edit": "Edit Agent information"
         },
         "action": {
-          "create": "Create Agent",
+          "create": "Add",
           "edit": "Save"
         }
       },
       "sourceFilter": {
-        "label": "Filter Agents by source",
+        "label": "Filter Agents by information source",
         "all": "All",
-        "builtin": "Built-in",
-        "custom": "Custom",
+        "builtin": "Included with Skill Deck",
+        "custom": "Added by you",
         "count": "Agent count: {{count}}"
       },
       "source": {
-        "builtin": "Built-in",
-        "custom": "Custom"
+        "builtin": "Included with Skill Deck",
+        "custom": "Added by you"
       },
       "summary": {
         "label": "Agent summary",
-        "total": "Agent definitions",
+        "total": "Recorded",
         "detected": "Detected"
       },
       "search": {
         "all": "Search Agents…",
-        "builtin": "Search built-in Agents…",
-        "custom": "Search custom Agents…",
+        "builtin": "Search included Agent information…",
+        "custom": "Search information added by you…",
         "clear": "Clear search"
       },
       "empty": {
         "allTitle": "No Agents",
-        "allDescription": "This version has no Agent definitions to show.",
-        "builtinTitle": "No built-in Agents",
-        "builtinDescription": "This version has no built-in Agent definitions to show.",
-        "customTitle": "No Custom Agents yet",
-        "customDescription": "Add a Custom Agent that is not included in the built-in list.",
+        "allDescription": "There is no Agent information to show.",
+        "builtinTitle": "No included Agent information",
+        "builtinDescription": "This version does not include any Agent information.",
+        "customTitle": "No Agent information added yet",
+        "customDescription": "Add Skill read locations and Agent detection locations for an Agent that is not yet included.",
         "searchTitle": "No results for “{{query}}”",
         "searchDescription": "Try searching by Agent name, ID, or path.",
         "clearSearch": "Clear search",
         "inspector": "Select an Agent to review its read directories and detection configuration."
       },
-      "customTitle": "Custom Agents",
-      "builtinTitle": "Built-in Agents",
-      "customEmpty": "No custom Agents match the current search.",
+      "customTitle": "Added by you",
+      "builtinTitle": "Included with Skill Deck",
+      "customEmpty": "No information added by you matches the current search.",
       "needsAttentionTitle": "Needs attention",
-      "conflictsTitle": "Definition conflicts",
-      "builtinConflict": "Uses the same ID as built-in Agent {{name}}. This custom definition is inactive.",
-      "invalidTitle": "Invalid custom definitions",
-      "saved": "Agent saved",
-      "loadError": "Unable to load Agent definitions.",
-      "refreshing": "Refreshing Agent definitions…",
-      "refreshError": "Unable to refresh Agent definitions. Previously loaded data remains visible.",
-      "runtimeError": "Unable to resolve Agent paths and detection for the current Environment. Definitions remain available.",
-      "saveError": "Failed to save Agent",
-      "deletePreviewError": "Could not inspect the effects of deleting this Agent definition",
+      "conflictsTitle": "Information conflicts",
+      "builtinConflict": "Uses the same ID as Agent {{name}}, which is included with Skill Deck. The information you added is inactive.",
+      "invalidTitle": "Invalid Agent information",
+      "saved": "Agent information saved",
+      "loadError": "Unable to load Agent information.",
+      "refreshing": "Refreshing Agent information…",
+      "refreshError": "Unable to refresh Agent information. Previously loaded data remains visible.",
+      "runtimeError": "Unable to resolve Agent paths and detection on the current system. Saved information remains available.",
+      "saveError": "Failed to save Agent information",
+      "deletePreviewError": "Could not inspect the effects of deleting this Agent information",
       "deletePreviewLoading": "Checking what this deletion will affect…",
       "retryDeletePreview": "Retry preview",
       "invalidDeleteError": "Failed to delete the invalid Agent record",
       "reviewInvalid": "Review invalid Agent record",
       "invalidDetailTitle": "Review invalid Agent record",
-      "invalidDetailDescription": "This raw record cannot be used as an Agent definition. Review it before deleting it.",
+      "invalidDetailDescription": "This raw record cannot be used as Agent information. Review it before deleting it.",
       "confirmInvalidDelete": "Delete invalid record",
-      "deleted": "Agent definition deleted",
-      "deleteError": "Failed to delete Agent definition",
+      "deleted": "Agent information deleted",
+      "deleteError": "Failed to delete Agent information",
       "deleteStale": "The Agent Registry changed. Review the refreshed impact and enter the Agent ID again.",
       "deleting": "Deleting…",
       "retryDelete": "Retry deletion",
       "deleteTitle": "Delete {{name}}?",
-      "deleteDescription": "This removes the custom Agent definition from Skill Deck.",
+      "deleteDescription": "This removes the Agent information you added from Skill Deck.",
       "deleteFilesSafe": "Installed Skill files and Agent directories will not be deleted.",
-      "deleteManagementWarning": "Skills currently associated with this Agent may no longer be detected or managed until the definition is added again.",
+      "deleteManagementWarning": "Skills currently associated with this Agent may no longer be detected or managed until the same information is added again.",
       "deleteDefaultReferenced": "Current default target",
       "deleteObservedSkillCount": "{{count}}{{suffix}} Skill(s) detected",
-      "deletePathUnavailable": "This path cannot be resolved in the current environment",
+      "deletePathUnavailable": "This path cannot be resolved on the current system",
       "deletePathUnavailableReasons": {
         "projectContextRequired": "Project impact cannot be inspected because the current Project path is unavailable. No files will be deleted.",
-        "environmentUnavailable": "This path cannot be inspected because the current Environment is unavailable. No files will be deleted."
+        "environmentUnavailable": "This path cannot be inspected because the current system is unavailable. No files will be deleted."
       },
       "deletePathKind": {
-        "shared": "Shared directory",
+        "standard": "Standard directory",
         "private": "Agent directory"
       },
       "deleteConfirmId": "Enter the Agent ID to confirm",
-      "deleteConfirmHint": "Enter {{id}}. This removes only the definition and default references, not files.",
-      "confirmDelete": "Delete definition",
+      "deleteConfirmHint": "Enter {{id}}. This removes only the saved information and default references, not files.",
+      "confirmDelete": "Delete information",
       "scope": {
         "both": "Global and Project",
         "global": "Global",
@@ -780,41 +776,41 @@
         "readMethod": "Read rule"
       },
       "installDetection": {
-        "title": "Installation detection",
+        "title": "Agent detection",
         "cardHint": "Any location exists",
-        "hint": "The Agent is considered installed when any detection path exists."
+        "hint": "The Agent is considered detected when any Agent detection location exists."
       },
       "pathKinds": {
         "based": "Based path",
         "absolute": "Absolute path"
       },
-      "absolutePathHint": "Absolute paths are resolved as written in the Environment where the Agent runs.",
+      "absolutePathHint": "Absolute paths are resolved as written on the selected system.",
       "locations": {
-        "shared": "Shared directory only",
+        "standard": "Common directory only",
         "private": "Agent-specific directory only",
         "both": "Both directories"
       },
       "detectionReasons": {
         "projectContextRequired": "Detection must be evaluated in a specific Project",
-        "environmentUnavailable": "The current Environment is unavailable"
+        "environmentUnavailable": "The current system is unavailable"
       },
       "readMode": {
-        "shared": "Reads only the shared directory",
+        "standard": "Reads only the common directory",
         "private": "Reads only the Agent directory",
-        "both": "Reads both the shared and Agent directories",
+        "both": "Reads both the common and Agent directories",
         "globalUnsupported": "Does not read Global Skills",
         "projectUnsupported": "Does not read Project Skills"
       },
       "directoryKind": {
-        "shared": "Shared directory",
+        "standard": "Common directory",
         "private": "Agent-specific Skill directory"
       },
-      "sharedDirectories": {
-        "title": "Shared Skill directories",
-        "cardLabel": "Shared directory",
-        "sharedAriaLabel": "{{scope}}: reads the shared Skill directory",
+      "standardDirectories": {
+        "title": "Common Skill directories",
+        "cardLabel": "Common directory",
+        "standardAriaLabel": "{{scope}}: reads the common Skill directory",
         "privateAriaLabel": "{{scope}}: reads this Agent's Skill directory",
-        "bothAriaLabel": "{{scope}}: reads the shared Skill directory and this Agent's Skill directory"
+        "bothAriaLabel": "{{scope}}: reads the common Skill directory and this Agent's Skill directory"
       },
       "pathBases": {
         "home": "Home",
@@ -850,7 +846,7 @@
       "detection": {
         "title": "Agent detection",
         "cardLabel": "Detection",
-        "cardTooltip": "Agent installation detection paths",
+        "cardTooltip": "Agent detection locations",
         "directoryLocation": "Detection directory location",
         "kind": "Detection path type",
         "based": "Based path",
@@ -863,13 +859,13 @@
         "remove": "Remove detection path",
         "removed": "Detection path removed",
         "morePaths": "{{count}} more detection paths",
-        "absolutePlaceholder": "Enter a complete path in the current Environment",
-        "hint": "The Agent is detected when any configured path exists. Absolute paths are resolved inside the selected environment.",
+        "absolutePlaceholder": "Enter a complete path on the current system",
+        "hint": "The Agent is detected when any configured path exists. Absolute paths are resolved on the selected system.",
         "anyPathExists": "The Agent is detected when any configured path exists.",
         "eve": "Detection uses the Eve package and Agent configuration in the current Project."
       },
       "preview": {
-        "title": "Current Environment preview",
+        "title": "Current system preview",
         "validating": "Resolving paths and detection status…",
         "currentEnvironment": "These paths are display-only and never authorize file operations.",
         "detectionLabel": "Detection",
@@ -891,18 +887,18 @@
         "projectBaseNotAllowed": "Global paths cannot use the project directory",
         "absolutePathNotAllowed": "Project paths cannot be absolute",
         "forbidden": "The selected read location does not use an Agent directory path",
-        "invalidDefinition": "The definition format is invalid",
+        "invalidDefinition": "The Agent information format is invalid",
         "invalidScope": "The scope configuration is invalid"
       },
       "storageIssues": {
-        "customAgentStorageUnavailable": "Custom Agent configuration is read-only. Built-in Agents remain available; repair the configuration file before changing definitions."
+        "customAgentStorageUnavailable": "Agent information added by you is currently read-only. Information included with Skill Deck remains available; repair the configuration file before making changes."
       },
       "stale": {
         "title": "The Agent list changed elsewhere",
-        "description": "Reload the latest definitions and review this draft. Skill Deck will not overwrite external changes automatically.",
+        "description": "Reload the latest information and review this draft. Skill Deck will not overwrite external changes automatically.",
         "reload": "Reload and review",
-        "deletedTitle": "This Agent definition was deleted",
-        "deletedDescription": "The definition being edited was not found after reloading. This draft will not overwrite the external deletion; return to the Agent list and add it again if needed."
+        "deletedTitle": "This Agent information was deleted",
+        "deletedDescription": "The information being edited was not found after reloading. This draft will not overwrite the external deletion; return to the Agent list and add it again if needed."
       },
       "warnings": {
         "defaultCleanupFailed": "The Agent was deleted, but old default references could not be cleaned up. They will be removed the next time defaults are saved."
@@ -1008,7 +1004,7 @@
       "githubTitle": "GitHub Repo",
       "feedback": "FEEDBACK",
       "issuesTitle": "Submit Issue",
-      "cliCompatibility": "CLI COMPATIBILITY",
+      "cliReferenceVersion": "skills CLI reference version",
       "vercelSkills": "Vercel Skills"
     },
     "version": "Version",
@@ -1071,7 +1067,6 @@
     }
   },
   "mutation": {
-    "host": "This computer",
     "status": "{{environment}} / {{scope}} · {{status}}",
     "activity": "{{operation}} · {{phase}}",
     "activityWithSubject": "{{operation}} · {{phase}} · {{subject}}",
@@ -1185,7 +1180,7 @@
     "switchToOwner": "Switch to {{owner}}",
     "dismiss": "Don't show again",
     "dismissFailed": "Failed to save warning preference",
-    "hostEnvironment": "Windows",
+    "nativeEnvironment": "Windows",
     "failureGuidance": "{{operation}} failed in the current environment. This project is stored in {{environment}}; switch to that environment and try again.",
     "operation": {
       "install": "Installation",
@@ -1200,7 +1195,7 @@
   "addSkill": {
     "title": "Install Skills",
     "steps": {
-      "scope": "Usage Scope",
+      "scope": "Skill Location",
       "source": "Source",
       "skills": "Skills",
       "options": "Targets",
@@ -1251,18 +1246,14 @@
     "agents": {
       "title": "Install Targets",
       "automaticTitle": "Ready to use",
-      "automaticHint": "These Agents are ready to use after install. No selection is needed.",
+      "automaticHint": "These Agents need no selection and can read directly from the common Skill directory.",
       "defaultAvailableTitle": "Ready to use",
-      "defaultAvailableHint": "These Agents are ready to use after install. No selection is needed.",
-      "additionalTitle": "Needs separate setup",
-      "additionalHint": "Create links or copies for Agents that only read their own directories",
-      "privateRequiredTitle": "Needs separate setup",
-      "privateRequiredHint": "These Agents need to be connected to the Skill separately. When selected, install will create a link or copy for them.",
+      "defaultAvailableHint": "These Agents need no selection and can read directly from the common Skill directory.",
       "privateCopyTitle": "Keep separately",
-      "privateCopyHint": "These Agents can already use the shared Skill directory. Select an Agent only when you also want to keep a link or copy in its own Skill directory; copied files may not update with the shared Skill.",
+      "privateCopyHint": "These Agents can already use this Skill through the common Skill directory. Select an Agent only when you also want to keep a link or copy in its own Skill directory; independent copies may not update with the Skill in the common Skill directory.",
       "privateCopySelected": "{{count}} selected",
       "targetTitle": "Target agents",
-      "loadError": "Could not load Agents for the selected Environment.",
+      "loadError": "Could not load Agents on the selected system.",
       "defaultLoadWarning": "Default targets could not be loaded, so built-in recommendations are being used. You can still adjust the targets for this install.",
       "concreteTargetsTitle": "Project-local targets",
       "concreteTargetsHint": "Choose the project-local targets to install to, such as Eve root or subagents.",
@@ -1270,7 +1261,7 @@
       "collapseOtherAgents": "Collapse agents",
       "noneSelected": "None selected",
       "moreUndetected": "+ {{count}} other",
-      "undetectedListPrefix": "These Agents read the shared Skill directory, but their current detection state is not confirmed",
+      "undetectedListPrefix": "These Agents read the common Skill directory, but their current detection state is not confirmed",
       "viewUndetectedInfo": "View {{count}} other ready-to-use Agents",
       "detected": "Detected",
       "notDetected": "Not detected",
@@ -1278,24 +1269,24 @@
       "noAutomaticAgents": "No related agents were detected.",
       "noDefaultAvailableAgents": "No ready-to-use Agents were detected.",
       "unknownTitle": "Unknown Agents",
-      "unknownHint": "Skill Deck has no matching Agent definitions, so these targets are unavailable. Close the install wizard, create the definitions in Settings > Agents, and start the installation again.",
+      "unknownHint": "Skill Deck has no read or detection information for these Agents, so the targets are unavailable. Close the install wizard, add the Agent information in Settings > Agents, and start the installation again.",
       "unknownRemovableHint": "Remove unavailable targets to continue with the remaining Agents.",
       "unknownUnavailable": "Unavailable",
       "removeUnknown": "Remove target"
     },
     "scope": {
-      "title": "Usage Scope",
+      "title": "Skill Location",
       "project": "Project",
-      "projectHint": "Use only in the current project",
+      "projectHint": "Install in the current Project",
       "global": "Global",
-      "globalHint": "Available in every project"
+      "globalHint": "Install globally"
     },
     "scopeSelect": {
-      "title": "Usage Scope",
-      "hint": "Choose where this Skill can be used.",
+      "title": "Choose a Skill location",
+      "hint": "Install globally or in a specific Project.",
       "global": "Global",
-      "globalHint": "Available in every project · {{path}}",
-      "environmentGlobalHint": "Install in the current environment's global Skill directory",
+      "globalHint": "Install globally · {{path}}",
+      "environmentGlobalHint": "Install globally in {{environment}}",
       "localProjects": "Projects"
     },
     "mode": {
@@ -1304,9 +1295,7 @@
       "symlinkHint": "Keep a single source for easier updates",
       "recommended": "Recommended",
       "copy": "Copy",
-      "copyHint": "Create a separate Skill copy for each agent",
-      "singleDirectoryTitle": "Shared Skill directory only",
-      "singleDirectoryHint": "If no Agents need separate setup, the Skill is installed only to the shared Skill directory."
+      "copyHint": "Create an independent Skill copy for each Agent"
     },
     "confirm": {
       "summary": "Will install {{count}} skills. {{overwriteCount}} target directories already contain matching skills and will be overwritten.",
@@ -1316,20 +1305,21 @@
       "installDirNameChangedHint": "The Skill name contains characters that are not suitable for a directory name. Install will use {{installDirName}}.",
       "overwriteCount": "{{count}} target directories already contain matching skills and will be overwritten",
       "willOverwrite": "Overwrite targets: {{agents}}",
-      "shared": "Shared Skill directory",
+      "standard": "Common Skill directory",
       "directories": "Install locations",
-      "directoryHint": "Skills are installed to the shared Skill directory. Agents that need separate setup are handled with the selected method.",
+      "directoryHint": "Skill Deck installs the Skill in the common Skill directory first, then creates links or copies for the selected Agents.",
       "installPlan": "Install plan",
       "installPlanHint": "Review which Agents can use this Skill after install.",
-      "defaultLocation": "Shared Skill directory",
-      "defaultLocationHint": "These Agents read the shared Skill directory.",
-      "privateSetup": "Separate setup",
+      "defaultLocation": "Install in the common Skill directory",
+      "defaultLocationHint": "These Agents can read this Skill directly from the common Skill directory.",
+      "createLinks": "Create links",
+      "createCopies": "Create copies",
       "privateCopies": "Keep separately",
       "privateCopiesHint": "These Agents are already ready to use. This install will also keep a link or copy in their own Skill directory.",
       "concreteTargets": "Project-local targets",
       "concreteTargetsHint": "The Skill will be installed to these project-local targets.",
       "symlink": "Symlink",
-      "symlinkHint": "Connect these Agents to the shared Skill directory with symlinks.",
+      "symlinkHint": "Create links to this Skill in the common Skill directory from the selected Agent directories.",
       "copy": "Copy",
       "copyHint": "Copy the Skill into each Agent directory.",
       "trust": {
@@ -1371,7 +1361,7 @@
       "failedCount": "Failed: {{count}}",
       "agentCoverage": "{{success}}/{{total}} agents",
       "defaultAvailable": "Ready to use",
-      "privateAdapted": "Separate setup",
+      "privateAdapted": "Links or copies created",
       "privateCopies": "Kept separately",
       "skippedCategory": "Not written",
       "failedCategory": "Failed",
@@ -1422,9 +1412,9 @@
       "wslCommandTimedOut": "The WSL operation timed out",
       "wslOutputLimitExceeded": "The WSL {{stream}} output exceeded the {{limit}} byte safety limit",
       "wslCommandFailed": "The WSL command failed (exit code: {{exitCode}})",
-      "environmentUnavailable": "The selected environment is unavailable",
-      "storageMappingUnsupported": "The path cannot be accessed from the selected environment: {{path}}",
-      "configurationReadOnly": "Agent configuration is read-only because it uses an unsupported version.",
+      "environmentUnavailable": "The selected system is unavailable",
+      "storageMappingUnsupported": "The path cannot be accessed from the selected system: {{path}}",
+      "configurationReadOnly": "Agent information is read-only because it uses an unsupported version.",
       "payloadStorageRequiresCleanup": "Temporary Skill storage requires cleanup before another operation can start.",
       "runtimeMaintenance": "Runtime maintenance is not ready, so Skill operations are temporarily paused. Try again shortly.",
       "staleState": "The installation facts changed. Refresh the preview and confirm again.",
@@ -1452,8 +1442,8 @@
         "checkAgentName": "Check that the agent name is correct",
         "reselectAgents": "Go back and reselect agents",
         "reviewRiskAndConfirm": "Go back to the confirmation step, review the risk warning, and confirm manually",
-        "chooseAccessiblePath": "Choose a path that is accessible from the selected environment",
-        "chooseWritableConfiguration": "Choose an environment with writable Agent configuration",
+        "chooseAccessiblePath": "Choose a path that is accessible from the selected system",
+        "chooseWritableConfiguration": "Choose a system with writable Agent information",
         "retryOrContact": "Check the error details and retry, or check logs if the issue persists"
       },
       "actions": {

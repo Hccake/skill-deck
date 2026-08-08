@@ -34,12 +34,12 @@ impl RuntimeRecoveryConsistencyChecker {
         marker: &RecoveryMarker,
     ) -> Result<RecoveryConsistency, AppError> {
         match &marker.environment {
-            EnvironmentRef::Host => {
+            EnvironmentRef::Native => {
                 let marker = marker.clone();
-                tokio::task::spawn_blocking(move || check_host_marker(&marker))
+                tokio::task::spawn_blocking(move || check_native_marker(&marker))
                     .await
                     .map_err(|error| AppError::ExecutionFailed {
-                        message: format!("host recovery consistency task failed: {error}"),
+                        message: format!("native recovery consistency task failed: {error}"),
                     })?
             }
             EnvironmentRef::Wsl { distro_name } => {
@@ -72,7 +72,7 @@ impl RecoveryConsistencyChecker for RuntimeRecoveryConsistencyChecker {
     }
 }
 
-fn check_host_marker(marker: &RecoveryMarker) -> Result<RecoveryConsistency, AppError> {
+fn check_native_marker(marker: &RecoveryMarker) -> Result<RecoveryConsistency, AppError> {
     for entry in &marker.entries {
         let destination = inspect_entry_no_follow(Path::new(&entry.destination.native_path))?;
         let backup_exists = entry
@@ -167,7 +167,7 @@ impl RuntimeRecoveryGraph {
         let repository_store: Arc<dyn RecoveryMarkerStore> = native_underlying.clone();
         let repository = Arc::new(RecoveryRepository::new(vec![repository_store], checker));
         let native_store: Arc<dyn RecoveryMarkerStore> = Arc::new(
-            RepositoryRecoveryMarkerStore::new(EnvironmentRef::Host, Arc::clone(&repository)),
+            RepositoryRecoveryMarkerStore::new(EnvironmentRef::Native, Arc::clone(&repository)),
         );
         Ok(Self {
             repository,
@@ -227,9 +227,9 @@ impl RuntimeRecoveryGraph {
         RecoveryService::new(Arc::clone(&self.repository))
     }
 
-    pub async fn reindex_host(&self) -> Result<(), AppError> {
+    pub async fn reindex_native(&self) -> Result<(), AppError> {
         self.repository
-            .reindex_environment(&EnvironmentRef::Host, &HashSet::new())
+            .reindex_environment(&EnvironmentRef::Native, &HashSet::new())
             .await
     }
 }
@@ -248,11 +248,11 @@ mod tests {
         RecoveryMarkerEntry {
             physical_target_digest: "target-1".to_string(),
             destination: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: "/work/demo".to_string(),
             },
             backup: Some(ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: "/work/.skill-deck-backup-demo".to_string(),
             }),
             expected_state,

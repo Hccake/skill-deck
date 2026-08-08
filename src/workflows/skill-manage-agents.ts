@@ -9,7 +9,7 @@ import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { t } from '@/stores/skills-utils';
 import type {
   AgentSelectionSubmission,
-  ContextRef,
+  SkillLocationRef,
   InstalledSkill,
   ManageAgentsResponse,
   MutationUnitResult,
@@ -54,7 +54,7 @@ function isStaleError(error: unknown): boolean {
 
 export async function openManageAgentChanges(
   skill: InstalledSkill,
-  context: ContextRef,
+  context: SkillLocationRef,
   projectPath?: string,
 ): Promise<void> {
   const generation = ++manageSelectionGeneration;

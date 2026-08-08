@@ -20,9 +20,9 @@ import { toAppError } from '@/utils/to-app-error';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
 import type {
   AppError,
-  ContextRef,
+  SkillLocationRef,
   ResolvedAgent,
-  SkillScope,
+  InstalledSkillLocation,
   SkillUpdateInfo,
   SkillAuditData,
   SourceUpdateCheckInfo,
@@ -117,7 +117,7 @@ function emptyUpdateCheckSession(): UpdateCheckSession {
   };
 }
 
-function skillCheckFingerprint(context: ContextRef, skill: SkillListItem): string {
+function skillCheckFingerprint(context: SkillLocationRef, skill: SkillListItem): string {
   return [
     contextKey(context),
     skill.name,
@@ -210,7 +210,7 @@ function preserveLastConfirmedUpdates(
 
 function clearLocalUpdateFlags(
   skills: SkillListItem[],
-  scope: SkillScope,
+  scope: InstalledSkillLocation,
   skillNames: Set<string>,
   options: {
     clearCannotCheck?: boolean;
@@ -248,22 +248,22 @@ interface SkillsDataState {
   forceUpdateScopes: Set<string>;
 
   // Actions
-  refreshContext: (context: ContextRef, options?: RefreshOptions) => Promise<void>;
-  refreshWorkspace: (context: ContextRef, options?: RefreshOptions) => Promise<void>;
-  invalidateContexts: (contexts: ContextRef[]) => void;
+  refreshContext: (context: SkillLocationRef, options?: RefreshOptions) => Promise<void>;
+  refreshWorkspace: (context: SkillLocationRef, options?: RefreshOptions) => Promise<void>;
+  invalidateContexts: (contexts: SkillLocationRef[]) => void;
   invalidateAgentProjections: () => void;
-  syncSkills: (context: ContextRef, options?: RefreshOptions) => Promise<void>;
-  syncUpdates: (context: ContextRef) => Promise<void>;
-  activateAutomaticChecks: (context: ContextRef) => Promise<void>;
-  reconcileAutomaticChecks: (context: ContextRef) => Promise<void>;
+  syncSkills: (context: SkillLocationRef, options?: RefreshOptions) => Promise<void>;
+  syncUpdates: (context: SkillLocationRef) => Promise<void>;
+  activateAutomaticChecks: (context: SkillLocationRef) => Promise<void>;
+  reconcileAutomaticChecks: (context: SkillLocationRef) => Promise<void>;
   forceCheckUpdates: (
-    context: ContextRef,
+    context: SkillLocationRef,
     selection: UpdateCheckSelection,
   ) => Promise<UpdateCheckOutcome | null>;
-  applyUpdateResult: (context: ContextRef, response: UpdateResponse) => Promise<void>;
+  applyUpdateResult: (context: SkillLocationRef, response: UpdateResponse) => Promise<void>;
   fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
-  markSourceRepairSucceeded: (context: ContextRef, skillName: string) => void;
-  clearHostGithubProviderCooldown: () => void;
+  markSourceRepairSucceeded: (context: SkillLocationRef, skillName: string) => void;
+  clearNativeGithubProviderCooldown: () => void;
 }
 
 export interface ContextSkillSnapshot {
@@ -289,7 +289,7 @@ function emptyContextSnapshot(): ContextSkillSnapshot {
 
 export function sourceDiagnosticsForEnvironment(
   snapshots: Record<string, ContextSkillSnapshot>,
-  environment: ContextRef['environment'],
+  environment: SkillLocationRef['environment'],
 ): SourceUpdateCheckInfo[] {
   const prefix = `${environmentKey(environment)}/`;
   return Object.entries(snapshots).flatMap(([key, snapshot]) => (
@@ -297,7 +297,7 @@ export function sourceDiagnosticsForEnvironment(
   ));
 }
 
-function clearHostGithubProviderCooldown(
+function clearNativeGithubProviderCooldown(
   source: SourceUpdateCheckInfo,
 ): SourceUpdateCheckInfo {
   const failure = source.lastAttempt?.failure;
@@ -338,29 +338,29 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   checkingUpdateScopes: new Set(),
   automaticUpdateScopes: new Set(),
   forceUpdateScopes: new Set(),
-  clearHostGithubProviderCooldown: () => {
+  clearNativeGithubProviderCooldown: () => {
     for (const [key, cacheEntry] of updateInfoCache) {
-      if (!key.startsWith('host/')) continue;
+      if (!key.startsWith('native/')) continue;
       updateInfoCache.set(key, {
         ...cacheEntry,
-        sources: cacheEntry.sources.map(clearHostGithubProviderCooldown),
+        sources: cacheEntry.sources.map(clearNativeGithubProviderCooldown),
       });
     }
     set((state) => ({
       snapshots: Object.fromEntries(Object.entries(state.snapshots).map(([key, snapshot]) => {
-        if (!key.startsWith('host/')) return [key, snapshot];
+        if (!key.startsWith('native/')) return [key, snapshot];
         return [key, {
           ...snapshot,
           skills: snapshot.skills.map((skill) => ({
             ...skill,
             updateEvidence: skill.updateEvidence
-              ? clearHostGithubProviderCooldown(skill.updateEvidence)
+              ? clearNativeGithubProviderCooldown(skill.updateEvidence)
               : skill.updateEvidence,
           })),
           updateCheck: snapshot.updateCheck
             ? {
                 ...snapshot.updateCheck,
-                sources: snapshot.updateCheck.sources.map(clearHostGithubProviderCooldown),
+                sources: snapshot.updateCheck.sources.map(clearNativeGithubProviderCooldown),
               }
             : snapshot.updateCheck,
         }];

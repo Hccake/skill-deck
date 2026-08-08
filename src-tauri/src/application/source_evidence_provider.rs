@@ -18,7 +18,7 @@ use crate::core::source_identity::{NormalizedRef, SourceProvider};
 use crate::core::{
     GithubApiClient, GithubTokenProvider, GithubTreeFailure, GithubTreeFetchOutcome,
 };
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 #[cfg(test)]
@@ -204,7 +204,7 @@ impl RuntimeSourceEvidenceDetector {
             request.key.normalized_ref.clone(),
             &environment,
         );
-        let reusable = if previous.is_some() && matches!(&environment, EnvironmentRef::Host) {
+        let reusable = if previous.is_some() && matches!(&environment, EnvironmentRef::Native) {
             let probe_source = source.clone();
             let probe_ref = request.acquisition.git_ref().map(ToString::to_string);
             let probe_cancellation = cancellation.clone();
@@ -242,9 +242,9 @@ impl RuntimeSourceEvidenceDetector {
                     Arc::clone(&self.git_transport),
                 )
                 .discover_parsed_with_cancellation(
-                    ContextRef {
+                    SkillLocationRef {
                         environment: environment.clone(),
-                        scope: ContextScope::Global,
+                        scope: SkillLocation::Global,
                     },
                     parsed,
                     source,
@@ -356,7 +356,7 @@ impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
     ) -> EvidenceFuture<'a> {
         Box::pin(async move {
             match (&request.environment, request.key.remote.provider()) {
-                (EnvironmentRef::Host, SourceProvider::Github) => {
+                (EnvironmentRef::Native, SourceProvider::Github) => {
                     self.detect_github(request, _previous).await
                 }
                 (_, SourceProvider::Github | SourceProvider::Gitlab | SourceProvider::Git) => {
@@ -541,7 +541,7 @@ mod tests {
         )
         .unwrap();
         EvidenceDetectionRequest {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             key: RemoteEvidenceKey::from_identity(&identity),
             requested_skill_paths: BTreeSet::from([skill_path.to_string()]),
             acquisition: Arc::new(identity.acquisition().clone()),
@@ -594,7 +594,7 @@ mod tests {
         )
         .unwrap();
         EvidenceCheckRequest {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             key: RemoteEvidenceKey::from_identity(&identity),
             throttle_key: ProviderThrottleKey::from_identity(&identity),
             mode,
@@ -676,7 +676,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn github_wsl_refresh_does_not_use_the_host_api_client() {
+    async fn github_wsl_refresh_does_not_use_the_native_api_client() {
         let fixture = HttpFixture::new(vec![HttpResponse {
             status: "200 OK",
             headers: vec![("Content-Type", "application/json")],
@@ -1013,7 +1013,7 @@ mod tests {
         let outcome = detector
             .detect(
                 EvidenceDetectionRequest {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     key: RemoteEvidenceKey::from_identity(&identity),
                     requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
                     acquisition: Arc::new(identity.acquisition().clone()),
@@ -1042,7 +1042,7 @@ mod tests {
         assert!(!evidence.skill_revisions.contains_key("skills/beta"));
         assert_eq!(
             payloads
-                .protected_session_ids(&EnvironmentRef::Host)
+                .protected_session_ids(&EnvironmentRef::Native)
                 .unwrap()
                 .len(),
             1
@@ -1051,7 +1051,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clone_detector_routes_wsl_refresh_away_from_host_git_transport() {
+    async fn clone_detector_routes_wsl_refresh_away_from_native_git_transport() {
         let remote = SkillTreeFixture::new(&["skills/alpha"]);
         let parsed = ParsedSource {
             source_type: SourceType::Git,
@@ -1127,7 +1127,7 @@ mod tests {
         ));
         let coordinator = SourceEvidenceCoordinator::with_snapshot_reuse(detector, snapshots);
         let request = |path: &str| EvidenceCheckRequest {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             key: RemoteEvidenceKey::from_identity(&identity),
             throttle_key: ProviderThrottleKey::from_identity(&identity),
             mode: EvidenceCheckMode::Force,
@@ -1175,7 +1175,7 @@ mod tests {
             git_transport.clone(),
         );
         let request = || EvidenceDetectionRequest {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             key: RemoteEvidenceKey::from_identity(&identity),
             requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
             acquisition: Arc::new(identity.acquisition().clone()),
@@ -1224,7 +1224,7 @@ mod tests {
             git_transport.clone(),
         );
         let request = || EvidenceDetectionRequest {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             key: RemoteEvidenceKey::from_identity(&identity),
             requested_skill_paths: BTreeSet::from(["skills/alpha".to_string()]),
             acquisition: Arc::new(identity.acquisition().clone()),

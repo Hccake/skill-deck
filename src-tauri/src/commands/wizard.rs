@@ -6,7 +6,7 @@ use crate::application::install_wizard_workflow::{
     InstallWizardWindowAdapter, InstallWizardWindowRequest,
 };
 use crate::commands::window_role::INSTALL_WIZARD_LABEL;
-use crate::environment::types::{ContextRef, ContextScope};
+use crate::environment::types::{SkillLocation, SkillLocationRef};
 use crate::runtime::RuntimeServiceGraph;
 
 const INSTALL_WIZARD_WIDTH: f64 = 940.0;
@@ -80,19 +80,29 @@ fn io_error(error: impl std::fmt::Display) -> crate::error::AppError {
 
 fn build_wizard_query(
     entry_point: &str,
-    context: &ContextRef,
+    context: &SkillLocationRef,
     project_path: Option<&str>,
     prefill_source: Option<&str>,
     prefill_skill_name: Option<&str>,
 ) -> Result<String, crate::error::AppError> {
     let scope = match context.scope {
-        ContextScope::Global => "global",
-        ContextScope::Project { .. } => "project",
+        SkillLocation::Global => "global",
+        SkillLocation::Project { .. } => "project",
     };
     let mut query_parts = vec![
         format!("entryPoint={}", urlencoding::encode(entry_point)),
         format!("scope={}", urlencoding::encode(scope)),
     ];
+    let environment_name = match &context.environment {
+        crate::environment::types::EnvironmentRef::Native => {
+            crate::environment::project_service::native_environment_info().display_name
+        }
+        crate::environment::types::EnvironmentRef::Wsl { distro_name } => distro_name.clone(),
+    };
+    query_parts.push(format!(
+        "environmentName={}",
+        urlencoding::encode(&environment_name)
+    ));
     if let Some(path) = project_path {
         query_parts.push(format!("projectPath={}", urlencoding::encode(path)));
     }
@@ -118,7 +128,7 @@ pub async fn open_install_wizard(
     app: AppHandle,
     runtime: State<'_, RuntimeServiceGraph>,
     entry_point: String,
-    context: ContextRef,
+    context: SkillLocationRef,
     project_path: Option<String>,
     prefill_source: Option<String>,
     prefill_skill_name: Option<String>,
@@ -177,7 +187,7 @@ pub fn focus_install_wizard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 
     #[test]
     fn install_wizard_uses_wider_default_window() {
@@ -189,11 +199,11 @@ mod tests {
 
     #[test]
     fn wizard_query_keeps_explicit_context() {
-        let context = ContextRef {
+        let context = SkillLocationRef {
             environment: EnvironmentRef::Wsl {
                 distro_name: "Ubuntu".to_string(),
             },
-            scope: ContextScope::Project {
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
@@ -209,19 +219,26 @@ mod tests {
         assert!(query.contains("context="));
         assert!(query.contains("scope=project"));
         assert!(query.contains("projectPath=%2Fhome%2Fme%2Fproject"));
+        assert!(query.contains("environmentName=Ubuntu"));
     }
 
     #[test]
     fn wizard_query_derives_global_scope_from_context() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
 
         let query =
             build_wizard_query("skills-panel", &context, None, None, None).expect("build query");
 
         assert!(query.contains("scope=global"));
+        let native_name =
+            crate::environment::project_service::native_environment_info().display_name;
+        assert!(query.contains(&format!(
+            "environmentName={}",
+            urlencoding::encode(&native_name)
+        )));
         assert!(query.contains("context="));
     }
 }

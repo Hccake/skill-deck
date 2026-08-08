@@ -6,7 +6,7 @@ use crate::error::AppError;
 use crate::storage::atomic_document::AtomicDocumentIo;
 
 pub enum EnvironmentLockIo {
-    Host,
+    Native,
     ActiveWsl(WslSession),
 }
 
@@ -16,7 +16,7 @@ impl EnvironmentLockIo {
         locator: &ResourceLocator,
     ) -> Result<Option<Vec<u8>>, AppError> {
         match self {
-            Self::Host => NativeAtomicDocumentIo.read_optional(locator).await,
+            Self::Native => NativeAtomicDocumentIo.read_optional(locator).await,
             Self::ActiveWsl(session) => {
                 WslAtomicDocumentIo::from_active_session(session.clone())
                     .read_optional(locator)
@@ -40,7 +40,7 @@ impl EnvironmentLockIo {
         bytes: Vec<u8>,
     ) -> Result<(), AppError> {
         match self {
-            Self::Host => NativeAtomicDocumentIo.write_atomic(locator, bytes).await,
+            Self::Native => NativeAtomicDocumentIo.write_atomic(locator, bytes).await,
             Self::ActiveWsl(session) => {
                 WslAtomicDocumentIo::from_active_session(session.clone())
                     .write_atomic(locator, bytes)
@@ -58,17 +58,17 @@ mod tests {
     use crate::environment::types::{EnvironmentRef, ResourceLocator};
 
     #[tokio::test]
-    async fn host_lock_io_round_trips_bytes_atomically() {
+    async fn native_lock_io_round_trips_bytes_atomically() {
         let temp = tempdir().expect("tempdir");
         let locator = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: temp
                 .path()
                 .join("state/lock.json")
                 .to_string_lossy()
                 .to_string(),
         };
-        let io = EnvironmentLockIo::Host;
+        let io = EnvironmentLockIo::Native;
 
         io.write_atomic(&locator, br#"{"skills":{}}\n"#.to_vec())
             .await
@@ -81,17 +81,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_optional_read_distinguishes_missing_lock_from_empty_bytes() {
+    async fn native_optional_read_distinguishes_missing_lock_from_empty_bytes() {
         let temp = tempdir().expect("tempdir");
         let locator = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: temp
                 .path()
                 .join("state/lock.json")
                 .to_string_lossy()
                 .to_string(),
         };
-        let io = EnvironmentLockIo::Host;
+        let io = EnvironmentLockIo::Native;
 
         assert_eq!(
             io.read_optional(&locator).await.expect("missing lock"),
@@ -108,14 +108,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_lock_io_does_not_leave_a_previous_version_sidecar() {
+    async fn native_lock_io_does_not_leave_a_previous_version_sidecar() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("state/lock.json");
         let locator = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string_lossy().into_owned(),
         };
-        let io = EnvironmentLockIo::Host;
+        let io = EnvironmentLockIo::Native;
 
         io.write_atomic(&locator, b"first".to_vec()).await.unwrap();
         io.write_atomic(&locator, b"second".to_vec()).await.unwrap();

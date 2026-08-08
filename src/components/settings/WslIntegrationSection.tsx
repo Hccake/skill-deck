@@ -43,10 +43,10 @@ export function WslIntegrationSection() {
   const saving = transition.kind === 'wslIntegration';
   const disabled = transition.kind !== 'idle' || writeBlocked;
   const errorMessage = failure ? formatAppError(failure.error, t) : null;
-  const hostAlreadySelected = selectedEnvironment.kind === 'host';
+  const nativeAlreadySelected = selectedEnvironment.kind === 'native';
   const activeDisableLabel = transition.kind === 'wslIntegration'
-    ? transition.phase === 'switchingHost'
-      ? 'settings.general.wslSwitchingHost'
+    ? transition.phase === 'switchingNative'
+      ? 'settings.general.wslSwitchingNative'
       : transition.phase === 'disabling'
         ? 'settings.general.wslDisabling'
         : null
@@ -109,8 +109,8 @@ export function WslIntegrationSection() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t('settings.general.wslDisableTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t(hostAlreadySelected
-                ? 'settings.general.wslDisableAfterHostDescription'
+              {t(nativeAlreadySelected
+                ? 'settings.general.wslDisableAfterNativeDescription'
                 : 'settings.general.wslDisableDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -137,7 +137,7 @@ export function WslIntegrationSection() {
                   />
                   {t(activeDisableLabel)}
                 </>
-              ) : t(hostAlreadySelected
+              ) : t(nativeAlreadySelected
                 ? 'settings.general.wslDisableOnlyConfirm'
                 : 'settings.general.wslDisableConfirm')}
             </AlertDialogAction>

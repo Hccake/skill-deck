@@ -42,20 +42,20 @@ const skill = (overrides: Partial<InstalledSkill> = {}): InstalledSkill => ({
 
 const defaultCopyProps = {
   sourceContext: {
-    environment: { kind: 'host' as const },
+    environment: { kind: 'native' as const },
     scope: { scope: 'project' as const, project_id: 'project-a' },
   },
   environments: [
     {
-      environment: { kind: 'host' as const },
-      displayName: 'Host',
+      environment: { kind: 'native' as const },
+      displayName: 'Native',
       status: 'available' as const,
       revision: 1,
       error: null,
     },
   ],
   projectsByEnvironment: {
-    host: ['/project-a', '/project-b'].map((nativePath) => ({
+    native: ['/project-a', '/project-b'].map((nativePath) => ({
       binding: {
         id: nativePath.slice(1),
         nativePath,
@@ -123,7 +123,7 @@ function failedCopyUnit(projectId: string, retryable = true): MutationUnitResult
     skillName: 'toolkit',
     source: defaultCopyProps.sourceContext,
     target: {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: projectId },
     },
     status: 'failed',
@@ -140,7 +140,7 @@ function failedCopyUnit(projectId: string, retryable = true): MutationUnitResult
       severity: 'error',
       retryable,
       technicalDetails: 'private diagnostic',
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       context: null,
       unitId: `copy:toolkit:${projectId}`,
       recoveryResourceId: null,
@@ -190,7 +190,7 @@ describe('CopyToProjectDialog', () => {
     useMutationStore.setState({
       activeMutation: {
         kind: 'update',
-        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
         id: 'mutation-1',
         phase: 'preparing',
         progress: null,
@@ -235,7 +235,7 @@ describe('CopyToProjectDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
 
     await waitFor(() => expect(onCopy).toHaveBeenCalledWith({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       projectIds: ['project-b'],
       agentSelection: {
         revision: 'copy-selection-2',
@@ -293,7 +293,7 @@ describe('CopyToProjectDialog', () => {
     fireEvent.click(copy);
 
     await waitFor(() => expect(onCopy).toHaveBeenLastCalledWith({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       projectIds: ['project-b'],
       agentSelection: {
         revision: 'copy-selection-3',
@@ -307,7 +307,7 @@ describe('CopyToProjectDialog', () => {
     const onCopy = vi.fn(async () => ({
       status: 'succeeded',
       response: { units: [] },
-      succeededProjectIds: ['host-target'],
+      succeededProjectIds: ['native-target'],
     } satisfies CopyOutcome));
     render(
       <CopyToProjectDialog
@@ -317,13 +317,13 @@ describe('CopyToProjectDialog', () => {
           scope: { scope: 'project', project_id: 'source' },
         }}
         environments={[
-          { environment: { kind: 'host' }, displayName: 'Windows', status: 'available', revision: 1, error: null },
+          { environment: { kind: 'native' }, displayName: 'Windows', status: 'available', revision: 1, error: null },
           { environment: { kind: 'wsl', distro_name: 'Ubuntu' }, displayName: 'Ubuntu', status: 'available', revision: 1, error: null },
         ]}
         projectsByEnvironment={{
-          host: [{
+          native: [{
             binding: {
-              id: 'host-target', nativePath: 'C:\\Code\\target', displayName: 'Host target',
+              id: 'native-target', nativePath: 'C:\\Code\\target', displayName: 'Native target',
               order: 0, suppressCrossStorageWarning: false,
             },
             storage: { access: 'native', owner: null },
@@ -345,13 +345,13 @@ describe('CopyToProjectDialog', () => {
 
     fireEvent.click(screen.getByRole('combobox', { name: 'skills.copyToProject.targetEnvironment' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Windows' }));
-    fireEvent.click(await screen.findByText('Host target'));
+    fireEvent.click(await screen.findByText('Native target'));
     fireEvent.click(screen.getByRole('button', { name: 'skills.copyToProject.copy' }));
 
     await waitFor(() => {
       expect(onCopy).toHaveBeenCalledWith({
-        environment: { kind: 'host' },
-        projectIds: ['host-target'],
+        environment: { kind: 'native' },
+        projectIds: ['native-target'],
         agentSelection: {
           revision: 'copy-selection-1',
           selectedOptionIds: [],
@@ -445,7 +445,7 @@ describe('CopyToProjectDialog', () => {
       retryableProjectIds: ['project-c'],
     } satisfies CopyOutcome));
     const projects = [
-      ...defaultCopyProps.projectsByEnvironment.host,
+      ...defaultCopyProps.projectsByEnvironment.native,
       {
         binding: {
           id: 'project-c', nativePath: '/project-c', displayName: null,
@@ -458,7 +458,7 @@ describe('CopyToProjectDialog', () => {
       <CopyToProjectDialog
         skill={skill()}
         {...defaultCopyProps}
-        projectsByEnvironment={{ host: projects }}
+        projectsByEnvironment={{ native: projects }}
         onClose={vi.fn()}
         onCopy={onCopy}
       />
@@ -672,7 +672,7 @@ describe('CopyToProjectDialog', () => {
           failureSource: 'environment',
           error: {
             kind: 'environmentUnavailable',
-            data: { environment: { kind: 'host' }, message: 'unavailable' },
+            data: { environment: { kind: 'native' }, message: 'unavailable' },
           },
         })}
         onClose={vi.fn()}
@@ -706,12 +706,12 @@ describe('CopyToProjectDialog', () => {
   });
 
   it('ignores stale presence results after switching environments', async () => {
-    const hostPresence = deferred<Array<{ projectId: string; hasSkill: boolean }>>();
+    const nativePresence = deferred<Array<{ projectId: string; hasSkill: boolean }>>();
     const ubuntuPresence = deferred<Array<{ projectId: string; hasSkill: boolean }>>();
     const checkExistence = vi.fn((
       _skillName: string,
       environment: { kind: string },
-    ) => environment.kind === 'host' ? hostPresence.promise : ubuntuPresence.promise);
+    ) => environment.kind === 'native' ? nativePresence.promise : ubuntuPresence.promise);
 
     render(
       <CopyToProjectDialog
@@ -752,7 +752,7 @@ describe('CopyToProjectDialog', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Ubuntu' }));
     ubuntuPresence.resolve([{ projectId: 'ubuntu-target', hasSkill: false }]);
     await waitFor(() => expect(screen.getByText('/home/me/target')).toBeDefined());
-    hostPresence.resolve([{ projectId: 'project-b', hasSkill: true }]);
+    nativePresence.resolve([{ projectId: 'project-b', hasSkill: true }]);
 
     await waitFor(() => {
       expect(screen.queryByText('skills.copyToProject.installed')).toBeNull();

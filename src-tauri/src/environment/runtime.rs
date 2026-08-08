@@ -6,8 +6,8 @@ use specta::Type;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::environment::types::{
-    same_environment_identity, ContextRef, ContextScope, EnvironmentKey, EnvironmentRef,
-    ProjectBinding, ResourceLocator,
+    same_environment_identity, EnvironmentKey, EnvironmentRef, RegisteredProject, ResourceLocator,
+    SkillLocation, SkillLocationRef,
 };
 use crate::error::AppError;
 
@@ -104,8 +104,8 @@ pub struct ContextOwnedRootFields {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextRevisionInput {
-    pub context: ContextRef,
-    pub selected_project: Option<ProjectBinding>,
+    pub context: SkillLocationRef,
+    pub selected_project: Option<RegisteredProject>,
     pub owned_root_fields: ContextOwnedRootFields,
     pub resolved_project_identity: Option<PhysicalProjectIdentity>,
     pub canonical_root_identity: PhysicalParentIdentity,
@@ -276,7 +276,7 @@ pub fn context_snapshot_revision(
     #[serde(rename_all = "camelCase")]
     struct ContextProjection<'a> {
         environment: EnvironmentKey,
-        scope: &'a ContextScope,
+        scope: &'a SkillLocation,
     }
 
     #[derive(Serialize)]
@@ -366,7 +366,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ProjectBinding};
+    use crate::environment::types::{
+        EnvironmentRef, RegisteredProject, SkillLocation, SkillLocationRef,
+    };
 
     fn backend() -> ExecutionBackend {
         ExecutionBackend::NativeUnix
@@ -414,8 +416,8 @@ mod tests {
         assert!(posix_relative_target("agent/skills", "/home/alice/.agents/skills/demo",).is_err());
     }
 
-    fn project(id: &str, path: &str) -> ProjectBinding {
-        ProjectBinding {
+    fn project(id: &str, path: &str) -> RegisteredProject {
+        RegisteredProject {
             id: id.to_string(),
             native_path: path.to_string(),
             display_name: Some("display-only".to_string()),
@@ -426,9 +428,9 @@ mod tests {
 
     fn context_input(mapping_fields: BTreeMap<String, String>) -> ContextRevisionInput {
         ContextRevisionInput {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Project {
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Project {
                     project_id: "app".to_string(),
                 },
             },
@@ -438,12 +440,12 @@ mod tests {
                 storage_mapping_fields: mapping_fields,
             },
             resolved_project_identity: Some(PhysicalProjectIdentity {
-                owner: EnvironmentRef::Host,
+                owner: EnvironmentRef::Native,
                 stable_id: "volume-7-file-9".to_string(),
             }),
             canonical_root_identity: parent(10),
             lock_parent_identity: parent(11),
-            storage_mapping_identity: "host-native-v1".to_string(),
+            storage_mapping_identity: "native-v1".to_string(),
         }
     }
 
@@ -474,9 +476,9 @@ mod tests {
             environment,
             native_path: native_path.to_string(),
         };
-        let host = locator(EnvironmentRef::Host, r"C:\Code\App");
-        let host_child = locator(EnvironmentRef::Host, r"c:\code\app\skills");
-        let host_sibling = locator(EnvironmentRef::Host, r"C:\Code\Application");
+        let native = locator(EnvironmentRef::Native, r"C:\Code\App");
+        let native_child = locator(EnvironmentRef::Native, r"c:\code\app\skills");
+        let native_sibling = locator(EnvironmentRef::Native, r"C:\Code\Application");
         let wsl = locator(
             EnvironmentRef::Wsl {
                 distro_name: "Ubuntu".to_string(),
@@ -484,9 +486,9 @@ mod tests {
             "/mnt/c/Code/App",
         );
 
-        assert!(physical_paths_overlap(&host, &host_child, false).expect("host overlap"));
-        assert!(!physical_paths_overlap(&host, &host_sibling, false).expect("host sibling"));
-        assert!(!physical_paths_overlap(&host, &wsl, false).expect("different Environment"));
+        assert!(physical_paths_overlap(&native, &native_child, false).expect("native overlap"));
+        assert!(!physical_paths_overlap(&native, &native_sibling, false).expect("native sibling"));
+        assert!(!physical_paths_overlap(&native, &wsl, false).expect("different Environment"));
     }
 
     #[test]
@@ -582,13 +584,13 @@ mod tests {
 
     #[test]
     fn project_identity_comparison_never_guesses_across_storage_owners() {
-        let host = PhysicalProjectIdentity {
-            owner: EnvironmentRef::Host,
+        let native = PhysicalProjectIdentity {
+            owner: EnvironmentRef::Native,
             stable_id: "volume-7-file-9".to_string(),
         };
-        let same_host = host.clone();
-        let other_host = PhysicalProjectIdentity {
-            owner: EnvironmentRef::Host,
+        let same_native = native.clone();
+        let other_native = PhysicalProjectIdentity {
+            owner: EnvironmentRef::Native,
             stable_id: "volume-7-file-10".to_string(),
         };
         let wsl = PhysicalProjectIdentity {
@@ -599,15 +601,15 @@ mod tests {
         };
 
         assert_eq!(
-            compare_project_identity(&host, &same_host),
+            compare_project_identity(&native, &same_native),
             PhysicalIdentityComparison::Same
         );
         assert_eq!(
-            compare_project_identity(&host, &other_host),
+            compare_project_identity(&native, &other_native),
             PhysicalIdentityComparison::Different
         );
         assert_eq!(
-            compare_project_identity(&host, &wsl),
+            compare_project_identity(&native, &wsl),
             PhysicalIdentityComparison::Unknown
         );
     }

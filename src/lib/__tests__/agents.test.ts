@@ -17,11 +17,11 @@ import {
 function resolvedScope(): ResolvedAgentScope {
   return {
     enabled: true,
-    readsShared: true,
-    sharedPath: '/home/alice/.agents/skills',
+    readsStandard: true,
+    standardPath: '/home/alice/.agents/skills',
     privatePath: null,
     readPaths: ['/home/alice/.agents/skills'],
-    sharedPresence: 'present',
+    standardPresence: 'present',
     privatePresence: null,
     legacyPaths: [],
   };
@@ -38,8 +38,8 @@ function resolvedAgent(
       displayName: id,
       source,
       aliases: [],
-      global: { enabled: true, readsShared: true, privatePath: null },
-      project: { enabled: true, readsShared: true, privatePath: null },
+      global: { enabled: true, readsStandard: true, privatePath: null },
+      project: { enabled: true, readsStandard: true, privatePath: null },
       detection: {
         kind: 'anyPathExists',
         paths: [{ kind: 'home', relativePath: `.${id}` }],
@@ -58,7 +58,7 @@ function runtimeSnapshot(agents: ResolvedAgent[]): AgentRuntimeSnapshot {
   return {
     registryRevision: 'registry-1',
     environmentRevision: 'environment-1',
-    environment: { kind: 'host' },
+    environment: { kind: 'native' },
     availability: 'available',
     projectPath: null,
     agents: Object.fromEntries(agents.map((agent) => [agentId(agent), agent])),

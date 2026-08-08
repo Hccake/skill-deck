@@ -27,7 +27,7 @@ import {
 } from '@/lib/mutation-results';
 import type {
   AgentId,
-  ContextRef,
+  SkillLocationRef,
   ErrorReport,
   ObservedEntryOwner,
   UpdateSkillPreview,
@@ -38,11 +38,11 @@ import { contextKey, environmentKey } from '@/lib/context';
 import { formatAppError } from '@/utils/format-app-error';
 
 const EMPTY_RESULTS: UpdateSkillResult[] = [];
-const HOST_ENVIRONMENT = { kind: 'host' as const };
+const NATIVE_ENVIRONMENT = { kind: 'native' as const };
 
 interface UpdatePlanDialogProps {
   open: boolean;
-  context: ContextRef | null;
+  context: SkillLocationRef | null;
   skillNames: string[];
   agentDisplayNames?: Map<AgentId, string>;
   onOpenChange: (open: boolean) => void;
@@ -97,7 +97,7 @@ function PreviewSkillRow({
       </div>
 
       <div className="space-y-1 text-xs text-muted-foreground">
-        <p>{t('skills.updatePlan.sharedSkillAction')}</p>
+        <p>{t('skills.updatePlan.standardSkillAction')}</p>
         {skill.cleanCopyCount > 0 ? (
           <p>{t('skills.updatePlan.cleanCopiesAction', { count: skill.cleanCopyCount })}</p>
         ) : null}
@@ -211,7 +211,7 @@ export function UpdatePlanDialog({
   const cancelActiveMutation = useMutationStore((state) => state.cancelActiveMutation);
   const businessWriteBlocked = useBusinessWriteBlocked();
   const environments = useEnvironmentStore((state) => state.environments);
-  const projectEnvironment = context?.environment ?? HOST_ENVIRONMENT;
+  const projectEnvironment = context?.environment ?? NATIVE_ENVIRONMENT;
   const { projects } = useProjectWorkspace(projectEnvironment);
   const projectsByEnvironment = useMemo(() => ({
     [environmentKey(projectEnvironment)]: [...projects],

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AgentRuntimeSnapshot,
   AgentSettingsSnapshot,
-  ContextRef,
+  SkillLocationRef,
   CustomAgentDefinition,
   EnvironmentRef,
 } from '@/bindings';
@@ -36,10 +36,10 @@ import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useMutationStore } from '@/stores/mutation';
 import { BusinessWriteBlockedError } from '@/hooks/useBusinessWriteBlocked';
 
-const host: EnvironmentRef = { kind: 'host' };
+const native: EnvironmentRef = { kind: 'native' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
-const hostGlobal: ContextRef = { environment: host, scope: { scope: 'global' } };
-const ubuntuGlobal: ContextRef = { environment: ubuntu, scope: { scope: 'global' } };
+const nativeGlobal: SkillLocationRef = { environment: native, scope: { scope: 'global' } };
+const ubuntuGlobal: SkillLocationRef = { environment: ubuntu, scope: { scope: 'global' } };
 
 function settings(environment: EnvironmentRef, revision: string): AgentSettingsSnapshot {
   return {
@@ -53,7 +53,7 @@ function settings(environment: EnvironmentRef, revision: string): AgentSettingsS
   };
 }
 
-function runtime(context: ContextRef, revision: string): AgentRuntimeSnapshot {
+function runtime(context: SkillLocationRef, revision: string): AgentRuntimeSnapshot {
   return {
     registryRevision: revision,
     environmentRevision: `environment-${revision}`,
@@ -87,17 +87,17 @@ describe('Agent definition workflow ownership', () => {
     vi.clearAllMocks();
     useAgentRegistryStore.setState({
       settingsByEnvironment: {
-        host: { data: settings(host, 'registry-1'), state: 'ready', requestId: 1, error: null },
+        native: { data: settings(native, 'registry-1'), state: 'ready', requestId: 1, error: null },
         'wsl:ubuntu': { data: settings(ubuntu, 'registry-1'), state: 'ready', requestId: 1, error: null },
       },
       runtimeByContext: {
-        [contextKey(hostGlobal)]: { data: runtime(hostGlobal, 'registry-1'), state: 'ready', requestId: 1, error: null },
+        [contextKey(nativeGlobal)]: { data: runtime(nativeGlobal, 'registry-1'), state: 'ready', requestId: 1, error: null },
         [contextKey(ubuntuGlobal)]: { data: runtime(ubuntuGlobal, 'registry-1'), state: 'ready', requestId: 1, error: null },
       },
     });
     useSkillsDataStore.setState({
       snapshots: {
-        [contextKey(hostGlobal)]: {} as never,
+        [contextKey(nativeGlobal)]: {} as never,
         [contextKey(ubuntuGlobal)]: {} as never,
       },
     });
@@ -114,9 +114,9 @@ describe('Agent definition workflow ownership', () => {
     api.listAgents.mockReturnValue(oldRuntime.promise);
     api.saveCustomAgent.mockResolvedValue(settings(ubuntu, 'registry-2'));
 
-    const staleLoad = useAgentRegistryStore.getState().loadRuntime(hostGlobal);
-    const result = await agentDefinitionWorkflow.save(hostGlobal, draft(), null, 'registry-1');
-    oldRuntime.resolve(runtime(hostGlobal, 'registry-1'));
+    const staleLoad = useAgentRegistryStore.getState().loadRuntime(nativeGlobal);
+    const result = await agentDefinitionWorkflow.save(nativeGlobal, draft(), null, 'registry-1');
+    oldRuntime.resolve(runtime(nativeGlobal, 'registry-1'));
     await staleLoad;
 
     expect(result?.registryRevision).toBe('registry-2');
@@ -135,7 +135,7 @@ describe('Agent definition workflow ownership', () => {
   it('does not send Agent definition writes while the install wizard is active', async () => {
     useInstallWizardSessionStore.setState({ revision: 1, active: true });
 
-    await expect(agentDefinitionWorkflow.save(hostGlobal, draft(), null, 'registry-1'))
+    await expect(agentDefinitionWorkflow.save(nativeGlobal, draft(), null, 'registry-1'))
       .rejects.toEqual(new BusinessWriteBlockedError('installWizardActive'));
     expect(api.saveCustomAgent).not.toHaveBeenCalled();
   });
@@ -146,7 +146,7 @@ describe('Agent definition workflow ownership', () => {
       error: { kind: 'installWizardActive' },
     });
 
-    await expect(agentDefinitionWorkflow.save(hostGlobal, draft(), null, 'registry-1'))
+    await expect(agentDefinitionWorkflow.save(nativeGlobal, draft(), null, 'registry-1'))
       .resolves.toBeNull();
 
     expect(useAgentRegistryStore.getState().runtimeByContext).not.toEqual({});
@@ -159,7 +159,7 @@ describe('Agent definition workflow ownership', () => {
       error: { kind: 'installWizardActive' },
     });
 
-    await expect(agentDefinitionWorkflow.delete(hostGlobal, 'custom-agent', 'registry-1'))
+    await expect(agentDefinitionWorkflow.delete(nativeGlobal, 'custom-agent', 'registry-1'))
       .resolves.toBeNull();
 
     expect(useAgentRegistryStore.getState().runtimeByContext).not.toEqual({});

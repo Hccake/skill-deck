@@ -98,8 +98,8 @@ pub async fn set_environment_project_cross_storage_warning(
 
 #[tauri::command]
 #[specta::specta]
-pub fn retry_host_project_migration(
+pub fn retry_native_project_migration(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<Vec<ProjectInfo>, AppError> {
-    environment_projects::retry_host_project_migration(runtime.projects(), runtime.admission())
+    environment_projects::retry_native_project_migration(runtime.projects(), runtime.admission())
 }

@@ -13,7 +13,7 @@ use crate::application::remove_runtime::RuntimeRemoveService;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::core::agent_definition::AgentId;
 use crate::core::mutation::{MutationKind, MutationPhase};
-use crate::environment::types::{ContextRef, ResourceLocator};
+use crate::environment::types::{ResourceLocator, SkillLocationRef};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -33,7 +33,7 @@ pub struct DuplicateCleanupService;
 impl DuplicateCleanupService {
     pub async fn execute(
         &self,
-        context: ContextRef,
+        context: SkillLocationRef,
         skill_name: String,
         agents: Vec<AgentId>,
         remove: &RuntimeRemoveService,
@@ -140,7 +140,7 @@ mod tests {
         ObservedPhysicalEntry {
             entry_id: ObservedEntryId::parse("entry-v1-private").unwrap(),
             display_path: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: "/work/.claude/skills/demo".to_string(),
             },
             kind,

@@ -21,7 +21,7 @@ import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { openManageAgentChanges } from '@/workflows/skill-manage-agents';
 import { openSkillRemoval } from '@/workflows/skill-remove';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import type { InstalledSkill, SkillScope } from '@/bindings';
+import type { InstalledSkill, InstalledSkillLocation } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
@@ -133,7 +133,7 @@ export function SkillsPage() {
     }
   }, [selectedContext, selectedGlobalContext, selectedProjectPath]);
 
-  const handleDetailUpdate = useCallback(async (name: string, scope: SkillScope) => {
+  const handleDetailUpdate = useCallback(async (name: string, scope: InstalledSkillLocation) => {
     const context = scope === 'project' ? selectedContext : selectedGlobalContext;
     await openUpdate(context, [name], false);
   }, [openUpdate, selectedContext, selectedGlobalContext]);

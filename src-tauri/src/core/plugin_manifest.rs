@@ -84,7 +84,7 @@ pub fn get_plugin_groupings(base_path: &Path) -> HashMap<PathBuf, String> {
 
 /// 解析 plugin manifest，并返回相对于 Source root 的 Skill 路径映射。
 ///
-/// 该函数不访问 filesystem，因此 Host 与 WSL discovery 可以共用同一套规则。
+/// 该函数不访问 filesystem，因此 Native 与 WSL discovery 可以共用同一套规则。
 pub fn get_relative_plugin_groupings(
     marketplace_document: Option<&str>,
     plugin_document: Option<&str>,

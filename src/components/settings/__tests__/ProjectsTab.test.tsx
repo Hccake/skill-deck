@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { ContextRef, EnvironmentInfo, EnvironmentRef, ProjectInfo } from '@/bindings';
+import type { SkillLocationRef, EnvironmentInfo, EnvironmentRef, ProjectInfo } from '@/bindings';
 import { ProjectsTab } from '../ProjectsTab';
 import { useMutationStore } from '@/stores/mutation';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
@@ -27,14 +27,14 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   captureProjectRemoval: vi.fn(),
   environments: [
-    { environment: { kind: 'host' as const }, displayName: 'Windows', status: 'available' as const },
+    { environment: { kind: 'native' as const }, displayName: 'Windows', status: 'available' as const },
     { environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' }, displayName: 'Ubuntu', status: 'available' as const },
   ] as EnvironmentInfo[],
   workspace: {
     selectedContext: {
       environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
       scope: { scope: 'global' as const },
-    } as ContextRef,
+    } as SkillLocationRef,
     transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
     contextRevision: 2,
   },
@@ -172,7 +172,7 @@ describe('ProjectsTab', () => {
   });
 
   it('leaves Environment switching to the main-window header', () => {
-    mocks.workspace.transition = { kind: 'switchEnvironment', target: { kind: 'host' } };
+    mocks.workspace.transition = { kind: 'switchEnvironment', target: { kind: 'native' } };
     render(<ProjectsTab />);
 
     expect(screen.queryByRole('combobox', { name: 'context.environmentLabel' })).toBeNull();

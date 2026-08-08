@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
   AddProjectResult,
-  ContextRef,
+  SkillLocationRef,
   EnvironmentRef,
   ProjectInfo,
 } from '@/bindings';
@@ -10,21 +10,21 @@ import {
   type ProjectWorkspaceDependencies,
 } from '../workspace';
 
-const host: EnvironmentRef = { kind: 'host' };
+const native: EnvironmentRef = { kind: 'native' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
 
-function project(id: string, environment: EnvironmentRef = host): ProjectInfo {
+function project(id: string, environment: EnvironmentRef = native): ProjectInfo {
   return {
     binding: {
       id,
-      nativePath: environment.kind === 'host' ? `C:\\Code\\${id}` : `/work/${id}`,
+      nativePath: environment.kind === 'native' ? `C:\\Code\\${id}` : `/work/${id}`,
       displayName: null,
       order: null,
       suppressCrossStorageWarning: false,
     },
     storage: {
       access: 'native',
-      owner: environment.kind === 'host' ? null : environment,
+      owner: environment.kind === 'native' ? null : environment,
     },
   };
 }
@@ -40,7 +40,7 @@ function deferred<T>() {
 }
 
 function setup(overrides: Partial<ProjectWorkspaceDependencies> = {}) {
-  let context: ContextRef = { environment: host, scope: { scope: 'global' } };
+  let context: SkillLocationRef = { environment: native, scope: { scope: 'global' } };
   let contextRevision = 0;
   const backend = {
     list: vi.fn<(environment: EnvironmentRef) => Promise<ProjectInfo[]>>()
@@ -58,7 +58,7 @@ function setup(overrides: Partial<ProjectWorkspaceDependencies> = {}) {
   const contextAccess = {
     captureContext: vi.fn(() => ({ context, revision: contextRevision })),
     onCompleteSnapshot: vi.fn(({ expectedContext, projects }: {
-      expectedContext: { context: ContextRef; revision: number };
+      expectedContext: { context: SkillLocationRef; revision: number };
       projects: readonly ProjectInfo[];
     }) => {
       if (expectedContext.revision !== contextRevision || expectedContext.context !== context) return false;
@@ -90,7 +90,7 @@ function setup(overrides: Partial<ProjectWorkspaceDependencies> = {}) {
     environment,
     contextAccess,
     write,
-    selectProject(projectId: string, targetEnvironment = host) {
+    selectProject(projectId: string, targetEnvironment = native) {
       context = {
         environment: targetEnvironment,
         scope: { scope: 'project', project_id: projectId },
@@ -107,14 +107,14 @@ describe('Project workspace', () => {
     const { workspace, backend } = setup();
     backend.list.mockReturnValue(pending.promise);
 
-    const first = workspace.execute({ kind: 'ensureLoaded', environment: host });
-    const second = workspace.execute({ kind: 'ensureLoaded', environment: host });
+    const first = workspace.execute({ kind: 'ensureLoaded', environment: native });
+    const second = workspace.execute({ kind: 'ensureLoaded', environment: native });
     pending.resolve([project('app')]);
 
     await expect(first).resolves.toMatchObject({ status: 'succeeded' });
     await expect(second).resolves.toMatchObject({ status: 'succeeded' });
     expect(backend.list).toHaveBeenCalledOnce();
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       phase: 'ready',
       completeness: 'complete',
       projects: [project('app')],
@@ -126,14 +126,14 @@ describe('Project workspace', () => {
     const { workspace, backend } = setup();
     backend.list.mockReturnValue(pending.promise);
 
-    const firstLoad = workspace.execute({ kind: 'ensureLoaded', environment: host });
-    const explicitRefresh = workspace.execute({ kind: 'refresh', environment: host });
+    const firstLoad = workspace.execute({ kind: 'ensureLoaded', environment: native });
+    const explicitRefresh = workspace.execute({ kind: 'refresh', environment: native });
     pending.resolve([project('app')]);
 
     await expect(firstLoad).resolves.toMatchObject({ status: 'succeeded' });
     await expect(explicitRefresh).resolves.toMatchObject({ status: 'succeeded' });
     expect(backend.list).toHaveBeenCalledOnce();
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       phase: 'ready',
       completeness: 'complete',
       projects: [project('app')],
@@ -145,13 +145,13 @@ describe('Project workspace', () => {
 
     const result = await workspace.execute({
       kind: 'add',
-      environment: host,
+      environment: native,
       nativePath: 'C:\\Code\\app',
     });
 
     expect(result).toEqual({ status: 'notRun', reason: 'catalogNotReady' });
     expect(backend.add).not.toHaveBeenCalled();
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       phase: 'idle',
       completeness: 'partial',
       projects: [],
@@ -161,16 +161,16 @@ describe('Project workspace', () => {
   it('commits one complete snapshot per Environment', async () => {
     const { workspace, backend } = setup();
     backend.list.mockImplementation(async (environment) => (
-      environment.kind === 'host' ? [project('host-app')] : [project('wsl-app', ubuntu)]
+      environment.kind === 'native' ? [project('native-app')] : [project('wsl-app', ubuntu)]
     ));
 
-    await workspace.execute({ kind: 'refresh', environment: host });
+    await workspace.execute({ kind: 'refresh', environment: native });
     await workspace.execute({ kind: 'refresh', environment: ubuntu });
 
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       phase: 'ready',
       completeness: 'complete',
-      projects: [project('host-app')],
+      projects: [project('native-app')],
     });
     expect(workspace.getSnapshot(ubuntu)).toMatchObject({
       phase: 'ready',
@@ -184,13 +184,13 @@ describe('Project workspace', () => {
     const { workspace, backend } = setup();
     backend.list.mockReturnValue(pending.promise);
 
-    const first = workspace.execute({ kind: 'refresh', environment: host });
-    const second = workspace.execute({ kind: 'refresh', environment: host });
+    const first = workspace.execute({ kind: 'refresh', environment: native });
+    const second = workspace.execute({ kind: 'refresh', environment: native });
     pending.resolve([project('app')]);
     await Promise.all([first, second]);
 
     expect(backend.list).toHaveBeenCalledOnce();
-    expect(workspace.getSnapshot(host).projects).toEqual([project('app')]);
+    expect(workspace.getSnapshot(native).projects).toEqual([project('app')]);
   });
 
   it('refreshes a complete snapshot on focus only after its freshness expires', async () => {
@@ -198,15 +198,15 @@ describe('Project workspace', () => {
     const { workspace, backend } = setup({ now: () => now });
     backend.list.mockResolvedValue([project('app')]);
 
-    await workspace.execute({ kind: 'refresh', environment: host, reason: 'manual' });
+    await workspace.execute({ kind: 'refresh', environment: native, reason: 'manual' });
     now += 299_999;
-    await workspace.execute({ kind: 'refresh', environment: host, reason: 'focus' });
+    await workspace.execute({ kind: 'refresh', environment: native, reason: 'focus' });
     expect(backend.list).toHaveBeenCalledOnce();
 
     now += 2;
-    await workspace.execute({ kind: 'refresh', environment: host, reason: 'focus' });
+    await workspace.execute({ kind: 'refresh', environment: native, reason: 'focus' });
     expect(backend.list).toHaveBeenCalledTimes(2);
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       lastSuccessAt: 301_001,
       freshUntil: 601_001,
     });
@@ -226,16 +226,16 @@ describe('Project workspace', () => {
       .mockReturnValueOnce(older.promise)
       .mockReturnValueOnce(current.promise);
 
-    const oldRefresh = workspace.execute({ kind: 'refresh', environment: host, reason: 'manual' });
+    const oldRefresh = workspace.execute({ kind: 'refresh', environment: native, reason: 'manual' });
     revision = 2;
-    const newRefresh = workspace.execute({ kind: 'refresh', environment: host, reason: 'reconnect' });
+    const newRefresh = workspace.execute({ kind: 'refresh', environment: native, reason: 'reconnect' });
     current.resolve([project('current')]);
     await newRefresh;
     older.resolve([project('old')]);
     await oldRefresh;
 
     expect(backend.list).toHaveBeenCalledTimes(2);
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       environmentRevision: 2,
       projects: [project('current')],
     });
@@ -248,16 +248,16 @@ describe('Project workspace', () => {
     const added = project('added');
     const { workspace, backend } = setup();
     backend.list.mockResolvedValueOnce([existing]);
-    await workspace.execute({ kind: 'ensureLoaded', environment: host });
+    await workspace.execute({ kind: 'ensureLoaded', environment: native });
     backend.list.mockReturnValueOnce(pending.promise);
     backend.add.mockResolvedValue({ project: added, created: true });
 
-    const refresh = workspace.execute({ kind: 'refresh', environment: host });
-    await workspace.execute({ kind: 'add', environment: host, nativePath: added.binding.nativePath });
+    const refresh = workspace.execute({ kind: 'refresh', environment: native });
+    await workspace.execute({ kind: 'add', environment: native, nativePath: added.binding.nativePath });
     pending.resolve([project('old')]);
     await refresh;
 
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       projects: [existing, added],
       completeness: 'complete',
     });
@@ -266,13 +266,13 @@ describe('Project workspace', () => {
   it('retains the last successful projects when refresh fails', async () => {
     const { workspace, backend } = setup();
     backend.list.mockResolvedValueOnce([project('app')]);
-    await workspace.execute({ kind: 'refresh', environment: host });
+    await workspace.execute({ kind: 'refresh', environment: native });
     backend.list.mockRejectedValueOnce(new Error('refresh failed'));
 
-    const result = await workspace.execute({ kind: 'refresh', environment: host });
+    const result = await workspace.execute({ kind: 'refresh', environment: native });
 
     expect(result).toMatchObject({ status: 'failed' });
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       phase: 'error',
       completeness: 'complete',
       projects: [project('app')],
@@ -284,12 +284,12 @@ describe('Project workspace', () => {
     const existing = project('existing');
     const { workspace, backend } = setup();
     backend.list.mockResolvedValueOnce([existing]);
-    await workspace.execute({ kind: 'ensureLoaded', environment: host });
+    await workspace.execute({ kind: 'ensureLoaded', environment: native });
     backend.add.mockRejectedValueOnce(new Error('add failed'));
 
     const result = await workspace.execute({
       kind: 'add',
-      environment: host,
+      environment: native,
       nativePath: 'C:\\Code\\new',
     });
 
@@ -297,7 +297,7 @@ describe('Project workspace', () => {
       status: 'failed',
       error: { kind: 'custom', data: { message: 'add failed' } },
     });
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       phase: 'ready',
       completeness: 'complete',
       projects: [existing],
@@ -310,7 +310,7 @@ describe('Project workspace', () => {
     selectProject('removed');
     backend.remove.mockResolvedValue([]);
 
-    await workspace.execute({ kind: 'remove', environment: host, projectId: 'removed' });
+    await workspace.execute({ kind: 'remove', environment: native, projectId: 'removed' });
 
     expect(context().scope).toEqual({ scope: 'global' });
     expect(contextAccess.onCompleteSnapshot).toHaveBeenCalledWith(
@@ -318,7 +318,7 @@ describe('Project workspace', () => {
         expectedContext: expect.objectContaining({
           context: expect.objectContaining({ scope: { scope: 'project', project_id: 'removed' } }),
         }),
-        environment: host,
+        environment: native,
         projects: [],
       }),
     );
@@ -330,7 +330,7 @@ describe('Project workspace', () => {
     selectProject('removed');
     backend.remove.mockReturnValue(pending.promise);
 
-    const removal = workspace.execute({ kind: 'remove', environment: host, projectId: 'removed' });
+    const removal = workspace.execute({ kind: 'remove', environment: native, projectId: 'removed' });
     selectProject('new-selection');
     pending.resolve([]);
     await removal;
@@ -346,7 +346,7 @@ describe('Project workspace', () => {
 
     expect(environment.ensureAvailable).toHaveBeenCalledWith(ubuntu);
     expect(result).toMatchObject({ status: 'succeeded' });
-    expect(context()).toEqual({ environment: host, scope: { scope: 'global' } });
+    expect(context()).toEqual({ environment: native, scope: { scope: 'global' } });
   });
 
   it('distinguishes Copy target connection failure from project catalog failure', async () => {
@@ -374,7 +374,7 @@ describe('Project workspace', () => {
     catalog.backend.list.mockRejectedValue(new Error('catalog failed'));
     await expect(catalog.workspace.execute({
       kind: 'prepareCopyTarget',
-      environment: host,
+      environment: native,
     })).resolves.toMatchObject({
       status: 'failed',
       failureSource: 'catalog',
@@ -388,17 +388,17 @@ describe('Project workspace', () => {
     };
     const { workspace, backend } = setup({ write });
     backend.list.mockResolvedValueOnce([project('existing')]);
-    await workspace.execute({ kind: 'ensureLoaded', environment: host });
+    await workspace.execute({ kind: 'ensureLoaded', environment: native });
 
     const result = await workspace.execute({
       kind: 'add',
-      environment: host,
+      environment: native,
       nativePath: 'C:\\Code\\app',
     });
 
     expect(result).toEqual({ status: 'notRun', reason: 'writeBlocked' });
     expect(backend.add).not.toHaveBeenCalled();
-    expect(workspace.getSnapshot(host)).toMatchObject({
+    expect(workspace.getSnapshot(native)).toMatchObject({
       phase: 'ready',
       completeness: 'complete',
       projects: [project('existing')],

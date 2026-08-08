@@ -114,7 +114,7 @@ fn effective_scope_defaults(
                 .and_then(|id| snapshot.active_definitions.get(&id))
                 .map(&scope)
                 .is_some_and(|scope| {
-                    scope.enabled && !scope.reads_shared && scope.private_path.is_some()
+                    scope.enabled && !scope.reads_standard && scope.private_path.is_some()
                 })
         })
         .cloned()
@@ -299,10 +299,10 @@ mod tests {
 
     static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-    fn scope(enabled: bool, reads_shared: bool, private_path: bool) -> ScopeDefinition {
+    fn scope(enabled: bool, reads_standard: bool, private_path: bool) -> ScopeDefinition {
         ScopeDefinition {
             enabled,
-            reads_shared,
+            reads_standard,
             private_path: private_path.then(|| PathSpec::home(".agent/skills")),
         }
     }
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn effective_defaults_filter_missing_conflicting_disabled_and_non_private_ids_stably() {
         let private = scope(true, false, true);
-        let shared = scope(true, true, false);
+        let standard = scope(true, true, false);
         let both = scope(true, true, true);
         let disabled = scope(false, false, true);
         let snapshot = registry_snapshot(vec![
@@ -349,7 +349,7 @@ mod tests {
                 "builtin-private",
                 AgentSource::Builtin,
                 private.clone(),
-                shared.clone(),
+                standard.clone(),
             ),
             definition(
                 "custom-private",
@@ -361,24 +361,24 @@ mod tests {
                 "private-to-both",
                 AgentSource::Builtin,
                 both,
-                shared.clone(),
+                standard.clone(),
             ),
             definition(
                 "disabled-private",
                 AgentSource::Builtin,
                 disabled,
-                shared.clone(),
+                standard.clone(),
             ),
             definition(
                 "not-detected-private",
                 AgentSource::Builtin,
                 private.clone(),
-                shared.clone(),
+                standard.clone(),
             ),
             definition(
                 "indeterminate-private",
                 AgentSource::Custom,
-                shared.clone(),
+                standard.clone(),
                 private,
             ),
         ]);

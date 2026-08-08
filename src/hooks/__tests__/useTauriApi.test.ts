@@ -187,7 +187,7 @@ describe('useTauriApi unwrap logic', () => {
     expect(mockCommands.getCopyAgentSelection).toHaveBeenCalledWith(context, 'toolkit');
   });
 
-  it('maps host picker paths through the selected environment', async () => {
+  it('maps native picker paths through the selected environment', async () => {
     const environment = { kind: 'wsl', distro_name: 'Ubuntu' } as const;
     mockCommands.mapEnvironmentPath.mockResolvedValue({
       status: 'ok',

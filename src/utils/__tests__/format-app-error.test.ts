@@ -81,7 +81,7 @@ describe('formatAppError', () => {
     ],
     [{ kind: 'configurationReadOnly' }, 'addSkill.error.configurationReadOnly'],
     [
-      { kind: 'payloadStorageRequiresCleanup', data: { environment: { kind: 'host' } } },
+      { kind: 'payloadStorageRequiresCleanup', data: { environment: { kind: 'native' } } },
       'addSkill.error.payloadStorageRequiresCleanup',
     ],
     [

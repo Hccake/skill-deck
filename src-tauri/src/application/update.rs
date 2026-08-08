@@ -28,7 +28,7 @@ use crate::application::update_planner::{LocalUpdateInspection, LockedUpdateSkil
 use crate::core::mutation::CancellationSignal;
 use crate::core::source_identity::{AcquisitionDescriptor, NormalizedRef, SourceIdentity};
 use crate::environment::runtime::ObservedEntryId;
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -106,7 +106,7 @@ pub enum UpdateCheckSelection {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateCheckRequest {
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub mode: UpdateCheckMode,
     pub selection: UpdateCheckSelection,
 }
@@ -193,7 +193,7 @@ pub fn derive_update_capability_from_metadata(
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct UpdateRequest {
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub skill_names: Vec<String>,
 }
 
@@ -324,7 +324,7 @@ pub trait UpdatePlanner: Send + Sync {
 pub struct UpdateAcquisitionGroup {
     pub source_result_id: String,
     pub source: String,
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub key: PayloadAcquisitionKey,
     pub evidence_key: RemoteEvidenceKey,
     pub descriptor: Arc<AcquisitionDescriptor>,
@@ -644,7 +644,7 @@ where
 }
 
 fn not_updated_skill(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     skill_name: String,
     source_result_id: String,
     report: ErrorReport,
@@ -665,7 +665,7 @@ fn not_updated_skill(
 }
 
 fn cancelled_before_mutation(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     groups: &[UpdateAcquisitionGroup],
 ) -> UpdateResponse {
     let report = ErrorReport::from_app_error(AppError::MutationCancelled, Some(context.clone()));
@@ -701,7 +701,7 @@ fn cancelled_before_mutation(
 fn update_coverage(
     mutation: Option<&MutationUnitResult>,
     preserved: bool,
-    context: &ContextRef,
+    context: &SkillLocationRef,
 ) -> (UpdateCoverage, Vec<UpdateWarningCode>, bool) {
     let Some(mutation) = mutation else {
         let report = ErrorReport::from_app_error(
@@ -810,7 +810,7 @@ fn preview_from_inspection(inspection: LocalUpdateInspection) -> Result<UpdatePr
 }
 
 fn acquisition_groups(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     skills: Vec<LockedUpdateSkill>,
 ) -> Result<Vec<UpdateAcquisitionGroup>, AppError> {
     let mut groups = Vec::<UpdateAcquisitionGroup>::new();
@@ -943,7 +943,7 @@ mod tests {
     use crate::core::skill_payload::build_skill_payload;
     use crate::core::source_identity::NormalizedRef;
     use crate::environment::runtime::ContextSnapshotRevision;
-    use crate::environment::types::{ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation};
     use crate::error::AppError;
     use tempfile::tempdir;
 
@@ -986,7 +986,7 @@ mod tests {
             crate::application::remove::ObservedPhysicalEntry {
                 entry_id: crate::environment::runtime::ObservedEntryId::parse(id).unwrap(),
                 display_path: crate::environment::types::ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: path.to_string(),
                 },
                 kind: crate::application::remove::ObservedEntryKind::Directory,
@@ -1063,7 +1063,7 @@ mod tests {
             entry_id: crate::environment::runtime::ObservedEntryId::parse("entry-v1-private")
                 .unwrap(),
             display_path: crate::environment::types::ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: "/agents/private".to_string(),
             },
             kind: crate::application::remove::ObservedEntryKind::Directory,
@@ -1097,9 +1097,9 @@ mod tests {
 
     #[test]
     fn update_check_request_serializes_mode_and_typed_selection() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let request = UpdateCheckRequest {
             context: context.clone(),
@@ -1116,13 +1116,13 @@ mod tests {
             serde_json::to_value(request).unwrap(),
             serde_json::json!({
                 "context": {
-                    "environment": { "kind": "host" },
+                    "environment": { "kind": "native" },
                     "scope": { "scope": "global" }
                 },
                 "mode": "force",
                 "selection": { "kind": "skills", "skills": [{
                     "context": {
-                        "environment": { "kind": "host" },
+                        "environment": { "kind": "native" },
                         "scope": { "scope": "global" }
                     },
                     "skillName": "demo"
@@ -1359,9 +1359,9 @@ mod tests {
             unit_id: name.to_string(),
             skill_name: name.to_string(),
             source: None,
-            target: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            target: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             status,
             retryable: status != MutationUnitStatus::Succeeded,
@@ -1423,7 +1423,7 @@ mod tests {
             fs::write(root.join("SKILL.md"), format!("---\nname: {name}\n---\n")).unwrap();
         }
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source")
+            .discover(EnvironmentRef::Native, "source")
             .await
             .unwrap();
         let mut payloads = Vec::new();
@@ -1496,9 +1496,9 @@ mod tests {
             .execute_with_stage_observer(
                 &UpdateExecutionRequest {
                     request: UpdateRequest {
-                        context: ContextRef {
-                            environment: EnvironmentRef::Host,
-                            scope: ContextScope::Global,
+                        context: SkillLocationRef {
+                            environment: EnvironmentRef::Native,
+                            scope: SkillLocation::Global,
                         },
                         skill_names: vec!["alpha".to_string(), "beta".to_string()],
                     },
@@ -1567,7 +1567,7 @@ mod tests {
         fs::create_dir_all(&alpha).unwrap();
         fs::write(alpha.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source")
+            .discover(EnvironmentRef::Native, "source")
             .await
             .unwrap();
         let alpha_handle = manager
@@ -1661,9 +1661,9 @@ mod tests {
             .execute(
                 &UpdateExecutionRequest {
                     request: UpdateRequest {
-                        context: ContextRef {
-                            environment: EnvironmentRef::Host,
-                            scope: ContextScope::Global,
+                        context: SkillLocationRef {
+                            environment: EnvironmentRef::Native,
+                            scope: SkillLocation::Global,
                         },
                         skill_names: vec!["alpha".to_string(), "beta".to_string()],
                     },
@@ -1718,9 +1718,9 @@ mod tests {
 
     #[test]
     fn successful_conflict_preservation_and_failed_mutation_have_distinct_coverage() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let succeeded = mutation_result("demo", MutationUnitStatus::Succeeded);
         let failed = mutation_result("demo", MutationUnitStatus::Failed);
@@ -1770,9 +1770,9 @@ mod tests {
 
     #[test]
     fn earlier_success_and_later_cancellation_remain_partial() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let cancellation =
             ErrorReport::from_app_error(AppError::MutationCancelled, Some(context.clone()));
@@ -1816,9 +1816,9 @@ mod tests {
             context_revision: ContextSnapshotRevision::parse("context-v1-demo").unwrap(),
         };
         let request = UpdateRequest {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             skill_names: vec!["demo".to_string()],
         };
@@ -1872,9 +1872,9 @@ mod tests {
             context_revision: ContextSnapshotRevision::parse("context-v1-demo").unwrap(),
         };
         let request = UpdateRequest {
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             skill_names: vec!["demo".to_string()],
         };
@@ -1927,9 +1927,9 @@ mod tests {
             environment_revision: "environment-1".to_string(),
             context_revision: ContextSnapshotRevision::parse("context-v1-cancel").unwrap(),
         };
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let service = UpdateService::new(
             manager,
@@ -1969,9 +1969,9 @@ mod tests {
 
     #[test]
     fn cancelled_source_acquisition_sets_cancelled_outcome_without_a_mutation_unit() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let cancelled =
             ErrorReport::from_app_error(AppError::MutationCancelled, Some(context.clone()));
@@ -1992,9 +1992,9 @@ mod tests {
 
     #[test]
     fn acquisition_groups_share_only_equivalent_source_descriptors() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let shared = acquisition_groups(
             &context,

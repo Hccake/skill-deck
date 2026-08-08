@@ -79,7 +79,7 @@ pub struct DiscoveryDocument {
     pub content: Vec<u8>,
 }
 
-/// Host 与 WSL 共用的 Environment-neutral discovery 输入。
+/// Native 与 WSL 共用的 Environment-neutral discovery 输入。
 #[derive(Debug, Clone)]
 pub struct DiscoveryInventory {
     pub search_prefix: PathBuf,

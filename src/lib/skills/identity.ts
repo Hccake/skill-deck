@@ -1,8 +1,8 @@
-import type { InstalledSkill, SkillScope } from '@/bindings';
+import type { InstalledSkill, InstalledSkillLocation } from '@/bindings';
 
 export interface SkillIdentity {
   name: string;
-  scope: SkillScope;
+  scope: InstalledSkillLocation;
   projectPath?: string | null;
 }
 

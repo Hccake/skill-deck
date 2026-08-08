@@ -5,7 +5,7 @@ import { useEnvironmentStore } from '../environment';
 import { projectWorkspace } from '../projects';
 import { selectPendingEnvironment, useWorkspaceContextStore } from '../workspace-context';
 
-const host: EnvironmentRef = { kind: 'host' };
+const native: EnvironmentRef = { kind: 'native' };
 const ubuntu: EnvironmentRef = { kind: 'wsl', distro_name: 'Ubuntu' };
 const debian: EnvironmentRef = { kind: 'wsl', distro_name: 'Debian' };
 
@@ -23,16 +23,16 @@ describe('useWorkspaceContextStore', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     useWorkspaceContextStore.setState({
-      selectedContext: { environment: host, scope: { scope: 'global' } },
+      selectedContext: { environment: native, scope: { scope: 'global' } },
       transition: { kind: 'idle' },
       wslIntegrationFailure: null,
       contextRevision: 0,
     });
   });
 
-  it('starts at Host Global and increments revision only for committed changes', () => {
+  it('starts at Native Global and increments revision only for committed changes', () => {
     expect(useWorkspaceContextStore.getState()).toMatchObject({
-      selectedContext: { environment: host, scope: { scope: 'global' } },
+      selectedContext: { environment: native, scope: { scope: 'global' } },
       transition: { kind: 'idle' },
       contextRevision: 0,
     });
@@ -55,7 +55,7 @@ describe('useWorkspaceContextStore', () => {
 
     const switching = useWorkspaceContextStore.getState().switchEnvironment(ubuntu);
 
-    expect(useWorkspaceContextStore.getState().selectedContext.environment).toEqual(host);
+    expect(useWorkspaceContextStore.getState().selectedContext.environment).toEqual(native);
     expect(selectPendingEnvironment(useWorkspaceContextStore.getState())).toEqual(ubuntu);
     await expect(useWorkspaceContextStore.getState().switchEnvironment(debian))
       .rejects.toThrow('Workspace transition already in progress');
@@ -110,7 +110,7 @@ describe('useWorkspaceContextStore', () => {
 
     expect(execute).not.toHaveBeenCalled();
     expect(useWorkspaceContextStore.getState()).toMatchObject({
-      selectedContext: { environment: host, scope: { scope: 'global' } },
+      selectedContext: { environment: native, scope: { scope: 'global' } },
       transition: { kind: 'idle' },
       contextRevision: 0,
     });
@@ -119,7 +119,7 @@ describe('useWorkspaceContextStore', () => {
   it('reconnects the current environment without leaving the selected project', async () => {
     useWorkspaceContextStore.setState({
       selectedContext: {
-        environment: host,
+        environment: native,
         scope: { scope: 'project', project_id: 'project-a' },
       },
       contextRevision: 4,
@@ -128,21 +128,21 @@ describe('useWorkspaceContextStore', () => {
       .mockResolvedValue(undefined);
     const execute = vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
       status: 'succeeded',
-      snapshot: projectWorkspace.getSnapshot(host),
+      snapshot: projectWorkspace.getSnapshot(native),
       value: [],
     });
 
-    await useWorkspaceContextStore.getState().switchEnvironment(host);
+    await useWorkspaceContextStore.getState().switchEnvironment(native);
 
-    expect(connect).toHaveBeenCalledWith(host);
+    expect(connect).toHaveBeenCalledWith(native);
     expect(execute).toHaveBeenCalledWith({
       kind: 'refresh',
-      environment: host,
+      environment: native,
       reason: 'reconnect',
     });
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: {
-        environment: host,
+        environment: native,
         scope: { scope: 'project', project_id: 'project-a' },
       },
       transition: { kind: 'idle' },
@@ -151,10 +151,10 @@ describe('useWorkspaceContextStore', () => {
   });
 
   it('keeps the selected project when reconnecting the current environment fails', async () => {
-    const error = new Error('host runtime unavailable');
+    const error = new Error('native runtime unavailable');
     useWorkspaceContextStore.setState({
       selectedContext: {
-        environment: host,
+        environment: native,
         scope: { scope: 'project', project_id: 'project-a' },
       },
       contextRevision: 4,
@@ -162,13 +162,13 @@ describe('useWorkspaceContextStore', () => {
     vi.spyOn(useEnvironmentStore.getState(), 'connect').mockRejectedValue(error);
     const execute = vi.spyOn(projectWorkspace, 'execute');
 
-    await expect(useWorkspaceContextStore.getState().switchEnvironment(host))
-      .rejects.toThrow('host runtime unavailable');
+    await expect(useWorkspaceContextStore.getState().switchEnvironment(native))
+      .rejects.toThrow('native runtime unavailable');
 
     expect(execute).not.toHaveBeenCalled();
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: {
-        environment: host,
+        environment: native,
         scope: { scope: 'project', project_id: 'project-a' },
       },
       transition: { kind: 'idle' },
@@ -181,7 +181,7 @@ describe('useWorkspaceContextStore', () => {
     vi.spyOn(tauriApi, 'listEnvironmentProjects').mockReturnValue(listing.promise);
     useWorkspaceContextStore.setState({
       selectedContext: {
-        environment: host,
+        environment: native,
         scope: { scope: 'project', project_id: 'removed' },
       },
       contextRevision: 7,
@@ -189,7 +189,7 @@ describe('useWorkspaceContextStore', () => {
 
     const refresh = projectWorkspace.execute({
       kind: 'refresh',
-      environment: host,
+      environment: native,
       reason: 'manual',
     });
     useWorkspaceContextStore.getState().selectProject('new-selection');
@@ -198,14 +198,14 @@ describe('useWorkspaceContextStore', () => {
 
     expect(useWorkspaceContextStore.getState()).toMatchObject({
       selectedContext: {
-        environment: host,
+        environment: native,
         scope: { scope: 'project', project_id: 'new-selection' },
       },
       contextRevision: 8,
     });
   });
 
-  it('owns Host switching and setting persistence as one WSL transition', async () => {
+  it('owns Native switching and setting persistence as one WSL transition', async () => {
     useWorkspaceContextStore.setState({
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
     });
@@ -216,14 +216,14 @@ describe('useWorkspaceContextStore', () => {
       .mockReturnValue(persisting.promise);
     vi.spyOn(projectWorkspace, 'execute').mockResolvedValue({
       status: 'succeeded',
-      snapshot: projectWorkspace.getSnapshot(host),
+      snapshot: projectWorkspace.getSnapshot(native),
       value: [],
     });
 
     const disabling = useWorkspaceContextStore.getState().changeWslIntegration(false);
     expect(useWorkspaceContextStore.getState().transition).toEqual({
       kind: 'wslIntegration',
-      phase: 'switchingHost',
+      phase: 'switchingNative',
     });
     await expect(useWorkspaceContextStore.getState().switchEnvironment(debian))
       .rejects.toThrow('Workspace transition already in progress');
@@ -231,7 +231,7 @@ describe('useWorkspaceContextStore', () => {
     connecting.resolve();
     await vi.waitFor(() => expect(setEnabled).toHaveBeenCalledWith(false));
     expect(useWorkspaceContextStore.getState()).toMatchObject({
-      selectedContext: { environment: host, scope: { scope: 'global' } },
+      selectedContext: { environment: native, scope: { scope: 'global' } },
       transition: { kind: 'wslIntegration', phase: 'disabling' },
     });
 
@@ -240,12 +240,12 @@ describe('useWorkspaceContextStore', () => {
     expect(useWorkspaceContextStore.getState().transition).toEqual({ kind: 'idle' });
   });
 
-  it('returns the failing stage and skips persistence when Host switching fails', async () => {
+  it('returns the failing stage and skips persistence when Native switching fails', async () => {
     useWorkspaceContextStore.setState({
       selectedContext: { environment: ubuntu, scope: { scope: 'global' } },
     });
     vi.spyOn(useEnvironmentStore.getState(), 'connect')
-      .mockRejectedValue(new Error('host unavailable'));
+      .mockRejectedValue(new Error('native unavailable'));
     const setEnabled = vi.spyOn(useEnvironmentStore.getState(), 'setWslIntegrationEnabled');
 
     const outcome = await useWorkspaceContextStore.getState().changeWslIntegration(false);
@@ -254,7 +254,7 @@ describe('useWorkspaceContextStore', () => {
       status: 'failed',
       failure: {
         stage: 'switchHost',
-        error: { kind: 'custom', data: { message: 'host unavailable' } },
+        error: { kind: 'custom', data: { message: 'native unavailable' } },
       },
     });
     expect(setEnabled).not.toHaveBeenCalled();

@@ -8,7 +8,7 @@ import { CopyToProjectDialogContainer } from '../CopyToProjectDialogContainer';
 import { UpdatePlanDialogContainer } from '../UpdatePlanDialogContainer';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
-import type { ContextRef, InstalledSkill } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
   openManageAgentChanges: vi.fn(),
@@ -42,7 +42,7 @@ vi.mock('../CopyToProjectDialog', () => ({
   CopyToProjectDialog: (props: {
     open: boolean;
     skill: InstalledSkill;
-    sourceContext: ContextRef;
+    sourceContext: SkillLocationRef;
   }) => (
     <div
       data-testid="copy-container-dialog"
@@ -65,8 +65,8 @@ vi.mock('../UpdatePlanDialog', () => ({
   ),
 }));
 
-const context: ContextRef = {
-  environment: { kind: 'host' },
+const context: SkillLocationRef = {
+  environment: { kind: 'native' },
   scope: { scope: 'project', project_id: 'source-project' },
 };
 

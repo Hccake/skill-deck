@@ -37,13 +37,13 @@ fn project_definition(config: &AgentConfig) -> ScopeDefinition {
     if config.skills_dir == ".agents/skills" {
         ScopeDefinition {
             enabled: true,
-            reads_shared: true,
+            reads_standard: true,
             private_path: None,
         }
     } else {
         ScopeDefinition {
             enabled: true,
-            reads_shared: false,
+            reads_standard: false,
             private_path: Some(PathSpec::project(config.skills_dir)),
         }
     }
@@ -54,14 +54,14 @@ fn global_definition(agent: AgentType, config: &AgentConfig) -> (ScopeDefinition
         return (
             ScopeDefinition {
                 enabled: true,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             },
             vec![LegacyPath {
                 scope: LegacyPathScope::Global,
                 path: PathSpec::home(".cline/skills"),
                 behavior: LegacyPathBehavior::OfferMigration,
-                migration_target: LegacyMigrationTarget::SharedCanonical,
+                migration_target: LegacyMigrationTarget::StandardCanonical,
             }],
         );
     }
@@ -70,7 +70,7 @@ fn global_definition(agent: AgentType, config: &AgentConfig) -> (ScopeDefinition
         return (
             ScopeDefinition {
                 enabled: false,
-                reads_shared: false,
+                reads_standard: false,
                 private_path: None,
             },
             Vec::new(),
@@ -78,14 +78,14 @@ fn global_definition(agent: AgentType, config: &AgentConfig) -> (ScopeDefinition
     };
 
     let private_path = global_path(agent, config);
-    let same_as_shared = private_path == PathSpec::home(".agents/skills");
-    let reads_shared = official_shared_support(agent) || same_as_shared;
+    let same_as_standard = private_path == PathSpec::home(".agents/skills");
+    let reads_standard = official_standard_support(agent) || same_as_standard;
 
     (
         ScopeDefinition {
             enabled: true,
-            reads_shared,
-            private_path: (!same_as_shared).then_some(private_path),
+            reads_standard,
+            private_path: (!same_as_standard).then_some(private_path),
         },
         Vec::new(),
     )
@@ -106,7 +106,7 @@ fn global_path(agent: AgentType, config: &AgentConfig) -> PathSpec {
         AgentType::MistralVibe => environment_variable_path("VIBE_HOME", ".vibe/skills"),
         AgentType::HermesAgent => environment_variable_path("HERMES_HOME", ".hermes/skills"),
         AgentType::AutohandCode => environment_variable_path("AUTOHAND_HOME", ".autohand/skills"),
-        _ => path_from_host(config.global_skills_dir.as_ref().expect("global path")),
+        _ => path_from_native(config.global_skills_dir.as_ref().expect("global path")),
     }
 }
 
@@ -133,7 +133,7 @@ fn environment_variable_with_fallback(
     }
 }
 
-fn path_from_host(path: &Path) -> PathSpec {
+fn path_from_native(path: &Path) -> PathSpec {
     if let Ok(relative) = path.strip_prefix(&PATHS.config_home) {
         return PathSpec::config_home(path_to_relative(relative));
     }
@@ -155,7 +155,12 @@ fn path_to_relative(path: &Path) -> String {
 
 fn detection_definition(agent: AgentType, config: &AgentConfig) -> DetectionSpec {
     if agent == AgentType::Eve {
-        return DetectionSpec::Eve;
+        return DetectionSpec::AnyPathExists {
+            paths: vec![
+                PathSpec::project("agent"),
+                PathSpec::project("package.json"),
+            ],
+        };
     }
 
     let paths = match agent {
@@ -208,7 +213,7 @@ fn detection_definition(agent: AgentType, config: &AgentConfig) -> DetectionSpec
                 PathSpec::config_home("zed"),
             ),
         ],
-        _ => vec![parent_path(&path_from_host(
+        _ => vec![parent_path(&path_from_native(
             config.global_skills_dir.as_ref().expect("detection path"),
         ))],
     };
@@ -250,7 +255,7 @@ fn parent_relative(path: &str) -> String {
         .to_string()
 }
 
-fn official_shared_support(agent: AgentType) -> bool {
+fn official_standard_support(agent: AgentType) -> bool {
     matches!(
         agent,
         AgentType::Codex
@@ -310,12 +315,24 @@ mod tests {
 
             assert!(project.enabled, "project support missing for {agent}");
             if config.skills_dir == ".agents/skills" {
-                assert!(project.reads_shared);
+                assert!(project.reads_standard);
                 assert!(project.private_path.is_none());
             } else {
-                assert!(!project.reads_shared);
+                assert!(!project.reads_standard);
                 assert!(project.private_path.is_some());
             }
+        }
+    }
+
+    #[test]
+    fn every_agent_definition_uses_detection_paths() {
+        for definition in builtin_agent_definitions() {
+            let DetectionSpec::AnyPathExists { paths } = &definition.detection;
+            assert!(
+                !paths.is_empty(),
+                "detection paths missing for {}",
+                definition.id
+            );
         }
     }
 
@@ -327,7 +344,7 @@ mod tests {
 
             if agent == AgentType::Cline {
                 assert!(definition.global.enabled);
-                assert!(definition.global.reads_shared);
+                assert!(definition.global.reads_standard);
                 assert!(definition.global.private_path.is_none());
                 continue;
             }
@@ -337,7 +354,7 @@ mod tests {
                 config.global_skills_dir.is_some()
             );
             if config.global_skills_dir.is_none() {
-                assert!(!definition.global.reads_shared);
+                assert!(!definition.global.reads_standard);
                 assert!(definition.global.private_path.is_none());
             }
         }
@@ -369,7 +386,7 @@ mod tests {
     fn cline_uses_shared_active_path_and_declares_legacy_migration() {
         let definition = definition(AgentType::Cline);
         assert_eq!(definition.global.private_path, None);
-        assert!(definition.global.reads_shared);
+        assert!(definition.global.reads_standard);
 
         assert_eq!(definition.legacy_paths.len(), 1);
         let legacy = &definition.legacy_paths[0];
@@ -378,15 +395,23 @@ mod tests {
         assert_eq!(legacy.behavior, LegacyPathBehavior::OfferMigration);
         assert_eq!(
             legacy.migration_target,
-            LegacyMigrationTarget::SharedCanonical
+            LegacyMigrationTarget::StandardCanonical
         );
     }
 
     #[test]
-    fn eve_uses_the_builtin_adapter_detection() {
+    fn eve_uses_detection_paths_with_the_builtin_adapter() {
         let definition = definition(AgentType::Eve);
         assert_eq!(definition.adapter, AgentAdapter::Eve);
-        assert_eq!(definition.detection, DetectionSpec::Eve);
+        assert_eq!(
+            definition.detection,
+            DetectionSpec::AnyPathExists {
+                paths: vec![
+                    PathSpec::project("agent"),
+                    PathSpec::project("package.json")
+                ]
+            }
+        );
         assert!(!definition.global.enabled);
         assert!(definition.project.enabled);
     }
@@ -407,13 +432,13 @@ mod tests {
         if config.skills_dir == ".agents/skills" {
             ScopeDefinition {
                 enabled: true,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             }
         } else {
             ScopeDefinition {
                 enabled: true,
-                reads_shared: false,
+                reads_standard: false,
                 private_path: Some(PathSpec::project(config.skills_dir)),
             }
         }
@@ -423,28 +448,28 @@ mod tests {
         if agent == AgentType::Cline {
             return ScopeDefinition {
                 enabled: true,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             };
         }
         let Some(_) = config.global_skills_dir else {
             return ScopeDefinition {
                 enabled: false,
-                reads_shared: false,
+                reads_standard: false,
                 private_path: None,
             };
         };
 
         let path = expected_global_path(agent, config);
-        let same_as_shared = path == PathSpec::home(".agents/skills");
+        let same_as_standard = path == PathSpec::home(".agents/skills");
         ScopeDefinition {
             enabled: true,
-            reads_shared: same_as_shared || expected_global_shared_support(agent),
-            private_path: (!same_as_shared).then_some(path),
+            reads_standard: same_as_standard || expected_global_standard_support(agent),
+            private_path: (!same_as_standard).then_some(path),
         }
     }
 
-    fn expected_global_shared_support(agent: AgentType) -> bool {
+    fn expected_global_standard_support(agent: AgentType) -> bool {
         matches!(
             agent,
             AgentType::Codex
@@ -481,13 +506,18 @@ mod tests {
             AgentType::AutohandCode => {
                 expected_environment_path("AUTOHAND_HOME", "skills", ".autohand/skills")
             }
-            _ => host_path_spec(config.global_skills_dir.as_ref().expect("global path")),
+            _ => native_path_spec(config.global_skills_dir.as_ref().expect("global path")),
         }
     }
 
     fn expected_detection(agent: AgentType, config: &AgentConfig) -> DetectionSpec {
         if agent == AgentType::Eve {
-            return DetectionSpec::Eve;
+            return DetectionSpec::AnyPathExists {
+                paths: vec![
+                    PathSpec::project("agent"),
+                    PathSpec::project("package.json"),
+                ],
+            };
         }
         let paths = match agent {
             AgentType::AiderDesk => vec![PathSpec::home(".aider-desk")],
@@ -608,7 +638,7 @@ mod tests {
         }
     }
 
-    fn host_path_spec(path: &std::path::Path) -> PathSpec {
+    fn native_path_spec(path: &std::path::Path) -> PathSpec {
         if let Ok(relative) = path.strip_prefix(&PATHS.config_home) {
             return PathSpec::config_home(relative.to_string_lossy().replace('\\', "/"));
         }

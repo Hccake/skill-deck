@@ -644,7 +644,7 @@ mod tests {
 
     fn locator(path: &str) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string(),
         }
     }
@@ -654,15 +654,15 @@ mod tests {
             schema_version: RECOVERY_MARKER_SCHEMA_VERSION,
             resource_id: RecoveryResourceId::parse(id).expect("resource ID"),
             kind,
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             operation_id: format!("operation-{id}"),
             unit_id: "unit-1".to_string(),
             subject: Some(crate::environment::recovery::RecoverySubject {
                 operation_kind: crate::core::mutation::MutationKind::Install,
                 skill_name: "demo".to_string(),
-                context: crate::environment::types::ContextRef {
-                    environment: EnvironmentRef::Host,
-                    scope: crate::environment::types::ContextScope::Global,
+                context: crate::environment::types::SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: crate::environment::types::SkillLocation::Global,
                 },
             }),
             created_at_epoch_ms: created,
@@ -694,7 +694,7 @@ mod tests {
 
         let restarted = repository(temp.path(), checker);
         restarted
-            .reindex_environment(&EnvironmentRef::Host, &Default::default())
+            .reindex_environment(&EnvironmentRef::Native, &Default::default())
             .await
             .expect("reindex");
         let resolved = restarted.resolve(&id).expect("resolved");
@@ -731,7 +731,7 @@ mod tests {
 
         let restarted = repository(temp.path(), checker);
         restarted
-            .reindex_environment(&EnvironmentRef::Host, &Default::default())
+            .reindex_environment(&EnvironmentRef::Native, &Default::default())
             .await
             .expect("reindex");
         assert_eq!(

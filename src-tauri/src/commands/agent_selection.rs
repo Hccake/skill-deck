@@ -7,14 +7,14 @@ use crate::application::agent_selection::{
 use crate::application::default_agents;
 use crate::application::install_planner::InstallPlanningFactSource;
 use crate::environment::agent_environment::DetectionState;
-use crate::environment::types::{ContextRef, ContextScope};
+use crate::environment::types::{SkillLocation, SkillLocationRef};
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn get_install_agent_selection(
-    context: ContextRef,
+    context: SkillLocationRef,
     explicit_agent_ids: Vec<String>,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallAgentSelectionSnapshot, AppError> {
@@ -32,9 +32,9 @@ pub async fn get_install_agent_selection(
         (explicit_agent_ids, None)
     } else {
         match default_agents::get_default_target_agents(
-            ContextRef {
+            SkillLocationRef {
                 environment: context.environment.clone(),
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             runtime.wsl(),
             runtime.agents(),
@@ -43,8 +43,8 @@ pub async fn get_install_agent_selection(
         {
             Ok(Some(defaults)) => (
                 match context.scope {
-                    ContextScope::Global => defaults.global,
-                    ContextScope::Project { .. } => defaults.project,
+                    SkillLocation::Global => defaults.global,
+                    SkillLocation::Project { .. } => defaults.project,
                 },
                 None,
             ),

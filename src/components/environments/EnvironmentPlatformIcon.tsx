@@ -11,7 +11,7 @@ export function EnvironmentPlatformIcon({
   environment,
   ...props
 }: EnvironmentPlatformIconProps) {
-  const platform = environment.kind === 'wsl' ? 'wsl' : 'host';
+  const platform = environment.kind === 'wsl' ? 'wsl' : 'native';
 
   return (
     <svg

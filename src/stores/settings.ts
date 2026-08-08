@@ -155,7 +155,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           } : state);
           if (result.saved && !result.warnings.includes('suppressionCleanupFailed')) {
-            useSkillsDataStore.getState().clearHostGithubProviderCooldown();
+            useSkillsDataStore.getState().clearNativeGithubProviderCooldown();
           }
           return result;
         } catch (error) {
@@ -198,7 +198,7 @@ export const useSettingsStore = create<SettingsState>()(
             },
           } : state);
           if (result.cleared && !result.warnings.includes('suppressionCleanupFailed')) {
-            useSkillsDataStore.getState().clearHostGithubProviderCooldown();
+            useSkillsDataStore.getState().clearNativeGithubProviderCooldown();
           }
           return result;
         } catch (error) {

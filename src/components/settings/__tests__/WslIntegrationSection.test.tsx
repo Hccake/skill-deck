@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppError, ContextRef } from '@/bindings';
+import type { AppError, SkillLocationRef } from '@/bindings';
 import { WslIntegrationSection } from '../WslIntegrationSection';
 
 const mocks = vi.hoisted(() => ({
@@ -12,9 +12,9 @@ const mocks = vi.hoisted(() => ({
   transition: { kind: 'idle' } as { kind: string; phase?: string },
   failure: null as { stage: string; error: AppError } | null,
   selectedContext: {
-    environment: { kind: 'host' },
+    environment: { kind: 'native' },
     scope: { scope: 'global' },
-  } as ContextRef,
+  } as SkillLocationRef,
   writeBlocked: false,
   changeWslIntegration: vi.fn(async (_enabled: boolean) => ({ status: 'succeeded' as const })),
   clearFailure: vi.fn(),
@@ -50,7 +50,7 @@ describe('WslIntegrationSection', () => {
     mocks.transition = { kind: 'idle' };
     mocks.failure = null;
     mocks.selectedContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     };
     mocks.writeBlocked = false;
@@ -64,7 +64,7 @@ describe('WslIntegrationSection', () => {
     expect(screen.queryByText('settings.general.wslTitle')).toBeNull();
   });
 
-  it('enables WSL integration directly from Host', async () => {
+  it('enables WSL integration directly from Native', async () => {
     mocks.supported = true;
     render(<WslIntegrationSection />);
 
@@ -73,7 +73,7 @@ describe('WslIntegrationSection', () => {
     await waitFor(() => expect(mocks.changeWslIntegration).toHaveBeenCalledWith(true));
   });
 
-  it('switches to Host before disabling the active WSL environment', async () => {
+  it('switches to Native before disabling the active WSL environment', async () => {
     mocks.supported = true;
     mocks.enabled = true;
     mocks.selectedContext = {
@@ -135,7 +135,7 @@ describe('WslIntegrationSection', () => {
     expect(screen.getByRole('alertdialog')).toBeTruthy();
   });
 
-  it('does not offer another Host switch after only the setting write failed', async () => {
+  it('does not offer another Native switch after only the setting write failed', async () => {
     mocks.supported = true;
     mocks.enabled = true;
     mocks.selectedContext = {
@@ -146,7 +146,7 @@ describe('WslIntegrationSection', () => {
 
     fireEvent.click(screen.getByRole('switch', { name: 'settings.general.wslTitle' }));
     mocks.selectedContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     };
     mocks.failure = {
@@ -155,7 +155,7 @@ describe('WslIntegrationSection', () => {
     };
     view.rerender(<WslIntegrationSection />);
 
-    expect(screen.getByText('settings.general.wslDisableAfterHostDescription')).toBeTruthy();
+    expect(screen.getByText('settings.general.wslDisableAfterNativeDescription')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'settings.general.wslDisableOnlyConfirm' }))
       .toBeTruthy();
     expect(screen.queryByText('settings.general.wslDisableDescription')).toBeNull();
@@ -171,7 +171,7 @@ describe('WslIntegrationSection', () => {
     const view = render(<WslIntegrationSection />);
     fireEvent.click(screen.getByRole('switch', { name: 'settings.general.wslTitle' }));
     mocks.selectedContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     };
     mocks.transition = { kind: 'wslIntegration', phase: 'disabling' };

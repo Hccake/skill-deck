@@ -14,11 +14,11 @@ pub struct DirectoryInspection {
     pub observed_skill_count_truncated: bool,
 }
 
-pub async fn inspect_host(paths: &[String]) -> BTreeMap<String, DirectoryInspection> {
+pub async fn inspect_native(paths: &[String]) -> BTreeMap<String, DirectoryInspection> {
     unique_paths(paths)
         .into_iter()
         .map(|path| {
-            let inspection = inspect_host_path(&path);
+            let inspection = inspect_native_path(&path);
             (path, inspection)
         })
         .collect()
@@ -72,7 +72,7 @@ fn bounded_directory_count(
     ))
 }
 
-fn inspect_host_path(path: &str) -> DirectoryInspection {
+fn inspect_native_path(path: &str) -> DirectoryInspection {
     let Ok(entries) = fs::read_dir(Path::new(path)) else {
         return DirectoryInspection {
             observed_skill_count: None,
@@ -95,10 +95,10 @@ fn inspect_host_path(path: &str) -> DirectoryInspection {
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded_directory_count, inspect_host};
+    use super::{bounded_directory_count, inspect_native};
 
     #[tokio::test]
-    async fn host_inspection_deduplicates_paths_and_caps_observed_entries() {
+    async fn native_inspection_deduplicates_paths_and_caps_observed_entries() {
         let temp = tempfile::tempdir().expect("tempdir");
         let skills = temp.path().join("skills");
         std::fs::create_dir_all(&skills).expect("create skills directory");
@@ -109,7 +109,7 @@ mod tests {
         let missing = temp.path().join("missing").to_string_lossy().to_string();
         let path = skills.to_string_lossy().to_string();
 
-        let inspected = inspect_host(&[path.clone(), path.clone(), missing.clone()]).await;
+        let inspected = inspect_native(&[path.clone(), path.clone(), missing.clone()]).await;
 
         assert_eq!(inspected.len(), 2);
         assert_eq!(inspected[&path].observed_skill_count, Some(10_000));
@@ -118,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn host_bounded_count_reports_an_entry_error_as_unavailable() {
+    fn native_bounded_count_reports_an_entry_error_as_unavailable() {
         let entries = vec![
             Ok(()),
             Err(std::io::Error::new(

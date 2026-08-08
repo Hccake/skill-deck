@@ -114,7 +114,9 @@ mod tests {
     use crate::environment::inspection::{FilesystemInspector, ReadPlanBuilder, ReadRootPurpose};
     use crate::environment::native::inspection::NativeInspector;
     use crate::environment::runtime::ContextSnapshotRevision;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
     use crate::environment::wsl::operations::scan::{
         parse_scan_response, ScanRequest, SCAN_SCRIPT,
     };
@@ -126,9 +128,9 @@ mod tests {
         fs::create_dir_all(root.join("demo")).unwrap();
         fs::write(root.join("demo/SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
         let missing = temp.path().join("missing");
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let mut builder = ReadPlanBuilder::new(
             context,
@@ -140,7 +142,7 @@ mod tests {
             builder
                 .add_root(
                     ResourceLocator {
-                        environment: EnvironmentRef::Host,
+                        environment: EnvironmentRef::Native,
                         native_path: path.to_string_lossy().into_owned(),
                     },
                     ReadRootPurpose::Detection,
@@ -149,7 +151,7 @@ mod tests {
                 .unwrap();
         }
         let plan = builder.build().unwrap();
-        let native = NativeInspector::new(EnvironmentRef::Host)
+        let native = NativeInspector::new(EnvironmentRef::Native)
             .inspect(&plan)
             .await
             .expect("native inspect");
@@ -179,7 +181,7 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
         let posix = snapshot_from_scan_response(
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             parse_scan_response(&output.stdout, &request).unwrap(),
         )
         .expect("project response");

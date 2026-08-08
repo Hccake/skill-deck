@@ -7,7 +7,7 @@ use crate::environment::agent_environment::{
     AgentRuntimeSnapshot, DetectionState, ResolvedAgent, ResolvedAgentScope,
 };
 use crate::environment::types::{
-    same_environment_identity, ContextRef, ContextScope, EnvironmentRef, ResourceLocator,
+    same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
 };
 use crate::error::AppError;
 
@@ -46,7 +46,7 @@ pub struct AgentEntryPlan {
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn resolve_agent_entry_plan(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     intents: &[AgentWriteIntent],
 ) -> Result<AgentEntryPlan, AppError> {
@@ -93,7 +93,7 @@ pub fn resolve_agent_entry_plan(
 }
 
 fn resolve_standard(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     agent: &ResolvedAgent,
     scope: &ResolvedAgentScope,
     intent: &AgentWriteIntent,
@@ -103,15 +103,15 @@ fn resolve_standard(
     if !intent.adapter_targets.is_empty() {
         return Err(validation("Standard Agent does not accept adapter targets"));
     }
-    if scope.reads_shared {
-        if scope.shared_path.is_none() {
-            return Err(validation("shared Skill directory is unavailable"));
+    if scope.reads_standard {
+        if scope.standard_path.is_none() {
+            return Err(validation("standard Skill directory is unavailable"));
         }
         canonical_owner_agent_ids.push(intent.agent_id.clone());
     }
 
     let needs_private = match (
-        scope.reads_shared,
+        scope.reads_standard,
         scope.private_path.as_ref(),
         intent.own_directory_selected,
     ) {
@@ -141,12 +141,12 @@ fn resolve_standard(
 }
 
 fn resolve_eve(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     intent: &AgentWriteIntent,
     required: &mut BTreeMap<String, LogicalAgentEntryRoot>,
 ) -> Result<(), AppError> {
-    if !matches!(context.scope, ContextScope::Project { .. })
+    if !matches!(context.scope, SkillLocation::Project { .. })
         || intent.own_directory_selected
         || intent.adapter_targets.is_empty()
     {
@@ -212,7 +212,7 @@ fn eve_target(
 
 fn insert_required_root(
     required: &mut BTreeMap<String, LogicalAgentEntryRoot>,
-    context: &ContextRef,
+    context: &SkillLocationRef,
     target_id: String,
     root: &str,
     owner: AgentId,
@@ -233,18 +233,18 @@ fn insert_required_root(
         });
 }
 
-fn resolved_scope<'a>(agent: &'a ResolvedAgent, scope: &ContextScope) -> &'a ResolvedAgentScope {
+fn resolved_scope<'a>(agent: &'a ResolvedAgent, scope: &SkillLocation) -> &'a ResolvedAgentScope {
     match scope {
-        ContextScope::Global => &agent.global,
-        ContextScope::Project { .. } => &agent.project,
+        SkillLocation::Global => &agent.global,
+        SkillLocation::Project { .. } => &agent.project,
     }
 }
 
 fn logical_root_key(environment: &EnvironmentRef, root: &str) -> String {
     let trimmed = root.trim_end_matches(['/', '\\']);
     match environment {
-        EnvironmentRef::Host if cfg!(windows) => trimmed.replace('/', "\\").to_lowercase(),
-        EnvironmentRef::Host => trimmed.to_string(),
+        EnvironmentRef::Native if cfg!(windows) => trimmed.replace('/', "\\").to_lowercase(),
+        EnvironmentRef::Native => trimmed.to_string(),
         EnvironmentRef::Wsl { distro_name } => {
             format!("{}:{trimmed}", distro_name.to_lowercase())
         }
@@ -253,7 +253,7 @@ fn logical_root_key(environment: &EnvironmentRef, root: &str) -> String {
 
 fn join_target_path(environment: &EnvironmentRef, root: &str, relative: &str) -> String {
     match environment {
-        EnvironmentRef::Host if cfg!(windows) => format!(
+        EnvironmentRef::Native if cfg!(windows) => format!(
             "{}\\{}",
             root.trim_end_matches(['/', '\\']),
             relative.replace('/', "\\")
@@ -286,23 +286,25 @@ mod tests {
     use crate::environment::agent_environment::{
         AgentRuntimeSnapshot, DetectionState, ResolvedAgent, ResolvedAgentScope,
     };
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus};
+    use crate::environment::types::{
+        EnvironmentRef, EnvironmentStatus, SkillLocation, SkillLocationRef,
+    };
 
     fn agent(
         id: &str,
         source: AgentSource,
         adapter: AgentAdapter,
-        reads_shared: bool,
+        reads_standard: bool,
         private_path: Option<&str>,
     ) -> (AgentId, ResolvedAgent) {
         let id = AgentId::parse(id).unwrap();
         let scope = ResolvedAgentScope {
             enabled: true,
-            reads_shared,
-            shared_path: reads_shared.then(|| "/home/alice/.agents/skills".to_string()),
+            reads_standard,
+            standard_path: reads_standard.then(|| "/home/alice/.agents/skills".to_string()),
             private_path: private_path.map(str::to_string),
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
@@ -316,12 +318,12 @@ mod tests {
                     aliases: Vec::new(),
                     global: ScopeDefinition {
                         enabled: true,
-                        reads_shared,
+                        reads_standard,
                         private_path: private_path.map(|_| PathSpec::home(".agent/skills")),
                     },
                     project: ScopeDefinition {
                         enabled: true,
-                        reads_shared,
+                        reads_standard,
                         private_path: private_path.map(|_| PathSpec::project(".agent/skills")),
                     },
                     detection: DetectionSpec::AnyPathExists {
@@ -342,16 +344,16 @@ mod tests {
         AgentRuntimeSnapshot {
             registry_revision: "registry-1".to_string(),
             environment_revision: "environment-1".to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             availability: EnvironmentStatus::Available,
             project_path: Some("/work/app".to_string()),
             agents: agents.into_iter().collect::<BTreeMap<_, _>>(),
         }
     }
 
-    fn context(scope: ContextScope) -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
+    fn context(scope: SkillLocation) -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
             scope,
         }
     }
@@ -375,7 +377,7 @@ mod tests {
         )]);
 
         let plan = resolve_agent_entry_plan(
-            &context(ContextScope::Global),
+            &context(SkillLocation::Global),
             &runtime,
             &[intent("shared", false)],
         )
@@ -399,7 +401,7 @@ mod tests {
         )]);
 
         let plan = resolve_agent_entry_plan(
-            &context(ContextScope::Global),
+            &context(SkillLocation::Global),
             &runtime,
             &[intent("private", true)],
         )
@@ -424,13 +426,13 @@ mod tests {
         )]);
 
         let canonical_only = resolve_agent_entry_plan(
-            &context(ContextScope::Global),
+            &context(SkillLocation::Global),
             &runtime,
             &[intent("both", false)],
         )
         .unwrap();
         let with_private = resolve_agent_entry_plan(
-            &context(ContextScope::Global),
+            &context(SkillLocation::Global),
             &runtime,
             &[intent("both", true)],
         )
@@ -463,8 +465,8 @@ mod tests {
         let intents = [intent("standard", true)];
 
         assert_eq!(
-            resolve_agent_entry_plan(&context(ContextScope::Global), &builtin, &intents).unwrap(),
-            resolve_agent_entry_plan(&context(ContextScope::Global), &custom, &intents).unwrap(),
+            resolve_agent_entry_plan(&context(SkillLocation::Global), &builtin, &intents).unwrap(),
+            resolve_agent_entry_plan(&context(SkillLocation::Global), &custom, &intents).unwrap(),
         );
     }
 
@@ -487,7 +489,7 @@ mod tests {
         };
 
         let plan = resolve_agent_entry_plan(
-            &context(ContextScope::Project {
+            &context(SkillLocation::Project {
                 project_id: "project-1".to_string(),
             }),
             &runtime,
@@ -548,7 +550,7 @@ mod tests {
 
             assert!(matches!(
                 resolve_agent_entry_plan(
-                    &context(ContextScope::Project {
+                    &context(SkillLocation::Project {
                         project_id: "project-1".to_string(),
                     }),
                     &runtime,

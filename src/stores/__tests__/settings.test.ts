@@ -116,9 +116,9 @@ describe('useSettingsStore', () => {
     expect(useSettingsStore.getState().githubCredential.status).toEqual(unavailableCredential);
   });
 
-  it('clears stale Host GitHub cooldown UI only after credential maintenance succeeds', async () => {
+  it('clears stale Native GitHub cooldown UI only after credential maintenance succeeds', async () => {
     const clearCooldown = vi.fn();
-    useSkillsDataStore.setState({ clearHostGithubProviderCooldown: clearCooldown });
+    useSkillsDataStore.setState({ clearNativeGithubProviderCooldown: clearCooldown });
     mockSaveGithubCredential
       .mockResolvedValueOnce({ saved: true, status: verifiedCredential, warnings: [] })
       .mockResolvedValueOnce({

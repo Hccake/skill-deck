@@ -8,21 +8,21 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
-use crate::environment::types::ProjectBinding;
+use crate::environment::types::RegisteredProject;
 use crate::error::AppError;
 
 const PROJECTS_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProjectPathSemantics {
-    WindowsHost,
+    Windows,
     Posix,
 }
 
 impl ProjectPathSemantics {
-    pub(crate) fn host() -> Self {
+    pub(crate) fn native() -> Self {
         if cfg!(target_os = "windows") {
-            Self::WindowsHost
+            Self::Windows
         } else {
             Self::Posix
         }
@@ -78,9 +78,9 @@ impl ProjectMigrationRegistry {
     }
 }
 
-pub(crate) struct ProjectBindingAddResult {
-    pub(crate) projects: Vec<ProjectBinding>,
-    pub(crate) project: ProjectBinding,
+pub(crate) struct RegisteredProjectAddResult {
+    pub(crate) projects: Vec<RegisteredProject>,
+    pub(crate) project: RegisteredProject,
     pub(crate) created: bool,
 }
 
@@ -88,11 +88,11 @@ pub(crate) struct ProjectBindingAddResult {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectsFile {
     pub(crate) schema_version: u32,
-    pub(crate) projects: Vec<ProjectBinding>,
+    pub(crate) projects: Vec<RegisteredProject>,
 }
 
 impl ProjectsFile {
-    pub(crate) fn new(projects: Vec<ProjectBinding>, semantics: ProjectPathSemantics) -> Self {
+    pub(crate) fn new(projects: Vec<RegisteredProject>, semantics: ProjectPathSemantics) -> Self {
         Self {
             schema_version: PROJECTS_SCHEMA_VERSION,
             projects: deduplicate_projects(&projects, semantics),
@@ -101,10 +101,10 @@ impl ProjectsFile {
 }
 
 pub(crate) fn add_project_binding(
-    mut projects: Vec<ProjectBinding>,
+    mut projects: Vec<RegisteredProject>,
     native_path: String,
     semantics: ProjectPathSemantics,
-) -> ProjectBindingAddResult {
+) -> RegisteredProjectAddResult {
     let normalized = normalize_project_path(&native_path, semantics);
     if let Some(project) = projects
         .iter()
@@ -113,13 +113,13 @@ pub(crate) fn add_project_binding(
         })
         .cloned()
     {
-        return ProjectBindingAddResult {
+        return RegisteredProjectAddResult {
             projects,
             project,
             created: false,
         };
     }
-    let project = ProjectBinding {
+    let project = RegisteredProject {
         id: Uuid::new_v4().to_string(),
         native_path: normalized.native_path,
         display_name: None,
@@ -127,7 +127,7 @@ pub(crate) fn add_project_binding(
         suppress_cross_storage_warning: false,
     };
     projects.push(project.clone());
-    ProjectBindingAddResult {
+    RegisteredProjectAddResult {
         projects: deduplicate_projects(&projects, semantics),
         project,
         created: true,
@@ -135,18 +135,18 @@ pub(crate) fn add_project_binding(
 }
 
 pub(crate) fn remove_project_binding(
-    mut projects: Vec<ProjectBinding>,
+    mut projects: Vec<RegisteredProject>,
     project_id: &str,
-) -> Vec<ProjectBinding> {
+) -> Vec<RegisteredProject> {
     projects.retain(|project| project.id != project_id);
     projects
 }
 
 pub(crate) fn set_project_cross_storage_warning_suppressed(
-    mut projects: Vec<ProjectBinding>,
+    mut projects: Vec<RegisteredProject>,
     project_id: &str,
     suppressed: bool,
-) -> Vec<ProjectBinding> {
+) -> Vec<RegisteredProject> {
     if let Some(project) = projects.iter_mut().find(|project| project.id == project_id) {
         project.suppress_cross_storage_warning = suppressed;
     }
@@ -160,14 +160,14 @@ pub struct ProjectsStore {
 
 impl ProjectsStore {
     pub fn new(path: PathBuf) -> Self {
-        Self::new_with_semantics(path, ProjectPathSemantics::host())
+        Self::new_with_semantics(path, ProjectPathSemantics::native())
     }
 
     pub(crate) fn new_with_semantics(path: PathBuf, semantics: ProjectPathSemantics) -> Self {
         Self { path, semantics }
     }
 
-    pub fn read(&self) -> Result<Vec<ProjectBinding>, AppError> {
+    pub fn read(&self) -> Result<Vec<RegisteredProject>, AppError> {
         if !self.path.exists() {
             return Ok(Vec::new());
         }
@@ -176,7 +176,7 @@ impl ProjectsStore {
         Ok(file.projects)
     }
 
-    pub fn write(&self, projects: &[ProjectBinding]) -> Result<(), AppError> {
+    pub fn write(&self, projects: &[RegisteredProject]) -> Result<(), AppError> {
         let projects = deduplicate_projects(projects, self.semantics);
         let file = ProjectsFile {
             schema_version: PROJECTS_SCHEMA_VERSION,
@@ -185,7 +185,7 @@ impl ProjectsStore {
         atomic_write_json(&self.path, &file)
     }
 
-    pub fn add(&self, native_path: String) -> Result<ProjectBindingAddResult, AppError> {
+    pub fn add(&self, native_path: String) -> Result<RegisteredProjectAddResult, AppError> {
         let result = add_project_binding(self.read()?, native_path, self.semantics);
         if result.created {
             self.write(&result.projects)?;
@@ -193,7 +193,7 @@ impl ProjectsStore {
         Ok(result)
     }
 
-    pub fn remove(&self, project_id: &str) -> Result<Vec<ProjectBinding>, AppError> {
+    pub fn remove(&self, project_id: &str) -> Result<Vec<RegisteredProject>, AppError> {
         let projects = remove_project_binding(self.read()?, project_id);
         self.write(&projects)?;
         self.read()
@@ -203,7 +203,7 @@ impl ProjectsStore {
         &self,
         project_id: &str,
         suppressed: bool,
-    ) -> Result<Vec<ProjectBinding>, AppError> {
+    ) -> Result<Vec<RegisteredProject>, AppError> {
         let projects =
             set_project_cross_storage_warning_suppressed(self.read()?, project_id, suppressed);
         self.write(&projects)?;
@@ -246,7 +246,7 @@ pub fn migrate_legacy_projects(
 
     let projects = legacy_paths
         .into_iter()
-        .map(|native_path| ProjectBinding {
+        .map(|native_path| RegisteredProject {
             id: Uuid::new_v4().to_string(),
             native_path: normalize_native_path(&native_path, store.semantics),
             display_name: None,
@@ -266,9 +266,9 @@ pub fn migrate_legacy_projects(
 }
 
 fn deduplicate_projects(
-    projects: &[ProjectBinding],
+    projects: &[RegisteredProject],
     semantics: ProjectPathSemantics,
-) -> Vec<ProjectBinding> {
+) -> Vec<RegisteredProject> {
     let mut seen = HashSet::new();
     projects
         .iter()
@@ -294,7 +294,7 @@ pub(crate) fn normalize_project_native_path(path: &str, semantics: ProjectPathSe
 
 fn normalize_project_path(path: &str, semantics: ProjectPathSemantics) -> NormalizedProjectPath {
     match semantics {
-        ProjectPathSemantics::WindowsHost => normalize_windows_project_path(path),
+        ProjectPathSemantics::Windows => normalize_windows_project_path(path),
         ProjectPathSemantics::Posix => normalize_posix_project_path(path),
     }
 }
@@ -427,7 +427,7 @@ mod tests {
         add_project_binding, migrate_legacy_projects, ProjectMigrationRegistry,
         ProjectMigrationState, ProjectPathSemantics, ProjectsStore,
     };
-    use crate::environment::types::ProjectBinding;
+    use crate::environment::types::RegisteredProject;
     use crate::error::AppError;
 
     #[test]
@@ -443,17 +443,17 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let store = ProjectsStore::new_with_semantics(
             temp.path().join("projects.json"),
-            ProjectPathSemantics::WindowsHost,
+            ProjectPathSemantics::Windows,
         );
         let projects = vec![
-            ProjectBinding {
+            RegisteredProject {
                 id: "first".to_string(),
                 native_path: "C:\\Code\\app\\".to_string(),
                 display_name: None,
                 order: None,
                 suppress_cross_storage_warning: false,
             },
-            ProjectBinding {
+            RegisteredProject {
                 id: "second".to_string(),
                 native_path: "C:\\Code\\app".to_string(),
                 display_name: Some("duplicate".to_string()),
@@ -476,14 +476,14 @@ mod tests {
         let store = ProjectsStore::new(temp.path().join("projects.json"));
         store
             .write(&[
-                ProjectBinding {
+                RegisteredProject {
                     id: "target".to_string(),
                     native_path: "/mnt/c/Code/app".to_string(),
                     display_name: None,
                     order: None,
                     suppress_cross_storage_warning: false,
                 },
-                ProjectBinding {
+                RegisteredProject {
                     id: "other".to_string(),
                     native_path: "/home/alice/other".to_string(),
                     display_name: None,
@@ -517,10 +517,8 @@ mod tests {
 }
 "#;
         fs::write(&projects_path, original).expect("seed projects");
-        let store = ProjectsStore::new_with_semantics(
-            projects_path.clone(),
-            ProjectPathSemantics::WindowsHost,
-        );
+        let store =
+            ProjectsStore::new_with_semantics(projects_path.clone(), ProjectPathSemantics::Windows);
 
         let result = store
             .add("C:\\Code\\app\\".to_string())
@@ -592,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_migration_state_blocks_host_projects_until_replaced() {
+    fn failed_migration_state_blocks_native_projects_until_replaced() {
         let registry = ProjectMigrationRegistry::new(ProjectMigrationState::Failed {
             error: AppError::Custom {
                 message: "disk is read-only".to_string(),
@@ -629,12 +627,12 @@ mod tests {
         let first = add_project_binding(
             Vec::new(),
             r"c:/Code/Skills/../App/".to_string(),
-            ProjectPathSemantics::WindowsHost,
+            ProjectPathSemantics::Windows,
         );
         let duplicate = add_project_binding(
             first.projects,
             r"C:\code\app".to_string(),
-            ProjectPathSemantics::WindowsHost,
+            ProjectPathSemantics::Windows,
         );
 
         assert_eq!(duplicate.project.native_path, r"C:\Code\App");
@@ -647,19 +645,19 @@ mod tests {
         let first = add_project_binding(
             Vec::new(),
             r"\\wsl$\Ubuntu\home\alice\App".to_string(),
-            ProjectPathSemantics::WindowsHost,
+            ProjectPathSemantics::Windows,
         );
         let duplicate = add_project_binding(
             first.projects,
             r"\\WSL.LOCALHOST\ubuntu\home\alice\App\".to_string(),
-            ProjectPathSemantics::WindowsHost,
+            ProjectPathSemantics::Windows,
         );
         assert!(!duplicate.created);
 
         let distinct = add_project_binding(
             duplicate.projects,
             r"\\wsl.localhost\Ubuntu\home\alice\app".to_string(),
-            ProjectPathSemantics::WindowsHost,
+            ProjectPathSemantics::Windows,
         );
         assert!(distinct.created);
         assert_eq!(distinct.projects.len(), 2);
@@ -686,11 +684,8 @@ mod tests {
     #[test]
     fn project_path_roots_are_preserved() {
         let posix = add_project_binding(Vec::new(), "/".to_string(), ProjectPathSemantics::Posix);
-        let windows = add_project_binding(
-            Vec::new(),
-            "c:/".to_string(),
-            ProjectPathSemantics::WindowsHost,
-        );
+        let windows =
+            add_project_binding(Vec::new(), "c:/".to_string(), ProjectPathSemantics::Windows);
 
         assert_eq!(posix.project.native_path, "/");
         assert_eq!(windows.project.native_path, "C:\\");

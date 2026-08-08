@@ -312,11 +312,11 @@ fn native_recovery_marker(
                     Sha256::digest(serde_json::to_vec(&entry.target)?)
                 ),
                 destination: ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: entry.destination.to_string_lossy().into_owned(),
                 },
                 backup: Some(ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: entry.backup.to_string_lossy().into_owned(),
                 }),
                 expected_state: entry.expected_state,
@@ -329,7 +329,7 @@ fn native_recovery_marker(
         schema_version: RECOVERY_MARKER_SCHEMA_VERSION,
         resource_id,
         kind: RecoveryMarkerKind::InProgress,
-        environment: EnvironmentRef::Host,
+        environment: EnvironmentRef::Native,
         operation_id: operation_id.to_string(),
         unit_id: unit_id.to_string(),
         subject: Some(subject),
@@ -360,7 +360,7 @@ pub fn prepare_native_mutations(
     payloads: &BTreeMap<PayloadId, Arc<SkillPayload>>,
     backend: ExecutionBackend,
 ) -> Result<Vec<NativeEntryIntent>, AppError> {
-    if unit.target.environment != EnvironmentRef::Host {
+    if unit.target.environment != EnvironmentRef::Native {
         return Err(AppError::StaleEnvironment);
     }
     let canonical_path = unit
@@ -446,7 +446,7 @@ fn validate_native_entry(
     backend: &ExecutionBackend,
 ) -> Result<(), AppError> {
     if &entry.key.backend != backend
-        || entry.destination.environment != EnvironmentRef::Host
+        || entry.destination.environment != EnvironmentRef::Native
         || !Path::new(&entry.destination.native_path).is_absolute()
     {
         return Err(AppError::StaleTarget);
@@ -485,7 +485,9 @@ mod tests {
     use crate::environment::runtime::{
         physical_target_key, ContextSnapshotRevision, ExecutionBackend, PhysicalTargetKey,
     };
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
     use crate::models::InstallMode;
 
     #[test]
@@ -565,7 +567,7 @@ mod tests {
             || 1_000,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-1")
+            .discover(EnvironmentRef::Native, "source-1")
             .await
             .expect("discover");
         let handle = manager
@@ -667,7 +669,7 @@ mod tests {
             || 1_000,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-1")
+            .discover(EnvironmentRef::Native, "source-1")
             .await
             .expect("discover");
         let handle = manager
@@ -739,7 +741,7 @@ mod tests {
         PreparedEntryMutation {
             key: target_key(parent, path.file_name().unwrap().to_str().unwrap()),
             destination: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: path.to_string_lossy().into_owned(),
             },
             action,
@@ -767,9 +769,9 @@ mod tests {
             id: "unit-1".to_string(),
             skill_name: "demo".to_string(),
             source: None,
-            target: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            target: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             expected_revisions: RuntimeRevisions {
                 registry: "registry-1".to_string(),

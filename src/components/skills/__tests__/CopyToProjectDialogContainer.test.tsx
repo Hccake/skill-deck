@@ -10,8 +10,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { CopyToProjectDialogContainer } from '../CopyToProjectDialogContainer';
 
-const host: EnvironmentInfo = {
-  environment: { kind: 'host' },
+const native: EnvironmentInfo = {
+  environment: { kind: 'native' },
   displayName: 'Windows',
   status: 'available',
   revision: 1,
@@ -29,14 +29,14 @@ function project(id: string, environment: EnvironmentRef): ProjectInfo {
   return {
     binding: {
       id,
-      nativePath: environment.kind === 'host' ? `C:\\Code\\${id}` : `/work/${id}`,
+      nativePath: environment.kind === 'native' ? `C:\\Code\\${id}` : `/work/${id}`,
       displayName: null,
       order: null,
       suppressCrossStorageWarning: false,
     },
     storage: {
       access: 'native',
-      owner: environment.kind === 'host' ? null : environment,
+      owner: environment.kind === 'native' ? null : environment,
     },
   };
 }
@@ -110,7 +110,7 @@ vi.mock('@/stores/workspace-context', () => ({
 }));
 
 const sourceContext = {
-  environment: host.environment,
+  environment: native.environment,
   scope: { scope: 'project' as const, project_id: 'source' },
 };
 const skill: InstalledSkill = {
@@ -132,9 +132,9 @@ describe('CopyToProjectDialogContainer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Element.prototype.scrollIntoView = vi.fn();
-    mocks.environments = [host, ubuntu];
+    mocks.environments = [native, ubuntu];
     mocks.projectsByEnvironment = {
-      host: [project('source', host.environment)],
+      native: [project('source', native.environment)],
       'wsl:ubuntu': [project('ubuntu-target', ubuntu.environment)],
     };
     mocks.execute.mockResolvedValue({ status: 'succeeded' });
@@ -183,7 +183,7 @@ describe('CopyToProjectDialogContainer', () => {
     fireEvent.click(await screen.findByText('/work/ubuntu-target'));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
 
-    mocks.environments = [host];
+    mocks.environments = [native];
     view.rerender(<CopyToProjectDialogContainer />);
 
     expect((await screen.findAllByText('skills.copyToProject.targetEnvironmentMissing')).length)
@@ -192,7 +192,7 @@ describe('CopyToProjectDialogContainer', () => {
     expect((screen.getByRole('checkbox', { name: 'Claude Code' }) as HTMLButtonElement).dataset.state)
       .toBe('checked');
 
-    mocks.environments = [ubuntu, host];
+    mocks.environments = [ubuntu, native];
     view.rerender(<CopyToProjectDialogContainer />);
     expect(screen.queryByText('/work/ubuntu-target')).toBeNull();
 

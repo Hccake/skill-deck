@@ -3,7 +3,8 @@ use tokio::time::Duration;
 use crate::core::projects::{ProjectPathSemantics, ProjectsFile};
 use crate::environment::path_mapping::{windows_storage_owner, WindowsStorageOwner};
 use crate::environment::types::{
-    EnvironmentRef, ProjectBinding, ProjectInfo, ProjectStorageInfo, ResourceLocator, StorageAccess,
+    EnvironmentRef, ProjectInfo, ProjectStorageInfo, RegisteredProject, ResourceLocator,
+    StorageAccess,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
 use crate::environment::wsl::protocol::{
@@ -20,7 +21,7 @@ const PROJECT_STORAGE_OPERATION: WslOperationDescriptor =
 
 pub async fn project_infos(
     session: &WslSession,
-    bindings: Vec<ProjectBinding>,
+    bindings: Vec<RegisteredProject>,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     if bindings.is_empty() {
         return Ok(Vec::new());
@@ -77,9 +78,9 @@ pub fn parse_project_storage(
             b"ok" => {
                 let mapped = std::str::from_utf8(record[1]).map_err(|_| protocol_error())?;
                 Ok(match windows_storage_owner(mapped) {
-                    WindowsStorageOwner::Host => ProjectStorageInfo {
+                    WindowsStorageOwner::Windows => ProjectStorageInfo {
                         access: StorageAccess::CrossStorage,
-                        owner: Some(EnvironmentRef::Host),
+                        owner: Some(EnvironmentRef::Native),
                     },
                     WindowsStorageOwner::Wsl { distro_name: owner }
                         if owner.eq_ignore_ascii_case(distro_name) =>
@@ -104,7 +105,7 @@ pub fn parse_project_storage(
         .collect()
 }
 
-pub async fn read_projects(session: &WslSession) -> Result<Vec<ProjectBinding>, AppError> {
+pub async fn read_projects(session: &WslSession) -> Result<Vec<RegisteredProject>, AppError> {
     let target = projects_locator(session);
     let io = WslAtomicDocumentIo::from_active_session(session.clone());
     match io.read_optional(&target).await? {
@@ -115,8 +116,8 @@ pub async fn read_projects(session: &WslSession) -> Result<Vec<ProjectBinding>, 
 
 pub async fn write_projects(
     session: &WslSession,
-    projects: Vec<ProjectBinding>,
-) -> Result<Vec<ProjectBinding>, AppError> {
+    projects: Vec<RegisteredProject>,
+) -> Result<Vec<RegisteredProject>, AppError> {
     let file = ProjectsFile::new(projects, ProjectPathSemantics::Posix);
     WslAtomicDocumentIo::from_active_session(session.clone())
         .write_atomic(

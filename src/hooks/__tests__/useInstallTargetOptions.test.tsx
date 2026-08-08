@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, InstallAgentSelectionSnapshot } from '@/bindings';
+import type { SkillLocationRef, InstallAgentSelectionSnapshot } from '@/bindings';
 import type { WizardState } from '@/components/skills/add-skill/types';
 import { makeAgentSelectionSnapshot } from '@/test-utils';
 import { useInstallTargetOptions } from '../useInstallTargetOptions';
@@ -14,8 +14,8 @@ vi.mock('@/hooks/useTauriApi', () => ({
   getInstallAgentSelection: (context: unknown, agents: unknown) => mocks.getSelection(context, agents),
 }));
 
-const context: ContextRef = {
-  environment: { kind: 'host' },
+const context: SkillLocationRef = {
+  environment: { kind: 'native' },
   scope: { scope: 'global' },
 };
 
@@ -83,7 +83,7 @@ describe('useInstallTargetOptions', () => {
       .mockReturnValueOnce(new Promise((resolve) => { resolveHost = resolve; }))
       .mockResolvedValueOnce(snapshot('revision-wsl'));
     const updateState = vi.fn();
-    const wslContext: ContextRef = {
+    const wslContext: SkillLocationRef = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
@@ -94,7 +94,7 @@ describe('useInstallTargetOptions', () => {
 
     rerender({ currentContext: wslContext });
     await waitFor(() => expect(result.current.status).toBe('ready'));
-    await act(async () => resolveHost(snapshot('revision-host')));
+    await act(async () => resolveHost(snapshot('revision-native')));
 
     expect(updateState).toHaveBeenCalledTimes(1);
     expect(result.current.status === 'ready' && result.current.snapshot.selection.revision).toBe('revision-wsl');

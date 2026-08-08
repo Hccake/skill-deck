@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use crate::core::projects::ProjectsStore;
 use crate::core::{get_config_path, skill_lock};
 use crate::environment::types::{
-    ContextRef, ContextScope, EnvironmentKey, EnvironmentRef, ProjectBinding, ResourceLocator,
+    EnvironmentKey, EnvironmentRef, RegisteredProject, ResourceLocator, SkillLocation,
+    SkillLocationRef,
 };
 use crate::environment::wsl::operations::projects;
 use crate::environment::wsl::WslSession;
@@ -13,8 +14,8 @@ pub struct ContextResolver;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedContext {
-    pub context: ContextRef,
-    pub project: Option<ProjectBinding>,
+    pub context: SkillLocationRef,
+    pub project: Option<RegisteredProject>,
     pub home: ResourceLocator,
     pub skill_root: ResourceLocator,
     pub lock: ResourceLocator,
@@ -30,23 +31,23 @@ impl ResolvedContext {
 }
 
 impl ContextResolver {
-    pub fn resolve_host(context: ContextRef) -> Result<ResolvedContext, AppError> {
+    pub fn resolve_native(context: SkillLocationRef) -> Result<ResolvedContext, AppError> {
         let home = dirs::home_dir().ok_or_else(|| AppError::Path {
             message: "cannot resolve home directory".to_string(),
         })?;
-        let projects = if matches!(context.scope, ContextScope::Project { .. }) {
+        let projects = if matches!(context.scope, SkillLocation::Project { .. }) {
             ProjectsStore::new(get_config_path()?.with_file_name("projects.json")).read()?
         } else {
             Vec::new()
         };
-        Self::resolve_host_from(context, home, skill_lock::get_skill_lock_path(), projects)
+        Self::resolve_native_from(context, home, skill_lock::get_skill_lock_path(), projects)
     }
 
     pub async fn resolve_wsl(
-        context: ContextRef,
+        context: SkillLocationRef,
         session: &WslSession,
     ) -> Result<ResolvedContext, AppError> {
-        let projects = if matches!(context.scope, ContextScope::Project { .. }) {
+        let projects = if matches!(context.scope, SkillLocation::Project { .. }) {
             projects::read_projects(session).await?
         } else {
             Vec::new()
@@ -54,13 +55,13 @@ impl ContextResolver {
         Self::resolve_wsl_from_projects(context, session, projects)
     }
 
-    pub(crate) fn resolve_host_from(
-        context: ContextRef,
+    pub(crate) fn resolve_native_from(
+        context: SkillLocationRef,
         home: PathBuf,
         global_lock: PathBuf,
-        projects: Vec<ProjectBinding>,
+        projects: Vec<RegisteredProject>,
     ) -> Result<ResolvedContext, AppError> {
-        if context.environment != EnvironmentRef::Host {
+        if context.environment != EnvironmentRef::Native {
             return Err(environment_mismatch(&context.environment));
         }
 
@@ -78,24 +79,24 @@ impl ContextResolver {
             context,
             project,
             home: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: home.to_string_lossy().to_string(),
             },
             skill_root: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: skill_root.to_string_lossy().to_string(),
             },
             lock: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: lock.to_string_lossy().to_string(),
             },
         })
     }
 
     pub(crate) fn resolve_wsl_from_projects(
-        context: ContextRef,
+        context: SkillLocationRef,
         session: &WslSession,
-        projects: Vec<ProjectBinding>,
+        projects: Vec<RegisteredProject>,
     ) -> Result<ResolvedContext, AppError> {
         let EnvironmentRef::Wsl { distro_name } = &context.environment else {
             return Err(environment_mismatch(&context.environment));
@@ -143,12 +144,12 @@ impl ContextResolver {
 }
 
 fn resolve_project(
-    scope: &ContextScope,
-    projects: Vec<ProjectBinding>,
-) -> Result<Option<ProjectBinding>, AppError> {
+    scope: &SkillLocation,
+    projects: Vec<RegisteredProject>,
+) -> Result<Option<RegisteredProject>, AppError> {
     match scope {
-        ContextScope::Global => Ok(None),
-        ContextScope::Project { project_id } => projects
+        SkillLocation::Global => Ok(None),
+        SkillLocation::Project { project_id } => projects
             .into_iter()
             .find(|project| project.id == *project_id)
             .map(Some)
@@ -175,12 +176,14 @@ mod tests {
     use std::path::PathBuf;
 
     use super::ContextResolver;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ProjectBinding};
+    use crate::environment::types::{
+        EnvironmentRef, RegisteredProject, SkillLocation, SkillLocationRef,
+    };
     use crate::environment::wsl::WslSession;
     use crate::error::AppError;
 
-    fn project(id: &str, native_path: &str) -> ProjectBinding {
-        ProjectBinding {
+    fn project(id: &str, native_path: &str) -> RegisteredProject {
+        RegisteredProject {
             id: id.to_string(),
             native_path: native_path.to_string(),
             display_name: None,
@@ -203,11 +206,11 @@ mod tests {
     }
 
     #[test]
-    fn resolves_host_global_and_project_resources() {
-        let global = ContextResolver::resolve_host_from(
-            ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+    fn resolves_native_global_and_project_resources() {
+        let global = ContextResolver::resolve_native_from(
+            SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             PathBuf::from("/home/alice"),
             PathBuf::from("/state/skills/.skill-lock.json"),
@@ -226,10 +229,10 @@ mod tests {
         assert_eq!(global.context_root(), "/home/alice");
         assert!(global.project.is_none());
 
-        let project_context = ContextResolver::resolve_host_from(
-            ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Project {
+        let project_context = ContextResolver::resolve_native_from(
+            SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Project {
                     project_id: "app".to_string(),
                 },
             },
@@ -259,11 +262,11 @@ mod tests {
     fn resolves_wsl_global_and_project_resources() {
         let session = wsl_session(Some("/home/alice/.local/state"));
         let global = ContextResolver::resolve_wsl_from_projects(
-            ContextRef {
+            SkillLocationRef {
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             &session,
             Vec::new(),
@@ -277,11 +280,11 @@ mod tests {
         );
 
         let project_context = ContextResolver::resolve_wsl_from_projects(
-            ContextRef {
+            SkillLocationRef {
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
-                scope: ContextScope::Project {
+                scope: SkillLocation::Project {
                     project_id: "app".to_string(),
                 },
             },
@@ -303,11 +306,11 @@ mod tests {
     #[test]
     fn rejects_missing_or_foreign_projects() {
         let missing = ContextResolver::resolve_wsl_from_projects(
-            ContextRef {
+            SkillLocationRef {
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Ubuntu".to_string(),
                 },
-                scope: ContextScope::Project {
+                scope: SkillLocation::Project {
                     project_id: "missing".to_string(),
                 },
             },
@@ -323,11 +326,11 @@ mod tests {
         );
 
         let foreign = ContextResolver::resolve_wsl_from_projects(
-            ContextRef {
+            SkillLocationRef {
                 environment: EnvironmentRef::Wsl {
                     distro_name: "Debian".to_string(),
                 },
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             &wsl_session(None),
             Vec::new(),

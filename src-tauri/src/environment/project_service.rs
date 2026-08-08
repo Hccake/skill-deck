@@ -14,8 +14,8 @@ use crate::environment::path_mapping::{
     WindowsStorageOwner,
 };
 use crate::environment::types::{
-    AddProjectResult, EnvironmentRef, EnvironmentStatus, ProjectBinding, ProjectInfo,
-    ProjectStorageInfo, StorageAccess,
+    AddProjectResult, EnvironmentRef, EnvironmentStatus, ProjectInfo, ProjectStorageInfo,
+    RegisteredProject, StorageAccess,
 };
 use crate::environment::wsl::operations::projects;
 use crate::environment::wsl::{WslRuntime, WslSession};
@@ -43,7 +43,7 @@ pub struct EnvironmentDiscoverySnapshot {
     pub wsl_capability_revision: u64,
 }
 
-pub fn host_environment_info() -> EnvironmentInfo {
+pub fn native_environment_info() -> EnvironmentInfo {
     let display_name = match std::env::consts::OS {
         "windows" => "Windows",
         "macos" => "macOS",
@@ -51,7 +51,7 @@ pub fn host_environment_info() -> EnvironmentInfo {
         other => other,
     };
     EnvironmentInfo {
-        environment: EnvironmentRef::Host,
+        environment: EnvironmentRef::Native,
         display_name: display_name.to_string(),
         status: EnvironmentStatus::Available,
         revision: 0,
@@ -63,7 +63,7 @@ fn environment_infos_from_wsl_discovery(
     discovery: Result<Vec<String>, AppError>,
     registry: &WslRuntime,
 ) -> EnvironmentDiscoverySnapshot {
-    let mut environments = vec![host_environment_info()];
+    let mut environments = vec![native_environment_info()];
     let error = match discovery {
         Ok(distributions) => {
             environments.extend(
@@ -94,7 +94,7 @@ fn environment_infos_from_wsl_discovery(
             None
         }
         Err(error) => {
-            log::warn!("WSL discovery unavailable; continuing with host only: {error}");
+            log::warn!("WSL discovery unavailable; continuing with native only: {error}");
             Some(error)
         }
     };
@@ -118,7 +118,7 @@ where
     DiscoveryFuture: Future<Output = Result<Vec<String>, AppError>>,
 {
     if !wsl_integration_supported || !registry.wsl_integration_enabled() {
-        return host_only_environment_snapshot(
+        return native_only_environment_snapshot(
             wsl_integration_supported,
             registry.capability_revision(),
         );
@@ -126,7 +126,7 @@ where
 
     let discovered = registry.discover_using(discover).await;
     if !registry.wsl_integration_enabled() {
-        return host_only_environment_snapshot(
+        return native_only_environment_snapshot(
             wsl_integration_supported,
             registry.capability_revision(),
         );
@@ -134,12 +134,12 @@ where
     environment_infos_from_wsl_discovery(discovered, registry)
 }
 
-fn host_only_environment_snapshot(
+fn native_only_environment_snapshot(
     wsl_integration_supported: bool,
     wsl_capability_revision: u64,
 ) -> EnvironmentDiscoverySnapshot {
     EnvironmentDiscoverySnapshot {
-        environments: vec![host_environment_info()],
+        environments: vec![native_environment_info()],
         error: None,
         wsl_integration_supported,
         wsl_integration_enabled: false,
@@ -152,14 +152,14 @@ pub async fn list_environments(
 ) -> Result<EnvironmentDiscoverySnapshot, AppError> {
     let supported = cfg!(target_os = "windows");
     if !supported || !registry.wsl_integration_enabled() {
-        return Ok(host_only_environment_snapshot(
+        return Ok(native_only_environment_snapshot(
             supported,
             registry.capability_revision(),
         ));
     }
     let discovered = registry.discover().await;
     if !registry.wsl_integration_enabled() {
-        return Ok(host_only_environment_snapshot(
+        return Ok(native_only_environment_snapshot(
             supported,
             registry.capability_revision(),
         ));
@@ -196,9 +196,9 @@ pub async fn map_environment_path(
     registry: &WslRuntime,
 ) -> Result<String, AppError> {
     match environment {
-        EnvironmentRef::Host => Ok(normalize_project_native_path(
+        EnvironmentRef::Native => Ok(normalize_project_native_path(
             &path,
-            ProjectPathSemantics::host(),
+            ProjectPathSemantics::native(),
         )),
         EnvironmentRef::Wsl { distro_name } => {
             if let Some(mapped) = registry.map_input_without_process(&distro_name, &path)? {
@@ -214,38 +214,38 @@ pub async fn map_environment_path(
     }
 }
 
-pub(crate) fn host_projects_store() -> Result<ProjectsStore, AppError> {
+pub(crate) fn native_projects_store() -> Result<ProjectsStore, AppError> {
     let config_path = get_config_path()?;
-    Ok(host_projects_store_from_config(&config_path))
+    Ok(native_projects_store_from_config(&config_path))
 }
 
-fn host_projects_store_from_config(config_path: &std::path::Path) -> ProjectsStore {
+fn native_projects_store_from_config(config_path: &std::path::Path) -> ProjectsStore {
     ProjectsStore::new(config_path.with_file_name("projects.json"))
 }
 
-fn run_host_project_migration() -> Result<ProjectMigrationState, AppError> {
+fn run_native_project_migration() -> Result<ProjectMigrationState, AppError> {
     let config_path = get_config_path()?;
     let projects_path = config_path.with_file_name("projects.json");
     migrate_legacy_projects(&config_path, &projects_path)
 }
 
-pub(crate) fn initialize_host_project_migration() -> ProjectMigrationRegistry {
-    let state = run_host_project_migration()
+pub(crate) fn initialize_native_project_migration() -> ProjectMigrationRegistry {
+    let state = run_native_project_migration()
         .unwrap_or_else(|error| ProjectMigrationState::Failed { error });
     ProjectMigrationRegistry::new(state)
 }
 
-fn ensure_host_projects_ready(
+fn ensure_native_projects_ready(
     migration: &ProjectMigrationRegistry,
 ) -> Result<ProjectsStore, AppError> {
     migration.ensure_ready()?;
-    host_projects_store()
+    native_projects_store()
 }
 
-fn host_project_info_for_platform(binding: ProjectBinding, windows: bool) -> ProjectInfo {
+fn native_project_info_for_platform(binding: RegisteredProject, windows: bool) -> ProjectInfo {
     let (access, owner) = if windows {
         match windows_storage_owner(&binding.native_path) {
-            WindowsStorageOwner::Host => (StorageAccess::Native, Some(EnvironmentRef::Host)),
+            WindowsStorageOwner::Windows => (StorageAccess::Native, Some(EnvironmentRef::Native)),
             WindowsStorageOwner::Wsl { distro_name } => (
                 StorageAccess::CrossStorage,
                 Some(EnvironmentRef::Wsl { distro_name }),
@@ -253,7 +253,7 @@ fn host_project_info_for_platform(binding: ProjectBinding, windows: bool) -> Pro
             WindowsStorageOwner::Unknown => (StorageAccess::Unknown, None),
         }
     } else if binding.native_path.starts_with('/') {
-        (StorageAccess::Native, Some(EnvironmentRef::Host))
+        (StorageAccess::Native, Some(EnvironmentRef::Native))
     } else {
         (StorageAccess::Unknown, None)
     };
@@ -263,22 +263,22 @@ fn host_project_info_for_platform(binding: ProjectBinding, windows: bool) -> Pro
     }
 }
 
-fn host_project_info(binding: ProjectBinding) -> ProjectInfo {
-    host_project_info_for_platform(binding, cfg!(target_os = "windows"))
+fn native_project_info(binding: RegisteredProject) -> ProjectInfo {
+    native_project_info_for_platform(binding, cfg!(target_os = "windows"))
 }
 
-fn host_project_infos(bindings: Vec<ProjectBinding>) -> Vec<ProjectInfo> {
-    bindings.into_iter().map(host_project_info).collect()
+fn native_project_infos(bindings: Vec<RegisteredProject>) -> Vec<ProjectInfo> {
+    bindings.into_iter().map(native_project_info).collect()
 }
 
-fn updated_host_project(
-    bindings: Vec<ProjectBinding>,
+fn updated_native_project(
+    bindings: Vec<RegisteredProject>,
     project_id: &str,
 ) -> Result<ProjectInfo, AppError> {
     bindings
         .into_iter()
         .find(|project| project.id == project_id)
-        .map(host_project_info)
+        .map(native_project_info)
         .ok_or_else(|| AppError::PathNotFound {
             path: project_id.to_string(),
         })
@@ -295,21 +295,21 @@ fn parse_wsl_project_storage(
 
 async fn wsl_project_infos(
     session: &WslSession,
-    bindings: Vec<ProjectBinding>,
+    bindings: Vec<RegisteredProject>,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     projects::project_infos(session, bindings).await
 }
 
 pub(crate) async fn read_wsl_projects(
     session: &WslSession,
-) -> Result<Vec<crate::environment::types::ProjectBinding>, AppError> {
+) -> Result<Vec<crate::environment::types::RegisteredProject>, AppError> {
     projects::read_projects(session).await
 }
 
 async fn write_wsl_projects(
     session: &WslSession,
-    projects: Vec<crate::environment::types::ProjectBinding>,
-) -> Result<Vec<crate::environment::types::ProjectBinding>, AppError> {
+    projects: Vec<crate::environment::types::RegisteredProject>,
+) -> Result<Vec<crate::environment::types::RegisteredProject>, AppError> {
     projects::write_projects(session, projects).await
 }
 
@@ -319,8 +319,8 @@ pub async fn list_environment_projects(
     migration: &ProjectMigrationRegistry,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     match environment {
-        EnvironmentRef::Host => Ok(host_project_infos(
-            ensure_host_projects_ready(migration)?.read()?,
+        EnvironmentRef::Native => Ok(native_project_infos(
+            ensure_native_projects_ready(migration)?.read()?,
         )),
         EnvironmentRef::Wsl { distro_name } => {
             registry
@@ -340,10 +340,10 @@ pub async fn add_environment_project(
     migration: &ProjectMigrationRegistry,
 ) -> Result<AddProjectResult, AppError> {
     match environment {
-        EnvironmentRef::Host => {
-            let result = ensure_host_projects_ready(migration)?.add(native_path)?;
+        EnvironmentRef::Native => {
+            let result = ensure_native_projects_ready(migration)?.add(native_path)?;
             Ok(AddProjectResult {
-                project: host_project_info(result.project),
+                project: native_project_info(result.project),
                 created: result.created,
             })
         }
@@ -389,8 +389,8 @@ pub async fn remove_environment_project(
     migration: &ProjectMigrationRegistry,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     match environment {
-        EnvironmentRef::Host => Ok(host_project_infos(
-            ensure_host_projects_ready(migration)?.remove(&project_id)?,
+        EnvironmentRef::Native => Ok(native_project_infos(
+            ensure_native_projects_ready(migration)?.remove(&project_id)?,
         )),
         EnvironmentRef::Wsl { distro_name } => {
             registry
@@ -417,10 +417,10 @@ pub async fn set_environment_project_cross_storage_warning(
     migration: &ProjectMigrationRegistry,
 ) -> Result<ProjectInfo, AppError> {
     match environment {
-        EnvironmentRef::Host => {
-            let projects = ensure_host_projects_ready(migration)?
+        EnvironmentRef::Native => {
+            let projects = ensure_native_projects_ready(migration)?
                 .set_cross_storage_warning_suppressed(&project_id, suppressed)?;
-            updated_host_project(projects, &project_id)
+            updated_native_project(projects, &project_id)
         }
         EnvironmentRef::Wsl { distro_name } => {
             registry
@@ -448,13 +448,13 @@ pub async fn set_environment_project_cross_storage_warning(
     }
 }
 
-pub fn retry_host_project_migration(
+pub fn retry_native_project_migration(
     migration: &ProjectMigrationRegistry,
 ) -> Result<Vec<ProjectInfo>, AppError> {
-    match run_host_project_migration() {
+    match run_native_project_migration() {
         Ok(state) => {
             migration.set(state);
-            Ok(host_project_infos(host_projects_store()?.read()?))
+            Ok(native_project_infos(native_projects_store()?.read()?))
         }
         Err(error) => {
             let message = error.to_string();
@@ -473,32 +473,32 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        environment_infos_from_wsl_discovery, host_environment_info,
-        host_project_info_for_platform, host_projects_store_from_config, list_environments_with,
-        map_environment_path, parse_wsl_project_storage,
+        environment_infos_from_wsl_discovery, list_environments_with, map_environment_path,
+        native_environment_info, native_project_info_for_platform,
+        native_projects_store_from_config, parse_wsl_project_storage,
     };
     use crate::environment::types::{
-        EnvironmentRef, EnvironmentStatus, ProjectBinding, StorageAccess,
+        EnvironmentRef, EnvironmentStatus, RegisteredProject, StorageAccess,
     };
     use crate::environment::wsl::WslRuntime;
     use crate::error::AppError;
 
     #[test]
-    fn host_environment_is_always_available() {
-        let host = host_environment_info();
-        assert_eq!(host.environment, EnvironmentRef::Host);
-        assert_eq!(host.status, EnvironmentStatus::Available);
+    fn native_environment_is_always_available() {
+        let native = native_environment_info();
+        assert_eq!(native.environment, EnvironmentRef::Native);
+        assert_eq!(native.status, EnvironmentStatus::Available);
         let expected_name = match std::env::consts::OS {
             "windows" => "Windows",
             "macos" => "macOS",
             "linux" => "Linux",
             other => other,
         };
-        assert_eq!(host.display_name, expected_name);
+        assert_eq!(native.display_name, expected_name);
     }
 
-    fn project(id: &str, native_path: &str) -> ProjectBinding {
-        ProjectBinding {
+    fn project(id: &str, native_path: &str) -> RegisteredProject {
+        RegisteredProject {
             id: id.to_string(),
             native_path: native_path.to_string(),
             display_name: None,
@@ -508,14 +508,14 @@ mod tests {
     }
 
     #[test]
-    fn host_project_storage_uses_platform_and_wsl_unc_owner() {
+    fn native_project_storage_uses_platform_and_wsl_unc_owner() {
         for path in [r"C:\Code\app", r"\\server\share\app"] {
-            let info = host_project_info_for_platform(project("windows", path), true);
+            let info = native_project_info_for_platform(project("windows", path), true);
             assert_eq!(info.storage.access, StorageAccess::Native);
-            assert_eq!(info.storage.owner, Some(EnvironmentRef::Host));
+            assert_eq!(info.storage.owner, Some(EnvironmentRef::Native));
         }
 
-        let wsl = host_project_info_for_platform(
+        let wsl = native_project_info_for_platform(
             project("wsl", r"\\wsl.localhost\Ubuntu\home\alice\app"),
             true,
         );
@@ -527,11 +527,11 @@ mod tests {
             })
         );
 
-        let linux = host_project_info_for_platform(project("linux", "/work/app"), false);
+        let linux = native_project_info_for_platform(project("linux", "/work/app"), false);
         assert_eq!(linux.storage.access, StorageAccess::Native);
-        assert_eq!(linux.storage.owner, Some(EnvironmentRef::Host));
+        assert_eq!(linux.storage.owner, Some(EnvironmentRef::Native));
 
-        let malformed = host_project_info_for_platform(project("bad", "relative/path"), true);
+        let malformed = native_project_info_for_platform(project("bad", "relative/path"), true);
         assert_eq!(malformed.storage.access, StorageAccess::Unknown);
         assert_eq!(malformed.storage.owner, None);
     }
@@ -550,7 +550,7 @@ mod tests {
 
         assert_eq!(storage.len(), 3);
         assert_eq!(storage[0].access, StorageAccess::CrossStorage);
-        assert_eq!(storage[0].owner, Some(EnvironmentRef::Host));
+        assert_eq!(storage[0].owner, Some(EnvironmentRef::Native));
         assert_eq!(storage[1].access, StorageAccess::Native);
         assert_eq!(storage[1].owner, Some(session_environment));
         assert_eq!(storage[2].access, StorageAccess::Unsupported);
@@ -568,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_wsl_discovery_keeps_the_host_environment() {
+    fn unavailable_wsl_discovery_keeps_the_native_environment() {
         let registry = WslRuntime::default();
         let snapshot = environment_infos_from_wsl_discovery(
             Err(AppError::EnvironmentDiscoveryFailed {
@@ -577,7 +577,7 @@ mod tests {
             &registry,
         );
 
-        assert_eq!(snapshot.environments, vec![host_environment_info()]);
+        assert_eq!(snapshot.environments, vec![native_environment_info()]);
         assert!(matches!(
             snapshot.error,
             Some(AppError::EnvironmentDiscoveryFailed { .. })
@@ -585,17 +585,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_wsl_discovery_is_normal_host_only_snapshot() {
+    fn empty_wsl_discovery_is_normal_native_only_snapshot() {
         let registry = WslRuntime::default();
         let snapshot = environment_infos_from_wsl_discovery(Ok(Vec::new()), &registry);
 
-        assert_eq!(snapshot.environments, vec![host_environment_info()]);
+        assert_eq!(snapshot.environments, vec![native_environment_info()]);
         assert_eq!(snapshot.environments[0].revision, 0);
         assert_eq!(snapshot.error, None);
     }
 
     #[tokio::test]
-    async fn disabled_wsl_integration_returns_host_without_discovery() {
+    async fn disabled_wsl_integration_returns_native_without_discovery() {
         let registry = WslRuntime::new(false);
         let calls = Arc::new(AtomicUsize::new(0));
         let discovery_calls = Arc::clone(&calls);
@@ -606,7 +606,7 @@ mod tests {
         })
         .await;
 
-        assert_eq!(snapshot.environments, vec![host_environment_info()]);
+        assert_eq!(snapshot.environments, vec![native_environment_info()]);
         assert_eq!(snapshot.error, None);
         assert_eq!(
             snapshot.wsl_integration_supported,
@@ -636,7 +636,7 @@ mod tests {
         release_tx.send(()).expect("release discovery");
 
         let snapshot = discovery.await.expect("discovery task");
-        assert_eq!(snapshot.environments, vec![host_environment_info()]);
+        assert_eq!(snapshot.environments, vec![native_environment_info()]);
         assert!(!snapshot.wsl_integration_enabled);
     }
 
@@ -688,13 +688,13 @@ mod tests {
     }
 
     #[test]
-    fn opening_host_projects_store_does_not_migrate_or_rewrite_config() {
+    fn opening_native_projects_store_does_not_migrate_or_rewrite_config() {
         let temp = tempdir().expect("tempdir");
         let config_path = temp.path().join("config.json");
         let original = br#"{"projects":["C:\\Code\\app"],"futureField":true}"#;
         fs::write(&config_path, original).expect("seed config");
 
-        let projects = host_projects_store_from_config(&config_path)
+        let projects = native_projects_store_from_config(&config_path)
             .read()
             .expect("read projects");
 

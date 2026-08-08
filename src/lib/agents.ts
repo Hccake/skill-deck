@@ -2,7 +2,7 @@ import type {
   AgentId,
   AgentRuntimeSnapshot,
   ResolvedAgent,
-  SkillScope,
+  InstalledSkillLocation,
 } from '@/bindings';
 
 export function agentId(agent: ResolvedAgent): AgentId {
@@ -15,7 +15,7 @@ export function agentDisplayName(agent: ResolvedAgent): string {
 
 export function agentsForScope(
   snapshot: AgentRuntimeSnapshot,
-  scope: SkillScope,
+  scope: InstalledSkillLocation,
 ): ResolvedAgent[] {
   return Object.values(snapshot.agents)
     .filter((agent): agent is ResolvedAgent => agent !== undefined)

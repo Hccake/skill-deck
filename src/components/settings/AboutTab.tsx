@@ -96,7 +96,7 @@ export function AboutTab() {
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 dark:bg-blue-500/15 transition-colors mb-2 border border-blue-500/10">
             <Terminal className="h-4 w-4 text-blue-600 dark:text-blue-400" />
           </div>
-          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">{t('settings.links.cliCompatibility', 'CLI 兼容')} v{COMPATIBLE_CLI_VERSION}</span>
+          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1">{t('settings.links.cliReferenceVersion', 'skills CLI 参考版本')} v{COMPATIBLE_CLI_VERSION}</span>
           <span className="text-xs font-bold text-foreground flex items-center gap-1">
             {t('settings.links.vercelSkills', 'Vercel Skills')} <ExternalLink className="h-2.5 w-2.5 opacity-40 ml-0.5" />
           </span>

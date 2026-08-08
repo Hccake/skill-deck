@@ -6,7 +6,7 @@ import {
   openManageAgentChanges,
 } from '@/workflows/skill-manage-agents';
 import { ManageAgentsDialog } from './ManageAgentsDialog';
-import type { ContextRef, InstalledSkill } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill } from '@/bindings';
 
 export function ManageAgentsDialogContainer() {
   const skill = useSkillDialogStore((state) => state.manageAgentsSkill);
@@ -28,7 +28,7 @@ function OpenManageAgentsDialog({
   context,
 }: {
   skill: InstalledSkill;
-  context: ContextRef;
+  context: SkillLocationRef;
 }) {
   const agentDetails = useSkillDialogStore((state) => state.manageAgentDetails);
   const loadingAgentDetails = useSkillDialogStore((state) => state.loadingManageAgentDetails);

@@ -15,7 +15,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
 }));
 
 const context = {
-  environment: { kind: 'host' },
+  environment: { kind: 'native' },
   scope: { scope: 'global' },
 } as const;
 
@@ -92,7 +92,7 @@ describe('repairSkillSource', () => {
     expect(workflowApi.fetchAvailable).toHaveBeenCalledWith(context, 'owner/repo', 'repair-1');
   });
 
-  it('preserves an existing extra installation for an Agent that also reads the shared directory', async () => {
+  it('preserves an existing extra installation for an Agent that also reads the standard directory', async () => {
     const workflowApi = api();
     workflowApi.getInstallAgentSelection.mockResolvedValue({
       selection: {

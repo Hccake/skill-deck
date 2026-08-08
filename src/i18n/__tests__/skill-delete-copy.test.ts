@@ -40,17 +40,17 @@ describe('Skill deletion copy', () => {
     expect(en.skills.deleteConfirm.copyMode).toBe('Copy');
   });
 
-  it('describes Skill directories as the deletion targets', () => {
+  it('states exactly what deletion removes', () => {
     expect(zhCN.skills.deleteConfirm.description)
-      .toBe('将删除“{{name}}”的通用 Skill 目录，以及各 Agent 下对应的 Skill 目录。');
+      .toBe('将删除通用 Skill 目录中的“{{name}}”，以及各 Agent 目录中对应的链接或副本。');
     expect(zhCN.skills.deleteConfirm.description).not.toContain('Agent 接入');
     expect(en.skills.deleteConfirm.description)
-      .toBe('This deletes the shared “{{name}}” Skill directory and its corresponding Skill directories under each Agent.');
+      .toBe('This deletes “{{name}}” from the common Skill directory and removes its corresponding links or copies from Agent directories.');
   });
 
   it('briefly explains that independent copies are also deleted', () => {
     expect(zhCN.skills.deleteConfirm.copyWarning)
-      .toBe('部分 Agent 目录中存在此 Skill 的独立副本，本次操作会将其一并删除。');
+      .toBe('部分 Agent 的 Skill 目录中保留了独立副本，本次操作会将其一并删除。');
     expect(en.skills.deleteConfirm.copyWarning)
       .toBe('Some Agent directories contain independent copies of this Skill. This operation will delete them as well.');
   });

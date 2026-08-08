@@ -225,7 +225,9 @@ mod tests {
         RecoveryMarkerKind, RecoveryMarkerStore, RecoveryResourcePathKind, RecoverySubject,
         RECOVERY_MARKER_SCHEMA_VERSION,
     };
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
     use crate::error::{AppError, RecoveryResourceId};
     use crate::storage::recovery_repository::{
         RecoveryConsistency, RecoveryConsistencyChecker, RecoveryRepository,
@@ -289,7 +291,7 @@ mod tests {
         assert!(service.open_target(&missing).is_err());
         service
             .repository()
-            .reindex_environment(&EnvironmentRef::Host, &HashSet::new())
+            .reindex_environment(&EnvironmentRef::Native, &HashSet::new())
             .await
             .unwrap();
     }
@@ -315,7 +317,7 @@ mod tests {
             Arc::clone(&checker),
         ));
         reopened
-            .reindex_environment(&EnvironmentRef::Host, &HashSet::new())
+            .reindex_environment(&EnvironmentRef::Native, &HashSet::new())
             .await
             .expect("reindex");
 
@@ -338,9 +340,9 @@ mod tests {
         value.subject = Some(RecoverySubject {
             operation_kind: MutationKind::Update,
             skill_name: "skill-deck".to_string(),
-            context: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            context: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
         });
         value.entries[0].destination = locator(r"\\?\C:\Users\cheng\.agents\skills\skill-deck");
@@ -388,7 +390,7 @@ mod tests {
         let checker = Arc::new(Checker(Mutex::new(RecoveryConsistency::Inconsistent)));
         let repository = Arc::new(RecoveryRepository::new(vec![store], checker));
         repository
-            .reindex_environment(&EnvironmentRef::Host, &HashSet::new())
+            .reindex_environment(&EnvironmentRef::Native, &HashSet::new())
             .await
             .expect("reindex invalid marker");
         let service = RecoveryService::new(repository);
@@ -429,7 +431,7 @@ mod tests {
 
         service
             .repository()
-            .reindex_environment(&EnvironmentRef::Host, &HashSet::new())
+            .reindex_environment(&EnvironmentRef::Native, &HashSet::new())
             .await
             .expect("stable reindex");
         assert_eq!(
@@ -440,7 +442,7 @@ mod tests {
         fs::remove_dir_all(&invalid_root).unwrap();
         service
             .repository()
-            .reindex_environment(&EnvironmentRef::Host, &HashSet::new())
+            .reindex_environment(&EnvironmentRef::Native, &HashSet::new())
             .await
             .expect("remove stale invalid index");
         assert!(service.list().await.unwrap().is_empty());
@@ -451,15 +453,15 @@ mod tests {
             schema_version: RECOVERY_MARKER_SCHEMA_VERSION,
             resource_id: RecoveryResourceId::parse(id).unwrap(),
             kind: RecoveryMarkerKind::InProgress,
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             operation_id: "operation-1".to_string(),
             unit_id: "unit-1".to_string(),
             subject: Some(RecoverySubject {
                 operation_kind: MutationKind::Update,
                 skill_name: "demo".to_string(),
-                context: ContextRef {
-                    environment: EnvironmentRef::Host,
-                    scope: ContextScope::Global,
+                context: SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: SkillLocation::Global,
                 },
             }),
             created_at_epoch_ms: 1_000,
@@ -476,7 +478,7 @@ mod tests {
 
     fn locator(path: &str) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string(),
         }
     }

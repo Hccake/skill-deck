@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::agent_definition::AgentId;
 use crate::environment::runtime::ContextSnapshotRevision;
 use crate::environment::types::{
-    same_environment_identity, ContextRef, EnvironmentRef, ResourceLocator,
+    same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef,
 };
 use crate::error::AppError;
 
@@ -33,7 +33,7 @@ pub struct ReadRoot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadPlan {
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub roots: Vec<ReadRoot>,
     pub registry_revision: String,
     pub environment_revision: String,
@@ -43,7 +43,7 @@ pub struct ReadPlan {
 }
 
 pub struct ReadPlanBuilder {
-    context: ContextRef,
+    context: SkillLocationRef,
     roots: HashMap<ResourceLocator, ReadRoot>,
     registry_revision: String,
     environment_revision: String,
@@ -52,7 +52,7 @@ pub struct ReadPlanBuilder {
 
 impl ReadPlanBuilder {
     pub fn new(
-        context: ContextRef,
+        context: SkillLocationRef,
         registry_revision: impl Into<String>,
         environment_revision: impl Into<String>,
         context_revision: ContextSnapshotRevision,

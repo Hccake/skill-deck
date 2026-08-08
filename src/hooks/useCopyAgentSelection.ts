@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppError, ContextRef, CopyAgentSelectionSnapshot } from '@/bindings';
+import type { AppError, SkillLocationRef, CopyAgentSelectionSnapshot } from '@/bindings';
 import { getCopyAgentSelection } from '@/hooks/useTauriApi';
 import { contextKey } from '@/lib/context';
 import { toAppError } from '@/utils/to-app-error';
@@ -10,7 +10,7 @@ export type CopyAgentSelectionState =
   | { status: 'error'; error: AppError };
 
 export function useCopyAgentSelection(
-  source: ContextRef,
+  source: SkillLocationRef,
   skillName: string,
 ): CopyAgentSelectionState & { retry: () => Promise<void> } {
   const inputKey = `${contextKey(source)}:${skillName}`;

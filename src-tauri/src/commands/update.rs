@@ -99,15 +99,15 @@ async fn execute_update(
 mod tests {
     use super::*;
     use crate::application::update::UpdateRequest;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 
     #[test]
     fn single_skill_update_rejects_batch_requests() {
         let execution = UpdateExecutionRequest {
             request: UpdateRequest {
-                context: ContextRef {
-                    environment: EnvironmentRef::Host,
-                    scope: ContextScope::Global,
+                context: SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: SkillLocation::Global,
                 },
                 skill_names: vec!["alpha".to_string(), "beta".to_string()],
             },

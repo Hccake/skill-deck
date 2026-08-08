@@ -90,7 +90,7 @@ pub struct SkillAgentPresenceInfo {
     pub agent: AgentId,
     pub display_name: String,
     pub presence: AgentSkillPresence,
-    pub shared_path: String,
+    pub standard_path: String,
     pub private_path: Option<String>,
     pub can_cleanup_private_copy: bool,
 }

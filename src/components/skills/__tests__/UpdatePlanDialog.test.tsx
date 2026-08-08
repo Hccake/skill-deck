@@ -6,7 +6,7 @@ import { UpdatePlanDialog } from '../UpdatePlanDialog';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { useSkillsDataStore } from '@/stores/skills-data';
 import { useMutationStore } from '@/stores/mutation';
-import type { ActiveMutation, ContextRef } from '@/bindings';
+import type { ActiveMutation, SkillLocationRef } from '@/bindings';
 import { contextKey } from '@/lib/context';
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({
@@ -17,7 +17,7 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({
   },
 }) }));
 
-const context: ContextRef = { environment: { kind: 'host' }, scope: { scope: 'global' } };
+const context: SkillLocationRef = { environment: { kind: 'native' }, scope: { scope: 'global' } };
 
 describe('UpdatePlanDialog', () => {
   beforeEach(() => {

@@ -61,14 +61,14 @@ vi.mock('@/hooks/useMutationMonitor', () => ({
 
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: { kind: string; distro_name?: string }) => (
-    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`
+    environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`
   ),
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector(mocks.environmentState),
 }));
 
 vi.mock('@/hooks/useProjectWorkspace', () => ({
   useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
-    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    const key = environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`;
     return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
   },
 }));
@@ -116,7 +116,7 @@ describe('MutationStatusBar', () => {
 
     render(<MutationStatusBar />);
 
-    expect(screen.getByText('Ubuntu 24.04 / cgp-be - mutation.activity')).toBeDefined();
+    expect(screen.getByText('context.environmentWslName / cgp-be - mutation.activity')).toBeDefined();
     const spinner = screen.getByTestId('mutation-spinner');
     expect(spinner.className).toContain('animate-spin');
     expect(spinner.querySelector('svg')?.className.baseVal).not.toContain('animate-spin');

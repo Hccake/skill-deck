@@ -34,7 +34,7 @@ impl ContentManifestReader for NativeContentManifestReader {
 }
 
 fn read_target(target: &ContentManifestTarget) -> Result<ContentManifest, AppError> {
-    if target.location.environment != EnvironmentRef::Host
+    if target.location.environment != EnvironmentRef::Native
         || !matches!(
             target.key.backend,
             ExecutionBackend::NativeWindows | ExecutionBackend::NativeUnix

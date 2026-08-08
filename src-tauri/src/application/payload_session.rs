@@ -17,7 +17,7 @@ use crate::core::skill_payload::{SkillPayload, SkillPayloadManifest};
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{
-    same_environment_identity, ContextRef, ContextScope, EnvironmentKey, EnvironmentRef,
+    same_environment_identity, EnvironmentKey, EnvironmentRef, SkillLocation, SkillLocationRef,
 };
 use crate::error::AppError;
 
@@ -114,7 +114,7 @@ pub struct AcquiredPayloadHandle {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopySourceSnapshot {
-    pub source_context: ContextRef,
+    pub source_context: SkillLocationRef,
     pub skill_name: String,
     pub revisions: RuntimeRevisions,
     pub lock_entry: Option<Value>,
@@ -1320,19 +1320,19 @@ fn validate_copy_source_snapshot_binding(
 ) -> Result<(), AppError> {
     let valid_project = matches!(
         &snapshot.source_context.scope,
-        ContextScope::Project { project_id } if !project_id.trim().is_empty()
+        SkillLocation::Project { project_id } if !project_id.trim().is_empty()
     );
-    let host_identity = matches!(
+    let native_identity = matches!(
         snapshot.project_identity.key.backend,
         ExecutionBackend::NativeWindows | ExecutionBackend::NativeUnix
     ) && matches!(
         snapshot.project_identity.destination.environment,
-        EnvironmentRef::Host
+        EnvironmentRef::Native
     ) && snapshot.project_identity.entry_kind == TargetEntryKind::Directory;
     if !valid_project
         || !same_environment_identity(&snapshot.source_context.environment, &handle.environment)
         || snapshot.skill_name != payload.planning_metadata.skill_name
-        || !host_identity
+        || !native_identity
     {
         return Err(AppError::StalePayload);
     }
@@ -1437,9 +1437,9 @@ mod tests {
 
     fn copy_source_snapshot(environment: EnvironmentRef) -> CopySourceSnapshot {
         CopySourceSnapshot {
-            source_context: ContextRef {
+            source_context: SkillLocationRef {
                 environment,
-                scope: ContextScope::Project {
+                scope: SkillLocation::Project {
                     project_id: "source-project".to_string(),
                 },
             },
@@ -1463,7 +1463,7 @@ mod tests {
                     normalized_final_child_name: "source".to_string(),
                 },
                 destination: ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: "/work/source".to_string(),
                 },
                 fingerprint: EntryFingerprint("entry-v1-source".to_string()),
@@ -1480,7 +1480,7 @@ mod tests {
                     normalized_final_child_name: "demo".to_string(),
                 },
                 destination: ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: "/source/.agents/skills/demo".to_string(),
                 },
                 fingerprint: EntryFingerprint("entry-v1-demo".to_string()),
@@ -1625,7 +1625,7 @@ mod tests {
         let manager = manager(now.clone());
         let discovery = manager
             .discover_with_source(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 "source-v1",
                 Arc::new(InMemoryPayloadSessionStorage::default()),
                 RetainedDiscoverySource::new(
@@ -1719,7 +1719,7 @@ mod tests {
         let now = Arc::new(AtomicU64::new(1_000));
         let manager = manager(now.clone());
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
@@ -1740,14 +1740,14 @@ mod tests {
         let now = Arc::new(AtomicU64::new(2_500));
         let manager = manager(now.clone());
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
             .acquire_payload(&discovery, "skills/demo", payload())
             .await
             .expect("payload handle");
-        let snapshot = copy_source_snapshot(EnvironmentRef::Host);
+        let snapshot = copy_source_snapshot(EnvironmentRef::Native);
 
         manager
             .bind_copy_source_snapshot(&handle, snapshot.clone())
@@ -1771,14 +1771,14 @@ mod tests {
         let now = Arc::new(AtomicU64::new(3_000));
         let manager = manager(now);
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
             .acquire_payload(&discovery, "skills/demo", payload())
             .await
             .expect("payload handle");
-        let snapshot = copy_source_snapshot(EnvironmentRef::Host);
+        let snapshot = copy_source_snapshot(EnvironmentRef::Native);
 
         manager
             .bind_copy_source_snapshot(&handle, snapshot.clone())
@@ -1809,7 +1809,7 @@ mod tests {
         let now = Arc::new(AtomicU64::new(5_000));
         let manager = manager(now.clone());
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
@@ -1840,7 +1840,7 @@ mod tests {
             now,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
@@ -1876,7 +1876,7 @@ mod tests {
             now,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let payload = payload();
@@ -1909,7 +1909,7 @@ mod tests {
             now,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
@@ -1939,7 +1939,7 @@ mod tests {
             now,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
@@ -1960,7 +1960,7 @@ mod tests {
         let now = Arc::new(AtomicU64::new(30_000));
         let manager = manager(now.clone());
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager
@@ -1984,7 +1984,7 @@ mod tests {
         let now = Arc::new(AtomicU64::new(35_000));
         let manager = manager(now);
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let metadata = PayloadPlanningMetadata {
@@ -2106,7 +2106,7 @@ mod tests {
             now,
         );
         let first = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("first discovery");
         let handle = manager
@@ -2116,7 +2116,7 @@ mod tests {
         let lease = manager.pin_verified(&handle).await.expect("lease");
 
         assert!(matches!(
-            manager.discover(EnvironmentRef::Host, "source-v2").await,
+            manager.discover(EnvironmentRef::Native, "source-v2").await,
             Err(AppError::CapabilityUnavailable { .. })
         ));
         assert_eq!(lease.manifest().payload_root_hash, handle.manifest_hash);
@@ -2130,7 +2130,7 @@ mod tests {
             0
         );
         manager
-            .discover(EnvironmentRef::Host, "source-v3")
+            .discover(EnvironmentRef::Native, "source-v3")
             .await
             .expect("old unpinned session can be evicted");
         assert!(matches!(
@@ -2153,7 +2153,7 @@ mod tests {
             now,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
 
@@ -2171,7 +2171,7 @@ mod tests {
         let now = Arc::new(AtomicU64::new(60_000));
         let manager = manager(now);
         let discovery = manager
-            .discover(EnvironmentRef::Host, "sha256-source")
+            .discover(EnvironmentRef::Native, "sha256-source")
             .await
             .expect("discovery");
         let handle = manager
@@ -2215,7 +2215,7 @@ mod tests {
         };
         let first_manager = manager_with_storage(storage.clone(), limits, now.clone());
         let discovery = first_manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = first_manager
@@ -2300,7 +2300,7 @@ mod tests {
         );
         manager
             .apply_maintenance_report(
-                &EnvironmentRef::Host,
+                &EnvironmentRef::Native,
                 &PayloadCleanupReport {
                     removed_sessions: 0,
                     protected_sessions: 0,
@@ -2311,7 +2311,7 @@ mod tests {
             )
             .expect("maintenance report");
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery within remaining capacity");
 
@@ -2325,7 +2325,7 @@ mod tests {
 
         manager
             .apply_maintenance_report(
-                &EnvironmentRef::Host,
+                &EnvironmentRef::Native,
                 &PayloadCleanupReport {
                     removed_sessions: 0,
                     protected_sessions: 0,
@@ -2341,9 +2341,9 @@ mod tests {
             .expect("blocked report");
 
         assert!(matches!(
-            manager.discover(EnvironmentRef::Host, "source-v2").await,
+            manager.discover(EnvironmentRef::Native, "source-v2").await,
             Err(AppError::PayloadStorageRequiresCleanup {
-                environment: EnvironmentRef::Host
+                environment: EnvironmentRef::Native
             })
         ));
     }
@@ -2381,7 +2381,7 @@ mod tests {
         let now = Arc::new(AtomicU64::new(97_000));
         let manager = manager(now);
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-existing")
+            .discover(EnvironmentRef::Native, "source-existing")
             .await
             .expect("discovery");
         let handle = manager
@@ -2389,7 +2389,7 @@ mod tests {
             .await
             .expect("payload");
         manager
-            .begin_maintenance(&EnvironmentRef::Host)
+            .begin_maintenance(&EnvironmentRef::Native)
             .expect("begin maintenance");
 
         let error = match manager.pin_verified(&handle).await {
@@ -2436,10 +2436,10 @@ mod tests {
     async fn protected_session_ids_are_scoped_by_environment() {
         let now = Arc::new(AtomicU64::new(100_000));
         let manager = manager(now);
-        let host = manager
-            .discover(EnvironmentRef::Host, "host-source")
+        let native = manager
+            .discover(EnvironmentRef::Native, "native-source")
             .await
-            .expect("host");
+            .expect("native");
         let wsl = manager
             .discover(
                 EnvironmentRef::Wsl {
@@ -2452,9 +2452,9 @@ mod tests {
 
         assert_eq!(
             manager
-                .protected_session_ids(&EnvironmentRef::Host)
-                .expect("host protected sessions"),
-            HashSet::from([host.session_id])
+                .protected_session_ids(&EnvironmentRef::Native)
+                .expect("native protected sessions"),
+            HashSet::from([native.session_id])
         );
         assert_eq!(
             manager
@@ -2467,13 +2467,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retiring_wsl_sessions_keeps_host_sessions_and_invalidates_old_handles() {
+    async fn retiring_wsl_sessions_keeps_native_sessions_and_invalidates_old_handles() {
         let now = Arc::new(AtomicU64::new(100_000));
         let manager = manager(now);
-        let host = manager
-            .discover(EnvironmentRef::Host, "host-source")
+        let native = manager
+            .discover(EnvironmentRef::Native, "native-source")
             .await
-            .expect("host");
+            .expect("native");
         let wsl = manager
             .discover(
                 EnvironmentRef::Wsl {
@@ -2486,7 +2486,7 @@ mod tests {
 
         assert_eq!(manager.retire_wsl_sessions(), 1);
 
-        assert!(manager.storage_for_discovery(&host).is_ok());
+        assert!(manager.storage_for_discovery(&native).is_ok());
         assert!(matches!(
             manager.storage_for_discovery(&wsl),
             Err(AppError::PayloadSessionExpired { session_id })

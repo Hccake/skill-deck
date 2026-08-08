@@ -41,8 +41,8 @@ function snapshot(): ManageAgentSelectionSnapshot {
   return {
     selection: makeAgentSelectionSnapshot({
       agents: [
-        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
-        { kind: 'standard', id: 'warp', displayName: 'Warp', detection: 'notDetected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'standardOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'warp', displayName: 'Warp', detection: 'notDetected', directoryAccess: 'standardOnly', installOptionId: null, groupId: null },
         { kind: 'standard', id: 'claude-code', displayName: 'Claude Code', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'claude', groupId: null },
         { kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'cursor', groupId: null },
         { kind: 'standard', id: 'unknown-runtime', displayName: 'Unknown Runtime', detection: 'indeterminate', directoryAccess: 'privateOnly', installOptionId: 'unknown', groupId: null },
@@ -165,7 +165,7 @@ describe('ManageAgentsDialog', () => {
   it('shows direct-use Agents as badges and reveals uncertain readers on hover', async () => {
     const user = userEvent.setup();
     const current = snapshot();
-    current.selection.agents.push({ kind: 'standard', id: 'aider', displayName: 'Aider', detection: 'indeterminate', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null });
+    current.selection.agents.push({ kind: 'standard', id: 'aider', displayName: 'Aider', detection: 'indeterminate', directoryAccess: 'standardOnly', installOptionId: null, groupId: null });
     renderDialog({ snapshot: current });
 
     const codexBadge = screen.getByText('Codex').closest('[data-slot="direct-agent-badge"]');

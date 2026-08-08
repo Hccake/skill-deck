@@ -27,7 +27,7 @@ use crate::environment::context_resolver::ResolvedContext;
 use crate::environment::planning::{ResolvedTargetFact, TargetFactResolver};
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{
-    same_environment_identity, ContextRef, EnvironmentRef, ResourceLocator,
+    same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef,
 };
 use crate::error::AppError;
 use crate::models::InstallMode;
@@ -47,12 +47,12 @@ pub struct InstallPlanningFacts {
 pub trait InstallPlanningFactSource: Send + Sync {
     fn current<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>>;
 
     fn current_for_copy_source<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
         self.current(context)
     }
@@ -515,7 +515,7 @@ fn observed_digest(
 
 fn join_entry(root: &ResourceLocator, child: &str) -> ResourceLocator {
     let native_path = match root.environment {
-        EnvironmentRef::Host if cfg!(windows) => format!(
+        EnvironmentRef::Native if cfg!(windows) => format!(
             "{}\\{}",
             root.native_path.trim_end_matches(['/', '\\']),
             child
@@ -560,7 +560,7 @@ mod tests {
     use crate::environment::planning::RuntimeTargetFactResolver;
     use crate::environment::runtime::ContextSnapshotRevision;
     use crate::environment::types::{
-        ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
+        EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
     };
     use crate::environment::wsl::WslRuntime;
     use crate::models::InstallMode;
@@ -570,7 +570,7 @@ mod tests {
     impl InstallPlanningFactSource for Facts {
         fn current<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
         ) -> crate::application::install::InstallFuture<
             'a,
             Result<InstallPlanningFacts, crate::error::AppError>,
@@ -599,7 +599,7 @@ mod tests {
             || 1_000,
         ));
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-fingerprint")
+            .discover(EnvironmentRef::Native, "source-fingerprint")
             .await
             .unwrap();
         let handle = manager
@@ -622,9 +622,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let private_root = physical_root.join(".custom/skills");
         let facts = InstallPlanningFacts {
@@ -742,7 +742,7 @@ mod tests {
             || 1_000,
         ));
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-fingerprint")
+            .discover(EnvironmentRef::Native, "source-fingerprint")
             .await
             .unwrap();
         let handle = manager
@@ -765,16 +765,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
         let facts = InstallPlanningFacts {
             resolved_context: ResolvedContext {
                 context: context.clone(),
-                project: Some(crate::environment::types::ProjectBinding {
+                project: Some(crate::environment::types::RegisteredProject {
                     id: "project-1".to_string(),
                     native_path: project.to_string_lossy().into_owned(),
                     display_name: None,
@@ -897,9 +897,9 @@ mod tests {
     fn eve_lock_placement_matches_cli_root_and_named_target_semantics() {
         let temp = tempdir().unwrap();
         let project = temp.path().join("project");
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
@@ -991,7 +991,7 @@ mod tests {
 
     fn locator(path: &std::path::Path) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string_lossy().into_owned(),
         }
     }
@@ -1000,18 +1000,18 @@ mod tests {
         let id = AgentId::parse("custom-private").unwrap();
         let scope = ResolvedAgentScope {
             enabled: true,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: Some(private_root.to_string()),
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
         AgentRuntimeSnapshot {
             registry_revision: "registry-1".to_string(),
             environment_revision: "environment-1".to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             availability: EnvironmentStatus::Available,
             project_path: None,
             agents: BTreeMap::from([(
@@ -1024,12 +1024,12 @@ mod tests {
                         aliases: Vec::new(),
                         global: ScopeDefinition {
                             enabled: true,
-                            reads_shared: false,
+                            reads_standard: false,
                             private_path: Some(PathSpec::home(".custom/skills")),
                         },
                         project: ScopeDefinition {
                             enabled: false,
-                            reads_shared: false,
+                            reads_standard: false,
                             private_path: None,
                         },
                         detection: DetectionSpec::AnyPathExists {
@@ -1051,28 +1051,28 @@ mod tests {
         let id = AgentId::parse("eve").unwrap();
         let disabled = ResolvedAgentScope {
             enabled: false,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: None,
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
         let project = ResolvedAgentScope {
             enabled: true,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: None,
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
         AgentRuntimeSnapshot {
             registry_revision: "registry-1".to_string(),
             environment_revision: "environment-1".to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             availability: EnvironmentStatus::Available,
             project_path: Some(project_path.to_string()),
             agents: BTreeMap::from([(
@@ -1085,15 +1085,20 @@ mod tests {
                         aliases: Vec::new(),
                         global: ScopeDefinition {
                             enabled: false,
-                            reads_shared: false,
+                            reads_standard: false,
                             private_path: None,
                         },
                         project: ScopeDefinition {
                             enabled: true,
-                            reads_shared: false,
+                            reads_standard: false,
                             private_path: None,
                         },
-                        detection: DetectionSpec::Eve,
+                        detection: DetectionSpec::AnyPathExists {
+                            paths: vec![
+                                PathSpec::project("agent"),
+                                PathSpec::project("package.json"),
+                            ],
+                        },
                         legacy_paths: Vec::new(),
                         adapter: AgentAdapter::Eve,
                     },

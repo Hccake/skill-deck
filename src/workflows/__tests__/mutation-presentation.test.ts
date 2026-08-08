@@ -11,7 +11,7 @@ function failedUnit(): MutationUnitResult {
     unitId: 'skill-a',
     skillName: 'Skill A',
     source: null,
-    target: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+    target: { environment: { kind: 'native' }, scope: { scope: 'global' } },
     status: 'failed',
     retryable: true,
     lockCommitted: false,
@@ -30,7 +30,7 @@ function failedUnit(): MutationUnitResult {
       severity: 'error',
       retryable: true,
       technicalDetails: 'permission denied at /secret',
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       context: null,
       unitId: 'skill-a',
       recoveryResourceId: null,
@@ -90,7 +90,8 @@ describe('mutation result presentation', () => {
     });
 
     expect(presentation.skillName).toBe('Skill A');
-    expect(presentation.environmentLabel).toBe('Ubuntu');
+    expect(presentation.environmentLabel)
+      .toBe('context.environmentWslName{"environment":"Ubuntu"}');
     expect(presentation.scopeLabel).toBe('Skill Deck');
   });
 });

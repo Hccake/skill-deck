@@ -56,7 +56,7 @@ permissions = [
   "allow-read-skill-content",
   "allow-remove-environment-project",
   "allow-remove-skill",
-  "allow-retry-host-project-migration",
+  "allow-retry-native-project-migration",
   "allow-save-config",
   "allow-save-custom-agent",
   "allow-save-github-credential",

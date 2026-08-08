@@ -33,7 +33,7 @@ use crate::application::payload_session::{
 use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
 use crate::application::remove::{RemoveIntent, RemoveRequest, RemoveService};
 use crate::application::runtime_facts::{
-    AgentRegistrySnapshotSource, HostRuntimeSnapshot, RuntimePlanningFactSource,
+    AgentRegistrySnapshotSource, NativeRuntimeSnapshot, RuntimePlanningFactSource,
 };
 use crate::application::skill_entries::{InstalledSkillPayloadAcquirer, SkillEntryObserver};
 use crate::application::source_evidence::{RemoteSnapshotId, SourceSnapshotFacts};
@@ -60,7 +60,7 @@ use crate::environment::native::recovery::NativeRecoveryMarkerStore;
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::recovery::RecoveryMarkerStore;
 use crate::environment::runtime::ExecutionBackend;
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 use crate::git_fixture::{BareSkillRepo as FileBareSkillRepo, CountingGitTransport};
@@ -330,10 +330,10 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
 
     let registry = Arc::new(StaticRegistry(Arc::new(test_registry())));
     let environments = Arc::new(WslRuntime::default());
-    let facts = RuntimePlanningFactSource::with_host_snapshot(
+    let facts = RuntimePlanningFactSource::with_native_snapshot(
         registry,
         environments.clone(),
-        HostRuntimeSnapshot {
+        NativeRuntimeSnapshot {
             home,
             config_home,
             projects_path,
@@ -358,7 +358,9 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
 
     let source_v1 = root.join("payload-v1/demo");
     let payload_v1 = create_payload(&source_v1, "v1")?;
-    let discovery_v1 = payloads.discover(EnvironmentRef::Host, "source-v1").await?;
+    let discovery_v1 = payloads
+        .discover(EnvironmentRef::Native, "source-v1")
+        .await?;
     let handle_v1 = payloads
         .acquire_payload_with_metadata(
             &discovery_v1,
@@ -371,7 +373,9 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     let source_v2 = root.join("payload-v2/demo");
     let payload_v2 = create_payload(&source_v2, "v2")?;
     let expected_copy_hash = compute_cli_project_hash_from_payload(&payload_v2)?;
-    let discovery_v2 = payloads.discover(EnvironmentRef::Host, "source-v2").await?;
+    let discovery_v2 = payloads
+        .discover(EnvironmentRef::Native, "source-v2")
+        .await?;
     let handle_v2 = payloads
         .acquire_payload_with_metadata(
             &discovery_v2,
@@ -817,7 +821,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     let copy_request = CopyRequest {
         skill_name: "demo".to_string(),
         source: source_context.clone(),
-        target_environment: EnvironmentRef::Host,
+        target_environment: EnvironmentRef::Native,
         target_project_ids: vec!["target".to_string()],
         agent_selection: crate::application::agent_selection::AgentSelectionSubmission {
             revision: copy_selection.revision,
@@ -910,10 +914,10 @@ fn project(id: &str, path: &Path, display_name: &str) -> Value {
     })
 }
 
-fn project_context(id: &str) -> ContextRef {
-    ContextRef {
-        environment: EnvironmentRef::Host,
-        scope: ContextScope::Project {
+fn project_context(id: &str) -> SkillLocationRef {
+    SkillLocationRef {
+        environment: EnvironmentRef::Native,
+        scope: SkillLocation::Project {
             project_id: id.to_string(),
         },
     }
@@ -928,7 +932,7 @@ pub(crate) fn test_registry() -> AgentRegistrySnapshot {
         global: disabled_scope(),
         project: ScopeDefinition {
             enabled: true,
-            reads_shared: true,
+            reads_standard: true,
             private_path: Some(PathSpec::project(".builtin/skills")),
         },
         detection: DetectionSpec::AnyPathExists {
@@ -942,7 +946,7 @@ pub(crate) fn test_registry() -> AgentRegistrySnapshot {
         display_name: "Custom Test".to_string(),
         global: CustomScopeDefinition {
             enabled: false,
-            location: ScopeLocation::Shared,
+            location: ScopeLocation::Standard,
             private_path: None,
         },
         project: CustomScopeDefinition {
@@ -967,7 +971,7 @@ pub(crate) fn test_registry() -> AgentRegistrySnapshot {
 fn disabled_scope() -> ScopeDefinition {
     ScopeDefinition {
         enabled: false,
-        reads_shared: false,
+        reads_standard: false,
         private_path: None,
     }
 }
@@ -1343,10 +1347,10 @@ mod update_lifecycle {
 
             let environments = Arc::new(WslRuntime::default());
             let registry = Arc::new(StaticRegistry(Arc::new(test_registry())));
-            let facts = RuntimePlanningFactSource::with_host_snapshot(
+            let facts = RuntimePlanningFactSource::with_native_snapshot(
                 registry,
                 environments.clone(),
-                HostRuntimeSnapshot {
+                NativeRuntimeSnapshot {
                     home,
                     config_home,
                     projects_path,
@@ -1401,7 +1405,7 @@ mod update_lifecycle {
             }
         }
 
-        fn context(&self) -> ContextRef {
+        fn context(&self) -> SkillLocationRef {
             project_context("source")
         }
 

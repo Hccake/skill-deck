@@ -7,13 +7,13 @@ pub use crate::application::agents::{AgentCommandError, ManagedAgentRegistry};
 use crate::core::agent_definition::{AgentId, CustomAgentDefinition};
 use crate::core::agent_settings::AgentSettingsSnapshot;
 use crate::environment::agent_environment::AgentRuntimeSnapshot;
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn list_agents(
-    context: ContextRef,
+    context: SkillLocationRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<AgentRuntimeSnapshot, AgentCommandError> {
     agents::list_agents(context, runtime.wsl(), runtime.agents()).await
@@ -22,7 +22,7 @@ pub async fn list_agents(
 #[tauri::command]
 #[specta::specta]
 pub fn get_agent_settings_snapshot(
-    context: ContextRef,
+    context: SkillLocationRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> AgentSettingsSnapshot {
     agents::get_agent_settings_snapshot(context, runtime.agents())
@@ -31,7 +31,7 @@ pub fn get_agent_settings_snapshot(
 #[tauri::command]
 #[specta::specta]
 pub async fn validate_custom_agent_draft(
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<CustomAgentDraftValidation, AgentCommandError> {
@@ -41,7 +41,7 @@ pub async fn validate_custom_agent_draft(
 #[tauri::command]
 #[specta::specta]
 pub fn save_custom_agent(
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     original_id: Option<AgentId>,
     expected_registry_revision: String,
@@ -60,7 +60,7 @@ pub fn save_custom_agent(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_custom_agent(
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
     runtime: State<'_, RuntimeServiceGraph>,
@@ -79,7 +79,7 @@ pub async fn delete_custom_agent(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_invalid_custom_agent(
-    context: ContextRef,
+    context: SkillLocationRef,
     index: u32,
     expected_registry_revision: String,
     runtime: State<'_, RuntimeServiceGraph>,
@@ -97,7 +97,7 @@ pub async fn delete_invalid_custom_agent(
 #[tauri::command]
 #[specta::specta]
 pub async fn preview_custom_agent_delete(
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
     runtime: State<'_, RuntimeServiceGraph>,

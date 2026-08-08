@@ -3,7 +3,7 @@ use crate::core::mutation::MutationKind;
 use crate::core::projects::ProjectMigrationRegistry;
 use crate::environment::project_service;
 use crate::environment::types::{
-    AddProjectResult, ContextRef, ContextScope, EnvironmentRef, ProjectInfo,
+    AddProjectResult, EnvironmentRef, ProjectInfo, SkillLocation, SkillLocationRef,
 };
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
@@ -14,10 +14,10 @@ fn begin_project_mutation(
     environment: EnvironmentRef,
     project_id: Option<&str>,
 ) -> Result<MutationPermit, AppError> {
-    let scope = project_id.map_or(ContextScope::Global, |project_id| ContextScope::Project {
+    let scope = project_id.map_or(SkillLocation::Global, |project_id| SkillLocation::Project {
         project_id: project_id.to_string(),
     });
-    admission.begin_mutation(kind, ContextRef { environment, scope })
+    admission.begin_mutation(kind, SkillLocationRef { environment, scope })
 }
 
 pub async fn add_environment_project(
@@ -76,17 +76,17 @@ pub async fn set_environment_project_cross_storage_warning(
     .await
 }
 
-pub fn retry_host_project_migration(
+pub fn retry_native_project_migration(
     migration: &ProjectMigrationRegistry,
     admission: &RuntimeAdmissionCoordinator,
 ) -> Result<Vec<ProjectInfo>, AppError> {
     let _permit = begin_project_mutation(
         admission,
         MutationKind::ProjectMigration,
-        EnvironmentRef::Host,
+        EnvironmentRef::Native,
         None,
     )?;
-    project_service::retry_host_project_migration(migration)
+    project_service::retry_native_project_migration(migration)
 }
 
 #[cfg(test)]
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(active.context.environment, environment);
         assert_eq!(
             active.context.scope,
-            ContextScope::Project {
+            SkillLocation::Project {
                 project_id: "project-1".to_string(),
             }
         );
@@ -125,9 +125,9 @@ mod tests {
         let _permit = admission
             .begin_mutation(
                 MutationKind::Install,
-                ContextRef {
-                    environment: EnvironmentRef::Host,
-                    scope: ContextScope::Global,
+                SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: SkillLocation::Global,
                 },
             )
             .expect("begin install");
@@ -136,7 +136,7 @@ mod tests {
             begin_project_mutation(
                 &admission,
                 MutationKind::AddProject,
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 None,
             ),
             Err(AppError::MutationBusy)

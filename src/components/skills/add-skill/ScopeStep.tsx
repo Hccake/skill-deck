@@ -3,16 +3,17 @@ import { useTranslation } from 'react-i18next';
 import { Globe, Folder } from 'lucide-react';
 import { useProjectWorkspace } from '@/hooks/useProjectWorkspace';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
-import type { ContextRef, SkillScope } from '@/bindings';
+import type { SkillLocationRef, InstalledSkillLocation } from '@/bindings';
 import type { WizardState } from './types';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { projectBindingDisplayName } from '@/lib/projects/presentation';
+import { registeredProjectDisplayName } from '@/lib/projects/presentation';
+import { environmentRefDisplayName } from '@/lib/environments/presentation';
 
 type ScopeOption = {
-  scope: SkillScope;
+  scope: InstalledSkillLocation;
   projectPath?: string;
-  context: ContextRef;
+  context: SkillLocationRef;
   label: string;
   hint: string;
   icon: typeof Globe;
@@ -26,23 +27,24 @@ interface ScopeStepProps {
 export function ScopeStep({ state, updateState }: ScopeStepProps) {
   const { t } = useTranslation();
   const environment = state.context.environment;
+  const environmentLabel = environmentRefDisplayName(environment, state.environmentName, t);
   const { projects: environmentProjects } = useProjectWorkspace(environment);
 
   const globalOption: ScopeOption = {
-    scope: 'global' as SkillScope,
+    scope: 'global' as InstalledSkillLocation,
     label: t('addSkill.scopeSelect.global'),
-    hint: environment.kind === 'host'
+    hint: environment.kind === 'native'
       ? t('addSkill.scopeSelect.globalHint', { path: getSharedSkillDirectory('global') })
-      : t('addSkill.scopeSelect.environmentGlobalHint'),
+      : t('addSkill.scopeSelect.environmentGlobalHint', { environment: environmentLabel }),
     icon: Globe,
     context: { environment, scope: { scope: 'global' } },
   };
 
   const projectOptions = useMemo<ScopeOption[]>(() => {
     return environmentProjects.map(({ binding: project }) => ({
-      scope: 'project' as SkillScope,
+      scope: 'project' as InstalledSkillLocation,
       projectPath: project.nativePath,
-      label: projectBindingDisplayName(project),
+      label: registeredProjectDisplayName(project),
       hint: project.nativePath,
       icon: Folder,
       context: {
@@ -105,13 +107,20 @@ export function ScopeStep({ state, updateState }: ScopeStepProps) {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <h2 id="scope-step-title" className="text-base font-semibold">
-          {t('addSkill.scopeSelect.title')}
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {t('addSkill.scopeSelect.hint')}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <h2 id="scope-step-title" className="text-base font-semibold">
+            {t('addSkill.scopeSelect.title')}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {t('addSkill.scopeSelect.hint')}
+          </p>
+        </div>
+        {environmentLabel ? (
+          <span className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground">
+            {environmentLabel}
+          </span>
+        ) : null}
       </div>
 
       <RadioGroup

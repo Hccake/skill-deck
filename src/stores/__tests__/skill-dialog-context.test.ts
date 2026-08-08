@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, InstalledSkill } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill } from '@/bindings';
 import { useMutationStore } from '../mutation';
 import { projectWorkspace } from '../projects';
 import { useSkillDialogStore } from '../skill-dialog';
@@ -38,7 +38,7 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
-const context: ContextRef = {
+const context: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   scope: { scope: 'project', project_id: 'source' },
 };

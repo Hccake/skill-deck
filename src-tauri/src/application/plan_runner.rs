@@ -14,8 +14,8 @@ use crate::environment::native::materialize::NativePreparedEntryExecutor;
 use crate::environment::recovery::RecoveryMarkerStore;
 use crate::environment::runtime::ExecutionBackend;
 use crate::environment::types::{
-    normalized_wsl_distro_name, same_environment_identity, ContextRef, EnvironmentKey,
-    EnvironmentRef,
+    normalized_wsl_distro_name, same_environment_identity, EnvironmentKey, EnvironmentRef,
+    SkillLocationRef,
 };
 use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
 use crate::environment::wsl::operations::materialize::WslPreparedEntryExecutor;
@@ -40,7 +40,7 @@ impl PreparedLockCommitter for RuntimeLockCommitter {
     ) -> BoxFuture<'a, Result<LockCommitReceipt, AppError>> {
         Box::pin(async move {
             match &mutation.target.environment {
-                EnvironmentRef::Host => {
+                EnvironmentRef::Native => {
                     LockPlanCommitter::new(Arc::new(NativeAtomicDocumentIo))
                         .commit(mutation.clone())
                         .await
@@ -150,7 +150,7 @@ impl RuntimePlanExecutor {
             Err(error) => return failed_plan(&plan, error),
         };
         match environment {
-            EnvironmentRef::Host => {
+            EnvironmentRef::Native => {
                 let backend = native_backend();
                 if let Err(error) = validate_entry_backends(&plan, &backend) {
                     return failed_plan(&plan, error);
@@ -276,14 +276,14 @@ struct SharedRevisions(Arc<dyn RuntimeRevisionSource>);
 impl RuntimeRevisionSource for SharedRevisions {
     fn current<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> BoxFuture<'a, Result<RuntimeRevisions, AppError>> {
         self.0.current(context)
     }
 
     fn snapshot<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> BoxFuture<'a, Result<RuntimeRevisionSnapshot, AppError>> {
         self.0.snapshot(context)
     }
@@ -345,8 +345,8 @@ fn native_backend() -> ExecutionBackend {
 struct FailureUnit {
     id: String,
     skill_name: String,
-    source: Option<ContextRef>,
-    target: ContextRef,
+    source: Option<SkillLocationRef>,
+    target: SkillLocationRef,
 }
 
 fn failure_units(plan: &MutationPlan) -> Vec<FailureUnit> {
@@ -413,7 +413,9 @@ mod tests {
     use crate::environment::native::recovery::NativeRecoveryMarkerStore;
     use crate::environment::native::tree::project_target;
     use crate::environment::runtime::{ContextSnapshotRevision, ExecutionBackend};
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
     use crate::environment::wsl::WslRuntime;
     use crate::error::AppError;
     use crate::models::InstallMode;
@@ -435,7 +437,7 @@ mod tests {
     impl RuntimeRevisionSource for Revisions {
         fn current<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
         ) -> BoxFuture<'a, Result<RuntimeRevisions, AppError>> {
             Box::pin(async move { Ok(self.0.clone()) })
         }
@@ -458,7 +460,7 @@ mod tests {
             || 1_000,
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source")
+            .discover(EnvironmentRef::Native, "source")
             .await
             .unwrap();
         let handle = manager
@@ -473,9 +475,9 @@ mod tests {
             ExecutionBackend::NativeUnix
         };
         let projected = project_target(&destination, backend).unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let revisions = RuntimeRevisions {
             registry: "registry-1".to_string(),
@@ -485,7 +487,7 @@ mod tests {
         let entry = PreparedEntryMutation {
             key: projected.key.clone(),
             destination: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: projected
                     .physical_destination
                     .to_string_lossy()
@@ -537,10 +539,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_lock_committer_routes_host_documents_through_atomic_lock_io() {
+    async fn runtime_lock_committer_routes_native_documents_through_atomic_lock_io() {
         let temp = tempdir().unwrap();
         let target = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: temp
                 .path()
                 .join("skills-lock.json")

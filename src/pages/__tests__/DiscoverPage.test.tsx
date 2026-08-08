@@ -4,7 +4,7 @@ import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DiscoverPage } from '../DiscoverPage';
-import type { ContextRef } from '@/bindings';
+import type { SkillLocationRef } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -29,9 +29,9 @@ const mocks = vi.hoisted(() => ({
   },
   workspaceContextState: {
     selectedContext: {
-      environment: { kind: 'host' as const },
+      environment: { kind: 'native' as const },
       scope: { scope: 'global' as const },
-    } as ContextRef,
+    } as SkillLocationRef,
   },
   projectState: {
     projectsByEnvironment: {} as Record<string, unknown[]>,
@@ -58,7 +58,7 @@ vi.mock('@/stores/workspace-context', () => ({
 
 vi.mock('@/hooks/useProjectWorkspace', () => ({
   useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
-    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    const key = environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`;
     return {
       projects: mocks.projectState.projectsByEnvironment[key] ?? [],
       refresh: mocks.projectState.refresh,
@@ -89,7 +89,7 @@ vi.mock('@/components/ui/resizable', () => ({
 describe('DiscoverPage', () => {
   beforeEach(() => {
     mocks.skillsDataState.snapshots = {
-      'host/global': {
+      'native/global': {
         skills: [], agents: [], pathExists: true, loading: false, error: null, requestId: 1,
       },
     };
@@ -97,7 +97,7 @@ describe('DiscoverPage', () => {
     mocks.skillsDataState.refreshContext.mockResolvedValue(undefined);
     mocks.skillDialogState.openAddWithPrefill.mockReset();
     mocks.workspaceContextState.selectedContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     };
     mocks.projectState.projectsByEnvironment = {};

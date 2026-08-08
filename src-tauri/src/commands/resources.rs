@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::application::resources::{ConfigResourceKind, SkillIdentity};
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
@@ -17,7 +17,7 @@ pub async fn open_skill_resource(
 #[tauri::command]
 #[specta::specta]
 pub async fn open_config_resource(
-    context: ContextRef,
+    context: SkillLocationRef,
     kind: ConfigResourceKind,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<(), AppError> {

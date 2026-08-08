@@ -7,7 +7,7 @@ import type {
   DiscoverySessionHandle,
   InstallMode,
   InstallResponse,
-  ContextRef,
+  SkillLocationRef,
   InstallAgentSelectionSnapshot,
 } from '@/bindings';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
@@ -54,7 +54,8 @@ export interface WizardState {
   // Scope
   scope: 'global' | 'project';
   projectPath?: string;
-  context: ContextRef;
+  context: SkillLocationRef;
+  environmentName?: string;
 
   // Source
   source: string;

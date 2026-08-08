@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppError, ContextRef, EnvironmentRef } from '@/bindings';
+import type { AppError, SkillLocationRef, EnvironmentRef } from '@/bindings';
 import { globalContext, sameContext, sameEnvironment } from '@/lib/context';
 import { toAppError } from '@/utils/to-app-error';
 import { useEnvironmentStore } from './environment';
@@ -10,7 +10,7 @@ export type WorkspaceTransition =
   | { kind: 'switchEnvironment'; target: EnvironmentRef }
   | {
     kind: 'wslIntegration';
-    phase: 'enabling' | 'switchingHost' | 'disabling';
+    phase: 'enabling' | 'switchingNative' | 'disabling';
   };
 
 export type WslIntegrationFailure = {
@@ -24,7 +24,7 @@ export type WslIntegrationChangeOutcome =
   | { status: 'failed'; failure: WslIntegrationFailure };
 
 export interface WorkspaceContextState {
-  selectedContext: ContextRef;
+  selectedContext: SkillLocationRef;
   transition: WorkspaceTransition;
   wslIntegrationFailure: WslIntegrationFailure | null;
   contextRevision: number;
@@ -35,14 +35,14 @@ export interface WorkspaceContextState {
   selectProject: (projectId: string) => void;
 }
 
-const HOST: EnvironmentRef = { kind: 'host' };
+const NATIVE: EnvironmentRef = { kind: 'native' };
 
 export function selectPendingEnvironment(state: WorkspaceContextState): EnvironmentRef | null {
   if (state.transition.kind === 'switchEnvironment') return state.transition.target;
   if (
     state.transition.kind === 'wslIntegration'
-    && state.transition.phase === 'switchingHost'
-  ) return HOST;
+    && state.transition.phase === 'switchingNative'
+  ) return NATIVE;
   return null;
 }
 
@@ -71,7 +71,7 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
   };
 
   return {
-    selectedContext: globalContext(HOST),
+    selectedContext: globalContext(NATIVE),
     transition: { kind: 'idle' },
     wslIntegrationFailure: null,
     contextRevision: 0,
@@ -100,14 +100,14 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
       set({
         transition: {
           kind: 'wslIntegration',
-          phase: switchHost ? 'switchingHost' : enabled ? 'enabling' : 'disabling',
+          phase: switchHost ? 'switchingNative' : enabled ? 'enabling' : 'disabling',
         },
         wslIntegrationFailure: null,
       });
       try {
         if (switchHost) {
           try {
-            await connectAndCommit(HOST);
+            await connectAndCommit(NATIVE);
           } catch (error) {
             const failure: WslIntegrationFailure = {
               stage: 'switchHost',
@@ -149,7 +149,7 @@ export const useWorkspaceContextStore = create<WorkspaceContextState>()((set, ge
     },
 
     selectProject: (projectId) => {
-      const next: ContextRef = {
+      const next: SkillLocationRef = {
         environment: get().selectedContext.environment,
         scope: { scope: 'project', project_id: projectId },
       };

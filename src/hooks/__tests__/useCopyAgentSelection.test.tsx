@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, CopyAgentSelectionSnapshot } from '@/bindings';
+import type { SkillLocationRef, CopyAgentSelectionSnapshot } from '@/bindings';
 import { makeAgentSelectionSnapshot } from '@/test-utils';
 
 const mocks = vi.hoisted(() => ({
@@ -16,8 +16,8 @@ vi.mock('@/hooks/useTauriApi', () => ({
 
 import { useCopyAgentSelection } from '../useCopyAgentSelection';
 
-const source = (projectId: string): ContextRef => ({
-  environment: { kind: 'host' },
+const source = (projectId: string): SkillLocationRef => ({
+  environment: { kind: 'native' },
   scope: { scope: 'project', project_id: projectId },
 });
 

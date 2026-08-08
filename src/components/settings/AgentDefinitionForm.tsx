@@ -76,7 +76,7 @@ function ScopeEditor({
     onChange({
       ...value,
       location,
-      privatePath: location === 'shared' ? null : value.privatePath ?? defaultPrivatePath(id, agentId),
+      privatePath: location === 'standard' ? null : value.privatePath ?? defaultPrivatePath(id, agentId),
     });
   };
   return (
@@ -112,7 +112,7 @@ function ScopeEditor({
               aria-labelledby={readRuleId}
               onValueChange={(location) => setLocation(location as ScopeLocation)}
             >
-              {(['shared', 'private', 'both'] as const).map((location) => {
+              {(['standard', 'private', 'both'] as const).map((location) => {
                 const locationId = `${id}-location-${location}`;
                 return (
                   <Label
@@ -134,7 +134,7 @@ function ScopeEditor({
           {value.location !== 'private' ? (
             <div className="flex min-w-0 items-baseline gap-3 rounded-md bg-muted/35 px-3 py-2 text-xs">
               <span className="shrink-0 text-muted-foreground">
-                {t('settings.agents.directoryKind.shared')}
+                {t('settings.agents.directoryKind.standard')}
               </span>
               <code className="min-w-0 truncate font-mono text-foreground" translate="no">
                 {id === 'global' ? '~/.agents/skills' : '.agents/skills'}

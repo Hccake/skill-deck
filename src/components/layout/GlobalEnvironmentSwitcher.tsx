@@ -20,16 +20,8 @@ import { useMutationStore } from '@/stores/mutation';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
 import { formatAppError } from '@/utils/format-app-error';
 import { toAppError } from '@/utils/to-app-error';
-import type { EnvironmentInfo, EnvironmentRef } from '@/bindings';
-
-function environmentDisplayName(
-  entry: Pick<EnvironmentInfo, 'environment' | 'displayName'>,
-  t: (key: string, values?: Record<string, unknown>) => string,
-): string {
-  return entry.environment.kind === 'wsl'
-    ? t('context.environmentWslName', { environment: entry.displayName })
-    : entry.displayName;
-}
+import { environmentDisplayName } from '@/lib/environments/presentation';
+import type { EnvironmentRef } from '@/bindings';
 
 export function GlobalEnvironmentSwitcher() {
   const { t } = useTranslation();
@@ -51,7 +43,7 @@ export function GlobalEnvironmentSwitcher() {
     ? environmentDisplayName(selectedEntry, t)
     : selectedEnvironment.kind === 'wsl'
       ? t('context.environmentWslName', { environment: selectedEnvironment.distro_name })
-      : 'Host';
+      : '';
   const selectedConnectionError = selectedEntry
     && (selectedEntry.status === 'unavailable' || selectedEntry.status === 'error')
     ? selectedEntry.error

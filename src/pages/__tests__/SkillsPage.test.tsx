@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { SkillsPage } from '../SkillsPage';
-import type { ContextRef, InstalledSkill, ProjectInfo } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill, ProjectInfo } from '@/bindings';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -16,9 +16,9 @@ vi.mock('react-i18next', () => ({
 const mocks = vi.hoisted(() => ({
   workspaceContextState: {
     selectedContext: {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
-    } as ContextRef,
+    } as SkillLocationRef,
   },
   projectState: {
     projectsByEnvironment: {} as Record<string, ProjectInfo[]>,
@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   },
   environmentState: {
     environments: [
-      { environment: { kind: 'host' as const }, displayName: 'Host', status: 'available' as const },
+      { environment: { kind: 'native' as const }, displayName: 'Native', status: 'available' as const },
       { environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' }, displayName: 'Ubuntu', status: 'available' as const },
     ],
     connect: vi.fn().mockResolvedValue(undefined),
@@ -61,7 +61,7 @@ const mocks = vi.hoisted(() => ({
     manageAgentsSkill: null,
     manageAgentsScope: 'global',
     copySkill: null as InstalledSkill | null,
-    copyContext: null as ContextRef | null,
+    copyContext: null as SkillLocationRef | null,
     repairSourceTarget: null,
     openCopyToProject: vi.fn(),
     closeCopyToProject: vi.fn(),
@@ -76,13 +76,13 @@ const mocks = vi.hoisted(() => ({
   },
   skillsPanelLifecycle: [] as string[],
   updateWorkflowState: {
-    phase: 'closed', context: null as ContextRef | null, skillNames: [] as string[],
+    phase: 'closed', context: null as SkillLocationRef | null, skillNames: [] as string[],
     open: vi.fn().mockResolvedValue(true), close: vi.fn(),
   },
 }));
 
-const hostGlobal: ContextRef = {
-  environment: { kind: 'host' },
+const nativeGlobal: SkillLocationRef = {
+  environment: { kind: 'native' },
   scope: { scope: 'global' },
 };
 
@@ -118,7 +118,7 @@ vi.mock('@/stores/workspace-context', () => ({
 
 vi.mock('@/hooks/useProjectWorkspace', () => ({
   useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
-    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    const key = environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`;
     return {
       projects: mocks.projectState.projectsByEnvironment[key] ?? [],
       hasCompleteSnapshot: true,
@@ -137,7 +137,7 @@ vi.mock('@/stores/projects', () => ({
   projectWorkspace: {
     execute: vi.fn().mockResolvedValue({ status: 'succeeded' }),
     getSnapshot: (environment: { kind: string; distro_name?: string }) => {
-      const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+      const key = environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`;
       return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
     },
   },
@@ -253,7 +253,7 @@ vi.mock('@/components/ui/resizable', () => ({
 
 describe('SkillsPage', () => {
   beforeEach(() => {
-    mocks.workspaceContextState.selectedContext = hostGlobal;
+    mocks.workspaceContextState.selectedContext = nativeGlobal;
     mocks.projectState.projectsByEnvironment = {};
     mocks.projectState.refresh.mockReset();
     mocks.projectState.refresh.mockResolvedValue(undefined);
@@ -261,7 +261,7 @@ describe('SkillsPage', () => {
     mocks.environmentState.connect.mockResolvedValue(undefined);
     mocks.tauriApi.listSkills.mockReset();
     mocks.tauriApi.listSkills.mockResolvedValue({ skills: [], agents: [], pathExists: true });
-    mocks.skillsDataState.snapshots = { 'host/global': snapshot() };
+    mocks.skillsDataState.snapshots = { 'native/global': snapshot() };
     mocks.skillsDataState.checkingUpdateScopes = new Set();
     mocks.skillsDataState.forceCheckUpdates.mockReset();
     mocks.updateWorkflowState.phase = 'closed';
@@ -292,7 +292,7 @@ describe('SkillsPage', () => {
       name: 'test-skill',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot([makeSkill('test-skill')]);
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('test-skill')]);
 
     render(<SkillsPage />);
 
@@ -334,7 +334,7 @@ describe('SkillsPage', () => {
       name: 'test-skill',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot([makeSkill('test-skill')]);
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('test-skill')]);
 
     rerender(<SkillsPage />);
 
@@ -360,7 +360,7 @@ describe('SkillsPage', () => {
       name: 'test-skill',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot([makeSkill('test-skill')]);
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('test-skill')]);
 
     rerender(<SkillsPage />);
 
@@ -379,9 +379,9 @@ describe('SkillsPage', () => {
       name: 'toolkit',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot([makeSkill('toolkit')]);
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
     mocks.updateWorkflowState.phase = 'executing';
-    mocks.updateWorkflowState.context = hostGlobal;
+    mocks.updateWorkflowState.context = nativeGlobal;
     mocks.updateWorkflowState.skillNames = ['toolkit'];
 
     const { getByText } = render(<SkillsPage />);
@@ -394,8 +394,8 @@ describe('SkillsPage', () => {
       name: 'toolkit',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot([makeSkill('toolkit')]);
-    mocks.skillsDataState.checkingUpdateScopes = new Set(['host/global']);
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
+    mocks.skillsDataState.checkingUpdateScopes = new Set(['native/global']);
 
     const { getByText } = render(<SkillsPage />);
     const detailButton = getByText('skill-detail-panel');
@@ -404,8 +404,8 @@ describe('SkillsPage', () => {
 
     fireEvent.click(detailButton);
 
-    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(hostGlobal, {
-      kind: 'skills', skills: [{ context: hostGlobal, skillName: 'toolkit' }],
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(nativeGlobal, {
+      kind: 'skills', skills: [{ context: nativeGlobal, skillName: 'toolkit' }],
     });
   });
 
@@ -414,18 +414,18 @@ describe('SkillsPage', () => {
       name: 'toolkit',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot([
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([
       makeSkill('toolkit', { hasUpdate: true }),
     ]);
     mocks.updateWorkflowState.phase = 'ready';
-    mocks.updateWorkflowState.context = hostGlobal;
+    mocks.updateWorkflowState.context = nativeGlobal;
     mocks.updateWorkflowState.skillNames = ['toolkit'];
 
     const { getByText, getByTestId } = render(<SkillsPage />);
     fireEvent.click(getByText('detail-update'));
 
     expect(mocks.updateWorkflowState.open).toHaveBeenCalledWith(
-      hostGlobal,
+      nativeGlobal,
       ['toolkit'],
       false,
     );
@@ -433,7 +433,7 @@ describe('SkillsPage', () => {
   });
 
   it('uses the explicit environment key for detail update progress', () => {
-    const context: ContextRef = {
+    const context: SkillLocationRef = {
       environment: { kind: 'wsl', distro_name: 'Ubuntu' },
       scope: { scope: 'global' },
     };
@@ -558,7 +558,7 @@ describe('SkillsPage', () => {
       name: 'toolkit',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot([
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([
       makeSkill('toolkit', { updatedAt: '2026-04-07T12:00:00.000Z' }),
     ]);
 
@@ -572,7 +572,7 @@ describe('SkillsPage', () => {
       name: 'missing-skill',
       scope: 'global',
     };
-    mocks.skillsDataState.snapshots['host/global'] = snapshot();
+    mocks.skillsDataState.snapshots['native/global'] = snapshot();
 
     render(<SkillsPage />);
 

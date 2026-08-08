@@ -8,7 +8,7 @@ import type {
   ScopeDefinition,
 } from '@/bindings';
 
-export type ScopeReadMode = 'unsupported' | 'shared' | 'private' | 'both';
+export type ScopeReadMode = 'unsupported' | 'standard' | 'private' | 'both';
 
 export interface AgentListItem {
   definition: AgentDefinition;
@@ -53,8 +53,8 @@ export function scopeReadMode(
 ): ScopeReadMode {
   if (!scope.enabled) return 'unsupported';
   if ('location' in scope) return scope.location;
-  if (scope.readsShared && scope.privatePath) return 'both';
-  if (scope.readsShared) return 'shared';
+  if (scope.readsStandard && scope.privatePath) return 'both';
+  if (scope.readsStandard) return 'standard';
   return 'private';
 }
 

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::core::agent_definition::AgentId;
-use crate::environment::types::{ContextRef, EnvironmentRef, ResourceLocator};
+use crate::environment::types::{EnvironmentRef, ResourceLocator, SkillLocationRef};
 use crate::error::AppError;
 use crate::models::InstallMode;
 
@@ -100,7 +100,7 @@ pub struct ErrorReport {
     pub retryable: bool,
     pub technical_details: Option<String>,
     pub environment: Option<EnvironmentRef>,
-    pub context: Option<ContextRef>,
+    pub context: Option<SkillLocationRef>,
     pub unit_id: Option<String>,
     pub recovery_resource_id: Option<RecoveryResourceId>,
     pub display_paths: Vec<ResourceLocator>,
@@ -136,7 +136,7 @@ impl ErrorReport {
         }
     }
 
-    pub fn from_app_error(error: AppError, context: Option<ContextRef>) -> Self {
+    pub fn from_app_error(error: AppError, context: Option<SkillLocationRef>) -> Self {
         let mut report = match error {
             AppError::Validation { field, message } => {
                 let mut report = Self::with_details(OperationErrorCode::Validation, false, message);
@@ -386,8 +386,8 @@ pub struct AgentTargetMutationResult {
 pub struct MutationUnitResult {
     pub unit_id: String,
     pub skill_name: String,
-    pub source: Option<ContextRef>,
-    pub target: ContextRef,
+    pub source: Option<SkillLocationRef>,
+    pub target: SkillLocationRef,
     pub status: MutationUnitStatus,
     pub retryable: bool,
     pub lock_committed: bool,
@@ -403,7 +403,7 @@ impl MutationUnitResult {
     pub fn recovery_required(
         unit_id: impl Into<String>,
         skill_name: impl Into<String>,
-        target: ContextRef,
+        target: SkillLocationRef,
         mut error: ErrorReport,
     ) -> Self {
         let resource_id = error
@@ -439,13 +439,13 @@ impl MutationUnitResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
     use crate::error::AppError;
 
-    fn context() -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+    fn context() -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         }
     }
 

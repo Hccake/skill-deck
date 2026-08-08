@@ -1,6 +1,6 @@
-import type { ContextRef } from '@/bindings';
+import type { SkillLocationRef } from '@/bindings';
 
-export function parseWizardContext(value: string | null): ContextRef | undefined {
+export function parseWizardContext(value: string | null): SkillLocationRef | undefined {
   if (!value) return undefined;
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -12,7 +12,7 @@ export function parseWizardContext(value: string | null): ContextRef | undefined
 
     const environmentRecord = environment as Record<string, unknown>;
     const scopeRecord = scope as Record<string, unknown>;
-    const validEnvironment = environmentRecord.kind === 'host'
+    const validEnvironment = environmentRecord.kind === 'native'
       || (environmentRecord.kind === 'wsl'
         && typeof environmentRecord.distro_name === 'string'
         && environmentRecord.distro_name.length > 0);
@@ -20,7 +20,7 @@ export function parseWizardContext(value: string | null): ContextRef | undefined
       || (scopeRecord.scope === 'project'
         && typeof scopeRecord.project_id === 'string'
         && scopeRecord.project_id.length > 0);
-    return validEnvironment && validScope ? parsed as ContextRef : undefined;
+    return validEnvironment && validScope ? parsed as SkillLocationRef : undefined;
   } catch {
     return undefined;
   }

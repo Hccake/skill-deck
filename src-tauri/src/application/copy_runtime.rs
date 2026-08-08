@@ -29,7 +29,7 @@ impl RuntimeCopyProjectComparator {
         Self { environments }
     }
 
-    async fn resolve_project_to_host(
+    async fn resolve_project_to_native(
         &self,
         facts: &InstallPlanningFacts,
     ) -> Result<ResolvedTargetFact, AppError> {
@@ -38,16 +38,16 @@ impl RuntimeCopyProjectComparator {
             .project
             .as_ref()
             .ok_or(AppError::StaleContext)?;
-        let host_path = match &facts.resolved_context.context.environment {
-            EnvironmentRef::Host => project.native_path.clone(),
+        let native_path = match &facts.resolved_context.context.environment {
+            EnvironmentRef::Native => project.native_path.clone(),
             EnvironmentRef::Wsl { distro_name } => {
                 self.map_wsl_project_to_host(distro_name, &project.native_path)
                     .await?
             }
         };
         let mut resolved = resolve_native_targets(&[ResourceLocator {
-            environment: EnvironmentRef::Host,
-            native_path: host_path,
+            environment: EnvironmentRef::Native,
+            native_path,
         }])?;
         resolved.pop().ok_or(AppError::StaleTarget)
     }
@@ -62,7 +62,7 @@ impl RuntimeCopyProjectComparator {
             .project
             .as_ref()
             .ok_or(AppError::StaleContext)?;
-        let target_identity = self.resolve_project_to_host(target).await?;
+        let target_identity = self.resolve_project_to_native(target).await?;
         let physical_identity = compare_resolved_projects(source, &target_identity)?;
         Ok(ProjectComparison {
             physical_identity,
@@ -91,7 +91,7 @@ impl RuntimeCopyProjectComparator {
 
     async fn storage_access(&self, environment: &EnvironmentRef, path: &str) -> StorageAccess {
         match environment {
-            EnvironmentRef::Host => host_storage_access(path),
+            EnvironmentRef::Native => native_storage_access(path),
             EnvironmentRef::Wsl { distro_name } => match self
                 .map_wsl_project_to_host(distro_name, path)
                 .await
@@ -109,7 +109,7 @@ impl CopyProjectComparator for RuntimeCopyProjectComparator {
         &'a self,
         source: &'a InstallPlanningFacts,
     ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>> {
-        Box::pin(async move { self.resolve_project_to_host(source).await })
+        Box::pin(async move { self.resolve_project_to_native(source).await })
     }
 
     fn compare<'a>(
@@ -121,7 +121,7 @@ impl CopyProjectComparator for RuntimeCopyProjectComparator {
     }
 }
 
-fn host_storage_access(path: &str) -> StorageAccess {
+fn native_storage_access(path: &str) -> StorageAccess {
     if !cfg!(target_os = "windows") {
         return if Path::new(path).is_absolute() {
             StorageAccess::Native
@@ -130,7 +130,7 @@ fn host_storage_access(path: &str) -> StorageAccess {
         };
     }
     match windows_storage_owner(path) {
-        WindowsStorageOwner::Host => StorageAccess::Native,
+        WindowsStorageOwner::Windows => StorageAccess::Native,
         WindowsStorageOwner::Wsl { .. } => StorageAccess::CrossStorage,
         WindowsStorageOwner::Unknown => StorageAccess::Unknown,
     }
@@ -138,7 +138,7 @@ fn host_storage_access(path: &str) -> StorageAccess {
 
 fn wsl_storage_access(distro_name: &str, host_path: &str) -> StorageAccess {
     match windows_storage_owner(host_path) {
-        WindowsStorageOwner::Host => StorageAccess::CrossStorage,
+        WindowsStorageOwner::Windows => StorageAccess::CrossStorage,
         WindowsStorageOwner::Wsl { distro_name: owner }
             if owner.eq_ignore_ascii_case(distro_name) =>
         {

@@ -23,8 +23,8 @@ function selectionSnapshot(): InstallAgentSelectionSnapshot {
   return {
     selection: makeAgentSelectionSnapshot({
       agents: [
-        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
-        { kind: 'standard', id: 'warp', displayName: 'Warp', detection: 'notDetected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'standardOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'warp', displayName: 'Warp', detection: 'notDetected', directoryAccess: 'standardOnly', installOptionId: null, groupId: null },
         { kind: 'standard', id: 'claude-code', displayName: 'Claude Code', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'claude', groupId: null },
         { kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'notDetected', directoryAccess: 'privateOnly', installOptionId: 'cursor', groupId: null },
       ],
@@ -46,7 +46,7 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     step: 'options',
     entryPoint: 'skills-panel',
     scope: 'global',
-    context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+    context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
     source: 'owner/repo',
     fetchStatus: 'success',
     fetchError: null,
@@ -74,7 +74,7 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
 }
 
 function controller(snapshot = selectionSnapshot()): InstallTargetOptionsController {
-  return { status: 'ready', inputKey: 'host/global', snapshot, retry: vi.fn() };
+  return { status: 'ready', inputKey: 'native/global', snapshot, retry: vi.fn() };
 }
 
 function renderStep(state = createState(), targetOptions = controller()) {

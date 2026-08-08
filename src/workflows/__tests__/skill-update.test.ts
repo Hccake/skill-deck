@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppError, ContextRef, UpdatePreview, UpdateResponse } from '@/bindings';
+import type { AppError, SkillLocationRef, UpdatePreview, UpdateResponse } from '@/bindings';
 import { contextKey } from '@/lib/context';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 
@@ -19,7 +19,7 @@ vi.mock('@/stores/skills-data', () => ({
 
 import { useSkillUpdateWorkflow } from '../skill-update';
 
-const context: ContextRef = { environment: { kind: 'host' }, scope: { scope: 'global' } };
+const context: SkillLocationRef = { environment: { kind: 'native' }, scope: { scope: 'global' } };
 const preview = (name = 'demo'): UpdatePreview => ({
   token: { generation: 'preview-1', registryRevision: 'registry-1', environmentRevision: 'environment-1', contextRevision: 'context-1' },
   skills: [{

@@ -42,10 +42,10 @@ export function CrossStorageWarningBanner() {
     (entry) => sameEnvironment(entry.environment, owner),
   ) : null;
   const currentLabel = currentInfo?.displayName
-    ?? (environment.kind === 'host' ? t('crossStorage.hostEnvironment') : environment.distro_name);
+    ?? (environment.kind === 'native' ? t('crossStorage.nativeEnvironment') : environment.distro_name);
   const ownerLabel = owner
     ? ownerInfo?.displayName
-      ?? (owner.kind === 'host' ? t('crossStorage.hostEnvironment') : owner.distro_name)
+      ?? (owner.kind === 'native' ? t('crossStorage.nativeEnvironment') : owner.distro_name)
     : t('common.unknown');
   const canSwitchToOwner = owner !== null
     && ownerInfo !== undefined

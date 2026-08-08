@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, InstalledSkill } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill } from '@/bindings';
 import { contextKey, globalContext } from '@/lib/context';
 import { projectWorkspace } from '../projects';
 import { useSkillsDataStore } from '../skills-data';
@@ -18,7 +18,7 @@ vi.mock('@/hooks/useTauriApi', async (importOriginal) => {
   };
 });
 
-const projectContext: ContextRef = {
+const projectContext: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   scope: { scope: 'project', project_id: 'project-a' },
 };
@@ -125,7 +125,7 @@ describe('Skill detail workspace context', () => {
     mocks.readSkillContent.mockClear();
     useWorkspaceContextStore.setState({
       selectedContext: {
-        environment: { kind: 'host' },
+        environment: { kind: 'native' },
         scope: { scope: 'global' },
       },
     });
@@ -143,7 +143,7 @@ describe('Skill detail workspace context', () => {
     mocks.readSkillContent.mockClear();
     useWorkspaceContextStore.setState({
       selectedContext: {
-        environment: { kind: 'host' },
+        environment: { kind: 'native' },
         scope: { scope: 'global' },
       },
     });

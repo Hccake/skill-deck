@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, ProjectInfo } from '@/bindings';
+import type { SkillLocationRef, ProjectInfo } from '@/bindings';
 import { CrossStorageWarningBanner } from '../CrossStorageWarningBanner';
 import { useMutationStore } from '@/stores/mutation';
 
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   context: {
     environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
     scope: { scope: 'project' as const, project_id: 'project-1' },
-  } as ContextRef,
+  } as SkillLocationRef,
   projects: [{
     binding: {
       id: 'project-1',
@@ -20,13 +20,13 @@ const mocks = vi.hoisted(() => ({
       order: null,
       suppressCrossStorageWarning: false,
     },
-    storage: { access: 'crossStorage', owner: { kind: 'host' } },
+    storage: { access: 'crossStorage', owner: { kind: 'native' } },
   }] as ProjectInfo[],
   setCrossStorageWarning: vi.fn().mockResolvedValue([]),
   switchEnvironment: vi.fn().mockResolvedValue(undefined),
-  transition: { kind: 'idle' } as { kind: string; target?: ContextRef['environment'] },
+  transition: { kind: 'idle' } as { kind: string; target?: SkillLocationRef['environment'] },
   environments: [
-    { environment: { kind: 'host' as const }, displayName: 'Windows', status: 'available' as const },
+    { environment: { kind: 'native' as const }, displayName: 'Windows', status: 'available' as const },
     {
       environment: { kind: 'wsl' as const, distro_name: 'Ubuntu' },
       displayName: 'Ubuntu',
@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: { environment?: string; owner?: string }) => {
-      if (key === 'crossStorage.hostEnvironment') return 'Windows';
+      if (key === 'crossStorage.nativeEnvironment') return 'Windows';
       if (options?.environment && options?.owner) {
         return `${key}:${options.environment}:${options.owner}`;
       }
@@ -88,11 +88,11 @@ describe('CrossStorageWarningBanner', () => {
         order: null,
         suppressCrossStorageWarning: false,
       },
-      storage: { access: 'crossStorage', owner: { kind: 'host' } },
+      storage: { access: 'crossStorage', owner: { kind: 'native' } },
     }];
     mocks.transition = { kind: 'idle' };
     mocks.environments = [
-      { environment: { kind: 'host' }, displayName: 'Windows', status: 'available' },
+      { environment: { kind: 'native' }, displayName: 'Windows', status: 'available' },
       {
         environment: { kind: 'wsl', distro_name: 'Ubuntu' },
         displayName: 'Ubuntu',
@@ -122,12 +122,12 @@ describe('CrossStorageWarningBanner', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'crossStorage.switchToOwner:Windows' }));
 
-    expect(mocks.switchEnvironment).toHaveBeenCalledWith({ kind: 'host' });
+    expect(mocks.switchEnvironment).toHaveBeenCalledWith({ kind: 'native' });
   });
 
   it('does not offer a dead switch action when the owner is missing from discovery', () => {
     mocks.environments = mocks.environments.filter(
-      (entry) => entry.environment.kind !== 'host',
+      (entry) => entry.environment.kind !== 'native',
     );
 
     render(<CrossStorageWarningBanner />);
@@ -141,7 +141,7 @@ describe('CrossStorageWarningBanner', () => {
       activeMutation: {
         id: 'mutation-1',
         kind: 'install',
-        context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+        context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
         phase: 'preparing',
         progress: null,
         cancelable: true,
@@ -176,7 +176,7 @@ describe('CrossStorageWarningBanner', () => {
         ...mocks.projects[0].binding,
         suppressCrossStorageWarning: true,
       },
-      storage: { access: 'crossStorage', owner: { kind: 'host' } },
+      storage: { access: 'crossStorage', owner: { kind: 'native' } },
     };
     render(<CrossStorageWarningBanner />);
     expect(screen.queryByText('crossStorage.title')).toBeNull();

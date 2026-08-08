@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { getProjectStorageOwner, isCrossStorageProject } from '../projectStorage';
 
 describe('isCrossStorageProject', () => {
-  it('detects WSL storage managed from the host environment', () => {
+  it('detects WSL storage managed from the native environment', () => {
     expect(isCrossStorageProject(
-      { kind: 'host' },
+      { kind: 'native' },
       '\\\\wsl.localhost\\Ubuntu\\home\\alice\\app',
     )).toBe(true);
-    expect(isCrossStorageProject({ kind: 'host' }, 'C:\\Code\\app')).toBe(false);
-    expect(isCrossStorageProject({ kind: 'host' }, '/home/alice/app')).toBe(false);
+    expect(isCrossStorageProject({ kind: 'native' }, 'C:\\Code\\app')).toBe(false);
+    expect(isCrossStorageProject({ kind: 'native' }, '/home/alice/app')).toBe(false);
   });
 
   it('detects Windows DrvFS storage managed from a WSL environment', () => {
@@ -22,13 +22,13 @@ describe('isCrossStorageProject', () => {
 
   it('identifies the environment that owns cross-storage project files', () => {
     expect(getProjectStorageOwner(
-      { kind: 'host' },
+      { kind: 'native' },
       '\\\\wsl.localhost\\Ubuntu-24.04\\home\\alice\\app',
     )).toEqual({ kind: 'wsl', distro_name: 'Ubuntu-24.04' });
     expect(getProjectStorageOwner(
       { kind: 'wsl', distro_name: 'Ubuntu' },
       '/mnt/c/Code/app',
-    )).toEqual({ kind: 'host' });
+    )).toEqual({ kind: 'native' });
     expect(getProjectStorageOwner(
       { kind: 'wsl', distro_name: 'Ubuntu' },
       '/home/alice/app',

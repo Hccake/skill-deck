@@ -15,8 +15,8 @@ import { projectSnapshotFor } from './projects';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type {
   InstalledSkill,
-  SkillScope,
-  ContextRef,
+  InstalledSkillLocation,
+  SkillLocationRef,
   ManageAgentSelectionSnapshot,
   RemovePreview,
 } from '@/bindings';
@@ -31,42 +31,42 @@ interface SkillDialogState {
 
   // Manage agents dialog
   manageAgentsSkill: InstalledSkill | null;
-  manageAgentsScope: SkillScope;
+  manageAgentsScope: InstalledSkillLocation;
   manageAgentsProjectPath?: string;
-  manageAgentsContext?: ContextRef;
+  manageAgentsContext?: SkillLocationRef;
   manageAgentDetails: ManageAgentSelectionSnapshot | null;
   loadingManageAgentDetails: boolean;
 
   // Copy to project dialog
   copySkill: InstalledSkill | null;
-  copyContext?: ContextRef;
+  copyContext?: SkillLocationRef;
 
   // Repair source dialog
   repairSourceTarget: RepairSourceDraft | null;
 
   // Actions
-  openDelete: (skill: InstalledSkill, context: ContextRef, projectPath?: string) => void;
+  openDelete: (skill: InstalledSkill, context: SkillLocationRef, projectPath?: string) => void;
   setDeletePreview: (preview: RemovePreview | null) => void;
   setDeleteFeedback: (feedback: SkillDialogState['deleteFeedback']) => void;
   setDeleteLoading: (loading: boolean) => void;
   closeDelete: () => void;
-  openAdd: (context: ContextRef, projectPath?: string) => void;
-  openAddWithPrefill: (prefill: AddDialogPrefill, context: ContextRef) => void;
+  openAdd: (context: SkillLocationRef, projectPath?: string) => void;
+  openAddWithPrefill: (prefill: AddDialogPrefill, context: SkillLocationRef) => void;
   openRepairSource: (
     skill: InstalledSkill,
-    context: ContextRef,
+    context: SkillLocationRef,
     projectPath?: string,
   ) => void;
   closeRepairSource: () => void;
-  openManageAgents: (skill: InstalledSkill, context: ContextRef, projectPath?: string) => void;
+  openManageAgents: (skill: InstalledSkill, context: SkillLocationRef, projectPath?: string) => void;
   setManageAgentDetails: (snapshot: ManageAgentSelectionSnapshot | null) => void;
   setManageAgentLoading: (loading: boolean) => void;
   closeManageAgents: () => void;
-  openCopyToProject: (skill: InstalledSkill, context: ContextRef) => void;
+  openCopyToProject: (skill: InstalledSkill, context: SkillLocationRef) => void;
   closeCopyToProject: () => void;
 }
 
-function projectPathForContext(context: ContextRef): string | undefined {
+function projectPathForContext(context: SkillLocationRef): string | undefined {
   const scope = context.scope;
   if (scope.scope !== 'project') return undefined;
   return projectSnapshotFor(context.environment).projects.find(
@@ -80,7 +80,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
   deleteFeedback: null,
   loadingAgentDetails: false,
   manageAgentsSkill: null,
-  manageAgentsScope: 'global' as SkillScope,
+  manageAgentsScope: 'global' as InstalledSkillLocation,
   manageAgentsProjectPath: undefined,
   manageAgentsContext: undefined,
   manageAgentDetails: null,

@@ -3,7 +3,7 @@ import { Plus, Search, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { AgentIcon } from '@/components/agents/AgentIcon';
-import { AgentCardGrid, SharedDirectoriesReference } from './AgentCardGrid';
+import { AgentCardGrid, StandardDirectoriesReference } from './AgentCardGrid';
 import {
   AgentDefinitionFormPage,
   type AgentDefinitionFormMode,
@@ -45,7 +45,7 @@ import type {
   AgentDeleteImpact,
   AgentFieldError,
   AgentSource,
-  ContextRef,
+  SkillLocationRef,
   CustomAgentDefinition,
   CustomScopeDefinition,
   InvalidCustomAgentRecord,
@@ -53,7 +53,7 @@ import type {
 } from '@/bindings';
 
 interface AgentSettingsPageProps {
-  context: ContextRef;
+  context: SkillLocationRef;
   view?: string | null;
   agentId?: string | null;
   onNavigate?: (view: 'list' | 'new' | 'edit', agentId?: string) => void;
@@ -82,8 +82,8 @@ function invalidRecordLabel(raw: unknown, index: number): string {
 function customDisplayDefinition(definition: CustomAgentDefinition): AgentDefinition {
   const scope = (value: CustomScopeDefinition) => ({
     enabled: value.enabled,
-    readsShared: value.enabled && value.location !== 'private',
-    privatePath: value.enabled && value.location !== 'shared'
+    readsStandard: value.enabled && value.location !== 'private',
+    privatePath: value.enabled && value.location !== 'standard'
       ? value.privatePath?.kind === 'based'
         ? value.privatePath.base === 'configHome'
           ? { kind: 'configHome' as const, relativePath: value.privatePath.relativePath }
@@ -173,7 +173,7 @@ export function AgentSettingsPage({
   const data = snapshot?.data;
   const registryRevision = data?.registryRevision;
   const readOnly = (data?.customStorageIssue?.readOnly ?? false) || businessWriteBlocked;
-  const runtimeContext = useMemo<ContextRef>(() => ({
+  const runtimeContext = useMemo<SkillLocationRef>(() => ({
     environment: context.environment,
     scope: { scope: 'global' },
   }), [context.environment]);
@@ -381,7 +381,7 @@ export function AgentSettingsPage({
     ? [...builtinItems, ...customItems].filter((item) => item.runtime?.detection === 'detected').length
     : null;
   const resolvedGlobalSharedPath = Object.values(runtimeAgents)
-    .find((agent) => agent?.global.sharedPath)?.global.sharedPath ?? null;
+    .find((agent) => agent?.global.standardPath)?.global.standardPath ?? null;
   const edit = (definition: CustomAgentDefinition) => {
     if (readOnly) return;
     const nextDraft = structuredClone(definition);
@@ -741,7 +741,7 @@ export function AgentSettingsPage({
         </div>
       </section>
 
-      <SharedDirectoriesReference
+      <StandardDirectoriesReference
         resolvedGlobalPath={resolvedGlobalSharedPath}
         runtimeState={runtimeState}
       />

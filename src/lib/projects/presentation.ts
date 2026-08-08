@@ -1,4 +1,4 @@
-import type { ProjectBinding, ProjectInfo } from '@/bindings';
+import type { RegisteredProject, ProjectInfo } from '@/bindings';
 
 export interface ProjectPresentation {
   name: string;
@@ -20,14 +20,14 @@ export function projectPathBasename(path: string): string {
   return trimmedPath.split('/').at(-1) || path;
 }
 
-export function projectBindingDisplayName(binding: Pick<ProjectBinding, 'displayName' | 'nativePath'>): string {
+export function registeredProjectDisplayName(binding: Pick<RegisteredProject, 'displayName' | 'nativePath'>): string {
   const configuredName = binding.displayName?.trim();
   if (configuredName) return configuredName;
   return projectPathBasename(binding.nativePath);
 }
 
 export function projectDisplayName(project: ProjectInfo): string {
-  return projectBindingDisplayName(project.binding);
+  return registeredProjectDisplayName(project.binding);
 }
 
 export function projectPresentation(project: ProjectInfo): ProjectPresentation {

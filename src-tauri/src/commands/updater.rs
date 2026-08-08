@@ -191,7 +191,7 @@ mod tests {
         RuntimeAdmissionCoordinator, WizardAdmission, WizardWindowPresence,
     };
     use crate::core::mutation::MutationKind;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 
     struct FakeUpdater {
         version: String,
@@ -227,7 +227,7 @@ mod tests {
                     self.controller.activity_snapshot().lifecycle.is_some();
                 assert!(matches!(
                     self.controller
-                        .begin_mutation(MutationKind::Install, host_global()),
+                        .begin_mutation(MutationKind::Install, native_global()),
                     Err(AppError::MutationBusy)
                 ));
                 *self.installed.lock().unwrap() = true;
@@ -316,10 +316,10 @@ mod tests {
         assert_eq!(download_calls.load(Ordering::SeqCst), 0);
     }
 
-    fn host_global() -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+    fn native_global() -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         }
     }
 }

@@ -1,9 +1,9 @@
-import type { ContextRef, EnvironmentRef, ProjectInfo } from '@/bindings';
+import type { SkillLocationRef, EnvironmentRef, ProjectInfo } from '@/bindings';
 import { sameEnvironment } from '@/lib/context';
 
 export interface CopyTargetFilterInput {
   targetEnvironment: EnvironmentRef;
-  sourceContext: ContextRef;
+  sourceContext: SkillLocationRef;
   projects: ProjectInfo[];
   completedProjectIds: ReadonlySet<string>;
 }

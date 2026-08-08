@@ -5,14 +5,14 @@ use crate::application::github_credentials::{
 };
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::core::mutation::MutationKind;
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
-fn host_global() -> ContextRef {
-    ContextRef {
-        environment: EnvironmentRef::Host,
-        scope: ContextScope::Global,
+fn native_global() -> SkillLocationRef {
+    SkillLocationRef {
+        environment: EnvironmentRef::Native,
+        scope: SkillLocation::Global,
     }
 }
 
@@ -55,7 +55,8 @@ where
     Operation: FnOnce() -> OperationFuture,
     OperationFuture: std::future::Future<Output = T>,
 {
-    let _permit = admission.begin_mutation(MutationKind::ManageGithubCredential, host_global())?;
+    let _permit =
+        admission.begin_mutation(MutationKind::ManageGithubCredential, native_global())?;
     Ok(operation().await)
 }
 

@@ -34,7 +34,7 @@ impl NativeRecoveryMarkerStore {
 
     fn marker_locator(&self, root: &Path) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: root.join(MARKER_FILE).to_string_lossy().into_owned(),
         }
     }
@@ -42,17 +42,17 @@ impl NativeRecoveryMarkerStore {
     fn marker_ref(&self, marker: &RecoveryMarker, root: &Path) -> RecoveryMarkerRef {
         RecoveryMarkerRef {
             resource_id: marker.resource_id.clone(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             managed_root: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: root.to_string_lossy().into_owned(),
             },
         }
     }
 
     fn verify_ref(&self, marker_ref: &RecoveryMarkerRef) -> Result<PathBuf, AppError> {
-        if marker_ref.environment != EnvironmentRef::Host
-            || marker_ref.managed_root.environment != EnvironmentRef::Host
+        if marker_ref.environment != EnvironmentRef::Native
+            || marker_ref.managed_root.environment != EnvironmentRef::Native
         {
             return Err(AppError::StorageUnsupported {
                 path: marker_ref.managed_root.native_path.clone(),
@@ -70,7 +70,7 @@ impl NativeRecoveryMarkerStore {
 
     fn parse_load(&self, root: PathBuf) -> RecoveryMarkerLoad {
         let managed_root = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: root.to_string_lossy().into_owned(),
         };
         let result = (|| {
@@ -84,7 +84,7 @@ impl NativeRecoveryMarkerStore {
             let marker: RecoveryMarker =
                 serde_json::from_slice(&fs::read(root.join(MARKER_FILE))?)?;
             validate_recovery_marker(&marker)?;
-            if marker.environment != EnvironmentRef::Host
+            if marker.environment != EnvironmentRef::Native
                 || self.managed_root(&marker.resource_id) != root
             {
                 return Err(AppError::ConfigurationCorrupted {
@@ -120,11 +120,11 @@ impl NativeRecoveryMarkerStore {
 
 impl RecoveryMarkerStore for NativeRecoveryMarkerStore {
     fn environment(&self) -> EnvironmentRef {
-        EnvironmentRef::Host
+        EnvironmentRef::Native
     }
 
     fn validate_managed_root(&self, root: &ResourceLocator) -> Result<(), AppError> {
-        if root.environment != EnvironmentRef::Host {
+        if root.environment != EnvironmentRef::Native {
             return Err(AppError::StorageUnsupported {
                 path: root.native_path.clone(),
             });
@@ -155,7 +155,7 @@ impl RecoveryMarkerStore for NativeRecoveryMarkerStore {
     ) -> RecoveryFuture<'a, Result<RecoveryMarkerRef, AppError>> {
         Box::pin(async move {
             validate_recovery_marker(marker)?;
-            if marker.environment != EnvironmentRef::Host {
+            if marker.environment != EnvironmentRef::Native {
                 return Err(AppError::StorageUnsupported {
                     path: format!("{:?}", marker.environment),
                 });
@@ -293,15 +293,15 @@ mod tests {
             schema_version: RECOVERY_MARKER_SCHEMA_VERSION,
             resource_id: RecoveryResourceId::parse(id).expect("resource ID"),
             kind,
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             operation_id: "operation-1".to_string(),
             unit_id: "unit-1".to_string(),
             subject: Some(crate::environment::recovery::RecoverySubject {
                 operation_kind: crate::core::mutation::MutationKind::Install,
                 skill_name: "demo".to_string(),
-                context: crate::environment::types::ContextRef {
-                    environment: EnvironmentRef::Host,
-                    scope: crate::environment::types::ContextScope::Global,
+                context: crate::environment::types::SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: crate::environment::types::SkillLocation::Global,
                 },
             }),
             created_at_epoch_ms: 1_000,
@@ -318,7 +318,7 @@ mod tests {
 
     fn locator(path: &str) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string(),
         }
     }

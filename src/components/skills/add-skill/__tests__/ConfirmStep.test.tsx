@@ -54,7 +54,7 @@ function state(overrides: Partial<WizardState> = {}): WizardState {
   const agentSnapshot = {
     selection: makeAgentSelectionSnapshot({
       agents: [
-        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'sharedOnly', installOptionId: null, groupId: null },
+        { kind: 'standard', id: 'codex', displayName: 'Codex', detection: 'detected', directoryAccess: 'standardOnly', installOptionId: null, groupId: null },
         { kind: 'standard', id: 'cursor', displayName: 'Cursor', detection: 'detected', directoryAccess: 'privateOnly', installOptionId: 'cursor-item', groupId: null },
       ],
       installOptions: [{ id: 'cursor-item', kind: 'standardDirectory', agentIds: ['cursor'], displayName: 'Cursor', path: '~/.cursor/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null }],
@@ -67,14 +67,14 @@ function state(overrides: Partial<WizardState> = {}): WizardState {
     step: 'confirm',
     entryPoint: 'skills-panel',
     scope: 'global',
-    context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+    context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
     source: 'owner/repo',
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
     discoverySession: {
       sessionId: 'discovery-1',
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       sourceFingerprint: 'source-1',
       expiresAtEpochMs: 1000,
     },
@@ -159,13 +159,34 @@ describe('ConfirmStep', () => {
     })));
   });
 
-  it('shows the shared readers and selected placement from the snapshot', async () => {
+  it('shows the standard readers and selected placement from the snapshot', async () => {
     render(<ConfirmStep state={state()} updateState={vi.fn()} scope="global" />);
 
     await waitFor(() => expect(preview).toHaveBeenCalledOnce());
     expect(screen.getByText('Codex')).toBeDefined();
     expect(screen.getByText('Cursor')).toBeDefined();
     expect(screen.getByText('~/.cursor/skills')).toBeDefined();
+  });
+
+  it('groups selected Agents by the link or copy action the user will see', async () => {
+    const current = state({ mode: 'symlink' });
+    current.agentSelectionSnapshot!.selection.agents.push({
+      kind: 'standard', id: 'eve', displayName: 'Eve', detection: 'detected',
+      directoryAccess: 'privateOnly', installOptionId: 'eve-item', groupId: null,
+    });
+    current.agentSelectionSnapshot!.selection.installOptions.push({
+      id: 'eve-item', kind: 'standardDirectory', agentIds: ['eve'], displayName: 'Eve',
+      path: './agent/skills', groupId: null, selectable: true,
+      modeConstraint: 'copyOnly', disabledReason: null,
+    });
+    current.selectedAgentOptionIds = ['cursor-item', 'eve-item'];
+
+    render(<ConfirmStep state={current} updateState={vi.fn()} scope="global" />);
+
+    await waitFor(() => expect(preview).toHaveBeenCalledOnce());
+    expect(screen.getByText('addSkill.confirm.createLinks')).toBeDefined();
+    expect(screen.getByText('addSkill.confirm.createCopies')).toBeDefined();
+    expect(screen.queryByText('agentSelection.title')).toBeNull();
   });
 
   it('keeps risk acknowledgement in the wizard state', async () => {

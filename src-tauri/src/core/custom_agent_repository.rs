@@ -492,12 +492,12 @@ mod tests {
             display_name: format!("{id} display"),
             global: CustomScopeDefinition {
                 enabled: true,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             project: CustomScopeDefinition {
                 enabled: false,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             detection_paths: vec![CustomPathSpec::based(
@@ -728,7 +728,7 @@ mod tests {
                     "location": "private",
                     "privatePath": { "kind": "absolute", "path": "/opt/agent/skills" }
                 },
-                "project": { "enabled": false, "location": "shared", "privatePath": null },
+                "project": { "enabled": false, "location": "standard", "privatePath": null },
                 "detectionPaths": [
                     { "kind": "absolute", "path": "/opt/agent" }
                 ]
@@ -748,7 +748,7 @@ mod tests {
             "agents": [{
                 "id": "absolute-project-agent",
                 "displayName": "Absolute Project Agent",
-                "global": { "enabled": false, "location": "shared", "privatePath": null },
+                "global": { "enabled": false, "location": "standard", "privatePath": null },
                 "project": {
                     "enabled": true,
                     "location": "private",
@@ -956,7 +956,7 @@ mod tests {
         };
         first_update.project = CustomScopeDefinition {
             enabled: true,
-            location: ScopeLocation::Shared,
+            location: ScopeLocation::Standard,
             private_path: None,
         };
         first_update.detection_paths = vec![

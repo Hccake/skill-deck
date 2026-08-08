@@ -9,27 +9,27 @@ describe('agent settings presentation', () => {
   it('maps built-in scope definitions to the four read modes', () => {
     const unsupported: ScopeDefinition = {
       enabled: false,
-      readsShared: false,
+      readsStandard: false,
       privatePath: null,
     };
-    const shared: ScopeDefinition = {
+    const standard: ScopeDefinition = {
       enabled: true,
-      readsShared: true,
+      readsStandard: true,
       privatePath: null,
     };
     const privateOnly: ScopeDefinition = {
       enabled: true,
-      readsShared: false,
+      readsStandard: false,
       privatePath: { kind: 'project', relativePath: '.agent/skills' },
     };
     const both: ScopeDefinition = {
       enabled: true,
-      readsShared: true,
+      readsStandard: true,
       privatePath: { kind: 'home', relativePath: '.agent/skills' },
     };
 
     expect(scopeReadMode(unsupported)).toBe('unsupported');
-    expect(scopeReadMode(shared)).toBe('shared');
+    expect(scopeReadMode(standard)).toBe('standard');
     expect(scopeReadMode(privateOnly)).toBe('private');
     expect(scopeReadMode(both)).toBe('both');
   });
@@ -38,13 +38,13 @@ describe('agent settings presentation', () => {
     const scope = (enabled: boolean, location: CustomScopeDefinition['location']): CustomScopeDefinition => ({
       enabled,
       location,
-      privatePath: location === 'shared'
+      privatePath: location === 'standard'
         ? null
         : { kind: 'based', base: 'home', relativePath: '.agent/skills' },
     });
 
     expect(scopeReadMode(scope(false, 'both'))).toBe('unsupported');
-    expect(scopeReadMode(scope(true, 'shared'))).toBe('shared');
+    expect(scopeReadMode(scope(true, 'standard'))).toBe('standard');
     expect(scopeReadMode(scope(true, 'private'))).toBe('private');
     expect(scopeReadMode(scope(true, 'both'))).toBe('both');
   });

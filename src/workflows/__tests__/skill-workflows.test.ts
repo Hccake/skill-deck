@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentSelectionSubmission, ContextRef, InstalledSkill, ManageAgentSelectionSnapshot, ManageAgentsPreview, RemovePreview } from '@/bindings';
+import type { AgentSelectionSubmission, SkillLocationRef, InstalledSkill, ManageAgentSelectionSnapshot, ManageAgentsPreview, RemovePreview } from '@/bindings';
 import { makeAgentSelectionSnapshot } from '@/test-utils';
 import { useMutationStore } from '@/stores/mutation';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
@@ -57,7 +57,7 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
-const context: ContextRef = {
+const context: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   scope: { scope: 'project', project_id: 'source' },
 };
@@ -158,7 +158,7 @@ describe('skill workflows', () => {
         token,
         payload: {},
         source: context,
-        targetEnvironment: { kind: 'host' },
+        targetEnvironment: { kind: 'native' },
         targets: [],
       },
     });
@@ -407,27 +407,27 @@ describe('skill workflows', () => {
     mocks.copySkillToProjects.mockResolvedValueOnce({
       units: [{
         status: 'succeeded',
-        target: { scope: { scope: 'project', project_id: 'host-target' } },
+        target: { scope: { scope: 'project', project_id: 'native-target' } },
       }],
     });
 
     const outcome = await executeSkillCopy({
-      environment: { kind: 'host' },
-      projectIds: ['host-target'],
+      environment: { kind: 'native' },
+      projectIds: ['native-target'],
       agentSelection: manageSubmission,
     });
 
     expect(outcome.status).toBe('succeeded');
     expect(mocks.previewCopySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({
       source: context,
-      targetEnvironment: { kind: 'host' },
-      targetProjectIds: ['host-target'],
+      targetEnvironment: { kind: 'native' },
+      targetProjectIds: ['native-target'],
       agentSelection: manageSubmission,
     }));
     expect(mocks.copySkillToProjects).toHaveBeenCalledWith(expect.objectContaining({ token }));
     expect(mocks.refreshContext).toHaveBeenCalledWith({
-      environment: { kind: 'host' },
-      scope: { scope: 'project', project_id: 'host-target' },
+      environment: { kind: 'native' },
+      scope: { scope: 'project', project_id: 'native-target' },
     }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] });
   });
 
@@ -436,8 +436,8 @@ describe('skill workflows', () => {
     mocks.copySkillToProjects.mockRejectedValueOnce({ kind: 'installWizardActive' });
 
     await expect(executeSkillCopy({
-      environment: { kind: 'host' },
-      projectIds: ['host-target'],
+      environment: { kind: 'native' },
+      projectIds: ['native-target'],
       agentSelection: manageSubmission,
     })).resolves.toEqual({ status: 'blocked' });
 
@@ -453,8 +453,8 @@ describe('skill workflows', () => {
     });
 
     await expect(executeSkillCopy({
-      environment: { kind: 'host' },
-      projectIds: ['host-target'],
+      environment: { kind: 'native' },
+      projectIds: ['native-target'],
       agentSelection: manageSubmission,
     })).resolves.toEqual({
       status: 'selectionStale',
@@ -470,8 +470,8 @@ describe('skill workflows', () => {
     mocks.getCopyAgentSelection.mockResolvedValueOnce({ selection });
 
     await expect(executeSkillCopy({
-      environment: { kind: 'host' },
-      projectIds: ['host-target'],
+      environment: { kind: 'native' },
+      projectIds: ['native-target'],
       agentSelection: manageSubmission,
     })).resolves.toEqual({
       status: 'selectionStale',
@@ -489,8 +489,8 @@ describe('skill workflows', () => {
       mocks.getCopyAgentSelection.mockResolvedValueOnce({ selection });
 
       await expect(executeSkillCopy({
-        environment: { kind: 'host' },
-        projectIds: ['host-target'],
+        environment: { kind: 'native' },
+        projectIds: ['native-target'],
         agentSelection: manageSubmission,
       })).resolves.toEqual({
         status: 'selectionStale',
@@ -509,7 +509,7 @@ describe('skill workflows', () => {
     });
 
     const outcome = await executeSkillCopy({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       projectIds: ['project-b', 'project-c'],
       agentSelection: manageSubmission,
     });
@@ -521,7 +521,7 @@ describe('skill workflows', () => {
     });
     expect(mocks.refreshContext).toHaveBeenCalledTimes(1);
     expect(mocks.refreshContext).toHaveBeenCalledWith({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'project-b' },
     }, { origin: 'selfMutation', mutatedSkillNames: ['toolkit'] });
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);
@@ -538,7 +538,7 @@ describe('skill workflows', () => {
     mocks.copySkillToProjects.mockResolvedValue({ units: [failedUnit] });
 
     const outcome = await executeSkillCopy({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       projectIds: ['project-c'],
       agentSelection: manageSubmission,
     });
@@ -558,7 +558,7 @@ describe('skill workflows', () => {
     });
 
     const outcome = await executeSkillCopy({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       projectIds: ['project-c'],
       agentSelection: manageSubmission,
     });
@@ -585,7 +585,7 @@ describe('skill workflows', () => {
     });
 
     const outcome = await executeSkillCopy({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       projectIds: ['project-b', 'project-c'],
       agentSelection: manageSubmission,
     });

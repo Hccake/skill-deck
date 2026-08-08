@@ -37,11 +37,11 @@ export function makeResolvedAgentScope(
 ): ResolvedAgentScope {
   return {
     enabled: target.enabled ?? true,
-    readsShared: target.readsShared ?? true,
-    sharedPath: target.sharedPath ?? '~/.agents/skills',
+    readsStandard: target.readsStandard ?? true,
+    standardPath: target.standardPath ?? '~/.agents/skills',
     privatePath: target.privatePath ?? null,
-    readPaths: target.readPaths ?? [target.sharedPath ?? '~/.agents/skills'],
-    sharedPresence: target.sharedPresence ?? 'missing',
+    readPaths: target.readPaths ?? [target.standardPath ?? '~/.agents/skills'],
+    standardPresence: target.standardPresence ?? 'missing',
     privatePresence: target.privatePresence ?? null,
     legacyPaths: target.legacyPaths ?? [],
   };
@@ -52,20 +52,20 @@ export function makeResolvedScopeFixture(target: {
   automatic?: boolean;
   supported?: boolean;
   defaultAvailable?: boolean;
-  sharedPath?: string;
+  standardPath?: string;
   readPaths?: string[];
   privatePath?: string | null;
   availability?: string;
 }): ResolvedAgentScope {
-  const readsShared = target.defaultAvailable ?? target.automatic ?? false;
-  const sharedPath = target.sharedPath
-    ?? (readsShared ? target.path : '~/.agents/skills');
+  const readsStandard = target.defaultAvailable ?? target.automatic ?? false;
+  const standardPath = target.standardPath
+    ?? (readsStandard ? target.path : '~/.agents/skills');
   const privatePath = target.privatePath
-    ?? (readsShared ? null : target.path);
+    ?? (readsStandard ? null : target.path);
   return makeResolvedAgentScope({
     enabled: target.supported ?? true,
-    readsShared,
-    sharedPath,
+    readsStandard,
+    standardPath,
     privatePath,
     readPaths: target.readPaths ?? [target.path],
   });
@@ -89,14 +89,14 @@ export function makeResolvedAgent(options: {
       aliases: [],
       global: {
         enabled: global.enabled,
-        readsShared: global.readsShared,
+        readsStandard: global.readsStandard,
         privatePath: global.privatePath
           ? { kind: 'home', relativePath: `.${options.id}/skills` }
           : null,
       },
       project: {
         enabled: project.enabled,
-        readsShared: project.readsShared,
+        readsStandard: project.readsStandard,
         privatePath: project.privatePath
           ? { kind: 'project', relativePath: `.${options.id}/skills` }
           : null,
@@ -121,7 +121,7 @@ export function makeAgentRuntimeSnapshot(
   return {
     registryRevision: 'registry-1',
     environmentRevision: 'environment-1',
-    environment: { kind: 'host' },
+    environment: { kind: 'native' },
     availability: 'available',
     projectPath: null,
     agents: Object.fromEntries(

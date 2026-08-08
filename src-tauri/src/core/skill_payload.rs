@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn manifest_rejects_traversal_duplicates_and_file_prefix_conflicts() {
         let destination = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: "/tmp/skills/demo".to_string(),
         };
         let profile = TargetPathProfile::native_unix();
@@ -904,7 +904,7 @@ mod tests {
     #[test]
     fn target_profile_rejects_case_unicode_and_windows_name_collisions() {
         let destination = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: "C:\\Users\\alice\\skills\\demo".to_string(),
         };
         let windows = TargetPathProfile::native_windows();
@@ -933,7 +933,7 @@ mod tests {
     fn target_length_limit_includes_destination_root() {
         let payload = synthetic_payload(&[("nested/file.md", PayloadEntryKind::File)]);
         let destination = ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: "/already/long/root".to_string(),
         };
         let profile = TargetPathProfile {

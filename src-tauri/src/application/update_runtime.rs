@@ -50,7 +50,7 @@ fn retained_snapshot_action(
     retained_revision: Option<&str>,
     probe: Result<&str, &AppError>,
 ) -> RetainedSnapshotAction {
-    if !matches!(environment, EnvironmentRef::Host) || retained_revision.is_none() {
+    if !matches!(environment, EnvironmentRef::Native) || retained_revision.is_none() {
         return RetainedSnapshotAction::Reacquire;
     }
     match probe {
@@ -63,7 +63,7 @@ fn retained_snapshot_action(
 }
 
 fn snapshot_reuse_eligible(environment: &EnvironmentRef) -> bool {
-    matches!(environment, EnvironmentRef::Host)
+    matches!(environment, EnvironmentRef::Native)
 }
 
 impl RuntimeUpdatePayloadAcquirer {
@@ -452,13 +452,21 @@ mod tests {
     }
 
     #[test]
-    fn retained_host_snapshot_reuse_requires_an_unchanged_probe() {
+    fn retained_native_snapshot_reuse_requires_an_unchanged_probe() {
         assert_eq!(
-            retained_snapshot_action(&EnvironmentRef::Host, Some("revision-1"), Ok("revision-1")),
+            retained_snapshot_action(
+                &EnvironmentRef::Native,
+                Some("revision-1"),
+                Ok("revision-1")
+            ),
             RetainedSnapshotAction::Reuse
         );
         assert_eq!(
-            retained_snapshot_action(&EnvironmentRef::Host, Some("revision-1"), Ok("revision-2")),
+            retained_snapshot_action(
+                &EnvironmentRef::Native,
+                Some("revision-1"),
+                Ok("revision-2")
+            ),
             RetainedSnapshotAction::Reacquire
         );
     }
@@ -469,10 +477,14 @@ mod tests {
             message: "probe unavailable".to_string(),
         };
         assert_eq!(
-            retained_snapshot_action(&EnvironmentRef::Host, Some("revision-1"), Err(&probe_error),),
+            retained_snapshot_action(
+                &EnvironmentRef::Native,
+                Some("revision-1"),
+                Err(&probe_error),
+            ),
             RetainedSnapshotAction::Reacquire
         );
-        assert!(snapshot_reuse_eligible(&EnvironmentRef::Host));
+        assert!(snapshot_reuse_eligible(&EnvironmentRef::Native));
         assert!(!snapshot_reuse_eligible(&EnvironmentRef::Wsl {
             distro_name: "Ubuntu".to_string(),
         }));
@@ -492,7 +504,7 @@ mod tests {
     fn cancelled_probe_preserves_cancellation_instead_of_reacquiring() {
         assert_eq!(
             retained_snapshot_action(
-                &EnvironmentRef::Host,
+                &EnvironmentRef::Native,
                 Some("revision-1"),
                 Err(&AppError::MutationCancelled),
             ),

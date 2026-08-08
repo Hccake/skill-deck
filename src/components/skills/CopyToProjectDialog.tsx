@@ -21,7 +21,7 @@ import { environmentKey } from '@/lib/context';
 import { formatMutationError } from '@/lib/mutation-results';
 import type {
   AgentSelectionSubmission,
-  ContextRef,
+  SkillLocationRef,
   EnvironmentInfo,
   EnvironmentRef,
   InstalledSkill,
@@ -57,7 +57,7 @@ export interface CopyTargetSelection {
 interface CopyToProjectDialogProps {
   open?: boolean;
   skill: InstalledSkill | null;
-  sourceContext: ContextRef;
+  sourceContext: SkillLocationRef;
   environments: EnvironmentInfo[];
   projectsByEnvironment: Record<string, ProjectInfo[]>;
   agentSelection: CopyAgentSelectionState & { retry: () => Promise<void> };

@@ -70,9 +70,9 @@ describe('AboutTab updater actions', () => {
     expect(showDialog).not.toHaveBeenCalled();
   });
 
-  it('shows the vendored skills CLI compatibility baseline', () => {
+  it('shows the third-party skills CLI reference version', () => {
     render(<AboutTab />);
 
-    expect(screen.getByText(/settings\.links\.cliCompatibility v1\.5\.13/)).toBeTruthy();
+    expect(screen.getByText(/settings\.links\.cliReferenceVersion v1\.5\.13/)).toBeTruthy();
   });
 });

@@ -4,7 +4,7 @@ use tauri::{Emitter, State, WebviewWindow};
 
 use crate::application::source_acquisition::SourceDiscoveryService;
 use crate::core::CloneProgress;
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::models::FetchResult;
 use crate::runtime::RuntimeServiceGraph;
@@ -20,7 +20,7 @@ struct SourceFetchProgressEvent {
 #[specta::specta]
 pub async fn fetch_available(
     window: WebviewWindow,
-    context: ContextRef,
+    context: SkillLocationRef,
     source: String,
     operation_id: String,
     runtime: State<'_, RuntimeServiceGraph>,

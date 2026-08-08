@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AgentId,
   AppError,
-  ContextRef,
+  SkillLocationRef,
   InstallAgentSelectionSnapshot,
 } from '@/bindings';
 import { getInstallAgentSelection } from '@/hooks/useTauriApi';
@@ -22,7 +22,7 @@ export type InstallTargetOptionsState =
 
 export interface InstallTargetOptionsInput {
   active: boolean;
-  context: ContextRef;
+  context: SkillLocationRef;
   preselectedAgents: AgentId[];
   snapshot: InstallAgentSelectionSnapshot | null;
   selectedOptionIds: string[];
@@ -34,7 +34,7 @@ export type InstallTargetOptionsController = InstallTargetOptionsState & {
   retry: () => Promise<void>;
 };
 
-function inputKey(context: ContextRef, preselectedAgents: AgentId[]) {
+function inputKey(context: SkillLocationRef, preselectedAgents: AgentId[]) {
   return JSON.stringify([
     contextKey(context),
     [...new Set(preselectedAgents)].sort(),

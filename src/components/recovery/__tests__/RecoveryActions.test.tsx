@@ -49,7 +49,7 @@ describe('RecoveryActions', () => {
   it('opens opaque recovery data and confirms cleanup with the displayed revision', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
+      environment: { kind: 'native' }, subject: null, paths: [], diagnostic: null,
     });
     const onResolved = vi.fn();
     render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} onResolved={onResolved} />);
@@ -67,7 +67,7 @@ describe('RecoveryActions', () => {
   it('never offers cleanup while recovery still needs attention', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'needsAttention', revision: 'revision-1',
-      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
+      environment: { kind: 'native' }, subject: null, paths: [], diagnostic: null,
     });
     render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} />);
 
@@ -80,7 +80,7 @@ describe('RecoveryActions', () => {
       recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }}
       initialStatus={{
         resourceId: 'recovery-1', state: 'needsAttention', revision: 'revision-1',
-        environment: { kind: 'host' }, createdAtEpochMs: 1, subject: null, paths: [], diagnostic: null,
+        environment: { kind: 'native' }, createdAtEpochMs: 1, subject: null, paths: [], diagnostic: null,
       }}
     />);
 
@@ -95,25 +95,25 @@ describe('RecoveryActions', () => {
         resourceId: 'recovery-1',
         state: 'needsAttention',
         revision: 'revision-1',
-        environment: { kind: 'host' },
+        environment: { kind: 'native' },
         createdAtEpochMs: 1_786_080_000_000,
         subject: {
           operationKind: 'update',
           skillName: 'skill-deck',
-          context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+          context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
         },
         paths: [
           {
             kind: 'current',
             location: {
-              environment: { kind: 'host' },
+              environment: { kind: 'native' },
               nativePath: 'C:\\Users\\cheng\\.agents\\skills\\skill-deck',
             },
           },
           {
             kind: 'backup',
             location: {
-              environment: { kind: 'host' },
+              environment: { kind: 'native' },
               nativePath: 'C:\\Users\\cheng\\.agents\\skills\\.skill-deck-backup-update',
             },
           },
@@ -140,11 +140,11 @@ describe('RecoveryActions', () => {
     mocks.getStatus
       .mockResolvedValueOnce({
         resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-        environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
+        environment: { kind: 'native' }, subject: null, paths: [], diagnostic: null,
       })
       .mockResolvedValueOnce({
         resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-2',
-        environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
+        environment: { kind: 'native' }, subject: null, paths: [], diagnostic: null,
       });
     mocks.confirm.mockRejectedValue(new Error('cleanup failed'));
     const onResolved = vi.fn();
@@ -162,7 +162,7 @@ describe('RecoveryActions', () => {
   it('keeps cleanup local feedback clear when the install flow wins the race', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
+      environment: { kind: 'native' }, subject: null, paths: [], diagnostic: null,
     });
     mocks.confirm.mockRejectedValue({ kind: 'installWizardActive' });
     const onResolved = vi.fn();
@@ -185,8 +185,8 @@ describe('RecoveryActions', () => {
   it('reports an open failure instead of leaving an unhandled rejection', async () => {
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'invalid', revision: '',
-      environment: { kind: 'host' }, subject: null, paths: [{
-        kind: 'record', location: { environment: { kind: 'host' }, nativePath: '/tmp/recovery' },
+      environment: { kind: 'native' }, subject: null, paths: [{
+        kind: 'record', location: { environment: { kind: 'native' }, nativePath: '/tmp/recovery' },
       }],
       diagnostic: null,
     });
@@ -203,7 +203,7 @@ describe('RecoveryActions', () => {
     useInstallWizardSessionStore.setState({ revision: 1, active: true });
     mocks.getStatus.mockResolvedValue({
       resourceId: 'recovery-1', state: 'consistentCanCleanup', revision: 'revision-1',
-      environment: { kind: 'host' }, subject: null, paths: [], diagnostic: null,
+      environment: { kind: 'native' }, subject: null, paths: [], diagnostic: null,
     });
 
     render(<RecoveryActions recovery={{ resourceId: 'recovery-1', suggestedActionCode: 'reviewChanges' }} />);

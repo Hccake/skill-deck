@@ -2,14 +2,14 @@ use tauri::State;
 
 use crate::application::resources::SkillIdentity;
 use crate::application::skill_read::ListSkillsResult;
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn list_skills(
-    context: ContextRef,
+    context: SkillLocationRef,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<ListSkillsResult, AppError> {
     crate::application::skills::list_skills(context, runtime.wsl(), runtime.agents()).await

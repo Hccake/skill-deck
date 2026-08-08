@@ -3,14 +3,14 @@
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { AppError, ContextRef, EnvironmentInfo, EnvironmentRef } from '@/bindings';
+import type { AppError, SkillLocationRef, EnvironmentInfo, EnvironmentRef } from '@/bindings';
 import { useMutationStore } from '@/stores/mutation';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { GlobalEnvironmentSwitcher } from '../GlobalEnvironmentSwitcher';
 
-const host: EnvironmentInfo = {
-  environment: { kind: 'host' },
+const native: EnvironmentInfo = {
+  environment: { kind: 'native' },
   displayName: 'Windows',
   status: 'available',
   revision: 1,
@@ -28,9 +28,9 @@ const mocks = vi.hoisted(() => ({
   environments: [] as EnvironmentInfo[],
   discoveryError: null as AppError | null,
   selectedContext: {
-    environment: { kind: 'host' },
+    environment: { kind: 'native' },
     scope: { scope: 'global' },
-  } as ContextRef,
+  } as SkillLocationRef,
   transition: { kind: 'idle' } as { kind: string; target?: EnvironmentRef },
   switchEnvironment: vi.fn(async (_environment: EnvironmentRef) => undefined),
   retryDiscovery: vi.fn(async () => undefined),
@@ -53,7 +53,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }));
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: EnvironmentRef) => (
-    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name.toLocaleLowerCase()}`
+    environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name.toLocaleLowerCase()}`
   ),
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
     environments: mocks.environments,
@@ -90,10 +90,10 @@ function renderSwitcher() {
 describe('GlobalEnvironmentSwitcher', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.environments = [host];
+    mocks.environments = [native];
     mocks.discoveryError = null;
     mocks.selectedContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     };
     mocks.transition = { kind: 'idle' };
@@ -108,14 +108,14 @@ describe('GlobalEnvironmentSwitcher', () => {
     useInstallWizardSessionStore.setState({ revision: 0, active: false, loading: false });
   });
 
-  it('stays hidden when Host is the only available Environment', () => {
+  it('stays hidden when Native is the only available Environment', () => {
     renderSwitcher();
 
     expect(screen.queryByRole('button', { name: /Environment:/ })).toBeNull();
   });
 
   it('shows the WSL type with the distro name and switches through the unsaved-change guard', async () => {
-    mocks.environments = [host, ubuntu];
+    mocks.environments = [native, ubuntu];
     mocks.selectedContext = {
       environment: ubuntu.environment,
       scope: { scope: 'global' },
@@ -126,15 +126,15 @@ describe('GlobalEnvironmentSwitcher', () => {
     expect(trigger.querySelector('[data-environment-platform="wsl"]')).not.toBeNull();
     openEnvironmentMenu();
     const windowsItem = await screen.findByRole('menuitemradio', { name: 'Windows' });
-    expect(windowsItem.querySelector('[data-environment-platform="host"]')).not.toBeNull();
+    expect(windowsItem.querySelector('[data-environment-platform="native"]')).not.toBeNull();
     fireEvent.click(windowsItem);
 
     await waitFor(() => expect(mocks.guard).toHaveBeenCalledTimes(1));
-    expect(mocks.switchEnvironment).toHaveBeenCalledWith(host.environment);
+    expect(mocks.switchEnvironment).toHaveBeenCalledWith(native.environment);
   });
 
   it('sizes the menu to its content without showing leading radio dots', async () => {
-    mocks.environments = [host, ubuntu];
+    mocks.environments = [native, ubuntu];
     renderSwitcher();
 
     openEnvironmentMenu();
@@ -153,13 +153,13 @@ describe('GlobalEnvironmentSwitcher', () => {
     ['a write operation is active', null, {
       id: 'mutation-1',
       kind: 'install' as const,
-      context: { environment: { kind: 'host' as const }, scope: { scope: 'global' as const } },
+      context: { environment: { kind: 'native' as const }, scope: { scope: 'global' as const } },
       phase: 'preparing' as const,
       progress: null,
       cancelable: true,
     }],
   ])('disables global switching while %s', (_label, pendingEnvironment, activeMutation) => {
-    mocks.environments = [host, ubuntu];
+    mocks.environments = [native, ubuntu];
     mocks.transition = pendingEnvironment
       ? { kind: 'switchEnvironment', target: pendingEnvironment }
       : { kind: 'idle' };
@@ -190,7 +190,7 @@ describe('GlobalEnvironmentSwitcher', () => {
       kind: 'environmentUnavailable',
       data: { environment: ubuntu.environment, message: 'distribution stopped' },
     };
-    mocks.environments = [host, ubuntu];
+    mocks.environments = [native, ubuntu];
     mocks.switchEnvironment.mockRejectedValue(error);
     renderSwitcher();
 
@@ -202,7 +202,7 @@ describe('GlobalEnvironmentSwitcher', () => {
   });
 
   it('keeps Environment switching available while the install wizard makes business actions read-only', () => {
-    mocks.environments = [host, ubuntu];
+    mocks.environments = [native, ubuntu];
     useInstallWizardSessionStore.setState({ revision: 1, active: true });
 
     renderSwitcher();

@@ -13,7 +13,7 @@ import type {
   AgentRuntimeSnapshot,
   AgentSettingsSnapshot,
   AppError,
-  ContextRef,
+  SkillLocationRef,
   CustomAgentDefinition,
   CustomAgentDraftValidation,
 } from '@/bindings';
@@ -35,15 +35,15 @@ interface AgentRegistryApi {
 interface AgentRegistryState {
   settingsByEnvironment: Record<string, AsyncSnapshot<AgentSettingsSnapshot>>;
   runtimeByContext: Record<string, AsyncSnapshot<AgentRuntimeSnapshot>>;
-  loadSettings: (context: ContextRef) => Promise<void>;
-  loadRuntime: (context: ContextRef) => Promise<void>;
+  loadSettings: (context: SkillLocationRef) => Promise<void>;
+  loadRuntime: (context: SkillLocationRef) => Promise<void>;
   validateDraft: (
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     lane?: 'background' | 'submit',
   ) => Promise<CustomAgentDraftValidation | null>;
   loadDeleteImpact: (
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     revision: string,
   ) => Promise<AgentDeleteImpact | null>;
@@ -63,7 +63,7 @@ function emptySnapshot<T>(): AsyncSnapshot<T> {
   return { data: null, state: 'idle', requestId: 0, error: null };
 }
 
-function deleteImpactContextAgentKey(context: ContextRef, id: AgentId): string {
+function deleteImpactContextAgentKey(context: SkillLocationRef, id: AgentId): string {
   return `${contextKey(context)}/${encodeURIComponent(id)}`;
 }
 

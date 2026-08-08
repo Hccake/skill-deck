@@ -14,8 +14,8 @@ use crate::environment::runtime::{
     PhysicalTargetKey,
 };
 use crate::environment::types::{
-    normalized_wsl_distro_name, same_environment_identity, ContextRef, EnvironmentRef,
-    ResourceLocator,
+    normalized_wsl_distro_name, same_environment_identity, EnvironmentRef, ResourceLocator,
+    SkillLocationRef,
 };
 use crate::environment::wsl::operations::content_manifest as wsl_content_manifest;
 use crate::environment::wsl::operations::entry::inspect_entries;
@@ -48,7 +48,7 @@ pub type TargetFactFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait TargetFactResolver: Send + Sync {
     fn resolve<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
         logical_destinations: &'a [ResourceLocator],
         cancellation: Option<CancellationSignal>,
     ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>>;
@@ -68,14 +68,14 @@ impl RuntimeTargetFactResolver {
 impl TargetFactResolver for RuntimeTargetFactResolver {
     fn resolve<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
         logical_destinations: &'a [ResourceLocator],
         cancellation: Option<CancellationSignal>,
     ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
         Box::pin(async move {
             validate_owners(&context.environment, logical_destinations)?;
             match &context.environment {
-                EnvironmentRef::Host => {
+                EnvironmentRef::Native => {
                     let destinations = logical_destinations.to_vec();
                     tokio::task::spawn_blocking(move || resolve_native(&destinations))
                         .await
@@ -109,7 +109,7 @@ impl ContentManifestReader for RuntimeTargetFactResolver {
     ) -> Pin<Box<dyn Future<Output = Result<ContentManifest, AppError>> + Send + 'a>> {
         Box::pin(async move {
             match &target.location.environment {
-                EnvironmentRef::Host => NativeContentManifestReader.read(target).await,
+                EnvironmentRef::Native => NativeContentManifestReader.read(target).await,
                 EnvironmentRef::Wsl { distro_name } => {
                     let target = target.clone();
                     self.environments
@@ -140,7 +140,7 @@ fn resolve_native(
             Ok(ResolvedTargetFact {
                 key: projected.key,
                 destination: ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: projected
                         .physical_destination
                         .to_string_lossy()
@@ -227,7 +227,7 @@ fn wsl_fact(
 ) -> Result<ResolvedTargetFact, AppError> {
     let normalized_distro_name = normalized_wsl_distro_name(&session.distro_name);
     let case_sensitive = match windows_storage_owner(&projected.storage_projection) {
-        WindowsStorageOwner::Host => false,
+        WindowsStorageOwner::Windows => false,
         WindowsStorageOwner::Wsl { distro_name }
             if normalized_wsl_distro_name(&distro_name) == normalized_distro_name =>
         {
@@ -323,7 +323,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
     use crate::environment::wsl::WslRuntime;
 
     fn wsl_session() -> WslSession {
@@ -395,14 +397,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_facts_resolve_physical_destinations_and_missing_entry_fingerprints() {
+    async fn native_facts_resolve_physical_destinations_and_missing_entry_fingerprints() {
         let temp = tempdir().unwrap();
         let destination = std::fs::canonicalize(temp.path())
             .unwrap()
             .join(".custom/skills/demo");
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
 
@@ -410,7 +412,7 @@ mod tests {
             .resolve(
                 &context,
                 &[ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: destination.to_string_lossy().into_owned(),
                 }],
                 None,
@@ -434,7 +436,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn host_facts_keep_final_directory_and_symlink_kinds_distinct() {
+    async fn native_facts_keep_final_directory_and_symlink_kinds_distinct() {
         use std::os::unix::fs::symlink;
 
         let temp = tempdir().unwrap();
@@ -442,9 +444,9 @@ mod tests {
         let link = temp.path().join("link");
         std::fs::create_dir(&directory).unwrap();
         symlink(&directory, &link).unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
 
@@ -453,11 +455,11 @@ mod tests {
                 &context,
                 &[
                     ResourceLocator {
-                        environment: EnvironmentRef::Host,
+                        environment: EnvironmentRef::Native,
                         native_path: directory.to_string_lossy().into_owned(),
                     },
                     ResourceLocator {
-                        environment: EnvironmentRef::Host,
+                        environment: EnvironmentRef::Native,
                         native_path: link.to_string_lossy().into_owned(),
                     },
                 ],
@@ -479,7 +481,7 @@ mod tests {
             .resolve(
                 &context,
                 &[ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: broken.to_string_lossy().into_owned(),
                 }],
                 None,
@@ -491,9 +493,9 @@ mod tests {
 
     #[tokio::test]
     async fn resolver_rejects_locators_owned_by_another_environment() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
 

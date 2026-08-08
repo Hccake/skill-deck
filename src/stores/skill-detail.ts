@@ -10,11 +10,11 @@ import {
   getSkillIdentityKey,
   type SkillIdentity,
 } from '@/lib/skills/identity';
-import type { ContextRef, InstalledSkill } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill } from '@/bindings';
 
 interface SkillDetailState {
   selectedSkillRef: SkillIdentity | null;
-  selectedContext: ContextRef | null;
+  selectedContext: SkillLocationRef | null;
   skillContent: string | null;
   loadingContent: boolean;
 
@@ -24,7 +24,7 @@ interface SkillDetailState {
 }
 
 function getContextualSelectionKey(
-  context: ContextRef | null,
+  context: SkillLocationRef | null,
   identity: SkillIdentity | null,
 ): string | null {
   return context && identity
@@ -32,7 +32,7 @@ function getContextualSelectionKey(
     : null;
 }
 
-function projectPathForContext(context: ContextRef): string | undefined {
+function projectPathForContext(context: SkillLocationRef): string | undefined {
   const scope = context.scope;
   if (scope.scope !== 'project') return undefined;
   return projectSnapshotFor(context.environment).projects.find(
@@ -40,14 +40,14 @@ function projectPathForContext(context: ContextRef): string | undefined {
   )?.binding.nativePath;
 }
 
-function getSelectionIdentity(skill: InstalledSkill, context: ContextRef): SkillIdentity {
+function getSelectionIdentity(skill: InstalledSkill, context: SkillLocationRef): SkillIdentity {
   const projectPath = skill.scope === 'project' ? projectPathForContext(context) : undefined;
   return getSkillIdentity(skill, projectPath);
 }
 
 async function resolveSelectedSkill(
   identity: SkillIdentity,
-  context: ContextRef,
+  context: SkillLocationRef,
 ): Promise<InstalledSkill | null> {
   const { useSkillsDataStore } = await import('./skills-data');
   const snapshots = useSkillsDataStore.getState().snapshots;

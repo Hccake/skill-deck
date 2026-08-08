@@ -237,7 +237,7 @@ mod tests {
 
     fn locator() -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: "/project/skills-lock.json".to_string(),
         }
     }

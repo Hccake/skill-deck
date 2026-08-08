@@ -57,7 +57,7 @@ vi.mock('@/stores/skills-data', () => ({
 }));
 
 const context = {
-  environment: { kind: 'host' },
+  environment: { kind: 'native' },
   scope: { scope: 'global' },
 } as const;
 const discoverySession = {

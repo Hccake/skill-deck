@@ -9,7 +9,7 @@ import type {
   AgentDeleteResult,
   AgentId,
   AgentSettingsSnapshot,
-  ContextRef,
+  SkillLocationRef,
   CustomAgentDefinition,
 } from '@/bindings';
 import { assertBusinessWriteAvailable } from '@/hooks/useBusinessWriteBlocked';
@@ -23,18 +23,18 @@ export function applyAgentRegistryMutationResult(settings: AgentSettingsSnapshot
 
 export interface AgentDefinitionWorkflow {
   save(
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     originalId: AgentId | null,
     expectedRevision: string,
   ): Promise<AgentSettingsSnapshot | null>;
   delete(
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     expectedRevision: string,
   ): Promise<AgentDeleteResult | null>;
   deleteInvalid(
-    context: ContextRef,
+    context: SkillLocationRef,
     index: number,
     expectedRevision: string,
   ): Promise<AgentDeleteResult | null>;

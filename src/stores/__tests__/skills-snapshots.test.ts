@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextRef, InstalledSkill, ListSkillsResult } from '@/bindings';
+import type { SkillLocationRef, InstalledSkill, ListSkillsResult } from '@/bindings';
 import { contextKey, globalContext } from '@/lib/context';
 import { useSkillsDataStore } from '../skills-data';
 import { makeAgentRuntimeSnapshot, makeResolvedAgent } from '@/test-utils';
@@ -23,15 +23,15 @@ vi.mock('@/hooks/useTauriApi', () => ({
   checkSkillAudit: vi.fn(),
 }));
 
-const ubuntuGlobal: ContextRef = {
+const ubuntuGlobal: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   scope: { scope: 'global' },
 };
-const ubuntuProject: ContextRef = {
+const ubuntuProject: SkillLocationRef = {
   environment: ubuntuGlobal.environment,
   scope: { scope: 'project', project_id: 'project-a' },
 };
-const debianGlobal: ContextRef = {
+const debianGlobal: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Debian' },
   scope: { scope: 'global' },
 };
@@ -116,7 +116,7 @@ describe('context-keyed Skill snapshots', () => {
   it('keeps concurrent environment results in independent snapshots', async () => {
     const ubuntu = deferred<ListSkillsResult>();
     const debian = deferred<ListSkillsResult>();
-    mocks.listSkills.mockImplementation((context: ContextRef) => (
+    mocks.listSkills.mockImplementation((context: SkillLocationRef) => (
       context.environment.kind === 'wsl' && context.environment.distro_name === 'Ubuntu'
         ? ubuntu.promise
         : debian.promise
@@ -192,7 +192,7 @@ describe('context-keyed Skill snapshots', () => {
       id: 'global-only',
       project: { enabled: false },
     });
-    mocks.listSkills.mockImplementation(async (context: ContextRef) => ({
+    mocks.listSkills.mockImplementation(async (context: SkillLocationRef) => ({
       ...(context.scope.scope === 'global' ? result('global') : result('project', 'project')),
       agents: context.scope.scope === 'global' ? [both, globalOnly] : [both],
     }));
@@ -211,7 +211,7 @@ describe('context-keyed Skill snapshots', () => {
   it('uses the scope Agents returned with listSkills without a second runtime request', async () => {
     const globalAgent = makeResolvedAgent({ id: 'global-agent' });
     const projectAgent = makeResolvedAgent({ id: 'project-agent' });
-    mocks.listSkills.mockImplementation(async (context: ContextRef) => ({
+    mocks.listSkills.mockImplementation(async (context: SkillLocationRef) => ({
       ...result(context.scope.scope === 'global' ? 'global' : 'project', context.scope.scope),
       agents: context.scope.scope === 'global' ? [globalAgent] : [projectAgent],
     } as ListSkillsResult));

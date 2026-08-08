@@ -2,14 +2,14 @@ use tauri::State;
 
 use crate::application::remove::{RemovePreview, RemoveRequest, RemoveResponse};
 use crate::core::mutation::{MutationKind, MutationPhase};
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn preview_remove(
-    context: ContextRef,
+    context: SkillLocationRef,
     skill_name: String,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<RemovePreview, AppError> {

@@ -12,7 +12,7 @@ import { Compass } from 'lucide-react';
 import type { DiscoverSkillSummary, DiscoverTab } from '@/lib/discover/types';
 import { getSkillInstallLocations } from '@/lib/discover-utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import type { ContextRef } from '@/bindings';
+import type { SkillLocationRef } from '@/bindings';
 
 const EMPTY_SNAPSHOT: ContextSkillSnapshot = {
   skills: [],
@@ -43,7 +43,7 @@ export function DiscoverPage() {
     () => globalContext(selectedContext.environment),
     [selectedContext.environment],
   );
-  const projectContexts = useMemo<ContextRef[]>(() => projects.map((project) => ({
+  const projectContexts = useMemo<SkillLocationRef[]>(() => projects.map((project) => ({
     environment: selectedContext.environment,
     scope: { scope: 'project', project_id: project.binding.id },
   })), [projects, selectedContext.environment]);

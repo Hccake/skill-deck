@@ -32,8 +32,8 @@ impl FilesystemInspector for NativeInspector {
         let environment = self.environment.clone();
         let plan = plan.clone();
         Box::pin(async move {
-            if environment != EnvironmentRef::Host
-                || plan.context.environment != EnvironmentRef::Host
+            if environment != EnvironmentRef::Native
+                || plan.context.environment != EnvironmentRef::Native
             {
                 return Err(AppError::StorageUnsupported {
                     path: "nativeInspector".to_string(),
@@ -113,7 +113,7 @@ fn inspect_native(plan: &ReadPlan) -> Result<RawFilesystemSnapshot, AppError> {
         }
     }
     Ok(RawFilesystemSnapshot {
-        environment: EnvironmentRef::Host,
+        environment: EnvironmentRef::Native,
         facts,
         total_content_bytes: total as u32,
     })
@@ -189,7 +189,7 @@ mod tests {
     use super::*;
     use crate::environment::inspection::{FilesystemInspector, ReadPlanBuilder, ReadRootPurpose};
     use crate::environment::runtime::ContextSnapshotRevision;
-    use crate::environment::types::{ContextRef, ContextScope, ResourceLocator};
+    use crate::environment::types::{ResourceLocator, SkillLocation, SkillLocationRef};
 
     #[tokio::test]
     async fn context_root_is_stat_only_and_does_not_consume_skill_content_budget() {
@@ -200,9 +200,9 @@ mod tests {
             b"---\nname: unrelated\ndescription: Unrelated\n---\n",
         )
         .unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let mut builder = ReadPlanBuilder::new(
             context,
@@ -213,7 +213,7 @@ mod tests {
         builder
             .add_root(
                 ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: temp.path().to_string_lossy().into_owned(),
                 },
                 ReadRootPurpose::Context,
@@ -221,7 +221,7 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = NativeInspector::new(EnvironmentRef::Host)
+        let snapshot = NativeInspector::new(EnvironmentRef::Native)
             .inspect(&builder.build().unwrap())
             .await
             .unwrap();
@@ -245,9 +245,9 @@ mod tests {
         std::fs::write(canonical.join("SKILL.md"), document).unwrap();
         symlink(&canonical, agent_root.join("toolkit")).unwrap();
 
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let mut builder = ReadPlanBuilder::new(
             context,
@@ -258,7 +258,7 @@ mod tests {
         builder
             .add_root(
                 ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: agent_root.to_string_lossy().into_owned(),
                 },
                 ReadRootPurpose::Private,
@@ -266,7 +266,7 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = NativeInspector::new(EnvironmentRef::Host)
+        let snapshot = NativeInspector::new(EnvironmentRef::Native)
             .inspect(&builder.build().unwrap())
             .await
             .unwrap();
@@ -295,9 +295,9 @@ mod tests {
         let agent_root = temp.path().join("agent-skills");
         std::fs::create_dir_all(&agent_root).unwrap();
         symlink(temp.path().join("missing"), agent_root.join("toolkit")).unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let mut builder = ReadPlanBuilder::new(
             context,
@@ -308,7 +308,7 @@ mod tests {
         builder
             .add_root(
                 ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: agent_root.to_string_lossy().into_owned(),
                 },
                 ReadRootPurpose::Private,
@@ -316,7 +316,7 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = NativeInspector::new(EnvironmentRef::Host)
+        let snapshot = NativeInspector::new(EnvironmentRef::Native)
             .inspect(&builder.build().unwrap())
             .await
             .unwrap();
@@ -341,9 +341,9 @@ mod tests {
         let document = b"---\nname: toolkit\ndescription: Toolkit\n---\n";
         std::fs::write(canonical.join("SKILL.md"), document).unwrap();
         junction::create(&canonical, agent_root.join("toolkit")).unwrap();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let mut builder = ReadPlanBuilder::new(
             context,
@@ -354,7 +354,7 @@ mod tests {
         builder
             .add_root(
                 ResourceLocator {
-                    environment: EnvironmentRef::Host,
+                    environment: EnvironmentRef::Native,
                     native_path: agent_root.to_string_lossy().into_owned(),
                 },
                 ReadRootPurpose::Private,
@@ -362,7 +362,7 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = NativeInspector::new(EnvironmentRef::Host)
+        let snapshot = NativeInspector::new(EnvironmentRef::Native)
             .inspect(&builder.build().unwrap())
             .await
             .unwrap();

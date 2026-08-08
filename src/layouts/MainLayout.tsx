@@ -8,7 +8,7 @@ import { MutationStatusBar } from '@/components/layout/MutationStatusBar';
 import { useEnvironmentRuntimeMonitor } from '@/hooks/useEnvironmentRuntimeMonitor';
 import { useInstallWizardSessionMonitor } from '@/hooks/useInstallWizardSessionMonitor';
 import { useSkillsDataStore } from '@/stores/skills-data';
-import type { ContextRef } from '@/bindings';
+import type { SkillLocationRef } from '@/bindings';
 import { useEnvironmentStore } from '@/stores/environment';
 import { projectWorkspace } from '@/stores/projects';
 import {
@@ -51,7 +51,7 @@ export default function MainLayout() {
   }, [environment, environmentStatus, transitionActive]);
 
   useEffect(() => {
-    const unlisten = listen<{ context: ContextRef; mutatedSkillNames: string[] }>('wizard-result', (event) => {
+    const unlisten = listen<{ context: SkillLocationRef; mutatedSkillNames: string[] }>('wizard-result', (event) => {
       void refreshWorkspace(event.payload.context, {
         origin: 'selfMutation',
         mutatedSkillNames: event.payload.mutatedSkillNames,

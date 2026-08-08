@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ActiveMutation, AppError, ContextRef, UpdatePreview, UpdateResponse } from '@/bindings';
+import type { ActiveMutation, AppError, SkillLocationRef, UpdatePreview, UpdateResponse } from '@/bindings';
 import { contextKey } from '@/lib/context';
 import { previewUpdate, updateSkill, updateSkillsBatch } from '@/hooks/useTauriApi';
 import { useSkillsDataStore } from '@/stores/skills-data';
@@ -17,7 +17,7 @@ export type SkillUpdatePhase =
 
 interface SkillUpdateWorkflowState {
   phase: SkillUpdatePhase;
-  context: ContextRef | null;
+  context: SkillLocationRef | null;
   skillNames: string[];
   batch: boolean;
   preview: UpdatePreview | null;
@@ -27,7 +27,7 @@ interface SkillUpdateWorkflowState {
   confirming: boolean;
   conflictDecisions: Set<string>;
   generation: number;
-  open: (context: ContextRef, skillNames: string[], batch?: boolean) => Promise<boolean>;
+  open: (context: SkillLocationRef, skillNames: string[], batch?: boolean) => Promise<boolean>;
   setConflictDecision: (entryId: string, overwrite: boolean) => void;
   confirm: () => Promise<void>;
   retryFailed: () => Promise<void>;

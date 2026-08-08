@@ -11,6 +11,10 @@ import {
 } from '@/stores/install-wizard-session';
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { formatMutationStatus } from '@/lib/mutationStatus';
+import {
+  environmentDisplayName,
+  environmentRefDisplayName,
+} from '@/lib/environments/presentation';
 import { projectDisplayName } from '@/lib/projects/presentation';
 
 interface MutationStatusBarProps {
@@ -26,7 +30,7 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
     selectInstallWizardSessionBlocksWrites,
   );
   const environments = useEnvironmentStore((state) => state.environments);
-  const mutationEnvironment = activeMutation?.context.environment ?? { kind: 'host' as const };
+  const mutationEnvironment = activeMutation?.context.environment ?? { kind: 'native' as const };
   const { projects } = useProjectWorkspace(mutationEnvironment);
 
   useMutationMonitor(pollIntervalMs);
@@ -38,10 +42,10 @@ export function MutationStatusBar({ pollIntervalMs = 2_000 }: MutationStatusBarP
     const environment = environments.find(
       (entry) => environmentKey(entry.environment) === key,
     );
-    const environmentLabel = environment?.displayName
-      ?? (activeMutation.context.environment.kind === 'host'
-        ? t('mutation.host')
-        : activeMutation.context.environment.distro_name);
+    const environmentLabel = environment
+      ? environmentDisplayName(environment, t)
+      : environmentRefDisplayName(activeMutation.context.environment, undefined, t);
+    if (!environmentLabel) return null;
 
     if (activeMutation.context.scope.scope === 'global') {
       return { environmentLabel, scopeLabel: t('context.global') };

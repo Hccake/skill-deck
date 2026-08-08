@@ -31,7 +31,7 @@ use crate::core::mutation::{CancellationSignal, MutationKind};
 use crate::core::skill_payload::PayloadId;
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind, TargetFactResolver};
 use crate::environment::runtime::ObservedEntryId;
-use crate::environment::types::{same_environment_identity, ContextRef};
+use crate::environment::types::{same_environment_identity, SkillLocationRef};
 use crate::error::{AgentSelectionInvalidReason, AppError};
 use crate::models::InstallMode;
 use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
@@ -41,7 +41,7 @@ use uuid::Uuid;
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct ManageAgentsPreviewRequest {
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub skill_name: String,
     pub agent_selection: AgentSelectionSubmission,
 }
@@ -51,7 +51,7 @@ pub struct ManageAgentsPreviewRequest {
 #[specta(rename_all = "camelCase")]
 pub struct ManageAgentsRequest {
     pub token: PreviewToken,
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub skill_name: String,
     pub agent_selection: AgentSelectionSubmission,
     pub confirm_entity_directories: bool,
@@ -63,7 +63,7 @@ pub struct ManageAgentsRequest {
 #[specta(rename_all = "camelCase")]
 pub struct ManageAgentsPreview {
     pub token: PreviewToken,
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub skill_name: String,
     pub canonical_payload: Option<AcquiredPayloadHandle>,
     pub confirmation: Option<ManageAgentsConfirmation>,
@@ -159,7 +159,7 @@ pub struct ManageAgentSelectionSnapshot {
 
 #[derive(Serialize)]
 struct ResolvedManageSelection {
-    context: ContextRef,
+    context: SkillLocationRef,
     skill_name: String,
     add: Vec<AgentWriteIntent>,
     #[serde(skip)]
@@ -383,7 +383,7 @@ where
 
     pub async fn selection(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<ManageAgentSelectionSnapshot, AppError> {
         Ok(self.load_selection(context, skill_name).await?.public)
@@ -391,7 +391,7 @@ where
 
     async fn load_selection(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<LoadedManageSelection, AppError> {
         load_observed_agent_selection(&self.observer, &self.targets, context, skill_name).await
@@ -528,7 +528,7 @@ where
 pub(crate) async fn load_observed_agent_selection<F, T>(
     observer: &SkillEntryObserver<F, T>,
     targets: &T,
-    context: &ContextRef,
+    context: &SkillLocationRef,
     skill_name: &str,
 ) -> Result<LoadedManageSelection, AppError>
 where
@@ -542,7 +542,7 @@ where
 pub(crate) async fn load_observed_agent_selection_for_copy<F, T>(
     observer: &SkillEntryObserver<F, T>,
     targets: &T,
-    context: &ContextRef,
+    context: &SkillLocationRef,
     skill_name: &str,
 ) -> Result<LoadedManageSelection, AppError>
 where
@@ -557,7 +557,7 @@ where
 
 async fn build_observed_agent_selection<T>(
     targets: &T,
-    context: &ContextRef,
+    context: &SkillLocationRef,
     skill_name: &str,
     observed: ObservedSkillSnapshot,
 ) -> Result<LoadedManageSelection, AppError>
@@ -875,7 +875,7 @@ fn manage_lock_mutation(
     }
     if !matches!(
         request.context.scope,
-        crate::environment::types::ContextScope::Project { .. }
+        crate::environment::types::SkillLocation::Project { .. }
     ) {
         return Err(AppError::Validation {
             field: Some("eveTargets".to_string()),
@@ -1062,7 +1062,7 @@ mod tests {
         let observed = vec![crate::application::remove::ObservedPhysicalEntry {
             entry_id: id.clone(),
             display_path: crate::environment::types::ResourceLocator {
-                environment: crate::environment::types::EnvironmentRef::Host,
+                environment: crate::environment::types::EnvironmentRef::Native,
                 native_path: "/agent/skills/demo".to_string(),
             },
             kind: crate::application::remove::ObservedEntryKind::Directory,

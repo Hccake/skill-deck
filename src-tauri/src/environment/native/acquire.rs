@@ -555,7 +555,7 @@ mod tests {
             },
         );
         let discovery = manager
-            .discover(EnvironmentRef::Host, "source-v1")
+            .discover(EnvironmentRef::Native, "source-v1")
             .await
             .expect("discovery");
         let handle = manager

@@ -1860,7 +1860,7 @@ mod tests {
             interpret_wsl_discovery_outcome(WslDiscoveryCommandOutcome::SpawnFailed(
                 std::io::Error::from(std::io::ErrorKind::NotFound),
             ))
-            .expect("missing WSL is a normal Host-only result");
+            .expect("missing WSL is a normal Native-only result");
 
         assert!(distributions.is_empty());
     }

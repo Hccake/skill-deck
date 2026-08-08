@@ -9,9 +9,9 @@ describe('Agent Skill directory copy', () => {
       readMethod: '读取规则',
     });
     expect(zhCN.settings.agents.installDetection).toEqual({
-      title: '安装检测',
+      title: 'Agent 检测',
       cardHint: '任一位置存在',
-      hint: '任一检测路径存在，即视为已安装。',
+      hint: '任一 Agent 检测位置存在时，即视为已检测到。',
     });
     expect(zhCN.settings.agents.global).toMatchObject({
       title: 'Global',
@@ -26,16 +26,16 @@ describe('Agent Skill directory copy', () => {
       location: 'Project 读取位置',
     });
     expect(zhCN.settings.agents.locations).toEqual({
-      shared: '仅读取通用 Skill 目录',
+      standard: '仅读取通用 Skill 目录',
       private: '仅读取 Agent 专用目录',
       both: '两者都读取',
     });
-    expect(zhCN.settings.agents.readMode.shared).toBe('从通用 Skill 目录读取');
+    expect(zhCN.settings.agents.readMode.standard).toBe('从通用 Skill 目录读取');
     expect(zhCN.settings.agents.readMode.private).toBe('从此 Agent 的 Skill 目录读取');
     expect(zhCN.settings.agents.readMode.both).toBe('同时从以上两个位置读取');
     expect(en.settings.agents.locations.both).toBe('Both directories');
     expect(zhCN.settings.agents.directoryKind).toEqual({
-      shared: '通用 Skill 目录',
+      standard: '通用 Skill 目录',
       private: 'Agent 专用 Skill 目录',
     });
     expect(zhCN.settings.agents.pathLocations).toEqual({
@@ -44,19 +44,19 @@ describe('Agent Skill directory copy', () => {
       project: '项目目录',
       absolute: '绝对路径',
     });
-    expect(zhCN.settings.agents.sharedDirectories).toEqual({
+    expect(zhCN.settings.agents.standardDirectories).toEqual({
       title: '通用 Skill 目录',
       cardLabel: '通用目录',
-      sharedAriaLabel: '{{scope}}：读取通用 Skill 目录',
+      standardAriaLabel: '{{scope}}：读取通用 Skill 目录',
       privateAriaLabel: '{{scope}}：读取此 Agent 的 Skill 目录',
       bothAriaLabel: '{{scope}}：同时读取通用 Skill 目录和此 Agent 的 Skill 目录',
     });
-    expect(en.settings.agents.sharedDirectories).toEqual({
-      title: 'Shared Skill directories',
-      cardLabel: 'Shared directory',
-      sharedAriaLabel: '{{scope}}: reads the shared Skill directory',
+    expect(en.settings.agents.standardDirectories).toEqual({
+      title: 'Common Skill directories',
+      cardLabel: 'Common directory',
+      standardAriaLabel: '{{scope}}: reads the common Skill directory',
       privateAriaLabel: '{{scope}}: reads this Agent\'s Skill directory',
-      bothAriaLabel: '{{scope}}: reads the shared Skill directory and this Agent\'s Skill directory',
+      bothAriaLabel: '{{scope}}: reads the common Skill directory and this Agent\'s Skill directory',
     });
     expect(zhCN.settings.agents.delete).toBe('删除');
     expect(en.settings.agents.delete).toBe('Delete');
@@ -66,11 +66,11 @@ describe('Agent Skill directory copy', () => {
     expect(en.settings.agents.form.title).not.toHaveProperty('duplicate');
     expect(zhCN.settings.agents.detection).toMatchObject({
       cardLabel: '检测',
-      cardTooltip: 'Agent 安装检测路径',
+      cardTooltip: 'Agent 检测位置',
     });
     expect(en.settings.agents.detection).toMatchObject({
       cardLabel: 'Detection',
-      cardTooltip: 'Agent installation detection paths',
+      cardTooltip: 'Agent detection locations',
     });
   });
 
@@ -85,11 +85,7 @@ describe('Agent Skill directory copy', () => {
     expect(copy).not.toContain('共享目录');
     expect(copy).not.toContain('Agent 独立目录');
     expect(copy).not.toContain('独立 Skill');
-    expect(zhCN.addSkill.agents.additionalHint).toBe(
-      '为只从自身 Skill 目录读取的 Agent 创建链接或副本'
-    );
-    expect(zhCN.addSkill.agents.privateRequiredHint).toBe(
-      '这些 Agent 只从自己的 Skill 目录读取。选择后，安装时会创建链接或副本。'
-    );
+    expect(zhCN.addSkill.agents).not.toHaveProperty('additionalHint');
+    expect(zhCN.addSkill.agents).not.toHaveProperty('privateRequiredHint');
   });
 });

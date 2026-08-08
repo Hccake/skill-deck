@@ -10,10 +10,10 @@ import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { runBusinessWrite } from '@/workflows/install-session-feedback';
 import { useEnvironmentStore } from './environment';
 
-const HOST: EnvironmentRef = { kind: 'host' };
+const NATIVE: EnvironmentRef = { kind: 'native' };
 
 let catalogObserver: ProjectCatalogObserver = {
-  captureContext: () => ({ context: globalContext(HOST), revision: 0 }),
+  captureContext: () => ({ context: globalContext(NATIVE), revision: 0 }),
   onCompleteSnapshot: () => undefined,
 };
 
@@ -22,7 +22,7 @@ export function registerProjectCatalogObserver(observer: ProjectCatalogObserver)
 }
 
 function environmentIsAvailable(environment: EnvironmentRef): boolean {
-  if (environment.kind === 'host') return true;
+  if (environment.kind === 'native') return true;
   return useEnvironmentStore.getState().environments.some((entry) => (
     sameEnvironment(entry.environment, environment) && entry.status === 'available'
   ));

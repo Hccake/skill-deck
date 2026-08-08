@@ -21,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTime } from '@/lib/utils';
-import type { InstalledSkill, SkillScope, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
+import type { InstalledSkill, InstalledSkillLocation, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
 import {
   hasIncompleteUpdateCheck,
   resolveEvidenceFailureReasonI18nKey,
@@ -49,7 +49,7 @@ interface SkillDetailPanelProps {
   projectPath?: string;
   onClose: () => void;
   onCheckUpdates?: () => Promise<UpdateCheckOutcome | null>;
-  onUpdate: (name: string, scope: SkillScope) => void;
+  onUpdate: (name: string, scope: InstalledSkillLocation) => void;
   onDelete: (skill: InstalledSkill) => void;
   onRetry: () => void;
   onManageAgents: (skill: InstalledSkill) => void;

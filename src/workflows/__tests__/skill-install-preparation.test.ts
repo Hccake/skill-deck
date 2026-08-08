@@ -7,11 +7,11 @@ import {
 } from '../skill-install-preparation';
 
 const input: InstallPreparationInput = {
-  context: { environment: { kind: 'host' }, scope: { scope: 'global' } },
+  context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
   source: 'owner/repo',
   discoverySession: {
     sessionId: 'discovery-1',
-    environment: { kind: 'host' },
+    environment: { kind: 'native' },
     sourceFingerprint: 'source-1',
     expiresAtEpochMs: 1000,
   },

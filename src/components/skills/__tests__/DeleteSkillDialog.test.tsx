@@ -30,7 +30,7 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-const context = { environment: { kind: 'host' }, scope: { scope: 'global' } } as const;
+const context = { environment: { kind: 'native' }, scope: { scope: 'global' } } as const;
 const basePath = 'D:\\Code\\temp\\skills';
 const canonicalPath = `${basePath}\\.agents\\skills\\a-very-long-skill-name`;
 const agentPath = `${basePath}\\.custom-agent\\skills\\a-very-long-skill-name`;
@@ -56,7 +56,7 @@ describe('DeleteSkillDialog', () => {
         physicalEntries: [
           {
             entryId: 'entry-copy',
-            displayPath: { environment: { kind: 'host' }, nativePath: agentPath },
+            displayPath: { environment: { kind: 'native' }, nativePath: agentPath },
             kind: 'directory',
             physicalTargetKey: 'target-copy',
             owners: [{
@@ -68,7 +68,7 @@ describe('DeleteSkillDialog', () => {
           },
           {
             entryId: 'entry-link',
-            displayPath: { environment: { kind: 'host' }, nativePath: '/agents/codex/toolkit' },
+            displayPath: { environment: { kind: 'native' }, nativePath: '/agents/codex/toolkit' },
             kind: 'symlink',
             physicalTargetKey: 'target-link',
             owners: [{ agentId: 'codex', displayName: 'Codex', logicalTargetId: 'codex' }],

@@ -51,7 +51,7 @@ function selectCustomDeleteAction() {
   fireEvent.click(screen.getByRole('button', { name: 'settings.agents.deleteNamed' }));
 }
 
-const context = { environment: { kind: 'host' }, scope: { scope: 'global' } } as const;
+const context = { environment: { kind: 'native' }, scope: { scope: 'global' } } as const;
 
 function RoutedAgentSettingsHarness() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -117,8 +117,8 @@ const pageState = vi.hoisted(() => ({
   pendingEnvironment: null as unknown,
   environments: [
     {
-      environment: { kind: 'host' as const },
-      displayName: 'Host',
+      environment: { kind: 'native' as const },
+      displayName: 'Native',
       status: 'available' as const,
       revision: 1,
       error: null,
@@ -160,8 +160,8 @@ const snapshot: AgentSettingsSnapshot = {
   registryRevision: 'registry-1',
   activeBuiltin: [{
     id: 'codex', displayName: 'Codex', source: 'builtin', aliases: [],
-    global: { enabled: true, readsShared: true, privatePath: null },
-    project: { enabled: true, readsShared: true, privatePath: null },
+    global: { enabled: true, readsStandard: true, privatePath: null },
+    project: { enabled: true, readsStandard: true, privatePath: null },
     detection: { kind: 'anyPathExists', paths: [] }, legacyPaths: [], adapter: 'standard',
   }],
   activeCustom: [{
@@ -178,14 +178,14 @@ const snapshot: AgentSettingsSnapshot = {
   }],
   disabledConflicts: [],
   invalidCustomRecords: [],
-  currentEnvironment: { kind: 'host' },
+  currentEnvironment: { kind: 'native' },
   customStorageIssue: null,
 };
 
 vi.mock('@/stores/agent-registry', () => ({
   useAgentRegistryStore: (selector: (state: unknown) => unknown) => selector({
     settingsByEnvironment: {
-      host: { data: registryState.snapshot, state: registryState.state, requestId: 1, error: registryState.error },
+      native: { data: registryState.snapshot, state: registryState.state, requestId: 1, error: registryState.error },
       'wsl:ubuntu': { data: registryState.snapshot, state: registryState.state, requestId: 1, error: registryState.error },
     },
     ...actions,
@@ -193,7 +193,7 @@ vi.mock('@/stores/agent-registry', () => ({
 }));
 vi.mock('@/stores/environment', () => ({
   environmentKey: (environment: { kind: string; distro_name?: string }) => (
-    environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLocaleLowerCase()}`
+    environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLocaleLowerCase()}`
   ),
   useEnvironmentStore: (selector: (state: unknown) => unknown) => selector({
     environments: pageState.environments,
@@ -314,13 +314,13 @@ describe('AgentSettingsPage', () => {
           detection: 'detected',
           detectionReason: null,
           global: {
-            enabled: true, readsShared: true, sharedPath: '/home/me/.agents/skills',
+            enabled: true, readsStandard: true, standardPath: '/home/me/.agents/skills',
             privatePath: '/home/me/.my-agent/skills', readPaths: [],
-            sharedPresence: 'present', privatePresence: 'present', legacyPaths: [],
+            standardPresence: 'present', privatePresence: 'present', legacyPaths: [],
           },
           project: {
-            enabled: true, readsShared: false, sharedPath: null, privatePath: null,
-            readPaths: [], sharedPresence: 'projectNotSelected',
+            enabled: true, readsStandard: false, standardPath: null, privatePath: null,
+            readPaths: [], standardPresence: 'projectNotSelected',
             privatePresence: 'projectNotSelected', legacyPaths: [],
           },
         },
@@ -343,7 +343,7 @@ describe('AgentSettingsPage', () => {
     const toolbar = screen.getByRole('toolbar', { name: 'settings.agents.registryToolbar' });
     expect(within(toolbar).queryByRole('button', { name: 'settings.agents.add' })).toBeNull();
     const reference = screen.getByRole('group', {
-      name: 'settings.agents.sharedDirectories.title',
+      name: 'settings.agents.standardDirectories.title',
     });
     expect(summary.compareDocumentPosition(reference) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
@@ -382,17 +382,17 @@ describe('AgentSettingsPage', () => {
     expect(screen.getByRole('status').textContent).toContain('settings.agents.refreshing');
   });
 
-  it('shows the shared directory rules once while the Environment path resolves', async () => {
+  it('shows the standard directory rules once while the Environment path resolves', async () => {
     render(<AgentSettingsPage context={context} />);
 
     const reference = screen.getByRole('group', {
-      name: 'settings.agents.sharedDirectories.title',
+      name: 'settings.agents.standardDirectories.title',
     });
     expect(reference.compareDocumentPosition(screen.getByRole('group', {
       name: 'settings.agents.sourceFilter.label',
     }))
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(reference).getByText('settings.agents.sharedDirectories.title')).toBeDefined();
+    expect(within(reference).getByText('settings.agents.standardDirectories.title')).toBeDefined();
     expect(within(reference).getByText('settings.agents.global.title')).toBeDefined();
     expect(within(reference).getByText('settings.agents.project.title')).toBeDefined();
 
@@ -424,19 +424,19 @@ describe('AgentSettingsPage', () => {
           detectionReason: null,
           global: {
             enabled: true,
-            readsShared: true,
-            sharedPath: '/home/me/.agents/skills',
+            readsStandard: true,
+            standardPath: '/home/me/.agents/skills',
             privatePath: '/home/me/.my-agent/skills',
             readPaths: ['/home/me/.agents/skills', '/home/me/.my-agent/skills'],
-            sharedPresence: 'present', privatePresence: 'present', legacyPaths: [],
+            standardPresence: 'present', privatePresence: 'present', legacyPaths: [],
           },
           project: {
             enabled: true,
-            readsShared: false,
-            sharedPath: '/work/.agents/skills',
+            readsStandard: false,
+            standardPath: '/work/.agents/skills',
             privatePath: '/work/.my-agent/skills',
             readPaths: ['/work/.my-agent/skills'],
-            sharedPresence: 'missing', privatePresence: 'present', legacyPaths: [],
+            standardPresence: 'missing', privatePresence: 'present', legacyPaths: [],
           },
         },
       },
@@ -477,17 +477,17 @@ describe('AgentSettingsPage', () => {
     );
     expect(installationTitle.parentElement).toBe(installationHint.parentElement);
     expect(installationTitle.parentElement?.className).toContain('justify-between');
-    expect(card.textContent).not.toContain('settings.agents.directoryQualifier.shared');
+    expect(card.textContent).not.toContain('settings.agents.directoryQualifier.standard');
     expect(card.textContent).not.toContain('settings.agents.directoryQualifier.agent');
-    expect(within(card).queryByRole('img', { name: 'settings.agents.directoryKind.shared' }))
+    expect(within(card).queryByRole('img', { name: 'settings.agents.directoryKind.standard' }))
       .toBeNull();
     expect(within(card).queryByRole('img', { name: 'settings.agents.directoryKind.private' }))
       .toBeNull();
     const globalRow = within(skillReading).getByRole('group', {
-      name: 'settings.agents.sharedDirectories.bothAriaLabel',
+      name: 'settings.agents.standardDirectories.bothAriaLabel',
     });
     const projectRow = within(skillReading).getByRole('group', {
-      name: 'settings.agents.sharedDirectories.privateAriaLabel',
+      name: 'settings.agents.standardDirectories.privateAriaLabel',
     });
     expect(globalRow.className).toContain('h-12');
     expect(projectRow.className).toContain('h-12');
@@ -500,7 +500,7 @@ describe('AgentSettingsPage', () => {
     expect(propertyLabels[0].className).toContain('bg-muted/20');
     expect([...propertyLabels].every((label) => label.className.includes('whitespace-nowrap')))
       .toBe(true);
-    expect(within(globalRow).getByText('settings.agents.sharedDirectories.cardLabel')).toBeDefined();
+    expect(within(globalRow).getByText('settings.agents.standardDirectories.cardLabel')).toBeDefined();
     expect(within(globalRow).getByText('+').getAttribute('aria-hidden')).toBe('true');
     expect(globalRow.textContent).not.toContain('~/.agents/skills');
     expect(card.textContent).toContain('~/.my-agent/skills');
@@ -508,12 +508,12 @@ describe('AgentSettingsPage', () => {
     expect(card.textContent).toContain('~/.my-agent');
     expect(card.textContent).not.toContain('/opt/my-agent');
     expect(within(installationDetection).getByText('+1')).toBeDefined();
-    expect(card.textContent).not.toContain('settings.agents.directoryKind.shared');
+    expect(card.textContent).not.toContain('settings.agents.directoryKind.standard');
     expect(card.textContent).not.toContain('settings.agents.directoryKind.private');
     const reference = screen.getByRole('group', {
-      name: 'settings.agents.sharedDirectories.title',
+      name: 'settings.agents.standardDirectories.title',
     });
-    const sharedPath = within(reference).getByText('~/.agents/skills');
+    const standardPath = within(reference).getByText('~/.agents/skills');
     const privatePath = within(globalRow).getByText('~/.my-agent/skills');
     expect(privatePath.getAttribute('title')).toBeNull();
     expect(privatePath.className).toContain('inline-block');
@@ -522,28 +522,28 @@ describe('AgentSettingsPage', () => {
     expect([...card.querySelectorAll('[data-slot="agent-property-value"]')])
       .toHaveLength(2);
 
-    fireEvent.focus(sharedPath);
+    fireEvent.focus(standardPath);
     const tooltip = await screen.findByRole('tooltip');
     const tooltipContent = tooltip.closest('[data-slot="tooltip-content"]');
     expect(tooltipContent?.className).toContain('bg-popover');
     expect(tooltipContent?.className).toContain('text-popover-foreground');
     expect(tooltipContent?.className).toContain('text-left');
-    expect(tooltip.textContent).not.toContain('Host');
+    expect(tooltip.textContent).not.toContain('Native');
     expect(tooltip.textContent).not.toContain('settings.agents.project.relativeHint');
     expect(tooltip.querySelector('[data-slot="agent-path-tooltip-kind"]')).toBeNull();
     expect(tooltip.querySelector('[data-slot="agent-path-tooltip-value"]')?.textContent)
       .toBe('/home/me/.agents/skills');
   });
 
-  it('renders shared and unsupported read modes without repeating shared paths', () => {
+  it('renders standard and unsupported read modes without repeating standard paths', () => {
     registryState.snapshot = {
       ...structuredClone(snapshot),
       activeCustom: [{
         ...structuredClone(snapshot.activeCustom[0]),
         definition: {
           ...structuredClone(snapshot.activeCustom[0].definition),
-          global: { enabled: false, location: 'shared', privatePath: null },
-          project: { enabled: false, location: 'shared', privatePath: null },
+          global: { enabled: false, location: 'standard', privatePath: null },
+          project: { enabled: false, location: 'standard', privatePath: null },
         },
       }],
     };
@@ -563,11 +563,11 @@ describe('AgentSettingsPage', () => {
     }));
     const sharedCard = screen.getByRole('article');
     const sharedRows = within(sharedCard).getAllByRole('group', {
-      name: 'settings.agents.sharedDirectories.sharedAriaLabel',
+      name: 'settings.agents.standardDirectories.standardAriaLabel',
     });
     expect(sharedRows).toHaveLength(2);
     expect(sharedRows.every((row) => (
-      within(row).getByText('settings.agents.sharedDirectories.cardLabel') !== null
+      within(row).getByText('settings.agents.standardDirectories.cardLabel') !== null
     ))).toBe(true);
     expect(sharedCard.textContent).not.toContain('~/.agents/skills');
     expect(sharedCard.textContent).not.toContain('.agents/skills');
@@ -642,7 +642,7 @@ describe('AgentSettingsPage', () => {
       ...structuredClone(snapshot),
       activeBuiltin: [{
         ...structuredClone(snapshot.activeBuiltin[0]),
-        detection: { kind: 'eve' },
+        adapter: 'eve',
       }],
     };
     render(<AgentSettingsPage context={context} />);
@@ -673,13 +673,13 @@ describe('AgentSettingsPage', () => {
           detection: 'indeterminate',
           detectionReason: 'projectContextRequired',
           global: {
-            enabled: true, readsShared: true, sharedPath: '/home/me/.agents/skills',
+            enabled: true, readsStandard: true, standardPath: '/home/me/.agents/skills',
             privatePath: '/home/me/.my-agent/skills', readPaths: [],
-            sharedPresence: 'present', privatePresence: 'present', legacyPaths: [],
+            standardPresence: 'present', privatePresence: 'present', legacyPaths: [],
           },
           project: {
-            enabled: true, readsShared: false, sharedPath: null,
-            privatePath: null, readPaths: [], sharedPresence: 'projectNotSelected',
+            enabled: true, readsStandard: false, standardPath: null,
+            privatePath: null, readPaths: [], standardPresence: 'projectNotSelected',
             privatePresence: 'projectNotSelected', legacyPaths: [],
           },
         },
@@ -713,7 +713,7 @@ describe('AgentSettingsPage', () => {
     render(<AgentSettingsPage context={context} />);
 
     await waitFor(() => expect(listRuntimeAgents).toHaveBeenCalledWith({
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'global' },
     }));
     expect(screen.getByText('.my-agent/skills')).toBeDefined();
@@ -745,7 +745,7 @@ describe('AgentSettingsPage', () => {
     listRuntimeAgents
       .mockResolvedValueOnce({
         registryRevision: 'registry-1',
-        environmentRevision: 'environment-host',
+        environmentRevision: 'environment-native',
         environment: context.environment,
         availability: 'available',
         projectPath: null,
@@ -755,13 +755,13 @@ describe('AgentSettingsPage', () => {
             detection: 'detected',
             detectionReason: null,
             global: {
-              enabled: true, readsShared: true,
-              sharedPath: '/home/host/.agents/skills', privatePath: '/home/host/.my-agent/skills',
-              readPaths: ['/home/host/.agents/skills'], sharedPresence: 'present', privatePresence: 'present', legacyPaths: [],
+              enabled: true, readsStandard: true,
+              standardPath: '/home/native/.agents/skills', privatePath: '/home/native/.my-agent/skills',
+              readPaths: ['/home/native/.agents/skills'], standardPresence: 'present', privatePresence: 'present', legacyPaths: [],
             },
             project: {
-              enabled: true, readsShared: false, sharedPath: null, privatePath: null,
-              readPaths: [], sharedPresence: 'projectNotSelected', privatePresence: 'projectNotSelected', legacyPaths: [],
+              enabled: true, readsStandard: false, standardPath: null, privatePath: null,
+              readPaths: [], standardPresence: 'projectNotSelected', privatePresence: 'projectNotSelected', legacyPaths: [],
             },
           },
         },
@@ -770,17 +770,17 @@ describe('AgentSettingsPage', () => {
 
     const { rerender } = render(<AgentSettingsPage context={context} />);
     const reference = await screen.findByRole('group', {
-      name: 'settings.agents.sharedDirectories.title',
+      name: 'settings.agents.standardDirectories.title',
     });
     fireEvent.focus(within(reference).getByText('~/.agents/skills'));
-    expect((await screen.findAllByText('/home/host/.agents/skills')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('/home/native/.agents/skills')).length).toBeGreaterThan(0);
     const privatePath = await screen.findByText('~/.my-agent/skills');
     fireEvent.focus(privatePath);
-    expect((await screen.findAllByText('/home/host/.my-agent/skills')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('/home/native/.my-agent/skills')).length).toBeGreaterThan(0);
 
     rerender(<AgentSettingsPage context={wslContext} />);
-    expect(screen.queryAllByText('/home/host/.agents/skills')).toHaveLength(0);
-    expect(screen.queryAllByText('/home/host/.my-agent/skills')).toHaveLength(0);
+    expect(screen.queryAllByText('/home/native/.agents/skills')).toHaveLength(0);
+    expect(screen.queryAllByText('/home/native/.my-agent/skills')).toHaveLength(0);
 
     resolveWsl?.({
       registryRevision: 'registry-1',
@@ -794,19 +794,19 @@ describe('AgentSettingsPage', () => {
           detection: 'notDetected',
           detectionReason: null,
           global: {
-            enabled: true, readsShared: true,
-            sharedPath: '/home/wsl/.agents/skills', privatePath: '/home/wsl/.my-agent/skills',
-            readPaths: ['/home/wsl/.agents/skills'], sharedPresence: 'missing', privatePresence: 'missing', legacyPaths: [],
+            enabled: true, readsStandard: true,
+            standardPath: '/home/wsl/.agents/skills', privatePath: '/home/wsl/.my-agent/skills',
+            readPaths: ['/home/wsl/.agents/skills'], standardPresence: 'missing', privatePresence: 'missing', legacyPaths: [],
           },
           project: {
-            enabled: true, readsShared: false, sharedPath: null, privatePath: null,
-            readPaths: [], sharedPresence: 'projectNotSelected', privatePresence: 'projectNotSelected', legacyPaths: [],
+            enabled: true, readsStandard: false, standardPath: null, privatePath: null,
+            readPaths: [], standardPresence: 'projectNotSelected', privatePresence: 'projectNotSelected', legacyPaths: [],
           },
         },
       },
     });
     fireEvent.focus(within(screen.getByRole('group', {
-      name: 'settings.agents.sharedDirectories.title',
+      name: 'settings.agents.standardDirectories.title',
     })).getByText('~/.agents/skills'));
     expect((await screen.findAllByText('/home/wsl/.agents/skills')).length).toBeGreaterThan(0);
     fireEvent.focus(screen.getByText('~/.my-agent/skills'));
@@ -832,7 +832,7 @@ describe('AgentSettingsPage', () => {
     expect(screen.getByRole('article').textContent).toContain('My Agent');
     expect(screen.getByLabelText('settings.agents.preview.detection.unavailable')).toBeDefined();
     const reference = screen.getByRole('group', {
-      name: 'settings.agents.sharedDirectories.title',
+      name: 'settings.agents.standardDirectories.title',
     });
     fireEvent.focus(within(reference).getByText('~/.agents/skills'));
     expect((await screen.findByRole('tooltip')).textContent)
@@ -1182,7 +1182,7 @@ describe('AgentSettingsPage', () => {
 
   it('uses the current Project Context and keeps deletion available when project impact is unresolved', async () => {
     const projectContext = {
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       scope: { scope: 'project', project_id: 'project-1' },
     } as const;
     actions.loadDeleteImpact.mockResolvedValue({
@@ -1434,21 +1434,21 @@ describe('AgentSettingsPage', () => {
     actions.validateDraft.mockResolvedValue({
       registryRevision: 'registry-1',
       environmentRevision: 'environment-1',
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       resolved: {
         definition: snapshot.activeBuiltin[0],
         detection: 'detected',
         detectionReason: null,
         global: {
-          enabled: true, readsShared: true, sharedPath: '/home/me/.agents/skills',
+          enabled: true, readsStandard: true, standardPath: '/home/me/.agents/skills',
           privatePath: '/home/me/.my-agent/skills',
           readPaths: ['/home/me/.agents/skills', '/home/me/.my-agent/skills'],
-          sharedPresence: 'present', privatePresence: 'present', legacyPaths: [],
+          standardPresence: 'present', privatePresence: 'present', legacyPaths: [],
         },
         project: {
-          enabled: true, readsShared: false, sharedPath: '/work/.agents/skills',
+          enabled: true, readsStandard: false, standardPath: '/work/.agents/skills',
           privatePath: '/work/.my-agent/skills', readPaths: ['/work/.my-agent/skills'],
-          sharedPresence: 'missing', privatePresence: 'present', legacyPaths: [],
+          standardPresence: 'missing', privatePresence: 'present', legacyPaths: [],
         },
       },
     } as never);
@@ -1544,16 +1544,16 @@ describe('AgentSettingsPage', () => {
     actions.validateDraft.mockResolvedValue({
       registryRevision: 'registry-2',
       environmentRevision: 'environment-1',
-      environment: { kind: 'host' },
+      environment: { kind: 'native' },
       resolved: {
         definition: snapshot.activeBuiltin[0], detection: 'notDetected', detectionReason: null,
         global: {
-          enabled: true, readsShared: true, sharedPath: '/home/me/.agents/skills', privatePath: null,
-          readPaths: ['/home/me/.agents/skills'], sharedPresence: 'present', privatePresence: null, legacyPaths: [],
+          enabled: true, readsStandard: true, standardPath: '/home/me/.agents/skills', privatePath: null,
+          readPaths: ['/home/me/.agents/skills'], standardPresence: 'present', privatePresence: null, legacyPaths: [],
         },
         project: {
-          enabled: true, readsShared: true, sharedPath: '/work/.agents/skills', privatePath: null,
-          readPaths: ['/work/.agents/skills'], sharedPresence: 'present', privatePresence: null, legacyPaths: [],
+          enabled: true, readsStandard: true, standardPath: '/work/.agents/skills', privatePath: null,
+          readPaths: ['/work/.agents/skills'], standardPresence: 'present', privatePresence: null, legacyPaths: [],
         },
       },
     } as never);

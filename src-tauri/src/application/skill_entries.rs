@@ -16,8 +16,8 @@ use crate::environment::planning::TargetFactResolver;
 use crate::environment::planning::{ResolvedTargetFact, TargetEntryKind};
 use crate::environment::runtime::{observed_entry_id, PhysicalTargetKey};
 use crate::environment::types::{
-    display_locator, same_environment_identity, ContextRef, ContextScope, EnvironmentRef,
-    ResourceLocator,
+    display_locator, same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocation,
+    SkillLocationRef,
 };
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::WslRuntime;
@@ -62,7 +62,7 @@ impl InstalledSkillPayloadAcquirer {
 
     pub async fn acquire(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
         canonical: &ResolvedTargetFact,
     ) -> Result<AcquiredPayloadHandle, AppError> {
@@ -73,7 +73,7 @@ impl InstalledSkillPayloadAcquirer {
         }
         let source_fingerprint = stable_digest(&(&canonical.key, &canonical.fingerprint))?;
         match &context.environment {
-            EnvironmentRef::Host => {
+            EnvironmentRef::Native => {
                 let payload = crate::core::skill_payload::build_skill_payload(Path::new(
                     &canonical.destination.native_path,
                 ))?;
@@ -81,7 +81,7 @@ impl InstalledSkillPayloadAcquirer {
                     crate::core::skill_payload::compute_cli_project_hash_from_payload(&payload)?;
                 let discovery = self
                     .payloads
-                    .discover(EnvironmentRef::Host, source_fingerprint)
+                    .discover(EnvironmentRef::Native, source_fingerprint)
                     .await?;
                 self.payloads
                     .acquire_payload_with_metadata(
@@ -140,7 +140,7 @@ impl InstalledSkillPayloadAcquirer {
 
     pub async fn current_manifest_hash(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
         canonical: &ResolvedTargetFact,
     ) -> Result<String, AppError> {
@@ -150,7 +150,7 @@ impl InstalledSkillPayloadAcquirer {
             return Err(AppError::StaleTarget);
         }
         match &context.environment {
-            EnvironmentRef::Host => Ok(crate::core::skill_payload::build_skill_payload(
+            EnvironmentRef::Native => Ok(crate::core::skill_payload::build_skill_payload(
                 Path::new(&canonical.destination.native_path),
             )?
             .manifest()
@@ -201,7 +201,7 @@ where
 {
     pub async fn observe(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<ObservedSkillSnapshot, AppError> {
         let facts = self.facts.current(context).await?;
@@ -210,7 +210,7 @@ where
 
     pub async fn observe_for_copy_source(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<ObservedSkillSnapshot, AppError> {
         let facts = self.facts.current_for_copy_source(context).await?;
@@ -219,7 +219,7 @@ where
 
     async fn observe_with_facts(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
         facts: InstallPlanningFacts,
     ) -> Result<ObservedSkillSnapshot, AppError> {
@@ -227,8 +227,8 @@ where
         let mut owners = Vec::new();
         for (agent_id, agent) in &facts.agent_runtime.agents {
             let scope = match &context.scope {
-                ContextScope::Global => &agent.global,
-                ContextScope::Project { .. } => &agent.project,
+                SkillLocation::Global => &agent.global,
+                SkillLocation::Project { .. } => &agent.project,
             };
             if agent.definition.adapter != AgentAdapter::Standard || !scope.enabled {
                 continue;
@@ -319,7 +319,7 @@ fn eve_target_ids_from_lock_entry(
 }
 
 pub fn join_entry(root: &ResourceLocator, child: &str) -> ResourceLocator {
-    let separator = if matches!(root.environment, EnvironmentRef::Host) && cfg!(windows) {
+    let separator = if matches!(root.environment, EnvironmentRef::Native) && cfg!(windows) {
         '\\'
     } else {
         '/'
@@ -573,9 +573,9 @@ mod tests {
             Arc::clone(&manager),
             Arc::new(WslRuntime::default()),
         );
-        let context = crate::environment::types::ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: crate::environment::types::ContextScope::Global,
+        let context = crate::environment::types::SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: crate::environment::types::SkillLocation::Global,
         };
         let canonical_fact = fact(
             "demo",
@@ -629,7 +629,7 @@ mod tests {
                 normalized_final_child_name: name.to_string(),
             },
             destination: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: path.to_string(),
             },
             fingerprint: EntryFingerprint(format!("entry-v1-{name}")),

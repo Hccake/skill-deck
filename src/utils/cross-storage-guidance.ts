@@ -1,4 +1,4 @@
-import type { ContextRef } from '@/bindings';
+import type { SkillLocationRef } from '@/bindings';
 import { useEnvironmentStore } from '@/stores/environment';
 import { projectSnapshotFor } from '@/stores/projects';
 import { environmentKey } from '@/lib/context';
@@ -15,7 +15,7 @@ export type CrossStorageOperation =
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export function getCrossStorageFailureGuidance(
-  context: ContextRef | null | undefined,
+  context: SkillLocationRef | null | undefined,
   operation: CrossStorageOperation,
   t: Translate,
 ): string | null {
@@ -34,7 +34,7 @@ export function getCrossStorageFailureGuidance(
     (entry) => environmentKey(entry.environment) === environmentKey(owner),
   );
   const environmentLabel = ownerInfo?.displayName
-    ?? (owner.kind === 'host' ? t('crossStorage.hostEnvironment') : owner.distro_name);
+    ?? (owner.kind === 'native' ? t('crossStorage.nativeEnvironment') : owner.distro_name);
 
   return t('crossStorage.failureGuidance', {
     operation: t(`crossStorage.operation.${operation}`),
@@ -44,7 +44,7 @@ export function getCrossStorageFailureGuidance(
 
 export function appendCrossStorageFailureGuidance(
   message: string,
-  context: ContextRef | null | undefined,
+  context: SkillLocationRef | null | undefined,
   operation: CrossStorageOperation,
   t: Translate,
 ): string {

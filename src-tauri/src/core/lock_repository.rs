@@ -234,7 +234,7 @@ mod tests {
 
     fn locator(path: &Path) -> ResourceLocator {
         ResourceLocator {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             native_path: path.to_string_lossy().to_string(),
         }
     }
@@ -283,7 +283,7 @@ mod tests {
             &legacy,
             include_bytes!("../../tests/fixtures/locks/cli-legacy-project-v3-future.json"),
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
 
         let document = repository
             .read_document(&project_target(&primary, Some(&legacy)))
@@ -307,7 +307,7 @@ mod tests {
         let legacy_bytes =
             include_bytes!("../../tests/fixtures/locks/cli-legacy-project-v3-future.json");
         write(&legacy, legacy_bytes);
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
 
         let transaction = repository
             .begin(
@@ -333,7 +333,7 @@ mod tests {
             &path,
             br#"{"version":3,"skills":{},"defaultTargetAgents":{"global":["deleted"],"project":[]},"lastSelectedAgents":["deleted"]}"#,
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let mut transaction = repository
             .begin(project_target(&path, None), default_targets())
             .await
@@ -366,7 +366,7 @@ mod tests {
     async fn begin_if_present_captures_default_roots_without_creating_a_missing_lock() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("skills-lock.json");
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
 
         assert!(repository
             .begin_if_present(project_target(&path, None), default_targets())
@@ -399,7 +399,7 @@ mod tests {
         let legacy_bytes =
             include_bytes!("../../tests/fixtures/locks/cli-legacy-project-v3-future.json");
         write(&legacy, legacy_bytes);
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let mut transaction = repository
             .begin(
                 project_target(&primary, Some(&legacy)),
@@ -433,7 +433,7 @@ mod tests {
             &legacy,
             include_bytes!("../../tests/fixtures/locks/cli-legacy-project-v3-future.json"),
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let target = project_target(&primary, Some(&legacy));
         let mut transaction = repository
             .begin(target, entry_targets(&["toolkit"]))
@@ -471,7 +471,7 @@ mod tests {
             &primary,
             br#"{"version":1,"skills":{"toolkit":{"source":"old"}}}"#,
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let mut transaction = repository
             .begin(project_target(&primary, None), entry_targets(&["toolkit"]))
             .await
@@ -500,7 +500,7 @@ mod tests {
             &primary,
             br#"{"version":1,"skills":{"toolkit":{"source":"old"},"review":{"source":"before"}}}"#,
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let mut transaction = repository
             .begin(project_target(&primary, None), entry_targets(&["toolkit"]))
             .await
@@ -528,7 +528,7 @@ mod tests {
             &primary,
             br#"{"version":3,"defaultTargetAgents":{"global":["codex"],"project":[]},"lastSelectedAgents":["codex"],"skills":{}}"#,
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let target = LockTarget {
             primary: locator(&primary),
             legacy: None,
@@ -568,7 +568,7 @@ mod tests {
             &primary,
             br#"{"version":3,"defaultTargetAgents":{"global":["codex"],"project":[]},"lastSelectedAgents":["codex"],"skills":{}}"#,
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let mut transaction = repository
             .begin(
                 LockTarget {
@@ -613,7 +613,7 @@ mod tests {
             &primary,
             br#"{"version":1,"skills":{"toolkit":{"source":"old-a"},"review":{"source":"old-b"}}}"#,
         );
-        let repository = LockRepository::new(EnvironmentLockIo::Host);
+        let repository = LockRepository::new(EnvironmentLockIo::Native);
         let mut transaction = repository
             .begin(
                 project_target(&primary, None),

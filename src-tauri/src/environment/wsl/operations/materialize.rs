@@ -793,7 +793,9 @@ mod tests {
     use crate::environment::runtime::{
         ContextSnapshotRevision, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
-    use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{
+        EnvironmentRef, ResourceLocator, SkillLocation, SkillLocationRef,
+    };
     #[cfg(target_os = "linux")]
     use crate::environment::wsl::operations::entry::{parse_entry_states, ENTRY_STATE_SCRIPT};
     use crate::models::InstallMode;
@@ -802,9 +804,9 @@ mod tests {
         RecoverySubject {
             operation_kind: crate::core::mutation::MutationKind::Install,
             skill_name: "demo".to_string(),
-            context: ContextRef {
+            context: SkillLocationRef {
                 environment,
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
         }
     }
@@ -1329,9 +1331,9 @@ mod tests {
             id: "unit-1".to_string(),
             skill_name: "demo".to_string(),
             source: None,
-            target: ContextRef {
+            target: SkillLocationRef {
                 environment: environment.clone(),
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             expected_revisions: RuntimeRevisions {
                 registry: "registry-1".to_string(),
@@ -1428,9 +1430,9 @@ mod tests {
             id: "remove-demo".to_string(),
             skill_name: "demo".to_string(),
             source: None,
-            target: ContextRef {
+            target: SkillLocationRef {
                 environment,
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             expected_revisions: RuntimeRevisions {
                 registry: "registry-1".to_string(),

@@ -3,7 +3,7 @@ use tauri::State;
 use crate::application::recovery::RecoveryResourceStatus;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::core::mutation::MutationKind;
-use crate::environment::types::{ContextRef, ContextScope, EnvironmentRef};
+use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::error::{AppError, RecoveryResourceId};
 use crate::runtime::RuntimeServiceGraph;
 
@@ -34,7 +34,7 @@ pub async fn confirm_recovery_resource_resolved(
     let status = runtime.recovery().status(&resource_id).await?;
     confirm_recovery_with_admission(
         runtime.admission(),
-        status.environment.unwrap_or(EnvironmentRef::Host),
+        status.environment.unwrap_or(EnvironmentRef::Native),
         || async {
             runtime
                 .recovery()
@@ -56,9 +56,9 @@ where
 {
     let _permit = admission.begin_mutation(
         MutationKind::ResolveRecovery,
-        ContextRef {
+        SkillLocationRef {
             environment,
-            scope: ContextScope::Global,
+            scope: SkillLocation::Global,
         },
     )?;
     operation().await
@@ -94,7 +94,7 @@ mod tests {
         };
         let cleaned = Cell::new(false);
 
-        let error = confirm_recovery_with_admission(&admission, EnvironmentRef::Host, || async {
+        let error = confirm_recovery_with_admission(&admission, EnvironmentRef::Native, || async {
             cleaned.set(true);
             Ok(())
         })

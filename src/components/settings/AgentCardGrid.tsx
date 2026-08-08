@@ -143,7 +143,7 @@ function PathValue({
   );
 }
 
-export function SharedDirectoriesReference({
+export function StandardDirectoriesReference({
   resolvedGlobalPath,
   runtimeState,
 }: {
@@ -160,11 +160,11 @@ export function SharedDirectoriesReference({
   return (
     <section
       role="group"
-      aria-label={t('settings.agents.sharedDirectories.title')}
+      aria-label={t('settings.agents.standardDirectories.title')}
       className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 border-y border-border/60 py-3 text-xs"
     >
       <h3 className="shrink-0 font-medium text-foreground">
-        {t('settings.agents.sharedDirectories.title')}
+        {t('settings.agents.standardDirectories.title')}
       </h3>
       <dl className="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -243,7 +243,7 @@ function ScopeDirectories({
   const scopeLabel = t(`settings.agents.${scope}.title`);
   const ariaLabel = mode === 'unsupported'
     ? t(`settings.agents.readMode.${scope}Unsupported`)
-    : t(`settings.agents.sharedDirectories.${mode}AriaLabel`, { scope: scopeLabel });
+    : t(`settings.agents.standardDirectories.${mode}AriaLabel`, { scope: scopeLabel });
   const privateValue = privateDisplayPath ? (
     <PathValue
       value={privateDisplayPath}
@@ -260,14 +260,14 @@ function ScopeDirectories({
         <p className="text-[11px] leading-4 text-muted-foreground">
           {t(`settings.agents.readMode.${scope}Unsupported`)}
         </p>
-      ) : mode === 'shared' ? (
+      ) : mode === 'standard' ? (
         <span className="w-fit max-w-full truncate text-[11px] leading-4 text-muted-foreground">
-          {t('settings.agents.sharedDirectories.cardLabel')}
+          {t('settings.agents.standardDirectories.cardLabel')}
         </span>
       ) : mode === 'private' ? privateValue : (
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="max-w-[7.5rem] shrink-0 truncate whitespace-nowrap text-[11px] leading-4 text-muted-foreground">
-            {t('settings.agents.sharedDirectories.cardLabel')}
+            {t('settings.agents.standardDirectories.cardLabel')}
           </span>
           <span aria-hidden="true" className="shrink-0 text-[11px] text-muted-foreground">+</span>
           <div className="min-w-0 flex-1">{privateValue}</div>
@@ -324,10 +324,10 @@ function AgentCard({
   const detectionLabels = detectionPaths.map((path) => detectionPathLabel(path, t));
   const visibleDetectionLabels = detectionLabels.slice(0, 1);
   const hiddenDetectionCount = detectionLabels.length - visibleDetectionLabels.length;
-  const detectionFallback = item.definition.detection.kind === 'eve'
+  const detectionFallback = item.definition.adapter === 'eve'
     ? t('settings.agents.detection.eve')
     : t('settings.agents.pathUnavailable');
-  const usesDetectionPaths = item.definition.detection.kind !== 'eve';
+  const usesDetectionPaths = item.definition.adapter !== 'eve';
 
   return (
     <article className="grid h-full min-w-0 grid-rows-[4rem_auto_auto] overflow-hidden rounded-lg border border-border/60 bg-background transition-colors hover:border-border [contain-intrinsic-size:auto_16rem] [content-visibility:auto]">

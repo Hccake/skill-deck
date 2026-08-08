@@ -11,8 +11,8 @@ use crate::models::{AgentSkillPresence, SkillAgentPresenceInfo};
 #[serde(rename_all = "kebab-case")]
 #[specta(rename_all = "kebab-case")]
 pub enum AgentAvailabilityKind {
-    SharedOnly,
-    SharedCompatible,
+    StandardOnly,
+    StandardCompatible,
     PrivateRequired,
     Unknown,
     Unsupported,
@@ -21,7 +21,7 @@ pub enum AgentAvailabilityKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 #[specta(rename_all = "kebab-case")]
-pub enum SharedSupportConfidence {
+pub enum StandardSupportConfidence {
     Official,
     Inferred,
     Unknown,
@@ -34,39 +34,41 @@ pub struct AgentAvailability {
     pub supported: bool,
     pub default_available: bool,
     pub kind: AgentAvailabilityKind,
-    pub confidence: SharedSupportConfidence,
-    pub shared_path: String,
+    pub confidence: StandardSupportConfidence,
+    pub standard_path: String,
     pub install_path: String,
     pub read_paths: Vec<String>,
     pub private_path: Option<String>,
 }
 
 pub fn availability_for_resolved_scope(scope: &ResolvedAgentScope) -> AgentAvailability {
-    let shared_path = scope.shared_path.clone().unwrap_or_default();
+    let standard_path = scope.standard_path.clone().unwrap_or_default();
     let private_path = scope.private_path.clone();
     let (kind, default_available) = if !scope.enabled {
         (AgentAvailabilityKind::Unsupported, false)
-    } else if scope.reads_shared && private_path.is_none() {
-        (AgentAvailabilityKind::SharedOnly, true)
-    } else if scope.reads_shared {
-        (AgentAvailabilityKind::SharedCompatible, true)
+    } else if scope.reads_standard && private_path.is_none() {
+        (AgentAvailabilityKind::StandardOnly, true)
+    } else if scope.reads_standard {
+        (AgentAvailabilityKind::StandardCompatible, true)
     } else if private_path.is_some() {
         (AgentAvailabilityKind::PrivateRequired, false)
     } else {
         (AgentAvailabilityKind::Unknown, false)
     };
     let install_path = if default_available {
-        shared_path.clone()
+        standard_path.clone()
     } else {
-        private_path.clone().unwrap_or_else(|| shared_path.clone())
+        private_path
+            .clone()
+            .unwrap_or_else(|| standard_path.clone())
     };
 
     AgentAvailability {
         supported: scope.enabled,
         default_available,
         kind,
-        confidence: SharedSupportConfidence::Inferred,
-        shared_path,
+        confidence: StandardSupportConfidence::Inferred,
+        standard_path,
         install_path,
         read_paths: scope.read_paths.clone(),
         private_path,
@@ -86,8 +88,8 @@ pub fn resolved_agent_presence(
         &resolved.project
     };
     let sanitized_name = sanitize_name(skill_name);
-    let shared_exists = scope
-        .shared_path
+    let standard_exists = scope
+        .standard_path
         .as_ref()
         .is_some_and(|path| PathBuf::from(path).join(&sanitized_name).exists());
     let private_exists = scope
@@ -99,7 +101,7 @@ pub fn resolved_agent_presence(
         resolved,
         skill_name,
         is_global,
-        shared_exists,
+        standard_exists,
         private_exists,
     )
 }
@@ -109,7 +111,7 @@ pub fn resolved_agent_presence_from_paths(
     resolved: &ResolvedAgent,
     skill_name: &str,
     is_global: bool,
-    shared_exists: bool,
+    standard_exists: bool,
     private_exists: bool,
 ) -> SkillAgentPresenceInfo {
     let scope = if is_global {
@@ -119,8 +121,8 @@ pub fn resolved_agent_presence_from_paths(
     };
     let availability = availability_for_resolved_scope(scope);
     let sanitized_name = sanitize_name(skill_name);
-    let shared_path = scope
-        .shared_path
+    let standard_path = scope
+        .standard_path
         .as_ref()
         .map(|path| PathBuf::from(path).join(&sanitized_name))
         .unwrap_or_default();
@@ -128,13 +130,13 @@ pub fn resolved_agent_presence_from_paths(
         .private_path
         .as_ref()
         .map(|path| PathBuf::from(path).join(&sanitized_name));
-    let presence = if shared_exists && private_exists && availability.default_available {
+    let presence = if standard_exists && private_exists && availability.default_available {
         AgentSkillPresence::DuplicateCopy
-    } else if shared_exists && availability.default_available {
+    } else if standard_exists && availability.default_available {
         AgentSkillPresence::DefaultActive
     } else if private_exists {
         AgentSkillPresence::PrivateOnly
-    } else if shared_exists && scope.enabled && !availability.default_available {
+    } else if standard_exists && scope.enabled && !availability.default_available {
         AgentSkillPresence::RequiresPrivateInstall
     } else {
         AgentSkillPresence::NotInstalled
@@ -144,7 +146,7 @@ pub fn resolved_agent_presence_from_paths(
         agent: agent_id.clone(),
         display_name: resolved.definition.display_name.clone(),
         presence: presence.clone(),
-        shared_path: path_string(&shared_path),
+        standard_path: path_string(&standard_path),
         private_path: private_path.as_ref().map(|path| path_string(path)),
         can_cleanup_private_copy: matches!(presence, AgentSkillPresence::DuplicateCopy),
     }
@@ -175,12 +177,12 @@ mod tests {
                 aliases: Vec::new(),
                 global: ScopeDefinition {
                     enabled: false,
-                    reads_shared: false,
+                    reads_standard: false,
                     private_path: None,
                 },
                 project: ScopeDefinition {
                     enabled: true,
-                    reads_shared: true,
+                    reads_standard: true,
                     private_path: Some(PathSpec::project(".my-custom/skills")),
                 },
                 detection: DetectionSpec::AnyPathExists {
@@ -193,21 +195,21 @@ mod tests {
             detection_reason: None,
             global: ResolvedAgentScope {
                 enabled: false,
-                reads_shared: false,
-                shared_path: None,
+                reads_standard: false,
+                standard_path: None,
                 private_path: None,
                 read_paths: Vec::new(),
-                shared_presence: None,
+                standard_presence: None,
                 private_presence: None,
                 legacy_paths: Vec::new(),
             },
             project: ResolvedAgentScope {
                 enabled: true,
-                reads_shared: true,
-                shared_path: Some("/work/app/.agents/skills".to_string()),
+                reads_standard: true,
+                standard_path: Some("/work/app/.agents/skills".to_string()),
                 private_path: Some(private_path),
                 read_paths: Vec::new(),
-                shared_presence: None,
+                standard_presence: None,
                 private_presence: None,
                 legacy_paths: Vec::new(),
             },

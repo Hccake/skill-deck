@@ -188,12 +188,12 @@ mod tests {
             aliases: Vec::new(),
             global: ScopeDefinition {
                 enabled: true,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             },
             project: ScopeDefinition {
                 enabled: false,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             },
             detection: DetectionSpec::AnyPathExists {
@@ -210,12 +210,12 @@ mod tests {
             display_name: "Foo".to_string(),
             global: CustomScopeDefinition {
                 enabled: true,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             project: CustomScopeDefinition {
                 enabled: false,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             detection_paths: vec![CustomPathSpec::based(CustomPathBase::Home, ".foo")],

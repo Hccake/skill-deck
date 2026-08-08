@@ -59,7 +59,7 @@ pub fn parse_skill_md(path: &Path) -> Result<SkillFrontmatter, AppError> {
 
 /// 解析已经由所属 Environment 读取的 SKILL.md 内容。
 ///
-/// Discovery selector 通过该入口共享 Host 与 WSL 的 frontmatter 语义，
+/// Discovery selector 通过该入口共享 Native 与 WSL 的 frontmatter 语义，
 /// filesystem 访问仍由各自的 inventory collector 负责。
 pub fn parse_skill_md_content(content: &str) -> Result<SkillFrontmatter, AppError> {
     // 检查是否以 --- 开头
@@ -136,11 +136,11 @@ pub fn sanitize_name(name: &str) -> String {
     }
 }
 
-/// Skill 范围
+/// 已安装 Skill 的位置类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
 #[specta(rename_all = "lowercase")]
-pub enum SkillScope {
+pub enum InstalledSkillLocation {
     Global,
     Project,
 }
@@ -155,7 +155,7 @@ pub struct InstalledSkill {
     pub description: String,
     pub path: String,
     pub canonical_path: String,
-    pub scope: SkillScope,
+    pub scope: InstalledSkillLocation,
     pub agents: Vec<AgentId>,
     /// 每次读取 Skill 时根据当前 runtime 和文件系统重新组装，不写入 skill-lock。
     /// 只包含当前已检测到并且实际能够读取该 Skill 的关联 Agent。
@@ -195,7 +195,7 @@ pub struct InstalledSkill {
     /// 已独立适配 Agent 数量
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_adapted_agent_count: Option<u32>,
-    /// 可清理的额外 Agent 目录项数量（可能是链接或副本）
+    /// 可清理的额外 Agent Skill 安装项数量（可能是链接或副本）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duplicate_copy_count: Option<u32>,
     /// 默认可用 Agents
@@ -204,13 +204,13 @@ pub struct InstalledSkill {
     /// 需要/已有单独适配的 Agents
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_adapted_agents: Option<Vec<AgentId>>,
-    /// 当前存在额外 Agent 目录项的 Agents（可能是链接或副本）
+    /// 当前存在额外 Agent Skill 安装项的 Agents（可能是链接或副本）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duplicate_copy_agents: Option<Vec<AgentId>>,
-    /// 当前只通过 Agent 目录项使用的 Agents
+    /// 当前只通过 Agent Skill 安装项使用的 Agents
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_only_agents: Option<Vec<AgentId>>,
-    /// 需要额外保留到 Agent 目录的默认可用 Agents
+    /// 需要额外保留到 Agent 专用 Skill 目录的默认可用 Agents
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_copy_agents: Option<Vec<AgentId>>,
 }
@@ -256,7 +256,7 @@ impl InstalledSkill {
 
 #[cfg(test)]
 fn apply_presence_summary(skill: &mut InstalledSkill, runtime: &AgentRuntimeSnapshot) {
-    let is_global = matches!(skill.scope, SkillScope::Global);
+    let is_global = matches!(skill.scope, InstalledSkillLocation::Global);
     let original_agents = skill.agents.clone();
     let mut effective_agents = Vec::new();
     let mut default_available_agents = Vec::new();
@@ -292,7 +292,7 @@ fn apply_presence_summary(skill: &mut InstalledSkill, runtime: &AgentRuntimeSnap
             }
             AgentSkillPresence::PrivateOnly => {
                 private_only_agents.push(agent.clone());
-                if availability.kind == AgentAvailabilityKind::SharedCompatible {
+                if availability.kind == AgentAvailabilityKind::StandardCompatible {
                     private_copy_agents.push(agent.clone());
                 } else {
                     private_adapted_count += 1;
@@ -371,7 +371,7 @@ fn add_scan_scope_owner(
 /// 对应 CLI: listInstalledSkills (installer.ts:797-1007)
 #[cfg(test)]
 pub fn list_installed_skills(
-    scope: Option<SkillScope>,
+    scope: Option<InstalledSkillLocation>,
     cwd: &str,
     runtime: &AgentRuntimeSnapshot,
 ) -> Result<Vec<InstalledSkill>, AppError> {
@@ -383,8 +383,8 @@ pub fn list_installed_skills(
 
     // 确定要扫描的 scope 类型
     let scope_types: Vec<bool> = match scope {
-        Some(SkillScope::Global) => vec![true],
-        Some(SkillScope::Project) => vec![false],
+        Some(InstalledSkillLocation::Global) => vec![true],
+        Some(InstalledSkillLocation::Project) => vec![false],
         None => vec![false, true], // 默认扫描 project 和 global
     };
 
@@ -508,9 +508,9 @@ pub fn list_installed_skills(
                         path: path.to_string_lossy().to_string(),
                         canonical_path: path.to_string_lossy().to_string(),
                         scope: if scope_info.global {
-                            SkillScope::Global
+                            InstalledSkillLocation::Global
                         } else {
-                            SkillScope::Project
+                            InstalledSkillLocation::Project
                         },
                         agents: scope_info.agent_ids.iter().cloned().collect(),
                         associated_agents: Vec::new(),
@@ -628,9 +628,9 @@ pub fn list_installed_skills(
                     path: path.to_string_lossy().to_string(),
                     canonical_path: path.to_string_lossy().to_string(),
                     scope: if scope_info.global {
-                        SkillScope::Global
+                        InstalledSkillLocation::Global
                     } else {
-                        SkillScope::Project
+                        InstalledSkillLocation::Project
                     },
                     agents: installed_agents,
                     associated_agents: Vec::new(),
@@ -733,12 +733,12 @@ mod tests {
                 aliases: Vec::new(),
                 global: ScopeDefinition {
                     enabled: false,
-                    reads_shared: false,
+                    reads_standard: false,
                     private_path: None,
                 },
                 project: ScopeDefinition {
                     enabled: true,
-                    reads_shared: false,
+                    reads_standard: false,
                     private_path: Some(PathSpec::project(".my-custom/skills")),
                 },
                 detection: DetectionSpec::AnyPathExists {
@@ -751,18 +751,18 @@ mod tests {
             detection_reason: None,
             global: ResolvedAgentScope {
                 enabled: false,
-                reads_shared: false,
-                shared_path: None,
+                reads_standard: false,
+                standard_path: None,
                 private_path: None,
                 read_paths: Vec::new(),
-                shared_presence: None,
+                standard_presence: None,
                 private_presence: None,
                 legacy_paths: Vec::new(),
             },
             project: ResolvedAgentScope {
                 enabled: true,
-                reads_shared: false,
-                shared_path: Some(
+                reads_standard: false,
+                standard_path: Some(
                     Path::new(project_path)
                         .join(".agents/skills")
                         .to_string_lossy()
@@ -770,7 +770,7 @@ mod tests {
                 ),
                 private_path: Some(private_root.to_string_lossy().to_string()),
                 read_paths: vec![private_root.to_string_lossy().to_string()],
-                shared_presence: Some(DirectoryPresenceState::Missing),
+                standard_presence: Some(DirectoryPresenceState::Missing),
                 private_presence: Some(DirectoryPresenceState::Present),
                 legacy_paths: Vec::new(),
             },
@@ -778,7 +778,7 @@ mod tests {
         AgentRuntimeSnapshot {
             registry_revision: "registry".to_string(),
             environment_revision: "environment".to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             availability: EnvironmentStatus::Available,
             project_path: Some(project_path.to_string()),
             agents: BTreeMap::from([(id, resolved)]),
@@ -788,7 +788,7 @@ mod tests {
     fn builtin_runtime(project_path: &str) -> AgentRuntimeSnapshot {
         let registry = AgentRegistry::new(Vec::new());
         let resolver = AgentEnvironmentResolver::from_environment(EnvironmentContext {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             home: project_path.to_string(),
             config_home: Path::new(project_path)
                 .join(".config")
@@ -796,7 +796,7 @@ mod tests {
                 .to_string(),
             environment_variables: BTreeMap::new(),
             availability: EnvironmentStatus::Available,
-            revision: "skill-tests-host".to_string(),
+            revision: "skill-tests-native".to_string(),
             wsl_workspace: None,
         });
         tauri::async_runtime::block_on(
@@ -818,8 +818,8 @@ mod tests {
         .unwrap();
         let runtime = custom_runtime(&cwd, DetectionState::NotDetected);
 
-        let skills =
-            list_installed_skills(Some(SkillScope::Project), &cwd, &runtime).expect("list skills");
+        let skills = list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime)
+            .expect("list skills");
         let skill = skills.iter().find(|skill| skill.name == "demo").unwrap();
         let custom = AgentId::parse("my-custom-agent").unwrap();
 
@@ -841,7 +841,7 @@ mod tests {
         )
         .unwrap();
         let runtime = custom_runtime(&cwd, DetectionState::Detected);
-        let skill = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime)
+        let skill = list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime)
             .unwrap()
             .into_iter()
             .find(|skill| skill.name == "demo")
@@ -884,7 +884,8 @@ mod tests {
         custom_resolved.project.read_paths = vec![subagent_root];
         runtime.agents.insert(custom.clone(), custom_resolved);
 
-        let skills = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime).unwrap();
+        let skills =
+            list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime).unwrap();
         let skill = skills
             .iter()
             .find(|skill| skill.name == "demo")
@@ -914,7 +915,8 @@ mod tests {
         second_resolved.definition.display_name = "My Custom Agent Two".to_string();
         runtime.agents.insert(second.clone(), second_resolved);
 
-        let skills = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime).unwrap();
+        let skills =
+            list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime).unwrap();
         let skill = skills
             .iter()
             .find(|skill| skill.name == "demo")
@@ -1061,7 +1063,8 @@ Content.
         let mut runtime = builtin_runtime(&cwd);
         let undetected_id = AgentId::parse(undetected_agent.to_string()).unwrap();
         runtime.agents.get_mut(&undetected_id).unwrap().detection = DetectionState::NotDetected;
-        let skills = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime).unwrap();
+        let skills =
+            list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime).unwrap();
 
         let ghost_skill = skills
             .iter()
@@ -1108,7 +1111,7 @@ Content.
             description: "Hidden skill".to_string(),
             path: agent_dir.to_string_lossy().to_string(),
             canonical_path: agent_dir.to_string_lossy().to_string(),
-            scope: SkillScope::Project,
+            scope: InstalledSkillLocation::Project,
             agents: vec![undetected_id.clone()],
             associated_agents: Vec::new(),
             source: None,
@@ -1162,7 +1165,8 @@ Content.
         .unwrap();
 
         let runtime = builtin_runtime(&cwd);
-        let skills = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime).unwrap();
+        let skills =
+            list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime).unwrap();
         let skill = skills
             .iter()
             .find(|skill| skill.name == "legacy-name")
@@ -1196,7 +1200,8 @@ Content.
         .unwrap();
 
         let runtime = builtin_runtime(&cwd);
-        let skills = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime).unwrap();
+        let skills =
+            list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime).unwrap();
         let skill = skills
             .iter()
             .find(|skill| skill.name == "demo")
@@ -1215,10 +1220,10 @@ Content.
         let project = tempdir().unwrap();
         let cwd = project.path().to_string_lossy().to_string();
 
-        let shared_dir = project.path().join(".agents").join("skills").join("demo");
-        fs::create_dir_all(&shared_dir).unwrap();
+        let standard_dir = project.path().join(".agents").join("skills").join("demo");
+        fs::create_dir_all(&standard_dir).unwrap();
         fs::write(
-            shared_dir.join("SKILL.md"),
+            standard_dir.join("SKILL.md"),
             "---\nname: demo\ndescription: Demo\n---\n",
         )
         .unwrap();
@@ -1232,7 +1237,8 @@ Content.
         .unwrap();
 
         let runtime = builtin_runtime(&cwd);
-        let skills = list_installed_skills(Some(SkillScope::Project), &cwd, &runtime).unwrap();
+        let skills =
+            list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime).unwrap();
         let skill = skills
             .iter()
             .find(|skill| skill.name == "demo")
@@ -1275,7 +1281,7 @@ Content.
             description: "SSH skill".to_string(),
             path: String::new(),
             canonical_path: String::new(),
-            scope: SkillScope::Project,
+            scope: InstalledSkillLocation::Project,
             agents: Vec::new(),
             associated_agents: Vec::new(),
             source: None,
@@ -1325,7 +1331,7 @@ Content.
             description: "Demo".to_string(),
             path: String::new(),
             canonical_path: String::new(),
-            scope: SkillScope::Project,
+            scope: InstalledSkillLocation::Project,
             agents: Vec::new(),
             associated_agents: Vec::new(),
             source: None,
@@ -1361,7 +1367,7 @@ Content.
             description: "Demo".to_string(),
             path: String::new(),
             canonical_path: String::new(),
-            scope: SkillScope::Global,
+            scope: InstalledSkillLocation::Global,
             agents: Vec::new(),
             associated_agents: Vec::new(),
             source: None,

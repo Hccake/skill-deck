@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Bot, Folder, Package } from 'lucide-react';
+import { AlertTriangle, Copy, Folder, Link2, Package } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -118,6 +118,12 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
   const directAgents = projected?.directAgents.map((agent) => agent.displayName) ?? [];
   const selectedSet = new Set(state.selectedAgentOptionIds);
   const selectedOptions = selection?.installOptions.filter((option) => selectedSet.has(option.id)) ?? [];
+  const linkOptions = selectedOptions.filter(
+    (option) => state.mode === 'symlink' && option.modeConstraint !== 'copyOnly',
+  );
+  const copyOptions = selectedOptions.filter(
+    (option) => state.mode === 'copy' || option.modeConstraint === 'copyOnly',
+  );
   const isPreparing = state.preparation.status === 'idle' || state.preparation.status === 'preparing';
 
   return (
@@ -188,8 +194,11 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
         <h2 className="text-sm font-semibold">{t('addSkill.confirm.installPlan')}</h2>
         <div className="space-y-2">
           <PlanRow icon={Folder} title={t('addSkill.confirm.defaultLocation')} path={getSharedSkillDirectory(scope)} names={directAgents} />
-          {selectedOptions.length > 0 ? (
-            <PlanRow icon={Bot} title={t('agentSelection.title')} names={selectedOptions.map((option) => option.displayName)} paths={selectedOptions.map((option) => option.path)} />
+          {linkOptions.length > 0 ? (
+            <PlanRow icon={Link2} title={t('addSkill.confirm.createLinks')} names={linkOptions.map((option) => option.displayName)} paths={linkOptions.map((option) => option.path)} />
+          ) : null}
+          {copyOptions.length > 0 ? (
+            <PlanRow icon={Copy} title={t('addSkill.confirm.createCopies')} names={copyOptions.map((option) => option.displayName)} paths={copyOptions.map((option) => option.path)} />
           ) : null}
         </div>
       </section>

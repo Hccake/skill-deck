@@ -6,7 +6,7 @@ use specta::Type;
 
 use crate::core::mutation::MutationKind;
 use crate::environment::types::{
-    same_environment_identity, ContextRef, EnvironmentRef, ResourceLocator,
+    same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef,
 };
 use crate::error::{AppError, RecoveryResourceId};
 
@@ -19,7 +19,7 @@ const LEGACY_RECOVERY_MARKER_SCHEMA_VERSION: u32 = 1;
 pub struct RecoverySubject {
     pub operation_kind: MutationKind,
     pub skill_name: String,
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]

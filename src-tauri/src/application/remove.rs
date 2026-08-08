@@ -15,7 +15,7 @@ use crate::core::agent_definition::AgentId;
 use crate::core::mutation::{CancellationSignal, MutationKind};
 use crate::environment::planning::TargetFactResolver;
 use crate::environment::runtime::ObservedEntryId;
-use crate::environment::types::{ContextRef, ResourceLocator};
+use crate::environment::types::{ResourceLocator, SkillLocationRef};
 use crate::error::AppError;
 use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
 use uuid::Uuid;
@@ -58,7 +58,7 @@ pub struct ObservedPhysicalEntry {
 #[specta(rename_all = "camelCase")]
 pub struct RemovePreview {
     pub token: PreviewToken,
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub skill_name: String,
     pub canonical: ObservedEntryKind,
     pub physical_entries: Vec<ObservedPhysicalEntry>,
@@ -78,7 +78,7 @@ pub enum RemoveIntent {
 #[specta(rename_all = "camelCase")]
 pub struct RemoveRequest {
     pub token: PreviewToken,
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub skill_name: String,
     pub intent: RemoveIntent,
 }
@@ -107,7 +107,7 @@ where
 
     pub async fn preview(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<RemovePreview, AppError> {
         if skill_name.trim().is_empty() {
@@ -243,7 +243,7 @@ fn selected_entry_ids(
 }
 
 fn remove_preview(
-    context: &ContextRef,
+    context: &SkillLocationRef,
     skill_name: &str,
     snapshot: &crate::application::skill_entries::ObservedSkillSnapshot,
 ) -> Result<RemovePreview, AppError> {
@@ -332,9 +332,9 @@ mod tests {
                 )
                 .unwrap(),
             },
-            context: ContextRef {
-                environment: crate::environment::types::EnvironmentRef::Host,
-                scope: crate::environment::types::ContextScope::Global,
+            context: SkillLocationRef {
+                environment: crate::environment::types::EnvironmentRef::Native,
+                scope: crate::environment::types::SkillLocation::Global,
             },
             skill_name: "demo".to_string(),
             intent: RemoveIntent::FullSkill,
@@ -358,9 +358,9 @@ mod tests {
                 )
                 .unwrap(),
             },
-            context: ContextRef {
-                environment: crate::environment::types::EnvironmentRef::Host,
-                scope: crate::environment::types::ContextScope::Global,
+            context: SkillLocationRef {
+                environment: crate::environment::types::EnvironmentRef::Native,
+                scope: crate::environment::types::SkillLocation::Global,
             },
             skill_name: "demo".to_string(),
             canonical: ObservedEntryKind::Directory,

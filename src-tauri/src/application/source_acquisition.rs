@@ -25,7 +25,7 @@ use crate::core::{
     select_discovered_skills, source_risk_policy, CloneProgress, DiscoverOptions,
     DiscoveryDocument, DiscoveryInventory,
 };
-use crate::environment::types::{ContextRef, EnvironmentRef};
+use crate::environment::types::{EnvironmentRef, SkillLocationRef};
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::operations::scan::{
     scan, scan_priority_directories, ScanRequest, ScanResponse, ScannedEntryKind,
@@ -88,7 +88,7 @@ impl<'a> SourceDiscoveryService<'a> {
 
     pub async fn discover<P>(
         &self,
-        context: ContextRef,
+        context: SkillLocationRef,
         requested_source: String,
         on_progress: P,
     ) -> Result<FetchResult, AppError>
@@ -106,7 +106,7 @@ impl<'a> SourceDiscoveryService<'a> {
 
     pub async fn discover_with_cancellation<P>(
         &self,
-        context: ContextRef,
+        context: SkillLocationRef,
         requested_source: String,
         on_progress: P,
         cancellation: CancellationSignal,
@@ -127,7 +127,7 @@ impl<'a> SourceDiscoveryService<'a> {
 
     pub(crate) async fn discover_parsed_with_cancellation<P>(
         &self,
-        context: ContextRef,
+        context: SkillLocationRef,
         parsed: ParsedSource,
         requested_source: String,
         on_progress: P,
@@ -137,7 +137,7 @@ impl<'a> SourceDiscoveryService<'a> {
         P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
     {
         match (&context.environment, parsed.source_type.clone()) {
-            (EnvironmentRef::Host, SourceType::Local) => {
+            (EnvironmentRef::Native, SourceType::Local) => {
                 let root = parsed
                     .local_path
                     .clone()
@@ -158,7 +158,7 @@ impl<'a> SourceDiscoveryService<'a> {
                 )
                 .await
             }
-            (EnvironmentRef::Host, SourceType::WellKnown) => {
+            (EnvironmentRef::Native, SourceType::WellKnown) => {
                 let fetched = fetch_wellknown_skills(&parsed.url).await?;
                 let root = fetched.repo_path.clone();
                 retain_discovered_source(
@@ -177,7 +177,7 @@ impl<'a> SourceDiscoveryService<'a> {
                 )
                 .await
             }
-            (EnvironmentRef::Host, _) => {
+            (EnvironmentRef::Native, _) => {
                 let clone_url = parsed.url.clone();
                 let clone_ref = parsed.git_ref.clone();
                 let clone_cancellation = cancellation.clone();
@@ -563,7 +563,7 @@ async fn retain_discovered_source<O>(
     parsed: ParsedSource,
     requested_source: String,
     location: DiscoverySourceLocation,
-    host_root: PathBuf,
+    native_root: PathBuf,
     owner: O,
     storage: Option<Arc<dyn PayloadSessionStorage>>,
     trust_metadata: Option<std::collections::HashMap<String, WellKnownTrustMetadata>>,
@@ -571,7 +571,7 @@ async fn retain_discovered_source<O>(
 where
     O: Send + Sync + 'static,
 {
-    let scan_root = host_root.clone();
+    let scan_root = native_root.clone();
     let scan_subpath = parsed.subpath.clone();
     let scan_include_internal = parsed.skill_filter.is_some();
     let (discovered, catalog) = tokio::task::spawn_blocking(move || {
@@ -620,7 +620,7 @@ where
 }
 
 fn build_discovery_catalog(
-    host_root: &Path,
+    native_root: &Path,
     subpath: Option<&str>,
     include_internal: bool,
 ) -> Result<
@@ -631,14 +631,14 @@ fn build_discovery_catalog(
     AppError,
 > {
     let discovered = discover_skills(
-        host_root,
+        native_root,
         subpath,
         DiscoverOptions {
             include_internal,
             full_depth: false,
         },
     )?;
-    let physical_root = fs::canonicalize(host_root)?;
+    let physical_root = fs::canonicalize(native_root)?;
     let mut catalog = std::collections::BTreeMap::new();
     for skill in &discovered {
         let source_root = resolve_skill_root(&physical_root, &skill.relative_path)?;
@@ -672,7 +672,7 @@ fn wsl_acquisition_source(parsed: &ParsedSource) -> Result<WslAcquisitionSource,
                 git_ref: parsed.git_ref.clone(),
             })
         }
-        SourceType::WellKnown => Err(invalid_source("Well-known sources use Host HTTP")),
+        SourceType::WellKnown => Err(invalid_source("Well-known sources use Native HTTP")),
     }
 }
 
@@ -843,7 +843,7 @@ impl SelectedPayloadAcquisitionService {
             } => {
                 let expected_distro = match &request.discovery_session.environment {
                     crate::environment::types::EnvironmentRef::Wsl { distro_name } => distro_name,
-                    crate::environment::types::EnvironmentRef::Host => {
+                    crate::environment::types::EnvironmentRef::Native => {
                         return Err(AppError::StaleEnvironment)
                     }
                 };
@@ -1159,7 +1159,7 @@ mod tests {
     use crate::core::mutation::CancellationSignal;
     use crate::core::skill_payload::{build_skill_payload, SkillPayload};
     use crate::environment::types::EnvironmentRef;
-    use crate::environment::types::{ContextRef, ContextScope};
+    use crate::environment::types::{SkillLocation, SkillLocationRef};
     use crate::environment::wsl::WslRuntime;
     use crate::models::SourceType;
 
@@ -1281,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn source_environment_routing_keeps_well_known_on_host_and_git_local_in_wsl() {
+    fn source_environment_routing_keeps_well_known_on_native_and_git_local_in_wsl() {
         let git = parse_source("owner/repo#main").expect("git");
         let local = parse_source("/home/alice/code/skills").expect("local");
         let well_known = parse_source("https://skills.example.com").expect("well-known");
@@ -1356,7 +1356,7 @@ mod tests {
     }
 
     #[test]
-    fn wsl_discovery_matches_host_paths_internal_filter_and_plugin_metadata() {
+    fn wsl_discovery_matches_native_paths_internal_filter_and_plugin_metadata() {
         use crate::environment::wsl::operations::scan::{
             ScanResponse, ScannedEntry, ScannedEntryKind,
         };
@@ -1608,7 +1608,7 @@ mod tests {
         ));
         let discovery = manager
             .discover_with_source(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 "source-fingerprint",
                 Arc::new(InMemoryPayloadSessionStorage::default()),
                 RetainedDiscoverySource::new(
@@ -1748,7 +1748,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_local_discovery_and_selected_acquisition_share_one_source_snapshot() {
+    async fn native_local_discovery_and_selected_acquisition_share_one_source_snapshot() {
         let source = tempdir().expect("source");
         let skill_root = source.path().join("skills/demo");
         fs::create_dir_all(&skill_root).expect("skill root");
@@ -1771,9 +1771,9 @@ mod tests {
 
         let fetched = discovery_service
             .discover(
-                ContextRef {
-                    environment: EnvironmentRef::Host,
-                    scope: ContextScope::Global,
+                SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: SkillLocation::Global,
                 },
                 source.path().to_string_lossy().to_string(),
                 |_| {},
@@ -1783,7 +1783,10 @@ mod tests {
 
         assert_eq!(fetched.skills.len(), 1);
         assert_eq!(fetched.skills[0].relative_path, "skills/demo/SKILL.md");
-        assert_eq!(fetched.discovery_session.environment, EnvironmentRef::Host);
+        assert_eq!(
+            fetched.discovery_session.environment,
+            EnvironmentRef::Native
+        );
         let selected_path = fetched.skills[0].relative_path.clone();
         let handles = SelectedPayloadAcquisitionService::new(manager.clone())
             .acquire(AcquireSelectedPayloadsRequest {

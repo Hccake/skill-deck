@@ -154,7 +154,7 @@ mod tests {
                 "acme/tools",
             ),
             NormalizedRef::Named("main".to_string()),
-            &EnvironmentRef::Host,
+            &EnvironmentRef::Native,
         )
     }
 
@@ -191,7 +191,7 @@ mod tests {
             move || now.load(Ordering::SeqCst)
         });
         let handle = sessions
-            .discover_with_retained_source(EnvironmentRef::Host, "source", retained_source())
+            .discover_with_retained_source(EnvironmentRef::Native, "source", retained_source())
             .await
             .unwrap();
         let index = SourceSnapshotReuseIndex::with_clock({
@@ -216,7 +216,7 @@ mod tests {
         let index = SourceSnapshotReuseIndex::with_clock(|| 1_000);
         let missing = DiscoverySessionHandle {
             session_id: "missing".to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             source_fingerprint: "source".to_string(),
             expires_at_epoch_ms: 10_000,
         };
@@ -230,7 +230,7 @@ mod tests {
     async fn ref_revision_mismatch_is_a_reuse_miss() {
         let sessions = PayloadSessionManager::in_memory(limits(), || 1_000);
         let handle = sessions
-            .discover_with_retained_source(EnvironmentRef::Host, "source", retained_source())
+            .discover_with_retained_source(EnvironmentRef::Native, "source", retained_source())
             .await
             .unwrap();
         let index = SourceSnapshotReuseIndex::with_clock(|| 1_000);
@@ -244,7 +244,7 @@ mod tests {
     async fn candidate_exposes_retained_revision_for_confirm_time_probe() {
         let sessions = PayloadSessionManager::in_memory(limits(), || 1_000);
         let handle = sessions
-            .discover_with_retained_source(EnvironmentRef::Host, "source", retained_source())
+            .discover_with_retained_source(EnvironmentRef::Native, "source", retained_source())
             .await
             .unwrap();
         let index = SourceSnapshotReuseIndex::with_clock(|| 1_000);

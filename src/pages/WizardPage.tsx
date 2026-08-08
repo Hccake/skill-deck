@@ -29,7 +29,7 @@ import type {
   WizardStep,
   WizardState,
 } from '@/components/skills/add-skill/types';
-import type { ContextRef } from '@/bindings';
+import type { SkillLocationRef } from '@/bindings';
 import { cn } from '@/lib/utils';
 
 type InstallResults = NonNullable<WizardState['installResults']>;
@@ -38,7 +38,8 @@ function createInitialState(params: {
   entryPoint: EntryPoint;
   scope: 'global' | 'project';
   projectPath?: string;
-  context: ContextRef;
+  context: SkillLocationRef;
+  environmentName?: string;
   prefillSource?: string;
   prefillSkillName?: string;
 }): WizardState {
@@ -56,6 +57,7 @@ function createInitialState(params: {
     scope: params.scope,
     projectPath: params.projectPath,
     context: params.context,
+    environmentName: params.environmentName,
     source,
     fetchStatus: 'idle',
     fetchError: null,
@@ -97,12 +99,13 @@ export function WizardPage() {
   // 从 URL query 解析参数
   const wizardParams = useMemo(() => {
     const context = parseWizardContext(searchParams.get('context'))
-      ?? globalContext({ kind: 'host' });
+      ?? globalContext({ kind: 'native' });
     return {
       entryPoint: (searchParams.get('entryPoint') ?? 'skills-panel') as EntryPoint,
       scope: context.scope.scope,
       projectPath: searchParams.get('projectPath') ?? undefined,
       context,
+      environmentName: searchParams.get('environmentName') ?? undefined,
       prefillSource: searchParams.get('prefillSource') ?? undefined,
       prefillSkillName: searchParams.get('prefillSkillName') ?? undefined,
     };
@@ -341,6 +344,8 @@ export function WizardPage() {
               <ScopeBadge
                 scope={state.scope}
                 projectPath={state.projectPath}
+                environment={state.context.environment}
+                environmentName={state.environmentName}
                 onClick={handleScopeBadgeClick}
               />
           )}

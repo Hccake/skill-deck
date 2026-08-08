@@ -2,7 +2,7 @@ import { fetchAvailable, getInstallAgentSelection, installSkills } from '@/hooks
 import type {
   AgentId,
   AppError,
-  ContextRef,
+  SkillLocationRef,
   FetchResult,
   InstallResponse,
   RecoveryAction,
@@ -14,7 +14,7 @@ import { prepareInstall, type InstallPreparationOutcome } from './skill-install-
 import { runBusinessWrite } from './install-session-feedback';
 
 export interface RepairSkillSourceRequest {
-  context: ContextRef;
+  context: SkillLocationRef;
   source: string;
   skillName: string;
   agents?: AgentId[];

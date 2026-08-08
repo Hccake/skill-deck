@@ -43,7 +43,7 @@ use crate::environment::runtime::{
     ContextSnapshotRevision, ExecutionBackend, PhysicalIdentityComparison,
 };
 use crate::environment::types::{
-    same_environment_identity, ContextRef, EnvironmentRef, ResourceLocator, StorageAccess,
+    same_environment_identity, EnvironmentRef, ResourceLocator, SkillLocationRef, StorageAccess,
 };
 use crate::error::AppError;
 use crate::models::InstallMode;
@@ -55,7 +55,7 @@ use uuid::Uuid;
 #[specta(rename_all = "camelCase")]
 pub struct CopyRequest {
     pub skill_name: String,
-    pub source: ContextRef,
+    pub source: SkillLocationRef,
     pub target_environment: EnvironmentRef,
     pub target_project_ids: Vec<String>,
     pub agent_selection: AgentSelectionSubmission,
@@ -83,7 +83,7 @@ pub struct CopyExecutionRequest {
 pub struct CopyPreview {
     pub token: PreviewToken,
     pub payload: AcquiredPayloadHandle,
-    pub source: ContextRef,
+    pub source: SkillLocationRef,
     pub target_environment: EnvironmentRef,
     pub targets: Vec<CopyTargetPreview>,
 }
@@ -195,7 +195,7 @@ where
 
     pub async fn selection(
         &self,
-        source: &ContextRef,
+        source: &SkillLocationRef,
         skill_name: &str,
     ) -> Result<CopyAgentSelectionSnapshot, AppError> {
         let loaded = load_observed_agent_selection_for_copy(
@@ -650,7 +650,7 @@ struct BuiltCopy {
 }
 
 struct CopyPlanningFailure {
-    context: ContextRef,
+    context: SkillLocationRef,
     error: AppError,
 }
 
@@ -700,7 +700,7 @@ impl CopyPlanningFailure {
 }
 
 struct BuiltCopyTarget {
-    context: ContextRef,
+    context: SkillLocationRef,
     facts: InstallPlanningFacts,
     agent_plan: AgentEntryPlan,
     entry_modes: BTreeMap<String, InstallMode>,
@@ -769,7 +769,7 @@ pub fn validate_copy_request(request: &CopyRequest) -> Result<(), AppError> {
         || request.target_project_ids.is_empty()
         || !matches!(
             request.source.scope,
-            crate::environment::types::ContextScope::Project { .. }
+            crate::environment::types::SkillLocation::Project { .. }
         )
     {
         return Err(validation("Skill and target projects are required"));
@@ -785,10 +785,10 @@ pub fn validate_copy_request(request: &CopyRequest) -> Result<(), AppError> {
     Ok(())
 }
 
-fn project_context(environment: &EnvironmentRef, project_id: &str) -> ContextRef {
-    ContextRef {
+fn project_context(environment: &EnvironmentRef, project_id: &str) -> SkillLocationRef {
+    SkillLocationRef {
         environment: environment.clone(),
-        scope: crate::environment::types::ContextScope::Project {
+        scope: crate::environment::types::SkillLocation::Project {
             project_id: project_id.to_string(),
         },
     }
@@ -1064,10 +1064,10 @@ fn build_copy_unit(
     })
 }
 
-fn project_id(context: &ContextRef) -> Result<&str, AppError> {
+fn project_id(context: &SkillLocationRef) -> Result<&str, AppError> {
     match &context.scope {
-        crate::environment::types::ContextScope::Project { project_id } => Ok(project_id),
-        crate::environment::types::ContextScope::Global => Err(AppError::StaleContext),
+        crate::environment::types::SkillLocation::Project { project_id } => Ok(project_id),
+        crate::environment::types::SkillLocation::Global => Err(AppError::StaleContext),
     }
 }
 
@@ -1208,7 +1208,7 @@ mod tests {
         EntryFingerprint, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
     use crate::environment::types::{
-        ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ProjectBinding,
+        EnvironmentRef, EnvironmentStatus, RegisteredProject, SkillLocation, SkillLocationRef,
     };
     use crate::environment::wsl::WslRuntime;
     use crate::models::InstallMode;
@@ -1219,7 +1219,7 @@ mod tests {
     impl TargetFactResolver for DistinctAgentTargets {
         fn resolve<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
             logical_destinations: &'a [ResourceLocator],
             _cancellation: Option<CancellationSignal>,
         ) -> crate::environment::planning::TargetFactFuture<
@@ -1253,16 +1253,16 @@ mod tests {
         let id = AgentId::parse(id).unwrap();
         let disabled_scope = ScopeDefinition {
             enabled: false,
-            reads_shared: false,
+            reads_standard: false,
             private_path: None,
         };
         let disabled_resolved_scope = ResolvedAgentScope {
             enabled: false,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: None,
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
@@ -1276,7 +1276,7 @@ mod tests {
                     aliases: Vec::new(),
                     global: ScopeDefinition {
                         enabled: true,
-                        reads_shared: false,
+                        reads_standard: false,
                         private_path: Some(PathSpec::home(path)),
                     },
                     project: disabled_scope,
@@ -1290,11 +1290,11 @@ mod tests {
                 detection_reason: None,
                 global: ResolvedAgentScope {
                     enabled: true,
-                    reads_shared: false,
-                    shared_path: None,
+                    reads_standard: false,
+                    standard_path: None,
                     private_path: Some(path.to_string()),
                     read_paths: vec![path.to_string()],
-                    shared_presence: Some(DirectoryPresenceState::Missing),
+                    standard_presence: Some(DirectoryPresenceState::Missing),
                     private_presence: Some(DirectoryPresenceState::Present),
                     legacy_paths: Vec::new(),
                 },
@@ -1307,31 +1307,31 @@ mod tests {
         let (id, mut agent) = private_agent(id, "/unused/global/skills");
         agent.definition.global = ScopeDefinition {
             enabled: false,
-            reads_shared: false,
+            reads_standard: false,
             private_path: None,
         };
         agent.global = ResolvedAgentScope {
             enabled: false,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: None,
             read_paths: Vec::new(),
-            shared_presence: None,
+            standard_presence: None,
             private_presence: None,
             legacy_paths: Vec::new(),
         };
         agent.definition.project = ScopeDefinition {
             enabled: true,
-            reads_shared: false,
+            reads_standard: false,
             private_path: Some(PathSpec::project(path)),
         };
         agent.project = ResolvedAgentScope {
             enabled: true,
-            reads_shared: false,
-            shared_path: None,
+            reads_standard: false,
+            standard_path: None,
             private_path: Some(path.to_string()),
             read_paths: vec![path.to_string()],
-            shared_presence: None,
+            standard_presence: None,
             private_presence: Some(DirectoryPresenceState::Present),
             legacy_paths: Vec::new(),
         };
@@ -1352,9 +1352,9 @@ mod tests {
     fn copy_request_has_one_target_environment_and_unique_projects() {
         let request = CopyRequest {
             skill_name: "demo".to_string(),
-            source: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            source: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             target_environment: EnvironmentRef::Wsl {
                 distro_name: "Ubuntu".to_string(),
@@ -1372,11 +1372,11 @@ mod tests {
     fn copy_source_must_be_a_project_context() {
         let request = CopyRequest {
             skill_name: "demo".to_string(),
-            source: ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            source: SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
-            target_environment: EnvironmentRef::Host,
+            target_environment: EnvironmentRef::Native,
             target_project_ids: vec!["project-1".to_string()],
             agent_selection: test_selection(InstallMode::Copy),
         };
@@ -1392,7 +1392,7 @@ mod tests {
                 normalized_final_child_name: child.to_string(),
             },
             destination: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: path.to_string(),
             },
             fingerprint: EntryFingerprint("entry-v1-project".to_string()),
@@ -1474,14 +1474,14 @@ mod tests {
 
     #[tokio::test]
     async fn copy_preserves_existing_entry_modes_and_uses_requested_mode_for_new_entries() {
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let runtime = AgentRuntimeSnapshot {
             registry_revision: "registry-1".to_string(),
             environment_revision: "environment-1".to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             availability: EnvironmentStatus::Available,
             project_path: None,
             agents: [
@@ -1586,12 +1586,12 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct Facts(Arc<Mutex<HashMap<ContextRef, InstallPlanningFacts>>>);
+    struct Facts(Arc<Mutex<HashMap<SkillLocationRef, InstallPlanningFacts>>>);
 
     impl InstallPlanningFactSource for Facts {
         fn current<'a>(
             &'a self,
-            context: &'a ContextRef,
+            context: &'a SkillLocationRef,
         ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
             Box::pin(async move {
                 self.0
@@ -1607,13 +1607,13 @@ mod tests {
     #[derive(Clone)]
     struct FailingTargetFacts {
         facts: Facts,
-        failed_context: ContextRef,
+        failed_context: SkillLocationRef,
     }
 
     impl InstallPlanningFactSource for FailingTargetFacts {
         fn current<'a>(
             &'a self,
-            context: &'a ContextRef,
+            context: &'a SkillLocationRef,
         ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
             if context == &self.failed_context {
                 return Box::pin(async {
@@ -1739,17 +1739,17 @@ mod tests {
         }
     }
 
-    fn context(environment: EnvironmentRef, project_id: &str) -> ContextRef {
-        ContextRef {
+    fn context(environment: EnvironmentRef, project_id: &str) -> SkillLocationRef {
+        SkillLocationRef {
             environment,
-            scope: ContextScope::Project {
+            scope: SkillLocation::Project {
                 project_id: project_id.to_string(),
             },
         }
     }
 
     fn planning_facts(
-        context: ContextRef,
+        context: SkillLocationRef,
         root: &std::path::Path,
         source_lock: bool,
     ) -> InstallPlanningFacts {
@@ -1762,7 +1762,7 @@ mod tests {
         } else {
             LosslessLockDocument::empty(LockSchema::Project)
         };
-        let project = ProjectBinding {
+        let project = RegisteredProject {
             id: project_id.clone(),
             native_path: root.to_string_lossy().into_owned(),
             display_name: Some(project_id.clone()),
@@ -1818,8 +1818,8 @@ mod tests {
         fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
         fs::create_dir_all(&target_root).unwrap();
 
-        let source = context(EnvironmentRef::Host, "source");
-        let target = context(EnvironmentRef::Host, "target");
+        let source = context(EnvironmentRef::Native, "source");
+        let target = context(EnvironmentRef::Native, "target");
         let mut source_facts = planning_facts(source.clone(), &source_root, false);
         source_facts.lock_document = source_lock;
         let facts = Arc::new(Mutex::new(HashMap::from([
@@ -1855,7 +1855,7 @@ mod tests {
         let request = CopyRequest {
             skill_name: "demo".to_string(),
             source,
-            target_environment: EnvironmentRef::Host,
+            target_environment: EnvironmentRef::Native,
             target_project_ids,
             agent_selection: AgentSelectionSubmission {
                 revision: agent_selection.revision,
@@ -1961,9 +1961,9 @@ mod tests {
         fs::create_dir_all(&healthy_root).unwrap();
         fs::create_dir_all(&broken_root).unwrap();
 
-        let source = context(EnvironmentRef::Host, "source");
-        let healthy = context(EnvironmentRef::Host, "healthy");
-        let broken = context(EnvironmentRef::Host, "broken");
+        let source = context(EnvironmentRef::Native, "source");
+        let healthy = context(EnvironmentRef::Native, "healthy");
+        let broken = context(EnvironmentRef::Native, "broken");
         let base_facts = Facts(Arc::new(Mutex::new(HashMap::from([
             (
                 source.clone(),
@@ -2006,7 +2006,7 @@ mod tests {
         let request = CopyRequest {
             skill_name: "demo".to_string(),
             source,
-            target_environment: EnvironmentRef::Host,
+            target_environment: EnvironmentRef::Native,
             target_project_ids: vec!["healthy".to_string(), "broken".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: selection.revision,
@@ -2040,9 +2040,9 @@ mod tests {
         fs::create_dir_all(&first_root).unwrap();
         fs::create_dir_all(&second_root).unwrap();
 
-        let source = context(EnvironmentRef::Host, "source");
-        let first = context(EnvironmentRef::Host, "first");
-        let second = context(EnvironmentRef::Host, "second");
+        let source = context(EnvironmentRef::Native, "source");
+        let first = context(EnvironmentRef::Native, "first");
+        let second = context(EnvironmentRef::Native, "second");
         let facts = Arc::new(Mutex::new(HashMap::from([
             (
                 source.clone(),
@@ -2079,7 +2079,7 @@ mod tests {
         let request = CopyRequest {
             skill_name: "demo".to_string(),
             source,
-            target_environment: EnvironmentRef::Host,
+            target_environment: EnvironmentRef::Native,
             target_project_ids: vec!["first".to_string(), "second".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: source_selection.revision,
@@ -2272,9 +2272,9 @@ mod tests {
         fs::create_dir_all(&healthy_root).unwrap();
         fs::create_dir_all(&conflicted_root).unwrap();
 
-        let source = context(EnvironmentRef::Host, "source");
-        let healthy = context(EnvironmentRef::Host, "healthy");
-        let conflicted = context(EnvironmentRef::Host, "conflicted");
+        let source = context(EnvironmentRef::Native, "source");
+        let healthy = context(EnvironmentRef::Native, "healthy");
+        let conflicted = context(EnvironmentRef::Native, "conflicted");
         let mut source_facts = planning_facts(source.clone(), &source_root, true);
         let mut healthy_facts = planning_facts(healthy.clone(), &healthy_root, false);
         let mut conflicted_facts = planning_facts(conflicted.clone(), &conflicted_root, false);
@@ -2336,7 +2336,7 @@ mod tests {
         let request = CopyRequest {
             skill_name: "demo".to_string(),
             source,
-            target_environment: EnvironmentRef::Host,
+            target_environment: EnvironmentRef::Native,
             target_project_ids: vec!["healthy".to_string(), "conflicted".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: selection.revision,
@@ -2384,8 +2384,8 @@ mod tests {
         fs::write(source_skill.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
         fs::create_dir_all(&target_root).unwrap();
 
-        let source = context(EnvironmentRef::Host, "source");
-        let target = context(EnvironmentRef::Host, "target");
+        let source = context(EnvironmentRef::Native, "source");
+        let target = context(EnvironmentRef::Native, "target");
         let facts = Arc::new(Mutex::new(HashMap::from([
             (
                 source.clone(),
@@ -2418,7 +2418,7 @@ mod tests {
         let request = CopyRequest {
             skill_name: "demo".to_string(),
             source,
-            target_environment: EnvironmentRef::Host,
+            target_environment: EnvironmentRef::Native,
             target_project_ids: vec!["target".to_string()],
             agent_selection: AgentSelectionSubmission {
                 revision: selection.revision,

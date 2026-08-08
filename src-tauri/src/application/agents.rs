@@ -19,10 +19,10 @@ use crate::environment::agent_environment::{
     EnvironmentContext, ResolvedAgent, ResolvedAgentScope,
 };
 use crate::environment::context_resolver::{ContextResolver, ResolvedContext};
-use crate::environment::directory_inspection::{inspect_host, inspect_wsl, DirectoryInspection};
+use crate::environment::directory_inspection::{inspect_native, inspect_wsl, DirectoryInspection};
 use crate::environment::lock_io::EnvironmentLockIo;
 use crate::environment::types::{
-    ContextRef, ContextScope, EnvironmentRef, EnvironmentStatus, ResourceLocator,
+    EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
 };
 use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
@@ -86,7 +86,7 @@ pub struct AgentDeleteScopeImpact {
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub enum AgentDeletePathKind {
-    Shared,
+    Standard,
     Private,
 }
 
@@ -450,18 +450,18 @@ fn validate_draft(definition: &CustomAgentDefinition) -> Result<(), AgentCommand
 }
 
 pub async fn list_agents(
-    context: ContextRef,
+    context: SkillLocationRef,
     environment_registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
 ) -> Result<AgentRuntimeSnapshot, AgentCommandError> {
     match &context.environment {
-        EnvironmentRef::Host => {
-            let resolved = ContextResolver::resolve_host(context)?;
+        EnvironmentRef::Native => {
+            let resolved = ContextResolver::resolve_native(context)?;
             let project_path = resolved
                 .project
                 .as_ref()
                 .map(|project| project.native_path.clone());
-            let environment = host_environment_context(&resolved);
+            let environment = native_environment_context(&resolved);
             list_agents_dynamic(agent_registry, environment, project_path.as_deref())
                 .await
                 .map_err(AgentCommandError::from)
@@ -528,14 +528,14 @@ where
 }
 
 pub fn get_agent_settings_snapshot(
-    context: ContextRef,
+    context: SkillLocationRef,
     registry: &ManagedAgentRegistry,
 ) -> AgentSettingsSnapshot {
     settings_snapshot(registry, context.environment)
 }
 
 pub async fn validate_custom_agent_draft(
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     environment_registry: &WslRuntime,
     agent_registry: &ManagedAgentRegistry,
@@ -543,8 +543,8 @@ pub async fn validate_custom_agent_draft(
     let draft_id = draft.id.clone();
     let preview_snapshot = agent_registry.preview_registry(draft)?.snapshot().clone();
     match &context.environment {
-        EnvironmentRef::Host => {
-            let resolved = ContextResolver::resolve_host(context)?;
+        EnvironmentRef::Native => {
+            let resolved = ContextResolver::resolve_native(context)?;
             let project_path = resolved
                 .project
                 .as_ref()
@@ -552,7 +552,7 @@ pub async fn validate_custom_agent_draft(
             resolve_custom_agent_preview(
                 &preview_snapshot,
                 &draft_id,
-                host_environment_context(&resolved),
+                native_environment_context(&resolved),
                 project_path.as_deref(),
             )
             .await
@@ -593,7 +593,7 @@ pub async fn validate_custom_agent_draft(
 }
 
 pub fn save_custom_agent(
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     original_id: Option<AgentId>,
     expected_registry_revision: String,
@@ -611,7 +611,7 @@ pub fn save_custom_agent(
 }
 
 pub async fn delete_custom_agent(
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
     registry: &ManagedAgentRegistry,
@@ -630,7 +630,7 @@ pub async fn delete_custom_agent(
 }
 
 pub async fn delete_invalid_custom_agent(
-    context: ContextRef,
+    context: SkillLocationRef,
     index: u32,
     expected_registry_revision: String,
     registry: &ManagedAgentRegistry,
@@ -648,7 +648,7 @@ pub async fn delete_invalid_custom_agent(
 fn delete_invalid_custom_agent_with_controller(
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    context: ContextRef,
+    context: SkillLocationRef,
     index: u32,
     expected_registry_revision: String,
 ) -> Result<AgentDeleteResult, AgentCommandError> {
@@ -667,7 +667,7 @@ fn delete_invalid_custom_agent_with_controller(
 }
 
 pub async fn preview_custom_agent_delete(
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
     registry: &ManagedAgentRegistry,
@@ -677,23 +677,23 @@ pub async fn preview_custom_agent_delete(
     let definition = captured.definition;
     let snapshot = delete_preview_snapshot(&definition, &captured.registry.snapshot().revision)?;
     match &context.environment {
-        EnvironmentRef::Host => {
+        EnvironmentRef::Native => {
             let defaults = crate::application::default_agents::read_raw_default_target_agents(
                 context.clone(),
                 environment_registry,
             )
             .await?;
-            let resolved = ContextResolver::resolve_host(context)?;
+            let resolved = ContextResolver::resolve_native(context)?;
             let project_path = resolved
                 .project
                 .as_ref()
                 .map(|project| project.native_path.as_str());
             let runtime =
-                AgentEnvironmentResolver::from_environment(host_environment_context(&resolved))
+                AgentEnvironmentResolver::from_environment(native_environment_context(&resolved))
                     .resolve_registry(&snapshot, project_path)
                     .await?;
             let inspections =
-                inspect_host(&delete_impact_resolved_paths(&runtime, &definition.id)).await;
+                inspect_native(&delete_impact_resolved_paths(&runtime, &definition.id)).await;
             Ok(build_delete_impact(
                 &runtime,
                 definition.id,
@@ -782,7 +782,7 @@ pub async fn preview_custom_agent_delete(
 
 async fn resolve_wsl_delete_preview_contexts(
     session: &WslSession,
-    selected_context: ContextRef,
+    selected_context: SkillLocationRef,
 ) -> Result<WslDeletePreviewContexts, AppError> {
     resolve_wsl_delete_preview_contexts_with(
         session,
@@ -794,18 +794,18 @@ async fn resolve_wsl_delete_preview_contexts(
 
 async fn resolve_wsl_delete_preview_contexts_with<Resolve, ResolveFuture>(
     session: &WslSession,
-    selected_context: ContextRef,
+    selected_context: SkillLocationRef,
     mut resolve: Resolve,
 ) -> Result<WslDeletePreviewContexts, AppError>
 where
-    Resolve: FnMut(ContextRef, WslSession) -> ResolveFuture,
+    Resolve: FnMut(SkillLocationRef, WslSession) -> ResolveFuture,
     ResolveFuture: std::future::Future<Output = Result<ResolvedContext, AppError>>,
 {
     let runtime = resolve(selected_context.clone(), session.clone()).await?;
     let defaults = resolve(
-        ContextRef {
+        SkillLocationRef {
             environment: selected_context.environment,
-            scope: ContextScope::Global,
+            scope: SkillLocation::Global,
         },
         session.clone(),
     )
@@ -959,7 +959,7 @@ fn save_custom_agent_inner_with_original_id(
 fn save_custom_agent_with_controller(
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     expected_registry_revision: String,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
@@ -976,7 +976,7 @@ fn save_custom_agent_with_controller(
 fn save_custom_agent_with_original_id_controller(
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    context: ContextRef,
+    context: SkillLocationRef,
     draft: CustomAgentDefinition,
     original_id: Option<AgentId>,
     expected_registry_revision: String,
@@ -1085,8 +1085,8 @@ fn delete_impact_resolved_paths(runtime: &AgentRuntimeSnapshot, id: &AgentId) ->
         .into_iter()
         .flat_map(|scope| {
             let mut paths = Vec::new();
-            if scope.reads_shared {
-                paths.extend(scope.shared_path.clone());
+            if scope.reads_standard {
+                paths.extend(scope.standard_path.clone());
             }
             paths.extend(scope.private_path.clone());
             paths
@@ -1104,13 +1104,13 @@ fn delete_scope_path_impacts(
         return Vec::new();
     }
     let mut paths = Vec::new();
-    if definition_scope.reads_shared {
+    if definition_scope.reads_standard {
         paths.push(delete_path_impact(
-            AgentDeletePathKind::Shared,
-            shared_logical_path(&scope),
-            resolved_scope.shared_path.clone(),
+            AgentDeletePathKind::Standard,
+            standard_logical_path(&scope),
+            resolved_scope.standard_path.clone(),
             resolved_scope
-                .shared_presence
+                .standard_presence
                 .unwrap_or(DirectoryPresenceState::EnvironmentUnavailable),
             inspections,
         ));
@@ -1129,7 +1129,7 @@ fn delete_scope_path_impacts(
     paths
 }
 
-fn shared_logical_path(scope: &Scope) -> PathSpec {
+fn standard_logical_path(scope: &Scope) -> PathSpec {
     match scope {
         Scope::Global => PathSpec::home(".agents/skills"),
         Scope::Project => PathSpec::project(".agents/skills"),
@@ -1190,7 +1190,7 @@ fn delete_path_impact(
 fn delete_custom_agent_with_controller(
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
 ) -> Result<AgentSettingsSnapshot, AgentCommandError> {
@@ -1209,7 +1209,7 @@ async fn delete_custom_agent_with_cleanup(
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
     environment_registry: &WslRuntime,
-    context: ContextRef,
+    context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
 ) -> Result<AgentDeleteResult, AgentCommandError> {
@@ -1259,16 +1259,16 @@ fn delete_preview_snapshot(
     })
 }
 
-fn host_environment_context(resolved: &ResolvedContext) -> EnvironmentContext {
+fn native_environment_context(resolved: &ResolvedContext) -> EnvironmentContext {
     let environment_variables = std::env::vars().collect::<BTreeMap<_, _>>();
     let home = resolved.home.native_path.clone();
     let config_home = PATHS.config_home.to_string_lossy().to_string();
     let revision = environment_revision(
-        "host",
+        "native",
         &(home.clone(), config_home.clone(), &environment_variables),
     );
     EnvironmentContext {
-        environment: EnvironmentRef::Host,
+        environment: EnvironmentRef::Native,
         home,
         config_home,
         environment_variables,
@@ -1355,7 +1355,7 @@ mod tests {
             },
             project: CustomScopeDefinition {
                 enabled: false,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             detection_paths: vec![CustomPathSpec::Based {
@@ -1365,14 +1365,14 @@ mod tests {
         }
     }
 
-    fn host_environment(home: &std::path::Path) -> EnvironmentContext {
+    fn native_environment(home: &std::path::Path) -> EnvironmentContext {
         EnvironmentContext {
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             home: home.to_string_lossy().to_string(),
             config_home: home.join(".config").to_string_lossy().to_string(),
             environment_variables: BTreeMap::new(),
             availability: EnvironmentStatus::Available,
-            revision: "host-test-revision".to_string(),
+            revision: "native-test-revision".to_string(),
             wsl_workspace: None,
         }
     }
@@ -1395,9 +1395,9 @@ mod tests {
             distro_name: session.distro_name.clone(),
         };
         ResolvedContext {
-            context: ContextRef {
+            context: SkillLocationRef {
                 environment: environment.clone(),
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             project: None,
             home: ResourceLocator {
@@ -1417,7 +1417,7 @@ mod tests {
 
     fn resolved_wsl_context_for(
         session: &WslSession,
-        context: ContextRef,
+        context: SkillLocationRef,
         lock_path: &str,
     ) -> ResolvedContext {
         let mut resolved = resolved_wsl_context(session);
@@ -1463,7 +1463,7 @@ mod tests {
 
         save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             draft.clone(),
             initial_revision.clone(),
         )
@@ -1471,7 +1471,7 @@ mod tests {
 
         let error = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             draft.clone(),
             initial_revision.clone(),
         )
@@ -1486,7 +1486,7 @@ mod tests {
 
         let edit_error = save_custom_agent_inner_with_original_id(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             draft.clone(),
             Some(draft.id),
             initial_revision,
@@ -1517,8 +1517,8 @@ mod tests {
             .expect("custom agent directory");
         let service = ManagedAgentRegistry::from_repository(repository);
 
-        let settings = settings_snapshot(&service, EnvironmentRef::Host);
-        let runtime = list_agents_dynamic(&service, host_environment(temp.path()), None)
+        let settings = settings_snapshot(&service, EnvironmentRef::Native);
+        let runtime = list_agents_dynamic(&service, native_environment(temp.path()), None)
             .await
             .expect("runtime snapshot");
 
@@ -1539,7 +1539,7 @@ mod tests {
         assert!(!runtime
             .agents
             .contains_key(&AgentId::parse("broken-id").unwrap()));
-        assert_eq!(runtime.environment, EnvironmentRef::Host);
+        assert_eq!(runtime.environment, EnvironmentRef::Native);
     }
 
     #[tokio::test]
@@ -1550,13 +1550,13 @@ mod tests {
         std::fs::write(&path, original).expect("future schema fixture");
         let service =
             ManagedAgentRegistry::from_repository(CustomAgentRepository::new(path.clone()));
-        let settings = settings_snapshot(&service, EnvironmentRef::Host);
-        let runtime = list_agents_dynamic(&service, host_environment(temp.path()), None)
+        let settings = settings_snapshot(&service, EnvironmentRef::Native);
+        let runtime = list_agents_dynamic(&service, native_environment(temp.path()), None)
             .await
             .expect("built-in runtime remains available");
         let validation = validate_custom_agent_draft_inner(
             &service,
-            host_environment(temp.path()),
+            native_environment(temp.path()),
             None,
             custom_definition("preview-agent", ".preview-agent"),
         )
@@ -1571,28 +1571,28 @@ mod tests {
         invalid_draft.display_name = "   ".to_string();
         let invalid_save_error = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             invalid_draft,
             revision.clone(),
         )
         .expect_err("storage error takes precedence over draft validation");
         let collision_save_error = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             custom_definition("codex", ".old-codex"),
             revision.clone(),
         )
         .expect_err("storage error takes precedence over Built-in collision");
         let save_error = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             custom_definition("blocked-agent", ".blocked-agent"),
             revision.clone(),
         )
         .expect_err("unavailable storage blocks save");
         let delete_error = delete_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             AgentId::parse("blocked-agent").unwrap(),
             revision,
         )
@@ -1628,17 +1628,17 @@ mod tests {
         };
         let service =
             ManagedAgentRegistry::from_repository_initializer(|| Err(expected_error.clone()));
-        let settings = settings_snapshot(&service, EnvironmentRef::Host);
+        let settings = settings_snapshot(&service, EnvironmentRef::Native);
         let first_runtime = list_agents_dynamic(
             &service,
-            host_environment(std::path::Path::new("/unavailable-home")),
+            native_environment(std::path::Path::new("/unavailable-home")),
             None,
         )
         .await
         .expect("empty runtime snapshot");
         let second_runtime = list_agents_dynamic(
             &service,
-            host_environment(std::path::Path::new("/unavailable-home")),
+            native_environment(std::path::Path::new("/unavailable-home")),
             None,
         )
         .await
@@ -1648,7 +1648,7 @@ mod tests {
         };
         let validation_error = validate_custom_agent_draft_inner(
             &service,
-            host_environment(std::path::Path::new("/unavailable-home")),
+            native_environment(std::path::Path::new("/unavailable-home")),
             None,
             custom_definition("preview-agent", ".preview-agent"),
         )
@@ -1656,14 +1656,14 @@ mod tests {
         .expect_err("path failure blocks validation");
         let save_error = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             custom_definition("new-agent", ".new-agent"),
             settings.registry_revision.clone(),
         )
         .expect_err("path failure blocks save");
         let delete_error = delete_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             AgentId::parse("missing-agent").unwrap(),
             settings.registry_revision.clone(),
         )
@@ -1698,14 +1698,14 @@ mod tests {
         std::fs::write(&path, original).expect("corrupt primary fixture");
         let service =
             ManagedAgentRegistry::from_repository(CustomAgentRepository::new(path.clone()));
-        let settings = settings_snapshot(&service, EnvironmentRef::Host);
+        let settings = settings_snapshot(&service, EnvironmentRef::Native);
         let issue = settings
             .custom_storage_issue
             .expect("Settings exposes storage failure");
 
         let save_error = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             custom_definition("blocked-agent", ".blocked-agent"),
             settings.registry_revision,
         )
@@ -1732,7 +1732,7 @@ mod tests {
 
         let saved = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             custom_definition("new-agent", ".new-agent"),
             initial_revision.clone(),
         )
@@ -1745,7 +1745,7 @@ mod tests {
 
         let deleted = delete_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             AgentId::parse("new-agent").unwrap(),
             saved.registry_revision.clone(),
         )
@@ -1804,7 +1804,7 @@ mod tests {
             active_custom: Vec::new(),
             disabled_conflicts: Vec::new(),
             invalid_custom_records: Vec::new(),
-            current_environment: EnvironmentRef::Host,
+            current_environment: EnvironmentRef::Native,
             custom_storage_issue: None,
         }
     }
@@ -1821,7 +1821,7 @@ mod tests {
         let mut definition = custom_definition_with_project_scope("my-agent", ".my-agent");
         definition.global = CustomScopeDefinition {
             enabled: true,
-            location: ScopeLocation::Shared,
+            location: ScopeLocation::Standard,
             private_path: None,
         };
         let snapshot = AgentRegistrySnapshot {
@@ -1831,12 +1831,12 @@ mod tests {
                 definition.normalize().expect("normalize definition"),
             )]),
         };
-        let runtime = AgentEnvironmentResolver::from_environment(host_environment(temp.path()))
+        let runtime = AgentEnvironmentResolver::from_environment(native_environment(temp.path()))
             .resolve_registry(&snapshot, Some(project.to_str().unwrap()))
             .await
             .expect("resolve one current-environment snapshot");
 
-        let inspections = crate::environment::directory_inspection::inspect_host(
+        let inspections = crate::environment::directory_inspection::inspect_native(
             &delete_impact_resolved_paths(&runtime, &definition.id),
         )
         .await;
@@ -1853,7 +1853,10 @@ mod tests {
 
         assert_eq!(impact.agent_id.as_str(), "my-agent");
         assert_eq!(impact.scopes[0].scope, Scope::Global);
-        assert_eq!(impact.scopes[0].paths[0].kind, AgentDeletePathKind::Shared);
+        assert_eq!(
+            impact.scopes[0].paths[0].kind,
+            AgentDeletePathKind::Standard
+        );
         assert_eq!(
             impact.scopes[0].paths[0].logical_path,
             PathSpec::home(".agents/skills")
@@ -1879,7 +1882,7 @@ mod tests {
                 definition.normalize().expect("normalize definition"),
             )]),
         };
-        let runtime = AgentEnvironmentResolver::from_environment(host_environment(temp.path()))
+        let runtime = AgentEnvironmentResolver::from_environment(native_environment(temp.path()))
             .resolve_registry(&snapshot, None)
             .await
             .expect("resolve one current-environment snapshot");
@@ -1921,11 +1924,11 @@ mod tests {
                 definition.normalize().expect("normalize definition"),
             )]),
         };
-        let runtime = AgentEnvironmentResolver::from_environment(host_environment(temp.path()))
+        let runtime = AgentEnvironmentResolver::from_environment(native_environment(temp.path()))
             .resolve_registry(&snapshot, None)
             .await
             .expect("resolve runtime");
-        let inspected = crate::environment::directory_inspection::inspect_host(
+        let inspected = crate::environment::directory_inspection::inspect_native(
             &delete_impact_resolved_paths(&runtime, &definition.id),
         )
         .await;
@@ -1940,7 +1943,10 @@ mod tests {
 
         assert_eq!(inspected.len(), 1);
         assert_eq!(impact.scopes[0].paths.len(), 2);
-        assert_eq!(impact.scopes[0].paths[0].kind, AgentDeletePathKind::Shared);
+        assert_eq!(
+            impact.scopes[0].paths[0].kind,
+            AgentDeletePathKind::Standard
+        );
         assert_eq!(impact.scopes[0].paths[1].kind, AgentDeletePathKind::Private);
         assert_eq!(
             impact.scopes[0].paths[0].logical_path,
@@ -2019,11 +2025,11 @@ mod tests {
     #[tokio::test]
     async fn wsl_project_preview_uses_the_global_context_lock_for_defaults() {
         let session = wsl_session();
-        let selected_context = ContextRef {
+        let selected_context = SkillLocationRef {
             environment: EnvironmentRef::Wsl {
                 distro_name: session.distro_name.clone(),
             },
-            scope: ContextScope::Project {
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         };
@@ -2035,8 +2041,8 @@ mod tests {
                 move |context, session| {
                     observed_scopes.lock().unwrap().push(context.scope.clone());
                     let lock = match context.scope {
-                        ContextScope::Global => "/home/alice/.local/state/skills/.skill-lock.json",
-                        ContextScope::Project { .. } => "/work/project/skills-lock.json",
+                        SkillLocation::Global => "/home/alice/.local/state/skills/.skill-lock.json",
+                        SkillLocation::Project { .. } => "/work/project/skills-lock.json",
                     };
                     std::future::ready(Ok(resolved_wsl_context_for(&session, context, lock)))
                 }
@@ -2045,7 +2051,7 @@ mod tests {
             .expect("resolve selected and global contexts");
 
         assert_eq!(contexts.runtime.context, selected_context);
-        assert_eq!(contexts.defaults.context.scope, ContextScope::Global);
+        assert_eq!(contexts.defaults.context.scope, SkillLocation::Global);
         assert_eq!(
             contexts.defaults.lock.native_path,
             "/home/alice/.local/state/skills/.skill-lock.json"
@@ -2053,10 +2059,10 @@ mod tests {
         assert_eq!(
             *observed_scopes.lock().unwrap(),
             vec![
-                ContextScope::Project {
+                SkillLocation::Project {
                     project_id: "project-1".to_string(),
                 },
-                ContextScope::Global,
+                SkillLocation::Global,
             ]
         );
     }
@@ -2169,7 +2175,7 @@ mod tests {
             let mut definition = custom_definition(id, ".detection");
             definition.global = CustomScopeDefinition {
                 enabled: false,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             };
             definition.project = CustomScopeDefinition {
@@ -2187,11 +2193,12 @@ mod tests {
                     definition.normalize().expect("normalize definition"),
                 )]),
             };
-            let runtime = AgentEnvironmentResolver::from_environment(host_environment(temp.path()))
-                .resolve_registry(&snapshot, None)
-                .await
-                .expect("resolve runtime");
-            let inspected = crate::environment::directory_inspection::inspect_host(
+            let runtime =
+                AgentEnvironmentResolver::from_environment(native_environment(temp.path()))
+                    .resolve_registry(&snapshot, None)
+                    .await
+                    .expect("resolve runtime");
+            let inspected = crate::environment::directory_inspection::inspect_native(
                 &delete_impact_resolved_paths(&runtime, &definition.id),
             )
             .await;
@@ -2204,7 +2211,7 @@ mod tests {
             );
             let paths = &impact.scopes[1].paths;
 
-            assert_eq!(paths[0].kind, AgentDeletePathKind::Shared);
+            assert_eq!(paths[0].kind, AgentDeletePathKind::Standard);
             assert_eq!(
                 paths[0].unavailable_reason,
                 Some(DetectionReason::ProjectContextRequired)
@@ -2240,7 +2247,7 @@ mod tests {
 
         let error = validate_custom_agent_draft_inner(
             &service,
-            host_environment(std::path::Path::new("/definitely/not/read")),
+            native_environment(std::path::Path::new("/definitely/not/read")),
             None,
             draft,
         )
@@ -2266,14 +2273,14 @@ mod tests {
 
         let save_error = save_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             custom_definition("new-agent", ".new-agent"),
             "stale-revision".to_string(),
         )
         .expect_err("stale save");
         let delete_error = delete_custom_agent_inner(
             &service,
-            EnvironmentRef::Host,
+            EnvironmentRef::Native,
             AgentId::parse("source-agent").unwrap(),
             "stale-revision".to_string(),
         )
@@ -2348,11 +2355,11 @@ mod tests {
             &service,
             &controller,
             &environments,
-            ContextRef {
+            SkillLocationRef {
                 environment: EnvironmentRef::Wsl {
                     distro_name: "missing-session".to_string(),
                 },
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             AgentId::parse("codex").unwrap(),
             revision,
@@ -2383,9 +2390,9 @@ mod tests {
         let error = save_custom_agent_with_controller(
             &service,
             &controller,
-            ContextRef {
-                environment: EnvironmentRef::Host,
-                scope: ContextScope::Global,
+            SkillLocationRef {
+                environment: EnvironmentRef::Native,
+                scope: SkillLocation::Global,
             },
             invalid,
             service.registry_snapshot(true).revision.clone(),
@@ -2408,9 +2415,9 @@ mod tests {
         let repository_path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
         let controller = RuntimeAdmissionCoordinator::default();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let _guard = controller
             .begin_mutation(MutationKind::Install, context.clone())
@@ -2461,9 +2468,9 @@ mod tests {
         let repository_path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
         let controller = RuntimeAdmissionCoordinator::default();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let _guard = controller
             .begin_mutation(MutationKind::Install, context.clone())
@@ -2510,9 +2517,9 @@ mod tests {
         let path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
         let controller = RuntimeAdmissionCoordinator::default();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let _guard = controller
             .begin_mutation(MutationKind::Install, context.clone())
@@ -2545,9 +2552,9 @@ mod tests {
         let service =
             ManagedAgentRegistry::from_repository_initializer(|| Err(expected_error.clone()));
         let controller = RuntimeAdmissionCoordinator::default();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let _guard = controller
             .begin_mutation(MutationKind::Install, context.clone())
@@ -2586,9 +2593,9 @@ mod tests {
         let repository_path = repository.path().to_path_buf();
         let service = ManagedAgentRegistry::from_repository(repository);
         let controller = RuntimeAdmissionCoordinator::default();
-        let context = ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         };
         let r1 = service.registry_snapshot(true);
         let repository_before = std::fs::read(&repository_path).expect("repository bytes");
@@ -2650,11 +2657,11 @@ mod tests {
             runtime_generation: 0,
         };
         let resolved = ResolvedContext {
-            context: ContextRef {
+            context: SkillLocationRef {
                 environment: EnvironmentRef::Wsl {
                     distro_name: session.distro_name.clone(),
                 },
-                scope: ContextScope::Global,
+                scope: SkillLocation::Global,
             },
             project: None,
             home: ResourceLocator {
@@ -2691,14 +2698,14 @@ mod tests {
         assert_eq!(context.config_home, "/home/alice/.config");
         assert_eq!(context.environment_variables["CODEX_HOME"], "/opt/codex");
         assert_eq!(context.wsl_workspace, Some(workspace));
-        assert_ne!(context.revision, "compatibility-host");
+        assert_ne!(context.revision, "compatibility-native");
     }
 
     fn revision_only_runtime(registry: &str, environment: &str) -> AgentRuntimeSnapshot {
         AgentRuntimeSnapshot {
             registry_revision: registry.to_string(),
             environment_revision: environment.to_string(),
-            environment: EnvironmentRef::Host,
+            environment: EnvironmentRef::Native,
             availability: EnvironmentStatus::Available,
             project_path: None,
             agents: BTreeMap::new(),

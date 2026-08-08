@@ -7,14 +7,14 @@ use specta::Type;
 
 use crate::environment::planning::TargetEntryKind;
 use crate::environment::planning::TargetFactResolver;
-use crate::environment::types::{ContextRef, ResourceLocator};
+use crate::environment::types::{ResourceLocator, SkillLocationRef};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct SkillIdentity {
-    pub context: ContextRef,
+    pub context: SkillLocationRef,
     pub skill_name: String,
 }
 
@@ -37,7 +37,7 @@ pub type ResourceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait ResourceContextSource: Send + Sync {
     fn resolve<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> ResourceFuture<'a, Result<ResolvedResourceContext, AppError>>;
 }
 
@@ -99,7 +99,7 @@ where
 
     pub async fn open_config(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         kind: ConfigResourceKind,
     ) -> Result<(), AppError> {
         let resolved = self.source.resolve(context).await?;
@@ -113,7 +113,7 @@ where
 
     async fn resolve_directory(
         &self,
-        context: &ContextRef,
+        context: &SkillLocationRef,
         target: ResourceLocator,
     ) -> Result<ResourceLocator, AppError> {
         let mut facts = self
@@ -163,7 +163,7 @@ impl RuntimeResourceContextSource {
 impl ResourceContextSource for RuntimeResourceContextSource {
     fn resolve<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> ResourceFuture<'a, Result<ResolvedResourceContext, AppError>> {
         use crate::application::install_planner::InstallPlanningFactSource;
 
@@ -210,7 +210,7 @@ impl AuthorizedResourceReader for RuntimeResourceReader {
     ) -> ResourceFuture<'a, Result<String, AppError>> {
         Box::pin(async move {
             match &target.environment {
-                crate::environment::types::EnvironmentRef::Host => {
+                crate::environment::types::EnvironmentRef::Native => {
                     crate::core::skill::read_skill_content(&target.native_path)
                 }
                 crate::environment::types::EnvironmentRef::Wsl { distro_name } => {
@@ -266,7 +266,7 @@ mod tests {
     use crate::environment::runtime::{
         EntryFingerprint, ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
-    use crate::environment::types::{ContextScope, EnvironmentRef};
+    use crate::environment::types::{EnvironmentRef, SkillLocation};
 
     #[derive(Clone)]
     struct StaticSource;
@@ -274,7 +274,7 @@ mod tests {
     impl ResourceContextSource for StaticSource {
         fn resolve<'a>(
             &'a self,
-            context: &'a ContextRef,
+            context: &'a SkillLocationRef,
         ) -> ResourceFuture<'a, Result<ResolvedResourceContext, AppError>> {
             let environment = context.environment.clone();
             Box::pin(async move {
@@ -292,7 +292,7 @@ mod tests {
     impl TargetFactResolver for DirectoryTargets {
         fn resolve<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
             destinations: &'a [ResourceLocator],
             _cancellation: Option<crate::core::mutation::CancellationSignal>,
         ) -> TargetFactFuture<'a, Result<Vec<ResolvedTargetFact>, AppError>> {
@@ -346,10 +346,10 @@ mod tests {
         }
     }
 
-    fn context() -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Project {
+    fn context() -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Project {
                 project_id: "project-1".to_string(),
             },
         }
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(
             *opened.lock().unwrap(),
             vec![locator(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 &std::path::Path::new("/work/project/.agents/skills")
                     .join("demo")
                     .to_string_lossy()
@@ -431,7 +431,7 @@ mod tests {
 
         assert_eq!(
             *opened.lock().unwrap(),
-            vec![locator(EnvironmentRef::Host, "/work/project")]
+            vec![locator(EnvironmentRef::Native, "/work/project")]
         );
     }
 
@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(
             *read.lock().unwrap(),
             vec![locator(
-                EnvironmentRef::Host,
+                EnvironmentRef::Native,
                 &std::path::Path::new("/work/project/.agents/skills")
                     .join("demo")
                     .to_string_lossy()

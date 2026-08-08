@@ -85,7 +85,8 @@ pub enum AgentSource {
 #[serde(rename_all = "kebab-case")]
 #[specta(rename_all = "kebab-case")]
 pub enum ScopeLocation {
-    Shared,
+    #[serde(alias = "shared")]
+    Standard,
     Private,
     Both,
 }
@@ -229,7 +230,6 @@ impl PathSpec {
 #[specta(tag = "kind", rename_all = "camelCase")]
 pub enum DetectionSpec {
     AnyPathExists { paths: Vec<PathSpec> },
-    Eve,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -237,14 +237,14 @@ pub enum DetectionSpec {
 #[specta(rename_all = "camelCase")]
 pub struct ScopeDefinition {
     pub enabled: bool,
-    pub reads_shared: bool,
+    pub reads_standard: bool,
     pub private_path: Option<PathSpec>,
 }
 
 impl ScopeDefinition {
     #[cfg(test)]
     fn validate(&self, field: &str) -> Result<(), AgentFieldError> {
-        if self.enabled && !self.reads_shared && self.private_path.is_none() {
+        if self.enabled && !self.reads_standard && self.private_path.is_none() {
             return Err(AgentFieldError::new(field, "invalidScope"));
         }
         if let Some(path) = &self.private_path {
@@ -275,7 +275,8 @@ pub enum LegacyPathBehavior {
 #[specta(rename_all = "camelCase")]
 pub enum LegacyMigrationTarget {
     CurrentPrivate,
-    SharedCanonical,
+    #[serde(alias = "sharedCanonical")]
+    StandardCanonical,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -346,20 +347,12 @@ impl AgentDefinition {
             ));
         }
 
-        match &self.detection {
-            DetectionSpec::AnyPathExists { paths } => {
-                if paths.is_empty() {
-                    return Err(AgentFieldError::new("detection.paths", "required"));
-                }
-                for (index, path) in paths.iter().enumerate() {
-                    path.validate(&format!("detection.paths[{index}]"))?;
-                }
-            }
-            DetectionSpec::Eve => {
-                if self.adapter != AgentAdapter::Eve {
-                    return Err(AgentFieldError::new("adapter", "invalidAdapter"));
-                }
-            }
+        let DetectionSpec::AnyPathExists { paths } = &self.detection;
+        if paths.is_empty() {
+            return Err(AgentFieldError::new("detection.paths", "required"));
+        }
+        for (index, path) in paths.iter().enumerate() {
+            path.validate(&format!("detection.paths[{index}]"))?;
         }
 
         for (index, legacy) in self.legacy_paths.iter().enumerate() {
@@ -461,7 +454,7 @@ impl CustomScopeDefinition {
         };
 
         match self.location {
-            ScopeLocation::Shared if self.private_path.is_some() => {
+            ScopeLocation::Standard if self.private_path.is_some() => {
                 return Err(AgentFieldError::new(private_field, "forbidden"));
             }
             ScopeLocation::Private | ScopeLocation::Both if self.private_path.is_none() => {
@@ -481,7 +474,7 @@ impl CustomScopeDefinition {
 
         Ok(ScopeDefinition {
             enabled: self.enabled,
-            reads_shared: matches!(self.location, ScopeLocation::Shared | ScopeLocation::Both),
+            reads_standard: matches!(self.location, ScopeLocation::Standard | ScopeLocation::Both),
             private_path: self.private_path.as_ref().map(CustomPathSpec::normalize),
         })
     }
@@ -638,12 +631,12 @@ mod tests {
             display_name: "Demo Agent".to_string(),
             global: CustomScopeDefinition {
                 enabled: true,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             project: CustomScopeDefinition {
                 enabled: false,
-                location: ScopeLocation::Shared,
+                location: ScopeLocation::Standard,
                 private_path: None,
             },
             detection_paths: vec![custom_path(CustomPathBase::Home, ".demo")],
@@ -673,10 +666,10 @@ mod tests {
     }
 
     #[test]
-    fn scope_location_uses_kebab_case_serialization() {
+    fn scope_location_uses_stable_serialization_and_reads_legacy_shared_value() {
         assert_eq!(
-            serde_json::to_string(&ScopeLocation::Shared).unwrap(),
-            "\"shared\""
+            serde_json::to_string(&ScopeLocation::Standard).unwrap(),
+            "\"standard\""
         );
         assert_eq!(
             serde_json::to_string(&ScopeLocation::Private).unwrap(),
@@ -685,6 +678,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&ScopeLocation::Both).unwrap(),
             "\"both\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ScopeLocation>("\"shared\"").unwrap(),
+            ScopeLocation::Standard
         );
     }
 
@@ -698,7 +695,7 @@ mod tests {
 
         let normalized = scope.normalize().expect("valid scope");
 
-        assert!(normalized.reads_shared);
+        assert!(normalized.reads_standard);
         assert!(normalized.private_path.is_some());
     }
 
@@ -718,7 +715,7 @@ mod tests {
     fn custom_scope_rejects_private_path_for_shared() {
         let scope = CustomScopeDefinition {
             enabled: true,
-            location: ScopeLocation::Shared,
+            location: ScopeLocation::Standard,
             private_path: Some(custom_path(CustomPathBase::Home, ".demo/skills")),
         };
 
@@ -765,12 +762,12 @@ mod tests {
             aliases: Vec::new(),
             global: ScopeDefinition {
                 enabled: true,
-                reads_shared: false,
+                reads_standard: false,
                 private_path: Some(PathSpec::project(".demo/skills")),
             },
             project: ScopeDefinition {
                 enabled: true,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             },
             detection: DetectionSpec::AnyPathExists {
@@ -812,12 +809,12 @@ mod tests {
                 aliases: Vec::new(),
                 global: ScopeDefinition {
                     enabled: true,
-                    reads_shared: false,
+                    reads_standard: false,
                     private_path: Some(private_path),
                 },
                 project: ScopeDefinition {
                     enabled: false,
-                    reads_shared: false,
+                    reads_standard: false,
                     private_path: None,
                 },
                 detection: DetectionSpec::AnyPathExists {
@@ -882,12 +879,12 @@ mod tests {
             aliases: Vec::new(),
             global: ScopeDefinition {
                 enabled: true,
-                reads_shared: true,
+                reads_standard: true,
                 private_path: None,
             },
             project: ScopeDefinition {
                 enabled: true,
-                reads_shared: false,
+                reads_standard: false,
                 private_path: Some(PathSpec::absolute("/work/demo/.agent/skills")),
             },
             detection: DetectionSpec::AnyPathExists {
@@ -1002,9 +999,7 @@ mod tests {
             .push(custom_path(CustomPathBase::Home, ".demo"));
 
         let normalized = definition.normalize().expect("valid definition");
-        let DetectionSpec::AnyPathExists { paths } = normalized.detection else {
-            panic!("custom definitions must use any-path detection");
-        };
+        let DetectionSpec::AnyPathExists { paths } = normalized.detection;
         assert_eq!(paths.len(), 1);
     }
 }

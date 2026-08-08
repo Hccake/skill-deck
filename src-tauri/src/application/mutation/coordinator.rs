@@ -10,7 +10,7 @@ use crate::application::mutation::result::{
 use crate::application::payload_session::PinnedPayloadLease;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::PayloadId;
-use crate::environment::types::ContextRef;
+use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::storage::lock_plan::{LockCommitReceipt, PreparedLockMutation};
 
@@ -62,12 +62,12 @@ pub trait PreparedLockCommitter: Send + Sync {
 pub trait RuntimeRevisionSource: Send + Sync {
     fn current<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> BoxFuture<'a, Result<RuntimeRevisions, AppError>>;
 
     fn snapshot<'a>(
         &'a self,
-        context: &'a ContextRef,
+        context: &'a SkillLocationRef,
     ) -> BoxFuture<'a, Result<RuntimeRevisionSnapshot, AppError>> {
         Box::pin(async move {
             let revisions = self.current(context).await?;
@@ -413,7 +413,7 @@ mod tests {
         ContextSnapshotRevision, EntryFingerprint, ExecutionBackend, PhysicalParentIdentity,
         PhysicalTargetKey,
     };
-    use crate::environment::types::{ContextScope, EnvironmentRef, ResourceLocator};
+    use crate::environment::types::{EnvironmentRef, ResourceLocator, SkillLocation};
     use crate::error::RecoveryResourceId;
     use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
 
@@ -605,14 +605,14 @@ mod tests {
     impl RuntimeRevisionSource for ChangingRootRevisions {
         fn current<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
         ) -> BoxFuture<'a, Result<RuntimeRevisions, AppError>> {
             Box::pin(async { Ok(revisions()) })
         }
 
         fn snapshot<'a>(
             &'a self,
-            _context: &'a ContextRef,
+            _context: &'a SkillLocationRef,
         ) -> BoxFuture<'a, Result<RuntimeRevisionSnapshot, AppError>> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             let change_authority = self.change_authority;
@@ -641,14 +641,14 @@ mod tests {
     impl RuntimeRevisionSource for FakeRevisions {
         fn current<'a>(
             &'a self,
-            context: &'a ContextRef,
+            context: &'a SkillLocationRef,
         ) -> BoxFuture<'a, Result<RuntimeRevisions, AppError>> {
             Box::pin(async move {
                 self.log.lock().unwrap().push(format!(
                     "runtime:{}",
                     match context.scope {
-                        ContextScope::Global => "global",
-                        ContextScope::Project { .. } => "project",
+                        SkillLocation::Global => "global",
+                        SkillLocation::Project { .. } => "project",
                     }
                 ));
                 Ok(self.revisions.clone())
@@ -656,10 +656,10 @@ mod tests {
         }
     }
 
-    fn context() -> ContextRef {
-        ContextRef {
-            environment: EnvironmentRef::Host,
-            scope: ContextScope::Global,
+    fn context() -> SkillLocationRef {
+        SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
         }
     }
 
@@ -686,7 +686,7 @@ mod tests {
         let document = LosslessLockDocument::empty(LockSchema::Project);
         PreparedLockMutation {
             target: ResourceLocator {
-                environment: EnvironmentRef::Host,
+                environment: EnvironmentRef::Native,
                 native_path: "/work/skills-lock.json".to_string(),
             },
             legacy_target: None,

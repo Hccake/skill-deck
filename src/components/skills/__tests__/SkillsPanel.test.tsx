@@ -8,22 +8,22 @@ import { makeResolvedAgent } from '@/test-utils';
 import type {
   AgentId,
   AppError,
-  ContextRef,
+  SkillLocationRef,
   InstalledSkill,
   ProjectInfo,
   ResolvedAgent,
 } from '@/bindings';
 import type { ReactNode } from 'react';
 
-const hostGlobal: ContextRef = {
-  environment: { kind: 'host' },
+const nativeGlobal: SkillLocationRef = {
+  environment: { kind: 'native' },
   scope: { scope: 'global' },
 };
-const ubuntuGlobal: ContextRef = {
+const ubuntuGlobal: SkillLocationRef = {
   environment: { kind: 'wsl', distro_name: 'Ubuntu' },
   scope: { scope: 'global' },
 };
-const ubuntuProject: ContextRef = {
+const ubuntuProject: SkillLocationRef = {
   environment: ubuntuGlobal.environment,
   scope: { scope: 'project', project_id: 'project-a' },
 };
@@ -71,9 +71,9 @@ function snapshot(
 const mocks = vi.hoisted(() => ({
   workspaceContextState: {
     selectedContext: {
-      environment: { kind: 'host' as const },
+      environment: { kind: 'native' as const },
       scope: { scope: 'global' as const },
-    } as ContextRef,
+    } as SkillLocationRef,
   },
   projectState: {
     projectsByEnvironment: {} as Record<string, ProjectInfo[]>,
@@ -105,10 +105,10 @@ const mocks = vi.hoisted(() => ({
     openAdd: vi.fn(),
     openRepairSource: vi.fn(),
   },
-  updateWorkflowState: { phase: 'closed', context: null as ContextRef | null, skillNames: [] as string[], open: vi.fn().mockResolvedValue(true) },
+  updateWorkflowState: { phase: 'closed', context: null as SkillLocationRef | null, skillNames: [] as string[], open: vi.fn().mockResolvedValue(true) },
   updateWorkflowSelectors: [] as Array<(state: {
     phase: string;
-    context: ContextRef | null;
+    context: SkillLocationRef | null;
     skillNames: string[];
     open: (...args: unknown[]) => unknown;
   }) => unknown>,
@@ -127,7 +127,7 @@ vi.mock('@/stores/workspace-context', () => ({
 
 vi.mock('@/hooks/useProjectWorkspace', () => ({
   useProjectWorkspace: (environment: { kind: string; distro_name?: string }) => {
-    const key = environment.kind === 'host' ? 'host' : `wsl:${environment.distro_name?.toLowerCase()}`;
+    const key = environment.kind === 'native' ? 'native' : `wsl:${environment.distro_name?.toLowerCase()}`;
     return { projects: mocks.projectState.projectsByEnvironment[key] ?? [] };
   },
 }));
@@ -302,10 +302,10 @@ vi.mock('../EmptyStates', () => ({
 
 describe('SkillsPanel', () => {
   beforeEach(() => {
-    mocks.workspaceContextState.selectedContext = hostGlobal;
+    mocks.workspaceContextState.selectedContext = nativeGlobal;
     mocks.projectState.projectsByEnvironment = {};
     mocks.skillsDataState.snapshots = {
-      'host/global': snapshot(),
+      'native/global': snapshot(),
     };
     mocks.skillsDataState.isSyncing = false;
     mocks.skillsDataState.checkingUpdateScopes = new Set();
@@ -336,7 +336,7 @@ describe('SkillsPanel', () => {
     render(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(hostGlobal);
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(nativeGlobal);
     });
 
     expect(mocks.skillDetailState.deselectSkill).not.toHaveBeenCalled();
@@ -345,27 +345,27 @@ describe('SkillsPanel', () => {
 
   it('opens the repair source dialog for repairable skills instead of the install wizard', async () => {
     mocks.skillsDataState.snapshots = {
-      'host/global': snapshot([makeSkill('toolkit')]),
+      'native/global': snapshot([makeSkill('toolkit')]),
     };
 
     render(<SkillsPanel compact={false} />);
 
     await waitFor(() => {
-      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(hostGlobal);
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(nativeGlobal);
     });
 
     document.querySelector<HTMLButtonElement>('[data-testid="repair:global:toolkit"]')?.click();
 
     expect(mocks.skillDialogState.openRepairSource).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'toolkit', scope: 'global' }),
-      hostGlobal,
+      nativeGlobal,
     );
     expect(mocks.skillDialogState.openAdd).not.toHaveBeenCalled();
   });
 
   it('keeps cached rows visible while the committed context refreshes', () => {
     mocks.skillsDataState.snapshots = {
-      'host/global': snapshot([makeSkill('cached')], true),
+      'native/global': snapshot([makeSkill('cached')], true),
     };
 
     render(<SkillsPanel compact={false} />);
@@ -375,10 +375,10 @@ describe('SkillsPanel', () => {
 
   it('projects an executing update into the matching list row', () => {
     mocks.skillsDataState.snapshots = {
-      'host/global': snapshot([makeSkill('toolkit')]),
+      'native/global': snapshot([makeSkill('toolkit')]),
     };
     mocks.updateWorkflowState.phase = 'executing';
-    mocks.updateWorkflowState.context = hostGlobal;
+    mocks.updateWorkflowState.context = nativeGlobal;
     mocks.updateWorkflowState.skillNames = ['toolkit'];
 
     render(<SkillsPanel compact={false} />);
@@ -388,7 +388,7 @@ describe('SkillsPanel', () => {
 
   it('keeps update subscriptions stable while the preview dialog opens', () => {
     mocks.skillsDataState.snapshots = {
-      'host/global': snapshot([makeSkill('toolkit')]),
+      'native/global': snapshot([makeSkill('toolkit')]),
     };
 
     render(<SkillsPanel compact={false} />);
@@ -402,7 +402,7 @@ describe('SkillsPanel', () => {
     const loadingPreview = {
       ...closed,
       phase: 'loadingPreview',
-      context: hostGlobal,
+      context: nativeGlobal,
       skillNames: ['toolkit'],
     };
     const ready = { ...loadingPreview, phase: 'ready' };
@@ -449,7 +449,7 @@ describe('SkillsPanel', () => {
     const { rerender } = render(<SkillsPanel compact />);
 
     await waitFor(() => {
-      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(hostGlobal);
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(nativeGlobal);
     });
 
     mocks.skillDetailState.deselectSkill.mockClear();
@@ -573,12 +573,12 @@ describe('SkillsPanel', () => {
 
   it('supports an Agent whose literal ID is all', async () => {
     const allAgent = makeResolvedAgent({ id: 'all', displayName: 'All Tools' });
-    const hostSnapshot = snapshot([
+    const nativeSnapshot = snapshot([
       { ...makeSkill('matched'), associatedAgents: ['all'] },
       { ...makeSkill('unrelated'), associatedAgents: ['codex'] },
     ]);
-    hostSnapshot.agents = [allAgent];
-    mocks.skillsDataState.snapshots = { 'host/global': hostSnapshot };
+    nativeSnapshot.agents = [allAgent];
+    mocks.skillsDataState.snapshots = { 'native/global': nativeSnapshot };
 
     render(<SkillsPanel compact={false} />);
     fireEvent.click(screen.getByTestId('filter-agent:all'));
@@ -593,14 +593,14 @@ describe('SkillsPanel', () => {
   it('preserves a still-valid Agent across Context changes and clears an invalid one', async () => {
     const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
     const cursor = makeResolvedAgent({ id: 'cursor', displayName: 'Cursor' });
-    const hostSnapshot = snapshot([{ ...makeSkill('host-skill'), associatedAgents: ['codex'] }]);
-    hostSnapshot.agents = [codex];
+    const nativeSnapshot = snapshot([{ ...makeSkill('native-skill'), associatedAgents: ['codex'] }]);
+    nativeSnapshot.agents = [codex];
     const ubuntuSnapshot = snapshot([{ ...makeSkill('ubuntu-skill'), associatedAgents: ['codex'] }]);
     ubuntuSnapshot.agents = [codex];
     const cursorSnapshot = snapshot([{ ...makeSkill('cursor-skill'), associatedAgents: ['cursor'] }]);
     cursorSnapshot.agents = [cursor];
     mocks.skillsDataState.snapshots = {
-      'host/global': hostSnapshot,
+      'native/global': nativeSnapshot,
       'wsl:ubuntu/global': ubuntuSnapshot,
     };
 
@@ -621,10 +621,10 @@ describe('SkillsPanel', () => {
 
   it('keeps the Agent filter while a previously unseen Context loads', () => {
     const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
-    const hostSnapshot = snapshot([{ ...makeSkill('host-skill'), associatedAgents: ['codex'] }]);
-    hostSnapshot.agents = [codex];
+    const nativeSnapshot = snapshot([{ ...makeSkill('native-skill'), associatedAgents: ['codex'] }]);
+    nativeSnapshot.agents = [codex];
     mocks.skillsDataState.snapshots = {
-      'host/global': hostSnapshot,
+      'native/global': nativeSnapshot,
     };
 
     const { rerender } = render(<SkillsPanel compact={false} />);
@@ -645,12 +645,12 @@ describe('SkillsPanel', () => {
 
   it('keeps the selected Agent when the next Context has no Skills', () => {
     const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
-    const hostSnapshot = snapshot([{ ...makeSkill('host-skill'), associatedAgents: ['codex'] }]);
-    hostSnapshot.agents = [codex];
+    const nativeSnapshot = snapshot([{ ...makeSkill('native-skill'), associatedAgents: ['codex'] }]);
+    nativeSnapshot.agents = [codex];
     const ubuntuSnapshot = snapshot();
     ubuntuSnapshot.agents = [codex];
     mocks.skillsDataState.snapshots = {
-      'host/global': hostSnapshot,
+      'native/global': nativeSnapshot,
       'wsl:ubuntu/global': ubuntuSnapshot,
     };
 
@@ -667,9 +667,9 @@ describe('SkillsPanel', () => {
   it('uses the dedicated filtered-empty state in both full and compact layouts', async () => {
     const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
     const cursor = makeResolvedAgent({ id: 'cursor', displayName: 'Cursor' });
-    const hostSnapshot = snapshot([{ ...makeSkill('toolkit'), associatedAgents: ['codex'] }]);
-    hostSnapshot.agents = [codex, cursor];
-    mocks.skillsDataState.snapshots = { 'host/global': hostSnapshot };
+    const nativeSnapshot = snapshot([{ ...makeSkill('toolkit'), associatedAgents: ['codex'] }]);
+    nativeSnapshot.agents = [codex, cursor];
+    mocks.skillsDataState.snapshots = { 'native/global': nativeSnapshot };
 
     const { rerender } = render(<SkillsPanel compact={false} />);
     fireEvent.click(screen.getByTestId('filter-agent:codex'));
@@ -713,12 +713,12 @@ describe('SkillsPanel', () => {
   it('checks updates only for the current filtered result', async () => {
     const codex = makeResolvedAgent({ id: 'codex', displayName: 'Codex' });
     const cursor = makeResolvedAgent({ id: 'cursor', displayName: 'Cursor' });
-    const hostSnapshot = snapshot([
+    const nativeSnapshot = snapshot([
       { ...makeSkill('codex-skill'), associatedAgents: ['codex'] },
       { ...makeSkill('cursor-skill'), associatedAgents: ['cursor'] },
     ]);
-    hostSnapshot.agents = [codex, cursor];
-    mocks.skillsDataState.snapshots = { 'host/global': hostSnapshot };
+    nativeSnapshot.agents = [codex, cursor];
+    mocks.skillsDataState.snapshots = { 'native/global': nativeSnapshot };
 
     render(<SkillsPanel compact={false} />);
     fireEvent.click(screen.getByTestId('filter-agent:codex'));
@@ -727,9 +727,9 @@ describe('SkillsPanel', () => {
     });
     fireEvent.click(screen.getByTestId('check:global'));
 
-    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(hostGlobal, {
+    expect(mocks.skillsDataState.forceCheckUpdates).toHaveBeenCalledWith(nativeGlobal, {
       kind: 'skills',
-      skills: [{ context: hostGlobal, skillName: 'codex-skill' }],
+      skills: [{ context: nativeGlobal, skillName: 'codex-skill' }],
     });
   });
 
@@ -738,13 +738,13 @@ describe('SkillsPanel', () => {
 
     fireEvent.click(screen.getByTestId('toolbar-sync'));
 
-    expect(mocks.skillsDataState.syncSkills).toHaveBeenCalledWith(hostGlobal, { origin: 'passive' });
+    expect(mocks.skillsDataState.syncSkills).toHaveBeenCalledWith(nativeGlobal, { origin: 'passive' });
   });
 
   it('does not recheck on focus, remount, or unmount timer activity', async () => {
     const { unmount } = render(<SkillsPanel compact={false} />);
     await waitFor(() => {
-      expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal);
+      expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(nativeGlobal);
     });
     expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledTimes(1);
 
@@ -764,13 +764,13 @@ describe('SkillsPanel', () => {
     expect(mocks.skillsDataState.activateAutomaticChecks).not.toHaveBeenCalled();
     resolveRefresh();
     await waitFor(() => {
-      expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal);
+      expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(nativeGlobal);
     });
   });
 
   it('activates each newly selected Context once without a focus timer', async () => {
     const { rerender } = render(<SkillsPanel compact={false} />);
-    await waitFor(() => expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal));
+    await waitFor(() => expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(nativeGlobal));
 
     mocks.workspaceContextState.selectedContext = ubuntuGlobal;
     rerender(<SkillsPanel compact={false} />);
@@ -783,7 +783,7 @@ describe('SkillsPanel', () => {
 
   it('does not start another check when the same Context is remounted', async () => {
     const first = render(<SkillsPanel compact={false} />);
-    await waitFor(() => expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(hostGlobal));
+    await waitFor(() => expect(mocks.skillsDataState.activateAutomaticChecks).toHaveBeenCalledWith(nativeGlobal));
     first.unmount();
     render(<SkillsPanel compact={false} />);
     await act(async () => { await Promise.resolve(); });

@@ -81,7 +81,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::environments::add_environment_project,
             commands::environments::remove_environment_project,
             commands::environments::set_environment_project_cross_storage_warning,
-            commands::environments::retry_host_project_migration,
+            commands::environments::retry_native_project_migration,
             commands::mutations::get_active_mutation,
             commands::mutations::request_cancel_active_mutation,
             commands::updater::check_application_update,
@@ -215,12 +215,12 @@ pub fn run() {
                     }
                 });
 
-            let host_environment = environment::types::EnvironmentRef::Host;
-            maintenance.register(host_environment.clone())?;
-            let host_maintenance = maintenance.clone();
+            let native_environment = environment::types::EnvironmentRef::Native;
+            maintenance.register(native_environment.clone())?;
+            let native_maintenance = maintenance.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = host_maintenance.start(host_environment, 0).await {
-                    log::warn!("Failed to run Host runtime maintenance: {error}");
+                if let Err(error) = native_maintenance.start(native_environment, 0).await {
+                    log::warn!("Failed to run Native runtime maintenance: {error}");
                 }
             });
 
