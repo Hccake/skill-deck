@@ -98,7 +98,7 @@ Download the installer for your platform from [GitHub Releases](https://github.c
   > ```bash
   > sudo xattr -rd com.apple.quarantine "/Applications/Skill Deck.app"
   > ```
-- **Linux**: `skill-deck_x.x.x_linux_amd64.deb`, `skill-deck_x.x.x_linux_x86_64.rpm`, or `skill-deck_x.x.x_linux_x86_64.AppImage`
+- **Linux**: `skill-deck_x.x.x_linux_amd64.deb`, `skill-deck_x.x.x_linux_x86_64.rpm`, or `skill-deck_x.x.x_linux_amd64.AppImage`
 
 ### Option 2: Build from source
 

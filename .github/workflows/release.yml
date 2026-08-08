@@ -68,79 +68,14 @@ jobs:
     with:
       target_sha: ${{ needs.validate.outputs.commit_sha }}
 
-  build-artifacts:
+  prepare-release:
     needs: [validate, quality]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-latest
-            args: --target aarch64-apple-darwin --bundles app
-            platform_key: darwin-aarch64
-          - runner: macos-latest
-            args: --target x86_64-apple-darwin --bundles app
-            platform_key: darwin-x86_64
-          - runner: ubuntu-22.04
-            args: --bundles appimage
-            platform_key: linux-x86_64
-          - runner: windows-latest
-            args: --bundles nsis
-            platform_key: windows-x86_64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.validate.outputs.commit_sha }}
-      - name: Checkout release tooling
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.workflow_sha }}
-          path: .release-tooling
-          sparse-checkout: scripts
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: pnpm
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.runner == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-      - run: pnpm install --frozen-lockfile
-      - name: Build signed updater artifact
-        id: tauri-build
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          args: ${{ matrix.args }}
-      - name: Package smoke and private metadata
-        env:
-          PLATFORM_KEY: ${{ matrix.platform_key }}
-          VERSION: ${{ needs.validate.outputs.version }}
-          TAG: ${{ needs.validate.outputs.tag }}
-          COMMIT_SHA: ${{ needs.validate.outputs.commit_sha }}
-          TAURI_ARTIFACT_PATHS: ${{ steps.tauri-build.outputs.artifactPaths }}
-        run: node .release-tooling/scripts/package-updater-artifact.mjs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: updater-${{ matrix.platform_key }}
-          path: release-artifact
-          if-no-files-found: error
-
-  aggregate:
-    needs: [validate, build-artifacts]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+      release_body: ${{ steps.notes.outputs.release_body }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -154,24 +89,23 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: updater-*
-          path: release-artifacts
-      - name: Validate complete matrix and create latest.json
-        run: |
-          node .release-tooling/scripts/aggregate-updater-manifest.mjs \
-            --input release-artifacts \
-            --tag "${{ needs.validate.outputs.tag }}" \
-            --commit "${{ needs.validate.outputs.commit_sha }}" \
-            --repository "${{ github.repository }}" \
-            --output latest.json
       - name: Extract Release notes from changelog
         run: |
           node .release-tooling/scripts/extract-release-notes.mjs \
             --changelog CHANGELOG.md \
             --version "${{ needs.validate.outputs.version }}" \
             --output release-notes.md
+      - name: Export Release notes for updater metadata
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          DELIMITER="release-notes-${RANDOM}-${RANDOM}"
+          {
+            echo "release_body<<${DELIMITER}"
+            cat release-notes.md
+            echo "${DELIMITER}"
+          } >> "$GITHUB_OUTPUT"
       - name: Inspect Release state before mutation
         id: state
         env:
@@ -181,11 +115,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --json isDraft,isPrerelease,assets > release-state.json 2>/dev/null; then
+          if gh release view "$TAG" --json tagName,isDraft,isPrerelease,assets > release-state.json 2>/dev/null; then
             node .release-tooling/scripts/verify-release-assets.mjs \
               --mode draft \
               --release release-state.json \
-              --input release-artifacts \
+              --tag "$TAG" \
               --expected-prerelease "$EXPECTED_PRERELEASE"
             echo 'exists=true' >> "$GITHUB_OUTPUT"
           else
@@ -229,41 +163,138 @@ jobs:
           printf '%s\n' "$REMOTE_NOTES" > remote-release-notes.md
           cmp --silent release-notes.md remote-release-notes.md \
             || { echo "::error::Remote Release notes do not match CHANGELOG.md"; exit 1; }
-      - name: Upload validated installers and signatures
+      - name: Resolve and verify draft Release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
+          EXPECTED_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t FILES < <(find release-artifacts -type f ! -name metadata.json | sort)
-          test "${#FILES[@]}" -eq 8 || { echo "::error::Expected 8 installer/signature files"; exit 1; }
-          gh release upload "$TAG" "${FILES[@]}" --clobber
-      - name: Verify remote assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release view "$TAG" --json assets > remote-assets.json
+          gh release view "$TAG" \
+            --json databaseId,tagName,isDraft,isPrerelease,assets > release-state.json
           node .release-tooling/scripts/verify-release-assets.mjs \
-            --mode uploaded \
-            --release remote-assets.json \
-            --input release-artifacts
-      - name: Upload latest.json last
+            --mode draft \
+            --release release-state.json \
+            --tag "$TAG" \
+            --expected-prerelease "$EXPECTED_PRERELEASE"
+          RELEASE_ID="$(node -e "const state = require('./release-state.json'); process.stdout.write(String(state.databaseId))")"
+          test -n "$RELEASE_ID" || { echo "::error::Release has no database ID"; exit 1; }
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+
+  build-release:
+    needs: [validate, quality, prepare-release]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            args: --target aarch64-apple-darwin --bundles app,dmg
+            asset_platform: macos
+          - runner: macos-latest
+            args: --target x86_64-apple-darwin --bundles app,dmg
+            asset_platform: macos
+          - runner: ubuntu-22.04
+            args: --bundles appimage,deb,rpm
+            asset_platform: linux
+          - runner: windows-latest
+            args: --bundles nsis,msi
+            asset_platform: windows
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.commit_sha }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.runner == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - run: pnpm install --frozen-lockfile
+      - name: Build and upload release bundles
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release upload "$TAG" latest.json --clobber
-      - name: Verify uploaded latest.json
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.prepare-release.outputs.release_id }}
+          releaseBody: ${{ needs.prepare-release.outputs.release_body }}
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: false
+          retryAttempts: 3
+          releaseAssetNamePattern: skill-deck_[version]_${{ matrix.asset_platform }}_[arch][setup][ext]
+          args: ${{ matrix.args }}
+
+  verify-release:
+    needs: [validate, prepare-release, build-release]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.commit_sha }}
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tooling
+          sparse-checkout: scripts
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Extract expected Release notes
+        run: |
+          node .release-tooling/scripts/extract-release-notes.mjs \
+            --changelog CHANGELOG.md \
+            --version "${{ needs.validate.outputs.version }}" \
+            --output release-notes.md
+      - name: Download updater manifest and signatures
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir verified-manifest
-          gh release download "$TAG" --pattern "latest.json" --dir verified-manifest
-          cmp --silent latest.json verified-manifest/latest.json \
-            || { echo "::error::Remote latest.json does not match the validated manifest"; exit 1; }
+          mkdir verified-release
+          gh release download "$TAG" \
+            --pattern "latest.json" \
+            --pattern "*.sig" \
+            --dir verified-release
+      - name: Verify complete Draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" \
+            --json tagName,isDraft,isPrerelease,body,assets > release-state.json
+          node .release-tooling/scripts/verify-release-assets.mjs \
+            --mode complete \
+            --release release-state.json \
+            --manifest verified-release/latest.json \
+            --signatures verified-release \
+            --notes release-notes.md \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --repository "${{ github.repository }}" \
+            --expected-prerelease "$EXPECTED_PRERELEASE"

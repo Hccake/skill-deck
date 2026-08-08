@@ -99,7 +99,7 @@ Skill 是否可用取决于它的安装位置以及 Agent 是否读取该位置�
   > ```bash
   > sudo xattr -rd com.apple.quarantine "/Applications/Skill Deck.app"
   > ```
-- **Linux**：`skill-deck_x.x.x_linux_amd64.deb`、`skill-deck_x.x.x_linux_x86_64.rpm` 或 `skill-deck_x.x.x_linux_x86_64.AppImage`
+- **Linux**：`skill-deck_x.x.x_linux_amd64.deb`、`skill-deck_x.x.x_linux_x86_64.rpm` 或 `skill-deck_x.x.x_linux_amd64.AppImage`
 
 ### 方式二：从源码构建
 
