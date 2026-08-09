@@ -11,7 +11,7 @@ use crate::application::copy::{
 };
 use crate::application::copy_runtime::RuntimeCopyProjectComparator;
 use crate::application::install::{
-    InstallFuture, InstallPreviewOutcome, InstallRequest, InstallService,
+    InstallFuture, InstallOperation, InstallPreviewOutcome, InstallRequest, InstallService,
 };
 use crate::application::install_planner::{ConcreteInstallPlanner, InstallPlanningFactSource};
 use crate::application::manage_agents::{
@@ -413,12 +413,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     };
     let InstallPreviewOutcome::Ready {
         preview: install_preview,
-    } = install.preview(&install_request).await?
+    } = install
+        .preview(InstallOperation::Install, &install_request)
+        .await?
     else {
         panic!("expected ready install preview");
     };
     let installed = install
         .execute(
+            InstallOperation::Install,
             &install_request,
             install_preview.token,
             CancellationSignal::default(),
@@ -1505,14 +1508,19 @@ mod update_lifecycle {
                     acknowledge_risk: true,
                 };
                 let preview_outcome = install
-                    .preview(&request)
+                    .preview(InstallOperation::Install, &request)
                     .await
                     .expect("preview lifecycle install");
                 let InstallPreviewOutcome::Ready { preview } = preview_outcome else {
                     panic!("expected ready lifecycle install preview");
                 };
                 let installed = install
-                    .execute(&request, preview.token, CancellationSignal::default())
+                    .execute(
+                        InstallOperation::Install,
+                        &request,
+                        preview.token,
+                        CancellationSignal::default(),
+                    )
                     .await
                     .expect("execute lifecycle install");
                 assert_succeeded(&installed.units);

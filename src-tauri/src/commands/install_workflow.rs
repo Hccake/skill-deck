@@ -2,11 +2,13 @@ use std::future::Future;
 
 use tauri::{State, WebviewWindow};
 
-use crate::application::install::{InstallPreviewOutcome, InstallRequest, InstallResponse};
+use crate::application::install::{
+    InstallOperation, InstallPreviewOutcome, InstallRequest, InstallResponse,
+};
 use crate::application::mutation::plan::PreviewToken;
 use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
 use crate::commands::window_role::WindowRole;
-use crate::core::mutation::{MutationKind, MutationPhase};
+use crate::core::mutation::MutationPhase;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
 use crate::runtime::RuntimeServiceGraph;
@@ -15,9 +17,12 @@ use crate::runtime::RuntimeServiceGraph;
 #[specta::specta]
 pub async fn preview_install(
     request: InstallRequest,
+    window: WebviewWindow,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallPreviewOutcome, AppError> {
-    runtime.install().preview(&request).await
+    let operation =
+        install_operation_for_window(WindowRole::from_label(window.label()), "preview_install")?;
+    runtime.install().preview(operation, &request).await
 }
 
 #[tauri::command]
@@ -29,15 +34,16 @@ pub async fn install_skills(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallResponse, AppError> {
     let admission = runtime.admission().clone();
+    let role = WindowRole::from_label(window.label());
     execute_install_for_window(
         &admission,
-        WindowRole::from_label(window.label()),
+        role,
         request.context.clone(),
-        |guard| async move {
+        |operation, guard| async move {
             guard.transition(MutationPhase::Acquiring, None, true);
             runtime
                 .install()
-                .execute(&request, expected_token, guard.cancellation())
+                .execute(operation, &request, expected_token, guard.cancellation())
                 .await
         },
     )
@@ -51,23 +57,39 @@ async fn execute_install_for_window<T, Execute, ExecuteFuture>(
     execute: Execute,
 ) -> Result<T, AppError>
 where
-    Execute: FnOnce(MutationPermit) -> ExecuteFuture,
+    Execute: FnOnce(InstallOperation, MutationPermit) -> ExecuteFuture,
     ExecuteFuture: Future<Output = Result<T, AppError>>,
 {
-    let guard = begin_install_for_window(admission, role, context)?;
-    execute(guard).await
+    let operation = install_operation_for_window(role, "install_skills")?;
+    let guard = begin_install_for_window(admission, role, operation, context)?;
+    execute(operation, guard).await
 }
 
 fn begin_install_for_window(
     admission: &RuntimeAdmissionCoordinator,
     role: WindowRole,
+    operation: InstallOperation,
     context: SkillLocationRef,
 ) -> Result<MutationPermit, AppError> {
     match role {
-        WindowRole::Main => admission.begin_mutation(MutationKind::Install, context),
+        WindowRole::Main => admission.begin_mutation(operation.mutation_kind(), context),
         WindowRole::InstallWizard => admission.begin_install_from_active_wizard(context),
         WindowRole::Unknown => Err(AppError::CapabilityUnavailable {
             capability: "install_skills".to_string(),
+            path: None,
+        }),
+    }
+}
+
+fn install_operation_for_window(
+    role: WindowRole,
+    capability: &str,
+) -> Result<InstallOperation, AppError> {
+    match role {
+        WindowRole::Main => Ok(InstallOperation::Repair),
+        WindowRole::InstallWizard => Ok(InstallOperation::Install),
+        WindowRole::Unknown => Err(AppError::CapabilityUnavailable {
+            capability: capability.to_string(),
             path: None,
         }),
     }
@@ -90,6 +112,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn window_role_selects_install_or_repair_identity() {
+        assert_eq!(
+            install_operation_for_window(WindowRole::Main, "preview_install").unwrap(),
+            crate::application::install::InstallOperation::Repair
+        );
+        assert_eq!(
+            install_operation_for_window(WindowRole::InstallWizard, "preview_install").unwrap(),
+            crate::application::install::InstallOperation::Install
+        );
+        assert!(matches!(
+            install_operation_for_window(WindowRole::Unknown, "preview_install"),
+            Err(AppError::CapabilityUnavailable { capability, path: None })
+                if capability == "preview_install"
+        ));
+    }
+
+    #[tokio::test]
+    async fn main_window_source_repair_registers_repair_activity() {
+        let admission = RuntimeAdmissionCoordinator::default();
+        let observed_admission = admission.clone();
+
+        execute_install_for_window(
+            &admission,
+            WindowRole::Main,
+            native_global(),
+            |operation, guard| async move {
+                let _guard = guard;
+                assert_eq!(operation, InstallOperation::Repair);
+                assert_eq!(
+                    observed_admission.active().map(|mutation| mutation.kind),
+                    Some(crate::core::mutation::MutationKind::Repair)
+                );
+                Ok(())
+            },
+        )
+        .await
+        .expect("main-window source repair admitted");
+
+        assert!(admission.active().is_none());
+    }
+
     #[tokio::test]
     async fn install_handler_runs_the_executor_only_after_role_admission() {
         let admission = RuntimeAdmissionCoordinator::default();
@@ -106,7 +170,7 @@ mod tests {
             &admission,
             WindowRole::InstallWizard,
             native_global(),
-            |_| async {
+            |_, _| async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             },
@@ -116,10 +180,15 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         assert_eq!(
-            execute_install_for_window(&admission, WindowRole::Main, native_global(), |_| async {
-                calls.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
+            execute_install_for_window(
+                &admission,
+                WindowRole::Main,
+                native_global(),
+                |_, _| async {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            )
             .await
             .unwrap_err(),
             AppError::InstallWizardActive
@@ -129,7 +198,7 @@ mod tests {
                 &admission,
                 WindowRole::Unknown,
                 native_global(),
-                |_| async {
+                |_, _| async {
                     calls.fetch_add(1, Ordering::SeqCst);
                     Ok(())
                 },
@@ -146,7 +215,7 @@ mod tests {
                 &unavailable_admission,
                 WindowRole::InstallWizard,
                 native_global(),
-                |_| async {
+                |_, _| async {
                     calls.fetch_add(1, Ordering::SeqCst);
                     Ok(())
                 },

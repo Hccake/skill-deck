@@ -136,6 +136,30 @@ describe('RecoveryActions', () => {
       .toBe('polite');
   });
 
+  it('identifies an interrupted source repair by its original operation', () => {
+    render(<RecoveryActions
+      recovery={{ resourceId: 'recovery-repair', suggestedActionCode: 'reviewChanges' }}
+      initialStatus={{
+        resourceId: 'recovery-repair',
+        state: 'needsAttention',
+        revision: 'revision-repair',
+        environment: { kind: 'native' },
+        createdAtEpochMs: 1_786_080_000_000,
+        subject: {
+          operationKind: 'repair',
+          skillName: 'skill-deck',
+          context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
+        },
+        paths: [],
+        diagnostic: null,
+      }}
+    />);
+
+    expect(screen.getByRole('heading', {
+      name: 'recovery.itemTitle.repair:{"skillName":"skill-deck"}',
+    })).toBeDefined();
+  });
+
   it('keeps the recovery action visible and refreshes status when cleanup fails', async () => {
     mocks.getStatus
       .mockResolvedValueOnce({

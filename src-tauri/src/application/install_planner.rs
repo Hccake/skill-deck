@@ -6,8 +6,8 @@ use crate::application::agent_selection::{
     InstallAgentSelectionSnapshot,
 };
 use crate::application::install::{
-    InstallFuture, InstallPlanner, InstallPreview, InstallPreviewOutcome, InstallRequest,
-    InstallSkillPreview,
+    InstallFuture, InstallOperation, InstallPlanner, InstallPreview, InstallPreviewOutcome,
+    InstallRequest, InstallSkillPreview,
 };
 use crate::application::mutation::plan::{
     group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
@@ -20,7 +20,6 @@ use crate::application::mutation::planning::{
 use crate::application::payload_session::{PayloadSessionManager, PinnedPayloadLease};
 use crate::application::workflow_planner::AgentEntryPlan;
 use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
-use crate::core::mutation::MutationKind;
 use crate::core::skill_payload::{validate_manifest_for_target, PayloadId, TargetPathProfile};
 use crate::environment::agent_environment::AgentRuntimeSnapshot;
 use crate::environment::context_resolver::ResolvedContext;
@@ -89,11 +88,12 @@ where
 {
     fn preview<'a>(
         &'a self,
+        operation: InstallOperation,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
     ) -> InstallFuture<'a, Result<InstallPreviewOutcome, AppError>> {
         Box::pin(async move {
-            match self.build(request, payloads, false).await? {
+            match self.build(operation, request, payloads, false).await? {
                 BuiltInstallOutcome::Ready(built) => Ok(InstallPreviewOutcome::Ready {
                     preview: built.preview,
                 }),
@@ -106,11 +106,13 @@ where
 
     fn rebuild<'a>(
         &'a self,
+        operation: InstallOperation,
         request: &'a InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
     ) -> InstallFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
         Box::pin(async move {
-            let BuiltInstallOutcome::Ready(built) = self.build(request, payloads, true).await?
+            let BuiltInstallOutcome::Ready(built) =
+                self.build(operation, request, payloads, true).await?
             else {
                 return Err(AppError::StaleTarget);
             };
@@ -146,6 +148,7 @@ where
 {
     async fn build(
         &self,
+        operation: InstallOperation,
         request: &InstallRequest,
         payloads: Vec<PinnedPayloadLease>,
         include_plan: bool,
@@ -229,7 +232,7 @@ where
         let observed_state_digest =
             observed_digest(&target_facts, &facts, &payloads[..canonical_payload_count])?;
         let token = issue_preview_token(PreviewTokenDraft {
-            kind: MutationKind::Install,
+            kind: operation.mutation_kind(),
             request,
             revisions: facts.revisions.clone(),
             observed_state_digest,
@@ -270,7 +273,7 @@ where
         };
         let plan = include_plan.then(|| {
             assemble_plan(MutationPlanDraft {
-                kind: MutationKind::Install,
+                kind: operation.mutation_kind(),
                 payloads: payloads
                     .into_iter()
                     .map(|lease| (lease.manifest().payload_id().clone(), lease))
@@ -555,6 +558,7 @@ mod tests {
         ScopeDefinition,
     };
     use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
+    use crate::core::mutation::MutationKind;
     use crate::core::skill_payload::build_skill_payload;
     use crate::environment::agent_environment::{
         AgentRuntimeSnapshot, DetectionState, ResolvedAgent, ResolvedAgentScope,
@@ -676,12 +680,33 @@ mod tests {
 
         let preview_lease = manager.pin_verified(&handle).await.unwrap();
         let preview = planner
-            .preview(&request, vec![preview_lease])
+            .preview(InstallOperation::Install, &request, vec![preview_lease])
             .await
             .unwrap();
         let execute_lease = manager.pin_verified(&handle).await.unwrap();
         let (token, plan) = planner
-            .rebuild(&request, vec![execute_lease])
+            .rebuild(InstallOperation::Install, &request, vec![execute_lease])
+            .await
+            .unwrap();
+        let InstallPreviewOutcome::Ready {
+            preview: repair_preview,
+        } = planner
+            .preview(
+                InstallOperation::Repair,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("expected ready repair preview");
+        };
+        let (repair_token, repair_plan) = planner
+            .rebuild(
+                InstallOperation::Repair,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
             .await
             .unwrap();
 
@@ -689,6 +714,10 @@ mod tests {
             panic!("expected ready preview");
         };
         assert_eq!(preview.token, token);
+        assert_eq!(plan.kind, MutationKind::Install);
+        assert_eq!(repair_preview.token, repair_token);
+        assert_eq!(repair_plan.kind, MutationKind::Repair);
+        assert_ne!(preview.token, repair_preview.token);
         assert_eq!(preview.skills.len(), 1);
         assert_eq!(plan.payloads.len(), 1);
         assert_eq!(plan.units.len(), 1);
@@ -831,11 +860,19 @@ mod tests {
         };
 
         let preview = planner
-            .preview(&request, vec![manager.pin_verified(&handle).await.unwrap()])
+            .preview(
+                InstallOperation::Install,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
             .await
             .unwrap();
         let (token, plan) = planner
-            .rebuild(&request, vec![manager.pin_verified(&handle).await.unwrap()])
+            .rebuild(
+                InstallOperation::Install,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
             .await
             .unwrap();
 

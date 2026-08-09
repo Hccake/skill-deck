@@ -544,7 +544,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn executor_persists_recovery_before_swap_and_cleans_after_restore() {
+    async fn executor_persists_repair_identity_before_swap_and_cleans_after_restore() {
         let temp = tempdir().expect("temp");
         let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
         let canonical = physical_root.join("shared/demo");
@@ -596,7 +596,7 @@ mod tests {
         let executor = NativePreparedEntryExecutor::for_operation(
             native_backend(),
             "operation-1",
-            crate::core::mutation::MutationKind::Update,
+            crate::core::mutation::MutationKind::Repair,
             recovery_store.clone(),
         );
 
@@ -614,7 +614,7 @@ mod tests {
             [RecoveryMarkerLoad::Valid { marker, .. }]
                 if marker.kind == RecoveryMarkerKind::InProgress
                     && marker.subject.as_ref().is_some_and(|subject| {
-                        subject.operation_kind == crate::core::mutation::MutationKind::Update
+                        subject.operation_kind == crate::core::mutation::MutationKind::Repair
                             && subject.skill_name == "demo"
                     })
                     && marker.entries.iter().all(|entry| {
