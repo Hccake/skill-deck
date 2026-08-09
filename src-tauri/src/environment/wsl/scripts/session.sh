@@ -9,6 +9,8 @@ case "$subcommand" in
     }
 
     git --version >/dev/null 2>&1 || fail 'Skill Deck requires Git in the WSL environment'
+    timeout --kill-after=1s 1s /bin/sh -c 'exit 0' >/dev/null 2>&1 \
+      || fail 'Skill Deck requires GNU timeout in the WSL environment'
 
     probe_root=${TMPDIR:-/tmp}/skill-deck-session-probe-$$
     probe_root_created=0

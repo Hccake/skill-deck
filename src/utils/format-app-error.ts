@@ -1,6 +1,15 @@
 import type { TFunction } from 'i18next';
 import type { AppError } from '@/bindings';
 
+const MAX_GIT_ERROR_DETAILS_CHARS = 2_000;
+
+function summarizeGitErrorDetails(message: string): string {
+  if (message.length <= MAX_GIT_ERROR_DETAILS_CHARS) return message;
+  const prefixLength = 500;
+  const suffixLength = MAX_GIT_ERROR_DETAILS_CHARS - prefixLength - 5;
+  return `${message.slice(0, prefixLength)}\n...\n${message.slice(-suffixLength)}`;
+}
+
 /**
  * 将 AppError 格式化为用户可读的字符串（用于 SourceStep 等简单错误展示）
  */
@@ -21,7 +30,9 @@ export function formatAppError(error: AppError, t: TFunction): string {
     case 'gitRefNotFound':
       return t('addSkill.source.error.refNotFound');
     case 'gitCloneFailed':
-      return t('addSkill.source.error.gitFailed');
+      return t('addSkill.source.error.gitFailed', {
+        details: summarizeGitErrorDetails(error.data.message),
+      });
     case 'gitNetworkError':
     case 'gitHubApiError':
       // GitHubApiError 主要在 update 流程出现 (检查 skill folder hash 时),

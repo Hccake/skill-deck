@@ -1,15 +1,19 @@
 use tokio::time::Duration;
 use uuid::Uuid;
 
+use crate::core::classify_git_failure;
 use crate::core::mutation::CancellationSignal;
 use crate::environment::wsl::protocol::{
     no_wsl_exit_mapping, WslOperationDescriptor, WslOperationExecutor, WslOperationRequest,
-    DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT,
+    DEFAULT_WSL_STDERR_LIMIT, DEFAULT_WSL_STDOUT_LIMIT, GIT_OUTPUT_CAPTURE,
 };
 use crate::environment::wsl::{WslSession, WslWorkspace};
 use crate::error::AppError;
 
 const WSL_SOURCE_ACQUISITION_SCRIPT: &str = include_str!("../scripts/source-acquisition.sh");
+// 宿主监督额外覆盖发行版启动及超时后的进程清理，不改变 Git 的用户配置时限。
+const WSL_GIT_TRANSPORT_GRACE: Duration = Duration::from_secs(30);
+const WSL_GIT_TIMEOUT_EXIT_CODE: i32 = 72;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WslAcquisitionSource {
@@ -27,7 +31,8 @@ pub struct WslAcquisitionPlan {
     pub script: &'static str,
     pub subcommand: &'static str,
     pub positional_args: Vec<String>,
-    pub timeout: Duration,
+    pub transport_timeout: Duration,
+    pub git_timeout: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,8 +59,10 @@ fn build_wsl_native_source_plan(
                     managed_repo_path.to_string(),
                     git_ref.unwrap_or_default(),
                     session.distro_name.clone(),
+                    git_timeout.as_secs().to_string(),
                 ],
-                timeout: git_timeout,
+                transport_timeout: git_timeout.saturating_add(WSL_GIT_TRANSPORT_GRACE),
+                git_timeout,
             }),
             cleanup_root: Some(managed_repo_path.to_string()),
         }),
@@ -77,6 +84,24 @@ fn build_wsl_native_source_plan(
 
 fn acquisition_cancelled() -> AppError {
     AppError::MutationCancelled
+}
+
+fn map_wsl_git_acquisition_error(error: AppError, source_url: &str, timeout: Duration) -> AppError {
+    match error {
+        AppError::WslCommandFailed {
+            exit_code: Some(WSL_GIT_TIMEOUT_EXIT_CODE),
+            ..
+        } => AppError::GitTimeout {
+            timeout_secs: u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX),
+        },
+        AppError::WslCommandFailed { exit_code, stderr } => {
+            classify_git_failure(&stderr, source_url, "clone", exit_code)
+        }
+        AppError::WslCommandTimedOut => AppError::GitTimeout {
+            timeout_secs: u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX),
+        },
+        other => other,
+    }
 }
 
 async fn run_wsl_acquisition_plan_with<F, Fut>(
@@ -104,7 +129,7 @@ where
         plan.script,
         plan.subcommand,
         plan.positional_args,
-        plan.timeout,
+        plan.transport_timeout,
         cancellation,
     )
     .await
@@ -176,6 +201,12 @@ pub async fn acquire_wsl_source_native(
     let managed_root = format!("/tmp/skill-deck-discovery-{}/repo", Uuid::new_v4().simple());
     let plan = build_wsl_native_source_plan(session, source, &managed_root, git_timeout)?;
     let ref_revision = if let Some(operation) = plan.operation {
+        let source_url = operation
+            .positional_args
+            .first()
+            .cloned()
+            .ok_or_else(acquisition_protocol_error)?;
+        let git_timeout = operation.git_timeout;
         let response = run_wsl_acquisition_plan_with(
             session.clone(),
             operation,
@@ -186,7 +217,7 @@ pub async fn acquire_wsl_source_native(
                     script,
                     map_exit: no_wsl_exit_mapping,
                 };
-                WslOperationExecutor::execute(
+                WslOperationExecutor::execute_with_output_capture(
                     &descriptor,
                     WslOperationRequest {
                         session,
@@ -197,12 +228,14 @@ pub async fn acquire_wsl_source_native(
                         stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
                         cancellation: Some(cancellation),
                     },
+                    GIT_OUTPUT_CAPTURE,
                 )
                 .await
                 .map(|output| output.stdout)
             },
         )
-        .await?;
+        .await
+        .map_err(|error| map_wsl_git_acquisition_error(error, &source_url, git_timeout))?;
         Some(parse_wsl_git_acquisition_response(&response)?)
     } else if cancellation.is_cancelled() {
         return Err(acquisition_cancelled());
@@ -250,6 +283,8 @@ mod tests {
     use std::collections::BTreeMap;
     #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     #[cfg(unix)]
     use std::process::Command;
 
@@ -344,6 +379,7 @@ mod tests {
             .arg(&destination)
             .arg("")
             .arg("Ubuntu")
+            .arg("30")
             .output()
             .expect("acquisition script");
         assert!(
@@ -432,12 +468,67 @@ mod tests {
         )
         .expect("build Git source plan");
 
+        let operation = plan.operation.expect("Git Source requires acquisition");
+        assert_eq!(operation.git_timeout, configured_git_timeout());
         assert_eq!(
-            plan.operation
-                .expect("Git Source requires acquisition")
-                .timeout,
-            configured_git_timeout()
+            operation.transport_timeout,
+            configured_git_timeout() + super::WSL_GIT_TRANSPORT_GRACE
         );
+        assert_eq!(operation.positional_args[4], "300");
+    }
+
+    #[test]
+    fn wsl_git_failures_use_shared_git_error_semantics() {
+        let url = "https://alice:secret@github.com/acme/private.git?token=query-secret";
+        let git_failure = super::map_wsl_git_acquisition_error(
+            crate::error::AppError::WslCommandFailed {
+                exit_code: Some(68),
+                stderr: format!(
+                    "fatal: failed to clone {url}\nAuthorization: Bearer header-secret"
+                ),
+            },
+            url,
+            configured_git_timeout(),
+        );
+        let rendered = git_failure.to_string();
+        assert!(matches!(
+            git_failure,
+            crate::error::AppError::GitCloneFailed { .. }
+        ));
+        for secret in ["alice", "secret", "query-secret", "header-secret"] {
+            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+        }
+
+        assert!(matches!(
+            super::map_wsl_git_acquisition_error(
+                crate::error::AppError::WslCommandFailed {
+                    exit_code: Some(68),
+                    stderr: "Could not resolve host: github.com".to_string(),
+                },
+                "https://github.com/acme/private.git",
+                configured_git_timeout(),
+            ),
+            crate::error::AppError::GitNetworkError { .. }
+        ));
+        assert!(matches!(
+            super::map_wsl_git_acquisition_error(
+                crate::error::AppError::WslCommandTimedOut,
+                "https://github.com/acme/private.git",
+                configured_git_timeout(),
+            ),
+            crate::error::AppError::GitTimeout { timeout_secs: 300 }
+        ));
+        assert!(matches!(
+            super::map_wsl_git_acquisition_error(
+                crate::error::AppError::WslCommandFailed {
+                    exit_code: Some(72),
+                    stderr: String::new(),
+                },
+                "https://github.com/acme/private.git",
+                configured_git_timeout(),
+            ),
+            crate::error::AppError::GitTimeout { timeout_secs: 300 }
+        ));
     }
 
     #[test]
@@ -508,6 +599,7 @@ mod tests {
             .arg(&destination)
             .arg("")
             .arg("Ubuntu")
+            .arg("30")
             .output()
             .expect("acquisition script");
 
@@ -533,10 +625,53 @@ mod tests {
             .arg(&destination)
             .arg("")
             .arg("Ubuntu")
+            .arg("30")
             .output()
             .expect("acquisition script");
 
         assert!(!output.status.success());
+        assert!(!managed_root.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_timeout_starts_when_the_clone_process_starts() {
+        let temp = tempfile::tempdir().expect("fake Git temp dir");
+        let fake_git = temp.path().join("git");
+        fs::write(&fake_git, "#!/bin/sh\nsleep 10\n").expect("fake Git");
+        let mut permissions = fs::metadata(&fake_git)
+            .expect("fake Git metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_git, permissions).expect("make fake Git executable");
+        let managed_root = std::path::PathBuf::from(format!(
+            "/tmp/skill-deck-discovery-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let destination = managed_root.join("repo");
+        let path = format!(
+            "{}:{}",
+            temp.path().display(),
+            std::env::var("PATH").unwrap()
+        );
+        let started = std::time::Instant::now();
+
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::WSL_SOURCE_ACQUISITION_SCRIPT)
+            .arg("--")
+            .arg("git")
+            .arg("https://github.com/example/repo")
+            .arg(&destination)
+            .arg("")
+            .arg("Ubuntu")
+            .arg("1")
+            .env("PATH", path)
+            .output()
+            .expect("acquisition script");
+
+        assert_eq!(output.status.code(), Some(72));
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
         assert!(!managed_root.exists());
     }
 

@@ -12,7 +12,22 @@ describe('formatAppError', () => {
       data: { message: 'git exited with status 128' },
     } as AppError;
 
-    expect(formatAppError(error, t as never)).toBe('addSkill.source.error.gitFailed');
+    expect(formatAppError(error, t as never)).toBe(
+      'addSkill.source.error.gitFailed{"details":"git exited with status 128"}'
+    );
+  });
+
+  it('bounds Git diagnostics rendered in the source step', () => {
+    const error = {
+      kind: 'gitCloneFailed',
+      data: { message: `prefix-${'x'.repeat(4_000)}-suffix` },
+    } as AppError;
+
+    const rendered = formatAppError(error, t as never);
+
+    expect(rendered.length).toBeLessThan(2_100);
+    expect(rendered).toContain('prefix-');
+    expect(rendered).toContain('-suffix');
   });
 
   it.each([

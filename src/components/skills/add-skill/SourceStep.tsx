@@ -292,7 +292,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
 
       {/* Error 在 Tabs 外层 — 无论从哪个 tab 触发的错误都能显示 */}
       {state.fetchStatus === 'error' && state.fetchError && (
-        <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md whitespace-pre-wrap">
+        <div className="max-h-40 overflow-y-auto break-words p-3 bg-destructive/10 text-destructive text-sm rounded-md whitespace-pre-wrap">
           {formatAppError(state.fetchError, t)}
         </div>
       )}

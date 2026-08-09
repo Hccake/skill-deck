@@ -8,13 +8,16 @@
 //!
 //! 与 CLI git.ts 行为一致
 
-use crate::background_process::std_command;
+use crate::background_process::{
+    attach_std_process_tree, configure_std_process_group, resume_std_process, std_command,
+    terminate_std_process_tree,
+};
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread::JoinHandle;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -25,6 +28,7 @@ pub const MIN_CLONE_TIMEOUT_SECS: u64 = 30;
 /// 允许的最大自定义超时时间（秒）
 pub const MAX_CLONE_TIMEOUT_SECS: u64 = 3600;
 const MAX_GIT_OUTPUT_CAPTURE_BYTES: usize = 256 * 1024;
+const GIT_OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// 克隆进度阶段
 #[derive(Debug, Clone, serde::Serialize)]
@@ -198,25 +202,39 @@ struct CommandOutput {
     elapsed_secs: u64,
 }
 
-fn spawn_output_reader<R>(mut reader: R) -> JoinHandle<std::io::Result<Vec<u8>>>
+struct RetainedOutput {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+fn spawn_output_reader<R>(mut reader: R) -> Receiver<std::io::Result<RetainedOutput>>
 where
     R: std::io::Read + Send + 'static,
 {
+    let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let mut retained = Vec::with_capacity(MAX_GIT_OUTPUT_CAPTURE_BYTES);
+        let mut truncated = false;
         let mut chunk = [0u8; 8 * 1024];
-        loop {
+        let result = loop {
             let read = reader.read(&mut chunk)?;
             if read == 0 {
-                return Ok(retained);
+                break Ok(RetainedOutput {
+                    bytes: retained,
+                    truncated,
+                });
             }
-            retain_output_tail(&mut retained, &chunk[..read]);
-        }
-    })
+            retain_output_tail(&mut retained, &chunk[..read], &mut truncated);
+        };
+        let _ = sender.send(result);
+        Ok::<(), std::io::Error>(())
+    });
+    receiver
 }
 
-fn retain_output_tail(retained: &mut Vec<u8>, chunk: &[u8]) {
+fn retain_output_tail(retained: &mut Vec<u8>, chunk: &[u8], truncated: &mut bool) {
     if chunk.len() >= MAX_GIT_OUTPUT_CAPTURE_BYTES {
+        *truncated = true;
         retained.clear();
         retained.extend_from_slice(&chunk[chunk.len() - MAX_GIT_OUTPUT_CAPTURE_BYTES..]);
         return;
@@ -227,24 +245,53 @@ fn retain_output_tail(retained: &mut Vec<u8>, chunk: &[u8]) {
         .saturating_add(chunk.len())
         .saturating_sub(MAX_GIT_OUTPUT_CAPTURE_BYTES);
     if overflow > 0 {
+        *truncated = true;
         retained.drain(..overflow);
     }
     retained.extend_from_slice(chunk);
 }
 
-fn join_output_reader(
-    reader: JoinHandle<std::io::Result<Vec<u8>>>,
+fn receive_output_reader(
+    reader: Receiver<std::io::Result<RetainedOutput>>,
+    deadline: std::time::Instant,
     stream: &str,
+    cancellation: &CancellationSignal,
 ) -> Result<String, AppError> {
-    let bytes = reader
-        .join()
-        .map_err(|_| AppError::GitCloneFailed {
-            message: format!("Git {stream} reader panicked"),
-        })?
-        .map_err(|error| AppError::GitCloneFailed {
-            message: format!("Failed to read Git {stream}: {error}"),
-        })?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    let retained = loop {
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(AppError::GitCloneFailed {
+                message: format!("Git {stream} remained open after the Git process exited"),
+            });
+        }
+        match reader.recv_timeout(remaining.min(Duration::from_millis(50))) {
+            Ok(result) => break result,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(AppError::GitCloneFailed {
+                    message: format!("Git {stream} reader stopped unexpectedly"),
+                });
+            }
+        }
+    }
+    .map_err(|error| AppError::GitCloneFailed {
+        message: format!("Failed to read Git {stream}: {error}"),
+    })?;
+    Ok(decode_retained_output(retained))
+}
+
+fn decode_retained_output(mut retained: RetainedOutput) -> String {
+    if retained.truncated {
+        if let Some(newline) = retained.bytes.iter().position(|byte| *byte == b'\n') {
+            retained.bytes.drain(..=newline);
+        } else {
+            retained.bytes.clear();
+        }
+    }
+    String::from_utf8_lossy(&retained.bytes).into_owned()
 }
 
 /// 带超时和进度回调执行命令
@@ -261,13 +308,29 @@ where
 
     // 设置 stderr 捕获
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    configure_std_process_group(cmd);
 
     if cancellation.is_cancelled() {
         return Err(AppError::MutationCancelled);
     }
 
+    let start = std::time::Instant::now();
+    let deadline = start + timeout;
     let mut child = cmd.spawn().map_err(|e| AppError::GitCloneFailed {
         message: format!("Failed to spawn git: {}", e),
+    })?;
+    let process_tree = attach_std_process_tree(&child).map_err(|error| {
+        let _ = child.kill();
+        let _ = child.wait();
+        AppError::GitCloneFailed {
+            message: format!("Failed to supervise Git process tree: {error}"),
+        }
+    })?;
+    resume_std_process(&child).map_err(|error| {
+        terminate_std_process_tree(&mut child, &process_tree);
+        AppError::GitCloneFailed {
+            message: format!("Failed to resume supervised Git process: {error}"),
+        }
     })?;
 
     let stdout_reader =
@@ -290,7 +353,6 @@ where
         );
 
     // 等待进程完成或超时；读取线程在等待期间持续排空管道。
-    let start = std::time::Instant::now();
     let mut last_progress_secs = 0u64;
 
     let status = loop {
@@ -300,8 +362,7 @@ where
             }
             Ok(None) => {
                 if cancellation.is_cancelled() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    terminate_std_process_tree(&mut child, &process_tree);
                     break Err(AppError::MutationCancelled);
                 }
 
@@ -311,8 +372,7 @@ where
 
                 if elapsed > timeout {
                     // 超时，杀死进程
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    terminate_std_process_tree(&mut child, &process_tree);
                     break Err(AppError::GitTimeout {
                         timeout_secs: timeout.as_secs() as u32,
                     });
@@ -330,11 +390,13 @@ where
                 }
 
                 // 短暂等待后重试
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(
+                    Duration::from_millis(100)
+                        .min(deadline.saturating_duration_since(std::time::Instant::now())),
+                );
             }
             Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_std_process_tree(&mut child, &process_tree);
                 break Err(AppError::GitCloneFailed {
                     message: format!("Failed to wait for git: {}", e),
                 });
@@ -342,9 +404,12 @@ where
         }
     };
 
-    let stdout = join_output_reader(stdout_reader, "stdout")?;
-    let stderr = join_output_reader(stderr_reader, "stderr")?;
     let status = status?;
+    let drain_deadline = std::time::Instant::now() + GIT_OUTPUT_DRAIN_TIMEOUT;
+    let stdout = receive_output_reader(stdout_reader, drain_deadline, "stdout", cancellation)
+        .inspect_err(|_| terminate_std_process_tree(&mut child, &process_tree))?;
+    let stderr = receive_output_reader(stderr_reader, drain_deadline, "stderr", cancellation)
+        .inspect_err(|_| terminate_std_process_tree(&mut child, &process_tree))?;
     Ok(CommandOutput {
         success: status.success(),
         status_code: status.code(),
@@ -470,36 +535,84 @@ fn sanitize_source_url(source_url: &str) -> String {
 fn sanitize_git_diagnostic(diagnostic: &str, source_url: &str) -> String {
     let safe_url = sanitize_source_url(source_url);
     let diagnostic = diagnostic.replace(source_url, &safe_url);
-    diagnostic
+    sanitize_urls_in_diagnostic(&diagnostic)
         .split_inclusive('\n')
         .map(redact_sensitive_diagnostic_line)
         .collect()
 }
 
-fn redact_sensitive_diagnostic_line(line: &str) -> String {
-    const MARKERS: [&str; 6] = [
-        "proxy-authorization:",
-        "authorization:",
-        "github_token=",
-        "gh_token=",
-        "access_token=",
-        "private-token:",
-    ];
+fn sanitize_urls_in_diagnostic(diagnostic: &str) -> String {
+    let mut sanitized = String::with_capacity(diagnostic.len());
+    let mut copied_until = 0;
+    let mut search_from = 0;
 
-    let lower = line.to_ascii_lowercase();
-    let Some((index, marker)) = MARKERS
-        .iter()
-        .filter_map(|marker| lower.find(marker).map(|index| (index, *marker)))
-        .min_by_key(|(index, _)| *index)
-    else {
+    while let Some(relative_marker) = diagnostic[search_from..].find("://") {
+        let marker = search_from + relative_marker;
+        let mut start = marker;
+        while start > 0 {
+            let byte = diagnostic.as_bytes()[start - 1];
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.') {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        if start == marker {
+            search_from = marker + 3;
+            continue;
+        }
+
+        let end = diagnostic[marker + 3..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                (character.is_whitespace()
+                    || matches!(character, '\'' | '"' | '<' | '>' | '[' | ']' | '(' | ')'))
+                .then_some(marker + 3 + offset)
+            })
+            .unwrap_or(diagnostic.len());
+        let candidate = &diagnostic[start..end];
+        if url::Url::parse(candidate).is_ok() {
+            sanitized.push_str(&diagnostic[copied_until..start]);
+            sanitized.push_str(&sanitize_source_url(candidate));
+            copied_until = end;
+        }
+        search_from = end;
+    }
+
+    sanitized.push_str(&diagnostic[copied_until..]);
+    sanitized
+}
+
+fn redact_sensitive_diagnostic_line(line: &str) -> String {
+    let Some((separator_index, separator_len)) = line.char_indices().find_map(|(index, value)| {
+        if !matches!(value, ':' | '=') {
+            return None;
+        }
+        let prefix = &line[..index];
+        let key_start = prefix
+            .char_indices()
+            .rev()
+            .find_map(|(key_index, character)| {
+                (!character.is_ascii_alphanumeric() && !matches!(character, '_' | '-'))
+                    .then_some(key_index + character.len_utf8())
+            })
+            .unwrap_or(0);
+        let key = prefix[key_start..].to_ascii_lowercase();
+        let sensitive = key.contains("authorization")
+            || key.contains("token")
+            || key.contains("password")
+            || key.contains("secret")
+            || key == "pat"
+            || key.ends_with("_pat");
+        sensitive.then_some((index, value.len_utf8()))
+    }) else {
         return line.to_string();
     };
 
     let newline = if line.ends_with('\n') { "\n" } else { "" };
     format!(
-        "{}{}<redacted>{newline}",
-        &line[..index],
-        &line[index..index + marker.len()]
+        "{}<redacted>{newline}",
+        &line[..separator_index + separator_len]
     )
 }
 
@@ -588,19 +701,27 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
 }
 
 fn classify_git_command_error(output: &CommandOutput, url: &str, operation: &str) -> AppError {
-    let classified = classify_git_error(&output.stderr, url);
+    classify_git_failure(&output.stderr, url, operation, output.status_code)
+}
+
+pub(crate) fn classify_git_failure(
+    stderr: &str,
+    url: &str,
+    operation: &str,
+    status_code: Option<i32>,
+) -> AppError {
+    let classified = classify_git_error(stderr, url);
     if !matches!(classified, AppError::GitCloneFailed { .. }) {
         return classified;
     }
 
-    let status = output
-        .status_code
+    let status = status_code
         .map(|code| code.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     AppError::GitCloneFailed {
         message: format!(
             "Git {operation} failed with exit status {status}: {}",
-            sanitize_git_diagnostic(&output.stderr, url).trim()
+            sanitize_git_diagnostic(stderr, url).trim()
         ),
     }
 }
@@ -614,6 +735,8 @@ mod tests {
     use super::*;
 
     const SUBPROCESS_OUTPUT_FIXTURE_ENV: &str = "SKILL_DECK_GIT_OUTPUT_FIXTURE";
+    const SUBPROCESS_PID_FILE_ENV: &str = "SKILL_DECK_GIT_PROCESS_PID_FILE";
+    const SUBPROCESS_DESCENDANT_PID_FILE_ENV: &str = "SKILL_DECK_GIT_DESCENDANT_PID_FILE";
 
     fn subprocess_output_fixture_command(stream: &str) -> Command {
         let mut command = Command::new(std::env::current_exe().expect("current test executable"));
@@ -627,20 +750,104 @@ mod tests {
         command
     }
 
+    fn cancel_after_pid_file_created(
+        cancellation: CancellationSignal,
+        pid_file: PathBuf,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !pid_file.is_file() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "subprocess did not publish its PID"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            cancellation.cancel();
+        })
+    }
+
+    #[cfg(unix)]
+    fn assert_process_exited(pid: u32) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = unsafe { libc::kill(pid as i32, 0) };
+            if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "descendant process {pid} remained alive"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn assert_process_exited(pid: u32) {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+
+        const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+
+        let process = unsafe { OpenProcess(SYNCHRONIZE_ACCESS, 0, pid) };
+        if process.is_null() {
+            return;
+        }
+        let wait_result = unsafe { WaitForSingleObject(process, 2_000) };
+        unsafe {
+            CloseHandle(process);
+        }
+        assert_eq!(
+            wait_result, WAIT_OBJECT_0,
+            "descendant process {pid} remained alive"
+        );
+    }
+
+    #[cfg(not(any(unix, target_os = "windows")))]
+    fn assert_process_exited(_pid: u32) {}
+
     #[test]
     fn subprocess_output_fixture() {
         let Ok(stream) = std::env::var(SUBPROCESS_OUTPUT_FIXTURE_ENV) else {
             return;
         };
+        if let Ok(pid_file) = std::env::var(SUBPROCESS_PID_FILE_ENV) {
+            std::fs::write(pid_file, std::process::id().to_string()).expect("write process pid");
+        }
         if stream == "sleep" {
             std::thread::sleep(Duration::from_secs(10));
             return;
         }
-        let output = vec![b'x'; 8 * 1024 * 1024];
+        if stream == "sleep-short" {
+            std::thread::sleep(Duration::from_secs(4));
+            return;
+        }
+        if stream == "spawn-descendant" {
+            let descendant = subprocess_output_fixture_command("sleep-short")
+                .spawn()
+                .expect("spawn descendant holding output pipes");
+            if let Ok(pid_file) = std::env::var(SUBPROCESS_DESCENDANT_PID_FILE_ENV) {
+                std::fs::write(pid_file, descendant.id().to_string())
+                    .expect("write descendant pid");
+            }
+            std::mem::forget(descendant);
+            return;
+        }
+        if stream == "sensitive-stderr" {
+            let secret = "TOP_SECRET_TOKEN".repeat(24 * 1024);
+            std::io::Write::write_all(
+                &mut std::io::stderr(),
+                format!("Authorization: Bearer {secret}\nvisible diagnostic\n").as_bytes(),
+            )
+            .expect("write sensitive stderr fixture");
+            return;
+        }
+        let output = format!("{}\n", "x".repeat(1023)).repeat(8 * 1024);
         match stream.as_str() {
-            "stderr" => std::io::Write::write_all(&mut std::io::stderr(), &output)
+            "stderr" => std::io::Write::write_all(&mut std::io::stderr(), output.as_bytes())
                 .expect("write stderr fixture"),
-            "stdout" => std::io::Write::write_all(&mut std::io::stdout(), &output)
+            "stdout" => std::io::Write::write_all(&mut std::io::stdout(), output.as_bytes())
                 .expect("write stdout fixture"),
             other => panic!("unknown subprocess output fixture: {other}"),
         }
@@ -716,6 +923,30 @@ mod tests {
             assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
         }
         assert!(rendered.contains("github.com/acme/private.git"));
+    }
+
+    #[test]
+    fn git_diagnostics_redact_redirect_urls_and_sensitive_assignments() {
+        let diagnostic = "redirected to https://bob:redirect-secret@gitlab.com/acme/repo.git?private_token=query-secret\n\
+                          GITLAB_TOKEN=gitlab-secret\n\
+                          proxy_password=proxy-secret\n\
+                          client_secret: oauth-secret\n\
+                          visible=value";
+
+        let rendered = sanitize_git_diagnostic(diagnostic, "https://github.com/acme/repo.git");
+
+        for secret in [
+            "bob",
+            "redirect-secret",
+            "query-secret",
+            "gitlab-secret",
+            "proxy-secret",
+            "oauth-secret",
+        ] {
+            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+        }
+        assert!(rendered.contains("https://gitlab.com/acme/repo.git"));
+        assert!(rendered.contains("visible=value"));
     }
 
     #[test]
@@ -864,13 +1095,12 @@ mod tests {
 
     #[test]
     fn active_child_is_killed_and_waited_when_clone_is_cancelled() {
+        let temp_dir = TempDir::new().expect("child pid temp dir");
+        let pid_file = temp_dir.path().join("child.pid");
         let cancellation = CancellationSignal::default();
-        let cancel_from_thread = cancellation.clone();
-        let canceller = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
-            cancel_from_thread.cancel();
-        });
+        let canceller = cancel_after_pid_file_created(cancellation.clone(), pid_file.clone());
         let mut command = subprocess_output_fixture_command("sleep");
+        command.env(SUBPROCESS_PID_FILE_ENV, &pid_file);
         let started = std::time::Instant::now();
 
         let result = execute_with_timeout_and_progress(
@@ -883,11 +1113,19 @@ mod tests {
 
         assert!(matches!(result, Err(AppError::MutationCancelled)));
         assert!(started.elapsed() < Duration::from_secs(2));
+        let pid = std::fs::read_to_string(pid_file)
+            .expect("read child pid")
+            .parse::<u32>()
+            .expect("parse child pid");
+        assert_process_exited(pid);
     }
 
     #[test]
     fn active_child_is_killed_and_waited_when_git_times_out() {
+        let temp_dir = TempDir::new().expect("child pid temp dir");
+        let pid_file = temp_dir.path().join("child.pid");
         let mut command = subprocess_output_fixture_command("sleep");
+        command.env(SUBPROCESS_PID_FILE_ENV, &pid_file);
         let started = std::time::Instant::now();
 
         let result = execute_with_timeout_and_progress(
@@ -902,6 +1140,77 @@ mod tests {
             Err(AppError::GitTimeout { timeout_secs: 1 })
         ));
         assert!(started.elapsed() < Duration::from_secs(3));
+        let pid = std::fs::read_to_string(pid_file)
+            .expect("read child pid")
+            .parse::<u32>()
+            .expect("parse child pid");
+        assert_process_exited(pid);
+    }
+
+    #[test]
+    fn inherited_output_pipe_failure_is_not_misreported_as_git_timeout() {
+        let temp_dir = TempDir::new().expect("descendant pid temp dir");
+        let pid_file = temp_dir.path().join("descendant.pid");
+        let mut command = subprocess_output_fixture_command("spawn-descendant");
+        command.env(SUBPROCESS_DESCENDANT_PID_FILE_ENV, &pid_file);
+        let started = std::time::Instant::now();
+
+        let result = execute_with_timeout_and_progress(
+            &mut command,
+            Duration::from_secs(1),
+            &|_| {},
+            &CancellationSignal::default(),
+        );
+
+        assert!(matches!(result, Err(AppError::GitCloneFailed { .. })));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let descendant_pid = std::fs::read_to_string(pid_file)
+            .expect("read descendant pid")
+            .parse::<u32>()
+            .expect("parse descendant pid");
+        assert_process_exited(descendant_pid);
+    }
+
+    #[test]
+    fn cancellation_interrupts_inherited_output_pipe_drain() {
+        let temp_dir = TempDir::new().expect("descendant pid temp dir");
+        let pid_file = temp_dir.path().join("descendant.pid");
+        let cancellation = CancellationSignal::default();
+        let canceller = cancel_after_pid_file_created(cancellation.clone(), pid_file.clone());
+        let mut command = subprocess_output_fixture_command("spawn-descendant");
+        command.env(SUBPROCESS_DESCENDANT_PID_FILE_ENV, &pid_file);
+        let started = std::time::Instant::now();
+
+        let result = execute_with_timeout_and_progress(
+            &mut command,
+            Duration::from_secs(10),
+            &|_| {},
+            &cancellation,
+        );
+        canceller.join().unwrap();
+
+        assert!(matches!(result, Err(AppError::MutationCancelled)));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let descendant_pid = std::fs::read_to_string(pid_file)
+            .expect("read descendant pid")
+            .parse::<u32>()
+            .expect("parse descendant pid");
+        assert_process_exited(descendant_pid);
+    }
+
+    #[test]
+    fn truncated_sensitive_line_is_not_retained() {
+        let mut command = subprocess_output_fixture_command("sensitive-stderr");
+        let output = execute_with_timeout_and_progress(
+            &mut command,
+            Duration::from_secs(2),
+            &|_| {},
+            &CancellationSignal::default(),
+        )
+        .expect("sensitive output fixture");
+
+        assert!(!output.stderr.contains("TOP_SECRET_TOKEN"));
+        assert!(output.stderr.contains("visible diagnostic"));
     }
 
     #[test]
@@ -921,7 +1230,8 @@ mod tests {
             } else {
                 output.stderr
             };
-            assert_eq!(retained.len(), MAX_GIT_OUTPUT_CAPTURE_BYTES);
+            assert!(!retained.is_empty());
+            assert!(retained.len() <= MAX_GIT_OUTPUT_CAPTURE_BYTES);
         }
     }
 }

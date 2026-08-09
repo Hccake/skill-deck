@@ -2021,7 +2021,15 @@ mod tests {
     fn bundled_session_script_rejects_each_missing_baseline_tool() {
         use std::os::unix::fs::PermissionsExt;
 
-        for command in ["git", "xargs", "sort", "sha256sum", "readlink", "stat"] {
+        for command in [
+            "git",
+            "timeout",
+            "xargs",
+            "sort",
+            "sha256sum",
+            "readlink",
+            "stat",
+        ] {
             let temp = tempfile::tempdir().expect("temporary command directory");
             let command_path = temp.path().join(command);
             std::fs::write(&command_path, "#!/bin/sh\nexit 1\n").expect("write failing command");
@@ -2064,6 +2072,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let incompatible_commands = [
+            (
+                "timeout",
+                r#"#!/bin/sh
+for argument in "$@"; do
+  [ "$argument" = "--kill-after=1s" ] && exit 64
+done
+exit 0
+"#,
+            ),
             (
                 "xargs",
                 r#"#!/bin/sh
