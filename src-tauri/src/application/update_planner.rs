@@ -2,12 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
-use uuid::Uuid;
 
 use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
 use crate::application::mutation::plan::{
-    group_physical_mutations, preview_token, stable_digest, ExecutionUnit, ExpectedTargetEntry,
-    MutationPlan, PreparedEntryAction, PreparedEntryMutation, PreviewFingerprint, PreviewToken,
+    group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
+    PreparedEntryAction, PreparedEntryMutation, PreviewToken,
+};
+use crate::application::mutation::planning::{
+    assemble_plan, issue_preview_token, MutationPlanDraft, MutationUnitDraft,
+    PreparedMutationEntries, PreviewTokenDraft,
 };
 use crate::application::mutation::result::OperationErrorCode;
 use crate::application::payload_session::{
@@ -354,15 +357,14 @@ where
         if !selected.is_subset(&all_selectable) {
             return Err(AppError::StaleTarget);
         }
-        let plan = MutationPlan {
+        let plan = assemble_plan(MutationPlanDraft {
             kind: MutationKind::Update,
-            operation_id: Uuid::new_v4().simple().to_string(),
             payloads: payloads
                 .into_iter()
                 .map(|lease| (lease.manifest().payload_id().clone(), lease))
                 .collect(),
             units,
-        };
+        });
         Ok((token, plan))
     }
 }
@@ -583,9 +585,9 @@ fn inspection_token(
     target_facts: &[ResolvedTargetFact],
     manifests: &BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
 ) -> Result<PreviewToken, AppError> {
-    preview_token(&PreviewFingerprint {
+    issue_preview_token(PreviewTokenDraft {
         kind: MutationKind::Update,
-        request_digest: stable_digest(request)?,
+        request,
         revisions: facts.revisions.clone(),
         observed_state_digest: observed_digest(target_facts, facts, locked, manifests)?,
         planner_contract_version: 1,
@@ -678,7 +680,7 @@ fn build_unit(
     selected: &BTreeSet<ObservedEntryId>,
     manifests: &BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
     now: String,
-) -> Result<ExecutionUnit, AppError> {
+) -> Result<MutationUnitDraft, AppError> {
     let canonical_fact = &target_facts[0];
     if matches!(
         canonical_fact.entry_kind,
@@ -746,23 +748,25 @@ fn build_unit(
         .into_iter()
         .filter(|entry| entry.key != canonical.key)
         .collect();
-    Ok(ExecutionUnit {
+    Ok(MutationUnitDraft {
         id: format!("update:{}", locked.name),
         skill_name: locked.name.clone(),
         source: None,
         target: request.context.clone(),
         expected_revisions: facts.revisions.clone(),
-        canonical_entry,
-        required_agent_entries,
+        entries: PreparedMutationEntries {
+            canonical: canonical_entry,
+            required_agents: required_agent_entries,
+            expected_targets: target_facts
+                .iter()
+                .map(|fact| ExpectedTargetEntry {
+                    key: fact.key.clone(),
+                    fingerprint: fact.fingerprint.clone(),
+                    expected_content_manifest_hash: manifests.get(&fact.key).cloned().flatten(),
+                })
+                .collect(),
+        },
         lock_mutation: Some(lock_mutation(facts, locked, payload, now)?),
-        expected_targets: target_facts
-            .iter()
-            .map(|fact| ExpectedTargetEntry {
-                key: fact.key.clone(),
-                fingerprint: fact.fingerprint.clone(),
-                expected_content_manifest_hash: manifests.get(&fact.key).cloned().flatten(),
-            })
-            .collect(),
     })
 }
 

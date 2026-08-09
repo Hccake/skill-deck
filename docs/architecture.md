@@ -88,7 +88,9 @@ flowchart LR
 | `storage/` | 提供原子文档、兼容 lock、凭据和恢复数据的持久化 Adapter |
 | `runtime/` | 在应用启动时构造并持有常驻模块，连接应用用例与具体 Adapter |
 
-`RuntimeServiceGraph` 是 Rust 后端的组合根。Tauri 在启动阶段创建该组合根，命令处理函数再从中取得已经组装的应用用例和平台能力。`RuntimeAdmissionCoordinator` 由组合根持有，统一协调安装向导会话、Skill 写操作、设置变更、应用生命周期和应用更新之间的运行许可。`application/mutation` 是应用层内部的写入实现，具体的一致性和恢复协议见[执行与恢复](./execution-and-recovery.md)。
+`RuntimeServiceGraph` 是 Rust 后端的组合根。Tauri 在启动阶段创建该组合根，命令处理函数再从中取得已经组装的应用用例和平台能力。`RuntimeAdmissionCoordinator` 由组合根持有，统一协调安装向导会话、Skill 写操作、设置变更、应用生命周期和应用更新之间的运行许可。
+
+`application/mutation` 统一提供预览凭据签发与校验、变更计划组装和计划执行 Interface（调用方依赖的执行接口）。安装、更新、来源修复、复制、移除和调整 Agent 关联等应用用例负责各自的业务策略，把已经决定的写入内容交给规划模块，并调用该 Interface。`RuntimePlanExecutor` 作为运行时 Adapter 协调变更任务，具体 Environment Adapter 负责目标文件系统上的读取与写入。写入的一致性和恢复协议见[执行与恢复](./execution-and-recovery.md)。
 
 ## IPC 契约
 

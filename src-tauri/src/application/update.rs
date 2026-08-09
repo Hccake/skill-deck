@@ -7,9 +7,12 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::application::agent_intent::AgentTargetFallbackPreview;
-use crate::application::install::InstallPlanExecutor;
 use crate::application::mutation::coordinator::MutationUnitObserver;
+use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{MutationPlan, PreviewToken};
+use crate::application::mutation::planning::{
+    validate_exact_preview, validate_same_scope_revisions, PreviewScopeRevisions,
+};
 use crate::application::mutation::result::{
     ErrorReport, MutationUnitResult, MutationUnitStatus, OperationErrorCode,
 };
@@ -376,7 +379,7 @@ impl<P, A, E> UpdateService<P, A, E>
 where
     P: UpdatePlanner,
     A: UpdatePayloadAcquirer,
-    E: InstallPlanExecutor,
+    E: MutationPlanExecutor,
 {
     pub fn new(payloads: Arc<PayloadSessionManager>, planner: P, acquirer: A, executor: E) -> Self {
         Self {
@@ -416,7 +419,7 @@ where
         validate_update_request(&execution.request)?;
         validate_conflict_decisions(execution)?;
         let initial = self.planner.inspect(&execution.request).await?;
-        validate_preview_token(&expected_token, &initial.token)?;
+        validate_exact_preview(&expected_token, &initial.token)?;
         let groups = acquisition_groups(
             &execution.request.context,
             initial.source_candidates.clone(),
@@ -438,8 +441,6 @@ where
             total: None,
         });
         let latest = self.planner.inspect(&execution.request).await?;
-        validate_preview_authority(&initial.token, &latest.token)?;
-
         let mut sources = Vec::with_capacity(acquisitions.len());
         let mut skills = Vec::with_capacity(execution.request.skill_names.len());
         let mut handles = Vec::new();
@@ -486,6 +487,10 @@ where
             })
             .cloned()
             .collect::<BTreeSet<_>>();
+        validate_same_scope_revisions(
+            &PreviewScopeRevisions::from(&initial.token),
+            &PreviewScopeRevisions::from(&latest.token),
+        )?;
         for acquisition in acquisitions {
             match acquisition.result {
                 Ok(acquired) => {
@@ -578,7 +583,10 @@ where
                 .planner
                 .build(&successful_execution, handles, payloads)
                 .await?;
-            validate_preview_authority(&latest.token, &actual_token)?;
+            validate_same_scope_revisions(
+                &PreviewScopeRevisions::from(&latest.token),
+                &PreviewScopeRevisions::from(&actual_token),
+            )?;
             let total = u32::try_from(plan.units.len()).unwrap_or(u32::MAX);
             observe_stage(UpdateExecutionProgress {
                 stage: UpdateExecutionStage::Updating,
@@ -890,37 +898,6 @@ fn update_outcome(skills: &[UpdateSkillResult]) -> UpdateOutcome {
     }
 }
 
-fn validate_preview_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
-    if expected.registry_revision != actual.registry_revision {
-        return Err(AppError::StaleRegistry);
-    }
-    if expected.environment_revision != actual.environment_revision {
-        return Err(AppError::StaleEnvironment);
-    }
-    if expected.context_revision != actual.context_revision
-        || expected.generation != actual.generation
-    {
-        return Err(AppError::StaleContext);
-    }
-    Ok(())
-}
-
-fn validate_preview_authority(
-    expected: &PreviewToken,
-    actual: &PreviewToken,
-) -> Result<(), AppError> {
-    if expected.registry_revision != actual.registry_revision {
-        return Err(AppError::StaleRegistry);
-    }
-    if expected.environment_revision != actual.environment_revision {
-        return Err(AppError::StaleEnvironment);
-    }
-    if expected.context_revision != actual.context_revision {
-        return Err(AppError::StaleContext);
-    }
-    Ok(())
-}
-
 fn validation(message: &str) -> AppError {
     AppError::Validation {
         field: Some("request".to_string()),
@@ -935,7 +912,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::application::install::InstallPlanExecutor;
+    use crate::application::mutation::executor::MutationPlanExecutor;
     use crate::application::mutation::plan::MutationPlan;
     use crate::application::payload_session::{PayloadSessionLimits, PayloadSessionManager};
     use crate::application::source_evidence::SourceSnapshotFacts;
@@ -1136,6 +1113,62 @@ mod tests {
         rebuilds: Arc<AtomicUsize>,
     }
 
+    fn update_test_manager() -> Arc<PayloadSessionManager> {
+        Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000_000,
+            },
+            || 1_000,
+        ))
+    }
+
+    fn update_test_token() -> PreviewToken {
+        PreviewToken {
+            generation: "preview-initial".to_string(),
+            registry_revision: "registry-1".to_string(),
+            environment_revision: "environment-1".to_string(),
+            context_revision: ContextSnapshotRevision::parse("context-v1-demo").unwrap(),
+        }
+    }
+
+    async fn acquired_update_source(
+        manager: &PayloadSessionManager,
+        skill_name: &str,
+    ) -> (SourceSnapshotFacts, AcquiredPayloadHandle) {
+        let source = tempdir().unwrap();
+        let skill = source.path().join(skill_name);
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {skill_name}\n---\n"),
+        )
+        .unwrap();
+        let discovery = manager
+            .discover(EnvironmentRef::Native, format!("source-{skill_name}"))
+            .await
+            .unwrap();
+        let handle = manager
+            .acquire_payload(
+                &discovery,
+                format!("skills/{skill_name}"),
+                build_skill_payload(&skill).unwrap(),
+            )
+            .await
+            .unwrap();
+        let facts = SourceSnapshotFacts {
+            discovery_session: discovery,
+            snapshot_id: RemoteSnapshotId::new(
+                NormalizedRef::Named("main".to_string()),
+                "main",
+                "revision-1",
+            ),
+            complete_skill_path_catalog: Default::default(),
+        };
+        (facts, handle)
+    }
+
     fn locked_update_skill(name: &str, source_url: &str) -> LockedUpdateSkill {
         LockedUpdateSkill {
             name: name.to_string(),
@@ -1262,7 +1295,7 @@ mod tests {
 
     struct Executor(Arc<AtomicUsize>);
 
-    impl InstallPlanExecutor for Executor {
+    impl MutationPlanExecutor for Executor {
         fn execute<'a>(
             &'a self,
             plan: MutationPlan,
@@ -1277,6 +1310,7 @@ mod tests {
     struct SequencedPlanner {
         inspections: Mutex<Vec<LocalUpdateInspection>>,
         builds: Arc<AtomicUsize>,
+        build_token: PreviewToken,
     }
 
     impl UpdatePlanner for SequencedPlanner {
@@ -1296,13 +1330,7 @@ mod tests {
             self.builds.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
                 Ok((
-                    PreviewToken {
-                        generation: "rebuilt".to_string(),
-                        registry_revision: "registry-1".to_string(),
-                        environment_revision: "environment-1".to_string(),
-                        context_revision: ContextSnapshotRevision::parse("context-v1-demo")
-                            .unwrap(),
-                    },
+                    self.build_token.clone(),
                     MutationPlan {
                         kind: crate::core::mutation::MutationKind::Update,
                         operation_id: "update-1".to_string(),
@@ -1342,7 +1370,7 @@ mod tests {
         expected_payload_count: usize,
     }
 
-    impl InstallPlanExecutor for ResultExecutor {
+    impl MutationPlanExecutor for ResultExecutor {
         fn execute<'a>(
             &'a self,
             plan: MutationPlan,
@@ -1407,15 +1435,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_lock_drift_after_group_acquisition_does_not_block_stable_skill() {
-        let manager = Arc::new(PayloadSessionManager::in_memory(
-            PayloadSessionLimits {
-                ttl_ms: 60_000,
-                max_sessions: 4,
-                max_bytes: 1_000_000,
-            },
-            || 1_000,
-        ));
+    async fn matching_scope_revisions_do_not_override_per_skill_drift() {
+        let manager = update_test_manager();
         let source = tempdir().unwrap();
         for name in ["alpha", "beta"] {
             let root = source.path().join(name);
@@ -1440,12 +1461,7 @@ mod tests {
                     .unwrap(),
             ));
         }
-        let token = PreviewToken {
-            generation: "preview-initial".to_string(),
-            registry_revision: "registry-1".to_string(),
-            environment_revision: "environment-1".to_string(),
-            context_revision: ContextSnapshotRevision::parse("context-v1-demo").unwrap(),
-        };
+        let token = update_test_token();
         let facts = SourceSnapshotFacts {
             discovery_session: discovery,
             snapshot_id: RemoteSnapshotId::new(
@@ -1472,6 +1488,10 @@ mod tests {
                     ),
                 ]),
                 builds: Arc::clone(&builds),
+                build_token: PreviewToken {
+                    generation: "rebuilt".to_string(),
+                    ..token.clone()
+                },
             },
             FixedAcquirer {
                 calls: Arc::clone(&calls),
@@ -1553,46 +1573,132 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mixed_source_failure_keeps_the_other_source_executable_in_one_coordinator_run() {
-        let manager = Arc::new(PayloadSessionManager::in_memory(
-            PayloadSessionLimits {
-                ttl_ms: 60_000,
-                max_sessions: 4,
-                max_bytes: 1_000_000,
+    async fn scope_revision_change_after_acquisition_aborts_before_plan_build() {
+        let manager = update_test_manager();
+        let token = update_test_token();
+        let acquire_calls = Arc::new(AtomicUsize::new(0));
+        let builds = Arc::new(AtomicUsize::new(0));
+        let executor_calls = Arc::new(AtomicUsize::new(0));
+        let service = UpdateService::new(
+            Arc::clone(&manager),
+            SequencedPlanner {
+                inspections: Mutex::new(vec![
+                    inspection(token.clone(), "old"),
+                    inspection(
+                        PreviewToken {
+                            registry_revision: "registry-2".to_string(),
+                            ..token.clone()
+                        },
+                        "old",
+                    ),
+                ]),
+                builds: Arc::clone(&builds),
+                build_token: token.clone(),
             },
-            || 1_000,
-        ));
-        let source = tempdir().unwrap();
-        let alpha = source.path().join("alpha");
-        fs::create_dir_all(&alpha).unwrap();
-        fs::write(alpha.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
-        let discovery = manager
-            .discover(EnvironmentRef::Native, "source")
-            .await
-            .unwrap();
-        let alpha_handle = manager
-            .acquire_payload(
-                &discovery,
-                "skills/alpha".to_string(),
-                build_skill_payload(&alpha).unwrap(),
+            FixedAcquirer {
+                calls: Arc::clone(&acquire_calls),
+                expected_group_count: 1,
+                acquisitions: Mutex::new(Some(Vec::new())),
+            },
+            ResultExecutor {
+                calls: Arc::clone(&executor_calls),
+                expected_payload_count: 0,
+                results: Vec::new(),
+            },
+        );
+
+        let result = service
+            .execute(
+                &UpdateExecutionRequest {
+                    request: UpdateRequest {
+                        context: SkillLocationRef {
+                            environment: EnvironmentRef::Native,
+                            scope: SkillLocation::Global,
+                        },
+                        skill_names: vec!["alpha".to_string(), "beta".to_string()],
+                    },
+                    overwrite_private_entries: Vec::new(),
+                },
+                token,
+                CancellationSignal::default(),
             )
-            .await
-            .unwrap();
-        let facts = SourceSnapshotFacts {
-            discovery_session: discovery,
-            snapshot_id: RemoteSnapshotId::new(
-                NormalizedRef::Named("main".to_string()),
-                "main",
-                "revision-1",
-            ),
-            complete_skill_path_catalog: Default::default(),
-        };
-        let token = PreviewToken {
-            generation: "preview-initial".to_string(),
-            registry_revision: "registry-1".to_string(),
-            environment_revision: "environment-1".to_string(),
-            context_revision: ContextSnapshotRevision::parse("context-v1-demo").unwrap(),
-        };
+            .await;
+
+        assert!(matches!(result, Err(AppError::StaleRegistry)));
+        assert_eq!(acquire_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(builds.load(Ordering::SeqCst), 0);
+        assert_eq!(executor_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn scope_revision_change_after_plan_build_aborts_before_execution() {
+        let manager = update_test_manager();
+        let (facts, alpha_handle) = acquired_update_source(&manager, "alpha").await;
+        let token = update_test_token();
+        let mut initial = inspection(token.clone(), "old");
+        initial.source_candidates.truncate(1);
+        initial.skills.truncate(1);
+        let acquire_calls = Arc::new(AtomicUsize::new(0));
+        let builds = Arc::new(AtomicUsize::new(0));
+        let executor_calls = Arc::new(AtomicUsize::new(0));
+        let service = UpdateService::new(
+            Arc::clone(&manager),
+            SequencedPlanner {
+                inspections: Mutex::new(vec![initial.clone(), initial]),
+                builds: Arc::clone(&builds),
+                build_token: PreviewToken {
+                    environment_revision: "environment-2".to_string(),
+                    ..token.clone()
+                },
+            },
+            FixedAcquirer {
+                calls: Arc::clone(&acquire_calls),
+                expected_group_count: 1,
+                acquisitions: Mutex::new(Some(vec![UpdateSourceAcquisition {
+                    source_result_id: "source-1".to_string(),
+                    source: "owner/repo".to_string(),
+                    skill_names: vec!["alpha".to_string()],
+                    result: Ok(AcquiredUpdateSource {
+                        facts,
+                        payloads: vec![("alpha".to_string(), alpha_handle)],
+                    }),
+                }])),
+            },
+            ResultExecutor {
+                calls: Arc::clone(&executor_calls),
+                expected_payload_count: 1,
+                results: Vec::new(),
+            },
+        );
+
+        let result = service
+            .execute(
+                &UpdateExecutionRequest {
+                    request: UpdateRequest {
+                        context: SkillLocationRef {
+                            environment: EnvironmentRef::Native,
+                            scope: SkillLocation::Global,
+                        },
+                        skill_names: vec!["alpha".to_string()],
+                    },
+                    overwrite_private_entries: Vec::new(),
+                },
+                token,
+                CancellationSignal::default(),
+            )
+            .await;
+
+        assert!(matches!(result, Err(AppError::StaleEnvironment)));
+        assert_eq!(acquire_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+        assert_eq!(executor_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn mixed_source_failure_keeps_the_other_source_executable_in_one_coordinator_run() {
+        let manager = update_test_manager();
+        let (facts, alpha_handle) = acquired_update_source(&manager, "alpha").await;
+        let token = update_test_token();
         let inspection = LocalUpdateInspection {
             token: token.clone(),
             source_candidates: vec![
@@ -1626,6 +1732,10 @@ mod tests {
             SequencedPlanner {
                 inspections: Mutex::new(vec![inspection.clone(), inspection]),
                 builds: Arc::clone(&builds),
+                build_token: PreviewToken {
+                    generation: "rebuilt".to_string(),
+                    ..token.clone()
+                },
             },
             FixedAcquirer {
                 calls: Arc::clone(&acquire_calls),

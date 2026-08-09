@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use crate::application::install::{InstallFuture, InstallPlanExecutor};
 use crate::application::mutation::coordinator::{
     BoxFuture, MutationCoordinator, MutationUnitObserver, PreparedLockCommitter,
     RuntimeRevisionSnapshot, RuntimeRevisionSource,
 };
+use crate::application::mutation::executor::{MutationFuture, MutationPlanExecutor};
 use crate::application::mutation::plan::{MutationPlan, RuntimeRevisions};
 use crate::application::mutation::result::{ErrorReport, MutationUnitResult, MutationUnitStatus};
 use crate::application::recovery_runtime::{RuntimeRecoveryGraph, RuntimeRecoveryService};
@@ -241,12 +241,12 @@ impl RuntimePlanExecutor {
     }
 }
 
-impl InstallPlanExecutor for RuntimePlanExecutor {
+impl MutationPlanExecutor for RuntimePlanExecutor {
     fn execute<'a>(
         &'a self,
         plan: MutationPlan,
         cancellation: CancellationSignal,
-    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
+    ) -> MutationFuture<'a, Vec<MutationUnitResult>> {
         Box::pin(async move { self.run(plan, cancellation, Arc::new(|_| {})).await })
     }
 
@@ -255,7 +255,7 @@ impl InstallPlanExecutor for RuntimePlanExecutor {
         plan: MutationPlan,
         cancellation: CancellationSignal,
         observer: MutationUnitObserver<'a>,
-    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
+    ) -> MutationFuture<'a, Vec<MutationUnitResult>> {
         Box::pin(async move { self.run(plan, cancellation, observer).await })
     }
 }
@@ -398,10 +398,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::application::install::InstallPlanExecutor;
     use crate::application::mutation::coordinator::{
-        BoxFuture, PreparedLockCommitter, RuntimeRevisionSource,
+        BoxFuture, MutationUnitProgress, PreparedLockCommitter, RuntimeRevisionSource,
     };
+    use crate::application::mutation::executor::MutationPlanExecutor;
     use crate::application::mutation::plan::{
         ExecutionUnit, ExpectedTargetEntry, MutationPlan, PreparedEntryAction,
         PreparedEntryMutation, RuntimeRevisions,
@@ -528,12 +528,28 @@ mod tests {
             Arc::new(Revisions(revisions)),
         );
 
-        let results = runner.execute(plan, CancellationSignal::default()).await;
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&progress);
+        let results = runner
+            .execute_with_observer(
+                plan,
+                CancellationSignal::default(),
+                Arc::new(move |item| observed.lock().unwrap().push(item)),
+            )
+            .await;
 
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].status,
             crate::application::mutation::result::MutationUnitStatus::Succeeded
+        );
+        assert_eq!(
+            *progress.lock().unwrap(),
+            vec![MutationUnitProgress {
+                skill_name: "demo".to_string(),
+                current: 1,
+                total: 1,
+            }]
         );
         assert_eq!(fs::read(destination.join("SKILL.md")).unwrap(), b"new");
     }

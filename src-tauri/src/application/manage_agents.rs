@@ -11,11 +11,15 @@ use crate::application::agent_selection::{
     AgentSelectionDisabledReason, AgentSelectionModeConstraint, AgentSelectionResolution,
     AgentSelectionRevision, AgentSelectionSnapshot, AgentSelectionSubmission,
 };
-use crate::application::install::InstallPlanExecutor;
 use crate::application::install_planner::InstallPlanningFactSource;
+use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{
-    group_physical_mutations, preview_token, stable_digest, ExecutionUnit, ExpectedTargetEntry,
-    MutationPlan, PreparedEntryAction, PreparedEntryMutation, PreviewFingerprint, PreviewToken,
+    group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
+    PreparedEntryAction, PreparedEntryMutation, PreviewToken,
+};
+use crate::application::mutation::planning::{
+    assemble_plan, issue_preview_token, validate_exact_preview, MutationPlanDraft,
+    MutationUnitDraft, PreparedMutationEntries, PreviewTokenDraft,
 };
 use crate::application::mutation::result::MutationUnitResult;
 use crate::application::payload_session::{
@@ -35,7 +39,6 @@ use crate::environment::types::{same_environment_identity, SkillLocationRef};
 use crate::error::{AgentSelectionInvalidReason, AppError};
 use crate::models::InstallMode;
 use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -324,7 +327,7 @@ impl<F, T, E> ManageAgentsService<F, T, E>
 where
     F: InstallPlanningFactSource,
     T: TargetFactResolver + Clone,
-    E: InstallPlanExecutor,
+    E: MutationPlanExecutor,
 {
     pub fn new(
         observer: SkillEntryObserver<F, T>,
@@ -486,7 +489,7 @@ where
             &additions,
             request.canonical_payload.clone(),
         )?;
-        validate_token(&request.token, &actual_preview.token)?;
+        validate_exact_preview(&request.token, &actual_preview.token)?;
         let execution = ResolvedManageExecution { selection };
         let plan = build_manage_plan(
             &execution,
@@ -709,9 +712,9 @@ fn manage_preview(
             .value()
             .cloned(),
     ))?;
-    let token = preview_token(&PreviewFingerprint {
+    let token = issue_preview_token(PreviewTokenDraft {
         kind: MutationKind::ManageAgents,
-        request_digest: stable_digest(request)?,
+        request,
         revisions: snapshot.facts.revisions.clone(),
         observed_state_digest,
         planner_contract_version: 1,
@@ -832,25 +835,26 @@ async fn build_manage_plan(
             expected_content_manifest_hash: None,
         })
         .collect();
-    Ok(MutationPlan {
+    Ok(assemble_plan(MutationPlanDraft {
         kind: MutationKind::ManageAgents,
-        operation_id: Uuid::new_v4().simple().to_string(),
         payloads: payloads
             .into_iter()
             .map(|lease| (lease.manifest().payload_id().clone(), lease))
             .collect::<BTreeMap<PayloadId, PinnedPayloadLease>>(),
-        units: vec![ExecutionUnit {
+        units: vec![MutationUnitDraft {
             id: format!("manage-agents:{}", request.selection.skill_name),
             skill_name: request.selection.skill_name.clone(),
             source: None,
             target: request.selection.context.clone(),
             expected_revisions: snapshot.facts.revisions,
-            canonical_entry,
-            required_agent_entries,
+            entries: PreparedMutationEntries {
+                canonical: canonical_entry,
+                required_agents: required_agent_entries,
+                expected_targets,
+            },
             lock_mutation,
-            expected_targets,
         }],
-    })
+    }))
 }
 
 fn manage_lock_mutation(
@@ -953,21 +957,6 @@ fn eve_lock_replacement(
         }
     }
     Ok(Some(replacement))
-}
-
-fn validate_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
-    if expected.registry_revision != actual.registry_revision {
-        return Err(AppError::StaleRegistry);
-    }
-    if expected.environment_revision != actual.environment_revision {
-        return Err(AppError::StaleEnvironment);
-    }
-    if expected.context_revision != actual.context_revision
-        || expected.generation != actual.generation
-    {
-        return Err(AppError::StaleContext);
-    }
-    Ok(())
 }
 
 pub fn validate_manage_selection(

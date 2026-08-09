@@ -13,16 +13,19 @@ use crate::application::agent_selection::{
     resolve_agent_selection_submission, AgentInstallOptionId, AgentSelectionModeConstraint,
     AgentSelectionResolution, AgentSelectionSnapshot, AgentSelectionSubmission,
 };
-use crate::application::install::InstallPlanExecutor;
 use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
 use crate::application::manage_agents::{
     load_observed_agent_selection, load_observed_agent_selection_for_copy, ManageCurrentEntry,
     ManageInstallOptionState,
 };
-use crate::application::mutation::plan::PreviewToken;
+use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{
-    group_physical_mutations, preview_token, stable_digest, ExecutionUnit, ExpectedTargetEntry,
-    MutationPlan, PreparedEntryAction, PreparedEntryMutation, PreviewFingerprint, RuntimeRevisions,
+    group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
+    PreparedEntryAction, PreparedEntryMutation, PreviewToken, RuntimeRevisions,
+};
+use crate::application::mutation::planning::{
+    assemble_plan, issue_preview_token, validate_exact_preview, MutationPlanDraft,
+    MutationUnitDraft, PreparedMutationEntries, PreviewTokenDraft,
 };
 use crate::application::mutation::result::{
     ErrorReport, MutationUnitResult, MutationUnitStatus, OperationErrorCode,
@@ -48,7 +51,6 @@ use crate::environment::types::{
 use crate::error::AppError;
 use crate::models::InstallMode;
 use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -171,7 +173,7 @@ impl<F, T, E, C> CopyService<F, T, E, C>
 where
     F: InstallPlanningFactSource + Clone,
     T: TargetFactResolver + Clone,
-    E: InstallPlanExecutor,
+    E: MutationPlanExecutor,
     C: CopyProjectComparator,
 {
     pub fn new(
@@ -297,7 +299,7 @@ where
                 true,
             )
             .await?;
-        validate_copy_token(&execution.token, &built.token)?;
+        validate_exact_preview(&execution.token, &built.token)?;
         let plan = built.plan.expect("execute build has a plan");
         let mut units = if plan.units.is_empty() {
             Vec::new()
@@ -597,9 +599,9 @@ where
                 .map(|failure| (&failure.context, failure.error_report().code))
                 .collect::<Vec<_>>(),
         ))?;
-        let token = preview_token(&PreviewFingerprint {
+        let token = issue_preview_token(PreviewTokenDraft {
             kind: MutationKind::Copy,
-            request_digest: stable_digest(request)?,
+            request,
             revisions,
             observed_state_digest,
             planner_contract_version: 1,
@@ -621,15 +623,14 @@ where
             if let Some(eve) = eve_payload {
                 payloads.push(eve);
             }
-            Some(MutationPlan {
+            Some(assemble_plan(MutationPlanDraft {
                 kind: MutationKind::Copy,
-                operation_id: Uuid::new_v4().simple().to_string(),
                 payloads: payloads
                     .into_iter()
                     .map(|payload| (payload.manifest().payload_id().clone(), payload))
                     .collect::<BTreeMap<PayloadId, PinnedPayloadLease>>(),
                 units,
-            })
+            }))
         } else {
             None
         };
@@ -842,21 +843,6 @@ fn validate_copy_source_snapshot(
     Ok(())
 }
 
-fn validate_copy_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
-    if expected.registry_revision != actual.registry_revision {
-        return Err(AppError::StaleRegistry);
-    }
-    if expected.environment_revision != actual.environment_revision {
-        return Err(AppError::StaleEnvironment);
-    }
-    if expected.context_revision != actual.context_revision
-        || expected.generation != actual.generation
-    {
-        return Err(AppError::StaleContext);
-    }
-    Ok(())
-}
-
 async fn validate_copy_payload_targets(
     canonical: &crate::core::skill_payload::SkillPayload,
     eve_payload: Option<&PinnedPayloadLease>,
@@ -964,7 +950,7 @@ fn build_copy_unit(
     eve_payload: Option<&PinnedPayloadLease>,
     source_lock_entry: Option<&Value>,
     computed_hash: &str,
-) -> Result<ExecutionUnit, AppError> {
+) -> Result<MutationUnitDraft, AppError> {
     let canonical_id = canonical_payload.manifest().payload_id().clone();
     let canonical = PreparedEntryMutation {
         key: target.target_facts[0].key.clone(),
@@ -1039,7 +1025,7 @@ fn build_copy_unit(
             std::iter::empty::<&str>(),
         ),
     };
-    Ok(ExecutionUnit {
+    Ok(MutationUnitDraft {
         id: format!(
             "copy:{}:{}",
             request.skill_name,
@@ -1049,18 +1035,20 @@ fn build_copy_unit(
         source: Some(request.source.clone()),
         target: target.context.clone(),
         expected_revisions: target.facts.revisions.clone(),
-        canonical_entry,
-        required_agent_entries,
+        entries: PreparedMutationEntries {
+            canonical: canonical_entry,
+            required_agents: required_agent_entries,
+            expected_targets: target
+                .target_facts
+                .iter()
+                .map(|fact| ExpectedTargetEntry {
+                    key: fact.key.clone(),
+                    fingerprint: fact.fingerprint.clone(),
+                    expected_content_manifest_hash: None,
+                })
+                .collect(),
+        },
         lock_mutation: Some(lock_mutation),
-        expected_targets: target
-            .target_facts
-            .iter()
-            .map(|fact| ExpectedTargetEntry {
-                key: fact.key.clone(),
-                fingerprint: fact.fingerprint.clone(),
-                expected_content_manifest_hash: None,
-            })
-            .collect(),
     })
 }
 
@@ -1669,7 +1657,7 @@ mod tests {
 
     struct CapturingExecutor(Arc<Mutex<Option<CapturedCopyPlan>>>);
 
-    impl InstallPlanExecutor for CapturingExecutor {
+    impl MutationPlanExecutor for CapturingExecutor {
         fn execute<'a>(
             &'a self,
             plan: MutationPlan,
@@ -1950,7 +1938,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn copy_preview_scopes_a_target_lock_failure_to_that_project() {
+    async fn copy_preview_and_execution_scope_a_target_lock_failure_to_that_project() {
         let temp = tempdir().unwrap();
         let source_root = temp.path().join("source");
         let healthy_root = temp.path().join("healthy");
@@ -1994,12 +1982,13 @@ mod tests {
             },
             || 1_000,
         ));
+        let captured = Arc::new(Mutex::new(None));
         let service = CopyService::new(
             facts,
             crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone()),
             payloads.clone(),
             InstalledSkillPayloadAcquirer::new(payloads, environments),
-            CapturingExecutor(Arc::new(Mutex::new(None))),
+            CapturingExecutor(captured.clone()),
             DifferentProjects,
         );
         let selection = service.selection(&source, "demo").await.unwrap().selection;
@@ -2024,6 +2013,33 @@ mod tests {
         assert_eq!(
             preview.targets[1].blocking_reasons,
             vec![OperationErrorCode::ConfigurationCorrupted]
+        );
+
+        let mut blocked_request = request;
+        blocked_request.target_project_ids = vec!["broken".to_string()];
+        let CopyPreviewOutcome::Ready {
+            preview: blocked_preview,
+        } = service.preview(&blocked_request).await.unwrap()
+        else {
+            panic!("fresh Agent selection should produce a blocked copy preview");
+        };
+        let response = service
+            .execute(
+                &CopyExecutionRequest {
+                    request: blocked_request,
+                    token: blocked_preview.token,
+                    payload: blocked_preview.payload,
+                },
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+
+        assert!(captured.lock().unwrap().is_none());
+        assert_eq!(response.units.len(), 1);
+        assert_eq!(
+            response.units[0].error.as_ref().unwrap().code,
+            OperationErrorCode::ConfigurationCorrupted
         );
     }
 

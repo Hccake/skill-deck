@@ -10,8 +10,9 @@ use crate::application::agent_intent::AgentTargetFallbackPreview;
 use crate::application::agent_selection::{
     AgentSelectionSubmission, InstallAgentSelectionSnapshot,
 };
-use crate::application::mutation::coordinator::MutationUnitObserver;
+use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{MutationPlan, PreviewToken};
+use crate::application::mutation::planning::validate_exact_preview;
 use crate::application::mutation::result::{MutationUnitResult, OperationErrorCode};
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, PayloadSessionManager, PinnedPayloadLease,
@@ -98,23 +99,6 @@ pub trait InstallPlanner: Send + Sync {
     ) -> InstallFuture<'a, Result<(PreviewToken, MutationPlan), AppError>>;
 }
 
-pub trait InstallPlanExecutor: Send + Sync {
-    fn execute<'a>(
-        &'a self,
-        plan: MutationPlan,
-        cancellation: CancellationSignal,
-    ) -> InstallFuture<'a, Vec<MutationUnitResult>>;
-
-    fn execute_with_observer<'a>(
-        &'a self,
-        plan: MutationPlan,
-        cancellation: CancellationSignal,
-        _observer: MutationUnitObserver<'a>,
-    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
-        self.execute(plan, cancellation)
-    }
-}
-
 type SourceSuppressionClearer =
     dyn Fn(&EnvironmentRef, &RemoteEvidenceKey) -> Result<(), AppError> + Send + Sync;
 
@@ -128,7 +112,7 @@ pub struct InstallService<P, E> {
 impl<P, E> InstallService<P, E>
 where
     P: InstallPlanner,
-    E: InstallPlanExecutor,
+    E: MutationPlanExecutor,
 {
     pub fn new(payloads: Arc<PayloadSessionManager>, planner: P, executor: E) -> Self {
         Self {
@@ -167,7 +151,7 @@ where
             .pin_request_payloads(request, Some(cancellation.clone()))
             .await?;
         let (actual_token, plan) = self.planner.rebuild(request, payloads).await?;
-        validate_preview_token(&expected_token, &actual_token)?;
+        validate_exact_preview(&expected_token, &actual_token)?;
         let mut response = InstallResponse {
             units: self.executor.execute(plan, cancellation).await,
             warnings: Vec::new(),
@@ -251,21 +235,6 @@ fn validate_handles(request: &InstallRequest) -> Result<(), AppError> {
         })
     {
         return Err(AppError::StalePayload);
-    }
-    Ok(())
-}
-
-fn validate_preview_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
-    if expected.registry_revision != actual.registry_revision {
-        return Err(AppError::StaleRegistry);
-    }
-    if expected.environment_revision != actual.environment_revision {
-        return Err(AppError::StaleEnvironment);
-    }
-    if expected.context_revision != actual.context_revision
-        || expected.generation != actual.generation
-    {
-        return Err(AppError::StaleContext);
     }
     Ok(())
 }
@@ -434,7 +403,7 @@ mod tests {
 
     struct Executor(Arc<AtomicUsize>);
 
-    impl InstallPlanExecutor for Executor {
+    impl MutationPlanExecutor for Executor {
         fn execute<'a>(
             &'a self,
             plan: MutationPlan,

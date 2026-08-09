@@ -11,7 +11,7 @@ use crate::application::copy::{
 };
 use crate::application::copy_runtime::RuntimeCopyProjectComparator;
 use crate::application::install::{
-    InstallFuture, InstallPlanExecutor, InstallPreviewOutcome, InstallRequest, InstallService,
+    InstallFuture, InstallPreviewOutcome, InstallRequest, InstallService,
 };
 use crate::application::install_planner::{ConcreteInstallPlanner, InstallPlanningFactSource};
 use crate::application::manage_agents::{
@@ -22,6 +22,7 @@ use crate::application::mutation::coordinator::{
     BoxFuture, MutationCoordinator, PreparedEntryExecutor, PreparedLockCommitter,
     RuntimeRevisionSource,
 };
+use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{ExecutionUnit, MutationPlan};
 use crate::application::mutation::result::{
     MutationUnitResult, MutationUnitStatus, MutationWarning,
@@ -159,7 +160,7 @@ impl PreparedLockCommitter for RejectingLockCommitter {
     }
 }
 
-impl InstallPlanExecutor for LockFailurePlanExecutor {
+impl MutationPlanExecutor for LockFailurePlanExecutor {
     fn execute<'a>(
         &'a self,
         plan: MutationPlan,
@@ -192,7 +193,7 @@ impl InstallPlanExecutor for LockFailurePlanExecutor {
     }
 }
 
-impl InstallPlanExecutor for VerifyFailurePlanExecutor {
+impl MutationPlanExecutor for VerifyFailurePlanExecutor {
     fn execute<'a>(
         &'a self,
         plan: MutationPlan,
@@ -1135,10 +1136,11 @@ mod update_lifecycle {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::application::install::{InstallFuture, InstallPlanExecutor};
+    use crate::application::install::InstallFuture;
     use crate::application::mutation::coordinator::{
         BoxFuture, MutationCoordinator, PreparedEntryExecutor,
     };
+    use crate::application::mutation::executor::MutationPlanExecutor;
     use crate::application::mutation::plan::{ExecutionUnit, MutationPlan};
     use crate::application::mutation::result::{MutationUnitStatus, MutationWarning};
     use crate::application::payload_session::{PayloadSessionManager, PinnedPayloadLease};
@@ -1261,7 +1263,7 @@ mod update_lifecycle {
         private_root: PathBuf,
     }
 
-    impl InstallPlanExecutor for StageFailurePlanExecutor {
+    impl MutationPlanExecutor for StageFailurePlanExecutor {
         fn execute<'a>(
             &'a self,
             plan: MutationPlan,

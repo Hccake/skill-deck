@@ -1,9 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use serde_json::{json, Map, Value};
-use uuid::Uuid;
-
 use crate::application::agent_selection::{
     build_agent_selection_catalog, resolve_agent_selection_submission, AgentSelectionResolution,
     InstallAgentSelectionSnapshot,
@@ -13,9 +10,12 @@ use crate::application::install::{
     InstallSkillPreview,
 };
 use crate::application::mutation::plan::{
-    group_physical_mutations, preview_token, stable_digest, ExecutionUnit, ExpectedTargetEntry,
-    MutationPlan, PreparedEntryAction, PreparedEntryMutation, PreviewFingerprint, PreviewToken,
-    RuntimeRevisions,
+    group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
+    PreparedEntryAction, PreparedEntryMutation, PreviewToken, RuntimeRevisions,
+};
+use crate::application::mutation::planning::{
+    assemble_plan, issue_preview_token, MutationPlanDraft, MutationUnitDraft,
+    PreparedMutationEntries, PreviewTokenDraft,
 };
 use crate::application::payload_session::{PayloadSessionManager, PinnedPayloadLease};
 use crate::application::workflow_planner::AgentEntryPlan;
@@ -33,6 +33,7 @@ use crate::error::AppError;
 use crate::models::InstallMode;
 use crate::models::InstallTargetInfo;
 use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
+use serde_json::{json, Map, Value};
 
 #[derive(Clone)]
 pub struct InstallPlanningFacts {
@@ -227,14 +228,13 @@ where
 
         let observed_state_digest =
             observed_digest(&target_facts, &facts, &payloads[..canonical_payload_count])?;
-        let fingerprint = PreviewFingerprint {
+        let token = issue_preview_token(PreviewTokenDraft {
             kind: MutationKind::Install,
-            request_digest: stable_digest(request)?,
+            request,
             revisions: facts.revisions.clone(),
             observed_state_digest,
             planner_contract_version: 1,
-        };
-        let token = preview_token(&fingerprint)?;
+        })?;
         let mut preview_skills = Vec::with_capacity(seeds.len());
         let mut units = Vec::with_capacity(seeds.len());
         for seed in &seeds {
@@ -268,14 +268,15 @@ where
             token,
             skills: preview_skills,
         };
-        let plan = include_plan.then(|| MutationPlan {
-            kind: MutationKind::Install,
-            operation_id: Uuid::new_v4().simple().to_string(),
-            payloads: payloads
-                .into_iter()
-                .map(|lease| (lease.manifest().payload_id().clone(), lease))
-                .collect::<BTreeMap<PayloadId, PinnedPayloadLease>>(),
-            units,
+        let plan = include_plan.then(|| {
+            assemble_plan(MutationPlanDraft {
+                kind: MutationKind::Install,
+                payloads: payloads
+                    .into_iter()
+                    .map(|lease| (lease.manifest().payload_id().clone(), lease))
+                    .collect::<BTreeMap<PayloadId, PinnedPayloadLease>>(),
+                units,
+            })
         });
         Ok(BuiltInstallOutcome::Ready(BuiltInstall { preview, plan }))
     }
@@ -351,7 +352,7 @@ fn build_unit(
     eve_payload: Option<&PinnedPayloadLease>,
     targets: &[ResolvedTargetFact],
     now: String,
-) -> Result<ExecutionUnit, AppError> {
+) -> Result<MutationUnitDraft, AppError> {
     let metadata = payload.planning_metadata();
     let payload_id = payload.manifest().payload_id().clone();
     let canonical = PreparedEntryMutation {
@@ -407,16 +408,18 @@ fn build_unit(
             expected_content_manifest_hash: None,
         })
         .collect();
-    Ok(ExecutionUnit {
+    Ok(MutationUnitDraft {
         id: format!("install:{}", metadata.install_dir_name),
         skill_name: metadata.skill_name.clone(),
         source: None,
         target: request.context.clone(),
         expected_revisions: facts.revisions.clone(),
-        canonical_entry,
-        required_agent_entries,
+        entries: PreparedMutationEntries {
+            canonical: canonical_entry,
+            required_agents: required_agent_entries,
+            expected_targets,
+        },
         lock_mutation: Some(lock_mutation(facts, metadata, agent_plan, now)?),
-        expected_targets,
     })
 }
 

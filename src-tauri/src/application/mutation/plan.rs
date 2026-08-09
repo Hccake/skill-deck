@@ -84,15 +84,15 @@ pub struct RuntimeRevisions {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviewFingerprint {
-    pub kind: MutationKind,
-    pub request_digest: String,
-    pub revisions: RuntimeRevisions,
-    pub observed_state_digest: String,
-    pub planner_contract_version: u32,
+pub(super) struct PreviewFingerprint {
+    pub(super) kind: MutationKind,
+    pub(super) request_digest: String,
+    pub(super) revisions: RuntimeRevisions,
+    pub(super) observed_state_digest: String,
+    pub(super) planner_contract_version: u32,
 }
 
-pub fn preview_token(fingerprint: &PreviewFingerprint) -> Result<PreviewToken, AppError> {
+pub(super) fn preview_token(fingerprint: &PreviewFingerprint) -> Result<PreviewToken, AppError> {
     Ok(PreviewToken {
         generation: format!(
             "preview-v1-{}",

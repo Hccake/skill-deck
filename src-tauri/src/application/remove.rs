@@ -3,11 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::application::install::InstallPlanExecutor;
 use crate::application::install_planner::InstallPlanningFactSource;
+use crate::application::mutation::executor::MutationPlanExecutor;
 use crate::application::mutation::plan::{
-    preview_token, stable_digest, ExecutionUnit, ExpectedTargetEntry, MutationPlan,
-    PreparedEntryAction, PreparedEntryMutation, PreviewFingerprint, PreviewToken,
+    stable_digest, ExpectedTargetEntry, PreparedEntryAction, PreparedEntryMutation, PreviewToken,
+};
+use crate::application::mutation::planning::{
+    assemble_plan, issue_preview_token, validate_exact_preview, MutationPlanDraft,
+    MutationUnitDraft, PreparedMutationEntries, PreviewTokenDraft,
 };
 use crate::application::mutation::result::MutationUnitResult;
 use crate::application::skill_entries::SkillEntryObserver;
@@ -18,7 +21,6 @@ use crate::environment::runtime::ObservedEntryId;
 use crate::environment::types::{ResourceLocator, SkillLocationRef};
 use crate::error::AppError;
 use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -99,7 +101,7 @@ impl<F, T, E> RemoveService<F, T, E>
 where
     F: InstallPlanningFactSource,
     T: TargetFactResolver,
-    E: InstallPlanExecutor,
+    E: MutationPlanExecutor,
 {
     pub fn new(observer: SkillEntryObserver<F, T>, executor: E) -> Self {
         Self { observer, executor }
@@ -130,7 +132,7 @@ where
             .observe(&request.context, &request.skill_name)
             .await?;
         let preview = remove_preview(&request.context, &request.skill_name, &snapshot)?;
-        validate_token(&request.token, &preview.token)?;
+        validate_exact_preview(&request.token, &preview.token)?;
         let selected = selected_entry_ids(&preview, &request.intent)?;
         let remove_canonical = request.intent == RemoveIntent::FullSkill;
         let canonical_entry = remove_canonical.then(|| PreparedEntryMutation {
@@ -175,29 +177,30 @@ where
                 std::iter::empty::<&str>(),
             ),
         });
-        let plan = MutationPlan {
+        let plan = assemble_plan(MutationPlanDraft {
             kind: MutationKind::Remove,
-            operation_id: Uuid::new_v4().simple().to_string(),
             payloads: BTreeMap::new(),
-            units: vec![ExecutionUnit {
+            units: vec![MutationUnitDraft {
                 id: format!("remove:{}", request.skill_name),
                 skill_name: request.skill_name.clone(),
                 source: None,
                 target: request.context.clone(),
                 expected_revisions: snapshot.facts.revisions.clone(),
-                canonical_entry,
-                required_agent_entries,
+                entries: PreparedMutationEntries {
+                    canonical: canonical_entry,
+                    required_agents: required_agent_entries,
+                    expected_targets: std::iter::once(&snapshot.canonical)
+                        .chain(snapshot.entries.iter().map(|entry| &entry.fact))
+                        .map(|fact| ExpectedTargetEntry {
+                            key: fact.key.clone(),
+                            fingerprint: fact.fingerprint.clone(),
+                            expected_content_manifest_hash: None,
+                        })
+                        .collect(),
+                },
                 lock_mutation,
-                expected_targets: std::iter::once(&snapshot.canonical)
-                    .chain(snapshot.entries.iter().map(|entry| &entry.fact))
-                    .map(|fact| ExpectedTargetEntry {
-                        key: fact.key.clone(),
-                        fingerprint: fact.fingerprint.clone(),
-                        expected_content_manifest_hash: None,
-                    })
-                    .collect(),
             }],
-        };
+        });
         Ok(RemoveResponse {
             units: self.executor.execute(plan, cancellation).await,
         })
@@ -262,9 +265,10 @@ fn remove_preview(
             .value()
             .cloned(),
     ))?;
-    let token = preview_token(&PreviewFingerprint {
+    let request = (context, skill_name);
+    let token = issue_preview_token(PreviewTokenDraft {
         kind: MutationKind::Remove,
-        request_digest: stable_digest(&(context, skill_name))?,
+        request: &request,
         revisions: snapshot.facts.revisions.clone(),
         observed_state_digest,
         planner_contract_version: 1,
@@ -282,21 +286,6 @@ fn remove_preview(
             .map(|entry| entry.public.clone())
             .collect(),
     })
-}
-
-fn validate_token(expected: &PreviewToken, actual: &PreviewToken) -> Result<(), AppError> {
-    if expected.registry_revision != actual.registry_revision {
-        return Err(AppError::StaleRegistry);
-    }
-    if expected.environment_revision != actual.environment_revision {
-        return Err(AppError::StaleEnvironment);
-    }
-    if expected.context_revision != actual.context_revision
-        || expected.generation != actual.generation
-    {
-        return Err(AppError::StaleContext);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
