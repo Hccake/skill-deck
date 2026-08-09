@@ -6,6 +6,19 @@ const t = (key: string, params?: Record<string, unknown>) =>
   `${key}${params ? JSON.stringify(params) : ''}`;
 
 describe('parseInstallError', () => {
+  it('preserves generic Git failure details without calling it a network failure', () => {
+    const error = {
+      kind: 'gitCloneFailed',
+      data: { message: 'git exited with status 128' },
+    } as AppError;
+
+    const result = parseInstallError(error, t as never);
+
+    expect(result.message).toBe('addSkill.error.gitFailed');
+    expect(result.details).toBe('git exited with status 128');
+    expect(result.suggestions).not.toContain('addSkill.error.suggestion.checkNetwork');
+  });
+
   it.each([
     [
       {

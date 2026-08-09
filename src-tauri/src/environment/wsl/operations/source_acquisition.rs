@@ -41,6 +41,7 @@ fn build_wsl_native_source_plan(
     session: &WslSession,
     source: WslAcquisitionSource,
     managed_repo_path: &str,
+    git_timeout: Duration,
 ) -> Result<WslNativeSourcePlan, AppError> {
     match source {
         WslAcquisitionSource::Git { url, git_ref } => Ok(WslNativeSourcePlan {
@@ -54,7 +55,7 @@ fn build_wsl_native_source_plan(
                     git_ref.unwrap_or_default(),
                     session.distro_name.clone(),
                 ],
-                timeout: Duration::from_secs(120),
+                timeout: git_timeout,
             }),
             cleanup_root: Some(managed_repo_path.to_string()),
         }),
@@ -169,10 +170,11 @@ pub async fn acquire_wsl_source_native(
     workspace: WslWorkspace,
     session: &WslSession,
     source: WslAcquisitionSource,
+    git_timeout: Duration,
     cancellation: CancellationSignal,
 ) -> Result<WslNativeSource, AppError> {
     let managed_root = format!("/tmp/skill-deck-discovery-{}/repo", Uuid::new_v4().simple());
-    let plan = build_wsl_native_source_plan(session, source, &managed_root)?;
+    let plan = build_wsl_native_source_plan(session, source, &managed_root, git_timeout)?;
     let ref_revision = if let Some(operation) = plan.operation {
         let response = run_wsl_acquisition_plan_with(
             session.clone(),
@@ -374,6 +376,10 @@ mod tests {
         }
     }
 
+    fn configured_git_timeout() -> tokio::time::Duration {
+        tokio::time::Duration::from_secs(300)
+    }
+
     fn git_operation() -> WslAcquisitionPlan {
         build_wsl_native_source_plan(
             &session(),
@@ -382,6 +388,7 @@ mod tests {
                 git_ref: None,
             },
             "/tmp/skill-deck-discovery-123/repo",
+            configured_git_timeout(),
         )
         .expect("build Git source plan")
         .operation
@@ -397,6 +404,7 @@ mod tests {
                 git_ref: Some("feature; echo unsafe".to_string()),
             },
             "/mnt/c/Temp/sd-1/repo",
+            configured_git_timeout(),
         )
         .expect("build git plan");
 
@@ -412,6 +420,27 @@ mod tests {
     }
 
     #[test]
+    fn wsl_git_plan_uses_the_configured_git_timeout() {
+        let plan = build_wsl_native_source_plan(
+            &session(),
+            WslAcquisitionSource::Git {
+                url: "https://github.com/example/repo".to_string(),
+                git_ref: None,
+            },
+            "/mnt/c/Temp/sd-1/repo",
+            configured_git_timeout(),
+        )
+        .expect("build Git source plan");
+
+        assert_eq!(
+            plan.operation
+                .expect("Git Source requires acquisition")
+                .timeout,
+            configured_git_timeout()
+        );
+    }
+
+    #[test]
     fn wsl_git_plan_keeps_a_narrow_operation_time_git_preflight() {
         let plan = build_wsl_native_source_plan(
             &session(),
@@ -420,6 +449,7 @@ mod tests {
                 git_ref: None,
             },
             "/mnt/c/Temp/sd-1/repo",
+            configured_git_timeout(),
         )
         .expect("build Git source plan");
 
@@ -437,6 +467,7 @@ mod tests {
                 native_path: "/home/alice/code/skills".to_string(),
             },
             "/tmp/skill-deck-discovery-123/repo",
+            configured_git_timeout(),
         )
         .expect("build local plan");
 
@@ -453,6 +484,7 @@ mod tests {
                 native_path: "relative/skills".to_string(),
             },
             "/tmp/skill-deck-discovery-123/repo",
+            configured_git_timeout(),
         )
         .expect_err("relative WSL Source must be rejected");
 

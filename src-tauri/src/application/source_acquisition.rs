@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,8 +23,8 @@ use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_f
 use crate::core::wellknown::{extract_hostname, fetch_wellknown_skills, WellKnownTrustMetadata};
 use crate::core::{
     compute_local_tree_sha, discover_skills, get_owner_repo, parse_source,
-    select_discovered_skills, source_risk_policy, CloneProgress, DiscoverOptions,
-    DiscoveryDocument, DiscoveryInventory,
+    resolve_clone_timeout_secs, select_discovered_skills, source_risk_policy, CloneProgress,
+    DiscoverOptions, DiscoveryDocument, DiscoveryInventory,
 };
 use crate::environment::types::{EnvironmentRef, SkillLocationRef};
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
@@ -253,6 +254,7 @@ impl<'a> SourceDiscoveryService<'a> {
                 let environment = context.environment.clone();
                 let requested_source = requested_source.clone();
                 let sessions = Arc::clone(&self.sessions);
+                let git_timeout = Duration::from_secs(resolve_clone_timeout_secs());
                 self.environments
                     .with_session_retry(distro_name, move |session| {
                         let workspace = workspace.clone();
@@ -273,6 +275,7 @@ impl<'a> SourceDiscoveryService<'a> {
                                 workspace.clone(),
                                 &session,
                                 acquisition,
+                                git_timeout,
                                 cancellation,
                             )
                             .await?;

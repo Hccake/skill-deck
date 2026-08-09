@@ -14,6 +14,7 @@ use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::error::AppError;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread::JoinHandle;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -23,6 +24,7 @@ pub const DEFAULT_CLONE_TIMEOUT_SECS: u64 = 120;
 pub const MIN_CLONE_TIMEOUT_SECS: u64 = 30;
 /// 允许的最大自定义超时时间（秒）
 pub const MAX_CLONE_TIMEOUT_SECS: u64 = 3600;
+const MAX_GIT_OUTPUT_CAPTURE_BYTES: usize = 256 * 1024;
 
 /// 克隆进度阶段
 #[derive(Debug, Clone, serde::Serialize)]
@@ -171,7 +173,7 @@ fn normalize_clone_timeout_secs(value: u64) -> u64 {
     }
 }
 
-fn resolve_clone_timeout_secs() -> u64 {
+pub(crate) fn resolve_clone_timeout_secs() -> u64 {
     crate::core::read_config()
         .map(|config| normalize_clone_timeout_secs(config.git_clone_timeout_secs.into()))
         .unwrap_or(DEFAULT_CLONE_TIMEOUT_SECS)
@@ -194,6 +196,55 @@ struct CommandOutput {
     stdout: String,
     stderr: String,
     elapsed_secs: u64,
+}
+
+fn spawn_output_reader<R>(mut reader: R) -> JoinHandle<std::io::Result<Vec<u8>>>
+where
+    R: std::io::Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut retained = Vec::with_capacity(MAX_GIT_OUTPUT_CAPTURE_BYTES);
+        let mut chunk = [0u8; 8 * 1024];
+        loop {
+            let read = reader.read(&mut chunk)?;
+            if read == 0 {
+                return Ok(retained);
+            }
+            retain_output_tail(&mut retained, &chunk[..read]);
+        }
+    })
+}
+
+fn retain_output_tail(retained: &mut Vec<u8>, chunk: &[u8]) {
+    if chunk.len() >= MAX_GIT_OUTPUT_CAPTURE_BYTES {
+        retained.clear();
+        retained.extend_from_slice(&chunk[chunk.len() - MAX_GIT_OUTPUT_CAPTURE_BYTES..]);
+        return;
+    }
+
+    let overflow = retained
+        .len()
+        .saturating_add(chunk.len())
+        .saturating_sub(MAX_GIT_OUTPUT_CAPTURE_BYTES);
+    if overflow > 0 {
+        retained.drain(..overflow);
+    }
+    retained.extend_from_slice(chunk);
+}
+
+fn join_output_reader(
+    reader: JoinHandle<std::io::Result<Vec<u8>>>,
+    stream: &str,
+) -> Result<String, AppError> {
+    let bytes = reader
+        .join()
+        .map_err(|_| AppError::GitCloneFailed {
+            message: format!("Git {stream} reader panicked"),
+        })?
+        .map_err(|error| AppError::GitCloneFailed {
+            message: format!("Failed to read Git {stream}: {error}"),
+        })?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// 带超时和进度回调执行命令
@@ -219,48 +270,39 @@ where
         message: format!("Failed to spawn git: {}", e),
     })?;
 
-    // 等待进程完成或超时
+    let stdout_reader =
+        spawn_output_reader(
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| AppError::GitCloneFailed {
+                    message: "Failed to capture Git stdout".to_string(),
+                })?,
+        );
+    let stderr_reader =
+        spawn_output_reader(
+            child
+                .stderr
+                .take()
+                .ok_or_else(|| AppError::GitCloneFailed {
+                    message: "Failed to capture Git stderr".to_string(),
+                })?,
+        );
+
+    // 等待进程完成或超时；读取线程在等待期间持续排空管道。
     let start = std::time::Instant::now();
     let mut last_progress_secs = 0u64;
 
-    loop {
+    let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                // 进程已结束
-                let stdout = child
-                    .stdout
-                    .take()
-                    .map(|mut output| {
-                        use std::io::Read;
-                        let mut buffer = String::new();
-                        output.read_to_string(&mut buffer).ok();
-                        buffer
-                    })
-                    .unwrap_or_default();
-                let stderr = child
-                    .stderr
-                    .take()
-                    .map(|mut s| {
-                        use std::io::Read;
-                        let mut buf = String::new();
-                        s.read_to_string(&mut buf).ok();
-                        buf
-                    })
-                    .unwrap_or_default();
-
-                return Ok(CommandOutput {
-                    success: status.success(),
-                    status_code: status.code(),
-                    stdout,
-                    stderr,
-                    elapsed_secs: start.elapsed().as_secs(),
-                });
+                break Ok(status);
             }
             Ok(None) => {
                 if cancellation.is_cancelled() {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(AppError::MutationCancelled);
+                    break Err(AppError::MutationCancelled);
                 }
 
                 // 进程仍在运行
@@ -271,7 +313,7 @@ where
                     // 超时，杀死进程
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(AppError::GitTimeout {
+                    break Err(AppError::GitTimeout {
                         timeout_secs: timeout.as_secs() as u32,
                     });
                 }
@@ -291,12 +333,25 @@ where
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                return Err(AppError::GitCloneFailed {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(AppError::GitCloneFailed {
                     message: format!("Failed to wait for git: {}", e),
                 });
             }
         }
-    }
+    };
+
+    let stdout = join_output_reader(stdout_reader, "stdout")?;
+    let stderr = join_output_reader(stderr_reader, "stderr")?;
+    let status = status?;
+    Ok(CommandOutput {
+        success: status.success(),
+        status_code: status.code(),
+        stdout,
+        stderr,
+        elapsed_secs: start.elapsed().as_secs(),
+    })
 }
 
 /// 在已 clone 的仓库里计算指定子目录的 tree SHA。
@@ -400,9 +455,59 @@ fn normalize_git_object_id(value: &str) -> Option<String> {
         .then(|| value.to_ascii_lowercase())
 }
 
+fn sanitize_source_url(source_url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(source_url) else {
+        return source_url.to_string();
+    };
+
+    let _ = parsed.set_password(None);
+    let _ = parsed.set_username("");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed.to_string()
+}
+
+fn sanitize_git_diagnostic(diagnostic: &str, source_url: &str) -> String {
+    let safe_url = sanitize_source_url(source_url);
+    let diagnostic = diagnostic.replace(source_url, &safe_url);
+    diagnostic
+        .split_inclusive('\n')
+        .map(redact_sensitive_diagnostic_line)
+        .collect()
+}
+
+fn redact_sensitive_diagnostic_line(line: &str) -> String {
+    const MARKERS: [&str; 6] = [
+        "proxy-authorization:",
+        "authorization:",
+        "github_token=",
+        "gh_token=",
+        "access_token=",
+        "private-token:",
+    ];
+
+    let lower = line.to_ascii_lowercase();
+    let Some((index, marker)) = MARKERS
+        .iter()
+        .filter_map(|marker| lower.find(marker).map(|index| (index, *marker)))
+        .min_by_key(|(index, _)| *index)
+    else {
+        return line.to_string();
+    };
+
+    let newline = if line.ends_with('\n') { "\n" } else { "" };
+    format!(
+        "{}{}<redacted>{newline}",
+        &line[..index],
+        &line[index..index + marker.len()]
+    )
+}
+
 /// 分类 Git 错误（与 CLI 行为一致）
 fn classify_git_error(stderr: &str, url: &str) -> AppError {
     let stderr_lower = stderr.to_lowercase();
+    let safe_url = sanitize_source_url(url);
+    let safe_stderr = sanitize_git_diagnostic(stderr, url);
 
     // 认证错误
     if stderr_lower.contains("authentication failed")
@@ -411,7 +516,7 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
     {
         return AppError::GitAuthFailed {
             message: format!(
-                "Authentication failed for {url}.\n\
+                "Authentication failed for {safe_url}.\n\
                  - For private repos, ensure you have access\n\
                  - For SSH: Check your keys with 'ssh -T git@github.com'\n\
                  - For HTTPS: Run 'gh auth login' or configure git credentials"
@@ -426,7 +531,7 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
     {
         return AppError::GitNetworkError {
             message: format!(
-                "DNS resolution failed for {url}.\n\
+                "DNS resolution failed for {safe_url}.\n\
                  - Check your internet connection\n\
                  - Verify the URL is correct"
             ),
@@ -440,7 +545,7 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
     {
         return AppError::GitNetworkError {
             message: format!(
-                "Connection failed for {url}.\n\
+                "Connection failed for {safe_url}.\n\
                  - Check your internet connection\n\
                  - Check if a proxy/VPN is required"
             ),
@@ -453,7 +558,7 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
     {
         return AppError::GitNetworkError {
             message: format!(
-                "SSL/TLS error for {url}.\n\
+                "SSL/TLS error for {safe_url}.\n\
                  - Check your system time\n\
                  - Check if a proxy is intercepting HTTPS"
             ),
@@ -467,20 +572,18 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         || (stderr_lower.contains("not found") && stderr_lower.contains("branch"))
     {
         return AppError::GitRefNotFound {
-            ref_name: stderr.to_string(),
+            ref_name: safe_stderr,
         };
     }
 
     // 仓库不存在
     if stderr_lower.contains("repository not found") || stderr_lower.contains("does not exist") {
-        return AppError::GitRepoNotFound {
-            repo: url.to_string(),
-        };
+        return AppError::GitRepoNotFound { repo: safe_url };
     }
 
     // 通用错误
     AppError::GitCloneFailed {
-        message: format!("Failed to clone {}: {}", url, stderr),
+        message: format!("Failed to clone {safe_url}: {safe_stderr}"),
     }
 }
 
@@ -497,7 +600,7 @@ fn classify_git_command_error(output: &CommandOutput, url: &str, operation: &str
     AppError::GitCloneFailed {
         message: format!(
             "Git {operation} failed with exit status {status}: {}",
-            output.stderr.trim()
+            sanitize_git_diagnostic(&output.stderr, url).trim()
         ),
     }
 }
@@ -509,6 +612,39 @@ fn classify_git_command_error(output: &CommandOutput, url: &str, operation: &str
 )]
 mod tests {
     use super::*;
+
+    const SUBPROCESS_OUTPUT_FIXTURE_ENV: &str = "SKILL_DECK_GIT_OUTPUT_FIXTURE";
+
+    fn subprocess_output_fixture_command(stream: &str) -> Command {
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "core::git::tests::subprocess_output_fixture",
+                "--nocapture",
+            ])
+            .env(SUBPROCESS_OUTPUT_FIXTURE_ENV, stream);
+        command
+    }
+
+    #[test]
+    fn subprocess_output_fixture() {
+        let Ok(stream) = std::env::var(SUBPROCESS_OUTPUT_FIXTURE_ENV) else {
+            return;
+        };
+        if stream == "sleep" {
+            std::thread::sleep(Duration::from_secs(10));
+            return;
+        }
+        let output = vec![b'x'; 8 * 1024 * 1024];
+        match stream.as_str() {
+            "stderr" => std::io::Write::write_all(&mut std::io::stderr(), &output)
+                .expect("write stderr fixture"),
+            "stdout" => std::io::Write::write_all(&mut std::io::stdout(), &output)
+                .expect("write stdout fixture"),
+            other => panic!("unknown subprocess output fixture: {other}"),
+        }
+    }
 
     #[test]
     fn test_classify_auth_error() {
@@ -563,6 +699,23 @@ mod tests {
     fn test_classify_ssl_error() {
         let err = classify_git_error("SSL certificate problem", "https://github.com");
         assert!(matches!(err, AppError::GitNetworkError { .. }));
+    }
+
+    #[test]
+    fn git_error_messages_redact_source_credentials() {
+        let url =
+            "https://alice:secret-token@github.com/acme/private.git?access_token=query-secret";
+        let stderr = format!(
+            "fatal: unexpected failure while accessing '{url}'\n\
+             Authorization: Bearer header-secret"
+        );
+
+        let rendered = classify_git_error(&stderr, url).to_string();
+
+        for secret in ["alice", "secret-token", "query-secret", "header-secret"] {
+            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+        }
+        assert!(rendered.contains("github.com/acme/private.git"));
     }
 
     #[test]
@@ -709,7 +862,6 @@ mod tests {
         assert_eq!(progress.message, Some(err.to_string()));
     }
 
-    #[cfg(unix)]
     #[test]
     fn active_child_is_killed_and_waited_when_clone_is_cancelled() {
         let cancellation = CancellationSignal::default();
@@ -718,8 +870,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
             cancel_from_thread.cancel();
         });
-        let mut command = Command::new("sleep");
-        command.arg("10");
+        let mut command = subprocess_output_fixture_command("sleep");
         let started = std::time::Instant::now();
 
         let result = execute_with_timeout_and_progress(
@@ -732,5 +883,45 @@ mod tests {
 
         assert!(matches!(result, Err(AppError::MutationCancelled)));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn active_child_is_killed_and_waited_when_git_times_out() {
+        let mut command = subprocess_output_fixture_command("sleep");
+        let started = std::time::Instant::now();
+
+        let result = execute_with_timeout_and_progress(
+            &mut command,
+            Duration::from_secs(1),
+            &|_| {},
+            &CancellationSignal::default(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AppError::GitTimeout { timeout_secs: 1 })
+        ));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn large_output_streams_are_drained_while_subprocess_is_running() {
+        for stream in ["stdout", "stderr"] {
+            let mut command = subprocess_output_fixture_command(stream);
+            let output = execute_with_timeout_and_progress(
+                &mut command,
+                Duration::from_secs(2),
+                &|_| {},
+                &CancellationSignal::default(),
+            )
+            .unwrap_or_else(|error| panic!("{stream} subprocess failed: {error:?}"));
+
+            let retained = if stream == "stdout" {
+                output.stdout
+            } else {
+                output.stderr
+            };
+            assert_eq!(retained.len(), MAX_GIT_OUTPUT_CAPTURE_BYTES);
+        }
     }
 }

@@ -293,6 +293,7 @@ describe('SourceStep', () => {
       });
     });
     expect(screen.getByText('addSkill.source.status.cloningWithTime')).toBeTruthy();
+    expect(screen.queryByRole('progressbar')).toBeNull();
 
     await act(async () => {
       fetchResult.resolve({

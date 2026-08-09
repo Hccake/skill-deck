@@ -20,8 +20,9 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.source.error.notFound');
     case 'gitRefNotFound':
       return t('addSkill.source.error.refNotFound');
-    case 'gitNetworkError':
     case 'gitCloneFailed':
+      return t('addSkill.source.error.gitFailed');
+    case 'gitNetworkError':
     case 'gitHubApiError':
       // GitHubApiError 主要在 update 流程出现 (检查 skill folder hash 时),
       // install 路径基本走不到。此处仅为 exhaustive match 兜底,统一归到 network 文案。

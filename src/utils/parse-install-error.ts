@@ -35,8 +35,17 @@ export function parseInstallError(
       };
     }
 
-    case 'gitNetworkError':
     case 'gitCloneFailed':
+      return {
+        message: t('addSkill.error.gitFailed'),
+        details: error.data.message,
+        suggestions: [
+          t('addSkill.error.suggestion.checkRepo'),
+          t('addSkill.error.suggestion.retryOrContact'),
+        ],
+      };
+
+    case 'gitNetworkError':
     case 'gitHubApiError':
       // GitHubApiError 主要在 update 流程出现 (检查 skill folder hash 时),
       // install 路径基本走不到。此处仅为 exhaustive match 兜底,统一归到 network 文案。

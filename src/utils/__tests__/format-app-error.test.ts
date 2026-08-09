@@ -6,6 +6,15 @@ const t = (key: string, params?: Record<string, unknown>) =>
   `${key}${params ? JSON.stringify(params) : ''}`;
 
 describe('formatAppError', () => {
+  it('does not report a generic Git failure as a network error', () => {
+    const error = {
+      kind: 'gitCloneFailed',
+      data: { message: 'git exited with status 128' },
+    } as AppError;
+
+    expect(formatAppError(error, t as never)).toBe('addSkill.source.error.gitFailed');
+  });
+
   it.each([
     [
       {

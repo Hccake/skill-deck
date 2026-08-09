@@ -372,7 +372,7 @@ fn git_failure(error: AppError) -> EvidenceDetectionOutcome {
         AppError::GitAuthFailed { .. } => (EvidenceFailureReason::AuthenticationRequired, None),
         AppError::GitRepoNotFound { .. } => (EvidenceFailureReason::RepositoryNotFound, None),
         AppError::GitRefNotFound { .. } => (EvidenceFailureReason::RefNotFound, None),
-        AppError::GitTimeout { .. } | AppError::GitCloneFailed { .. } => (
+        AppError::GitTimeout { .. } | AppError::GitNetworkError { .. } => (
             EvidenceFailureReason::Network,
             Some((chrono::Utc::now().timestamp_millis().max(0) as u64).saturating_add(30_000)),
         ),
@@ -450,6 +450,39 @@ mod tests {
             },
             || 1_000,
         ))
+    }
+
+    #[test]
+    fn git_failure_only_schedules_network_retry_for_network_and_timeout_errors() {
+        let cases = [
+            (
+                AppError::GitNetworkError {
+                    message: "offline".to_string(),
+                },
+                EvidenceFailureReason::Network,
+                true,
+            ),
+            (
+                AppError::GitTimeout { timeout_secs: 120 },
+                EvidenceFailureReason::Network,
+                true,
+            ),
+            (
+                AppError::GitCloneFailed {
+                    message: "git exited with status 128".to_string(),
+                },
+                EvidenceFailureReason::SourceUnavailable,
+                false,
+            ),
+        ];
+
+        for (error, expected_reason, expects_retry) in cases {
+            let EvidenceDetectionOutcome::Failed(failure) = git_failure(error) else {
+                panic!("Git failure must produce failed evidence");
+            };
+            assert_eq!(failure.reason, expected_reason);
+            assert_eq!(failure.retry_at_epoch_ms.is_some(), expects_retry);
+        }
     }
 
     struct HttpResponse {
@@ -1247,7 +1280,7 @@ mod tests {
             panic!("expected probe failure, got {outcome:?}");
         };
 
-        assert_eq!(failure.reason, EvidenceFailureReason::Network);
+        assert_eq!(failure.reason, EvidenceFailureReason::SourceUnavailable);
         assert_eq!(failure.message, "Git source evidence request failed");
         assert_eq!(git_transport.clone_count(), 1);
     }

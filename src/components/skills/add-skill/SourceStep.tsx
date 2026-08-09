@@ -6,7 +6,6 @@ import { Info } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { fetchAvailable } from '@/hooks/useTauriApi';
 import { parseSkillsCommand } from '@/utils/parse-skills-command';
@@ -193,11 +192,6 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
 
   const isLoading = state.fetchStatus === 'loading';
 
-  // 计算进度百分比
-  const progressPercent = cloneProgress
-    ? Math.min((cloneProgress.elapsed_secs / cloneProgress.timeout_secs) * 100, 99)
-    : 0;
-
   // 获取阶段文字
   const getPhaseText = () => {
     if (!cloneProgress) return t('addSkill.source.status.cloning');
@@ -240,11 +234,6 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
                 {state.source.replace(/@[^@]+$/, '')}
               </p>
             </div>
-            {cloneProgress && cloneProgress.phase === 'cloning' && (
-              <div className="w-full max-w-[280px] mt-4">
-                <Progress value={progressPercent} className="h-1.5" />
-              </div>
-            )}
           </div>
         ) : (
           <div className="flex-1 animate-in fade-in duration-300 flex flex-col">
