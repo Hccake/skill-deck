@@ -15,9 +15,7 @@ import { projectSnapshotFor } from './projects';
 import { isBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type {
   InstalledSkill,
-  InstalledSkillLocation,
   SkillLocationRef,
-  ManageAgentSelectionSnapshot,
   RemovePreview,
 } from '@/bindings';
 import { formatWorkflowError } from '@/workflows/mutation-presentation';
@@ -31,11 +29,7 @@ interface SkillDialogState {
 
   // Manage agents dialog
   manageAgentsSkill: InstalledSkill | null;
-  manageAgentsScope: InstalledSkillLocation;
-  manageAgentsProjectPath?: string;
   manageAgentsContext?: SkillLocationRef;
-  manageAgentDetails: ManageAgentSelectionSnapshot | null;
-  loadingManageAgentDetails: boolean;
 
   // Copy to project dialog
   copySkill: InstalledSkill | null;
@@ -58,9 +52,7 @@ interface SkillDialogState {
     projectPath?: string,
   ) => void;
   closeRepairSource: () => void;
-  openManageAgents: (skill: InstalledSkill, context: SkillLocationRef, projectPath?: string) => void;
-  setManageAgentDetails: (snapshot: ManageAgentSelectionSnapshot | null) => void;
-  setManageAgentLoading: (loading: boolean) => void;
+  openManageAgents: (skill: InstalledSkill, context: SkillLocationRef) => void;
   closeManageAgents: () => void;
   openCopyToProject: (skill: InstalledSkill, context: SkillLocationRef) => void;
   closeCopyToProject: () => void;
@@ -80,11 +72,7 @@ export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
   deleteFeedback: null,
   loadingAgentDetails: false,
   manageAgentsSkill: null,
-  manageAgentsScope: 'global' as InstalledSkillLocation,
-  manageAgentsProjectPath: undefined,
   manageAgentsContext: undefined,
-  manageAgentDetails: null,
-  loadingManageAgentDetails: false,
   copySkill: null,
   copyContext: undefined,
   repairSourceTarget: null,
@@ -155,29 +143,16 @@ export const useSkillDialogStore = create<SkillDialogState>()((set) => ({
 
   closeRepairSource: () => set({ repairSourceTarget: null }),
 
-  openManageAgents: (skill, context, projectPath = projectPathForContext(context)) => {
-    const scope = context.scope.scope;
-    const manageAgentsProjectPath = scope === 'project' ? projectPath : undefined;
+  openManageAgents: (skill, context) => {
     set({
       manageAgentsSkill: skill,
-      manageAgentsScope: scope,
-      manageAgentsProjectPath,
       manageAgentsContext: context,
-      manageAgentDetails: null,
-      loadingManageAgentDetails: true,
     });
   },
 
-  setManageAgentDetails: (manageAgentDetails) => set({ manageAgentDetails }),
-
-  setManageAgentLoading: (loadingManageAgentDetails) => set({ loadingManageAgentDetails }),
-
   closeManageAgents: () => set({
     manageAgentsSkill: null,
-    manageAgentsProjectPath: undefined,
     manageAgentsContext: undefined,
-    manageAgentDetails: null,
-    loadingManageAgentDetails: false,
   }),
 
   openCopyToProject: (skill, context) => {

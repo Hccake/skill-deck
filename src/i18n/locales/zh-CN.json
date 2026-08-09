@@ -346,8 +346,7 @@
       "discardConfirm": "放弃尚未保存的更改？",
       "discard": "放弃更改",
       "continueEditing": "继续编辑",
-      "success": "关联 Agent 已更新",
-      "cleanupSuccess": "额外副本已移除"
+      "success": "关联 Agent 已更新"
     },
     "copyToProject": {
       "title": "复制「{{name}}」到其他项目",
@@ -1076,7 +1075,6 @@
       "remove": "移除 Skill",
       "copy": "复制 Skill",
       "manageAgents": "更新关联 Agent",
-      "duplicateCleanup": "清理重复副本",
       "repair": "修复来源",
       "saveAgentDefaults": "保存 Agent 默认值",
       "batchUpdate": "批量更新 Skill",
@@ -1187,7 +1185,6 @@
       "update": "更新",
       "delete": "删除",
       "manageAgents": "管理关联 Agent",
-      "cleanup": "清理重复副本",
       "copy": "复制",
       "repair": "修复来源"
     }

@@ -5,7 +5,7 @@ import { Channel } from '@tauri-apps/api/core';
 import type {
   AgentId, AgentRuntimeSnapshot, ListSkillsResult, InstalledSkillLocation,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
-  SkillAuditData, DuplicateCleanupResult,
+  SkillAuditData,
   InstallRiskPolicy, InstallRiskKind,
   AgentDeleteImpact,
   AgentDeleteResult,
@@ -35,7 +35,7 @@ import type {
 export type {
   AgentId, AgentRuntimeSnapshot, ListSkillsResult, InstalledSkillLocation,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
-  SkillAuditData, DuplicateCleanupResult,
+  SkillAuditData,
   InstallRiskPolicy, InstallRiskKind,
   SkillLocationRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
   EnvironmentRef, AddProjectResult, InstallWizardSessionSnapshot, MutationSnapshot,
@@ -438,17 +438,6 @@ export async function manageSkillAgents(
   request: ManageAgentsRequest,
 ): Promise<ManageAgentsResponse> {
   return unwrap(await commands.manageSkillAgents(request));
-}
-
-export async function cleanupDuplicateAgentCopies(
-  context: SkillLocationRef,
-  params: { skillName: string; agents: AgentId[] },
-): Promise<DuplicateCleanupResult[]> {
-  return unwrap(await commands.cleanupDuplicateAgentCopies(
-    context,
-    params.skillName,
-    params.agents,
-  ));
 }
 
 // ============ 复制 Skill API ============

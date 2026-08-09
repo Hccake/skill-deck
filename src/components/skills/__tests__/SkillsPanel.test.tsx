@@ -104,6 +104,7 @@ const mocks = vi.hoisted(() => ({
     openDelete: vi.fn(),
     openAdd: vi.fn(),
     openRepairSource: vi.fn(),
+    openManageAgents: vi.fn(),
   },
   updateWorkflowState: { phase: 'closed', context: null as SkillLocationRef | null, skillNames: [] as string[], open: vi.fn().mockResolvedValue(true) },
   updateWorkflowSelectors: [] as Array<(state: {
@@ -239,6 +240,7 @@ vi.mock('../SkillsSection', () => ({
     skills,
     updatingSkills,
     onRepairSource,
+    onManageAgents,
     onCheckUpdates,
     onPrepareUpdate,
     scope,
@@ -247,6 +249,7 @@ vi.mock('../SkillsSection', () => ({
     skills: Array<{ name: string; scope: 'global' | 'project' }>;
     updatingSkills: Map<string, string>;
     onRepairSource?: (skill: { name: string; scope: 'global' | 'project' }) => void;
+    onManageAgents?: (skill: { name: string; scope: 'global' | 'project' }) => void;
     onCheckUpdates?: () => Promise<boolean>;
     onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
     scope: 'global' | 'project';
@@ -265,6 +268,13 @@ vi.mock('../SkillsSection', () => ({
             onClick={() => onRepairSource?.(skill)}
           >
             repair
+          </button>
+          <button
+            type="button"
+            data-testid={`manage:${skill.scope}:${skill.name}`}
+            onClick={() => onManageAgents?.(skill)}
+          >
+            manage
           </button>
         </div>
       ))}
@@ -330,6 +340,7 @@ describe('SkillsPanel', () => {
     mocks.skillDialogState.openDelete.mockClear();
     mocks.skillDialogState.openAdd.mockClear();
     mocks.skillDialogState.openRepairSource.mockClear();
+    mocks.skillDialogState.openManageAgents.mockClear();
   });
 
   it('does not clear the selected skill when compact mode mounts', async () => {
@@ -361,6 +372,24 @@ describe('SkillsPanel', () => {
       nativeGlobal,
     );
     expect(mocks.skillDialogState.openAdd).not.toHaveBeenCalled();
+  });
+
+  it('opens Agent management with the selected operation context', async () => {
+    mocks.skillsDataState.snapshots = {
+      'native/global': snapshot([makeSkill('toolkit')]),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    await waitFor(() => {
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(nativeGlobal);
+    });
+    fireEvent.click(screen.getByTestId('manage:global:toolkit'));
+
+    expect(mocks.skillDialogState.openManageAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'toolkit', scope: 'global' }),
+      nativeGlobal,
+    );
   });
 
   it('keeps cached rows visible while the committed context refreshes', () => {

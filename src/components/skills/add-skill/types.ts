@@ -5,10 +5,8 @@ import type {
   AppError,
   AvailableSkill,
   DiscoverySessionHandle,
-  InstallMode,
   InstallResponse,
   SkillLocationRef,
-  InstallAgentSelectionSnapshot,
 } from '@/bindings';
 import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
 import type {
@@ -72,15 +70,6 @@ export interface WizardState {
   skillFilter: string | null;
   skillSearchQuery: string;
 
-  // Options
-  agentSelectionSnapshot: InstallAgentSelectionSnapshot | null;
-  selectedAgentOptionIds: string[];
-  expandedAgentGroupIds: string[];
-  additionalAgentsExpanded: boolean;
-  selectionRequiresReconfirmation: boolean;
-  mode: InstallMode;
-  otherAgentsExpanded: boolean;
-
   // Confirm
   overwrites: Record<string, string[]>;
   preparation: InstallPreparationState;
@@ -103,8 +92,7 @@ export function canProceedForStep(state: WizardState): boolean {
     case 'skills':
       return state.selectedSkills.length > 0;
     case 'options':
-      return state.agentSelectionSnapshot !== null
-        && !state.selectionRequiresReconfirmation;
+      return true;
     case 'confirm':
       return state.preparation.status === 'ready'
         && (state.riskPolicy?.kind !== 'require-confirmation' || state.riskAcknowledged);

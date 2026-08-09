@@ -5,9 +5,8 @@ import { useMutationStore } from '@/stores/mutation';
 import { useInstallWizardSessionStore } from '@/stores/install-wizard-session';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillRemoval, openSkillRemoval } from '../skill-remove';
-import { executeManageAgentChanges, openManageAgentChanges } from '../skill-manage-agents';
+import { executeManageAgentChanges } from '../skill-manage-agents';
 import { executeSkillCopy } from '../skill-copy';
-import { executeDuplicateCleanup } from '../duplicate-cleanup';
 
 const mocks = vi.hoisted(() => ({
   previewRemove: vi.fn(),
@@ -18,7 +17,6 @@ const mocks = vi.hoisted(() => ({
   manageSkillAgents: vi.fn(),
   previewCopySkillToProjects: vi.fn(),
   copySkillToProjects: vi.fn(),
-  cleanupDuplicateAgentCopies: vi.fn(),
   syncSkills: vi.fn(),
   refreshContext: vi.fn(),
   deselectSkill: vi.fn(),
@@ -34,7 +32,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
   manageSkillAgents: (...args: unknown[]) => mocks.manageSkillAgents(...args),
   previewCopySkillToProjects: (...args: unknown[]) => mocks.previewCopySkillToProjects(...args),
   copySkillToProjects: (...args: unknown[]) => mocks.copySkillToProjects(...args),
-  cleanupDuplicateAgentCopies: (...args: unknown[]) => mocks.cleanupDuplicateAgentCopies(...args),
   getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
@@ -140,7 +137,6 @@ describe('skill workflows', () => {
       loadingAgentDetails: false,
       manageAgentsSkill: null,
       manageAgentsContext: undefined,
-      manageAgentDetails: null,
       copySkill: null,
       copyContext: undefined,
     });
@@ -163,9 +159,6 @@ describe('skill workflows', () => {
       },
     });
     mocks.copySkillToProjects.mockResolvedValue({ units: [{ status: 'succeeded' }] });
-    mocks.cleanupDuplicateAgentCopies.mockResolvedValue([
-      { agent: 'codex', success: true, skipped: false, path: null, error: null },
-    ]);
   });
 
   it('executes removal from the preview captured by dialog state', async () => {
@@ -313,7 +306,6 @@ describe('skill workflows', () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
-      manageAgentDetails: manageSnapshot,
     });
 
     await executeManageAgentChanges(manageSubmission);
@@ -360,7 +352,6 @@ describe('skill workflows', () => {
     useSkillDialogStore.setState({
       manageAgentsSkill: skill,
       manageAgentsContext: context,
-      manageAgentDetails: manageSnapshot,
     });
     mocks.manageSkillAgents.mockResolvedValueOnce({ units: [{ status: 'failed', error: null }] });
 
@@ -374,32 +365,11 @@ describe('skill workflows', () => {
     useSkillDialogStore.setState({ manageAgentsSkill: skill, manageAgentsContext: context });
     mocks.previewManageSkillAgents.mockResolvedValueOnce({ status: 'selectionStale', snapshot: latest });
 
-    await expect(executeManageAgentChanges(manageSubmission)).resolves.toEqual({ status: 'stale' });
-    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(latest);
+    await expect(executeManageAgentChanges(manageSubmission)).resolves.toEqual({
+      status: 'stale',
+      snapshot: latest,
+    });
     expect(mocks.manageSkillAgents).not.toHaveBeenCalled();
-  });
-
-  it('does not let a slow Agent selection load replace a newer dialog target', async () => {
-    const first = deferred<ManageAgentSelectionSnapshot>();
-    const second = deferred<ManageAgentSelectionSnapshot>();
-    const otherSkill = { ...skill, name: 'other-toolkit' };
-    const otherSnapshot = { ...manageSnapshot, selection: { ...manageSnapshot.selection, revision: 'other' } };
-    mocks.getManageAgentSelection
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-
-    const firstOpen = openManageAgentChanges(skill, context, '/source');
-    const secondOpen = openManageAgentChanges(otherSkill, context, '/source');
-    second.resolve(otherSnapshot);
-    await secondOpen;
-
-    expect(useSkillDialogStore.getState().manageAgentsSkill?.name).toBe(otherSkill.name);
-    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(otherSnapshot);
-
-    first.resolve(manageSnapshot);
-    await firstOpen;
-    expect(useSkillDialogStore.getState().manageAgentsSkill?.name).toBe(otherSkill.name);
-    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(otherSnapshot);
   });
 
   it('copies to project IDs in one explicitly selected target Environment', async () => {
@@ -600,37 +570,4 @@ describe('skill workflows', () => {
     expect(useSkillDialogStore.getState().copySkill).toBe(skill);
   });
 
-  it('refreshes the management preview after duplicate cleanup', async () => {
-    useSkillDialogStore.setState({
-      manageAgentsSkill: skill,
-      manageAgentsContext: context,
-      manageAgentDetails: manageSnapshot,
-    });
-
-    await executeDuplicateCleanup(['codex']);
-
-    expect(mocks.cleanupDuplicateAgentCopies).toHaveBeenCalledWith(context, {
-      skillName: skill.name,
-      agents: ['codex'],
-    });
-    expect(useSkillDialogStore.getState().manageAgentDetails).toEqual(manageSnapshot);
-    expect(mocks.syncSkills).toHaveBeenCalledWith(context, {
-      origin: 'selfMutation',
-      mutatedSkillNames: ['toolkit'],
-    });
-  });
-
-  it('does not show duplicate-cleanup failure feedback when installation wins admission', async () => {
-    useSkillDialogStore.setState({
-      manageAgentsSkill: skill,
-      manageAgentsContext: context,
-      manageAgentDetails: manageSnapshot,
-    });
-    mocks.cleanupDuplicateAgentCopies.mockRejectedValueOnce({ kind: 'installWizardActive' });
-
-    await executeDuplicateCleanup(['codex']);
-
-    expect(mocks.getManageAgentSelection).not.toHaveBeenCalled();
-    expect(mocks.syncSkills).not.toHaveBeenCalled();
-  });
 });

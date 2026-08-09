@@ -1,12 +1,16 @@
-import { useCallback } from 'react';
+import { getManageAgentSelection } from '@/hooks/useTauriApi';
 import { contextKey } from '@/lib/context';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import {
   executeManageAgentChanges,
-  openManageAgentChanges,
 } from '@/workflows/skill-manage-agents';
 import { ManageAgentsDialog } from './ManageAgentsDialog';
 import type { SkillLocationRef, InstalledSkill } from '@/bindings';
+import type { ManageAgentSelectionSessionRequest } from '@/hooks/useAgentSelectionSession';
+
+async function loadManageAgentSelection(request: ManageAgentSelectionSessionRequest) {
+  return getManageAgentSelection(request.context, request.skillName);
+}
 
 export function ManageAgentsDialogContainer() {
   const skill = useSkillDialogStore((state) => state.manageAgentsSkill);
@@ -30,23 +34,12 @@ function OpenManageAgentsDialog({
   skill: InstalledSkill;
   context: SkillLocationRef;
 }) {
-  const agentDetails = useSkillDialogStore((state) => state.manageAgentDetails);
-  const loadingAgentDetails = useSkillDialogStore((state) => state.loadingManageAgentDetails);
-  const projectPath = useSkillDialogStore((state) => state.manageAgentsProjectPath);
   const closeManageAgents = useSkillDialogStore((state) => state.closeManageAgents);
-  const previewFailed = !loadingAgentDetails && agentDetails === null;
-
-  const retryPreview = useCallback(() => {
-    void openManageAgentChanges(skill, context, projectPath);
-  }, [context, projectPath, skill]);
-
   return (
     <ManageAgentsDialog
       skill={skill}
-      snapshot={agentDetails}
-      loading={loadingAgentDetails}
-      loadFailed={previewFailed}
-      onRetry={retryPreview}
+      context={context}
+      loadAgentSelection={loadManageAgentSelection}
       onClose={closeManageAgents}
       onSave={executeManageAgentChanges}
     />

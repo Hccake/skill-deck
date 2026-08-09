@@ -47,7 +47,7 @@ const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
   listSkills: vi.fn(),
   executeSkillCopy: vi.fn(),
-  agentSelection: null as unknown,
+  getCopyAgentSelection: vi.fn(),
   selectGlobal: vi.fn(),
   selectProject: vi.fn(),
   switchEnvironment: vi.fn(),
@@ -83,12 +83,9 @@ vi.mock('@/hooks/useProjectWorkspace', () => ({
   useProjectCatalog: () => mocks.projectsByEnvironment,
 }));
 
-vi.mock('@/hooks/useCopyAgentSelection', () => ({
-  useCopyAgentSelection: () => mocks.agentSelection,
-}));
-
 vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mocks.listSkills(...args),
+  getCopyAgentSelection: (...args: unknown[]) => mocks.getCopyAgentSelection(...args),
   openInstallWizard: vi.fn(),
 }));
 
@@ -139,9 +136,7 @@ describe('CopyToProjectDialogContainer', () => {
     };
     mocks.execute.mockResolvedValue({ status: 'succeeded' });
     mocks.listSkills.mockResolvedValue({ skills: [] });
-    mocks.agentSelection = {
-      status: 'ready',
-      snapshot: {
+    mocks.getCopyAgentSelection.mockResolvedValue({
         selection: makeAgentSelectionSnapshot({
           revision: 'copy-container-selection',
           agents: [{
@@ -166,9 +161,7 @@ describe('CopyToProjectDialogContainer', () => {
           }],
           userModeOptionIds: ['claude'],
         }),
-      },
-      retry: vi.fn(),
-    };
+    });
     useSkillDialogStore.getState().closeCopyToProject();
     useSkillDialogStore.getState().openCopyToProject(skill, sourceContext);
   });

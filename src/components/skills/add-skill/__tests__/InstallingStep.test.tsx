@@ -92,8 +92,6 @@ function makeState(prepared = makePreparedInstall()): WizardState {
     ],
     privateCopyAgents: [],
     allAgents: [],
-    mode: 'copy',
-    otherAgentsExpanded: false,
     privateCopyAgentsExpanded: false,
     otherAgentsSearchQuery: '',
     overwrites: {},
@@ -136,7 +134,6 @@ describe('InstallingStep', () => {
         state={{
           ...makeState(prepared),
           selectedSkills: ['changed-after-preview'],
-          selectedAgentOptionIds: [],
         }}
         prepared={prepared}
         updateState={() => undefined}

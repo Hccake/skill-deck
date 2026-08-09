@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::application::agents::ManagedAgentRegistry;
 use crate::application::copy_runtime::{build_runtime_copy_service, RuntimeCopyService};
-use crate::application::duplicate_cleanup::DuplicateCleanupService;
 use crate::application::github_credentials::{
     resolve_environment_github_token, GithubCredentialService, GithubCredentialWorkflowService,
 };
@@ -42,7 +41,6 @@ pub struct RuntimeServiceGraph {
     projects: ProjectMigrationRegistry,
     admission: Arc<RuntimeAdmissionCoordinator>,
     install_wizard: Arc<InstallWizardWorkflow>,
-    duplicate_cleanup: DuplicateCleanupService,
     payloads: Arc<PayloadSessionManager>,
     maintenance: Arc<RuntimeMaintenanceCoordinator>,
     recovery: RuntimeRecoveryService,
@@ -150,7 +148,6 @@ impl RuntimeServiceGraph {
             projects: initialize_native_project_migration(),
             admission,
             install_wizard,
-            duplicate_cleanup: DuplicateCleanupService,
             payloads,
             maintenance,
             recovery: execution.recovery_service(),
@@ -189,10 +186,6 @@ impl RuntimeServiceGraph {
 
     pub fn install_wizard(&self) -> &Arc<InstallWizardWorkflow> {
         &self.install_wizard
-    }
-
-    pub fn duplicate_cleanup(&self) -> &DuplicateCleanupService {
-        &self.duplicate_cleanup
     }
 
     pub fn payloads(&self) -> &PayloadSessionManager {

@@ -18,6 +18,8 @@ pub enum MutationKind {
     Remove,
     Copy,
     ManageAgents,
+    // Kept so persisted recovery records from the retired cleanup operation remain readable.
+    #[allow(dead_code)]
     DuplicateCleanup,
     #[allow(dead_code)]
     Repair,

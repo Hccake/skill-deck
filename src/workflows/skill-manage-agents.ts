@@ -10,14 +10,12 @@ import { t } from '@/stores/skills-utils';
 import type {
   AgentSelectionSubmission,
   SkillLocationRef,
-  InstalledSkill,
+  ManageAgentSelectionSnapshot,
   ManageAgentsResponse,
   MutationUnitResult,
   RecoveryAction,
 } from '@/bindings';
 import { runBusinessWrite } from './install-session-feedback';
-
-let manageSelectionGeneration = 0;
 
 const STALE_CODES = new Set([
   'staleContext',
@@ -31,7 +29,7 @@ const STALE_CODES = new Set([
 export type ManageAgentsOutcome =
   | { status: 'blocked' }
   | { status: 'succeeded'; response: ManageAgentsResponse }
-  | { status: 'stale' }
+  | { status: 'stale'; snapshot: ManageAgentSelectionSnapshot }
   | { status: 'confirmationRequired' }
   | { status: 'recoveryRequired'; response: ManageAgentsResponse; recovery: RecoveryAction[] }
   | { status: 'failed' };
@@ -52,27 +50,18 @@ function isStaleError(error: unknown): boolean {
     && (STALE_CODES.has(error.kind) || error.kind === 'staleAgentRuntime'));
 }
 
-export async function openManageAgentChanges(
-  skill: InstalledSkill,
+async function reloadManageAgentSelection(
   context: SkillLocationRef,
-  projectPath?: string,
-): Promise<void> {
-  const generation = ++manageSelectionGeneration;
-  useSkillDialogStore.getState().openManageAgents(skill, context, projectPath);
+  skillName: string,
+): Promise<ManageAgentsOutcome> {
   try {
-    const snapshot = await getManageAgentSelection(context, skill.name);
-    const current = useSkillDialogStore.getState();
-    if (generation !== manageSelectionGeneration || current.manageAgentsSkill !== skill) return;
-    current.setManageAgentDetails(snapshot);
+    return {
+      status: 'stale',
+      snapshot: await getManageAgentSelection(context, skillName),
+    };
   } catch (error) {
-    if (generation === manageSelectionGeneration) {
-      console.warn('Failed to load Agent management selection:', error);
-    }
-  } finally {
-    const current = useSkillDialogStore.getState();
-    if (generation === manageSelectionGeneration && current.manageAgentsSkill === skill) {
-      current.setManageAgentLoading(false);
-    }
+    console.warn('Failed to refresh Agent management selection:', error);
+    return { status: 'failed' };
   }
 }
 
@@ -84,7 +73,6 @@ export async function executeManageAgentChanges(
   const {
     manageAgentsSkill,
     manageAgentsContext,
-    manageAgentsProjectPath,
   } = useSkillDialogStore.getState();
   if (!manageAgentsSkill || !manageAgentsContext) return { status: 'blocked' };
 
@@ -95,8 +83,7 @@ export async function executeManageAgentChanges(
       agentSelection,
     });
     if (previewOutcome.status === 'selectionStale') {
-      useSkillDialogStore.getState().setManageAgentDetails(previewOutcome.snapshot);
-      return { status: 'stale' };
+      return { status: 'stale', snapshot: previewOutcome.snapshot };
     }
     const preview = previewOutcome.preview;
     if (preview.confirmation?.removesEntityDirectories && !confirmEntityDirectories) {
@@ -114,8 +101,7 @@ export async function executeManageAgentChanges(
     const result = execution.value;
     const failedUnits = result.units.filter((unit) => unit.status !== 'succeeded');
     if (failedUnits.some((unit) => unit.error && STALE_CODES.has(unit.error.code))) {
-      await openManageAgentChanges(manageAgentsSkill, manageAgentsContext, manageAgentsProjectPath);
-      return { status: 'stale' };
+      return reloadManageAgentSelection(manageAgentsContext, manageAgentsSkill.name);
     }
     const recovery = recoveryActions(result.units);
     if (recovery.length > 0) return { status: 'recoveryRequired', response: result, recovery };
@@ -131,8 +117,7 @@ export async function executeManageAgentChanges(
     return { status: 'succeeded', response: result };
   } catch (error) {
     if (isStaleError(error)) {
-      await openManageAgentChanges(manageAgentsSkill, manageAgentsContext, manageAgentsProjectPath);
-      return { status: 'stale' };
+      return reloadManageAgentSelection(manageAgentsContext, manageAgentsSkill.name);
     }
     console.error('[executeManageAgentChanges] Failed:', error);
     return { status: 'failed' };

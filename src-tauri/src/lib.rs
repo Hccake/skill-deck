@@ -59,7 +59,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::recovery::open_recovery_resource,
             commands::resources::open_skill_resource,
             commands::resources::open_config_resource,
-            commands::duplicate_copies::cleanup_duplicate_agent_copies,
             commands::update::check_updates,
             commands::update::preview_update,
             commands::update::update_skill,
@@ -312,5 +311,11 @@ mod command_surface_tests {
     fn removed_agent_definition_duplication_is_not_exported() {
         assert!(!registered_commands().contains("duplicate_custom_agent_draft"));
         assert!(!app_manifest_commands().contains("duplicate_custom_agent_draft"));
+    }
+
+    #[test]
+    fn retired_duplicate_cleanup_is_not_exported() {
+        assert!(!registered_commands().contains("cleanup_duplicate_agent_copies"));
+        assert!(!app_manifest_commands().contains("cleanup_duplicate_agent_copies"));
     }
 }

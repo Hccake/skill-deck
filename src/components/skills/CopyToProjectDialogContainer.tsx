@@ -1,13 +1,12 @@
 import { useMemo } from 'react';
-import { listSkills } from '@/hooks/useTauriApi';
-import { contextKey } from '@/lib/context';
+import { getCopyAgentSelection, listSkills } from '@/hooks/useTauriApi';
 import { useEnvironmentStore } from '@/stores/environment';
-import { useCopyAgentSelection } from '@/hooks/useCopyAgentSelection';
 import { projectWorkspace } from '@/stores/projects';
 import { useProjectCatalog } from '@/hooks/useProjectWorkspace';
 import { useSkillDialogStore } from '@/stores/skill-dialog';
 import { executeSkillCopy } from '@/workflows/skill-copy';
 import { CopyToProjectDialog } from './CopyToProjectDialog';
+import type { CopyAgentSelectionSessionRequest } from '@/hooks/useAgentSelectionSession';
 import type { SkillLocationRef, EnvironmentRef, InstalledSkill, ProjectInfo } from '@/bindings';
 
 async function loadTargetProjects(environment: EnvironmentRef) {
@@ -16,6 +15,10 @@ async function loadTargetProjects(environment: EnvironmentRef) {
     environment,
   });
   if (result.status === 'failed') throw result;
+}
+
+async function loadCopyAgentSelection(request: CopyAgentSelectionSessionRequest) {
+  return getCopyAgentSelection(request.context, request.skillName);
 }
 
 function projectsForEnvironment(environment: EnvironmentRef): readonly ProjectInfo[] {
@@ -55,11 +58,7 @@ export function CopyToProjectDialogContainer() {
   if (!skill || !context) return null;
 
   return (
-    <OpenCopyToProjectDialog
-      key={`${contextKey(context)}:${skill.canonicalPath}`}
-      skill={skill}
-      sourceContext={context}
-    />
+    <OpenCopyToProjectDialog skill={skill} sourceContext={context} />
   );
 }
 
@@ -77,8 +76,6 @@ function OpenCopyToProjectDialog({
   );
   const projectsByEnvironment = useProjectCatalog(projectEnvironments);
   const closeCopyToProject = useSkillDialogStore((state) => state.closeCopyToProject);
-  const agentSelection = useCopyAgentSelection(sourceContext, skill.name);
-
   return (
     <CopyToProjectDialog
       open
@@ -86,7 +83,7 @@ function OpenCopyToProjectDialog({
       sourceContext={sourceContext}
       environments={environments}
       projectsByEnvironment={projectsByEnvironment}
-      agentSelection={agentSelection}
+      loadAgentSelection={loadCopyAgentSelection}
       onLoadProjects={loadTargetProjects}
       checkExistence={checkTargetExistence}
       onClose={closeCopyToProject}

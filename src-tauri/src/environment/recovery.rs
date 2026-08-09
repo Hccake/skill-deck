@@ -250,4 +250,50 @@ mod tests {
         assert!(marker.subject.is_none());
         validate_recovery_marker(&marker).expect("legacy marker remains valid");
     }
+
+    #[test]
+    fn duplicate_cleanup_marker_remains_readable_after_the_operation_is_retired() {
+        let value = json!({
+            "schemaVersion": 2,
+            "resourceId": "duplicate-cleanup-recovery",
+            "kind": "recoveryRequired",
+            "environment": { "kind": "native" },
+            "operationId": "operation-1",
+            "unitId": "duplicate-cleanup:demo",
+            "subject": {
+                "operationKind": "duplicateCleanup",
+                "skillName": "demo",
+                "context": {
+                    "environment": { "kind": "native" },
+                    "scope": { "scope": "global" }
+                }
+            },
+            "createdAtEpochMs": 1,
+            "entries": [{
+                "physicalTargetDigest": "target-1",
+                "destination": {
+                    "environment": { "kind": "native" },
+                    "nativePath": "/home/user/.agents/skills/demo"
+                },
+                "backup": {
+                    "environment": { "kind": "native" },
+                    "nativePath": "/home/user/.agents/skills/.skill-deck-backup-demo"
+                },
+                "expectedState": "present",
+                "originalFingerprint": "entry-v2-original",
+                "phase": "restoreFailed"
+            }]
+        });
+
+        let marker: RecoveryMarker = serde_json::from_value(value).expect("recovery marker");
+
+        assert_eq!(
+            marker
+                .subject
+                .as_ref()
+                .map(|subject| subject.operation_kind),
+            Some(MutationKind::DuplicateCleanup)
+        );
+        validate_recovery_marker(&marker).expect("retired operation marker remains valid");
+    }
 }

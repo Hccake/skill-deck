@@ -26,7 +26,6 @@ permissions = [
   "allow-confirm-recovery-resource-resolved",
   "allow-connect-environment",
   "allow-copy-skill-to-projects",
-  "allow-cleanup-duplicate-agent-copies",
   "allow-delete-custom-agent",
   "allow-delete-invalid-custom-agent",
   "allow-download-and-install-application-update",

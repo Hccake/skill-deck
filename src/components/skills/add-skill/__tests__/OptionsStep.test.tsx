@@ -6,7 +6,10 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { InstallAgentSelectionSnapshot } from '@/bindings';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import type { InstallTargetOptionsController } from '@/hooks/useInstallTargetOptions';
+import {
+  useAgentSelectionSession,
+  type AgentSelectionSessionController,
+} from '@/hooks/useAgentSelectionSession';
 import { makeAgentSelectionSnapshot } from '@/test-utils';
 import { canProceedForStep, type WizardState } from '../types';
 import { OptionsStep } from '../OptionsStep';
@@ -40,243 +43,202 @@ function selectionSnapshot(): InstallAgentSelectionSnapshot {
   };
 }
 
-function createState(overrides: Partial<WizardState> = {}): WizardState {
-  const snapshot = selectionSnapshot();
-  return {
-    step: 'options',
-    entryPoint: 'skills-panel',
-    scope: 'global',
-    context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
-    source: 'owner/repo',
-    fetchStatus: 'success',
-    fetchError: null,
-    gitRef: null,
-    riskPolicy: null,
-    riskAcknowledged: false,
-    availableSkills: [],
-    selectedSkills: ['demo'],
-    skillFilter: null,
-    skillSearchQuery: '',
-    agentSelectionSnapshot: snapshot,
-    selectedAgentOptionIds: ['claude'],
-    expandedAgentGroupIds: [],
-    additionalAgentsExpanded: false,
-    selectionRequiresReconfirmation: false,
-    mode: 'symlink',
-    otherAgentsExpanded: false,
-    overwrites: {},
-    preparation: { status: 'idle' },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
-    installResults: null,
-    ...overrides,
+function ReadyOptions({
+  snapshot,
+  refreshedSnapshot,
+}: {
+  snapshot: InstallAgentSelectionSnapshot;
+  refreshedSnapshot?: InstallAgentSelectionSnapshot;
+}) {
+  const request = {
+    kind: 'install' as const,
+    context: { environment: { kind: 'native' as const }, scope: { scope: 'global' as const } },
+    explicitAgentIds: [],
   };
+  const agentSelection = useAgentSelectionSession({
+    active: true,
+    request,
+    load: async () => snapshot,
+  });
+  return (
+    <>
+      <OptionsStep agentSelection={agentSelection} />
+      {refreshedSnapshot ? (
+        <button
+          type="button"
+          onClick={() => agentSelection.acceptSnapshot(refreshedSnapshot)}
+        >
+          refresh-selection
+        </button>
+      ) : null}
+    </>
+  );
 }
 
-function controller(snapshot = selectionSnapshot()): InstallTargetOptionsController {
-  return { status: 'ready', inputKey: 'native/global', snapshot, retry: vi.fn() };
-}
-
-function renderStep(state = createState(), targetOptions = controller()) {
-  const updateState = vi.fn();
+async function renderStep(
+  snapshot = selectionSnapshot(),
+  options: { refreshedSnapshot?: InstallAgentSelectionSnapshot } = {},
+) {
   render(
     <TooltipProvider>
-      <OptionsStep state={state} updateState={updateState} targetOptions={targetOptions} />
+      <ReadyOptions snapshot={snapshot} {...options} />
     </TooltipProvider>,
   );
-  return { updateState };
+  await screen.findByText('agentSelection.installTitle');
+}
+
+function unreadyController(
+  status: 'loading' | 'error',
+  retry: () => Promise<void>,
+): AgentSelectionSessionController<InstallAgentSelectionSnapshot> {
+  const actions = {
+    retry,
+    setOptionSelected: vi.fn(),
+    setMode: vi.fn(),
+    setGroupSelected: vi.fn(),
+    setOtherAgentsExpanded: vi.fn(),
+    setAdditionalInstallExpanded: vi.fn(),
+    setGroupExpanded: vi.fn(),
+    acceptSnapshot: vi.fn(),
+    confirmCurrentSelection: vi.fn(),
+  };
+  return status === 'error'
+    ? { status, error: { kind: 'custom', data: { message: 'failed' } }, ...actions }
+    : { status, ...actions };
 }
 
 describe('OptionsStep', () => {
-  it('only allows continuing after a current snapshot is confirmed', () => {
-    expect(canProceedForStep(createState())).toBe(true);
-    expect(canProceedForStep(createState({ selectionRequiresReconfirmation: true }))).toBe(false);
-    expect(canProceedForStep(createState({ agentSelectionSnapshot: null }))).toBe(false);
+  it('leaves readiness to the Agent selection controller', () => {
+    expect(canProceedForStep({ step: 'options' } as WizardState)).toBe(true);
   });
 
   it('renders loading and retry states', async () => {
     const user = userEvent.setup();
-    const retry = vi.fn();
-    const state = createState({ agentSelectionSnapshot: null });
+    const retry = vi.fn(async () => undefined);
     const { rerender } = render(
-      <OptionsStep state={state} updateState={vi.fn()} targetOptions={{ status: 'loading', inputKey: 'key', retry }} />,
+      <OptionsStep agentSelection={unreadyController('loading', retry)} />,
     );
     expect(screen.getByRole('status')).toBeDefined();
 
-    rerender(
-      <OptionsStep state={state} updateState={vi.fn()} targetOptions={{ status: 'error', inputKey: 'key', error: { kind: 'custom', data: { message: 'failed' } }, retry }} />,
-    );
+    rerender(<OptionsStep agentSelection={unreadyController('error', retry)} />);
     await user.click(screen.getByRole('button', { name: 'common.retry' }));
     expect(retry).toHaveBeenCalledOnce();
   });
 
-  it('keeps installation mode above the only scrolling list and publishes option IDs', async () => {
+  it('keeps installation mode above the only scrolling list and updates selection', async () => {
     const user = userEvent.setup();
-    const { updateState } = renderStep();
+    await renderStep();
 
     const title = screen.getByText('agentSelection.installTitle');
     const header = title.closest('header');
     expect(header?.contains(screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' }))).toBe(true);
-    expect(screen.getByRole('radio', { name: 'agentSelection.linkRecommended' })).toBeDefined();
-    await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
-    expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-      selectedAgentOptionIds: [],
-      selectionRequiresReconfirmation: false,
-    }));
+    const checkbox = screen.getByRole('checkbox', { name: 'Claude Code' });
+    await user.click(checkbox);
+    expect(checkbox.getAttribute('data-state')).toBe('unchecked');
   });
 
   it('uses install-specific guidance for automatic and selectable Agents', async () => {
-    renderStep();
-
+    await renderStep();
     expect(screen.getByText('agentSelection.automatic.install.title')).toBeDefined();
-    expect(screen.getByText('agentSelection.selectable.title')).toBeDefined();
-
-    const selectableHelp = screen.getByRole('button', {
-      name: 'agentSelection.selectable.help',
-    });
+    const selectableHelp = screen.getByRole('button', { name: 'agentSelection.selectable.help' });
     act(() => selectableHelp.focus());
-    expect((await screen.findByRole('tooltip')).textContent).toContain(
-      'agentSelection.selectable.help',
-    );
+    expect((await screen.findByRole('tooltip')).textContent).toContain('agentSelection.selectable.help');
   });
 
   it('allows choosing an installation mode before selecting an applicable Agent', async () => {
     const user = userEvent.setup();
-    const { updateState } = renderStep(createState({ selectedAgentOptionIds: [] }));
-
+    const snapshot = selectionSnapshot();
+    snapshot.selection.initialSelectedOptionIds = [];
+    await renderStep(snapshot);
     const copyMode = screen.getByRole('radio', { name: 'agentSelection.copy' });
-    expect(copyMode.hasAttribute('disabled')).toBe(false);
     await user.click(copyMode);
-
-    expect(updateState).toHaveBeenCalledWith({ mode: 'copy' });
+    expect(copyMode.getAttribute('data-state')).toBe('checked');
   });
 
-  it('keeps the Agent heading when no item uses a selectable installation mode', () => {
+  it('keeps the Agent heading when no item uses a selectable installation mode', async () => {
     const snapshot = selectionSnapshot();
     snapshot.selection.userModeOptionIds = [];
-    renderStep(createState({ agentSelectionSnapshot: snapshot }), controller(snapshot));
-
+    await renderStep(snapshot);
     expect(screen.getByText('agentSelection.installTitle')).toBeDefined();
     expect(screen.queryByRole('radiogroup')).toBeNull();
   });
 
-  it('shows the install empty state when no Agent is available', () => {
+  it('shows the install empty state when no Agent is available', async () => {
     const snapshot = selectionSnapshot();
     snapshot.selection.agents = [];
     snapshot.selection.installOptions = [];
     snapshot.selection.groups = [];
     snapshot.selection.initialSelectedOptionIds = [];
     snapshot.selection.userModeOptionIds = [];
-    renderStep(createState({ agentSelectionSnapshot: snapshot }), controller(snapshot));
-
+    await renderStep(snapshot);
     expect(screen.getByText('agentSelection.installEmpty')).toBeDefined();
   });
 
-  it('shows unknown explicit Agents as one read-only notice', () => {
-    renderStep();
-
+  it('shows unknown explicit Agents before the selection header', async () => {
+    await renderStep();
     const notice = screen.getByRole('status');
     const header = screen.getByText('agentSelection.installTitle').closest('header');
     expect(notice.textContent).toContain('old-agent');
-    expect(header).not.toBeNull();
     expect(notice.compareDocumentPosition(header as Node) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-    expect(screen.queryByRole('checkbox', { name: 'old-agent' })).toBeNull();
   });
 
   it('keeps undetected separate Agents under the collapsed Other Agents section', async () => {
     const user = userEvent.setup();
-    const { updateState } = renderStep();
-
+    await renderStep();
     expect(screen.queryByText('Cursor')).toBeNull();
     await user.click(screen.getByText(/agentSelection.otherAgents/));
-    expect(updateState).toHaveBeenCalledWith(expect.objectContaining({ otherAgentsExpanded: true }));
+    expect(screen.getByText('Cursor')).toBeDefined();
   });
 
-  it('publishes the optional own-directory disclosure from the direct-use section', async () => {
+  it('keeps optional own-directory writes inside the direct-use section', async () => {
     const user = userEvent.setup();
     const snapshot = selectionSnapshot();
     snapshot.selection.agents.push({ kind: 'standard', id: 'zed', displayName: 'Zed', detection: 'detected', directoryAccess: 'both', installOptionId: 'zed', groupId: null });
     snapshot.selection.installOptions.push({ id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
     snapshot.selection.userModeOptionIds.push('zed');
-    const { updateState } = renderStep(
-      createState({ agentSelectionSnapshot: snapshot }),
-      controller(snapshot),
-    );
-
+    await renderStep(snapshot);
     const directSection = screen.getByText('agentSelection.automatic.install.title').closest('section');
-    expect(directSection).not.toBeNull();
-    await user.click(within(directSection as HTMLElement).getByRole('button', {
-      name: /agentSelection\.ownDirectory\.title/,
-    }));
-
-    expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
-      additionalAgentsExpanded: true,
-    }));
+    await user.click(within(directSection as HTMLElement).getByRole('button', { name: /agentSelection\.ownDirectory\.title/ }));
+    expect(screen.getByRole('checkbox', { name: 'Zed' })).toBeDefined();
   });
 
-  it('shows Eve placements as copy-only choices', () => {
+  it('shows grouped placements as copy-only choices', async () => {
+    const user = userEvent.setup();
     const snapshot = selectionSnapshot();
     snapshot.selection.agents.push({ kind: 'grouped', id: 'eve', displayName: 'Eve', detection: 'detected', directoryAccess: null, installOptionId: null, groupId: 'eve-group' });
-    snapshot.selection.installOptions.push({
-      id: 'eve-root',
-      kind: 'groupLocation',
-      agentIds: ['eve'],
-      displayName: '主目录',
-      path: '~/.eve/skills',
-      groupId: 'eve-group',
-      selectable: true,
-      modeConstraint: 'copyOnly',
-      disabledReason: null,
-    });
-    snapshot.selection.groups.push({
-      id: 'eve-group',
-      agentId: 'eve',
-      displayName: 'Eve',
-      optionIds: ['eve-root'],
-      detection: 'detected',
-    });
-    renderStep(createState({
-      agentSelectionSnapshot: snapshot,
-      expandedAgentGroupIds: ['eve-group'],
-    }), controller(snapshot));
-
-    const group = screen.getByRole('group', { name: 'Eve' });
-    expect(within(group).getByText('agentSelection.copyOnly')).toBeDefined();
-    expect(within(group).getByText('agentSelection.copy')).toBeDefined();
+    snapshot.selection.installOptions.push({ id: 'eve-root', kind: 'groupLocation', agentIds: ['eve'], displayName: 'Main', path: '~/.eve/skills', groupId: 'eve-group', selectable: true, modeConstraint: 'copyOnly', disabledReason: null });
+    snapshot.selection.groups.push({ id: 'eve-group', agentId: 'eve', displayName: 'Eve', optionIds: ['eve-root'], detection: 'detected' });
+    await renderStep(snapshot);
+    await user.click(screen.getByRole('button', { name: /agentSelection.toggleGroup/ }));
+    expect(within(screen.getByRole('group', { name: 'Eve' })).getByText('agentSelection.copyOnly')).toBeDefined();
   });
 
   it('allows an initially selected placement conflict to be canceled', async () => {
     const user = userEvent.setup();
     const snapshot = selectionSnapshot();
-    snapshot.selection.installOptions[0].selectable = true;
     snapshot.selection.installOptions[0].disabledReason = 'placementConflict';
-    snapshot.selection.initialSelectedOptionIds = ['claude'];
-    const { updateState } = renderStep(
-      createState({ agentSelectionSnapshot: snapshot, selectedAgentOptionIds: ['claude'] }),
-      controller(snapshot),
-    );
-
-    expect(screen.getByText('agentSelection.disabled.placementConflict')).toBeDefined();
-    await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
-    expect(updateState).toHaveBeenCalledWith(expect.objectContaining({ selectedAgentOptionIds: [] }));
+    await renderStep(snapshot);
+    const checkbox = screen.getByRole('checkbox', { name: 'Claude Code' });
+    await user.click(checkbox);
+    expect(checkbox.getAttribute('data-state')).toBe('unchecked');
   });
 
-  it('shows a saved-default warning without blocking the selection', () => {
+  it('shows a saved-default warning without blocking the selection', async () => {
     const snapshot = selectionSnapshot();
     snapshot.defaultSelectionWarning = 'readFailed';
-    renderStep(createState({ agentSelectionSnapshot: snapshot }), controller(snapshot));
-
+    await renderStep(snapshot);
     expect(screen.getByText('addSkill.agents.defaultLoadWarning')).toBeDefined();
     expect(screen.getByRole('checkbox', { name: 'Claude Code' })).toBeDefined();
   });
 
   it('requires the user to confirm a refreshed Agent selection before continuing', async () => {
     const user = userEvent.setup();
-    const { updateState } = renderStep(createState({ selectionRequiresReconfirmation: true }));
-
+    const latest = selectionSnapshot();
+    latest.selection.revision = 'selection-revision-2';
+    await renderStep(selectionSnapshot(), { refreshedSnapshot: latest });
+    await user.click(screen.getByRole('button', { name: 'refresh-selection' }));
     expect(screen.getByRole('alert').textContent).toContain('agentSelection.selectionChanged');
     await user.click(screen.getByRole('button', { name: 'agentSelection.confirmCurrentSelection' }));
-
-    expect(updateState).toHaveBeenCalledWith({ selectionRequiresReconfirmation: false });
+    expect(screen.queryByText('agentSelection.selectionChanged')).toBeNull();
   });
 });

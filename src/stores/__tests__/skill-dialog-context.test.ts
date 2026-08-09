@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   previewCopySkillToProjects: vi.fn(),
   copySkillToProjects: vi.fn(),
   openInstallWizard: vi.fn(),
-  cleanupDuplicateAgentCopies: vi.fn(),
   previewManageSkillAgents: vi.fn(),
   manageSkillAgents: vi.fn(),
 }));
@@ -22,7 +21,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
   previewCopySkillToProjects: (...args: unknown[]) => mocks.previewCopySkillToProjects(...args),
   copySkillToProjects: (...args: unknown[]) => mocks.copySkillToProjects(...args),
   openInstallWizard: (...args: unknown[]) => mocks.openInstallWizard(...args),
-  cleanupDuplicateAgentCopies: (...args: unknown[]) => mocks.cleanupDuplicateAgentCopies(...args),
   previewManageSkillAgents: (...args: unknown[]) => mocks.previewManageSkillAgents(...args),
   manageSkillAgents: (...args: unknown[]) => mocks.manageSkillAgents(...args),
 }));
@@ -101,7 +99,6 @@ describe('Skill dialog context capture', () => {
       targets: [],
     });
     mocks.copySkillToProjects.mockResolvedValue({ units: [{ status: 'succeeded' }] });
-    mocks.cleanupDuplicateAgentCopies.mockResolvedValue([{ agent: 'cursor', success: true, skipped: false, path: null, error: null }]);
     mocks.manageSkillAgents.mockResolvedValue({ units: [{ status: 'succeeded', error: null }] });
   });
 
@@ -131,10 +128,10 @@ describe('Skill dialog context capture', () => {
   });
 
   it('captures Agent-management dialog state without owning preview orchestration', () => {
-    useSkillDialogStore.getState().openManageAgents(skill, context, '/source');
+    useSkillDialogStore.getState().openManageAgents(skill, context);
 
     expect(useSkillDialogStore.getState().manageAgentsContext).toEqual(context);
-    expect(useSkillDialogStore.getState().manageAgentDetails).toBeNull();
+    expect(useSkillDialogStore.getState().manageAgentsSkill).toBe(skill);
     expect(mocks.previewManageSkillAgents).not.toHaveBeenCalled();
   });
 

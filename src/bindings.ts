@@ -233,14 +233,6 @@ async openConfigResource(context: SkillLocationRef, kind: ConfigResourceKind) : 
     else return { status: "error", error: e  as any };
 }
 },
-async cleanupDuplicateAgentCopies(context: SkillLocationRef, skillName: string, agents: AgentId[]) : Promise<Result<DuplicateCleanupResult[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cleanup_duplicate_agent_copies", { context, skillName, agents }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async checkUpdates(request: UpdateCheckRequest) : Promise<Result<UpdateCheckResponse, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_updates", { request }) };
@@ -582,7 +574,6 @@ export type DetectionState = "detected" | "notDetected" | "indeterminate"
 export type DirectoryPresenceState = "present" | "missing" | "legacyPath" | "brokenLink" | "conflictingEntry" | "unsafePath" | "environmentUnavailable" | "projectNotSelected"
 export type DisabledAgentConflict = { definition: CustomAgentDefinition; builtin: AgentDefinition; raw: unknown }
 export type DiscoverySessionHandle = { sessionId: string; environment: EnvironmentRef; sourceFingerprint: string; expiresAtEpochMs: number }
-export type DuplicateCleanupResult = { agent: AgentId; success: boolean; skipped: boolean; path: ResourceLocator | null; error: OperationErrorCode | null }
 export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null; wslIntegrationSupported: boolean; wslIntegrationEnabled: boolean; wslCapabilityRevision: number }
 export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus; revision: number; error: AppError | null }
 export type EnvironmentRef = { kind: "native" } | { kind: "wsl"; distro_name: string }

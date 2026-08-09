@@ -24,7 +24,6 @@ import { contextKey, globalContext } from '@/lib/context';
 import { agentDisplayName, agentId } from '@/lib/agents';
 import { formatAppError } from '@/utils/format-app-error';
 import { openSkillRemoval } from '@/workflows/skill-remove';
-import { openManageAgentChanges } from '@/workflows/skill-manage-agents';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import {
@@ -124,6 +123,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const openAdd = useSkillDialogStore((s) => s.openAdd);
   const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
   const openCopyToProject = useSkillDialogStore((s) => s.openCopyToProject);
+  const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
 
   // ② UI 状态 — 仅 2 个 useState
   const [searchQuery, setSearchQuery] = useState('');
@@ -284,12 +284,12 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   }, [projectPath, selectedContext]);
 
   const handleManageAgentsGlobal = useCallback((skill: InstalledSkill) => {
-    void openManageAgentChanges(skill, selectedGlobalContext);
-  }, [selectedGlobalContext]);
+    openManageAgents(skill, selectedGlobalContext);
+  }, [openManageAgents, selectedGlobalContext]);
 
   const handleManageAgentsProject = useCallback((skill: InstalledSkill) => {
-    void openManageAgentChanges(skill, selectedContext, projectPath);
-  }, [projectPath, selectedContext]);
+    openManageAgents(skill, selectedContext);
+  }, [openManageAgents, selectedContext]);
 
   const handleAddGlobal = useCallback(() => {
     openAdd(selectedGlobalContext);

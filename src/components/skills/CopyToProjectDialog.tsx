@@ -1,5 +1,5 @@
 // src/components/skills/CopyToProjectDialog.tsx
-import { useState, useCallback, useMemo, useEffect, useRef, memo } from 'react';
+import { useState, useCallback, useMemo, useEffect, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Folder, Loader2 } from 'lucide-react';
 import {
@@ -21,6 +21,7 @@ import { environmentKey } from '@/lib/context';
 import { formatMutationError } from '@/lib/mutation-results';
 import type {
   AgentSelectionSubmission,
+  CopyAgentSelectionSnapshot,
   SkillLocationRef,
   EnvironmentInfo,
   EnvironmentRef,
@@ -31,21 +32,11 @@ import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import { ProjectIdentity } from '@/components/projects/ProjectIdentity';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import type { CopyOutcome } from '@/workflows/skill-copy';
-import type { CopyAgentSelectionState } from '@/hooks/useCopyAgentSelection';
-import { AgentSelectionModeControl } from '@/components/agents/selection/AgentSelectionModeControl';
+import { AgentSelectionPanel } from '@/components/agents/selection/AgentSelectionPanel';
 import {
-  AgentSelectionUnavailableNotice,
-  AgentSelectionView,
-} from '@/components/agents/selection/AgentSelectionView';
-import { useAgentSelectionPresentation } from '@/components/agents/selection/useAgentSelectionPresentation';
-import {
-  createAgentSelectionSession,
-  refreshAgentSelectionSession,
-  toggleInstallOption,
-  toggleSelectionGroup,
-  type AgentSelectionSession,
-} from '@/lib/agent-selection-session';
-import type { AgentSelectionSnapshot } from '@/bindings';
+  useAgentSelectionSession,
+  type CopyAgentSelectionSessionRequest,
+} from '@/hooks/useAgentSelectionSession';
 import { getCopyableProjects } from '@/lib/projects/copy-targets';
 
 export interface CopyTargetSelection {
@@ -60,7 +51,9 @@ interface CopyToProjectDialogProps {
   sourceContext: SkillLocationRef;
   environments: EnvironmentInfo[];
   projectsByEnvironment: Record<string, ProjectInfo[]>;
-  agentSelection: CopyAgentSelectionState & { retry: () => Promise<void> };
+  loadAgentSelection: (
+    request: CopyAgentSelectionSessionRequest,
+  ) => Promise<CopyAgentSelectionSnapshot>;
   onLoadProjects: (environment: EnvironmentRef) => Promise<void>;
   /** 检查 skill 在目标项目中是否已存在 */
   checkExistence?: (
@@ -119,14 +112,13 @@ function CopyToProjectDialogSession({
   sourceContext,
   environments,
   projectsByEnvironment,
-  agentSelection,
   onLoadProjects,
   checkExistence,
+  loadAgentSelection,
   onClose,
   onCopy,
 }: CopyToProjectDialogProps) {
   const { t } = useTranslation();
-  const presentation = useAgentSelectionPresentation('copyToProject');
   const writeBlocked = useBusinessWriteBlocked();
   const [copying, setCopying] = useState(false);
   const [projectLoadState, setProjectLoadState] = useState<ProjectLoadState>('idle');
@@ -147,9 +139,16 @@ function CopyToProjectDialogSession({
   );
   const [completedProjectIds, setCompletedProjectIds] = useState<Set<string>>(new Set());
   const [copyOutcome, setCopyOutcome] = useState<CopyOutcome | null>(null);
-  const [selectionSnapshot, setSelectionSnapshot] = useState<AgentSelectionSnapshot | null>(null);
-  const [agentSession, setAgentSession] = useState<AgentSelectionSession | null>(null);
-  const loadedSelectionRevisionRef = useRef<string | null>(null);
+  const agentSelectionRequest = useMemo<CopyAgentSelectionSessionRequest>(() => ({
+    kind: 'copy',
+    context: sourceContext,
+    skillName: skill?.name ?? '',
+  }), [skill?.name, sourceContext]);
+  const agentSelection = useAgentSelectionSession({
+    active: open && skill !== null,
+    request: agentSelectionRequest,
+    load: loadAgentSelection,
+  });
 
   const clearTargetProjectState = useCallback(() => {
     setSelected(new Set());
@@ -160,17 +159,6 @@ function CopyToProjectDialogSession({
     setPresenceState('idle');
     setPresenceByProject(new Map());
   }, []);
-
-  useEffect(() => {
-    if (agentSelection.status !== 'ready') return;
-    const nextSnapshot = agentSelection.snapshot.selection;
-    if (loadedSelectionRevisionRef.current === nextSnapshot.revision) return;
-    loadedSelectionRevisionRef.current = nextSnapshot.revision;
-    setSelectionSnapshot(nextSnapshot);
-    setAgentSession((session) => session
-      ? refreshAgentSelectionSession(session, nextSnapshot)
-      : createAgentSelectionSession(nextSnapshot));
-  }, [agentSelection]);
 
   const targetEnvironmentEntry = targetEnvironmentSelection.kind === 'valid'
     ? environments.find(
@@ -288,18 +276,14 @@ function CopyToProjectDialogSession({
   }, []);
 
   const handleCopy = useCallback(async () => {
-    if (!selectionSnapshot || !agentSession || !targetEnvironment) return;
+    if (agentSelection.status !== 'ready' || !targetEnvironment) return;
     setCopying(true);
     setCopyOutcome(null);
     try {
       const outcome = await onCopy({
         environment: targetEnvironment,
         projectIds: Array.from(selected),
-        agentSelection: {
-          revision: selectionSnapshot.revision,
-          selectedOptionIds: agentSession.selectedOptionIds,
-          requestedMode: agentSession.mode,
-        },
+        agentSelection: agentSelection.submission,
       });
       if (!outcome || outcome.status === 'succeeded') {
         onClose();
@@ -307,11 +291,8 @@ function CopyToProjectDialogSession({
       }
       setCopyOutcome(outcome);
       if (outcome.status === 'selectionStale') {
-        loadedSelectionRevisionRef.current = outcome.snapshot.selection.revision;
-        setSelectionSnapshot(outcome.snapshot.selection);
-        setAgentSession((session) => session
-          ? refreshAgentSelectionSession(session, outcome.snapshot.selection)
-          : createAgentSelectionSession(outcome.snapshot.selection));
+        agentSelection.acceptSnapshot(outcome.snapshot);
+        setCopyOutcome(null);
       } else if (outcome.status === 'partial') {
         setCompletedProjectIds((previous) => new Set([
           ...previous,
@@ -326,7 +307,7 @@ function CopyToProjectDialogSession({
     } finally {
       setCopying(false);
     }
-  }, [agentSession, onClose, onCopy, selected, selectionSnapshot, targetEnvironment]);
+  }, [agentSelection, onClose, onCopy, selected, targetEnvironment]);
 
   return (
     <Dialog
@@ -367,25 +348,6 @@ function CopyToProjectDialogSession({
                   {copyOutcome.recovery.map((action) => (
                     <RecoveryActions key={action.resourceId} recovery={action} />
                   ))}
-                </AlertDescription>
-              </Alert>
-            ) : copyOutcome?.status === 'selectionStale' ? (
-              <Alert role="alert">
-                <AlertDescription className="flex items-center justify-between gap-3">
-                  <span>{t('agentSelection.selectionChanged')}</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setAgentSession((current) => current
-                        ? { ...current, requiresReconfirmation: false }
-                        : current);
-                      setCopyOutcome(null);
-                    }}
-                  >
-                    {t('agentSelection.confirmCurrentSelection')}
-                  </Button>
                 </AlertDescription>
               </Alert>
             ) : copyOutcome?.status === 'failed' ? (
@@ -584,66 +546,13 @@ function CopyToProjectDialogSession({
                 data-testid="copy-agent-settings-scroll"
                 className="min-h-0 space-y-6 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]"
               >
-                {agentSelection.status === 'error' ? (
-                  <Alert>
-                    <AlertDescription className="flex items-center justify-between gap-3">
-                      <span>{t('skills.copyToProject.agentsLoadError')}</span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void agentSelection.retry()}
-                      >
-                        {t('common.retry')}
-                      </Button>
-                    </AlertDescription>
-                  </Alert>
-                ) : agentSelection.status === 'loading' || !selectionSnapshot || !agentSession ? (
-                  <div role="status" aria-live="polite" className="space-y-3">
-                    <span className="sr-only">{t('common.loading')}</span>
-                    <Skeleton className="h-10 w-72 max-w-full" />
-                    <Skeleton className="h-20 w-full" />
-                    <Skeleton className="h-32 w-full" />
-                  </div>
-                ) : (
-                  <>
-                    <AgentSelectionModeControl
-                      snapshot={selectionSnapshot}
-                      session={agentSession}
-                      onModeChange={(mode) => setAgentSession((current) => current
-                        ? { ...current, mode }
-                        : current)}
-                      disabled={copying}
-                      className="flex-col items-start gap-2"
-                    />
-                    <AgentSelectionUnavailableNotice snapshot={selectionSnapshot} />
-                    <AgentSelectionView
-                      presentation={presentation}
-                      snapshot={selectionSnapshot}
-                      session={agentSession}
-                      disabled={copying}
-                      emptyMessage={t('agentSelection.installEmpty')}
-                      onOptionChange={(optionId, checked) => setAgentSession((current) => current
-                        ? toggleInstallOption(current, selectionSnapshot, optionId, checked)
-                        : current)}
-                      onGroupChange={(groupId, checked) => setAgentSession((current) => current
-                        ? toggleSelectionGroup(current, selectionSnapshot, groupId, checked)
-                        : current)}
-                      onOtherExpandedChange={(otherAgentsExpanded) => setAgentSession((current) => current
-                        ? { ...current, otherAgentsExpanded }
-                        : current)}
-                      onAdditionalExpandedChange={(additionalInstallExpanded) => setAgentSession((current) => current
-                        ? { ...current, additionalInstallExpanded }
-                        : current)}
-                      onGroupExpandedChange={(groupId, expanded) => setAgentSession((current) => current ? {
-                        ...current,
-                        expandedGroupIds: expanded
-                          ? [...new Set([...current.expandedGroupIds, groupId])]
-                          : current.expandedGroupIds.filter((id) => id !== groupId),
-                      } : current)}
-                    />
-                  </>
-                )}
+                <AgentSelectionPanel
+                  usage="copyToProject"
+                  controller={agentSelection}
+                  disabled={copying}
+                  emptyMessage={t('agentSelection.installEmpty')}
+                  modeClassName="flex-col items-start gap-2"
+                />
               </div>
             </section>
           </div>
@@ -661,10 +570,8 @@ function CopyToProjectDialogSession({
               || !targetEnvironment
               || projectLoadState !== 'ready'
               || selected.size === 0
-              || !selectionSnapshot
-              || !agentSession
               || agentSelection.status !== 'ready'
-              || agentSession.requiresReconfirmation
+              || (agentSelection.status === 'ready' && agentSelection.requiresReconfirmation)
             }
           >
             {copying ? (

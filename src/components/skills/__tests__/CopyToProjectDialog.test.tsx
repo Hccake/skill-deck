@@ -67,17 +67,12 @@ const defaultCopyProps = {
     })),
   },
   onLoadProjects: vi.fn(async () => undefined),
-  agentSelection: {
-    status: 'ready' as const,
-    snapshot: {
+  loadAgentSelection: vi.fn(async () => ({
       selection: makeAgentSelectionSnapshot({ revision: 'copy-selection-1' }),
-    },
-    retry: vi.fn(async () => undefined),
-  },
+  })),
 };
 
 const selectableAgentState = {
-  status: 'ready' as const,
   snapshot: {
     selection: makeAgentSelectionSnapshot({
       revision: 'copy-selection-2',
@@ -104,7 +99,32 @@ const selectableAgentState = {
       userModeOptionIds: ['claude'],
     }),
   },
-  retry: vi.fn(async () => undefined),
+  loadAgentSelection: vi.fn(async () => ({
+    selection: makeAgentSelectionSnapshot({
+      revision: 'copy-selection-2',
+      agents: [{
+        kind: 'standard' as const,
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        detection: 'detected' as const,
+        directoryAccess: 'privateOnly' as const,
+        installOptionId: 'claude',
+        groupId: null,
+      }],
+      installOptions: [{
+        id: 'claude',
+        kind: 'standardDirectory' as const,
+        agentIds: ['claude-code'],
+        displayName: 'Claude Code',
+        path: '~/.claude/skills',
+        groupId: null,
+        selectable: true,
+        modeConstraint: 'userSelectable' as const,
+        disabledReason: null,
+      }],
+      userModeOptionIds: ['claude'],
+    }),
+  })),
 };
 
 function deferred<T>() {
@@ -156,7 +176,7 @@ describe('CopyToProjectDialog', () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it('keeps a stable dialog frame with independently scrolling project and Agent areas', () => {
+  it('keeps a stable dialog frame with independently scrolling project and Agent areas', async () => {
     const projectLoad = deferred<void>();
     render(
       <CopyToProjectDialog
@@ -184,6 +204,7 @@ describe('CopyToProjectDialog', () => {
     expect(agentScrollArea.className).toContain('overflow-y-auto');
     expect(body.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'common.cancel' })).not.toBeNull();
+    expect(await screen.findByText('agentSelection.installEmpty')).toBeDefined();
   });
 
   it('disables copying while another mutation is active', async () => {
@@ -220,7 +241,7 @@ describe('CopyToProjectDialog', () => {
       <CopyToProjectDialog
         skill={skill()}
         {...defaultCopyProps}
-        agentSelection={selectableAgentState}
+        loadAgentSelection={selectableAgentState.loadAgentSelection}
         onClose={vi.fn()}
         onCopy={onCopy}
       />
@@ -267,7 +288,7 @@ describe('CopyToProjectDialog', () => {
       <CopyToProjectDialog
         skill={skill()}
         {...defaultCopyProps}
-        agentSelection={selectableAgentState}
+        loadAgentSelection={selectableAgentState.loadAgentSelection}
         onClose={vi.fn()}
         onCopy={onCopy}
       />
@@ -336,7 +357,7 @@ describe('CopyToProjectDialog', () => {
             storage: { access: 'native', owner: null },
           }],
         }}
-        agentSelection={defaultCopyProps.agentSelection}
+        loadAgentSelection={defaultCopyProps.loadAgentSelection}
         onLoadProjects={vi.fn(async () => undefined)}
         onClose={vi.fn()}
         onCopy={onCopy}
@@ -393,7 +414,7 @@ describe('CopyToProjectDialog', () => {
         ...defaultCopyProps.projectsByEnvironment,
         'wsl:ubuntu': [ubuntuProject],
       },
-      agentSelection: selectableAgentState,
+      loadAgentSelection: selectableAgentState.loadAgentSelection,
       onLoadProjects: vi.fn(async () => undefined),
       onClose: vi.fn(),
       onCopy: vi.fn(),
@@ -740,7 +761,7 @@ describe('CopyToProjectDialog', () => {
             storage: { access: 'native', owner: { kind: 'wsl' as const, distro_name: 'Ubuntu' } },
           }],
         }}
-        agentSelection={defaultCopyProps.agentSelection}
+        loadAgentSelection={defaultCopyProps.loadAgentSelection}
         onLoadProjects={vi.fn(async () => undefined)}
         checkExistence={checkExistence}
         onClose={vi.fn()}

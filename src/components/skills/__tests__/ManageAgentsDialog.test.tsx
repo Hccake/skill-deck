@@ -1,12 +1,13 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   InstalledSkill,
   ManageAgentSelectionSnapshot,
+  SkillLocationRef,
 } from '@/bindings';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { makeAgentSelectionSnapshot } from '@/test-utils';
@@ -35,6 +36,10 @@ const skill: InstalledSkill = {
   scope: 'global',
   agents: ['claude-code'],
   associatedAgents: ['claude-code'],
+};
+const context: SkillLocationRef = {
+  environment: { kind: 'native' },
+  scope: { scope: 'global' },
 };
 
 function snapshot(): ManageAgentSelectionSnapshot {
@@ -68,20 +73,29 @@ function snapshot(): ManageAgentSelectionSnapshot {
   };
 }
 
-function renderDialog(props: Partial<React.ComponentProps<typeof ManageAgentsDialog>> = {}) {
+type DialogTestOptions = Partial<React.ComponentProps<typeof ManageAgentsDialog>> & {
+  loadedSnapshot?: ManageAgentSelectionSnapshot;
+};
+
+async function renderDialog({
+  loadedSnapshot = snapshot(),
+  ...props
+}: DialogTestOptions = {}) {
   const onClose = vi.fn();
   const onSave = vi.fn().mockResolvedValue({ status: 'succeeded', response: { units: [] } });
   render(
     <TooltipProvider>
       <ManageAgentsDialog
         skill={skill}
-        snapshot={snapshot()}
+        context={context}
+        loadAgentSelection={vi.fn(async () => loadedSnapshot)}
         onClose={onClose}
         onSave={onSave}
         {...props}
       />
     </TooltipProvider>,
   );
+  await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
   return { onClose, onSave };
 }
 
@@ -92,7 +106,7 @@ describe('ManageAgentsDialog', () => {
 
   it('places installation mode at the start of the scrolling content', async () => {
     const user = userEvent.setup();
-    renderDialog();
+    await renderDialog();
 
     const title = screen.getByText('skills.manageAgents.title:{"name":"frontend-design"}');
     const header = title.closest('[data-slot="dialog-header"]');
@@ -119,7 +133,7 @@ describe('ManageAgentsDialog', () => {
 
   it('allows choosing the mode first without treating an inactive choice as a saved change', async () => {
     const user = userEvent.setup();
-    renderDialog();
+    await renderDialog();
 
     const copyMode = screen.getByRole('radio', { name: 'agentSelection.copy' });
     expect(copyMode.hasAttribute('disabled')).toBe(false);
@@ -130,24 +144,40 @@ describe('ManageAgentsDialog', () => {
 
   it('renders loading and retry states without mounting a stale selection', async () => {
     const user = userEvent.setup();
-    const onRetry = vi.fn();
-    const { rerender } = render(
+    const loadAgentSelection = vi.fn(() => new Promise<ManageAgentSelectionSnapshot>(() => undefined));
+    const view = render(
       <TooltipProvider>
-        <ManageAgentsDialog skill={skill} loading onClose={vi.fn()} onSave={vi.fn()} />
+        <ManageAgentsDialog
+          skill={skill}
+          context={context}
+          loadAgentSelection={loadAgentSelection}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+        />
       </TooltipProvider>,
     );
     expect(screen.getByRole('status')).toBeDefined();
 
-    rerender(
+    view.unmount();
+    const retryLoad = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(snapshot());
+    render(
       <TooltipProvider>
-        <ManageAgentsDialog skill={skill} loadFailed onRetry={onRetry} onClose={vi.fn()} onSave={vi.fn()} />
+        <ManageAgentsDialog
+          skill={skill}
+          context={context}
+          loadAgentSelection={retryLoad}
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+        />
       </TooltipProvider>,
     );
-    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.retryPreview' }));
-    expect(onRetry).toHaveBeenCalledOnce();
+    await user.click(await screen.findByRole('button', { name: 'common.retry' }));
+    expect(retryLoad).toHaveBeenCalledTimes(2);
   });
 
-  it('shows the manage empty state with only a close action', () => {
+  it('shows the manage empty state with only a close action', async () => {
     const empty = snapshot();
     empty.selection.agents = [];
     empty.selection.installOptions = [];
@@ -155,7 +185,7 @@ describe('ManageAgentsDialog', () => {
     empty.selection.initialSelectedOptionIds = [];
     empty.selection.userModeOptionIds = [];
     empty.optionStates = [];
-    renderDialog({ snapshot: empty });
+    await renderDialog({ loadedSnapshot: empty });
 
     expect(screen.getByText('agentSelection.manageEmpty')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'common.cancel' })).toBeNull();
@@ -166,7 +196,7 @@ describe('ManageAgentsDialog', () => {
     const user = userEvent.setup();
     const current = snapshot();
     current.selection.agents.push({ kind: 'standard', id: 'aider', displayName: 'Aider', detection: 'indeterminate', directoryAccess: 'standardOnly', installOptionId: null, groupId: null });
-    renderDialog({ snapshot: current });
+    await renderDialog({ loadedSnapshot: current });
 
     const codexBadge = screen.getByText('Codex').closest('[data-slot="direct-agent-badge"]');
     expect(codexBadge).not.toBeNull();
@@ -189,7 +219,7 @@ describe('ManageAgentsDialog', () => {
 
   it('uses manage-specific guidance for automatic and selectable Agents', async () => {
     const user = userEvent.setup();
-    renderDialog();
+    await renderDialog();
 
     expect(screen.getByText('agentSelection.automatic.manage.title')).toBeDefined();
     expect(screen.getByText('agentSelection.selectable.title')).toBeDefined();
@@ -219,7 +249,7 @@ describe('ManageAgentsDialog', () => {
       { optionId: 'zed', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
       { optionId: 'trae', currentEntry: 'none', initialSelected: false, allowedResults: 'both', selectedEffect: 'add', unselectedEffect: 'keepAbsent', disabledReason: null },
     );
-    renderDialog({ snapshot: current });
+    await renderDialog({ loadedSnapshot: current });
 
     const directSection = screen.getByText('agentSelection.automatic.manage.title').closest('section');
     expect(directSection).not.toBeNull();
@@ -238,20 +268,20 @@ describe('ManageAgentsDialog', () => {
     expect(within(directSection as HTMLElement).queryByRole('button', { name: /agentSelection\.otherAgents/ })).toBeNull();
   });
 
-  it('reveals an existing own-directory installation and summarizes the selected Agents', () => {
+  it('reveals an existing own-directory installation and summarizes the selected Agents', async () => {
     const current = snapshot();
     current.selection.agents.push({ kind: 'standard', id: 'zed', displayName: 'Zed', detection: 'notDetected', directoryAccess: 'both', installOptionId: 'zed', groupId: null });
     current.selection.installOptions.push({ id: 'zed', kind: 'standardDirectory', agentIds: ['zed'], displayName: 'Zed', path: '~/.zed/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
     current.selection.initialSelectedOptionIds.push('zed');
     current.selection.userModeOptionIds.push('zed');
     current.optionStates.push({ optionId: 'zed', currentEntry: 'link', initialSelected: true, allowedResults: 'both', selectedEffect: 'retain', unselectedEffect: 'remove', disabledReason: null });
-    renderDialog({ snapshot: current });
+    await renderDialog({ loadedSnapshot: current });
 
     expect(screen.getByRole('checkbox', { name: 'Zed' }).getAttribute('data-state')).toBe('checked');
     expect(screen.getByText('agentSelection.ownDirectory.selectedCount:{"count":1}')).toBeDefined();
   });
 
-  it('keeps current installation states visible alongside each Agent', () => {
+  it('keeps current installation states visible alongside each Agent', async () => {
     const current = snapshot();
     current.selection.initialSelectedOptionIds = ['claude', 'cursor'];
     current.optionStates[1] = {
@@ -261,7 +291,7 @@ describe('ManageAgentsDialog', () => {
       selectedEffect: 'retain',
       unselectedEffect: 'remove',
     };
-    renderDialog({ snapshot: current });
+    await renderDialog({ loadedSnapshot: current });
 
     expect(screen.getByText('agentSelection.current.link')).toBeDefined();
     expect(screen.getByText('agentSelection.current.copy')).toBeDefined();
@@ -273,7 +303,7 @@ describe('ManageAgentsDialog', () => {
 
   it('connects a current installation state to its pending action', async () => {
     const user = userEvent.setup();
-    renderDialog();
+    await renderDialog();
 
     const checkbox = screen.getByRole('checkbox', { name: 'Claude Code' });
     const row = checkbox.closest('[data-slot="agent-selection-row"]');
@@ -284,8 +314,8 @@ describe('ManageAgentsDialog', () => {
     expect(row?.textContent).toContain('agentSelection.effect.remove');
   });
 
-  it('renders Other Agents as one disclosure control', () => {
-    renderDialog();
+  it('renders Other Agents as one disclosure control', async () => {
+    await renderDialog();
 
     const trigger = screen.getByRole('button', { name: /agentSelection.otherAgents/ });
     expect(trigger.textContent).toContain('agentSelection.otherAgents');
@@ -293,7 +323,7 @@ describe('ManageAgentsDialog', () => {
 
   it('keeps the Eve disclosure with its name and shows detection only on the parent', async () => {
     const user = userEvent.setup();
-    renderDialog();
+    await renderDialog();
 
     const toggle = screen.getByRole('button', { name: /agentSelection.toggleGroup/ });
     const eveName = screen.getByText('Eve');
@@ -305,8 +335,8 @@ describe('ManageAgentsDialog', () => {
     expect(within(group).getByText('agentSelection.copyOnly')).toBeDefined();
   });
 
-  it('automatically reveals an undetected Agent whose directory entry is abnormal', () => {
-    renderDialog();
+  it('automatically reveals an undetected Agent whose directory entry is abnormal', async () => {
+    await renderDialog();
 
     expect(screen.getByText('Unknown Runtime')).toBeDefined();
     expect(screen.queryByRole('checkbox', { name: 'Unknown Runtime' })).toBeNull();
@@ -315,7 +345,7 @@ describe('ManageAgentsDialog', () => {
 
   it('submits opaque option IDs and the selected installation mode', async () => {
     const user = userEvent.setup();
-    const { onSave } = renderDialog();
+    const { onSave } = await renderDialog();
 
     await user.click(screen.getByRole('checkbox', { name: 'Cursor' }));
     await user.click(screen.getByRole('radio', { name: 'agentSelection.copy' }));
@@ -333,7 +363,7 @@ describe('ManageAgentsDialog', () => {
     const onSave = vi.fn()
       .mockResolvedValueOnce({ status: 'confirmationRequired' })
       .mockResolvedValueOnce({ status: 'succeeded', response: { units: [] } });
-    renderDialog({ onSave });
+    await renderDialog({ onSave });
 
     await user.click(screen.getByRole('checkbox', { name: 'Claude Code' }));
     await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
@@ -345,7 +375,7 @@ describe('ManageAgentsDialog', () => {
 
   it('discards from Cancel but confirms unsaved changes for the window close action', async () => {
     const user = userEvent.setup();
-    const { onClose } = renderDialog();
+    const { onClose } = await renderDialog();
 
     await user.click(screen.getByRole('checkbox', { name: 'Cursor' }));
     await user.click(screen.getByRole('button', { name: 'common.close' }));
@@ -362,7 +392,7 @@ describe('ManageAgentsDialog', () => {
     const merged = snapshot();
     merged.selection.agents.push({ kind: 'standard', id: 'windsurf', displayName: 'Windsurf', detection: 'notDetected', directoryAccess: 'privateOnly', installOptionId: 'cursor', groupId: null });
     merged.selection.installOptions[1].agentIds.push('windsurf');
-    renderDialog({ snapshot: merged });
+    await renderDialog({ loadedSnapshot: merged });
 
     const viewMembers = screen.getByRole('button', { name: 'agentSelection.viewMembers' });
     const mergedCheckbox = screen.getByRole('checkbox', { name: /Cursor.*Windsurf/ });
@@ -392,21 +422,21 @@ describe('ManageAgentsDialog', () => {
     const latest = snapshot();
     latest.selection.revision = 'selection-revision-2';
     latest.selection.initialSelectedOptionIds = [];
-    const onSave = vi.fn().mockResolvedValue({ status: 'stale' });
-    const { rerender } = render(
+    const onSave = vi.fn().mockResolvedValue({ status: 'stale', snapshot: latest });
+    render(
       <TooltipProvider>
-        <ManageAgentsDialog skill={skill} snapshot={snapshot()} onClose={vi.fn()} onSave={onSave} />
+        <ManageAgentsDialog
+          skill={skill}
+          context={context}
+          loadAgentSelection={vi.fn(async () => snapshot())}
+          onClose={vi.fn()}
+          onSave={onSave}
+        />
       </TooltipProvider>,
     );
 
-    await user.click(screen.getByRole('checkbox', { name: 'Cursor' }));
+    await user.click(await screen.findByRole('checkbox', { name: 'Cursor' }));
     await user.click(screen.getByRole('button', { name: 'skills.manageAgents.save' }));
-    rerender(
-      <TooltipProvider>
-        <ManageAgentsDialog skill={skill} snapshot={latest} onClose={vi.fn()} onSave={onSave} />
-      </TooltipProvider>,
-    );
-
     expect(screen.getByRole('checkbox', { name: 'Cursor' }).getAttribute('data-state')).toBe('checked');
     expect(screen.getByRole('alert').textContent).toContain('agentSelection.selectionChanged');
     await user.click(screen.getByRole('button', { name: 'agentSelection.confirmCurrentSelection' }));

@@ -59,7 +59,6 @@ const mocks = vi.hoisted(() => ({
     closeManageAgents: vi.fn(),
     saveAgentChanges: vi.fn(),
     manageAgentsSkill: null,
-    manageAgentsScope: 'global',
     copySkill: null as InstalledSkill | null,
     copyContext: null as SkillLocationRef | null,
     repairSourceTarget: null,
@@ -192,12 +191,14 @@ vi.mock('@/components/skills', () => ({
     isCheckingUpdates,
     onCheckUpdates,
     onUpdate,
+    onManageAgents,
   }: {
     skill: InstalledSkill;
     updateStatus?: string;
     isCheckingUpdates?: boolean;
     onCheckUpdates?: () => void;
     onUpdate?: (name: string, scope: 'global' | 'project') => void;
+    onManageAgents?: (skill: InstalledSkill) => void;
   }) => (
     <div>
       <button
@@ -211,6 +212,9 @@ vi.mock('@/components/skills', () => ({
       </button>
       <button type="button" onClick={() => onUpdate?.(skill.name, skill.scope)}>
         detail-update
+      </button>
+      <button type="button" onClick={() => onManageAgents?.(skill)}>
+        detail-manage-agents
       </button>
     </div>
   ),
@@ -276,6 +280,7 @@ describe('SkillsPage', () => {
     mocks.skillDetailState.deselectSkill.mockReset();
     mocks.skillDetailState.reloadContent.mockReset();
     mocks.skillDialogState.openDelete.mockReset();
+    mocks.skillDialogState.openManageAgents.mockReset();
     mocks.skillDialogState.copySkill = null;
     mocks.skillDialogState.copyContext = null;
     mocks.resizable.groups.length = 0;
@@ -430,6 +435,22 @@ describe('SkillsPage', () => {
       false,
     );
     expect(getByTestId('page-update-dialog').getAttribute('data-open')).toBe('true');
+  });
+
+  it('opens detail Agent management with the selected operation context', () => {
+    mocks.skillDetailState.selectedSkillRef = {
+      name: 'toolkit',
+      scope: 'global',
+    };
+    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('toolkit')]);
+
+    const { getByText } = render(<SkillsPage />);
+    fireEvent.click(getByText('detail-manage-agents'));
+
+    expect(mocks.skillDialogState.openManageAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'toolkit', scope: 'global' }),
+      nativeGlobal,
+    );
   });
 
   it('uses the explicit environment key for detail update progress', () => {

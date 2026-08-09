@@ -11,11 +11,11 @@ import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
 import type { SkillLocationRef, InstalledSkill } from '@/bindings';
 
 const mocks = vi.hoisted(() => ({
-  openManageAgentChanges: vi.fn(),
+  getCopyAgentSelection: vi.fn(),
+  getManageAgentSelection: vi.fn(),
 }));
 
 vi.mock('@/workflows/skill-manage-agents', () => ({
-  openManageAgentChanges: mocks.openManageAgentChanges,
   executeManageAgentChanges: vi.fn(),
 }));
 
@@ -23,17 +23,33 @@ vi.mock('@/workflows/skill-copy', () => ({
   executeSkillCopy: vi.fn(),
 }));
 
-vi.mock('@/hooks/useCopyAgentSelection', () => ({
-  useCopyAgentSelection: () => ({ status: 'loading', retry: vi.fn() }),
+vi.mock('@/hooks/useTauriApi', () => ({
+  getCopyAgentSelection: (...args: unknown[]) => mocks.getCopyAgentSelection(...args),
+  getManageAgentSelection: (...args: unknown[]) => mocks.getManageAgentSelection(...args),
+  listSkills: vi.fn(),
 }));
 
 vi.mock('../ManageAgentsDialog', () => ({
   ManageAgentsDialog: (props: {
-    loadFailed?: boolean;
-    onRetry?: () => void;
+    context: SkillLocationRef;
+    skill: InstalledSkill;
+    loadAgentSelection: (request: {
+      kind: 'manage';
+      context: SkillLocationRef;
+      skillName: string;
+    }) => Promise<unknown>;
   }) => (
-    <div data-testid="manage-container-dialog" data-load-failed={String(props.loadFailed)}>
-      <button type="button" onClick={props.onRetry}>retry</button>
+    <div data-testid="manage-container-dialog">
+      <button
+        type="button"
+        onClick={() => void props.loadAgentSelection({
+          kind: 'manage',
+          context: props.context,
+          skillName: props.skill.name,
+        })}
+      >
+        load
+      </button>
     </div>
   ),
 }));
@@ -83,22 +99,19 @@ const skill: InstalledSkill = {
 
 describe('Skill dialog containers', () => {
   beforeEach(() => {
-    mocks.openManageAgentChanges.mockReset();
     useSkillDialogStore.getState().closeManageAgents();
     useSkillDialogStore.getState().closeCopyToProject();
     useSkillDialogStore.getState().closeRepairSource();
     useSkillUpdateWorkflow.getState().reset();
   });
 
-  it('keeps Manage Agents retry bound to the opened dialog session', () => {
-    useSkillDialogStore.getState().openManageAgents(skill, context, '/project');
-    useSkillDialogStore.getState().setManageAgentLoading(false);
+  it('keeps Manage Agents loading bound to the opened dialog session', () => {
+    useSkillDialogStore.getState().openManageAgents(skill, context);
 
     render(<ManageAgentsDialogContainer />);
 
-    expect(screen.getByTestId('manage-container-dialog').dataset.loadFailed).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'retry' }));
-    expect(mocks.openManageAgentChanges).toHaveBeenCalledWith(skill, context, '/project');
+    fireEvent.click(screen.getByRole('button', { name: 'load' }));
+    expect(mocks.getManageAgentSelection).toHaveBeenCalledWith(context, skill.name);
   });
 
   it('mounts Copy to Project only for a complete dialog session', () => {

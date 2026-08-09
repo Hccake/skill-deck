@@ -18,7 +18,6 @@ import { ManageAgentsDialogContainer } from '@/components/skills/ManageAgentsDia
 import { CopyToProjectDialogContainer } from '@/components/skills/CopyToProjectDialogContainer';
 import { UpdatePlanDialogContainer } from '@/components/skills/UpdatePlanDialogContainer';
 import { useSkillUpdateWorkflow } from '@/workflows/skill-update';
-import { openManageAgentChanges } from '@/workflows/skill-manage-agents';
 import { openSkillRemoval } from '@/workflows/skill-remove';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import type { InstalledSkill, InstalledSkillLocation } from '@/bindings';
@@ -85,6 +84,7 @@ export function SkillsPage() {
   ));
   const openUpdate = useSkillUpdateWorkflow((s) => s.open);
   const openRepairSource = useSkillDialogStore((s) => s.openRepairSource);
+  const openManageAgents = useSkillDialogStore((s) => s.openManageAgents);
   const allAgents = selectedContext.scope.scope === 'project'
     ? projectSnapshot.agents
     : globalSnapshot.agents;
@@ -140,8 +140,8 @@ export function SkillsPage() {
 
   const handleManageAgents = useCallback((skill: InstalledSkill) => {
     const context = skill.scope === 'project' ? selectedContext : selectedGlobalContext;
-    void openManageAgentChanges(skill, context, selectedProjectPath);
-  }, [selectedContext, selectedGlobalContext, selectedProjectPath]);
+    openManageAgents(skill, context);
+  }, [openManageAgents, selectedContext, selectedGlobalContext]);
 
   const handleDetailCheckUpdates = useCallback(() => {
     if (!selectedSkill) return Promise.resolve(null);

@@ -21,7 +21,11 @@ import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/ty
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { useMutationStore } from '@/stores/mutation';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
-import { useInstallTargetOptions } from '@/hooks/useInstallTargetOptions';
+import { getInstallAgentSelection } from '@/hooks/useTauriApi';
+import {
+  useAgentSelectionSession,
+  type InstallAgentSelectionSessionRequest,
+} from '@/hooks/useAgentSelectionSession';
 import { isRetryableMutationUnit } from '@/lib/mutation-results';
 import type {
   EntryPoint,
@@ -69,13 +73,6 @@ function createInitialState(params: {
     selectedSkills: [],
     skillFilter: null,
     skillSearchQuery: '',
-    agentSelectionSnapshot: null,
-    selectedAgentOptionIds: [],
-    expandedAgentGroupIds: [],
-    additionalAgentsExpanded: false,
-    selectionRequiresReconfirmation: false,
-    mode: 'symlink',
-    otherAgentsExpanded: false,
     overwrites: {},
     preparation: { status: 'idle' },
     preSelectedSkills: [],
@@ -133,14 +130,22 @@ export function WizardPage() {
     []
   );
 
-  const targetOptions = useInstallTargetOptions({
-    active: state.step === 'options',
+  const agentSelectionRequest = useMemo<InstallAgentSelectionSessionRequest>(() => ({
+    kind: 'install',
     context: state.context,
-    preselectedAgents: state.preSelectedAgents,
-    snapshot: state.agentSelectionSnapshot,
-    selectedOptionIds: state.selectedAgentOptionIds,
-    mode: state.mode,
-    updateState,
+    explicitAgentIds: state.preSelectedAgents,
+  }), [state.context, state.preSelectedAgents]);
+  const loadAgentSelection = useCallback(
+    (request: InstallAgentSelectionSessionRequest) => getInstallAgentSelection(
+      request.context,
+      request.explicitAgentIds,
+    ),
+    [],
+  );
+  const agentSelection = useAgentSelectionSession({
+    active: state.step === 'options' || state.step === 'confirm',
+    request: agentSelectionRequest,
+    load: loadAgentSelection,
   });
 
   // 步骤流程
@@ -230,8 +235,11 @@ export function WizardPage() {
   // 验证是否可以进入下一步
   const canProceed = useMemo(
     () => canProceedForStep(state)
-      && (state.step !== 'options' || targetOptions.status === 'ready'),
-    [state, targetOptions.status],
+      && (state.step !== 'options' || (
+        agentSelection.status === 'ready'
+        && !agentSelection.requiresReconfirmation
+      )),
+    [agentSelection, state],
   );
 
   // 是否为结果态
@@ -281,15 +289,15 @@ export function WizardPage() {
       case 'options':
         return (
           <OptionsStep
-            state={state}
-            updateState={updateState}
-            targetOptions={targetOptions}
+            agentSelection={agentSelection}
           />
         );
       case 'confirm':
+        if (agentSelection.status !== 'ready') return null;
         return (
           <ConfirmStep
             state={state}
+            agentSelection={agentSelection}
             updateState={updateState}
             scope={state.scope}
             projectPath={state.projectPath}

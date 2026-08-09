@@ -15,7 +15,6 @@ const { mockCommands } = vi.hoisted(() => ({
     getSkillAgentDetails: vi.fn(),
     manageSkillAgents: vi.fn(),
     getCopyAgentSelection: vi.fn(),
-    cleanupDuplicateAgentCopies: vi.fn(),
     copySkillToProjects: vi.fn(),
     checkOverwrites: vi.fn(),
     checkUpdates: vi.fn(),

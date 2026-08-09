@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   requestAction: vi.fn().mockResolvedValue(undefined),
   emit: vi.fn().mockResolvedValue(undefined),
   refreshProjects: vi.fn().mockResolvedValue([]),
+  getSelection: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -27,12 +28,14 @@ vi.mock('@/hooks/useMutationMonitor', () => ({
   useMutationMonitor: vi.fn(),
 }));
 
-vi.mock('@/hooks/useInstallTargetOptions', () => ({
-  useInstallTargetOptions: () => ({
+vi.mock('@/hooks/useTauriApi', () => ({
+  getInstallAgentSelection: (...args: unknown[]) => mocks.getSelection(...args),
+}));
+
+vi.mock('@/hooks/useAgentSelectionSession', () => ({
+  useAgentSelectionSession: () => ({
     status: 'ready',
-    inputKey: 'native/global',
-    snapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
-    retry: vi.fn(),
+    requiresReconfirmation: false,
   }),
 }));
 
@@ -75,8 +78,6 @@ vi.mock('@/components/skills/add-skill/SourceStep', () => ({
           pluginName: null,
         }],
         selectedSkills: ['demo'],
-        agentSelectionSnapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
-        selectionRequiresReconfirmation: false,
         preparation: {
           status: 'ready',
           prepared: { request: {} as never, preview: {} as never },
@@ -171,13 +172,6 @@ function createState(overrides: Partial<WizardState> = {}): WizardState {
     selectedSkills: ['demo'],
     skillFilter: null,
     skillSearchQuery: '',
-    agentSelectionSnapshot: { selection: makeAgentSelectionSnapshot(), defaultSelectionWarning: null },
-    selectedAgentOptionIds: [],
-    expandedAgentGroupIds: [],
-    additionalAgentsExpanded: false,
-    selectionRequiresReconfirmation: false,
-    mode: 'symlink',
-    otherAgentsExpanded: false,
     overwrites: {},
     preparation: {
       status: 'ready',
@@ -253,6 +247,10 @@ describe('parseWizardContext', () => {
 describe('WizardPage mutation guard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getSelection.mockResolvedValue({
+      selection: makeAgentSelectionSnapshot(),
+      defaultSelectionWarning: null,
+    });
     useMutationStore.setState({
       activeMutation: null,
       loading: false,

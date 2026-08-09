@@ -346,8 +346,7 @@
       "discardConfirm": "Discard unsaved changes?",
       "discard": "Discard changes",
       "continueEditing": "Continue editing",
-      "success": "Linked Agents updated",
-      "cleanupSuccess": "Extra copies removed"
+      "success": "Linked Agents updated"
     },
     "copyToProject": {
       "title": "Copy “{{name}}” to Other Projects",
@@ -1076,7 +1075,6 @@
       "remove": "Removing",
       "copy": "Copying",
       "manageAgents": "Updating linked Agents",
-      "duplicateCleanup": "Cleaning duplicates",
       "repair": "Repairing source",
       "saveAgentDefaults": "Saving agent defaults",
       "batchUpdate": "Updating skills",
@@ -1187,7 +1185,6 @@
       "update": "Update",
       "delete": "Deletion",
       "manageAgents": "Agent management",
-      "cleanup": "Duplicate-copy cleanup",
       "copy": "Copy",
       "repair": "Source repair"
     }

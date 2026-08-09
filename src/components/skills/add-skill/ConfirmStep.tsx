@@ -7,11 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { checkSkillAudit, type SkillAuditData } from '@/hooks/useTauriApi';
+import type { InstallAgentSelectionSnapshot } from '@/bindings';
+import type { AgentSelectionSessionController } from '@/hooks/useAgentSelectionSession';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
-import {
-  createAgentSelectionSession,
-  refreshAgentSelectionSession,
-} from '@/lib/agent-selection-session';
 import { projectAgentSelectionView } from '@/lib/agent-selection-view';
 import { prepareInstall } from '@/workflows/skill-install-preparation';
 import { formatAppError } from '@/utils/format-app-error';
@@ -20,24 +18,28 @@ import type { WizardState } from './types';
 
 interface ConfirmStepProps {
   state: WizardState;
+  agentSelection: Extract<
+    AgentSelectionSessionController<InstallAgentSelectionSnapshot>,
+    { status: 'ready' }
+  >;
   updateState: (updates: Partial<WizardState>) => void;
   scope: 'global' | 'project';
   projectPath?: string;
 }
 
-export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
+export function ConfirmStep({ state, agentSelection, updateState, scope }: ConfirmStepProps) {
   const { t } = useTranslation();
   const updateStateRef = useRef(updateState);
   useEffect(() => { updateStateRef.current = updateState; });
   const requestIdRef = useRef(0);
   const [preparationAttempt, setPreparationAttempt] = useState(0);
   const [auditData, setAuditData] = useState<Partial<Record<string, SkillAuditData>>>({});
-  const selection = state.agentSelectionSnapshot?.selection ?? null;
+  const selection = agentSelection.selection;
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
     let cancelled = false;
-    if (!state.discoverySession || !selection || state.selectedSkills.length === 0) {
+    if (!state.discoverySession || state.selectedSkills.length === 0) {
       updateStateRef.current({ overwrites: {}, preparation: { status: 'idle' } });
       return;
     }
@@ -53,34 +55,14 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
       skillPaths,
       skills: state.selectedSkills,
       explicitAgentIds: state.preSelectedAgents,
-      agentSelection: {
-        revision: selection.revision,
-        selectedOptionIds: state.selectedAgentOptionIds,
-        requestedMode: state.mode,
-      },
+      agentSelection: agentSelection.submission,
       acknowledgeRisk: state.riskAcknowledged,
     }).then((outcome) => {
       if (cancelled || requestId !== requestIdRef.current) return;
       if (outcome.status === 'selectionStale') {
-        const currentSession = {
-          ...createAgentSelectionSession(selection, state.mode),
-          selectedOptionIds: state.selectedAgentOptionIds,
-          otherAgentsExpanded: state.otherAgentsExpanded,
-          additionalInstallExpanded: state.additionalAgentsExpanded,
-          expandedGroupIds: state.expandedAgentGroupIds,
-        };
-        const refreshed = refreshAgentSelectionSession(
-          currentSession,
-          outcome.snapshot.selection,
-        );
+        agentSelection.acceptSnapshot(outcome.snapshot);
         updateStateRef.current({
           step: 'options',
-          agentSelectionSnapshot: outcome.snapshot,
-          selectedAgentOptionIds: refreshed.selectedOptionIds,
-          otherAgentsExpanded: refreshed.otherAgentsExpanded,
-          additionalAgentsExpanded: refreshed.additionalInstallExpanded,
-          expandedAgentGroupIds: refreshed.expandedGroupIds,
-          selectionRequiresReconfirmation: true,
           preparation: { status: 'idle' },
           overwrites: {},
         });
@@ -98,7 +80,7 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
       updateStateRef.current({ preparation: outcome, overwrites });
     });
     return () => { cancelled = true; };
-  }, [preparationAttempt, selection, state.additionalAgentsExpanded, state.availableSkills, state.context, state.discoverySession, state.expandedAgentGroupIds, state.mode, state.otherAgentsExpanded, state.preSelectedAgents, state.riskAcknowledged, state.selectedAgentOptionIds, state.selectedSkills, state.source]);
+  }, [agentSelection, preparationAttempt, selection, state.availableSkills, state.context, state.discoverySession, state.preSelectedAgents, state.riskAcknowledged, state.selectedSkills, state.source]);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,13 +98,15 @@ export function ConfirmStep({ state, updateState, scope }: ConfirmStepProps) {
   const overwriteCount = state.selectedSkills.filter((name) => (state.overwrites[name] ?? []).length > 0).length;
   const projected = selection ? projectAgentSelectionView(selection) : null;
   const directAgents = projected?.directAgents.map((agent) => agent.displayName) ?? [];
-  const selectedSet = new Set(state.selectedAgentOptionIds);
+  const selectedSet = new Set(agentSelection.submission.selectedOptionIds);
   const selectedOptions = selection?.installOptions.filter((option) => selectedSet.has(option.id)) ?? [];
   const linkOptions = selectedOptions.filter(
-    (option) => state.mode === 'symlink' && option.modeConstraint !== 'copyOnly',
+    (option) => agentSelection.submission.requestedMode === 'symlink'
+      && option.modeConstraint !== 'copyOnly',
   );
   const copyOptions = selectedOptions.filter(
-    (option) => state.mode === 'copy' || option.modeConstraint === 'copyOnly',
+    (option) => agentSelection.submission.requestedMode === 'copy'
+      || option.modeConstraint === 'copyOnly',
   );
   const isPreparing = state.preparation.status === 'idle' || state.preparation.status === 'preparing';
 
