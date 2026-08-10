@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::models::SkillDeckConfig;
+use crate::models::{NetworkProxySettings, SkillDeckConfig};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -56,10 +56,35 @@ fn read_config_from_path(path: &Path) -> Result<SkillDeckConfig, AppError> {
         }
     };
 
-    Ok(serde_json::from_str(&content).unwrap_or_else(|e| {
+    let mut value: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|e| {
         log::warn!("解析配置文件失败: {}，返回默认配置", e);
+        serde_json::json!({})
+    });
+    let network_proxy = value
+        .as_object_mut()
+        .and_then(|object| object.remove("networkProxy"))
+        .map_or_else(
+            || Ok(NetworkProxySettings::default()),
+            |network_proxy| {
+                serde_json::from_value::<NetworkProxySettings>(network_proxy)
+                    .map_err(|error| error.to_string())
+                    .and_then(|settings| {
+                        settings
+                            .validate_and_normalize()
+                            .map_err(|error| format!("code={}", error.code()))
+                    })
+            },
+        )
+        .unwrap_or_else(|error| {
+            log::warn!("代理设置无效，使用直接连接: {}", error);
+            NetworkProxySettings::default()
+        });
+    let mut config: SkillDeckConfig = serde_json::from_value(value).unwrap_or_else(|e| {
+        log::warn!("解析应用配置失败: {}，返回默认配置", e);
         SkillDeckConfig::default()
-    }))
+    });
+    config.network_proxy = network_proxy;
+    Ok(config)
 }
 
 fn write_config_to_path(config: &SkillDeckConfig, path: &Path) -> Result<(), AppError> {
@@ -76,11 +101,12 @@ fn write_config_to_path(config: &SkillDeckConfig, path: &Path) -> Result<(), App
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::mpsc;
     use std::time::Duration;
 
     use super::{read_config_from_path, update_config_at_path, write_config_to_path};
-    use crate::models::SkillDeckConfig;
+    use crate::models::{NativeGitProxySettings, ProxyMode, SkillDeckConfig};
     use tempfile::tempdir;
 
     #[test]
@@ -109,6 +135,38 @@ mod tests {
 
         assert_eq!(read_back.projects, vec!["/demo"]);
         assert_eq!(read_back.git_clone_timeout_secs, 300);
+    }
+
+    #[test]
+    fn invalid_network_settings_preserve_other_config() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("config.json");
+        fs::write(
+            &path,
+            r#"{
+                "projects": ["/must-survive"],
+                "networkProxy": {
+                    "mode": "system",
+                    "customProxyUrl": "http://127.0.0.1:7890",
+                    "bypassRules": ["github.com"],
+                    "nativeGit": "followProxySettings",
+                    "wslGitDefault": "followProxySettings",
+                    "wslGitOverrides": {"Ubuntu": "followProxySettings"}
+                }
+            }"#,
+        )
+        .expect("unsupported config");
+
+        let config = read_config_from_path(&path).expect("config");
+
+        assert_eq!(config.projects, vec!["/must-survive"]);
+        assert_eq!(config.network_proxy.mode, ProxyMode::Direct);
+        assert_eq!(config.network_proxy.custom_proxy_url, None);
+        assert_eq!(
+            config.network_proxy.native_git,
+            NativeGitProxySettings::UseExistingGitConfig
+        );
+        assert!(config.network_proxy.wsl_git.is_empty());
     }
 
     #[test]

@@ -40,6 +40,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.source.error.network');
     case 'invalidSource':
       return t('addSkill.source.error.invalidSource', { value: error.data.value });
+    case 'invalidProxySettings':
+      return t(`settings.proxy.errors.${error.data.code}`);
     case 'invalidAgent':
       return t('addSkill.error.invalidAgent', { agent: error.data.agent });
     case 'agentSelectionInvalid':

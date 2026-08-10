@@ -151,6 +151,12 @@ impl ErrorReport {
                     .insert("reason".to_string(), reason.code().to_string());
                 report
             }
+            AppError::InvalidProxySettings { code } => {
+                let mut report = Self::new(OperationErrorCode::Validation);
+                report.field = Some("networkProxy".to_string());
+                report.parameters.insert("reason".to_string(), code);
+                report
+            }
             AppError::InvalidSkillMd { message }
             | AppError::InvalidSource { value: message }
             | AppError::InstallRiskConfirmationRequired { code: message }

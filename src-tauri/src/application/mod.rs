@@ -16,6 +16,7 @@ pub mod install_wizard_workflow;
 pub mod manage_agents;
 pub mod manage_agents_runtime;
 pub mod mutation;
+pub mod network_settings;
 pub mod payload_session;
 pub mod plan_runner;
 pub mod recovery;

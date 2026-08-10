@@ -10,6 +10,7 @@ pub mod install_workflow;
 pub mod lifecycle;
 pub mod manage_agents;
 pub mod mutations;
+pub mod network;
 pub mod recovery;
 pub mod remove;
 pub mod resources;

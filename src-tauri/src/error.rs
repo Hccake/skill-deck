@@ -125,6 +125,9 @@ pub enum AppError {
     #[error("Invalid source: {value}")]
     InvalidSource { value: String },
 
+    #[error("Invalid proxy settings: {code}")]
+    InvalidProxySettings { code: String },
+
     #[error("Git clone failed: {message}")]
     GitCloneFailed { message: String },
 

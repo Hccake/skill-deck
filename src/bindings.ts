@@ -414,6 +414,22 @@ async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getProxySettings() : Promise<Result<NetworkProxySettings, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_proxy_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveProxySettings(settings: NetworkProxySettings) : Promise<Result<NetworkProxySettings, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_proxy_settings", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async checkApplicationUpdate() : Promise<Result<ApplicationUpdateInfo | null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_application_update") };
@@ -487,7 +503,7 @@ export type AgentStorageIssue = { code: string; message: string; readOnly: boole
 export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
 export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
-export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
+export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
@@ -607,6 +623,7 @@ riskPolicy: InstallRiskPolicy;
  * 可用的 skills 列表
  */
 skills: AvailableSkill[] }
+export type GitProxyScope = "githubOnly" | "allHttpHttps"
 export type GithubCredentialClearResult = { cleared: boolean; status: GithubCredentialStatus; warnings: SourceSuppressionWarningCode[] }
 export type GithubCredentialSaveResult = { saved: boolean; status: GithubCredentialStatus; warnings: SourceSuppressionWarningCode[] }
 export type GithubCredentialSource = "keyring" | "githubTokenEnv" | "ghTokenEnv" | "none"
@@ -742,6 +759,8 @@ export type MutationUnitResult = { unitId: string; skillName: string; source: Sk
 export type MutationUnitStatus = "succeeded" | "failed" | "skipped" | "cancelled" | "notRun" | "recoveryRequired"
 export type MutationWarning = { code: MutationWarningCode; parameters: Partial<{ [key in string]: string }>; technicalDetails: string | null }
 export type MutationWarningCode = "defaultTargetCleanupFailed" | "backupCleanupFailed" | "remoteHashRefreshFailed" | "cleanupMarkerRetained"
+export type NativeGitProxySettings = { behavior: "useExistingGitConfig" } | { behavior: "useProxy"; proxyUrl: string; scope: GitProxyScope }
+export type NetworkProxySettings = { mode: ProxyMode; customProxyUrl: string | null; nativeGit?: NativeGitProxySettings; wslGit?: Partial<{ [key in string]: WslGitProxySettings }> }
 export type ObservedEntryId = string
 export type ObservedEntryKind = "missing" | "directory" | "symlink" | "junction" | "brokenLink" | "other"
 export type ObservedEntryOwner = { agentId: AgentId; displayName: string; logicalTargetId: string }
@@ -756,6 +775,7 @@ export type PhysicalIdentityComparison = "same" | "different" | "unknown"
 export type PreviewToken = { generation: string; registryRevision: string; environmentRevision: string; contextRevision: ContextSnapshotRevision }
 export type ProjectInfo = { binding: RegisteredProject; storage: ProjectStorageInfo }
 export type ProjectStorageInfo = { access: StorageAccess; owner: EnvironmentRef | null }
+export type ProxyMode = "custom" | "direct"
 export type RecoveryAction = { resourceId: RecoveryResourceId; suggestedActionCode: SuggestedActionCode }
 export type RecoveryResourceId = string
 export type RecoveryResourcePath = { kind: RecoveryResourcePathKind; location: ResourceLocator }
@@ -794,7 +814,7 @@ gitCloneTimeoutSecs?: number;
 /**
  * 是否允许 Skill Deck 发现和使用 WSL Environment
  */
-wslIntegrationEnabled?: boolean; hiddenWslDistros?: string[]; lastSelectedEnvironment?: EnvironmentRef | null; lastConnectedWslUserByDistro?: Partial<{ [key in string]: string }> }
+wslIntegrationEnabled?: boolean; hiddenWslDistros?: string[]; lastSelectedEnvironment?: EnvironmentRef | null; lastConnectedWslUserByDistro?: Partial<{ [key in string]: string }>; networkProxy?: NetworkProxySettings }
 export type SkillDirectoryAccess = "standardOnly" | "privateOnly" | "both"
 export type SkillIdentity = { context: SkillLocationRef; skillName: string }
 export type SkillLocation = { scope: "global" } | { scope: "project"; project_id: string }
@@ -826,6 +846,7 @@ export type UpdateSkillResult = { skillIdentity: SkillIdentity; sourceResultId: 
 export type UpdateSourceResult = { id: string; source: string; status: UpdateSourceStatus; error: ErrorReport | null }
 export type UpdateSourceStatus = "acquired" | "failed"
 export type UpdateWarningCode = "preservedConflictingCopy"
+export type WslGitProxySettings = { behavior: "followNativeGit" } | { behavior: "useExistingGitConfig" } | { behavior: "useProxy"; proxyUrl: string; scope: GitProxyScope }
 export type WslIntegrationBusyReason = "mutation" | "lifecycle" | "installWizard" | "wslOperation"
 
 /** tauri-specta globals **/

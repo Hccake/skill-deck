@@ -607,6 +607,11 @@
   },
   "settings": {
     "title": "Settings",
+    "proxy": {
+      "errors": {
+        "invalidProxyUrl": "Enter an HTTP or HTTPS proxy URL with a port."
+      }
+    },
     "nav": {
       "sectionLabel": "Settings section",
       "general": "General",

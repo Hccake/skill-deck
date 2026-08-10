@@ -29,6 +29,7 @@ import type {
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
+  NetworkProxySettings,
 } from '@/bindings';
 
 export type {
@@ -53,6 +54,7 @@ export type {
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
+  NetworkProxySettings,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -185,6 +187,16 @@ export async function getConfig(): Promise<SkillDeckConfig> {
  */
 export async function saveConfig(config: SkillDeckConfig): Promise<void> {
   unwrap(await commands.saveConfig(config));
+}
+
+export async function getProxySettings(): Promise<NetworkProxySettings> {
+  return unwrap(await commands.getProxySettings());
+}
+
+export async function saveProxySettings(
+  settings: NetworkProxySettings,
+): Promise<NetworkProxySettings> {
+  return unwrap(await commands.saveProxySettings(settings));
 }
 
 export async function setWslIntegrationEnabled(

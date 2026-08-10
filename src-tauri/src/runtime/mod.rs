@@ -29,9 +29,11 @@ use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::project_service::initialize_native_project_migration;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
+use crate::runtime::proxy_settings::ProxySettingsStore;
 use crate::storage::github_credentials::KeyringGithubCredentialStore;
 
 pub mod maintenance;
+pub(crate) mod proxy_settings;
 
 use maintenance::{RuntimeMaintenanceCoordinator, RuntimeMaintenanceTasks};
 
@@ -54,6 +56,7 @@ pub struct RuntimeServiceGraph {
     github_credentials: GithubCredentialWorkflowService,
     agent_selection_facts: RuntimePlanningFactSource,
     agent_selection_targets: RuntimeTargetFactResolver,
+    proxy_settings: Arc<ProxySettingsStore>,
 }
 
 impl RuntimeServiceGraph {
@@ -62,8 +65,9 @@ impl RuntimeServiceGraph {
         recovery_root: std::path::PathBuf,
         agents: ManagedAgentRegistry,
     ) -> Result<Self, AppError> {
-        let wsl_integration_enabled =
-            cfg!(target_os = "windows") && crate::core::read_config()?.wsl_integration_enabled;
+        let config = crate::core::read_config()?;
+        let wsl_integration_enabled = cfg!(target_os = "windows") && config.wsl_integration_enabled;
+        let proxy_settings = Arc::new(ProxySettingsStore::new(config.network_proxy));
         let wsl = Arc::new(WslRuntime::new_with_support(
             cfg!(target_os = "windows"),
             wsl_integration_enabled,
@@ -161,6 +165,7 @@ impl RuntimeServiceGraph {
             github_credentials,
             agent_selection_facts,
             agent_selection_targets,
+            proxy_settings,
         })
     }
 
@@ -238,6 +243,10 @@ impl RuntimeServiceGraph {
 
     pub fn agent_selection_targets(&self) -> &RuntimeTargetFactResolver {
         &self.agent_selection_targets
+    }
+
+    pub(crate) fn activate_network_settings(&self, settings: crate::models::NetworkProxySettings) {
+        self.proxy_settings.replace_settings(settings);
     }
 }
 

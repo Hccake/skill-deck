@@ -113,6 +113,16 @@ fn clear_github_credential() -> &'static str {
     "clear-github-credential"
 }
 
+#[tauri::command]
+fn get_proxy_settings() -> &'static str {
+    "get-proxy-settings"
+}
+
+#[tauri::command]
+fn save_proxy_settings() -> &'static str {
+    "save-proxy-settings"
+}
+
 fn test_app() -> App<MockRuntime> {
     mock_builder()
         .plugin(tauri_plugin_http::init())
@@ -139,6 +149,8 @@ fn test_app() -> App<MockRuntime> {
             get_github_credential_status,
             save_github_credential,
             clear_github_credential,
+            get_proxy_settings,
+            save_proxy_settings,
         ])
         .build(tauri::generate_context!())
         .expect("mock Tauri app")
@@ -317,6 +329,14 @@ fn main_window_allows_skill_repair_commands() {
         Ok(Value::from("clear-github-credential"))
     );
     assert_eq!(
+        invoke(&main, "get_proxy_settings"),
+        Ok(Value::from("get-proxy-settings"))
+    );
+    assert_eq!(
+        invoke(&main, "save_proxy_settings"),
+        Ok(Value::from("save-proxy-settings"))
+    );
+    assert_eq!(
         invoke(&main, "fetch_available"),
         Ok(Value::from("fetch-available"))
     );
@@ -412,6 +432,11 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "clear_github_credential"),
         "clear_github_credential",
+    );
+    assert_denied(invoke(&wizard, "get_proxy_settings"), "get_proxy_settings");
+    assert_denied(
+        invoke(&wizard, "save_proxy_settings"),
+        "save_proxy_settings",
     );
     assert_denied(
         invoke(&wizard, "get_install_wizard_session"),

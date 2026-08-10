@@ -607,6 +607,11 @@
   },
   "settings": {
     "title": "设置",
+    "proxy": {
+      "errors": {
+        "invalidProxyUrl": "请填写 HTTP 或 HTTPS 代理地址，并包含端口。"
+      }
+    },
     "nav": {
       "sectionLabel": "设置分类",
       "general": "通用",

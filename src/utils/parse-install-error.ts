@@ -59,6 +59,12 @@ export function parseInstallError(
         ],
       };
 
+    case 'invalidProxySettings':
+      return {
+        message: t(`settings.proxy.errors.${error.data.code}`),
+        suggestions: [t('addSkill.error.suggestion.checkNetwork')],
+      };
+
     case 'gitAuthFailed':
       return {
         message: t('addSkill.error.authFailed'),
