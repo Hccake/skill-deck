@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use tauri::{Emitter, State, WebviewWindow};
 
-use crate::application::source_acquisition::SourceDiscoveryService;
 use crate::core::CloneProgress;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
@@ -26,7 +23,8 @@ pub async fn fetch_available(
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<FetchResult, AppError> {
     let window = window.clone();
-    SourceDiscoveryService::new(Arc::new(runtime.payloads().clone()), runtime.wsl())
+    runtime
+        .source_discovery()
         .discover(context, source, move |progress| {
             let _ = window.emit(
                 "clone-progress",

@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::application::git_transport::{GitSourceTransport, ProcessGitTransport};
+use crate::application::git_transport::GitSourceTransport;
+use crate::application::github_access::GithubTreeAccess;
 use crate::application::mutation::coordinator::RuntimeRevisionSource;
 use crate::application::payload_session::{
     DiscoverySessionHandle, DiscoverySourceLocation, PayloadPlanningMetadata, PayloadSessionManager,
@@ -9,7 +10,7 @@ use crate::application::payload_session::{
 use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
 use crate::application::source_acquisition::{
-    AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService, SourceDiscoveryService,
+    AcquireSelectedPayloadsRequest, GitSourceDiscovery, SelectedPayloadAcquisitionService,
 };
 use crate::application::source_evidence::{
     RemoteSnapshotId, SkillRevision, SourceEvidenceCoordinator, SourceSnapshotFacts,
@@ -22,9 +23,12 @@ use crate::application::update::{
 };
 use crate::application::update_check::UpdateCheckService;
 use crate::application::update_planner::ConcreteUpdatePlanner;
+#[cfg(test)]
+use crate::application::wsl_source_access::UnavailableWslSourceAccess;
+use crate::application::wsl_source_access::WslSourceAccess;
+use crate::core::compute_local_ref_revision;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::source_identity::{NormalizedRef, SourceProvider};
-use crate::core::{compute_local_ref_revision, GithubTokenProvider};
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::WslRuntime;
@@ -32,10 +36,10 @@ use crate::error::AppError;
 
 pub struct RuntimeUpdatePayloadAcquirer {
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<WslRuntime>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
     evidence: SourceEvidenceCoordinator,
     git_transport: Arc<dyn GitSourceTransport>,
+    wsl_source: Arc<dyn WslSourceAccess>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,33 +73,33 @@ fn snapshot_reuse_eligible(environment: &EnvironmentRef) -> bool {
 impl RuntimeUpdatePayloadAcquirer {
     pub fn new(
         payloads: Arc<PayloadSessionManager>,
-        environments: Arc<WslRuntime>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
         evidence: SourceEvidenceCoordinator,
+        git_transport: Arc<dyn GitSourceTransport>,
+        wsl_source: Arc<dyn WslSourceAccess>,
     ) -> Self {
         Self {
             payloads,
-            environments,
             snapshots,
             evidence,
-            git_transport: Arc::new(ProcessGitTransport),
+            git_transport,
+            wsl_source,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_git_transport(
         payloads: Arc<PayloadSessionManager>,
-        environments: Arc<WslRuntime>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
         evidence: SourceEvidenceCoordinator,
         git_transport: Arc<dyn GitSourceTransport>,
     ) -> Self {
         Self {
             payloads,
-            environments,
             snapshots,
             evidence,
             git_transport,
+            wsl_source: Arc::new(UnavailableWslSourceAccess),
         }
     }
 
@@ -229,18 +233,12 @@ impl RuntimeUpdatePayloadAcquirer {
         let parsed = group
             .descriptor
             .parsed_source(group.evidence_key.remote.provider());
-        SourceDiscoveryService::with_git_transport(
+        GitSourceDiscovery::new(
             self.payloads.clone(),
-            self.environments.as_ref(),
             Arc::clone(&self.git_transport),
+            Arc::clone(&self.wsl_source),
         )
-        .discover_parsed_with_cancellation(
-            group.context.clone(),
-            parsed,
-            source,
-            |_| {},
-            cancellation,
-        )
+        .discover(group.context.clone(), parsed, source, |_| {}, cancellation)
         .await
         .map(|discovery| discovery.discovery_session)
     }
@@ -344,15 +342,17 @@ pub type RuntimeUpdateCheckService = UpdateCheckService<RuntimePlanningFactSourc
 
 pub fn build_runtime_source_evidence_coordinator(
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<WslRuntime>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
-    github_token_provider: Arc<dyn GithubTokenProvider>,
+    github: Arc<dyn GithubTreeAccess>,
+    git_transport: Arc<dyn GitSourceTransport>,
+    wsl_source: Arc<dyn WslSourceAccess>,
 ) -> Result<SourceEvidenceCoordinator, AppError> {
     let detector = Arc::new(RuntimeSourceEvidenceDetector::new(
         payloads,
-        environments,
         snapshots.clone(),
-        github_token_provider,
+        github,
+        git_transport,
+        wsl_source,
     ));
     let home = dirs::home_dir().ok_or_else(|| AppError::Path {
         message: "无法确定用户主目录，不能初始化更新检查状态".to_string(),
@@ -380,8 +380,7 @@ pub fn build_runtime_update_service(
     environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
-    snapshots: Arc<SourceSnapshotReuseIndex>,
-    evidence: SourceEvidenceCoordinator,
+    acquirer: RuntimeUpdatePayloadAcquirer,
 ) -> RuntimeUpdateService {
     let facts = RuntimePlanningFactSource::for_current_user(registry, environments.clone());
     let planner = ConcreteUpdatePlanner::new(
@@ -393,12 +392,6 @@ pub fn build_runtime_update_service(
                 .format("%Y-%m-%dT%H:%M:%S%.3fZ")
                 .to_string()
         },
-    );
-    let acquirer = RuntimeUpdatePayloadAcquirer::new(
-        payloads.clone(),
-        environments.clone(),
-        snapshots,
-        evidence,
     );
     let revisions: Arc<dyn RuntimeRevisionSource> = Arc::new(facts);
     let executor = execution.executor(environments, revisions);

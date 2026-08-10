@@ -1,7 +1,5 @@
 use crate::core::mutation::CancellationSignal;
-use crate::core::{
-    clone_repo_with_progress, probe_remote_ref_revision, CloneProgress, CloneResult,
-};
+use crate::core::{CloneProgress, CloneResult};
 use crate::error::AppError;
 
 /// Git source 的 process transport seam。
@@ -25,64 +23,31 @@ pub(crate) trait GitSourceTransport: Send + Sync {
     ) -> Result<String, AppError>;
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct ProcessGitTransport;
+#[cfg(test)]
+pub(crate) struct UnavailableGitSourceTransport;
 
-impl GitSourceTransport for ProcessGitTransport {
+#[cfg(test)]
+impl GitSourceTransport for UnavailableGitSourceTransport {
     fn clone_source(
         &self,
-        url: &str,
-        git_ref: Option<&str>,
-        on_progress: &(dyn Fn(CloneProgress) + Send + Sync),
-        cancellation: CancellationSignal,
+        _url: &str,
+        _git_ref: Option<&str>,
+        _on_progress: &(dyn Fn(CloneProgress) + Send + Sync),
+        _cancellation: CancellationSignal,
     ) -> Result<CloneResult, AppError> {
-        clone_repo_with_progress(url, git_ref, on_progress, cancellation)
+        Err(AppError::ExecutionFailed {
+            message: "Git source access is unavailable in this test".to_string(),
+        })
     }
 
     fn probe_ref_revision(
         &self,
-        url: &str,
-        git_ref: Option<&str>,
-        cancellation: CancellationSignal,
+        _url: &str,
+        _git_ref: Option<&str>,
+        _cancellation: CancellationSignal,
     ) -> Result<String, AppError> {
-        probe_remote_ref_revision(url, git_ref, cancellation)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{GitSourceTransport, ProcessGitTransport};
-    use crate::core::mutation::CancellationSignal;
-    use crate::git_fixture::BareSkillRepo;
-
-    #[test]
-    fn process_transport_clones_and_probes_a_local_file_remote() {
-        let remote = BareSkillRepo::new(&["skills/alpha"]);
-        let transport = ProcessGitTransport;
-        let source = remote.local_source();
-
-        let initial_revision = transport
-            .probe_ref_revision(&source, Some("main"), CancellationSignal::default())
-            .expect("probe initial revision");
-        let cloned = transport
-            .clone_source(
-                &source,
-                Some("main"),
-                &|_| {},
-                CancellationSignal::default(),
-            )
-            .expect("clone local remote");
-
-        assert!(cloned.repo_path.join("skills/alpha/SKILL.md").is_file());
-        assert_eq!(
-            cloned.ref_revision.as_deref(),
-            Some(initial_revision.as_str())
-        );
-
-        remote.publish_change("skills/alpha");
-        let changed_revision = transport
-            .probe_ref_revision(&source, Some("main"), CancellationSignal::default())
-            .expect("probe changed revision");
-        assert_ne!(changed_revision, initial_revision);
+        Err(AppError::ExecutionFailed {
+            message: "Git source access is unavailable in this test".to_string(),
+        })
     }
 }

@@ -26,7 +26,6 @@ pub mod source_identity;
 pub mod source_parser;
 pub mod source_policy;
 pub mod update_metadata;
-pub mod wellknown;
 
 pub use app_config::*;
 pub use discovery::*;

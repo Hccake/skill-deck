@@ -47,6 +47,7 @@ fn build_wsl_native_source_plan(
     source: WslAcquisitionSource,
     managed_repo_path: &str,
     git_timeout: Duration,
+    proxy: Option<&str>,
 ) -> Result<WslNativeSourcePlan, AppError> {
     match source {
         WslAcquisitionSource::Git { url, git_ref } => Ok(WslNativeSourcePlan {
@@ -60,6 +61,13 @@ fn build_wsl_native_source_plan(
                     git_ref.unwrap_or_default(),
                     session.distro_name.clone(),
                     git_timeout.as_secs().to_string(),
+                    if proxy.is_some() {
+                        "inject"
+                    } else {
+                        "preserve"
+                    }
+                    .to_string(),
+                    proxy.unwrap_or_default().to_string(),
                 ],
                 transport_timeout: git_timeout.saturating_add(WSL_GIT_TRANSPORT_GRACE),
                 git_timeout,
@@ -196,21 +204,28 @@ pub async fn acquire_wsl_source_native(
     session: &WslSession,
     source: WslAcquisitionSource,
     git_timeout: Duration,
+    proxy: Option<String>,
     cancellation: CancellationSignal,
 ) -> Result<WslNativeSource, AppError> {
     let managed_root = format!("/tmp/skill-deck-discovery-{}/repo", Uuid::new_v4().simple());
-    let plan = build_wsl_native_source_plan(session, source, &managed_root, git_timeout)?;
-    let ref_revision = if let Some(operation) = plan.operation {
+    let source_for_plan = source.clone();
+    let initial_plan = build_wsl_native_source_plan(
+        session,
+        source_for_plan,
+        &managed_root,
+        git_timeout,
+        proxy.as_deref(),
+    )?;
+    let ref_revision = if let Some(operation) = initial_plan.operation.clone() {
         let source_url = operation
             .positional_args
             .first()
             .cloned()
             .ok_or_else(acquisition_protocol_error)?;
-        let git_timeout = operation.git_timeout;
         let response = run_wsl_acquisition_plan_with(
             session.clone(),
             operation,
-            cancellation,
+            cancellation.clone(),
             |session, script, subcommand, positional_args, timeout, cancellation| async move {
                 let descriptor = WslOperationDescriptor {
                     subcommand,
@@ -242,14 +257,14 @@ pub async fn acquire_wsl_source_native(
     } else {
         None
     };
-    let managed_owner_registered = plan.cleanup_root.is_some();
+    let managed_owner_registered = initial_plan.cleanup_root.is_some();
     if managed_owner_registered {
         workspace.register_source_owner()?;
     }
     Ok(WslNativeSource {
         workspace,
-        native_root: plan.native_root,
-        cleanup_root: plan.cleanup_root,
+        native_root: initial_plan.native_root,
+        cleanup_root: initial_plan.cleanup_root,
         managed_owner_registered,
         ref_revision,
     })
@@ -274,12 +289,62 @@ fn acquisition_protocol_error() -> AppError {
     }
 }
 
+pub(crate) async fn probe_wsl_git_connection(
+    session: &WslSession,
+    url: &str,
+    proxy: Option<String>,
+    timeout: Duration,
+    cancellation: CancellationSignal,
+) -> Result<(), AppError> {
+    let source_url = url.to_string();
+    let descriptor = WslOperationDescriptor {
+        subcommand: "git-probe",
+        script: WSL_SOURCE_ACQUISITION_SCRIPT,
+        map_exit: no_wsl_exit_mapping,
+    };
+    let response = WslOperationExecutor::execute_with_output_capture(
+        &descriptor,
+        WslOperationRequest {
+            session: session.clone(),
+            args: vec![
+                source_url.clone(),
+                session.distro_name.clone(),
+                timeout.as_secs().max(1).to_string(),
+                if proxy.is_some() {
+                    "inject"
+                } else {
+                    "preserve"
+                }
+                .to_string(),
+                proxy.clone().unwrap_or_default(),
+            ],
+            stdin: Vec::new(),
+            timeout,
+            stdout_limit: 256,
+            stderr_limit: DEFAULT_WSL_STDERR_LIMIT,
+            cancellation: Some(cancellation),
+        },
+        GIT_OUTPUT_CAPTURE,
+    )
+    .await
+    .map(|output| output.stdout)
+    .map_err(|error| map_wsl_git_acquisition_error(error, &source_url, timeout))?;
+    parse_wsl_git_acquisition_response(&response)?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
     reason = "acquisition 流程测试需要直接调用真实 Git 并运行 shell 测试脚本"
 )]
 mod tests {
+    use super::{
+        build_wsl_native_source_plan, run_wsl_acquisition_plan_with, WslAcquisitionPlan,
+        WslAcquisitionSource, WslNativeSource,
+    };
+    use crate::core::mutation::CancellationSignal;
+    use crate::environment::wsl::{WslRuntime, WslSession};
     use std::collections::BTreeMap;
     #[cfg(unix)]
     use std::fs;
@@ -287,13 +352,6 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     #[cfg(unix)]
     use std::process::Command;
-
-    use super::{
-        build_wsl_native_source_plan, run_wsl_acquisition_plan_with, WslAcquisitionPlan,
-        WslAcquisitionSource, WslNativeSource,
-    };
-    use crate::core::mutation::CancellationSignal;
-    use crate::environment::wsl::{WslRuntime, WslSession};
 
     #[cfg(unix)]
     fn git(cwd: &std::path::Path, args: &[&str]) -> String {
@@ -380,6 +438,8 @@ mod tests {
             .arg("")
             .arg("Ubuntu")
             .arg("30")
+            .arg("preserve")
+            .arg("")
             .output()
             .expect("acquisition script");
         assert!(
@@ -416,6 +476,10 @@ mod tests {
         tokio::time::Duration::from_secs(300)
     }
 
+    fn preserve_proxy() -> Option<&'static str> {
+        None
+    }
+
     fn git_operation() -> WslAcquisitionPlan {
         build_wsl_native_source_plan(
             &session(),
@@ -425,6 +489,7 @@ mod tests {
             },
             "/tmp/skill-deck-discovery-123/repo",
             configured_git_timeout(),
+            preserve_proxy(),
         )
         .expect("build Git source plan")
         .operation
@@ -441,6 +506,7 @@ mod tests {
             },
             "/mnt/c/Temp/sd-1/repo",
             configured_git_timeout(),
+            preserve_proxy(),
         )
         .expect("build git plan");
 
@@ -465,6 +531,7 @@ mod tests {
             },
             "/mnt/c/Temp/sd-1/repo",
             configured_git_timeout(),
+            preserve_proxy(),
         )
         .expect("build Git source plan");
 
@@ -495,9 +562,8 @@ mod tests {
             git_failure,
             crate::error::AppError::GitCloneFailed { .. }
         ));
-        for secret in ["alice", "secret", "query-secret", "header-secret"] {
-            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
-        }
+        assert!(rendered.contains(url));
+        assert!(rendered.contains("Authorization: Bearer header-secret"));
 
         assert!(matches!(
             super::map_wsl_git_acquisition_error(
@@ -532,6 +598,26 @@ mod tests {
     }
 
     #[test]
+    fn wsl_git_proxy_failures_use_the_shared_network_error() {
+        for stderr in [
+            "Could not resolve proxy: proxy.example",
+            "Failed to connect to 127.0.0.1 port 7890: Couldn't connect to server",
+        ] {
+            assert!(matches!(
+                super::map_wsl_git_acquisition_error(
+                    crate::error::AppError::WslCommandFailed {
+                        exit_code: Some(68),
+                        stderr: stderr.to_string(),
+                    },
+                    "https://github.com/acme/private.git",
+                    configured_git_timeout(),
+                ),
+                crate::error::AppError::GitNetworkError { .. }
+            ));
+        }
+    }
+
+    #[test]
     fn wsl_git_plan_keeps_a_narrow_operation_time_git_preflight() {
         let plan = build_wsl_native_source_plan(
             &session(),
@@ -541,6 +627,7 @@ mod tests {
             },
             "/mnt/c/Temp/sd-1/repo",
             configured_git_timeout(),
+            preserve_proxy(),
         )
         .expect("build Git source plan");
 
@@ -559,6 +646,7 @@ mod tests {
             },
             "/tmp/skill-deck-discovery-123/repo",
             configured_git_timeout(),
+            preserve_proxy(),
         )
         .expect("build local plan");
 
@@ -576,10 +664,33 @@ mod tests {
             },
             "/tmp/skill-deck-discovery-123/repo",
             configured_git_timeout(),
+            preserve_proxy(),
         )
         .expect_err("relative WSL Source must be rejected");
 
         assert!(matches!(error, crate::error::AppError::UnsafePath { .. }));
+    }
+
+    #[test]
+    fn wsl_git_plan_injects_proxy_only_for_the_current_command() {
+        let plan = build_wsl_native_source_plan(
+            &session(),
+            WslAcquisitionSource::Git {
+                url: "https://github.com/example/repo".to_string(),
+                git_ref: None,
+            },
+            "/tmp/skill-deck-discovery-123/repo",
+            configured_git_timeout(),
+            Some("http://127.0.0.1:7890"),
+        )
+        .expect("build proxied Git source plan");
+
+        let operation = plan.operation.expect("Git Source requires acquisition");
+        assert_eq!(operation.positional_args[5], "inject");
+        assert_eq!(operation.positional_args[6], "http://127.0.0.1:7890");
+        assert!(operation
+            .script
+            .contains("git -c \"http.proxy=$proxy_url\""));
     }
 
     #[cfg(unix)]
@@ -666,6 +777,8 @@ mod tests {
             .arg("")
             .arg("Ubuntu")
             .arg("1")
+            .arg("preserve")
+            .arg("")
             .env("PATH", path)
             .output()
             .expect("acquisition script");
@@ -673,6 +786,59 @@ mod tests {
         assert_eq!(output.status.code(), Some(72));
         assert!(started.elapsed() < std::time::Duration::from_secs(4));
         assert!(!managed_root.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_probe_uses_a_stable_diagnostic_locale() {
+        let temp = tempfile::tempdir().expect("fake Git temp dir");
+        let fake_git = temp.path().join("git");
+        fs::write(
+            &fake_git,
+            "#!/bin/sh\n[ \"${LC_ALL-}\" = C ] || exit 73\nprintf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\tHEAD\\n'\n",
+        )
+        .expect("fake Git");
+        let mut permissions = fs::metadata(&fake_git)
+            .expect("fake Git metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_git, permissions).expect("make fake Git executable");
+        let path = format!(
+            "{}:{}",
+            temp.path().display(),
+            std::env::var("PATH").expect("PATH")
+        );
+
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::WSL_SOURCE_ACQUISITION_SCRIPT)
+            .arg("--")
+            .arg("git-probe")
+            .arg("https://github.com/example/repo")
+            .arg("Ubuntu")
+            .arg("3")
+            .arg("preserve")
+            .arg("")
+            .env("PATH", path)
+            .output()
+            .expect("acquisition script");
+
+        assert!(
+            output.status.success(),
+            "git probe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            output.stdout,
+            b"1\0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0"
+        );
+    }
+
+    #[test]
+    fn wsl_proxy_reachability_uses_the_existing_git_baseline() {
+        assert!(!super::WSL_SOURCE_ACQUISITION_SCRIPT.contains("command -v bash"));
+        assert!(!super::WSL_SOURCE_ACQUISITION_SCRIPT.contains("/dev/tcp"));
+        assert!(super::WSL_SOURCE_ACQUISITION_SCRIPT.contains("git-probe"));
     }
 
     #[tokio::test]

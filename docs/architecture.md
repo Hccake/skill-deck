@@ -114,6 +114,10 @@ Runtime 内部的共享 HTTP Transport 为 Discover、GitHub API 和 Well-known 
 
 用户输入的 Well-known 来源允许使用 HTTP 或 HTTPS，并按普通客户端行为访问公开、本机或局域网地址。来源获取不预解析目标域名、不区分公网与私网地址，也不把解析结果固定到客户端；内容格式、摘要和解包检查继续由 Well-known 来源 Module 负责。
 
+Skill 来源 Module 根据操作位置选择 Native 或 WSL Git Adapter，并按目标 Environment、远端 URL 和当前代理设置生成进程级策略。选择保留 Git 原有连接方式时，Adapter 不传入覆盖项。远端 URL 命中代理使用范围时，Adapter 通过单次命令的 `git -c http.proxy=<proxy>` 注入对应 Environment 的代理地址；SSH 和未命中范围的远端不接收 HTTP 代理覆盖。
+
+传给 WSL 的代理 URL 必须从对应发行版内部可访问。WSL Adapter 原样传入页面解析后的地址，不探测网络模式、不解析宿主网关，也不改写回环地址。该过程不会读取、写入或清除用户的持久化 Git 代理配置。
+
 ## 主要运行流程
 
 ### 读取 Skill

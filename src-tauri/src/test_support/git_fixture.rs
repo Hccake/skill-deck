@@ -11,11 +11,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tempfile::TempDir;
 use url::Url;
 
-use crate::application::git_transport::{GitSourceTransport, ProcessGitTransport};
+use crate::application::git_transport::GitSourceTransport;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
 use crate::core::{ClonePhase, CloneProgress, CloneResult};
 use crate::error::AppError;
+use crate::runtime::git_source::ProcessGitTransport;
 
 /// 不启动 Git process 的可变 Skill tree，用于 application 层的确定性测试。
 pub(crate) struct SkillTreeFixture {
@@ -146,7 +147,6 @@ impl GitSourceTransport for DeterministicGitTransport {
 }
 
 /// 对真实 process Git 做计数，并将公开 fixture URL 映射到本地 `file://` remote。
-#[derive(Debug, Default)]
 pub(crate) struct CountingGitTransport {
     process: ProcessGitTransport,
     clone_count: AtomicUsize,
@@ -157,7 +157,7 @@ pub(crate) struct CountingGitTransport {
 impl CountingGitTransport {
     pub(crate) fn for_repo(repo: &BareSkillRepo) -> Self {
         Self {
-            process: ProcessGitTransport,
+            process: ProcessGitTransport::preserving_existing_config(),
             clone_count: AtomicUsize::new(0),
             public_source: Some(repo.source()),
             local_source: Some(repo.local_source()),

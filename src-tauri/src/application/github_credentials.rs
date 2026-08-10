@@ -6,7 +6,7 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::application::source_evidence::SourceSuppressionWarningCode;
-use crate::core::{GithubApiClient, GithubTokenProvider, GithubTokenValidation};
+use crate::core::{GithubTokenProvider, GithubTokenValidation};
 use crate::error::AppError;
 
 pub type GithubCredentialFuture<'a> =
@@ -25,12 +25,6 @@ pub trait GithubCredentialStore: Send + Sync {
 
 pub trait GithubTokenValidator: Send + Sync {
     fn validate<'a>(&'a self, token: &'a str) -> GithubCredentialFuture<'a>;
-}
-
-impl GithubTokenValidator for GithubApiClient {
-    fn validate<'a>(&'a self, token: &'a str) -> GithubCredentialFuture<'a> {
-        Box::pin(async move { self.validate_token(token).await })
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]

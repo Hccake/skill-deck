@@ -118,6 +118,7 @@ fn merge_config_preserving_wsl_setting(
     persisted: &mut SkillDeckConfig,
 ) {
     config.wsl_integration_enabled = persisted.wsl_integration_enabled;
+    config.network_proxy = persisted.network_proxy.clone();
     *persisted = config;
 }
 
@@ -256,6 +257,32 @@ mod tests {
         merge_config_preserving_wsl_setting(incoming, &mut persisted);
 
         assert!(!persisted.wsl_integration_enabled);
+    }
+
+    #[test]
+    fn generic_config_save_cannot_change_proxy_settings() {
+        use crate::models::{NetworkProxySettings, ProxyMode};
+
+        let incoming = SkillDeckConfig {
+            network_proxy: NetworkProxySettings {
+                mode: ProxyMode::Direct,
+                ..NetworkProxySettings::default()
+            },
+            ..SkillDeckConfig::default()
+        };
+        let expected = NetworkProxySettings {
+            mode: ProxyMode::Custom,
+            custom_proxy_url: Some("http://127.0.0.1:7890".to_string()),
+            ..NetworkProxySettings::default()
+        };
+        let mut persisted = SkillDeckConfig {
+            network_proxy: expected.clone(),
+            ..SkillDeckConfig::default()
+        };
+
+        merge_config_preserving_wsl_setting(incoming, &mut persisted);
+
+        assert_eq!(persisted.network_proxy, expected);
     }
 
     #[test]

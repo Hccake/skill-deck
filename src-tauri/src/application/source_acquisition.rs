@@ -2,41 +2,33 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
 use walkdir::WalkDir;
 
-use crate::application::git_transport::{GitSourceTransport, ProcessGitTransport};
+use crate::application::git_transport::GitSourceTransport;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySessionHandle, DiscoverySkillSnapshot,
     DiscoverySourceDescriptor, DiscoverySourceLocation, PayloadPlanningMetadata,
     PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey, RetainedDiscoverySource,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
+use crate::application::wellknown_access::{
+    extract_hostname, WellKnownAccess, WellKnownTrustMetadata,
+};
+use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
-use crate::core::plugin_manifest::get_relative_plugin_search_dirs;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
-use crate::core::wellknown::{extract_hostname, fetch_wellknown_skills, WellKnownTrustMetadata};
 use crate::core::{
-    compute_local_tree_sha, discover_skills, get_owner_repo, parse_source,
-    resolve_clone_timeout_secs, select_discovered_skills, source_risk_policy, CloneProgress,
-    DiscoverOptions, DiscoveryDocument, DiscoveryInventory,
+    compute_local_tree_sha, discover_skills, get_owner_repo, parse_source, source_risk_policy,
+    CloneProgress, DiscoverOptions,
 };
 use crate::environment::types::{EnvironmentRef, SkillLocationRef};
-use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
-use crate::environment::wsl::operations::scan::{
-    scan, scan_priority_directories, ScanRequest, ScanResponse, ScannedEntryKind,
-};
-use crate::environment::wsl::operations::source_acquisition::{
-    acquire_wsl_source_native, WslAcquisitionSource, WslNativeSource,
-};
-use crate::environment::wsl::{WslRuntime, WslSession, WslWorkspace};
 use crate::error::AppError;
-use crate::models::{AvailableSkill, FetchResult, InstallRiskPolicy, ParsedSource, SourceType};
+use crate::models::{AvailableSkill, FetchResult, ParsedSource, SourceType};
 
 const EXCLUDED_SOURCE_FILES: &[&str] = &["metadata.json"];
 const EXCLUDED_SOURCE_DIRS: &[&str] = &[".git", "__pycache__", "__pypackages__"];
@@ -48,42 +40,144 @@ pub struct AcquireSelectedPayloadsRequest {
     pub skill_paths: Vec<String>,
 }
 
-pub struct SourceDiscoveryService<'a> {
+pub struct SourceDiscoveryService {
     sessions: Arc<PayloadSessionManager>,
-    environments: &'a WslRuntime,
+    git: GitSourceDiscovery,
+    wellknown: Arc<dyn WellKnownAccess>,
+    wsl_source: Arc<dyn WslSourceAccess>,
+}
+
+#[derive(Clone)]
+pub(crate) struct GitSourceDiscovery {
+    sessions: Arc<PayloadSessionManager>,
     git_transport: Arc<dyn GitSourceTransport>,
+    wsl_source: Arc<dyn WslSourceAccess>,
 }
 
-struct PreparedWslDiscovery {
-    source_fingerprint: String,
-    storage: Arc<dyn PayloadSessionStorage>,
-    retained: RetainedDiscoverySource,
-    source_type: String,
-    source_url: String,
-    git_ref: Option<String>,
-    skill_filter: Option<String>,
-    risk_policy: InstallRiskPolicy,
-    skills: Vec<AvailableSkill>,
-}
-
-impl<'a> SourceDiscoveryService<'a> {
-    pub fn new(sessions: Arc<PayloadSessionManager>, environments: &'a WslRuntime) -> Self {
-        Self {
-            sessions,
-            environments,
-            git_transport: Arc::new(ProcessGitTransport),
-        }
-    }
-
-    pub(crate) fn with_git_transport(
+impl GitSourceDiscovery {
+    pub(crate) fn new(
         sessions: Arc<PayloadSessionManager>,
-        environments: &'a WslRuntime,
         git_transport: Arc<dyn GitSourceTransport>,
+        wsl_source: Arc<dyn WslSourceAccess>,
     ) -> Self {
         Self {
             sessions,
-            environments,
             git_transport,
+            wsl_source,
+        }
+    }
+
+    pub(crate) async fn discover<P>(
+        &self,
+        context: SkillLocationRef,
+        parsed: ParsedSource,
+        requested_source: String,
+        on_progress: P,
+        cancellation: CancellationSignal,
+    ) -> Result<FetchResult, AppError>
+    where
+        P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
+    {
+        if matches!(
+            parsed.source_type,
+            SourceType::Local | SourceType::WellKnown
+        ) {
+            return Err(invalid_source("Git source discovery requires a Git source"));
+        }
+        match &context.environment {
+            EnvironmentRef::Native => {
+                let clone_url = parsed.url.clone();
+                let clone_ref = parsed.git_ref.clone();
+                let clone_cancellation = cancellation.clone();
+                let git_transport = Arc::clone(&self.git_transport);
+                let clone_progress = on_progress.clone();
+                let _clone_permit = shared_source_clone_gate().acquire(&cancellation).await?;
+                let cloned = tokio::task::spawn_blocking(move || {
+                    git_transport.clone_source(
+                        &clone_url,
+                        clone_ref.as_deref(),
+                        &clone_progress,
+                        clone_cancellation,
+                    )
+                })
+                .await
+                .map_err(|error| AppError::ExecutionFailed {
+                    message: format!("native Git clone task failed: {error}"),
+                })??;
+                let root = cloned.repo_path.clone();
+                let ref_revision = cloned.ref_revision.clone();
+                retain_discovered_source(
+                    self.sessions.clone(),
+                    context.environment,
+                    parsed,
+                    requested_source,
+                    DiscoverySourceLocation::Native {
+                        root: root.clone(),
+                        ref_revision,
+                    },
+                    root,
+                    cloned,
+                    None,
+                    None,
+                )
+                .await
+            }
+            EnvironmentRef::Wsl { distro_name } => {
+                self.wsl_source
+                    .discover(distro_name, parsed, requested_source, cancellation)
+                    .await
+            }
+        }
+    }
+}
+
+impl SourceDiscoveryService {
+    pub fn new(
+        sessions: Arc<PayloadSessionManager>,
+        git_transport: Arc<dyn GitSourceTransport>,
+        wellknown: Arc<dyn WellKnownAccess>,
+        wsl_source: Arc<dyn WslSourceAccess>,
+    ) -> Self {
+        Self {
+            git: GitSourceDiscovery::new(sessions.clone(), git_transport, Arc::clone(&wsl_source)),
+            sessions,
+            wellknown,
+            wsl_source,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_git_transport(
+        sessions: Arc<PayloadSessionManager>,
+        git_transport: Arc<dyn GitSourceTransport>,
+    ) -> Self {
+        Self {
+            git: GitSourceDiscovery::new(
+                sessions.clone(),
+                git_transport,
+                Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
+            ),
+            sessions,
+            wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
+            wsl_source: Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_git_transport_and_wellknown(
+        sessions: Arc<PayloadSessionManager>,
+        git_transport: Arc<dyn GitSourceTransport>,
+        wellknown: Arc<dyn WellKnownAccess>,
+    ) -> Self {
+        Self {
+            git: GitSourceDiscovery::new(
+                sessions.clone(),
+                git_transport,
+                Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
+            ),
+            sessions,
+            wellknown,
+            wsl_source: Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
         }
     }
 
@@ -160,7 +254,7 @@ impl<'a> SourceDiscoveryService<'a> {
                 .await
             }
             (EnvironmentRef::Native, SourceType::WellKnown) => {
-                let fetched = fetch_wellknown_skills(&parsed.url).await?;
+                let fetched = self.wellknown.fetch(&parsed.url, &cancellation).await?;
                 let root = fetched.repo_path.clone();
                 retain_discovered_source(
                     self.sessions.clone(),
@@ -179,388 +273,21 @@ impl<'a> SourceDiscoveryService<'a> {
                 .await
             }
             (EnvironmentRef::Native, _) => {
-                let clone_url = parsed.url.clone();
-                let clone_ref = parsed.git_ref.clone();
-                let clone_cancellation = cancellation.clone();
-                let git_transport = Arc::clone(&self.git_transport);
-                let clone_progress = on_progress.clone();
-                let _clone_permit = shared_source_clone_gate().acquire(&cancellation).await?;
-                let cloned = tokio::task::spawn_blocking(move || {
-                    git_transport.clone_source(
-                        &clone_url,
-                        clone_ref.as_deref(),
-                        &clone_progress,
-                        clone_cancellation,
-                    )
-                })
-                .await
-                .map_err(|error| AppError::ExecutionFailed {
-                    message: format!("native Git clone task failed: {error}"),
-                })??;
-                let root = cloned.repo_path.clone();
-                let ref_revision = cloned.ref_revision.clone();
-                retain_discovered_source(
-                    self.sessions.clone(),
-                    context.environment,
-                    parsed,
-                    requested_source,
-                    DiscoverySourceLocation::Native {
-                        root: root.clone(),
-                        ref_revision,
-                    },
-                    root,
-                    cloned,
-                    None,
-                    None,
-                )
-                .await
-            }
-            (EnvironmentRef::Wsl { distro_name }, SourceType::WellKnown) => {
-                let workspace = self.environments.workspace(distro_name)?;
-                let fetched = fetch_wellknown_skills(&parsed.url).await?;
-                let root = fetched.repo_path.clone();
-                let owner = ManagedDownloadedDirectory::new(root.clone());
-                let environment = context.environment.clone();
-                let requested_source = requested_source.clone();
-                let sessions = Arc::clone(&self.sessions);
-                workspace
-                    .clone()
-                    .with_access(move || {
-                        let workspace = workspace.clone();
-                        async move {
-                            let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
-                            retain_discovered_source(
-                                sessions,
-                                environment,
-                                parsed,
-                                requested_source,
-                                DiscoverySourceLocation::Native {
-                                    root: root.clone(),
-                                    ref_revision: None,
-                                },
-                                root,
-                                owner,
-                                Some(storage),
-                                Some(fetched.trust_metadata),
-                            )
-                            .await
-                        }
-                    })
+                self.git
+                    .discover(context, parsed, requested_source, on_progress, cancellation)
                     .await
             }
             (EnvironmentRef::Wsl { distro_name }, _) => {
-                let workspace = self.environments.workspace(distro_name)?;
-                let acquisition = wsl_acquisition_source(&parsed)?;
-                let environment = context.environment.clone();
-                let requested_source = requested_source.clone();
-                let sessions = Arc::clone(&self.sessions);
-                let git_timeout = Duration::from_secs(resolve_clone_timeout_secs());
-                self.environments
-                    .with_session_retry(distro_name, move |session| {
-                        let workspace = workspace.clone();
-                        let parsed = parsed.clone();
-                        let requested_source = requested_source.clone();
-                        let acquisition = acquisition.clone();
-                        let cancellation = cancellation.clone();
-                        let sessions = Arc::clone(&sessions);
-                        let environment = environment.clone();
-                        async move {
-                            let _clone_permit = match &acquisition {
-                                WslAcquisitionSource::Git { .. } => {
-                                    Some(shared_source_clone_gate().acquire(&cancellation).await?)
-                                }
-                                WslAcquisitionSource::Local { .. } => None,
-                            };
-                            let native = acquire_wsl_source_native(
-                                workspace.clone(),
-                                &session,
-                                acquisition,
-                                git_timeout,
-                                cancellation,
-                            )
-                            .await?;
-                            let prepared = prepare_native_wsl_source(
-                                parsed,
-                                requested_source,
-                                session,
-                                workspace,
-                                native,
-                            )
-                            .await?;
-                            // Payload publication belongs to the same capability cycle as scanning.
-                            let discovery_session = sessions
-                                .discover_with_source(
-                                    environment,
-                                    prepared.source_fingerprint,
-                                    prepared.storage,
-                                    prepared.retained,
-                                )
-                                .await?;
-                            Ok(FetchResult {
-                                discovery_session,
-                                source_type: prepared.source_type,
-                                source_url: prepared.source_url,
-                                git_ref: prepared.git_ref,
-                                skill_filter: prepared.skill_filter,
-                                risk_policy: prepared.risk_policy,
-                                skills: prepared.skills,
-                            })
-                        }
-                    })
+                self.wsl_source
+                    .discover(distro_name, parsed, requested_source, cancellation)
                     .await
             }
         }
     }
 }
 
-async fn prepare_native_wsl_source(
-    parsed: ParsedSource,
-    requested_source: String,
-    session: WslSession,
-    workspace: WslWorkspace,
-    native: WslNativeSource,
-) -> Result<PreparedWslDiscovery, AppError> {
-    let root = native_root_with_subpath(native.native_root(), parsed.subpath.as_deref())?;
-    let mut roots = vec![root.clone()];
-    let mut stat_only_root_indexes = BTreeSet::new();
-    if parsed.subpath.is_some() {
-        roots.push(format!(
-            "{}/skills-lock.json",
-            native.native_root().trim_end_matches('/')
-        ));
-        stat_only_root_indexes.insert(1);
-    }
-    let mut response = scan(
-        &session,
-        ScanRequest {
-            roots,
-            stat_only_root_indexes,
-            recursive: true,
-            per_file_limit: 256 * 1024,
-            aggregate_limit: 16 * 1024 * 1024,
-        },
-        Some(CancellationSignal::default()),
-    )
-    .await?;
-    let plugin_search_dirs = get_relative_plugin_search_dirs(
-        wsl_document(&response, ".claude-plugin/marketplace.json"),
-        wsl_document(&response, ".claude-plugin/plugin.json"),
-    );
-    if !plugin_search_dirs.is_empty() {
-        let priority = scan_priority_directories(
-            &session,
-            ScanRequest {
-                roots: plugin_search_dirs
-                    .iter()
-                    .map(|relative| {
-                        format!(
-                            "{}/{}",
-                            root.trim_end_matches('/'),
-                            relative.to_string_lossy().replace('\\', "/")
-                        )
-                    })
-                    .collect(),
-                stat_only_root_indexes: BTreeSet::new(),
-                recursive: false,
-                per_file_limit: 256 * 1024,
-                aggregate_limit: 16 * 1024 * 1024,
-            },
-            Some(CancellationSignal::default()),
-        )
-        .await?;
-        merge_wsl_priority_documents(&mut response, priority, &plugin_search_dirs);
-    }
-    let (discovered, mut catalog) = build_wsl_discovery_catalog(
-        &response,
-        parsed.subpath.as_deref(),
-        parsed.skill_filter.is_some(),
-    )?;
-    let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
-    for skill in catalog.values_mut() {
-        let source_root = format!(
-            "{}/{}",
-            native.native_root().trim_end_matches('/'),
-            normalize_skill_folder_path(&skill.relative_path)
-        );
-        skill.source_metadata_fingerprint = storage
-            .source_metadata_fingerprint_in_active_session(&session, &source_root)
-            .await?;
-    }
-    let descriptor = DiscoverySourceDescriptor {
-        source: source_identifier(&parsed, &requested_source),
-        source_type: parsed.source_type.to_string(),
-        source_url: (!parsed.url.is_empty()).then(|| parsed.url.clone()),
-        ref_name: parsed.git_ref.clone(),
-    };
-    let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
-    let risk_policy = source_risk_policy(&parsed);
-    let retained = RetainedDiscoverySource::new(
-        DiscoverySourceLocation::WslNative {
-            distro_name: session.distro_name.clone(),
-            linux_root: native.native_root().to_string(),
-            ref_revision: native.ref_revision().map(str::to_string),
-        },
-        descriptor,
-        catalog,
-        native,
-    );
-    Ok(PreparedWslDiscovery {
-        source_fingerprint,
-        storage,
-        retained,
-        source_type: parsed.source_type.to_string(),
-        source_url: parsed.url,
-        git_ref: parsed.git_ref,
-        skill_filter: parsed.skill_filter,
-        risk_policy,
-        skills: discovered.into_iter().map(AvailableSkill::from).collect(),
-    })
-}
-
-fn wsl_document<'a>(response: &'a ScanResponse, relative_path: &str) -> Option<&'a str> {
-    response
-        .entries
-        .iter()
-        .find(|entry| {
-            entry.root_index == 0
-                && matches!(
-                    entry.kind,
-                    ScannedEntryKind::File | ScannedEntryKind::Symlink
-                )
-                && entry.relative_path == relative_path
-                && !entry.truncated
-        })
-        .and_then(|entry| std::str::from_utf8(&entry.content_bytes).ok())
-}
-
-fn merge_wsl_priority_documents(
-    inventory: &mut ScanResponse,
-    priority: ScanResponse,
-    relative_roots: &[PathBuf],
-) {
-    for mut entry in priority.entries {
-        if entry.relative_path.is_empty() {
-            continue;
-        }
-        let Some(prefix) = relative_roots.get(entry.root_index as usize) else {
-            continue;
-        };
-        entry.relative_path = prefix
-            .join(&entry.relative_path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        entry.root_index = 0;
-        if !inventory.entries.iter().any(|existing| {
-            existing.root_index == 0 && existing.relative_path == entry.relative_path
-        }) {
-            inventory.total_content_bytes = inventory
-                .total_content_bytes
-                .saturating_add(entry.content_bytes.len() as u32);
-            inventory.entries.push(entry);
-        }
-    }
-}
-
-fn native_root_with_subpath(root: &str, subpath: Option<&str>) -> Result<String, AppError> {
-    let Some(subpath) = subpath else {
-        return Ok(root.to_string());
-    };
-    let path = std::path::Path::new(subpath);
-    if path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir | std::path::Component::RootDir
-            )
-        })
-    {
-        return Err(AppError::UnsafePath {
-            path: subpath.to_string(),
-            reason: "WSL source subpath escapes its native root".to_string(),
-        });
-    }
-    Ok(format!("{}/{}", root.trim_end_matches('/'), subpath))
-}
-
-fn build_wsl_discovery_catalog(
-    response: &crate::environment::wsl::operations::scan::ScanResponse,
-    subpath: Option<&str>,
-    include_internal: bool,
-) -> Result<
-    (
-        Vec<crate::core::DiscoveredSkill>,
-        BTreeMap<String, DiscoverySkillSnapshot>,
-    ),
-    AppError,
-> {
-    let skill_documents = response
-        .entries
-        .iter()
-        .filter(|entry| {
-            entry.root_index == 0
-                && matches!(
-                    entry.kind,
-                    ScannedEntryKind::File | ScannedEntryKind::Symlink
-                )
-                && entry
-                    .relative_path
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
-                && !entry.truncated
-                && entry.error_code.is_none()
-        })
-        .map(|entry| DiscoveryDocument {
-            relative_path: entry.relative_path.clone(),
-            content: entry.content_bytes.clone(),
-        })
-        .collect();
-    let local_lock_document = response
-        .entries
-        .iter()
-        .find(|entry| {
-            matches!(
-                entry.kind,
-                ScannedEntryKind::File | ScannedEntryKind::Symlink
-            ) && !entry.truncated
-                && ((entry.root_index == 0 && entry.relative_path == "skills-lock.json")
-                    || (entry.root_index == 1 && entry.relative_path.is_empty()))
-        })
-        .and_then(|entry| std::str::from_utf8(&entry.content_bytes).ok())
-        .map(str::to_owned);
-    let inventory = DiscoveryInventory {
-        search_prefix: subpath.map(PathBuf::from).unwrap_or_default(),
-        skill_documents,
-        marketplace_document: wsl_document(response, ".claude-plugin/marketplace.json")
-            .map(str::to_owned),
-        plugin_document: wsl_document(response, ".claude-plugin/plugin.json").map(str::to_owned),
-        local_lock_document,
-    };
-    let discovered = select_discovered_skills(
-        &inventory,
-        DiscoverOptions {
-            include_internal,
-            full_depth: false,
-        },
-    )?;
-    let mut catalog = BTreeMap::new();
-    for skill in &discovered {
-        catalog.insert(
-            skill.relative_path.clone(),
-            DiscoverySkillSnapshot {
-                skill_name: skill.name.clone(),
-                install_dir_name: skill.install_dir_name.clone(),
-                relative_path: skill.relative_path.clone(),
-                plugin_name: skill.plugin_name.clone(),
-                source_metadata_fingerprint: String::new(),
-            },
-        );
-    }
-    Ok((discovered, catalog))
-}
-
 #[allow(clippy::too_many_arguments)]
-async fn retain_discovered_source<O>(
+pub(crate) async fn retain_discovered_source<O>(
     sessions: Arc<PayloadSessionManager>,
     environment: EnvironmentRef,
     parsed: ParsedSource,
@@ -659,27 +386,7 @@ fn build_discovery_catalog(
     Ok((discovered, catalog))
 }
 
-fn wsl_acquisition_source(parsed: &ParsedSource) -> Result<WslAcquisitionSource, AppError> {
-    match parsed.source_type {
-        SourceType::Local => Ok(WslAcquisitionSource::Local {
-            native_path: parsed
-                .local_path
-                .as_ref()
-                .ok_or_else(|| invalid_source("Missing local path"))?
-                .to_string_lossy()
-                .to_string(),
-        }),
-        SourceType::GitHub | SourceType::GitLab | SourceType::Git => {
-            Ok(WslAcquisitionSource::Git {
-                url: parsed.url.clone(),
-                git_ref: parsed.git_ref.clone(),
-            })
-        }
-        SourceType::WellKnown => Err(invalid_source("Well-known sources use Native HTTP")),
-    }
-}
-
-fn source_identifier(parsed: &ParsedSource, requested_source: &str) -> String {
+pub(crate) fn source_identifier(parsed: &ParsedSource, requested_source: &str) -> String {
     if parsed.source_type == SourceType::WellKnown {
         return extract_hostname(&parsed.url).unwrap_or_else(|| requested_source.to_string());
     }
@@ -689,7 +396,7 @@ fn source_identifier(parsed: &ParsedSource, requested_source: &str) -> String {
     get_owner_repo(parsed).unwrap_or_else(|| requested_source.to_string())
 }
 
-fn snapshot_fingerprint(
+pub(crate) fn snapshot_fingerprint(
     descriptor: &DiscoverySourceDescriptor,
     catalog: &std::collections::BTreeMap<String, DiscoverySkillSnapshot>,
 ) -> String {
@@ -734,19 +441,19 @@ fn apply_trust_metadata(
     }
 }
 
-fn invalid_source(message: &str) -> AppError {
+pub(crate) fn invalid_source(message: &str) -> AppError {
     AppError::InvalidSource {
         value: message.to_string(),
     }
 }
 
 #[derive(Clone)]
-struct ManagedDownloadedDirectory {
+pub(crate) struct ManagedDownloadedDirectory {
     _owner: Arc<ManagedDownloadedDirectoryOwner>,
 }
 
 impl ManagedDownloadedDirectory {
-    fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         Self {
             _owner: Arc::new(ManagedDownloadedDirectoryOwner(path)),
         }
@@ -1159,12 +866,89 @@ mod tests {
         PayloadSessionManager, PayloadSessionStorage, PayloadStorageFuture, PayloadStorageKey,
         RetainedDiscoverySource,
     };
+    use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchFuture};
     use crate::core::mutation::CancellationSignal;
     use crate::core::skill_payload::{build_skill_payload, SkillPayload};
     use crate::environment::types::EnvironmentRef;
     use crate::environment::types::{SkillLocation, SkillLocationRef};
-    use crate::environment::wsl::WslRuntime;
+    use crate::environment::wsl::operations::source_acquisition::WslAcquisitionSource;
     use crate::models::SourceType;
+    use crate::runtime::wsl_source::{build_wsl_discovery_catalog, wsl_acquisition_source};
+
+    struct FixtureWellKnownAccess {
+        root: PathBuf,
+        requested_urls: Mutex<Vec<String>>,
+    }
+
+    impl WellKnownAccess for FixtureWellKnownAccess {
+        fn fetch<'a>(
+            &'a self,
+            url: &'a str,
+            _cancellation: &'a CancellationSignal,
+        ) -> WellKnownFetchFuture<'a> {
+            self.requested_urls
+                .lock()
+                .expect("requested urls")
+                .push(url.to_string());
+            Box::pin(async move {
+                Ok(crate::application::wellknown_access::WellKnownFetchResult {
+                    repo_path: self.root.clone(),
+                    trust_metadata: HashMap::new(),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn native_well_known_discovery_uses_injected_access_port() {
+        let downloaded = tempdir().expect("downloaded");
+        fs::write(
+            downloaded.path().join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .expect("skill");
+        let root = downloaded.keep();
+        let access = Arc::new(FixtureWellKnownAccess {
+            root,
+            requested_urls: Mutex::new(Vec::new()),
+        });
+        let manager = Arc::new(PayloadSessionManager::new(
+            Arc::new(InMemoryPayloadSessionStorage::default()),
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1024 * 1024,
+            },
+            || 1_000,
+        ));
+        let service = SourceDiscoveryService::with_git_transport_and_wellknown(
+            manager,
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
+            access.clone(),
+        );
+
+        let result = service
+            .discover(
+                SkillLocationRef {
+                    environment: EnvironmentRef::Native,
+                    scope: SkillLocation::Global,
+                },
+                "http://127.0.0.1:8787/skills".to_string(),
+                |_| {},
+            )
+            .await
+            .expect("discover");
+
+        assert_eq!(result.skills.len(), 1);
+        assert_eq!(
+            access
+                .requested_urls
+                .lock()
+                .expect("requested urls")
+                .as_slice(),
+            ["http://127.0.0.1:8787/skills"]
+        );
+    }
 
     #[derive(Default)]
     struct SourceAcquiringStorage {
@@ -1769,8 +1553,12 @@ mod tests {
             },
             || 3_000,
         ));
-        let registry = WslRuntime::default();
-        let discovery_service = SourceDiscoveryService::new(manager.clone(), &registry);
+        let discovery_service = SourceDiscoveryService::new(
+            manager.clone(),
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
+            Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
+            Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
+        );
 
         let fetched = discovery_service
             .discover(

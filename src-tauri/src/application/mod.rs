@@ -43,3 +43,4 @@ pub mod update_planner;
 pub mod update_runtime;
 pub(crate) mod wellknown_access;
 pub mod workflow_planner;
+pub(crate) mod wsl_source_access;

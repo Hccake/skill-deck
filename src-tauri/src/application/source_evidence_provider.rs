@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::application::git_transport::{GitSourceTransport, ProcessGitTransport};
+use crate::application::git_transport::GitSourceTransport;
+use crate::application::github_access::GithubTreeAccess;
 use crate::application::payload_session::{DiscoverySourceLocation, PayloadSessionManager};
 use crate::application::source_acquisition::{
-    AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService, SourceDiscoveryService,
+    AcquireSelectedPayloadsRequest, GitSourceDiscovery, SelectedPayloadAcquisitionService,
 };
 use crate::application::source_evidence::{
     EvidenceDetectionFailure, EvidenceDetectionOutcome, EvidenceDetectionRequest,
@@ -12,71 +13,72 @@ use crate::application::source_evidence::{
     RemoteSnapshotId, SkillRevision, SourceEvidenceDetector, SourceSnapshotFacts,
 };
 use crate::application::source_snapshot_reuse::{PayloadAcquisitionKey, SourceSnapshotReuseIndex};
+#[cfg(test)]
+use crate::application::wsl_source_access::UnavailableWslSourceAccess;
+use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::source_identity::{NormalizedRef, SourceProvider};
-use crate::core::{
-    GithubApiClient, GithubTokenProvider, GithubTreeFailure, GithubTreeFetchOutcome,
-};
+use crate::core::{GithubTreeFailure, GithubTreeFetchOutcome};
 use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
-use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
 #[cfg(test)]
 use crate::models::{ParsedSource, SourceType};
 
 pub struct RuntimeSourceEvidenceDetector {
     payloads: Arc<PayloadSessionManager>,
-    environments: Arc<WslRuntime>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
-    github: GithubApiClient,
+    github: Arc<dyn GithubTreeAccess>,
     git_transport: Arc<dyn GitSourceTransport>,
+    wsl_source: Arc<dyn WslSourceAccess>,
 }
 
 impl RuntimeSourceEvidenceDetector {
     pub fn new(
         payloads: Arc<PayloadSessionManager>,
-        environments: Arc<WslRuntime>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
-        github_token_provider: Arc<dyn GithubTokenProvider>,
+        github: Arc<dyn GithubTreeAccess>,
+        git_transport: Arc<dyn GitSourceTransport>,
+        wsl_source: Arc<dyn WslSourceAccess>,
     ) -> Self {
         Self {
             payloads,
-            environments,
             snapshots,
-            github: GithubApiClient::with_token_provider(github_token_provider),
-            git_transport: Arc::new(ProcessGitTransport),
+            github,
+            git_transport,
+            wsl_source,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_git_transport(
         payloads: Arc<PayloadSessionManager>,
-        environments: Arc<WslRuntime>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
         git_transport: Arc<dyn GitSourceTransport>,
     ) -> Self {
         Self {
             payloads,
-            environments,
             snapshots,
-            github: GithubApiClient::new(),
+            github: Arc::new(UnavailableGithubAccess),
             git_transport,
+            wsl_source: Arc::new(UnavailableWslSourceAccess),
         }
     }
 
     #[cfg(test)]
-    fn with_github_client(
+    fn with_github_access(
         payloads: Arc<PayloadSessionManager>,
-        environments: Arc<WslRuntime>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
-        github: GithubApiClient,
+        github: Arc<dyn GithubTreeAccess>,
     ) -> Self {
         Self {
             payloads,
-            environments,
             snapshots,
             github,
-            git_transport: Arc::new(ProcessGitTransport),
+            git_transport: Arc::new(
+                crate::application::git_transport::UnavailableGitSourceTransport,
+            ),
+            wsl_source: Arc::new(UnavailableWslSourceAccess),
         }
     }
 
@@ -236,12 +238,12 @@ impl RuntimeSourceEvidenceDetector {
         let (discovery_session, ref_revision) = match reusable {
             Some(reusable) => reusable,
             None => {
-                let discovery = SourceDiscoveryService::with_git_transport(
+                let discovery = GitSourceDiscovery::new(
                     self.payloads.clone(),
-                    self.environments.as_ref(),
                     Arc::clone(&self.git_transport),
+                    Arc::clone(&self.wsl_source),
                 )
-                .discover_parsed_with_cancellation(
+                .discover(
                     SkillLocationRef {
                         environment: environment.clone(),
                         scope: SkillLocation::Global,
@@ -324,6 +326,21 @@ impl RuntimeSourceEvidenceDetector {
                 }),
             },
         ))
+    }
+}
+
+#[cfg(test)]
+struct UnavailableGithubAccess;
+
+#[cfg(test)]
+impl GithubTreeAccess for UnavailableGithubAccess {
+    fn fetch_tree<'a>(
+        &'a self,
+        _repository: &'a str,
+        _git_ref: &'a str,
+        _validation: Option<&'a str>,
+    ) -> crate::application::github_access::GithubTreeFuture<'a> {
+        Box::pin(async { GithubTreeFetchOutcome::Failed(crate::core::GithubTreeFailure::Network) })
     }
 }
 
@@ -436,10 +453,9 @@ mod tests {
     use crate::core::mutation::CancellationSignal;
     use crate::core::parse_source;
     use crate::core::source_identity::SourceIdentity;
-    use crate::core::GithubApiClient;
     use crate::environment::types::EnvironmentRef;
-    use crate::environment::wsl::WslRuntime;
     use crate::git_fixture::{DeterministicGitTransport, SkillTreeFixture};
+    use crate::runtime::github_client::GithubApiClient;
 
     fn payloads() -> Arc<PayloadSessionManager> {
         Arc::new(PayloadSessionManager::in_memory(
@@ -583,11 +599,10 @@ mod tests {
     }
 
     fn github_detector(fixture: &HttpFixture) -> RuntimeSourceEvidenceDetector {
-        RuntimeSourceEvidenceDetector::with_github_client(
+        RuntimeSourceEvidenceDetector::with_github_access(
             payloads(),
-            Arc::new(WslRuntime::default()),
             Arc::new(SourceSnapshotReuseIndex::default()),
-            GithubApiClient::with_base_url(fixture.base_url()),
+            Arc::new(GithubApiClient::with_base_url(fixture.base_url())),
         )
     }
 
@@ -1038,7 +1053,6 @@ mod tests {
         let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = RuntimeSourceEvidenceDetector::with_git_transport(
             payloads.clone(),
-            Arc::new(WslRuntime::default()),
             Arc::new(SourceSnapshotReuseIndex::default()),
             git_transport.clone(),
         );
@@ -1098,7 +1112,6 @@ mod tests {
         let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = RuntimeSourceEvidenceDetector::with_git_transport(
             payloads(),
-            Arc::new(WslRuntime::default()),
             Arc::new(SourceSnapshotReuseIndex::default()),
             git_transport.clone(),
         );
@@ -1154,7 +1167,6 @@ mod tests {
         let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = Arc::new(RuntimeSourceEvidenceDetector::with_git_transport(
             payloads,
-            Arc::new(WslRuntime::default()),
             snapshots.clone(),
             git_transport.clone(),
         ));
@@ -1203,7 +1215,6 @@ mod tests {
         let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = RuntimeSourceEvidenceDetector::with_git_transport(
             payloads(),
-            Arc::new(WslRuntime::default()),
             Arc::new(SourceSnapshotReuseIndex::default()),
             git_transport.clone(),
         );
@@ -1252,7 +1263,6 @@ mod tests {
         let git_transport = Arc::new(DeterministicGitTransport::for_fixture(&remote));
         let detector = RuntimeSourceEvidenceDetector::with_git_transport(
             payloads(),
-            Arc::new(WslRuntime::default()),
             Arc::new(SourceSnapshotReuseIndex::default()),
             git_transport.clone(),
         );

@@ -1136,6 +1136,7 @@ async fn connect_wsl_environment(distro_name: &str) -> Result<WslSession, AppErr
         "--",
         "session",
     ]);
+    command.kill_on_drop(true);
     let environment = EnvironmentRef::Wsl {
         distro_name: distro_name.to_string(),
     };

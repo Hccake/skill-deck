@@ -217,6 +217,12 @@ flowchart LR
 
 Skill Deck 维护一份显式代理设置。Direct 表示应用主动发起的 HTTP 请求不使用代理；Custom Proxy 只接受一个带显式端口、无内嵌认证信息的 HTTP 或 HTTPS 地址。Native Git 和各 WSL Environment 的 Git 连接方式也作为类型化设置保存。设置保存成功后才替换运行时当前值，已经开始的操作继续使用创建时的设置。
 
+HTTP 请求、本机 Git 和各 WSL 发行版中的 Git 分别设置连接方式。本机 Git 可以保持原有连接方式，也可以使用独立的 HTTP 或 HTTPS 代理地址。选择代理后，用户可以只代理 `github.com` 及其子域中的仓库，也可以代理所有使用 HTTP 或 HTTPS 的仓库。SSH、未命中范围和保留原有连接方式的仓库不接收代理覆盖。
+
+每个 WSL 发行版中的 Git 都作为独立 Environment。它可以跟随 Native Git、保持该发行版原有连接方式，或者使用一个能从该发行版访问的独立代理地址和使用范围。应用原样传递最终地址，不探测 WSL 网络模式，也不改写回环地址或宿主地址。
+
+Git 代理只通过本次进程的 `http.proxy` 参数生效，不读取、修改或清除持久化 Git 配置。
+
 ### Projects
 
 页面管理应用所在系统中已添加的项目；Windows 启用 WSL 支持后，则管理主窗口当前选择的 Windows 或 WSL 位置中的项目。WSL 发行版不可用或正在切换时，新增和移除操作保持禁用。

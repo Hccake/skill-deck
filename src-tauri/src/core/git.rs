@@ -69,29 +69,25 @@ pub struct CloneResult {
     pub ref_revision: Option<String>,
 }
 
-/// 克隆仓库到临时目录（带进度回调）
-///
-/// # Arguments
-/// * `url` - 仓库 URL（支持 HTTPS 和 SSH）
-/// * `git_ref` - 可选的分支或 tag
-/// * `on_progress` - 进度回调函数
-pub fn clone_repo_with_progress<F>(
+pub(crate) fn clone_repo_with_progress_options<F>(
     url: &str,
     git_ref: Option<&str>,
     on_progress: F,
     cancellation: CancellationSignal,
+    proxy: Option<&str>,
+    timeout: Duration,
+    display_timeout_secs: u64,
 ) -> Result<CloneResult, AppError>
 where
     F: Fn(CloneProgress),
 {
-    let timeout_secs = resolve_clone_timeout_secs();
     let started_at = std::time::Instant::now();
 
     // 发送连接中状态
     on_progress(CloneProgress {
         phase: ClonePhase::Connecting,
         elapsed_secs: 0,
-        timeout_secs,
+        timeout_secs: display_timeout_secs,
         message: None,
     });
 
@@ -104,6 +100,7 @@ where
 
     // 构建 git clone 命令，添加 --progress 以便 git 输出进度
     let mut cmd = std_command("git");
+    apply_proxy_override(&mut cmd, proxy);
     cmd.arg("clone").arg("--depth").arg("1").arg("--progress");
     apply_clone_env(&mut cmd);
 
@@ -115,12 +112,7 @@ where
     cmd.arg(url).arg(&repo_path);
 
     // 执行克隆
-    let result = execute_with_timeout_and_progress(
-        &mut cmd,
-        Duration::from_secs(timeout_secs),
-        &on_progress,
-        &cancellation,
-    );
+    let result = execute_with_timeout_and_progress(&mut cmd, timeout, &on_progress, &cancellation);
 
     match result {
         Ok(output) => {
@@ -128,7 +120,7 @@ where
                 on_progress(CloneProgress {
                     phase: ClonePhase::Done,
                     elapsed_secs: output.elapsed_secs,
-                    timeout_secs,
+                    timeout_secs: display_timeout_secs,
                     message: None,
                 });
                 let ref_revision = compute_local_ref_revision(&repo_path);
@@ -143,14 +135,14 @@ where
                 on_progress(CloneProgress {
                     phase: ClonePhase::Error,
                     elapsed_secs: output.elapsed_secs,
-                    timeout_secs,
+                    timeout_secs: display_timeout_secs,
                     message: Some(error.to_string()),
                 });
                 Err(error)
             }
         }
         Err(e) => {
-            on_progress(build_error_progress(started_at, timeout_secs, &e));
+            on_progress(build_error_progress(started_at, display_timeout_secs, &e));
             Err(e)
         }
     }
@@ -183,13 +175,23 @@ pub(crate) fn resolve_clone_timeout_secs() -> u64 {
         .unwrap_or(DEFAULT_CLONE_TIMEOUT_SECS)
 }
 
-fn clone_env_pairs() -> [(&'static str, &'static str); 2] {
-    [("GIT_TERMINAL_PROMPT", "0"), ("GIT_LFS_SKIP_SMUDGE", "1")]
+fn clone_env_pairs() -> [(&'static str, &'static str); 3] {
+    [
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("GIT_LFS_SKIP_SMUDGE", "1"),
+        ("LC_ALL", "C"),
+    ]
 }
 
 fn apply_clone_env(cmd: &mut Command) {
     for (key, value) in clone_env_pairs() {
         cmd.env(key, value);
+    }
+}
+
+fn apply_proxy_override(cmd: &mut Command, proxy: Option<&str>) {
+    if let Some(proxy) = proxy {
+        cmd.arg("-c").arg(format!("http.proxy={proxy}"));
     }
 }
 
@@ -422,7 +424,7 @@ where
 /// 在已 clone 的仓库里计算指定子目录的 tree SHA。
 ///
 /// 等价于 GitHub Trees API 返回的 `sha` 字段——它们指向同一个 git tree object。
-/// 让 update 流程可以直接复用 `clone_repo_with_progress` 已经下载的仓库，
+/// 让 update 流程可以直接复用 Git transport 已经下载的仓库，
 /// 省掉一次 Trees API 调用，同时避免 API 偶发失败导致 lock 写入空 hash。
 ///
 /// 失败返回 `None`：不在 git 仓库中、git 不可用、ref 不存在、目录不存在等。
@@ -462,12 +464,15 @@ pub fn compute_local_ref_revision(repo_path: &Path) -> Option<String> {
     })
 }
 
-pub fn probe_remote_ref_revision(
+pub(crate) fn probe_remote_ref_revision_options(
     url: &str,
     git_ref: Option<&str>,
     cancellation: CancellationSignal,
+    proxy: Option<&str>,
+    timeout: Duration,
 ) -> Result<String, AppError> {
     let mut cmd = std_command("git");
+    apply_proxy_override(&mut cmd, proxy);
     cmd.arg("ls-remote").arg("--exit-code").arg(url);
     match git_ref.filter(|value| !value.is_empty()) {
         Some(value) if value.starts_with("refs/") => {
@@ -487,12 +492,7 @@ pub fn probe_remote_ref_revision(
     }
     apply_clone_env(&mut cmd);
 
-    let output = execute_with_timeout_and_progress(
-        &mut cmd,
-        Duration::from_secs(resolve_clone_timeout_secs()),
-        &|_| {},
-        &cancellation,
-    )?;
+    let output = execute_with_timeout_and_progress(&mut cmd, timeout, &|_| {}, &cancellation)?;
     if !output.success {
         if output.status_code == Some(2) {
             return Err(AppError::GitRefNotFound {
@@ -520,107 +520,9 @@ fn normalize_git_object_id(value: &str) -> Option<String> {
         .then(|| value.to_ascii_lowercase())
 }
 
-fn sanitize_source_url(source_url: &str) -> String {
-    let Ok(mut parsed) = url::Url::parse(source_url) else {
-        return source_url.to_string();
-    };
-
-    let _ = parsed.set_password(None);
-    let _ = parsed.set_username("");
-    parsed.set_query(None);
-    parsed.set_fragment(None);
-    parsed.to_string()
-}
-
-fn sanitize_git_diagnostic(diagnostic: &str, source_url: &str) -> String {
-    let safe_url = sanitize_source_url(source_url);
-    let diagnostic = diagnostic.replace(source_url, &safe_url);
-    sanitize_urls_in_diagnostic(&diagnostic)
-        .split_inclusive('\n')
-        .map(redact_sensitive_diagnostic_line)
-        .collect()
-}
-
-fn sanitize_urls_in_diagnostic(diagnostic: &str) -> String {
-    let mut sanitized = String::with_capacity(diagnostic.len());
-    let mut copied_until = 0;
-    let mut search_from = 0;
-
-    while let Some(relative_marker) = diagnostic[search_from..].find("://") {
-        let marker = search_from + relative_marker;
-        let mut start = marker;
-        while start > 0 {
-            let byte = diagnostic.as_bytes()[start - 1];
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.') {
-                start -= 1;
-            } else {
-                break;
-            }
-        }
-        if start == marker {
-            search_from = marker + 3;
-            continue;
-        }
-
-        let end = diagnostic[marker + 3..]
-            .char_indices()
-            .find_map(|(offset, character)| {
-                (character.is_whitespace()
-                    || matches!(character, '\'' | '"' | '<' | '>' | '[' | ']' | '(' | ')'))
-                .then_some(marker + 3 + offset)
-            })
-            .unwrap_or(diagnostic.len());
-        let candidate = &diagnostic[start..end];
-        if url::Url::parse(candidate).is_ok() {
-            sanitized.push_str(&diagnostic[copied_until..start]);
-            sanitized.push_str(&sanitize_source_url(candidate));
-            copied_until = end;
-        }
-        search_from = end;
-    }
-
-    sanitized.push_str(&diagnostic[copied_until..]);
-    sanitized
-}
-
-fn redact_sensitive_diagnostic_line(line: &str) -> String {
-    let Some((separator_index, separator_len)) = line.char_indices().find_map(|(index, value)| {
-        if !matches!(value, ':' | '=') {
-            return None;
-        }
-        let prefix = &line[..index];
-        let key_start = prefix
-            .char_indices()
-            .rev()
-            .find_map(|(key_index, character)| {
-                (!character.is_ascii_alphanumeric() && !matches!(character, '_' | '-'))
-                    .then_some(key_index + character.len_utf8())
-            })
-            .unwrap_or(0);
-        let key = prefix[key_start..].to_ascii_lowercase();
-        let sensitive = key.contains("authorization")
-            || key.contains("token")
-            || key.contains("password")
-            || key.contains("secret")
-            || key == "pat"
-            || key.ends_with("_pat");
-        sensitive.then_some((index, value.len_utf8()))
-    }) else {
-        return line.to_string();
-    };
-
-    let newline = if line.ends_with('\n') { "\n" } else { "" };
-    format!(
-        "{}<redacted>{newline}",
-        &line[..separator_index + separator_len]
-    )
-}
-
 /// 分类 Git 错误（与 CLI 行为一致）
 fn classify_git_error(stderr: &str, url: &str) -> AppError {
     let stderr_lower = stderr.to_lowercase();
-    let safe_url = sanitize_source_url(url);
-    let safe_stderr = sanitize_git_diagnostic(stderr, url);
 
     // 认证错误
     if stderr_lower.contains("authentication failed")
@@ -629,7 +531,7 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
     {
         return AppError::GitAuthFailed {
             message: format!(
-                "Authentication failed for {safe_url}.\n\
+                "Authentication failed for {url}.\n\
                  - For private repos, ensure you have access\n\
                  - For SSH: Check your keys with 'ssh -T git@github.com'\n\
                  - For HTTPS: Run 'gh auth login' or configure git credentials"
@@ -637,44 +539,22 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         };
     }
 
-    // 网络/连接错误
     if stderr_lower.contains("could not resolve host")
+        || stderr_lower.contains("could not resolve proxy")
         || stderr_lower.contains("unable to resolve")
         || stderr_lower.contains("name or service not known")
-    {
-        return AppError::GitNetworkError {
-            message: format!(
-                "DNS resolution failed for {safe_url}.\n\
-                 - Check your internet connection\n\
-                 - Verify the URL is correct"
-            ),
-        };
-    }
-
-    if stderr_lower.contains("connection timed out")
+        || stderr_lower.contains("connection timed out")
         || stderr_lower.contains("connection refused")
+        || stderr_lower.contains("failed to connect")
+        || stderr_lower.contains("couldn't connect")
         || stderr_lower.contains("network is unreachable")
         || stderr_lower.contains("no route to host")
-    {
-        return AppError::GitNetworkError {
-            message: format!(
-                "Connection failed for {safe_url}.\n\
-                 - Check your internet connection\n\
-                 - Check if a proxy/VPN is required"
-            ),
-        };
-    }
-
-    if stderr_lower.contains("ssl certificate")
+        || stderr_lower.contains("ssl certificate")
         || stderr_lower.contains("certificate verify failed")
         || stderr_lower.contains("ssl_error")
     {
         return AppError::GitNetworkError {
-            message: format!(
-                "SSL/TLS error for {safe_url}.\n\
-                 - Check your system time\n\
-                 - Check if a proxy is intercepting HTTPS"
-            ),
+            message: format!("Git network request failed for {url}: {stderr}"),
         };
     }
 
@@ -685,18 +565,20 @@ fn classify_git_error(stderr: &str, url: &str) -> AppError {
         || (stderr_lower.contains("not found") && stderr_lower.contains("branch"))
     {
         return AppError::GitRefNotFound {
-            ref_name: safe_stderr,
+            ref_name: stderr.to_string(),
         };
     }
 
     // 仓库不存在
     if stderr_lower.contains("repository not found") || stderr_lower.contains("does not exist") {
-        return AppError::GitRepoNotFound { repo: safe_url };
+        return AppError::GitRepoNotFound {
+            repo: url.to_string(),
+        };
     }
 
     // 通用错误
     AppError::GitCloneFailed {
-        message: format!("Failed to clone {safe_url}: {safe_stderr}"),
+        message: format!("Failed to clone {url}: {stderr}"),
     }
 }
 
@@ -721,7 +603,7 @@ pub(crate) fn classify_git_failure(
     AppError::GitCloneFailed {
         message: format!(
             "Git {operation} failed with exit status {status}: {}",
-            sanitize_git_diagnostic(stderr, url).trim()
+            stderr.trim()
         ),
     }
 }
@@ -737,6 +619,55 @@ mod tests {
     const SUBPROCESS_OUTPUT_FIXTURE_ENV: &str = "SKILL_DECK_GIT_OUTPUT_FIXTURE";
     const SUBPROCESS_PID_FILE_ENV: &str = "SKILL_DECK_GIT_PROCESS_PID_FILE";
     const SUBPROCESS_DESCENDANT_PID_FILE_ENV: &str = "SKILL_DECK_GIT_DESCENDANT_PID_FILE";
+
+    #[test]
+    fn proxy_override_is_process_scoped_and_does_not_change_git_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let global_config = temp.path().join("gitconfig");
+        let initial_proxy = "http://existing.example:8080";
+        let injected_proxy = "http://runtime.example:7890";
+        let status = Command::new("git")
+            .args([
+                "config",
+                "--file",
+                global_config.to_str().expect("config path"),
+                "http.proxy",
+                initial_proxy,
+            ])
+            .status()
+            .expect("write fixture Git config");
+        assert!(status.success());
+
+        let mut command = Command::new("git");
+        apply_proxy_override(&mut command, Some(injected_proxy));
+        let args = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec!["-c".to_string(), format!("http.proxy={injected_proxy}")]
+        );
+        assert!(args
+            .iter()
+            .all(|argument| !argument.starts_with("https.proxy=")));
+
+        let persisted = Command::new("git")
+            .args([
+                "config",
+                "--file",
+                global_config.to_str().expect("config path"),
+                "--get",
+                "http.proxy",
+            ])
+            .output()
+            .expect("read fixture Git config");
+        assert!(persisted.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&persisted.stdout).trim(),
+            initial_proxy
+        );
+    }
 
     fn subprocess_output_fixture_command(stream: &str) -> Command {
         let mut command = Command::new(std::env::current_exe().expect("current test executable"));
@@ -891,14 +822,35 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_dns_error() {
-        let err = classify_git_error("Could not resolve host: github.com", "https://github.com");
-        assert!(matches!(err, AppError::GitNetworkError { .. }));
+    fn git_network_errors_use_one_generic_message_without_root_cause_inference() {
+        for diagnostic in [
+            "Could not resolve host: github.com",
+            "Could not resolve proxy: localhost",
+            "Connection timed out",
+            "SSL certificate problem",
+        ] {
+            let err = classify_git_error(diagnostic, "https://github.com/acme/repo.git");
+            assert!(matches!(
+                err,
+                AppError::GitNetworkError { message }
+                    if message.contains("Git network request failed")
+                        && message.contains(diagnostic)
+                        && !message.contains("DNS")
+                        && !message.contains("VPN")
+                        && !message.contains("intercept")
+            ));
+        }
     }
 
     #[test]
     fn test_classify_connection_error() {
         let err = classify_git_error("Connection timed out", "https://github.com");
+        assert!(matches!(err, AppError::GitNetworkError { .. }));
+
+        let err = classify_git_error(
+            "fatal: unable to access 'https://github.com/acme/repo.git/': Failed to connect to 127.0.0.1 port 7890 after 0 ms: Couldn't connect to server",
+            "https://github.com/acme/repo.git",
+        );
         assert!(matches!(err, AppError::GitNetworkError { .. }));
     }
 
@@ -909,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn git_error_messages_redact_source_credentials() {
+    fn git_error_messages_preserve_bounded_local_diagnostics() {
         let url =
             "https://alice:secret-token@github.com/acme/private.git?access_token=query-secret";
         let stderr = format!(
@@ -919,41 +871,16 @@ mod tests {
 
         let rendered = classify_git_error(&stderr, url).to_string();
 
-        for secret in ["alice", "secret-token", "query-secret", "header-secret"] {
-            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
-        }
-        assert!(rendered.contains("github.com/acme/private.git"));
+        assert!(rendered.contains(url));
+        assert!(rendered.contains(&stderr));
     }
 
     #[test]
-    fn git_diagnostics_redact_redirect_urls_and_sensitive_assignments() {
-        let diagnostic = "redirected to https://bob:redirect-secret@gitlab.com/acme/repo.git?private_token=query-secret\n\
-                          GITLAB_TOKEN=gitlab-secret\n\
-                          proxy_password=proxy-secret\n\
-                          client_secret: oauth-secret\n\
-                          visible=value";
-
-        let rendered = sanitize_git_diagnostic(diagnostic, "https://github.com/acme/repo.git");
-
-        for secret in [
-            "bob",
-            "redirect-secret",
-            "query-secret",
-            "gitlab-secret",
-            "proxy-secret",
-            "oauth-secret",
-        ] {
-            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
-        }
-        assert!(rendered.contains("https://gitlab.com/acme/repo.git"));
-        assert!(rendered.contains("visible=value"));
-    }
-
-    #[test]
-    fn test_clone_env_pairs_include_lfs_skip_smudge() {
+    fn git_commands_use_stable_non_interactive_environment() {
         let envs = clone_env_pairs();
         assert!(envs.contains(&("GIT_TERMINAL_PROMPT", "0")));
         assert!(envs.contains(&("GIT_LFS_SKIP_SMUDGE", "1")));
+        assert!(envs.contains(&("LC_ALL", "C")));
     }
 
     #[test]

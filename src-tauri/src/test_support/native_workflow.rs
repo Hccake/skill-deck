@@ -1379,7 +1379,6 @@ mod update_lifecycle {
             let detector = Arc::new(CountingDetector {
                 inner: RuntimeSourceEvidenceDetector::with_git_transport(
                     payloads.clone(),
-                    environments.clone(),
                     snapshots.clone(),
                     git_transport.clone(),
                 ),
@@ -1429,7 +1428,6 @@ mod update_lifecycle {
                 ),
                 RuntimeUpdatePayloadAcquirer::with_git_transport(
                     self.payloads.clone(),
-                    self.environments.clone(),
                     self.snapshots.clone(),
                     self.evidence.clone(),
                     self.git_transport.clone(),
@@ -1445,7 +1443,6 @@ mod update_lifecycle {
         async fn install(&self) {
             let discovery = SourceDiscoveryService::with_git_transport(
                 self.payloads.clone(),
-                self.environments.as_ref(),
                 self.git_transport.clone(),
             )
             .discover_parsed_with_cancellation(
@@ -1733,7 +1730,6 @@ mod update_lifecycle {
                 ),
                 RuntimeUpdatePayloadAcquirer::with_git_transport(
                     self.payloads.clone(),
-                    self.environments.clone(),
                     self.snapshots.clone(),
                     self.evidence.clone(),
                     self.git_transport.clone(),

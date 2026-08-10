@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use crate::application::agents::ManagedAgentRegistry;
 use crate::application::copy_runtime::{build_runtime_copy_service, RuntimeCopyService};
+use crate::application::git_transport::GitSourceTransport;
+use crate::application::github_access::GithubTreeAccess;
 use crate::application::github_credentials::{
     resolve_environment_github_token, GithubCredentialService, GithubCredentialWorkflowService,
 };
@@ -18,10 +20,14 @@ use crate::application::remove_runtime::{build_runtime_remove_service, RuntimeRe
 use crate::application::resources::{build_runtime_resource_service, RuntimeResourceService};
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
+use crate::application::source_acquisition::SourceDiscoveryService;
 use crate::application::update_runtime::{
     build_runtime_source_evidence_coordinator, build_runtime_update_check_service,
-    build_runtime_update_service, RuntimeUpdateCheckService, RuntimeUpdateService,
+    build_runtime_update_service, RuntimeUpdateCheckService, RuntimeUpdatePayloadAcquirer,
+    RuntimeUpdateService,
 };
+use crate::application::wellknown_access::WellKnownAccess;
+use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::projects::ProjectMigrationRegistry;
 use crate::core::GithubTokenProvider;
 use crate::environment::native::acquire::NativePayloadSessionStorage;
@@ -36,6 +42,7 @@ use crate::runtime::proxy_settings::ProxySettingsStore;
 use crate::storage::github_credentials::KeyringGithubCredentialStore;
 
 pub(crate) mod discovery;
+pub(crate) mod git_source;
 pub(crate) mod github;
 pub(crate) mod github_client;
 pub(crate) mod http_transport;
@@ -43,8 +50,50 @@ pub mod maintenance;
 pub(crate) mod proxy_settings;
 pub(crate) mod wellknown;
 pub(crate) mod wellknown_protocol;
+pub(crate) mod wsl_source;
 
 use maintenance::{RuntimeMaintenanceCoordinator, RuntimeMaintenanceTasks};
+
+struct RuntimeNetworkServices {
+    proxy_settings: Arc<ProxySettingsStore>,
+    http: HttpTransport,
+    discovery: DiscoveryGateway,
+    wellknown: Arc<dyn WellKnownAccess>,
+    git_source: Arc<dyn GitSourceTransport>,
+}
+
+impl RuntimeNetworkServices {
+    fn new(settings: crate::models::NetworkProxySettings) -> Self {
+        let proxy_settings = Arc::new(ProxySettingsStore::new(settings));
+        let http = HttpTransport::new(proxy_settings.clone());
+        let discovery = DiscoveryGateway::new(http.clone());
+        let wellknown = Arc::new(wellknown::RuntimeWellKnownAccess::new(http.clone()));
+        let git_source = Arc::new(git_source::ProcessGitTransport::new(proxy_settings.clone()));
+        Self {
+            proxy_settings,
+            http,
+            discovery,
+            wellknown,
+            git_source,
+        }
+    }
+
+    fn proxy_settings(&self) -> Arc<ProxySettingsStore> {
+        self.proxy_settings.clone()
+    }
+
+    fn http_client(&self) -> HttpTransport {
+        self.http.clone()
+    }
+
+    fn wellknown(&self) -> Arc<dyn WellKnownAccess> {
+        self.wellknown.clone()
+    }
+
+    fn git_source(&self) -> Arc<dyn GitSourceTransport> {
+        self.git_source.clone()
+    }
+}
 
 pub struct RuntimeServiceGraph {
     wsl: Arc<WslRuntime>,
@@ -65,8 +114,8 @@ pub struct RuntimeServiceGraph {
     github_credentials: GithubCredentialWorkflowService,
     agent_selection_facts: RuntimePlanningFactSource,
     agent_selection_targets: RuntimeTargetFactResolver,
-    proxy_settings: Arc<ProxySettingsStore>,
-    discovery: DiscoveryGateway,
+    network_services: RuntimeNetworkServices,
+    source_discovery: SourceDiscoveryService,
 }
 
 impl RuntimeServiceGraph {
@@ -77,15 +126,28 @@ impl RuntimeServiceGraph {
     ) -> Result<Self, AppError> {
         let config = crate::core::read_config()?;
         let wsl_integration_enabled = cfg!(target_os = "windows") && config.wsl_integration_enabled;
-        let proxy_settings = Arc::new(ProxySettingsStore::new(config.network_proxy));
-        let http = HttpTransport::new(proxy_settings.clone());
-        let discovery = DiscoveryGateway::new(http.clone());
+        let network_services = RuntimeNetworkServices::new(config.network_proxy);
+        let http = network_services.http_client();
+        let git_source = network_services.git_source();
         let wsl = Arc::new(WslRuntime::new_with_support(
             cfg!(target_os = "windows"),
             wsl_integration_enabled,
         ));
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;
         let payloads = Arc::new(payloads);
+        let wsl_source: Arc<dyn WslSourceAccess> =
+            Arc::new(wsl_source::RuntimeWslSourceAccess::new(
+                payloads.clone(),
+                wsl.clone(),
+                network_services.proxy_settings(),
+                network_services.wellknown(),
+            ));
+        let source_discovery = SourceDiscoveryService::new(
+            payloads.clone(),
+            git_source.clone(),
+            network_services.wellknown(),
+            wsl_source.clone(),
+        );
         let admission = Arc::new(RuntimeAdmissionCoordinator::default());
         let install_wizard = Arc::new(InstallWizardWorkflow::new(admission.clone()));
         let registry: Arc<dyn AgentRegistrySnapshotSource> = Arc::new(agents.clone());
@@ -95,10 +157,13 @@ impl RuntimeServiceGraph {
         );
         let github_credentials = Arc::new(GithubCredentialService::new(
             Arc::new(KeyringGithubCredentialStore),
-            Arc::new(GithubApiClient::with_network(http)),
+            Arc::new(GithubApiClient::with_network(http.clone())),
             Arc::new(resolve_environment_github_token),
         ));
         let github_token_provider: Arc<dyn GithubTokenProvider> = github_credentials.clone();
+        let github_tree_access: Arc<dyn GithubTreeAccess> = Arc::new(
+            GithubApiClient::with_token_provider_and_network(github_token_provider, http.clone()),
+        );
         let recovery_graph = execution.recovery_graph();
         let maintenance_backend = Arc::new(RuntimeMaintenanceTasks::new(
             payloads.clone(),
@@ -113,9 +178,10 @@ impl RuntimeServiceGraph {
         ));
         let update_evidence = build_runtime_source_evidence_coordinator(
             payloads.clone(),
-            wsl.clone(),
             source_snapshots.clone(),
-            github_token_provider,
+            github_tree_access,
+            git_source.clone(),
+            wsl_source.clone(),
         )?;
         let agent_selection_facts =
             RuntimePlanningFactSource::for_current_user(registry.clone(), wsl.clone());
@@ -132,14 +198,19 @@ impl RuntimeServiceGraph {
             registry.clone(),
             update_evidence.clone(),
         );
-        let update_evidence_for_update = update_evidence.clone();
+        let update_acquirer = RuntimeUpdatePayloadAcquirer::new(
+            payloads.clone(),
+            source_snapshots.clone(),
+            update_evidence.clone(),
+            git_source.clone(),
+            wsl_source.clone(),
+        );
         let update = build_runtime_update_service(
             payloads.clone(),
             wsl.clone(),
             registry.clone(),
             execution.clone(),
-            source_snapshots,
-            update_evidence_for_update,
+            update_acquirer,
         );
         let remove = build_runtime_remove_service(wsl.clone(), registry.clone(), execution.clone());
         let manage_agents = build_runtime_manage_agents_service(
@@ -177,8 +248,8 @@ impl RuntimeServiceGraph {
             github_credentials,
             agent_selection_facts,
             agent_selection_targets,
-            proxy_settings,
-            discovery,
+            network_services,
+            source_discovery,
         })
     }
 
@@ -259,11 +330,17 @@ impl RuntimeServiceGraph {
     }
 
     pub(crate) fn activate_network_settings(&self, settings: crate::models::NetworkProxySettings) {
-        self.proxy_settings.replace_settings(settings);
+        self.network_services
+            .proxy_settings
+            .replace_settings(settings);
+    }
+
+    pub(crate) fn source_discovery(&self) -> &SourceDiscoveryService {
+        &self.source_discovery
     }
 
     pub(crate) fn discovery(&self) -> &DiscoveryGateway {
-        &self.discovery
+        &self.network_services.discovery
     }
 }
 
@@ -290,4 +367,19 @@ fn build_payload_session_manager(
         },
     );
     Ok((manager, storage))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeNetworkServices;
+
+    #[test]
+    fn runtime_network_services_inject_one_shared_http_pool() {
+        let services = RuntimeNetworkServices::new(crate::models::NetworkProxySettings::default());
+
+        let discovery_http = services.http_client();
+        let source_http = services.http_client();
+
+        assert!(discovery_http.shares_client_pool_with(&source_http));
+    }
 }
