@@ -42,6 +42,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.source.error.invalidSource', { value: error.data.value });
     case 'invalidProxySettings':
       return t(`settings.proxy.errors.${error.data.code}`);
+    case 'discoveryRequestFailed':
+      return t('skills.discover.error');
     case 'invalidAgent':
       return t('addSkill.error.invalidAgent', { agent: error.data.agent });
     case 'agentSelectionInvalid':

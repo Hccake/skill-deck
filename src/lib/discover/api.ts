@@ -1,6 +1,10 @@
-import { fetch } from '@tauri-apps/plugin-http';
 import { formatInstalls } from './format';
 import { extractSourceOwner, parseMetric } from './ranking';
+import {
+  getDiscoverLeaderboardTransport,
+  getDiscoverSkillDetailTransport,
+  searchDiscoverSkillsTransport,
+} from '@/hooks/useTauriApi';
 import type {
   DiscoverAuditRisk,
   DiscoverInstalledOn,
@@ -32,10 +36,7 @@ type SearchApiResponse = {
   }>;
 };
 
-const SEARCH_API_BASE = 'https://skills.sh';
-const SEARCH_LIMIT = 100;
-const LEADERBOARD_BASE = 'https://skills.sh';
-const OFFICIAL_PATH = '/official';
+const DISCOVERY_SITE_BASE = 'https://www.skills.sh';
 const ALLOWED_RICH_TEXT_TAGS = new Set([
   'a',
   'blockquote',
@@ -67,13 +68,11 @@ const ALLOWED_RICH_TEXT_TAGS = new Set([
 const inflightRequests = new Map<string, Promise<unknown>>();
 const leaderboardCache = new Map<string, DiscoverSkillSummary[]>();
 const detailCache = new Map<string, DiscoverSkillDetail>();
-const officialCreatorsCache = new Map<string, Set<string>>();
 
 export function __resetDiscoverApiState(): void {
   inflightRequests.clear();
   leaderboardCache.clear();
   detailCache.clear();
-  officialCreatorsCache.clear();
 }
 
 function dedupeRequest<T>(key: string, loader: () => Promise<T>): Promise<T> {
@@ -118,7 +117,7 @@ function extractPathParts(reference: string): string[] {
 
 function toAbsoluteUrl(pathOrUrl: string): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(pathOrUrl)) return pathOrUrl;
-  return `${SEARCH_API_BASE}${pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`}`;
+  return `${DISCOVERY_SITE_BASE}${pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`}`;
 }
 
 function formatDisplayMetricValue(count: number): string {
@@ -315,12 +314,6 @@ function parseOfficialOwners(html: string): Set<string> {
   }
 
   return creators;
-}
-
-function parseLeaderboardSource(tab: DiscoverTab): string {
-  if (tab === 'trending') return `${LEADERBOARD_BASE}/trending`;
-  if (tab === 'hot') return `${LEADERBOARD_BASE}/hot`;
-  return LEADERBOARD_BASE;
 }
 
 function findLabeledBlock(document: Document, label: string): Element | undefined {
@@ -638,47 +631,16 @@ function parseDetailHtml(html: string, fallback: DiscoverSkillSummary): Discover
   };
 }
 
-async function fetchText(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return await response.text();
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return await response.json() as T;
-}
-
-async function loadOfficialCreators(): Promise<Set<string>> {
-  const cacheKey = 'official-creators';
-  const cached = officialCreatorsCache.get(cacheKey);
-  if (cached) return cached;
-
-  return dedupeRequest(cacheKey, async () => {
-    const html = await fetchText(`${LEADERBOARD_BASE}${OFFICIAL_PATH}`);
-    const creators = parseOfficialOwners(html);
-    officialCreatorsCache.set(cacheKey, creators);
-    return creators;
-  });
-}
-
 async function loadLeaderboard(tab: DiscoverTab): Promise<DiscoverSkillSummary[]> {
   const cacheKey = `leaderboard:${tab}`;
   const cached = leaderboardCache.get(cacheKey);
   if (cached) return cached;
 
   return dedupeRequest(cacheKey, async () => {
-    const [html, officialCreators] = await Promise.all([
-      fetchText(parseLeaderboardSource(tab)),
-      loadOfficialCreators(),
-    ]);
+    const payload = await getDiscoverLeaderboardTransport(tab);
+    const officialCreators = new Set(payload.officialCreators ?? []);
 
-    const results = parseLeaderboardHtml(html, tab, officialCreators);
+    const results = parseLeaderboardHtml(payload.leaderboardHtml, tab, officialCreators);
     leaderboardCache.set(cacheKey, results);
     return results;
   });
@@ -704,11 +666,9 @@ function createFallbackSummary(pathOrSlug: string, detailUrl: string): DiscoverS
 }
 
 export async function searchDiscoverSkills(query: string): Promise<DiscoverSkillSummary[]> {
-  const url = `${SEARCH_API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=${SEARCH_LIMIT}`;
-  const [data, officialCreators] = await Promise.all([
-    fetchJson<SearchApiResponse>(url),
-    loadOfficialCreators(),
-  ]);
+  const payload = await searchDiscoverSkillsTransport(query);
+  const data = JSON.parse(payload.searchJson) as SearchApiResponse;
+  const officialCreators = new Set(payload.officialCreators ?? []);
 
   return data.skills.map((skill) => {
     const detailPath = skill.id.startsWith('/') ? skill.id : `/${skill.id}`;
@@ -742,7 +702,14 @@ export async function getDiscoverSkillDetail(pathOrSlug: string): Promise<Discov
   if (cached) return cached;
 
   return dedupeRequest(`detail:${detailUrl}`, async () => {
-    const html = await fetchText(detailUrl);
+    const parts = extractPathParts(pathOrSlug);
+    const siteDetail = parts[0] === 'site' && parts.length >= 3;
+    const source = siteDetail ? parts[1] : parts.slice(0, 2).join('/');
+    const skill = parts.at(-1) ?? '';
+    if (!source || !skill || (!siteDetail && parts.length < 3)) {
+      throw new Error('Invalid Discover detail reference');
+    }
+    const html = await getDiscoverSkillDetailTransport(source, skill);
     const detail = parseDetailHtml(html, createFallbackSummary(pathOrSlug, detailUrl));
     detail.repoUrl = detail.repoUrl ?? buildGithubUrl(detail.source) ?? undefined;
     detailCache.set(detailUrl, detail);
@@ -755,4 +722,3 @@ export {
   parseOfficialOwners,
   parseLeaderboardHtml,
 };
-

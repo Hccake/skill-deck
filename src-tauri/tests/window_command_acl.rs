@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::Value;
 use tauri::test::{get_ipc_response, mock_builder, MockRuntime, INVOKE_KEY};
 use tauri::webview::InvokeRequest;
 use tauri::{App, WebviewWindow, WebviewWindowBuilder};
@@ -123,9 +123,23 @@ fn save_proxy_settings() -> &'static str {
     "save-proxy-settings"
 }
 
+#[tauri::command]
+fn search_discover_skills() -> &'static str {
+    "search-discover-skills"
+}
+
+#[tauri::command]
+fn get_discover_leaderboard() -> &'static str {
+    "get-discover-leaderboard"
+}
+
+#[tauri::command]
+fn get_discover_skill_detail() -> &'static str {
+    "get-discover-skill-detail"
+}
+
 fn test_app() -> App<MockRuntime> {
     mock_builder()
-        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             list_agents,
             save_custom_agent,
@@ -151,6 +165,9 @@ fn test_app() -> App<MockRuntime> {
             clear_github_credential,
             get_proxy_settings,
             save_proxy_settings,
+            search_discover_skills,
+            get_discover_leaderboard,
+            get_discover_skill_detail,
         ])
         .build(tauri::generate_context!())
         .expect("mock Tauri app")
@@ -188,68 +205,12 @@ fn invoke_with_body(
 }
 
 #[test]
-fn skills_search_http_is_scoped_to_skills_sh_in_main_and_install_wizard() {
-    let app = test_app();
-    let main = window(&app, "main");
-    let wizard = window(&app, "install-wizard");
-    let request = |url: &str| {
-        tauri::ipc::InvokeBody::Json(json!({
-            "clientConfig": {
-                "method": "GET",
-                "url": url,
-                "headers": []
-            }
-        }))
-    };
+fn application_windows_do_not_receive_generic_http_plugin_permissions() {
+    let main = include_str!("../capabilities/main.json");
+    let wizard = include_str!("../capabilities/install-wizard.json");
 
-    assert!(
-        invoke_with_body(
-            &main,
-            "plugin:http|fetch",
-            request("https://skills.sh/api/search?q=react&limit=1"),
-        )
-        .is_ok(),
-        "the main window must be able to start Discover HTTP requests"
-    );
-    assert!(
-        invoke_with_body(
-            &wizard,
-            "plugin:http|fetch",
-            request("https://skills.sh/api/search?q=react&limit=1"),
-        )
-        .is_ok(),
-        "the install wizard must be able to start Skill search HTTP requests"
-    );
-    for search_window in [&main, &wizard] {
-        assert!(
-            invoke_with_body(
-                search_window,
-                "plugin:http|fetch",
-                request("https://skills.sh"),
-            )
-            .is_ok(),
-            "Skill search windows must allow the scoped skills.sh root URL"
-        );
-    }
-    assert_url_denied(invoke_with_body(
-        &main,
-        "plugin:http|fetch",
-        request("https://example.com/api/search?q=react"),
-    ));
-    assert_url_denied(invoke_with_body(
-        &wizard,
-        "plugin:http|fetch",
-        request("https://example.com/api/search?q=react"),
-    ));
-}
-
-fn assert_url_denied(result: Result<Value, Value>) {
-    let error = result.expect_err("URL outside the configured scope must be denied");
-    let message = error.as_str().expect("URL denial must be a string");
-    assert!(
-        message.contains("url not allowed on the configured scope"),
-        "unexpected URL scope denial: {error}"
-    );
+    assert!(!main.contains("http:"));
+    assert!(!wizard.contains("http:"));
 }
 
 fn assert_denied(result: Result<Value, Value>, command: &str) {
@@ -337,6 +298,18 @@ fn main_window_allows_skill_repair_commands() {
         Ok(Value::from("save-proxy-settings"))
     );
     assert_eq!(
+        invoke(&main, "search_discover_skills"),
+        Ok(Value::from("search-discover-skills"))
+    );
+    assert_eq!(
+        invoke(&main, "get_discover_leaderboard"),
+        Ok(Value::from("get-discover-leaderboard"))
+    );
+    assert_eq!(
+        invoke(&main, "get_discover_skill_detail"),
+        Ok(Value::from("get-discover-skill-detail"))
+    );
+    assert_eq!(
         invoke(&main, "fetch_available"),
         Ok(Value::from("fetch-available"))
     );
@@ -378,6 +351,18 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_eq!(
         invoke(&wizard, "fetch_available"),
         Ok(Value::from("fetch-available"))
+    );
+    assert_eq!(
+        invoke(&wizard, "search_discover_skills"),
+        Ok(Value::from("search-discover-skills"))
+    );
+    assert_denied(
+        invoke(&wizard, "get_discover_leaderboard"),
+        "get_discover_leaderboard",
+    );
+    assert_denied(
+        invoke(&wizard, "get_discover_skill_detail"),
+        "get_discover_skill_detail",
     );
     assert_eq!(
         invoke(&wizard, "get_install_agent_selection"),

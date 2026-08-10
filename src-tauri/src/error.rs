@@ -128,6 +128,9 @@ pub enum AppError {
     #[error("Invalid proxy settings: {code}")]
     InvalidProxySettings { code: String },
 
+    #[error("Discovery request failed: {reason}")]
+    DiscoveryRequestFailed { reason: String },
+
     #[error("Git clone failed: {message}")]
     GitCloneFailed { message: String },
 

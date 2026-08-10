@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { fetch } from '@tauri-apps/plugin-http';
 import { Search, Download, AlertCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 
-const SEARCH_API_BASE = 'https://skills.sh';
+import { searchDiscoverSkills } from '@/lib/discover/api';
 
 export interface SearchSkill {
   name: string;
@@ -25,22 +24,12 @@ interface SkillSearchProps {
 }
 
 async function searchSkillsAPI(query: string): Promise<SearchSkill[]> {
-  const url = `${SEARCH_API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=50`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = (await res.json()) as {
-    skills: Array<{
-      id: string;
-      name: string;
-      installs: number;
-      source: string;
-    }>;
-  };
-  return data.skills.map((skill) => ({
+  const skills = await searchDiscoverSkills(query);
+  return skills.map((skill) => ({
     name: skill.name,
-    slug: skill.id,
+    slug: skill.slug,
     source: skill.source || '',
-    installs: skill.installs,
+    installs: skill.installs ?? 0,
   }));
 }
 

@@ -3,6 +3,7 @@ pub mod agent_selection;
 pub mod agents;
 pub mod config;
 pub mod copy_skill;
+pub mod discover;
 pub mod environments;
 pub mod github_credentials;
 pub mod install;

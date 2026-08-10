@@ -102,9 +102,17 @@ IPC 使用 `EnvironmentRef` 和 `SkillLocationRef` 标识操作位置，不把�
 
 Tauri 的 capability 和 permission 配置采用默认拒绝策略。每个窗口只能调用明确允许的命令，内容安全策略（CSP）和插件资源范围进一步限制 WebView 可以访问的外部资源。新增或修改命令的同步步骤见[贡献指南](../CONTRIBUTING.md)。
 
-## 外部网络设置
+## 外部网络访问
 
 Rust 运行时持有当前已经验证的代理设置。设置保存流程先持久化，再原子替换运行时当前值；持久化失败时运行时设置保持不变。底层客户端或进程已经开始的单次执行继续使用创建时的配置，后续执行使用新设置。
+
+Discover 页面通过受限的 Tauri 命令访问 `www.skills.sh`。当前 Discovery 数据契约使用 `/api/search`；排行榜、详情及前端补全的站内地址使用相同的规范站点。官方发布者信息在首次实际使用时后台加载，核心内容不等待这项辅助请求。Discover 响应携带的安全审计信息只随内容展示，应用不会把已安装 Skill 或用户手动输入的来源自动发送给第三方审计服务。
+
+前端脚本没有访问通用外部 HTTP 接口的权限。Discover 富文本中的 HTTPS 图片由平台 WebView 按系统网络设置加载，不经过 Rust HTTP Transport，也不使用应用保存的自定义代理。
+
+Runtime 内部的共享 HTTP Transport 为 Discover、GitHub API 和 Well-known Adapter 复用 reqwest 连接池。Direct 明确关闭客户端自动代理发现，Custom Proxy 只配置用户保存的一个代理地址。Transport 统一执行调用方给出的总时限、取消和响应读取上限；响应格式、Content-Type、大小和解包规模由消费内容的产品 Module 维护。
+
+用户输入的 Well-known 来源允许使用 HTTP 或 HTTPS，并按普通客户端行为访问公开、本机或局域网地址。来源获取不预解析目标域名、不区分公网与私网地址，也不把解析结果固定到客户端；内容格式、摘要和解包检查继续由 Well-known 来源 Module 负责。
 
 ## 主要运行流程
 

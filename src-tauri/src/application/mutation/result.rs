@@ -287,6 +287,12 @@ impl ErrorReport {
             AppError::GitTimeout { .. } | AppError::GitNetworkError { .. } => {
                 Self::new(OperationErrorCode::ExecutionFailed).with_retryable(true)
             }
+            AppError::DiscoveryRequestFailed { reason } => {
+                let mut report =
+                    Self::new(OperationErrorCode::ExecutionFailed).with_retryable(true);
+                report.parameters.insert("reason".to_string(), reason);
+                report
+            }
             AppError::Io { message }
             | AppError::Path { message }
             | AppError::GitCloneFailed { message }

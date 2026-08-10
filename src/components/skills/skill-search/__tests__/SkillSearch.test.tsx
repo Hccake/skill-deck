@@ -3,7 +3,7 @@
 import '@/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { fetch } from '@tauri-apps/plugin-http';
+import { searchDiscoverSkills } from '@/lib/discover/api';
 import { SkillSearch } from '../SkillSearch';
 
 vi.mock('react-i18next', () => ({
@@ -12,11 +12,11 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-vi.mock('@tauri-apps/plugin-http', () => ({
-  fetch: vi.fn(),
+vi.mock('@/lib/discover/api', () => ({
+  searchDiscoverSkills: vi.fn(),
 }));
 
-const fetchMock = vi.mocked(fetch);
+const searchMock = vi.mocked(searchDiscoverSkills);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -29,17 +29,19 @@ function deferred<T>() {
 }
 
 function searchResponse(name: string) {
-  return {
-    ok: true,
-    json: vi.fn().mockResolvedValue({
-      skills: [{
-        id: name,
-        name,
-        installs: 1,
-        source: `owner/${name}`,
-      }],
-    }),
-  } as Pick<Response, 'ok' | 'json'> as Response;
+  return [{
+    slug: name,
+    name,
+    installs: 1,
+    source: `owner/${name}`,
+    displayMetric: {
+      kind: 'installs' as const,
+      rawText: '1',
+      sortValue: 1,
+    },
+    isOfficial: false,
+    detailUrl: `https://skills.sh/owner/${name}/${name}`,
+  }];
 }
 
 async function flushAsyncWork() {
@@ -53,7 +55,7 @@ async function flushAsyncWork() {
 describe('SkillSearch', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    fetchMock.mockReset();
+    searchMock.mockReset();
   });
 
   afterEach(() => {
@@ -64,9 +66,9 @@ describe('SkillSearch', () => {
     const firstSearch = deferred<ReturnType<typeof searchResponse>>();
     const secondSearch = deferred<ReturnType<typeof searchResponse>>();
 
-    fetchMock
-      .mockReturnValueOnce(firstSearch.promise as ReturnType<typeof fetch>)
-      .mockReturnValueOnce(secondSearch.promise as ReturnType<typeof fetch>);
+    searchMock
+      .mockReturnValueOnce(firstSearch.promise)
+      .mockReturnValueOnce(secondSearch.promise);
 
     render(<SkillSearch installedSkillKeys={new Set()} onInstall={vi.fn()} />);
 

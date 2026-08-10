@@ -10,7 +10,8 @@ permissions = [
   "allow-install-skills",
   "allow-list-environment-projects",
   "allow-preview-install",
-  "allow-request-cancel-active-mutation"
+  "allow-request-cancel-active-mutation",
+  "allow-search-discover-skills"
 ]
 
 [[set]]
@@ -32,6 +33,8 @@ permissions = [
   "allow-get-agent-settings-snapshot",
   "allow-get-config",
   "allow-get-copy-agent-selection",
+  "allow-get-discover-leaderboard",
+  "allow-get-discover-skill-detail",
   "allow-get-github-credential-status",
   "allow-get-install-wizard-session",
   "allow-get-manage-agent-selection",

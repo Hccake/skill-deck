@@ -12,25 +12,25 @@ import {
   parseOfficialOwners,
   searchDiscoverSkills,
 } from '../api';
+import {
+  getDiscoverLeaderboardTransport,
+  getDiscoverSkillDetailTransport,
+  searchDiscoverSkillsTransport,
+} from '@/hooks/useTauriApi';
 
-const fetchMock = vi.fn();
-
-vi.mock('@tauri-apps/plugin-http', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
+vi.mock('@/hooks/useTauriApi', () => ({
+  searchDiscoverSkillsTransport: vi.fn(),
+  getDiscoverLeaderboardTransport: vi.fn(),
+  getDiscoverSkillDetailTransport: vi.fn(),
 }));
 
-function makeResponse(body: string, ok = true, status = 200) {
-  return {
-    ok,
-    status,
-    text: async () => body,
-    json: async () => JSON.parse(body),
-  };
-}
+const searchMock = vi.mocked(searchDiscoverSkillsTransport);
+const leaderboardMock = vi.mocked(getDiscoverLeaderboardTransport);
+const detailMock = vi.mocked(getDiscoverSkillDetailTransport);
+const officialCreators = Array.from(parseOfficialOwners(officialCreatorsHtml));
 
-function mockDiscoverFetch(overrides: Partial<Record<string, string>> = {}): void {
+function mockDiscoverTransport(overrides: Partial<Record<string, string>> = {}): void {
   const fixtures: Record<string, string> = {
-    '/official': officialCreatorsHtml,
     '/': leaderboardPopularHtml,
     '/trending': leaderboardTrendingHtml,
     '/hot': leaderboardHotHtml,
@@ -38,44 +38,31 @@ function mockDiscoverFetch(overrides: Partial<Record<string, string>> = {}): voi
     ...overrides,
   };
 
-  fetchMock.mockImplementation(async (url: string | URL) => {
-    const href = String(url);
-
-    if (href.includes('/api/search')) {
-      throw new Error('Unexpected search request');
-    }
-
-    if (href.endsWith('/official')) return makeResponse(fixtures['/official']);
-    if (href.endsWith('/trending')) return makeResponse(fixtures['/trending']);
-    if (href.endsWith('/hot')) return makeResponse(fixtures['/hot']);
-    if (href.endsWith('/vercel-labs/skills/find-skills')) return makeResponse(fixtures['/detail']);
-    if (href === 'https://skills.sh') return makeResponse(fixtures['/']);
-
-    throw new Error(`Unexpected URL: ${href}`);
+  leaderboardMock.mockImplementation(async (tab) => ({
+    leaderboardHtml: fixtures[tab === 'popular' ? '/' : `/${tab}`],
+    officialCreators,
+  }));
+  detailMock.mockImplementation(async () => fixtures['/detail']);
+  searchMock.mockImplementation(async () => {
+    throw new Error('Unexpected search request');
   });
 }
 
 describe('discover api adapter', () => {
   beforeEach(() => {
-    fetchMock.mockReset();
+    searchMock.mockReset();
+    leaderboardMock.mockReset();
+    detailMock.mockReset();
     __resetDiscoverApiState();
   });
 
   it('preserves search api order and derives official metadata from creator slugs', async () => {
-    fetchMock.mockImplementation(async (url: string | URL) => {
-      const href = String(url);
-      if (href.includes('/api/search')) {
-        return makeResponse(JSON.stringify({
+    searchMock.mockResolvedValue({
+      searchJson: JSON.stringify({
           ...searchReactFixture,
           skills: [searchReactFixture.skills[1], searchReactFixture.skills[0]],
-        }));
-      }
-
-      if (href.endsWith('/official')) {
-        return makeResponse(officialCreatorsHtml);
-      }
-
-      throw new Error(`Unexpected URL: ${href}`);
+      }),
+      officialCreators,
     });
 
     const result = await searchDiscoverSkills('react');
@@ -94,26 +81,19 @@ describe('discover api adapter', () => {
     expect(result[1].source).toBe('vercel-labs/agent-skills');
     expect(result[1].displayMetric.rawText).toBe('263.7K');
     expect(result[1].isOfficial).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(searchMock).toHaveBeenCalledOnce();
+    expect(searchMock).toHaveBeenCalledWith('react');
   });
 
-  it('requests search results with a limit of 100', async () => {
-    fetchMock.mockImplementation(async (url: string | URL) => {
-      const href = String(url);
-      if (href.includes('/api/search')) {
-        return makeResponse(JSON.stringify(searchReactFixture));
-      }
-
-      if (href.endsWith('/official')) {
-        return makeResponse(officialCreatorsHtml);
-      }
-
-      throw new Error(`Unexpected URL: ${href}`);
+  it('passes only the search query to the backend transport', async () => {
+    searchMock.mockResolvedValue({
+      searchJson: JSON.stringify(searchReactFixture),
+      officialCreators,
     });
 
     await searchDiscoverSkills('react');
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('limit=100');
+    expect(searchMock).toHaveBeenCalledWith('react');
   });
 
   it('extracts official creator slugs from single-segment links', () => {
@@ -154,7 +134,7 @@ describe('discover api adapter', () => {
       expectedLength: 3,
     },
   ])('parses $tab leaderboard rows without fabricating summaries', async ({ tab, fixture, metricKind, metricText, metricValue, installs, official, expectedLength = 2 }) => {
-    mockDiscoverFetch({
+    mockDiscoverTransport({
       '/': fixture === 'leaderboard-popular.html' ? leaderboardPopularHtml : leaderboardPopularHtml,
       '/trending': fixture === 'leaderboard-trending.html' ? leaderboardTrendingHtml : leaderboardTrendingHtml,
       '/hot': fixture === 'leaderboard-hot.html' ? leaderboardHotHtml : leaderboardHotHtml,
@@ -176,7 +156,7 @@ describe('discover api adapter', () => {
   });
 
   it('parses site-based hot leaderboard entries without folding name and source into metric text', async () => {
-    mockDiscoverFetch({
+    mockDiscoverTransport({
       '/hot': leaderboardHotHtml,
     });
 
@@ -190,18 +170,18 @@ describe('discover api adapter', () => {
         rawText: '22 +10',
         sortValue: 22,
       },
-      detailUrl: 'https://skills.sh/site/docs.stripe.com/stripe-best-practices',
+      detailUrl: 'https://www.skills.sh/site/docs.stripe.com/stripe-best-practices',
     });
   });
 
   it('caches leaderboard responses with official creator metadata', async () => {
-    mockDiscoverFetch();
+    mockDiscoverTransport();
 
     const first = await getDiscoverLeaderboard('popular');
     const second = await getDiscoverLeaderboard('popular');
 
     expect(second).toEqual(first);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(leaderboardMock).toHaveBeenCalledOnce();
   });
 
   it('only exposes public leaderboard tabs in its signature', () => {
@@ -210,7 +190,7 @@ describe('discover api adapter', () => {
   });
 
   it('parses detail fields, K/M metrics, and scoped highlights only', async () => {
-    mockDiscoverFetch();
+    mockDiscoverTransport();
 
     const detail = await getDiscoverSkillDetail('/vercel-labs/skills/find-skills');
 
@@ -219,7 +199,7 @@ describe('discover api adapter', () => {
     expect(detail.summaryHtml).toContain('<ul>');
     expect(detail.summaryHtml).toContain('Use the results to compare candidate skills before installation.');
     expect(detail.installCommand).toBe('npx skills add https://github.com/vercel-labs/skills --skill find-skills');
-    expect(detail.detailUrl).toBe('https://skills.sh/vercel-labs/skills/find-skills');
+    expect(detail.detailUrl).toBe('https://www.skills.sh/vercel-labs/skills/find-skills');
     expect(detail.repoUrl).toBe('https://github.com/vercel-labs/skills');
     expect(detail.source).toBe('vercel-labs/skills');
     expect(detail.stars).toBe(12800);
@@ -229,17 +209,17 @@ describe('discover api adapter', () => {
       {
         name: 'Gen Agent Trust Hub',
         status: 'pass',
-        url: 'https://skills.sh/vercel-labs/skills/find-skills/security/agent-trust-hub',
+        url: 'https://www.skills.sh/vercel-labs/skills/find-skills/security/agent-trust-hub',
       },
       {
         name: 'Socket',
         status: 'pass',
-        url: 'https://skills.sh/vercel-labs/skills/find-skills/security/socket',
+        url: 'https://www.skills.sh/vercel-labs/skills/find-skills/security/socket',
       },
       {
         name: 'Snyk',
         status: 'warn',
-        url: 'https://skills.sh/vercel-labs/skills/find-skills/security/snyk',
+        url: 'https://www.skills.sh/vercel-labs/skills/find-skills/security/snyk',
       },
     ]);
     expect(detail.installedOn).toEqual([
@@ -261,11 +241,12 @@ describe('discover api adapter', () => {
     expect(detail.contentHtml).toContain('<h2>Usage</h2>');
     expect(detail.contentHtml).toContain('Run it before selecting a new skill to install.');
     expect(detail.contentHtml).toContain('This list item belongs to the full SKILL.md');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(detailMock).toHaveBeenCalledOnce();
+    expect(detailMock).toHaveBeenCalledWith('vercel-labs/skills', 'find-skills');
   });
 
   it('caches skill detail requests', async () => {
-    mockDiscoverFetch();
+    mockDiscoverTransport();
 
     const first = await getDiscoverSkillDetail('/vercel-labs/skills/find-skills');
     const second = await getDiscoverSkillDetail('/vercel-labs/skills/find-skills');
@@ -282,7 +263,6 @@ describe('discover api adapter', () => {
     ]);
     expect(first.contentHtml).toContain('<h2>Usage</h2>');
     expect(second).toEqual(first);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(detailMock).toHaveBeenCalledOnce();
   });
 });
-

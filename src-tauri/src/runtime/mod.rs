@@ -23,17 +23,26 @@ use crate::application::update_runtime::{
     build_runtime_update_service, RuntimeUpdateCheckService, RuntimeUpdateService,
 };
 use crate::core::projects::ProjectMigrationRegistry;
-use crate::core::{GithubApiClient, GithubTokenProvider};
+use crate::core::GithubTokenProvider;
 use crate::environment::native::acquire::NativePayloadSessionStorage;
 use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::project_service::initialize_native_project_migration;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
+use crate::runtime::discovery::DiscoveryGateway;
+use crate::runtime::github_client::GithubApiClient;
+use crate::runtime::http_transport::HttpTransport;
 use crate::runtime::proxy_settings::ProxySettingsStore;
 use crate::storage::github_credentials::KeyringGithubCredentialStore;
 
+pub(crate) mod discovery;
+pub(crate) mod github;
+pub(crate) mod github_client;
+pub(crate) mod http_transport;
 pub mod maintenance;
 pub(crate) mod proxy_settings;
+pub(crate) mod wellknown;
+pub(crate) mod wellknown_protocol;
 
 use maintenance::{RuntimeMaintenanceCoordinator, RuntimeMaintenanceTasks};
 
@@ -57,6 +66,7 @@ pub struct RuntimeServiceGraph {
     agent_selection_facts: RuntimePlanningFactSource,
     agent_selection_targets: RuntimeTargetFactResolver,
     proxy_settings: Arc<ProxySettingsStore>,
+    discovery: DiscoveryGateway,
 }
 
 impl RuntimeServiceGraph {
@@ -68,6 +78,8 @@ impl RuntimeServiceGraph {
         let config = crate::core::read_config()?;
         let wsl_integration_enabled = cfg!(target_os = "windows") && config.wsl_integration_enabled;
         let proxy_settings = Arc::new(ProxySettingsStore::new(config.network_proxy));
+        let http = HttpTransport::new(proxy_settings.clone());
+        let discovery = DiscoveryGateway::new(http.clone());
         let wsl = Arc::new(WslRuntime::new_with_support(
             cfg!(target_os = "windows"),
             wsl_integration_enabled,
@@ -83,7 +95,7 @@ impl RuntimeServiceGraph {
         );
         let github_credentials = Arc::new(GithubCredentialService::new(
             Arc::new(KeyringGithubCredentialStore),
-            Arc::new(GithubApiClient::new()),
+            Arc::new(GithubApiClient::with_network(http)),
             Arc::new(resolve_environment_github_token),
         ));
         let github_token_provider: Arc<dyn GithubTokenProvider> = github_credentials.clone();
@@ -166,6 +178,7 @@ impl RuntimeServiceGraph {
             agent_selection_facts,
             agent_selection_targets,
             proxy_settings,
+            discovery,
         })
     }
 
@@ -247,6 +260,10 @@ impl RuntimeServiceGraph {
 
     pub(crate) fn activate_network_settings(&self, settings: crate::models::NetworkProxySettings) {
         self.proxy_settings.replace_settings(settings);
+    }
+
+    pub(crate) fn discovery(&self) -> &DiscoveryGateway {
+        &self.discovery
     }
 }
 

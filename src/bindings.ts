@@ -339,6 +339,30 @@ async copySkillToProjects(request: CopyExecutionRequest) : Promise<Result<CopyRe
     else return { status: "error", error: e  as any };
 }
 },
+async searchDiscoverSkills(query: string) : Promise<Result<DiscoverSearchPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_discover_skills", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getDiscoverLeaderboard(tab: DiscoverLeaderboardTab) : Promise<Result<DiscoverLeaderboardPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_discover_leaderboard", { tab }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getDiscoverSkillDetail(source: string, skill: string) : Promise<Result<string, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_discover_skill_detail", { source, skill }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async listEnvironments() : Promise<Result<EnvironmentDiscoverySnapshot, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_environments") };
@@ -503,7 +527,7 @@ export type AgentStorageIssue = { code: string; message: string; readOnly: boole
 export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
 export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
-export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
+export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
@@ -578,6 +602,9 @@ export type DetectionSpec = { kind: "anyPathExists"; paths: PathSpec[] }
 export type DetectionState = "detected" | "notDetected" | "indeterminate"
 export type DirectoryPresenceState = "present" | "missing" | "legacyPath" | "brokenLink" | "conflictingEntry" | "unsafePath" | "environmentUnavailable" | "projectNotSelected"
 export type DisabledAgentConflict = { definition: CustomAgentDefinition; builtin: AgentDefinition; raw: unknown }
+export type DiscoverLeaderboardPayload = { leaderboardHtml: string; officialCreators: string[] | null }
+export type DiscoverLeaderboardTab = "popular" | "trending" | "hot"
+export type DiscoverSearchPayload = { searchJson: string; officialCreators: string[] | null }
 export type DiscoverySessionHandle = { sessionId: string; environment: EnvironmentRef; sourceFingerprint: string; expiresAtEpochMs: number }
 export type EnvironmentDiscoverySnapshot = { environments: EnvironmentInfo[]; error: AppError | null; wslIntegrationSupported: boolean; wslIntegrationEnabled: boolean; wslCapabilityRevision: number }
 export type EnvironmentInfo = { environment: EnvironmentRef; displayName: string; status: EnvironmentStatus; revision: number; error: AppError | null }

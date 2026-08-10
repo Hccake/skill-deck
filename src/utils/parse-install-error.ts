@@ -65,6 +65,12 @@ export function parseInstallError(
         suggestions: [t('addSkill.error.suggestion.checkNetwork')],
       };
 
+    case 'discoveryRequestFailed':
+      return {
+        message: t('skills.discover.error'),
+        suggestions: [t('addSkill.error.suggestion.checkNetwork')],
+      };
+
     case 'gitAuthFailed':
       return {
         message: t('addSkill.error.authFailed'),

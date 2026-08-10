@@ -30,6 +30,7 @@ import type {
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
   NetworkProxySettings,
+  DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
 } from '@/bindings';
 
 export type {
@@ -55,6 +56,7 @@ export type {
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
   NetworkProxySettings,
+  DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
 };
 
 /** 解包 tauri-specta Result 类型，error 时抛出异常（保持与原有 invoke 行为一致） */
@@ -197,6 +199,25 @@ export async function saveProxySettings(
   settings: NetworkProxySettings,
 ): Promise<NetworkProxySettings> {
   return unwrap(await commands.saveProxySettings(settings));
+}
+
+export async function searchDiscoverSkillsTransport(
+  query: string,
+): Promise<DiscoverSearchPayload> {
+  return unwrap(await commands.searchDiscoverSkills(query));
+}
+
+export async function getDiscoverLeaderboardTransport(
+  tab: DiscoverLeaderboardTab,
+): Promise<DiscoverLeaderboardPayload> {
+  return unwrap(await commands.getDiscoverLeaderboard(tab));
+}
+
+export async function getDiscoverSkillDetailTransport(
+  source: string,
+  skill: string,
+): Promise<string> {
+  return unwrap(await commands.getDiscoverSkillDetail(source, skill));
 }
 
 export async function setWslIntegrationEnabled(

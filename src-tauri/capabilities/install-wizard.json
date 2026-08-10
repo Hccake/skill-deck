@@ -6,14 +6,6 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    {
-      "identifier": "http:default",
-      "allow": [
-        {
-          "url": "https://skills.sh/*"
-        }
-      ]
-    },
     "install-wizard-commands"
   ]
 }

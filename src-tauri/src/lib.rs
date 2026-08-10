@@ -72,6 +72,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::copy_skill::get_copy_agent_selection,
             commands::copy_skill::preview_copy_skill_to_projects,
             commands::copy_skill::copy_skill_to_projects,
+            commands::discover::search_discover_skills,
+            commands::discover::get_discover_leaderboard,
+            commands::discover::get_discover_skill_detail,
             commands::environments::list_environments,
             commands::environments::connect_environment,
             commands::environments::map_environment_path,
@@ -145,7 +148,6 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
