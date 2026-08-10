@@ -16,7 +16,6 @@ const mocks = vi.hoisted(() => ({
   listSkills: vi.fn(),
   listAgents: vi.fn(),
   checkUpdates: vi.fn(),
-  checkSkillAudit: vi.fn(),
   toastError: vi.fn(),
 }));
 
@@ -24,7 +23,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
   listSkills: (...args: unknown[]) => mocks.listSkills(...args),
   listAgents: (...args: unknown[]) => mocks.listAgents(...args),
   checkUpdates: (...args: unknown[]) => mocks.checkUpdates(...args),
-  checkSkillAudit: (...args: unknown[]) => mocks.checkSkillAudit(...args),
 }));
 
 vi.mock('sonner', () => ({ toast: { error: mocks.toastError } }));
@@ -115,7 +113,6 @@ describe('skills data store', () => {
     updateInfoCache.clear();
     useSkillsDataStore.setState({
       snapshots: {},
-      auditCache: {},
       updateCheckSessions: {},
       isSyncing: false,
       checkingUpdateScopes: new Set(),

@@ -5,7 +5,6 @@ import { Channel } from '@tauri-apps/api/core';
 import type {
   AgentId, AgentRuntimeSnapshot, ListSkillsResult, InstalledSkillLocation,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
-  SkillAuditData,
   InstallRiskPolicy, InstallRiskKind,
   AgentDeleteImpact,
   AgentDeleteResult,
@@ -35,7 +34,6 @@ import type {
 export type {
   AgentId, AgentRuntimeSnapshot, ListSkillsResult, InstalledSkillLocation,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
-  SkillAuditData,
   InstallRiskPolicy, InstallRiskKind,
   SkillLocationRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
   EnvironmentRef, AddProjectResult, InstallWizardSessionSnapshot, MutationSnapshot,
@@ -370,19 +368,6 @@ export async function updateSkillsBatch(
   expectedToken: PreviewToken,
 ): Promise<UpdateResponse> {
   return unwrap(await commands.updateSkillsBatch(execution, expectedToken));
-}
-
-// ============ 安全审计 API ============
-
-/**
- * 检查 skill 安全审计数据
- * 3 秒超时，graceful degradation
- */
-export async function checkSkillAudit(
-  source: string,
-  skills: string[]
-): Promise<Partial<Record<string, SkillAuditData>> | null> {
-  return unwrap(await commands.checkSkillAudit(source, skills));
 }
 
 // ============ 向导窗口 API ============

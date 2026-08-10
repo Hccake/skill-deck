@@ -291,17 +291,6 @@ async focusInstallWizard() : Promise<Result<boolean, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * 检查 skill 的安全审计数据
- */
-async checkSkillAudit(source: string, skills: string[]) : Promise<Result<Partial<{ [key in string]: SkillAuditData }> | null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("check_skill_audit", { source, skills }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async previewManageSkillAgents(request: ManageAgentsPreviewRequest) : Promise<Result<ManageAgentsPreviewOutcome, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("preview_manage_skill_agents", { request }) };
@@ -784,19 +773,11 @@ export type ResolvedAgentScope = { enabled: boolean; readsStandard: boolean; sta
 export type ResolvedPathPresence = { path: string | null; presence: DirectoryPresenceState }
 export type ResourceLocator = { environment: EnvironmentRef; nativePath: string }
 /**
- * 风险等级
- */
-export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical" | "unknown"
-/**
  * 安装范围
  */
 export type Scope = "global" | "project"
 export type ScopeDefinition = { enabled: boolean; readsStandard: boolean; privatePath: PathSpec | null }
 export type ScopeLocation = "standard" | "private" | "both"
-/**
- * Skill 审计数据
- */
-export type SkillAuditData = { risk: RiskLevel; alerts?: number | null; score?: number | null; analyzedAt: string }
 /**
  * Skill Deck 应用配置
  * 持久化到 ~/.skill-deck/config.json

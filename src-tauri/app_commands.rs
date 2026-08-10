@@ -2,7 +2,6 @@ pub const APP_COMMANDS: &[&str] = &[
     "acquire_selected_payloads",
     "add_environment_project",
     "check_application_update",
-    "check_skill_audit",
     "check_updates",
     "clear_github_credential",
     "confirm_recovery_resource_resolved",

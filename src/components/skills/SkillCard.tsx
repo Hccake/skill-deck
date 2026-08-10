@@ -36,7 +36,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { AgentId, InstalledSkill, RiskLevel, InstalledSkillLocation } from '@/bindings';
+import type { AgentId, InstalledSkill, InstalledSkillLocation } from '@/bindings';
 import {
   hasIncompleteUpdateCheck,
   hasCommittedUpdateComparison,
@@ -50,7 +50,6 @@ import {
   type SkillUpdateDisplayStatus,
   type SkillListItem,
 } from '@/stores/skills-utils';
-import { RiskBadge } from './RiskBadge';
 
 /** 默认空 Map，避免每次 render 创建新引用 — rerender-memo-with-default-value 规则 */
 const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
@@ -67,8 +66,6 @@ interface SkillCardProps {
   projectPath?: string;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentId, string>;
-  /** 安全审计风险等级 */
-  riskLevel?: RiskLevel;
   /** 其他写操作进行中，禁止发起新的 Skill 写入 */
   writeBlocked?: boolean;
   /** 点击卡片打开详情 */
@@ -86,7 +83,6 @@ export const SkillCard = memo(function SkillCard({
   hasConflict = false,
   updateStatus,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
-  riskLevel,
   writeBlocked = false,
   onClick,
   onUpdate,
@@ -200,9 +196,6 @@ export const SkillCard = memo(function SkillCard({
               <div className="flex min-w-0 items-center gap-2">
                 {/* Skill Name */}
                 <h3 className="truncate text-[15px] font-heading font-semibold leading-tight tracking-tight text-foreground">{skill.name}</h3>
-
-                {/* Risk Badge */}
-                {riskLevel ? <RiskBadge risk={riskLevel} /> : null}
 
                 <CrossfadeSwap transitionKey={updateStatusLabelKey ?? 'none'}>
                   {updateStatusLabelKey ? (

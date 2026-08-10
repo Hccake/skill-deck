@@ -1,7 +1,6 @@
 // src-tauri/src/commands/mod.rs
 pub mod agent_selection;
 pub mod agents;
-pub mod audit;
 pub mod config;
 pub mod copy_skill;
 pub mod environments;

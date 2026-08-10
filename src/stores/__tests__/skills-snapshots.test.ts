@@ -20,7 +20,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
   previewUpdate: (...args: unknown[]) => mocks.previewUpdate(...args),
   updateSkill: (...args: unknown[]) => mocks.updateSkill(...args),
   updateSkillsBatch: (...args: unknown[]) => mocks.updateSkillsBatch(...args),
-  checkSkillAudit: vi.fn(),
 }));
 
 const ubuntuGlobal: SkillLocationRef = {

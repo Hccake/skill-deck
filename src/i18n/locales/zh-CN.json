@@ -1055,16 +1055,6 @@
   "language": {
     "switchTo": "切换到英文"
   },
-  "audit": {
-    "risk": {
-      "safe": "安全",
-      "low": "低风险",
-      "medium": "中风险",
-      "high": "高风险",
-      "critical": "严重",
-      "unknown": "未知"
-    }
-  },
   "mutation": {
     "status": "{{environment}} / {{scope}} · {{status}}",
     "activity": "{{operation}} · {{phase}}",

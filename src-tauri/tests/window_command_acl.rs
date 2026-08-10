@@ -34,11 +34,6 @@ fn get_manage_agent_selection() -> &'static str {
 }
 
 #[tauri::command]
-fn check_skill_audit() -> &'static str {
-    "check-skill-audit"
-}
-
-#[tauri::command]
 fn list_environment_projects() -> &'static str {
     "list-environment-projects"
 }
@@ -128,7 +123,6 @@ fn test_app() -> App<MockRuntime> {
             acquire_selected_payloads,
             get_install_agent_selection,
             get_manage_agent_selection,
-            check_skill_audit,
             list_environment_projects,
             get_active_mutation,
             get_install_wizard_session,
@@ -435,7 +429,6 @@ fn install_wizard_allows_every_shared_runtime_command_used_by_the_flow() {
     let wizard = window(&app, "install-wizard");
 
     for (command, expected) in [
-        ("check_skill_audit", "check-skill-audit"),
         ("list_environment_projects", "list-environment-projects"),
         ("get_active_mutation", "get-active-mutation"),
         (

@@ -23,7 +23,6 @@ const api = vi.hoisted(() => ({
   previewUpdate: vi.fn(),
   updateSkill: vi.fn(),
   updateSkillsBatch: vi.fn(),
-  checkSkillAudit: vi.fn(),
   getInstallWizardSession: vi.fn(),
 }));
 

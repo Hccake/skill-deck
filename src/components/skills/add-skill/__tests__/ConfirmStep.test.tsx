@@ -9,7 +9,6 @@ import type { InstallAgentSelectionSnapshot, InstallMode, InstallPreviewOutcome 
 import { useAgentSelectionSession } from '@/hooks/useAgentSelectionSession';
 import {
   acquireSelectedPayloads,
-  checkSkillAudit,
   getInstallAgentSelection,
   previewInstall,
 } from '@/hooks/useTauriApi';
@@ -25,17 +24,18 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+const audit = vi.hoisted(() => vi.fn());
+
 vi.mock('@/hooks/useTauriApi', () => ({
   acquireSelectedPayloads: vi.fn(),
   previewInstall: vi.fn(),
   getInstallAgentSelection: vi.fn(),
-  checkSkillAudit: vi.fn(),
+  checkSkillAudit: audit,
 }));
 
 const acquirePayloads = vi.mocked(acquireSelectedPayloads);
 const preview = vi.mocked(previewInstall);
 const getSelection = vi.mocked(getInstallAgentSelection);
-const audit = vi.mocked(checkSkillAudit);
 
 function readyPreview(overwriteTargets: string[] = []): InstallPreviewOutcome {
   return {
@@ -158,7 +158,7 @@ describe('ConfirmStep', () => {
     vi.clearAllMocks();
     acquirePayloads.mockResolvedValue([]);
     preview.mockResolvedValue(readyPreview());
-    audit.mockResolvedValue(null);
+    audit.mockReset();
   });
 
   it('previews the immutable selection submission from the Backend snapshot', async () => {
@@ -179,6 +179,13 @@ describe('ConfirmStep', () => {
       discoverySession: state().discoverySession,
       skillPaths: ['skills/demo/SKILL.md'],
     });
+  });
+
+  it('does not send a manual source to third-party audit services', async () => {
+    renderConfirm(state({ source: '/home/alice/private-skills' }));
+
+    await waitFor(() => expect(preview).toHaveBeenCalledOnce());
+    expect(audit).not.toHaveBeenCalled();
   });
 
   it('returns to Agent selection with the latest snapshot when the revision is stale', async () => {

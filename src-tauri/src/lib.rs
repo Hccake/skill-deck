@@ -66,7 +66,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::wizard::open_install_wizard,
             commands::wizard::get_install_wizard_session,
             commands::wizard::focus_install_wizard,
-            commands::audit::check_skill_audit,
             commands::manage_agents::preview_manage_skill_agents,
             commands::manage_agents::get_manage_agent_selection,
             commands::manage_agents::manage_skill_agents,

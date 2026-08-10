@@ -354,6 +354,19 @@ describe('SkillsPanel', () => {
     expect(screen.getByText('cross-storage-warning')).toBeDefined();
   });
 
+  it('does not send installed Skill sources to third-party audit services', async () => {
+    mocks.skillsDataState.snapshots = {
+      'native/global': snapshot([makeSkill('private-toolkit')]),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    await waitFor(() => {
+      expect(mocks.skillsDataState.refreshWorkspace).toHaveBeenCalledWith(nativeGlobal);
+    });
+    expect(mocks.skillsDataState.fetchAuditForSkills).not.toHaveBeenCalled();
+  });
+
   it('opens the repair source dialog for repairable skills instead of the install wizard', async () => {
     mocks.skillsDataState.snapshots = {
       'native/global': snapshot([makeSkill('toolkit')]),

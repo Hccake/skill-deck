@@ -115,8 +115,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
   const openUpdate = useSkillUpdateWorkflow((s) => s.open);
   const refreshWorkspace = useSkillsDataStore((s) => s.refreshWorkspace);
   const syncSkills = useSkillsDataStore((s) => s.syncSkills);
-  const auditCache = useSkillsDataStore((s) => s.auditCache);
-  const fetchAuditForSkills = useSkillsDataStore((s) => s.fetchAuditForSkills);
   const selectSkill = useSkillDetailStore((s) => s.selectSkill);
   const deselectSkill = useSkillDetailStore((s) => s.deselectSkill);
   const selectedSkillRef = useSkillDetailStore((s) => s.selectedSkillRef);
@@ -165,15 +163,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedSkillRef, deselectSkill]);
-
-  // ③b 审计数据 — skills 变化后获取（仅对有 source 的 skills 请求）
-  useEffect(() => {
-    const allSkills = [...globalSkills, ...projectSkills];
-    const skillsWithSource = allSkills.filter((s) => s.source);
-    if (skillsWithSource.length > 0) {
-      fetchAuditForSkills(skillsWithSource);
-    }
-  }, [globalSkills, projectSkills, fetchAuditForSkills]);
 
   const filterableAgents = useMemo(() => {
     const agentsById = new Map<AgentId, ResolvedAgent>();
@@ -487,7 +476,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               isAutomaticCheckingUpdates={isAutomaticCheckingProject}
               hasCommittedComparison={hasCommittedComparison(projectSnapshot)}
               agentDisplayNames={agentDisplayNames}
-              auditCache={auditCache}
               onSkillClick={selectSkill}
               onPrepareUpdate={handlePrepareProjectUpdate}
               onDelete={handleDeleteProject}
@@ -513,7 +501,6 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             isAutomaticCheckingUpdates={isAutomaticCheckingGlobal}
             hasCommittedComparison={hasCommittedComparison(globalSnapshot)}
             agentDisplayNames={agentDisplayNames}
-            auditCache={auditCache}
             onSkillClick={selectSkill}
             onPrepareUpdate={handlePrepareGlobalUpdate}
             onDelete={handleDeleteGlobal}

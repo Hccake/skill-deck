@@ -6,14 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
-import { checkSkillAudit, type SkillAuditData } from '@/hooks/useTauriApi';
 import type { InstallAgentSelectionSnapshot } from '@/bindings';
 import type { AgentSelectionSessionController } from '@/hooks/useAgentSelectionSession';
 import { getSharedSkillDirectory } from '@/lib/agentTargets';
 import { projectAgentSelectionView } from '@/lib/agent-selection-view';
 import { prepareInstall } from '@/workflows/skill-install-preparation';
 import { formatAppError } from '@/utils/format-app-error';
-import { RiskBadge } from '../RiskBadge';
 import type { WizardState } from './types';
 
 interface ConfirmStepProps {
@@ -33,7 +31,6 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
   useEffect(() => { updateStateRef.current = updateState; });
   const requestIdRef = useRef(0);
   const [preparationAttempt, setPreparationAttempt] = useState(0);
-  const [auditData, setAuditData] = useState<Partial<Record<string, SkillAuditData>>>({});
   const selection = agentSelection.selection;
 
   useEffect(() => {
@@ -81,15 +78,6 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
     });
     return () => { cancelled = true; };
   }, [agentSelection, preparationAttempt, selection, state.availableSkills, state.context, state.discoverySession, state.preSelectedAgents, state.riskAcknowledged, state.selectedSkills, state.source]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!state.source || state.selectedSkills.length === 0) return;
-    void checkSkillAudit(state.source, state.selectedSkills)
-      .then((result) => { if (!cancelled) setAuditData(result ?? {}); })
-      .catch(() => { if (!cancelled) setAuditData({}); });
-    return () => { cancelled = true; };
-  }, [state.selectedSkills, state.source]);
 
   const availableSkillMap = useMemo(
     () => new Map(state.availableSkills.map((skill) => [skill.name, skill])),
@@ -167,7 +155,6 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{name}</span>
                 {(state.overwrites[name] ?? []).length > 0 ? <Badge variant="outline">{t('addSkill.confirm.overwriteGroup')}</Badge> : null}
                 {skill?.digestVerified ? <Badge variant="outline">{t('addSkill.confirm.trust.digestVerified')}</Badge> : null}
-                {auditData[name] ? <RiskBadge risk={auditData[name].risk} /> : null}
               </div>
             );
           })}

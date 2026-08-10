@@ -9,7 +9,7 @@ import { SkillCard } from './SkillCard';
 import { ProjectUnavailableState } from './EmptyStates';
 import { getSkillIdentityKey } from '@/lib/skills/identity';
 import { cn } from '@/lib/utils';
-import type { AgentId, InstalledSkill, SkillAuditData, InstalledSkillLocation, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
+import type { AgentId, InstalledSkill, InstalledSkillLocation, SourceUpdateCheckInfo, UpdateCheckOutcome } from '@/bindings';
 import {
   buildUpdatePlan,
   isSkillUpdateActive,
@@ -28,7 +28,6 @@ import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
 const EMPTY_CONFLICT_SET = new Set<string>();
 const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
-const EMPTY_AUDIT_CACHE: Record<string, SkillAuditData> = {};
 const EMPTY_SOURCE_DIAGNOSTICS: SourceUpdateCheckInfo[] = [];
 
 interface SkillsSectionProps {
@@ -54,8 +53,6 @@ interface SkillsSectionProps {
   filterActive?: boolean;
   /** Agent display name 映射（agentId → displayName） */
   agentDisplayNames?: Map<AgentId, string>;
-  /** 审计数据缓存（skillName → SkillAuditData） */
-  auditCache?: Record<string, SkillAuditData>;
   onSkillClick: (skill: InstalledSkill) => void;
   onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
   onDelete: (skill: InstalledSkill) => void;
@@ -81,7 +78,6 @@ export const SkillsSection = memo(function SkillsSection({
   hasCommittedComparison = false,
   filterActive = false,
   agentDisplayNames = EMPTY_DISPLAY_NAMES,
-  auditCache = EMPTY_AUDIT_CACHE,
   onSkillClick,
   onPrepareUpdate,
   onDelete,
@@ -435,7 +431,6 @@ export const SkillsSection = memo(function SkillsSection({
                     updateStatus={updateStatus}
                     projectPath={scope === 'project' ? projectPath : undefined}
                     agentDisplayNames={agentDisplayNames}
-                    riskLevel={auditCache[skill.name]?.risk}
                     writeBlocked={writeBlocked}
                     onClick={onSkillClick}
                     onUpdate={handleUpdateSkill}

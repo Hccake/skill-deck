@@ -3,7 +3,6 @@ identifier = "shared-business-commands"
 description = "Commands shared by the main window and install wizard"
 permissions = [
   "allow-acquire-selected-payloads",
-  "allow-check-skill-audit",
   "allow-execute-lifecycle-action",
   "allow-fetch-available",
   "allow-get-active-mutation",

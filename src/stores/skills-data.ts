@@ -14,7 +14,6 @@ import {
 import {
   listSkills,
   checkUpdates,
-  checkSkillAudit,
 } from '@/hooks/useTauriApi';
 import { toAppError } from '@/utils/to-app-error';
 import { contextKey, environmentKey, globalContext } from '@/lib/context';
@@ -24,7 +23,6 @@ import type {
   ResolvedAgent,
   InstalledSkillLocation,
   SkillUpdateInfo,
-  SkillAuditData,
   SourceUpdateCheckInfo,
   UpdateCheckSelection,
   UpdateCheckResponse,
@@ -239,7 +237,6 @@ function clearLocalUpdateFlags(
 
 interface SkillsDataState {
   snapshots: Record<string, ContextSkillSnapshot>;
-  auditCache: Record<string, SkillAuditData>;
   updateCheckSessions: Record<string, UpdateCheckSession>;
 
   isSyncing: boolean;
@@ -261,7 +258,6 @@ interface SkillsDataState {
     selection: UpdateCheckSelection,
   ) => Promise<UpdateCheckOutcome | null>;
   applyUpdateResult: (context: SkillLocationRef, response: UpdateResponse) => Promise<void>;
-  fetchAuditForSkills: (skills: SkillListItem[]) => Promise<void>;
   markSourceRepairSucceeded: (context: SkillLocationRef, skillName: string) => void;
   clearNativeGithubProviderCooldown: () => void;
 }
@@ -331,7 +327,6 @@ function nextContextRequestGeneration(key: string): number {
 
 export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
   snapshots: {},
-  auditCache: {},
   updateCheckSessions: {},
 
   isSyncing: false,
@@ -840,34 +835,6 @@ export const useSkillsDataStore = create<SkillsDataState>()((set, get) => ({
       origin: 'selfMutation',
       mutatedSkillNames: Array.from(successfulSkillNames),
     });
-  },
-
-  fetchAuditForSkills: async (skills) => {
-    const bySource = new Map<string, string[]>();
-    for (const skill of skills) {
-      if (!skill.source) continue;
-      const existing = bySource.get(skill.source);
-      if (existing) {
-        existing.push(skill.name);
-      } else {
-        bySource.set(skill.source, [skill.name]);
-      }
-    }
-
-    const results = await Promise.all(
-      Array.from(bySource.entries()).map(([source, skillNames]) =>
-        checkSkillAudit(source, skillNames).catch(() => null)
-      )
-    );
-
-    const newCache: Record<string, SkillAuditData> = { ...get().auditCache };
-    for (const result of results) {
-      if (!result) continue;
-      for (const [name, data] of Object.entries(result)) {
-        if (data) newCache[name] = data;
-      }
-    }
-    set({ auditCache: newCache });
   },
 
   markSourceRepairSucceeded: (context, skillName) => {
