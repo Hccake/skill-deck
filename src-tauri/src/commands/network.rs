@@ -5,6 +5,7 @@ use crate::core::mutation::MutationKind;
 use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 use crate::error::AppError;
 use crate::models::NetworkProxySettings;
+use crate::runtime::network_connection::ProxyConnectionTestResult;
 use crate::runtime::RuntimeServiceGraph;
 
 #[tauri::command]
@@ -29,4 +30,14 @@ pub fn save_proxy_settings(
     network_settings::save_proxy_settings(settings, |settings| {
         runtime.activate_network_settings(settings)
     })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn test_proxy_connection(
+    settings: NetworkProxySettings,
+    wsl_distros: Vec<String>,
+    runtime: State<'_, RuntimeServiceGraph>,
+) -> Result<ProxyConnectionTestResult, AppError> {
+    runtime.connection_probe().run(settings, wsl_distros).await
 }

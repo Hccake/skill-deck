@@ -29,7 +29,7 @@ import type {
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
-  NetworkProxySettings,
+  NetworkProxySettings, ProxyConnectionTestResult,
   DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
 } from '@/bindings';
 
@@ -55,7 +55,7 @@ export type {
   RecoveryResourceId, RecoveryResourceStatus,
   ApplicationUpdateInfo, ApplicationUpdateProgress, ApplicationUpdateResult,
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
-  NetworkProxySettings,
+  NetworkProxySettings, ProxyConnectionTestResult,
   DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
 };
 
@@ -203,6 +203,13 @@ export async function saveProxySettings(
   settings: NetworkProxySettings,
 ): Promise<NetworkProxySettings> {
   return unwrap(await commands.saveProxySettings(settings));
+}
+
+export async function testProxyConnection(
+  settings: NetworkProxySettings,
+  wslDistros: string[],
+): Promise<ProxyConnectionTestResult> {
+  return unwrap(await commands.testProxyConnection(settings, wslDistros));
 }
 
 export async function searchDiscoverSkillsTransport(

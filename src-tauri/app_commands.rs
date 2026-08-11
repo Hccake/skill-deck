@@ -53,6 +53,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "save_custom_agent",
     "save_github_credential",
     "save_proxy_settings",
+    "test_proxy_connection",
     "search_discover_skills",
     "set_environment_project_cross_storage_warning",
     "set_wsl_integration_enabled",

@@ -119,16 +119,6 @@ fn clear_github_credential() -> &'static str {
 }
 
 #[tauri::command]
-fn get_proxy_settings() -> &'static str {
-    "get-proxy-settings"
-}
-
-#[tauri::command]
-fn save_proxy_settings() -> &'static str {
-    "save-proxy-settings"
-}
-
-#[tauri::command]
 fn search_discover_skills() -> &'static str {
     "search-discover-skills"
 }
@@ -141,6 +131,21 @@ fn get_discover_leaderboard() -> &'static str {
 #[tauri::command]
 fn get_discover_skill_detail() -> &'static str {
     "get-discover-skill-detail"
+}
+
+#[tauri::command]
+fn get_proxy_settings() -> &'static str {
+    "get-proxy-settings"
+}
+
+#[tauri::command]
+fn save_proxy_settings() -> &'static str {
+    "save-proxy-settings"
+}
+
+#[tauri::command]
+fn test_proxy_connection() -> &'static str {
+    "test-proxy-connection"
 }
 
 fn test_app() -> App<MockRuntime> {
@@ -169,11 +174,12 @@ fn test_app() -> App<MockRuntime> {
             get_github_credential_status,
             save_github_credential,
             clear_github_credential,
-            get_proxy_settings,
-            save_proxy_settings,
             search_discover_skills,
             get_discover_leaderboard,
             get_discover_skill_detail,
+            get_proxy_settings,
+            save_proxy_settings,
+            test_proxy_connection,
         ])
         .build(tauri::generate_context!())
         .expect("mock Tauri app")
@@ -284,10 +290,6 @@ fn main_window_allows_skill_repair_commands() {
         Ok(Value::from("open-config-resource"))
     );
     assert_eq!(
-        invoke(&main, "cancel_application_update_download"),
-        Ok(Value::from("cancel-application-update-download"))
-    );
-    assert_eq!(
         invoke(&main, "get_github_credential_status"),
         Ok(Value::from("get-github-credential-status"))
     );
@@ -306,6 +308,10 @@ fn main_window_allows_skill_repair_commands() {
     assert_eq!(
         invoke(&main, "save_proxy_settings"),
         Ok(Value::from("save-proxy-settings"))
+    );
+    assert_eq!(
+        invoke(&main, "test_proxy_connection"),
+        Ok(Value::from("test-proxy-connection"))
     );
     assert_eq!(
         invoke(&main, "search_discover_skills"),
@@ -351,6 +357,10 @@ fn main_window_allows_skill_repair_commands() {
         invoke(&main, "focus_install_wizard"),
         Ok(Value::from("focus-install-wizard"))
     );
+    assert_eq!(
+        invoke(&main, "cancel_application_update_download"),
+        Ok(Value::from("cancel-application-update-download"))
+    );
 }
 
 #[test]
@@ -361,18 +371,6 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_eq!(
         invoke(&wizard, "fetch_available"),
         Ok(Value::from("fetch-available"))
-    );
-    assert_eq!(
-        invoke(&wizard, "search_discover_skills"),
-        Ok(Value::from("search-discover-skills"))
-    );
-    assert_denied(
-        invoke(&wizard, "get_discover_leaderboard"),
-        "get_discover_leaderboard",
-    );
-    assert_denied(
-        invoke(&wizard, "get_discover_skill_detail"),
-        "get_discover_skill_detail",
     );
     assert_eq!(
         invoke(&wizard, "get_install_agent_selection"),
@@ -389,6 +387,18 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_eq!(
         invoke(&wizard, "install_skills"),
         Ok(Value::from("install-skills"))
+    );
+    assert_eq!(
+        invoke(&wizard, "search_discover_skills"),
+        Ok(Value::from("search-discover-skills"))
+    );
+    assert_denied(
+        invoke(&wizard, "get_discover_leaderboard"),
+        "get_discover_leaderboard",
+    );
+    assert_denied(
+        invoke(&wizard, "get_discover_skill_detail"),
+        "get_discover_skill_detail",
     );
     assert_denied(invoke(&wizard, "save_custom_agent"), "save_custom_agent");
     assert_denied(invoke(&wizard, "list_agents"), "list_agents");
@@ -436,6 +446,10 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "save_proxy_settings"),
         "save_proxy_settings",
+    );
+    assert_denied(
+        invoke(&wizard, "test_proxy_connection"),
+        "test_proxy_connection",
     );
     assert_denied(
         invoke(&wizard, "get_install_wizard_session"),

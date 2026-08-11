@@ -48,6 +48,7 @@ pub(crate) mod github;
 pub(crate) mod github_client;
 pub(crate) mod http_transport;
 pub mod maintenance;
+pub(crate) mod network_connection;
 pub(crate) mod proxy_settings;
 pub(crate) mod wellknown;
 pub(crate) mod wellknown_protocol;
@@ -117,6 +118,7 @@ pub struct RuntimeServiceGraph {
     agent_selection_targets: RuntimeTargetFactResolver,
     network_services: RuntimeNetworkServices,
     source_discovery: SourceDiscoveryService,
+    connection_probe: network_connection::RuntimeNetworkConnectionProbe,
 }
 
 impl RuntimeServiceGraph {
@@ -134,6 +136,7 @@ impl RuntimeServiceGraph {
             cfg!(target_os = "windows"),
             wsl_integration_enabled,
         ));
+        let connection_probe = network_connection::RuntimeNetworkConnectionProbe::new(wsl.clone());
         let (payloads, native_payload_storage) = build_payload_session_manager(payload_cache_root)?;
         let payloads = Arc::new(payloads);
         let wsl_source: Arc<dyn WslSourceAccess> =
@@ -251,6 +254,7 @@ impl RuntimeServiceGraph {
             agent_selection_targets,
             network_services,
             source_discovery,
+            connection_probe,
         })
     }
 
@@ -338,6 +342,10 @@ impl RuntimeServiceGraph {
 
     pub(crate) fn source_discovery(&self) -> &SourceDiscoveryService {
         &self.source_discovery
+    }
+
+    pub(crate) fn connection_probe(&self) -> &network_connection::RuntimeNetworkConnectionProbe {
+        &self.connection_probe
     }
 
     pub(crate) fn application_updater<R: tauri::Runtime>(

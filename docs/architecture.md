@@ -81,14 +81,14 @@ flowchart LR
 
 | 模块 | 职责 |
 |---|---|
-| `commands/` | 接收 Tauri 调用，读取调用窗口和共享状态，并转换 IPC 输入与输出 |
-| `application/` | 执行业务用例，组织当前运行状态、预览、执行、结果和恢复入口 |
+| `commands/` | 维护 Tauri command 与 IPC 类型，读取调用窗口和共享状态，并组织只属于当前功能的简短流程 |
+| `application/` | 维护跨命令、跨执行阶段或跨 Environment 复用的业务流程，组织当前运行状态、预览、执行、结果和恢复入口 |
 | `core/` | 维护 Agent、Skill、来源、lock、配置和注册表的共享类型、解析规则与基础实现 |
 | `environment/` | 解析操作位置和文件系统能力，提供 Windows、Unix 与 WSL 的路径、读取、获取和写入 Adapter |
 | `storage/` | 提供原子文档、兼容 lock、凭据和恢复数据的持久化 Adapter |
 | `runtime/` | 在应用启动时构造并持有常驻模块，连接应用用例与具体 Adapter |
 
-`RuntimeServiceGraph` 是 Rust 后端的组合根。Tauri 在启动阶段创建该组合根，命令处理函数再从中取得已经组装的应用用例和平台能力。`RuntimeAdmissionCoordinator` 由组合根持有，统一协调安装向导会话、Skill 写操作、设置变更、应用生命周期和应用更新之间的运行许可。
+`RuntimeServiceGraph` 是 Rust 后端的组合根，也是 Tauri Managed State。Tauri 在启动阶段创建该组合根，命令处理函数从中取得长生命周期状态、共享业务流程和平台能力。只服务于单个命令的流程可以保留在对应命令模块中；需要跨入口复用、长期持有状态或隔离平台差异时，再提取到相应模块。`RuntimeAdmissionCoordinator` 由组合根持有，统一协调安装向导会话、Skill 写操作、设置变更、应用生命周期和应用更新之间的运行许可。
 
 `application/mutation` 统一提供预览凭据签发与校验、变更计划组装和计划执行 Interface（调用方依赖的执行接口）。安装、更新、来源修复、复制、移除和调整 Agent 关联等应用用例负责各自的业务策略，把已经决定的写入内容交给规划模块，并调用该 Interface。`RuntimePlanExecutor` 作为运行时 Adapter 协调变更任务，具体 Environment Adapter 负责目标文件系统上的读取与写入。写入的一致性和恢复协议见[执行与恢复](./execution-and-recovery.md)。
 
@@ -104,19 +104,27 @@ Tauri 的 capability 和 permission 配置采用默认拒绝策略。每个窗�
 
 ## 外部网络访问
 
-Rust 运行时持有当前已经验证的代理设置。设置保存流程先持久化，再原子替换运行时当前值；持久化失败时运行时设置保持不变。底层客户端或进程已经开始的单次执行继续使用创建时的配置，后续执行使用新设置。
+外部网络能力由 Skill 目录、Skill 来源、来源证据、连接测试和应用更新等具体产品 Module 提供。Command 只进入这些 Module 的 Interface；Application 不依赖通用 HTTP 请求、网络用途枚举、代理路由计划、reqwest、Git 进程、WSL session 或 Tauri Updater 类型。产品 Module 隐藏具体外部实现；只有平台实现或外部能力确实存在变化时才建立 seam，单一具体流程直接由 Runtime Module 实现。
 
-Discover 页面通过受限的 Tauri 命令访问 `www.skills.sh`。当前 Discovery 数据契约使用 `/api/search`；排行榜、详情及前端补全的站内地址使用相同的规范站点。官方发布者信息在首次实际使用时后台加载，核心内容不等待这项辅助请求。Discover 响应携带的安全审计信息只随内容展示，应用不会把已安装 Skill 或用户手动输入的来源自动发送给第三方审计服务。
+Rust 运行时持有当前已经验证的代理设置，设置保存成功后才原子替换。HTTP 请求、Git 命令和 Updater 操作在实际执行前读取当前设置；底层客户端或进程已经开始的单次执行继续使用创建时的配置，后续执行使用新设置。连接测试使用页面传入的设置草稿，不替换运行时设置。
 
-前端脚本没有访问通用外部 HTTP 接口的权限。Discover 富文本中的 HTTPS 图片由平台 WebView 按系统网络设置加载，不经过 Rust HTTP Transport，也不使用应用保存的自定义代理。
+Discover 页面通过受限的 Tauri 命令访问 `www.skills.sh`。当前 Discovery 数据契约使用 `/api/search`；排行榜、详情及前端补全的站内地址使用相同的规范站点。本次主机名统一不改变 API 版本或响应模型。官方发布者信息在搜索或榜单首次实际使用时由后台加载，核心内容只读取当时已经完成的进程内缓存，不等待这项辅助请求。加载失败不会写入缓存，后续实际请求可以再次尝试。Discover 返回的安全审计信息只随 Discover 内容展示；应用不会把已安装 Skill 或用户手动输入的来源自动发送给第三方审计服务。
 
-Runtime 内部的共享 HTTP Transport 为 Discover、GitHub API 和 Well-known Adapter 复用 reqwest 连接池。Direct 明确关闭客户端自动代理发现，Custom Proxy 只配置用户保存的一个代理地址。Transport 统一执行调用方给出的总时限、取消和响应读取上限；响应格式、Content-Type、大小和解包规模由消费内容的产品 Module 维护。
+前端脚本没有访问通用外部 HTTP 接口的权限，`connect-src` 只允许应用自身和 Tauri IPC。Discover 富文本中的 HTTPS 图片属于 CSP 允许的 WebView 子资源，由平台 WebView 按系统网络设置加载，不经过 Rust HTTP Transport，也不使用应用保存的自定义代理。图片加载失败不影响正文展示。
 
-应用更新在创建官方 Tauri Updater 对象时读取当前代理设置，并通过插件的 `proxy` 或 `no_proxy` 配置映射 Direct 或 Custom Proxy。官方插件负责读取 Tauri endpoint、按配置顺序检查版本、域名解析、重定向、下载安装包、验证签名和执行安装；Skill Deck 不增加 host allowlist、自定义重定向、读取停滞时限或运行时响应大小限制。`ApplicationUpdateCoordinator` 只维护运行许可、期望版本确认、取消窗口、进度、安装阶段切换和操作总时限。下载调用开始后即可取消，制品下载完成并进入签名校验和安装后关闭取消入口。发布流程继续检查清单和安装资产大小，这些检查不改变客户端运行时行为。
+Runtime 内部的共享 HTTP Transport 为 Discover、GitHub API 和 Well-known Adapter 复用 reqwest 连接池。Direct 明确关闭客户端自动代理发现，Custom Proxy 只配置用户保存的一个代理地址。HTTP Transport 执行调用方给出的总时限、取消和响应读取上限，不判断请求用途、目标主机或 DNS 地址类型；响应格式、Content-Type、大小和解包规模由消费该内容的产品 Module 维护。
 
-用户输入的 Well-known 来源允许使用 HTTP 或 HTTPS，并按普通客户端行为访问公开、本机或局域网地址。来源获取不预解析目标域名、不区分公网与私网地址，也不把解析结果固定到客户端；内容格式、摘要和解包检查继续由 Well-known 来源 Module 负责。
+用户输入的 Well-known 来源允许使用 HTTP 或 HTTPS，并按普通客户端行为访问公开、本机或局域网地址。来源获取不预解析目标域名、不区分公网与私网地址，也不把解析结果固定到客户端。索引、详情、制品和重定向使用相同的 HTTP 或 HTTPS 访问规则；内容格式、摘要和解包检查继续由 Well-known 来源 Module 负责。
 
-Skill 来源 Module 根据操作位置选择 Native 或 WSL Git Adapter，并按目标 Environment、远端 URL 和当前代理设置生成进程级策略。选择保留 Git 原有连接方式时，Adapter 不传入覆盖项。远端 URL 命中代理使用范围时，Adapter 通过单次命令的 `git -c http.proxy=<proxy>` 注入对应 Environment 的代理地址；SSH 和未命中范围的远端不接收 HTTP 代理覆盖。
+普通 HTTP 请求的连接与响应读取共用调用方给出的总时限，取消信号会中止当前请求。每个独立请求生成 `operation_id`；同一次 Well-known 获取中的索引、详情和制品请求复用同一标识，使本地日志可以关联失败阶段。日志不主动记录认证 Header、密码或响应正文。
+
+应用更新在创建官方 Tauri Updater 对象时读取当前代理设置，并通过插件的 `proxy` 或 `no_proxy` 配置映射 Direct 或 Custom Proxy。官方插件负责读取 Tauri endpoint、按配置顺序检查版本、域名解析、重定向、下载安装包、验证签名和执行安装；Skill Deck 不增加 host allowlist、自定义重定向、读取停滞时限或运行时响应大小限制。`ApplicationUpdateCoordinator` 只维护运行许可、期望版本确认、取消窗口、进度、安装阶段切换和操作总时限。下载调用开始后即可取消，制品下载完成并进入签名校验和安装后关闭取消入口。发布流程继续检查清单和安装资产大小，这些检查不改变客户端运行时行为。连接测试使用独立且明确展示的 10 秒诊断时限。
+
+GitHub API 请求使用固定的 API 版本和 JSON 媒体类型。客户端同时识别主要限流响应头和 secondary rate limit 响应正文；来源证据协调器负责记录 provider 级等待时间、合并并发检查，并在等待期结束前阻止 Automatic 和 Force 请求再次访问 GitHub。
+
+Skill 来源 Module 根据操作位置选择 Native 或 WSL Git Adapter，并按目标 Environment、远端 URL 和当前代理设置生成进程级策略。HTTP 请求、Native Git 和各 WSL Git 的代理策略相互独立；WSL Git 也可以显式继承 Native Git 的策略。
+
+选择保留 Git 原有连接方式时，Adapter 不传入覆盖项。远端 URL 命中代理使用范围时，Adapter 通过单次命令的 `git -c http.proxy=<proxy>` 注入对应 Environment 的代理地址；未命中使用范围时不传入 `http.proxy` 覆盖，由 Git 使用已有配置和环境设置。其他协议同样不接收 `http.proxy` 覆盖。
 
 传给 WSL 的代理 URL 必须从对应发行版内部可访问。WSL Adapter 原样传入页面解析后的地址，不探测网络模式、不解析宿主网关，也不改写回环地址。该过程不会读取、写入或清除用户的持久化 Git 代理配置。
 
@@ -204,7 +212,7 @@ Skill Deck 启动外部进程时，根据操作是否需要向用户显示界面
 - 写入前重新确认目标文件系统、目录身份、路径关系和当前运行状态；
 - Windows、Unix 和 WSL Adapter 使用目标文件系统的原生路径与原子文件操作能力；
 - GitHub Token 保存在操作系统安全存储，不进入 lock、更新检查状态或用户可见诊断；
-- 内部错误细节保留在本机日志，前端只接收稳定错误代码、参数和受控标识。
+- 前端错误协议使用稳定的错误类别和参数；帮助用户排查本机 Git 配置的诊断可以作为有界参数返回，其他内部错误细节保留在本机日志。
 
 路径安全、原子写入和恢复保证见[执行与恢复](./execution-and-recovery.md)。
 

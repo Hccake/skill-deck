@@ -223,6 +223,8 @@ HTTP 请求、本机 Git 和各 WSL 发行版中的 Git 分别设置连接方式
 
 Git 代理只通过本次进程的 `http.proxy` 参数生效，不读取、修改或清除持久化 Git 配置。
 
+用户可以在保存前测试当前页面中的设置。连接测试始终通过 `https://www.skills.sh/api/search` 的轻量查询检查在线 Skill 搜索，并通过 `https://github.com/hccake/skill-deck.git` 检查应用所在系统和当前页面中所有 WSL 发行版的 Git 连接。每项检查最多等待 10 秒，测试结果不会保存当前设置，也不表示任意 Well-known 地址、更新服务器或在线图片都可以访问。
+
 ### Projects
 
 页面管理应用所在系统中已添加的项目；Windows 启用 WSL 支持后，则管理主窗口当前选择的 Windows 或 WSL 位置中的项目。WSL 发行版不可用或正在切换时，新增和移除操作保持禁用。

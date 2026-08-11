@@ -113,6 +113,54 @@ async setWslIntegrationEnabled(enabled: boolean) : Promise<Result<EnvironmentDis
     else return { status: "error", error: e  as any };
 }
 },
+async getDiscoverLeaderboard(tab: DiscoverLeaderboardTab) : Promise<Result<DiscoverLeaderboardPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_discover_leaderboard", { tab }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getDiscoverSkillDetail(source: string, skill: string) : Promise<Result<string, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_discover_skill_detail", { source, skill }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async searchDiscoverSkills(query: string) : Promise<Result<DiscoverSearchPayload, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_discover_skills", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProxySettings() : Promise<Result<NetworkProxySettings, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_proxy_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveProxySettings(settings: NetworkProxySettings) : Promise<Result<NetworkProxySettings, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_proxy_settings", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async testProxyConnection(settings: NetworkProxySettings, wslDistros: string[]) : Promise<Result<ProxyConnectionTestResult, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("test_proxy_connection", { settings, wslDistros }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getGithubCredentialStatus() : Promise<Result<GithubCredentialStatus, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_github_credential_status") };
@@ -339,30 +387,6 @@ async copySkillToProjects(request: CopyExecutionRequest) : Promise<Result<CopyRe
     else return { status: "error", error: e  as any };
 }
 },
-async searchDiscoverSkills(query: string) : Promise<Result<DiscoverSearchPayload, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("search_discover_skills", { query }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getDiscoverLeaderboard(tab: DiscoverLeaderboardTab) : Promise<Result<DiscoverLeaderboardPayload, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_discover_leaderboard", { tab }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getDiscoverSkillDetail(source: string, skill: string) : Promise<Result<string, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_discover_skill_detail", { source, skill }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async listEnvironments() : Promise<Result<EnvironmentDiscoverySnapshot, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_environments") };
@@ -438,30 +462,6 @@ async requestCancelActiveMutation() : Promise<Result<boolean, AppError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getProxySettings() : Promise<Result<NetworkProxySettings, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_proxy_settings") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async saveProxySettings(settings: NetworkProxySettings) : Promise<Result<NetworkProxySettings, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("save_proxy_settings", { settings }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cancelApplicationUpdateDownload() : Promise<Result<boolean, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_application_update_download") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async checkApplicationUpdate() : Promise<Result<ApplicationUpdateInfo | null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_application_update") };
@@ -473,6 +473,14 @@ async checkApplicationUpdate() : Promise<Result<ApplicationUpdateInfo | null, Ap
 async downloadAndInstallApplicationUpdate(expectedVersion: string, progress: TAURI_CHANNEL<ApplicationUpdateProgress>) : Promise<Result<ApplicationUpdateResult, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("download_and_install_application_update", { expectedVersion, progress }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelApplicationUpdateDownload() : Promise<Result<boolean, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_application_update_download") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -810,6 +818,9 @@ export type PhysicalIdentityComparison = "same" | "different" | "unknown"
 export type PreviewToken = { generation: string; registryRevision: string; environmentRevision: string; contextRevision: ContextSnapshotRevision }
 export type ProjectInfo = { binding: RegisteredProject; storage: ProjectStorageInfo }
 export type ProjectStorageInfo = { access: StorageAccess; owner: EnvironmentRef | null }
+export type ProxyConnectionProbe = { status: ProxyConnectionStatus; elapsedMs: number; reasonCode: string | null }
+export type ProxyConnectionStatus = "succeeded" | "failed" | "skipped"
+export type ProxyConnectionTestResult = { onlineServices: ProxyConnectionProbe; nativeGit: ProxyConnectionProbe; wslGitByDistro: Partial<{ [key in string]: ProxyConnectionProbe }> }
 export type ProxyMode = "custom" | "direct"
 export type RecoveryAction = { resourceId: RecoveryResourceId; suggestedActionCode: SuggestedActionCode }
 export type RecoveryResourceId = string

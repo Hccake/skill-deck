@@ -5,13 +5,13 @@ permissions = [
   "allow-acquire-selected-payloads",
   "allow-execute-lifecycle-action",
   "allow-fetch-available",
+  "allow-search-discover-skills",
   "allow-get-active-mutation",
   "allow-get-install-agent-selection",
   "allow-install-skills",
   "allow-list-environment-projects",
   "allow-preview-install",
-  "allow-request-cancel-active-mutation",
-  "allow-search-discover-skills"
+  "allow-request-cancel-active-mutation"
 ]
 
 [[set]]
@@ -64,6 +64,7 @@ permissions = [
   "allow-save-custom-agent",
   "allow-save-github-credential",
   "allow-save-proxy-settings",
+  "allow-test-proxy-connection",
   "allow-set-environment-project-cross-storage-warning",
   "allow-set-wsl-integration-enabled",
   "allow-update-skill",
