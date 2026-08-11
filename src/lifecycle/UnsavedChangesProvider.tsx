@@ -140,17 +140,17 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
       <AlertDialog open={open}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('settings.agents.dirtyNavigation.title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('settings.unsavedChanges.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('settings.agents.dirtyNavigation.description')}
+              {t('settings.unsavedChanges.description')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => void finish(false)}>
-              {t('settings.agents.dirtyNavigation.stay')}
+              {t('settings.unsavedChanges.stay')}
             </AlertDialogCancel>
             <AlertDialogAction onClick={() => void finish(true)}>
-              {t('settings.agents.dirtyNavigation.discard')}
+              {t('settings.unsavedChanges.discard')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

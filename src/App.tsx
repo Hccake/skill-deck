@@ -66,7 +66,7 @@ function ApplicationShell() {
   }, [status, t]);
 
   const showUpdateDialog = !isInstallWizard && dialogVisible
-    && (status === 'available' || status === 'downloading' || status === 'ready' || status === 'error');
+    && ['available', 'downloading', 'cancelling', 'installing', 'ready', 'error'].includes(status);
 
   return (
     <UnsavedChangesProvider>

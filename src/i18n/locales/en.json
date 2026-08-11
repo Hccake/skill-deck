@@ -609,16 +609,12 @@
   },
   "settings": {
     "title": "Settings",
-    "proxy": {
-      "errors": {
-        "invalidProxyUrl": "Enter an HTTP or HTTPS proxy URL with a port."
-      }
-    },
     "nav": {
       "sectionLabel": "Settings section",
       "general": "General",
       "agents": "Agents",
       "git": "Git",
+      "proxy": "Proxy",
       "projects": "Projects",
       "about": "About"
     },
@@ -626,6 +622,12 @@
       "general": "General",
       "projects": "Projects",
       "about": "About"
+    },
+    "unsavedChanges": {
+      "title": "Discard unsaved changes?",
+      "description": "Changes on this page have not been saved. Leaving will discard them.",
+      "stay": "Stay on this page",
+      "discard": "Discard changes"
     },
     "general": {
       "title": "General",
@@ -649,6 +651,103 @@
       "wslDisableOnlyConfirm": "Disable WSL support",
       "wslSwitchingNative": "Switching to Windows",
       "wslDisabling": "Disabling WSL support"
+    },
+    "proxy": {
+      "title": "Proxy settings",
+      "description": "Set the connection method for HTTP requests and Git operations.",
+      "modeTitle": "HTTP requests",
+      "connectionMode": "Connection method",
+      "mode": {
+        "custom": "Use proxy",
+        "direct": "Direct connection"
+      },
+      "modeDescriptions": {
+        "custom": "Route HTTP requests from the app through the proxy below",
+        "direct": "Connect HTTP requests from the app directly"
+      },
+      "address": "Proxy server URL",
+      "httpConnectionMode": "HTTP request connection method",
+      "httpProxyAddress": "HTTP request proxy server URL",
+      "httpInfo": "View HTTP request scope",
+      "httpInfoDescription": "Used to browse online Skills, retrieve source information, and check for and download updates. Online images use the system network settings.",
+      "gitTitle": "Git operations",
+      "gitInfo": "View Git operation details",
+      "gitInfoDescription": "Only affects Git operations started by the app and does not change Git configuration in any Environment.",
+      "nativeEnvironment": "Native",
+      "nativeGitProxyAddress": "{{environment}} Git proxy server URL",
+      "wslInfo": "View {{distro}} Git details",
+      "wslInfoDescription": "The proxy URL must be reachable from {{distro}}.",
+      "wslGitProxyAddress": "WSL · {{distro}} Git proxy server URL",
+      "scopeTitle": "Applies to",
+      "scopeLabel": "{{environment}} proxy scope",
+      "scope": {
+        "githubOnly": "GitHub repositories only",
+        "allHttpHttps": "All HTTP/HTTPS repositories"
+      },
+      "gitBehavior": {
+        "useProxy": "Use proxy",
+        "useExistingGitConfig": "Keep existing connection method"
+      },
+      "gitBehaviorDescriptions": {
+        "useProxy": "Use the proxy URL and scope below",
+        "useExistingGitConfig": "Do not specify another proxy; keep the current Git configuration and environment settings"
+      },
+      "wslBehavior": {
+        "followNativeGit": "Match Windows Git",
+        "useExistingGitConfig": "Keep existing connection method",
+        "useProxy": "Use proxy"
+      },
+      "wslBehaviorDescriptions": {
+        "followNativeGit": "Use the Windows Git connection method, proxy URL, and scope",
+        "useExistingGitConfig": "Do not specify another proxy; keep this distribution's Git configuration and environment settings",
+        "useProxy": "Set a separate proxy URL and scope for this distribution"
+      },
+      "testTitle": "Connection test",
+      "testDescription": "The test uses the settings shown here without saving them.",
+      "testInfo": "View connection test details",
+      "testConnection": "Test connection",
+      "testing": "Testing",
+      "actions": "Unsaved change actions",
+      "unsavedChanges": "You have unsaved changes",
+      "discard": "Discard changes",
+      "save": "Save changes",
+      "saving": "Saving",
+      "saved": "Proxy settings saved",
+      "loadError": "Proxy settings could not be loaded.",
+      "saveError": "Proxy settings could not be saved. Review the values and try again.",
+      "testError": "The connection test could not finish. Review the proxy settings and try again.",
+      "errors": {
+        "invalidProxyUrl": "Enter an HTTP or HTTPS proxy URL with a port."
+      },
+      "test": {
+        "targets": {
+          "onlineServices": "HTTP request",
+          "nativeGit": "Native Git",
+          "wslGit": "WSL Git"
+        },
+        "status": {
+          "idle": "Not tested",
+          "testing": "Testing",
+          "succeeded": "Connected",
+          "failed": "Failed",
+          "skipped": "Not tested"
+        },
+        "reasons": {
+          "request_failed": "The request could not reach the target service.",
+          "request_prepare_failed": "A connection client could not be prepared for the selected route.",
+          "request_timeout": "The connection test exceeded its 10-second total timeout.",
+          "response_body_failed": "The connection was interrupted while reading the service response.",
+          "response_too_large": "The service response exceeded the diagnostic read limit.",
+          "http_status": "The target service returned an unexpected status.",
+          "git_timeout": "The Git operation reached the test time limit.",
+          "git_network": "Git could not connect to the remote repository.",
+          "git_auth": "The Git remote requires authentication.",
+          "git_failed": "Git could not complete the remote query.",
+          "git_task_failed": "The Native Git test could not be started.",
+          "wsl_unavailable": "The selected WSL distribution is unavailable."
+        },
+        "wslProxyHint": "This test is using a WSL Git proxy. If WSL cannot reach this URL, change it or select Keep existing connection method."
+      }
     },
     "agents": {
       "title": "Agents",

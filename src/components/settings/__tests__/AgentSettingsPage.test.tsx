@@ -1008,7 +1008,7 @@ describe('AgentSettingsPage', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'common.cancel' }));
     fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.discard',
+      name: 'settings.unsavedChanges.discard',
     }));
 
     await waitFor(() => expect(screen.queryByLabelText('settings.agents.fields.id')).toBeNull());

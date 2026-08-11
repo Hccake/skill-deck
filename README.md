@@ -79,6 +79,7 @@ Skill Deck is a cross-platform desktop application for browsing, installing, rea
 - 📦 **Two installation modes** — Choose symbolic links or file copies for each target
 - 🧩 **Custom agent support** — Add Skill locations and detection conditions for agents not included with Skill Deck
 - 🌐 **Bilingual interface** — Use Simplified Chinese or English in the main window and installation wizard
+- ⚙️ **Proxy settings** — Connect online services directly or through a custom proxy, with explicit Native and per-distribution WSL Git behavior
 - 🔄 **In-app updates** — Check, download, and install new versions from GitHub Releases
 
 Skill availability is determined by its installation location and agent associations.

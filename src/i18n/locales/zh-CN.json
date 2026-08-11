@@ -609,16 +609,12 @@
   },
   "settings": {
     "title": "设置",
-    "proxy": {
-      "errors": {
-        "invalidProxyUrl": "请填写 HTTP 或 HTTPS 代理地址，并包含端口。"
-      }
-    },
     "nav": {
       "sectionLabel": "设置分类",
       "general": "通用",
       "agents": "Agents",
       "git": "Git",
+      "proxy": "代理设置",
       "projects": "项目",
       "about": "关于"
     },
@@ -626,6 +622,12 @@
       "general": "通用",
       "projects": "项目",
       "about": "关于"
+    },
+    "unsavedChanges": {
+      "title": "放弃未保存的更改？",
+      "description": "当前页面的更改尚未保存。离开后，这些更改将会丢失。",
+      "stay": "留在当前页面",
+      "discard": "放弃更改"
     },
     "general": {
       "title": "通用",
@@ -649,6 +651,103 @@
       "wslDisableOnlyConfirm": "关闭 WSL 支持",
       "wslSwitchingNative": "正在切换到 Windows",
       "wslDisabling": "正在关闭 WSL 支持"
+    },
+    "proxy": {
+      "title": "代理设置",
+      "description": "设置 HTTP 请求和 Git 操作使用的连接方式。",
+      "modeTitle": "HTTP 请求",
+      "connectionMode": "连接方式",
+      "mode": {
+        "custom": "使用代理",
+        "direct": "直接连接"
+      },
+      "modeDescriptions": {
+        "custom": "应用发起的 HTTP 请求使用下方代理地址",
+        "direct": "应用发起的 HTTP 请求直接连接"
+      },
+      "address": "代理服务器地址",
+      "httpConnectionMode": "HTTP 请求连接方式",
+      "httpProxyAddress": "HTTP 请求代理服务器地址",
+      "httpInfo": "查看 HTTP 请求范围",
+      "httpInfoDescription": "用于浏览在线 Skill、获取来源信息以及检查和下载更新。在线图片使用系统网络设置。",
+      "gitTitle": "Git 操作",
+      "gitInfo": "查看 Git 操作说明",
+      "gitInfoDescription": "只影响应用发起的 Git 操作，不修改各 Environment 中的 Git 配置。",
+      "nativeEnvironment": "本机",
+      "nativeGitProxyAddress": "{{environment}} Git 代理服务器地址",
+      "wslInfo": "查看 {{distro}} Git 说明",
+      "wslInfoDescription": "代理地址需要能够从 {{distro}} 中访问。",
+      "wslGitProxyAddress": "WSL · {{distro}} Git 代理服务器地址",
+      "scopeTitle": "适用仓库",
+      "scopeLabel": "{{environment}} 代理适用仓库",
+      "scope": {
+        "githubOnly": "仅 GitHub 仓库",
+        "allHttpHttps": "所有 HTTP/HTTPS 仓库"
+      },
+      "gitBehavior": {
+        "useProxy": "使用代理",
+        "useExistingGitConfig": "保持原有连接方式"
+      },
+      "gitBehaviorDescriptions": {
+        "useProxy": "使用下方的代理地址和适用仓库",
+        "useExistingGitConfig": "不指定额外代理，沿用当前 Git 配置和环境设置"
+      },
+      "wslBehavior": {
+        "followNativeGit": "与 Windows Git 保持一致",
+        "useExistingGitConfig": "保持原有连接方式",
+        "useProxy": "使用代理"
+      },
+      "wslBehaviorDescriptions": {
+        "followNativeGit": "使用 Windows Git 的连接方式、代理地址和适用仓库",
+        "useExistingGitConfig": "不指定额外代理，沿用此发行版的 Git 配置和环境设置",
+        "useProxy": "为此发行版设置独立的代理地址和适用仓库"
+      },
+      "testTitle": "连接测试",
+      "testDescription": "测试使用当前页面中的设置，不会保存更改。",
+      "testInfo": "查看连接测试说明",
+      "testConnection": "测试连接",
+      "testing": "正在测试",
+      "actions": "未保存更改操作",
+      "unsavedChanges": "有未保存的更改",
+      "discard": "放弃更改",
+      "save": "保存更改",
+      "saving": "正在保存",
+      "saved": "代理设置已保存",
+      "loadError": "无法读取代理设置。",
+      "saveError": "无法保存代理设置，请检查填写内容后重试。",
+      "testError": "连接测试未能完成，请检查代理设置后重试。",
+      "errors": {
+        "invalidProxyUrl": "请填写 HTTP 或 HTTPS 代理地址，并包含端口。"
+      },
+      "test": {
+        "targets": {
+          "onlineServices": "HTTP 请求",
+          "nativeGit": "本机 Git",
+          "wslGit": "WSL Git"
+        },
+        "status": {
+          "idle": "尚未测试",
+          "testing": "正在测试",
+          "succeeded": "连接成功",
+          "failed": "连接失败",
+          "skipped": "未测试"
+        },
+        "reasons": {
+          "request_failed": "请求未能到达目标服务。",
+          "request_prepare_failed": "无法根据当前设置建立连接客户端。",
+          "request_timeout": "连接测试已超过 10 秒总时限。",
+          "response_body_failed": "目标服务返回响应时连接中断。",
+          "response_too_large": "目标服务返回的响应超过诊断读取上限。",
+          "http_status": "目标服务返回了异常状态。",
+          "git_timeout": "Git 操作已达到测试时限。",
+          "git_network": "Git 无法连接到远端仓库。",
+          "git_auth": "Git 远端要求身份验证。",
+          "git_failed": "Git 未能完成远端查询。",
+          "git_task_failed": "无法启动本机 Git 测试。",
+          "wsl_unavailable": "所选 WSL 发行版当前不可用。"
+        },
+        "wslProxyHint": "当前测试使用了 WSL Git 代理。如果该地址无法从 WSL 访问，请更换地址，或将连接方式改为“保持原有连接方式”。"
+      }
     },
     "agents": {
       "title": "Agents",

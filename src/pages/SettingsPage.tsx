@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { SlidersHorizontal, GitBranch, FolderOpen, Info, Bot } from 'lucide-react';
+import { SlidersHorizontal, GitBranch, FolderOpen, Info, Bot, Network } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useWorkspaceContextStore } from '@/stores/workspace-context';
@@ -12,8 +12,9 @@ const GeneralTab = lazy(() => import('@/components/settings/GeneralTab').then((m
 const GitSettingsPage = lazy(() => import('@/components/settings/GitSettingsPage').then((module) => ({ default: module.GitSettingsPage })));
 const ProjectsTab = lazy(() => import('@/components/settings/ProjectsTab').then((module) => ({ default: module.ProjectsTab })));
 const AgentSettingsPage = lazy(() => import('@/components/settings/AgentSettingsPage').then((module) => ({ default: module.AgentSettingsPage })));
+const ProxySettingsPage = lazy(() => import('@/components/settings/ProxySettingsPage').then((module) => ({ default: module.ProxySettingsPage })));
 
-type SettingsSectionId = 'general' | 'agents' | 'git' | 'projects' | 'about';
+type SettingsSectionId = 'general' | 'agents' | 'git' | 'proxy' | 'projects' | 'about';
 
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId;
@@ -36,6 +37,11 @@ const SETTINGS_SECTIONS: Array<{
     titleKey: 'settings.nav.git',
   },
   {
+    id: 'proxy',
+    icon: Network,
+    titleKey: 'settings.nav.proxy',
+  },
+  {
     id: 'projects',
     icon: FolderOpen,
     titleKey: 'settings.nav.projects',
@@ -43,7 +49,7 @@ const SETTINGS_SECTIONS: Array<{
 ];
 
 const DEFAULT_SECTION: SettingsSectionId = 'general';
-const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'agents', 'git', 'projects', 'about'];
+const VALID_SECTION_IDS: SettingsSectionId[] = ['general', 'agents', 'git', 'proxy', 'projects', 'about'];
 
 function isSettingsSection(value: string | null): value is SettingsSectionId {
   return !!value && VALID_SECTION_IDS.includes(value as SettingsSectionId);
@@ -95,6 +101,8 @@ export function SettingsPage() {
         );
       case 'git':
         return <GitSettingsPage />;
+      case 'proxy':
+        return <ProxySettingsPage />;
       case 'projects':
         return <ProjectsTab />;
       case 'about':

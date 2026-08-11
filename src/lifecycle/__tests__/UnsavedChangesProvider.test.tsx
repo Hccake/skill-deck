@@ -53,12 +53,12 @@ describe('UnsavedChangesProvider', () => {
     render(<RouterProvider router={router} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'leave' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'settings.agents.dirtyNavigation.stay' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.unsavedChanges.stay' }));
     expect(discard).not.toHaveBeenCalled();
     expect(action).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'leave' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'settings.agents.dirtyNavigation.discard' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.unsavedChanges.discard' }));
 
     await waitFor(() => expect(discard).toHaveBeenCalledTimes(1));
     expect(action).toHaveBeenCalledTimes(1);
@@ -79,17 +79,17 @@ describe('UnsavedChangesProvider', () => {
     await act(async () => { await router.navigate(-1); });
     expect(screen.getByTestId('location').textContent).toBe('/second');
     fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.stay',
+      name: 'settings.unsavedChanges.stay',
     }));
     expect(screen.getByTestId('location').textContent).toBe('/second');
     expect(discard).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('button', {
-      name: 'settings.agents.dirtyNavigation.stay',
+      name: 'settings.unsavedChanges.stay',
     })).toBeNull());
 
     await act(async () => { await router.navigate(-1); });
     fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.discard',
+      name: 'settings.unsavedChanges.discard',
     }));
 
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/first'));
@@ -114,14 +114,14 @@ describe('UnsavedChangesProvider', () => {
     fireEvent.click(screen.getByRole('button', { name: 'leave' }));
     fireEvent.click(screen.getByText('leave'));
     fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.discard',
+      name: 'settings.unsavedChanges.discard',
     }));
 
     await waitFor(() => expect(discard).toHaveBeenCalledTimes(1));
     expect(action).not.toHaveBeenCalled();
 
     fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.discard',
+      name: 'settings.unsavedChanges.discard',
     }));
     await waitFor(() => expect(discard).toHaveBeenCalledTimes(2));
     expect(action).toHaveBeenCalledTimes(1);
@@ -145,12 +145,12 @@ describe('UnsavedChangesProvider', () => {
     fireEvent.click(screen.getByRole('button', { name: 'leave' }));
     fireEvent.click(screen.getByText('leave'));
     fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.discard',
+      name: 'settings.unsavedChanges.discard',
     }));
 
     await waitFor(() => expect(action).toHaveBeenCalledTimes(1));
     fireEvent.click(await screen.findByRole('button', {
-      name: 'settings.agents.dirtyNavigation.discard',
+      name: 'settings.unsavedChanges.discard',
     }));
     await waitFor(() => expect(action).toHaveBeenCalledTimes(2));
   });
