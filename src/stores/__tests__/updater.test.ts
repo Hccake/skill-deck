@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   check: vi.fn(),
   install: vi.fn(),
+  cancel: vi.fn(),
   getInstallWizardSession: vi.fn(),
 }));
 
@@ -10,6 +11,7 @@ vi.mock('@/hooks/useTauriApi', () => ({
   checkApplicationUpdate: () => mocks.check(),
   downloadAndInstallApplicationUpdate: (version: string, progress: (event: unknown) => void) =>
     mocks.install(version, progress),
+  cancelApplicationUpdateDownload: () => mocks.cancel(),
   getInstallWizardSession: () => mocks.getInstallWizardSession(),
 }));
 
@@ -63,6 +65,46 @@ describe('useUpdaterStore', () => {
     });
     useUpdaterStore.getState().showDialog();
     expect(useUpdaterStore.getState().dialogVisible).toBe(true);
+  });
+
+  it('cancels only the active download and restores the available update', async () => {
+    useUpdaterStore.setState({ status: 'available', newVersion: '2.0.0', dialogVisible: true });
+    let rejectDownload: (reason: unknown) => void = () => undefined;
+    mocks.install.mockImplementation((_version, progress) => {
+      progress({ event: 'started', data: { content_length: 100 } });
+      return new Promise((_resolve, reject) => { rejectDownload = reject; });
+    });
+    mocks.cancel.mockResolvedValue(true);
+
+    const update = useUpdaterStore.getState().downloadAndInstall();
+    await vi.waitFor(() => expect(useUpdaterStore.getState().status).toBe('downloading'));
+    await useUpdaterStore.getState().cancelDownload();
+    expect(mocks.cancel).toHaveBeenCalledTimes(1);
+    expect(useUpdaterStore.getState().status).toBe('cancelling');
+
+    rejectDownload({ kind: 'mutationCancelled' });
+    await update;
+    expect(useUpdaterStore.getState()).toMatchObject({
+      status: 'available', error: null, failedOperation: null,
+    });
+  });
+
+  it('moves to a non-cancelable installing state after the download finishes', async () => {
+    useUpdaterStore.setState({ status: 'available', newVersion: '2.0.0', dialogVisible: true });
+    mocks.install.mockImplementation(async (_version, progress) => {
+      progress({ event: 'started', data: { content_length: 100 } });
+      progress({ event: 'downloaded' });
+      progress({ event: 'installing' });
+      return { version: '2.0.0', installed: true };
+    });
+
+    const states: string[] = [];
+    const unsubscribe = useUpdaterStore.subscribe((state) => states.push(state.status));
+    await useUpdaterStore.getState().downloadAndInstall();
+    unsubscribe();
+
+    expect(states).toContain('installing');
+    expect(mocks.cancel).not.toHaveBeenCalled();
   });
 
   it('keeps a failed install visible after dismiss and retries the same version', async () => {

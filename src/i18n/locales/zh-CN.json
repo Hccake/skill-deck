@@ -184,6 +184,8 @@
       "description": "确定要从 Skill Deck 中移除「{{name}}」吗？这不会删除本地文件。",
       "unregisterOnly": "此操作只解除 Skill Deck 中的项目注册，项目目录及其中的文件不会发生变化。",
       "cancel": "取消",
+      "cancelling": "正在取消...",
+      "installing": "下载已完成，正在安装更新。",
       "confirm": "移除",
       "removing": "正在移除…",
       "removeError": "无法从 Skill Deck 中移除此项目，本地文件未受影响，请重试。",

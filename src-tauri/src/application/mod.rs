@@ -1,6 +1,7 @@
 pub mod agent_intent;
 pub mod agent_selection;
 pub mod agents;
+pub mod application_update;
 pub mod copy;
 pub mod copy_runtime;
 pub mod default_agents;

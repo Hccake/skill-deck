@@ -158,6 +158,10 @@ export async function downloadAndInstallApplicationUpdate(
   return unwrap(await commands.downloadAndInstallApplicationUpdate(expectedVersion, progress));
 }
 
+export async function cancelApplicationUpdateDownload(): Promise<boolean> {
+  return unwrap(await commands.cancelApplicationUpdateDownload());
+}
+
 /**
  * 列出已安装的 Skills
  */

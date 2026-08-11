@@ -454,6 +454,14 @@ async saveProxySettings(settings: NetworkProxySettings) : Promise<Result<Network
     else return { status: "error", error: e  as any };
 }
 },
+async cancelApplicationUpdateDownload() : Promise<Result<boolean, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_application_update_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async checkApplicationUpdate() : Promise<Result<ApplicationUpdateInfo | null, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_application_update") };
@@ -534,7 +542,7 @@ export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml
  */
 { kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "installWizardActive" } | { kind: "installWizardSessionUnavailable" } | { kind: "applicationTerminating" } | { kind: "wslIntegrationBusy"; data: { reason: WslIntegrationBusyReason } } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "agentSelectionInvalid"; data: { reason: AgentSelectionInvalidReason } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "environmentChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "contextChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "externalLockChanged"; data: { target: LockConflictTarget } } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
 export type ApplicationUpdateInfo = { version: string; body: string | null }
-export type ApplicationUpdateProgress = { event: "started"; data: { content_length: number | null } } | { event: "progress"; data: { chunk_length: number } } | { event: "finished" }
+export type ApplicationUpdateProgress = { event: "started"; data: { content_length: number | null } } | { event: "progress"; data: { chunk_length: number } } | { event: "downloaded" } | { event: "installing" } | { event: "finished" }
 export type ApplicationUpdateResult = { version: string; installed: boolean }
 /**
  * 可用的 Skill 信息（fetch_available 返回）

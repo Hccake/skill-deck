@@ -20,6 +20,7 @@ description = "Application commands available to the main window"
 permissions = [
   "shared-business-commands",
   "allow-add-environment-project",
+  "allow-cancel-application-update-download",
   "allow-check-application-update",
   "allow-check-updates",
   "allow-clear-github-credential",

@@ -87,6 +87,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::mutations::request_cancel_active_mutation,
             commands::network::get_proxy_settings,
             commands::network::save_proxy_settings,
+            commands::updater::cancel_application_update_download,
             commands::updater::check_application_update,
             commands::updater::download_and_install_application_update,
         ])

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import {
+  cancelApplicationUpdateDownload,
   checkApplicationUpdate,
   downloadAndInstallApplicationUpdate,
 } from '@/hooks/useTauriApi';
@@ -13,7 +14,15 @@ const LAST_CHECK_ERROR_KEY = 'updater_last_check_error';
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const ERROR_RETRY_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'cancelling'
+  | 'installing'
+  | 'ready'
+  | 'error';
 type FailedOperation = 'check' | 'install';
 
 interface UpdaterState {
@@ -29,6 +38,7 @@ interface UpdaterState {
   failedOperation: FailedOperation | null;
   checkForUpdate: () => Promise<void>;
   downloadAndInstall: () => Promise<void>;
+  cancelDownload: () => Promise<void>;
   retry: () => Promise<void>;
   dismiss: () => void;
   showDialog: () => void;
@@ -70,7 +80,9 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
 
   checkForUpdate: async () => {
     if (!['idle', 'error'].includes(get().status)) {
-      if (['available', 'downloading', 'ready'].includes(get().status)) set({ dialogVisible: true });
+      if (['available', 'downloading', 'cancelling', 'installing', 'ready'].includes(get().status)) {
+        set({ dialogVisible: true });
+      }
       return;
     }
     set({ status: 'checking', error: null, failedOperation: null });
@@ -124,6 +136,8 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
               ? Math.min(100, Math.round(downloadedBytes / state.totalBytes * 100)) : state.downloadProgress,
           };
         });
+      } else if (event.event === 'downloaded' || event.event === 'installing') {
+        set({ status: 'installing', downloadProgress: 100 });
       }
     };
     try {
@@ -145,10 +159,31 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
         failedOperation: result.installed ? null : 'install',
       });
     } catch (error) {
+      const appError = toAppError(error);
+      if (appError.kind === 'mutationCancelled') {
+        set({
+          status: 'available', error: null, dialogVisible: true,
+          failedOperation: null, downloadProgress: 0, downloadedBytes: 0, totalBytes: null,
+        });
+        return;
+      }
       set({
-        status: 'error', error: toAppError(error), dialogVisible: true,
+        status: 'error', error: appError, dialogVisible: true,
         failedOperation: 'install',
       });
+    }
+  },
+
+  cancelDownload: async () => {
+    if (get().status !== 'downloading') return;
+    set({ status: 'cancelling' });
+    try {
+      const cancelled = await cancelApplicationUpdateDownload();
+      if (!cancelled && get().status === 'cancelling') {
+        set({ status: 'downloading' });
+      }
+    } catch {
+      if (get().status === 'cancelling') set({ status: 'downloading' });
     }
   },
 

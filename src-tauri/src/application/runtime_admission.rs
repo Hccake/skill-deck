@@ -84,6 +84,7 @@ struct MutationState {
 struct LifecycleState {
     token: u64,
     active: ActiveLifecycleLease,
+    cancellation: Option<CancellationSignal>,
 }
 
 enum WizardState {
@@ -200,10 +201,26 @@ impl RuntimeAdmissionCoordinator {
     }
 
     pub fn begin_lifecycle(&self, kind: LifecycleLeaseKind) -> Result<LifecyclePermit, AppError> {
+        self.register_lifecycle(kind, false)
+    }
+
+    pub fn begin_cancelable_lifecycle(
+        &self,
+        kind: LifecycleLeaseKind,
+    ) -> Result<LifecyclePermit, AppError> {
+        self.register_lifecycle(kind, true)
+    }
+
+    fn register_lifecycle(
+        &self,
+        kind: LifecycleLeaseKind,
+        supports_cancellation: bool,
+    ) -> Result<LifecyclePermit, AppError> {
         let mut state = self.lock_state();
         self.denial_for(&state, AdmissionIntent::Lifecycle(kind))
             .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
         let token = next_token(&mut state);
+        let cancellation = supports_cancellation.then(CancellationSignal::default);
         state.revision = next_revision(state.revision);
         state.lifecycle = Some(LifecycleState {
             token,
@@ -212,10 +229,12 @@ impl RuntimeAdmissionCoordinator {
                 kind,
                 cancelable: false,
             },
+            cancellation: cancellation.clone(),
         });
         Ok(LifecyclePermit {
             inner: Arc::clone(&self.inner),
             token,
+            cancellation,
         })
     }
 
@@ -353,6 +372,33 @@ impl RuntimeAdmissionCoordinator {
         }
         mutation.cancellation.cancel();
         Ok(true)
+    }
+
+    pub fn request_cancel_lifecycle(&self) -> Result<bool, AppError> {
+        let state = self.lock_state();
+        let Some(lifecycle) = state.lifecycle.as_ref() else {
+            return Ok(false);
+        };
+        if !lifecycle.active.cancelable {
+            return Ok(false);
+        }
+        let Some(cancellation) = lifecycle.cancellation.as_ref() else {
+            return Ok(false);
+        };
+        cancellation.cancel();
+        Ok(true)
+    }
+
+    pub fn set_application_update_cancelable(&self, cancelable: bool) {
+        let mut state = self.lock_state();
+        let Some(lifecycle) = state.lifecycle.as_mut().filter(|lifecycle| {
+            lifecycle.active.kind == LifecycleLeaseKind::ApplicationUpdate
+                && lifecycle.cancellation.is_some()
+        }) else {
+            return;
+        };
+        lifecycle.active.cancelable = cancelable;
+        state.revision = next_revision(state.revision);
     }
 
     pub fn request_termination(&self) -> TerminationAdmission {
@@ -662,6 +708,7 @@ impl Drop for MutationPermit {
 pub struct LifecyclePermit {
     inner: Arc<AdmissionInner>,
     token: u64,
+    cancellation: Option<CancellationSignal>,
 }
 
 impl fmt::Debug for LifecyclePermit {
@@ -669,6 +716,14 @@ impl fmt::Debug for LifecyclePermit {
         formatter
             .debug_struct("LifecyclePermit")
             .finish_non_exhaustive()
+    }
+}
+
+impl LifecyclePermit {
+    pub fn cancellation(&self) -> CancellationSignal {
+        self.cancellation
+            .clone()
+            .expect("lifecycle does not support cancellation")
     }
 }
 
@@ -975,6 +1030,25 @@ mod tests {
             .admit_install_wizard(WizardWindowPresence::Absent)
             .is_ok());
         drop(maintenance);
+    }
+
+    #[test]
+    fn application_update_lifecycle_is_cancelable_only_when_enabled() {
+        let admission = RuntimeAdmissionCoordinator::default();
+        let lifecycle = admission
+            .begin_cancelable_lifecycle(LifecycleLeaseKind::ApplicationUpdate)
+            .expect("application update admitted");
+
+        assert!(!admission.activity_snapshot().lifecycle.unwrap().cancelable);
+        assert_eq!(admission.request_cancel_lifecycle(), Ok(false));
+
+        admission.set_application_update_cancelable(true);
+        assert!(admission.activity_snapshot().lifecycle.unwrap().cancelable);
+        assert_eq!(admission.request_cancel_lifecycle(), Ok(true));
+        assert!(lifecycle.cancellation().is_cancelled());
+
+        admission.set_application_update_cancelable(false);
+        assert!(!admission.activity_snapshot().lifecycle.unwrap().cancelable);
     }
 
     #[test]

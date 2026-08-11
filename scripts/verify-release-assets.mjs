@@ -2,6 +2,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+export const MAX_UPDATER_MANIFEST_BYTES = 1024 * 1024;
+export const MAX_UPDATER_ASSET_BYTES = 256 * 1024 * 1024;
+
 const PLATFORM_ASSET_TEMPLATES = Object.freeze({
   "darwin-aarch64": "skill-deck_{version}_macos_aarch64.app.tar.gz",
   "darwin-aarch64-app": "skill-deck_{version}_macos_aarch64.app.tar.gz",
@@ -138,6 +141,19 @@ function expectedPlatformAssets(version) {
   );
 }
 
+function verifyUpdaterAssetSizes(remoteAssets, version) {
+  invariant(
+    remoteAssets.get("latest.json")?.size <= MAX_UPDATER_MANIFEST_BYTES,
+    "Updater manifest exceeds the 1 MiB limit",
+  );
+  for (const assetName of new Set(Object.values(expectedPlatformAssets(version)))) {
+    invariant(
+      remoteAssets.get(assetName)?.size <= MAX_UPDATER_ASSET_BYTES,
+      `Updater asset exceeds the 256 MiB limit: ${assetName}`,
+    );
+  }
+}
+
 async function readDownloadedAsset(directory, name, remoteAssets) {
   const file = path.join(directory, name);
   const stat = await fs.lstat(file).catch(() => null);
@@ -174,6 +190,7 @@ async function verifyCompleteRelease({
 
   const expectedNames = expectedReleaseAssetNames(version);
   const remoteAssets = readRemoteAssets(release, expectedNames, repository);
+  verifyUpdaterAssetSizes(remoteAssets, version);
   await readDownloadedAsset(signaturesDirectory, "latest.json", remoteAssets);
 
   invariant(manifest && typeof manifest === "object", "Invalid latest.json");

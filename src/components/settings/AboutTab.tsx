@@ -122,7 +122,7 @@ export function AboutTab() {
                 {t('settings.update.checking')}
               </Button>
             </div>
-          ) : updateStatus === 'downloading' ? (
+          ) : ['downloading', 'cancelling', 'installing'].includes(updateStatus) ? (
             <div className="flex flex-col items-center space-y-2">
               <Button onClick={showDialog} className="h-9 px-5 rounded-lg shadow-xs gap-2 w-48 transition-all font-semibold">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin" />

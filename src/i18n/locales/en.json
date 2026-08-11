@@ -184,6 +184,8 @@
       "description": "Remove \"{{name}}\" from Skill Deck? This will not delete local files.",
       "unregisterOnly": "Only the Skill Deck registration is removed. The project directory and its files remain unchanged.",
       "cancel": "Cancel",
+      "cancelling": "Cancelling...",
+      "installing": "The download is complete. Installing the update.",
       "confirm": "Remove",
       "removing": "Removing…",
       "removeError": "The project could not be removed from Skill Deck. Your files were not changed. Try again.",

@@ -137,7 +137,7 @@ docker run --rm \
 
 质量检查通过后，工作流会创建或复用草稿 Release，并由官方 `tauri-action` 构建和上传各平台安装包、更新签名与 `latest.json`。自动校验完成后，由维护者检查版本、Release 正文、安装包和更新信息，再通过 GitHub 界面公开发布。
 
-Release 正文来自标签对应提交中的 `CHANGELOG.md`。公开安装包名称由 `README.md` 和 `README.zh-CN.md` 维护，完整资产和更新清单契约由 `scripts/verify-release-assets.mjs` 及其测试维护。修改发布流程时，需要同步更新工作流、验证脚本、脚本测试和受影响的用户文档。
+Release 正文来自标签对应提交中的 `CHANGELOG.md`。公开安装包名称由 `README.md` 和 `README.zh-CN.md` 维护，完整资产和更新清单契约由 `scripts/verify-release-assets.mjs` 及其测试维护。该契约要求 `latest.json` 不超过 1 MiB，更新器引用的安装资产不超过 256 MiB。修改发布流程时，需要同步更新工作流、验证脚本、脚本测试和受影响的用户文档。
 
 ## 提交内容
 

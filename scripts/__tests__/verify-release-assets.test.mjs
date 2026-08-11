@@ -7,6 +7,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  MAX_UPDATER_ASSET_BYTES,
+  MAX_UPDATER_MANIFEST_BYTES,
   documentedInstallerNames,
   expectedReleaseAssetNames,
   verifyReleaseAssets,
@@ -205,6 +207,57 @@ test("accepts the complete official tauri-action release contract", async () => 
       repository,
       expectedPrerelease: true,
     });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects an updater manifest larger than 1 MiB", async () => {
+  const fixture = await createCompleteFixture();
+  try {
+    fixture.release.assets.find((asset) => asset.name === "latest.json").size =
+      MAX_UPDATER_MANIFEST_BYTES + 1;
+    await assert.rejects(
+      () =>
+        verifyReleaseAssets({
+          mode: "complete",
+          release: fixture.release,
+          manifest: fixture.manifest,
+          signaturesDirectory: fixture.signaturesDirectory,
+          notes,
+          version,
+          tag,
+          repository,
+          expectedPrerelease: true,
+        }),
+      /updater manifest exceeds the 1 MiB limit/i,
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects an updater asset larger than 256 MiB", async () => {
+  const fixture = await createCompleteFixture();
+  try {
+    const assetName = platformAssets["linux-x86_64"];
+    fixture.release.assets.find((asset) => asset.name === assetName).size =
+      MAX_UPDATER_ASSET_BYTES + 1;
+    await assert.rejects(
+      () =>
+        verifyReleaseAssets({
+          mode: "complete",
+          release: fixture.release,
+          manifest: fixture.manifest,
+          signaturesDirectory: fixture.signaturesDirectory,
+          notes,
+          version,
+          tag,
+          repository,
+          expectedPrerelease: true,
+        }),
+      /updater asset exceeds the 256 MiB limit/i,
+    );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

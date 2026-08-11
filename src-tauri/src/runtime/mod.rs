@@ -41,6 +41,7 @@ use crate::runtime::http_transport::HttpTransport;
 use crate::runtime::proxy_settings::ProxySettingsStore;
 use crate::storage::github_credentials::KeyringGithubCredentialStore;
 
+pub(crate) mod application_updater;
 pub(crate) mod discovery;
 pub(crate) mod git_source;
 pub(crate) mod github;
@@ -337,6 +338,16 @@ impl RuntimeServiceGraph {
 
     pub(crate) fn source_discovery(&self) -> &SourceDiscoveryService {
         &self.source_discovery
+    }
+
+    pub(crate) fn application_updater<R: tauri::Runtime>(
+        &self,
+        app: tauri::AppHandle<R>,
+    ) -> application_updater::TauriApplicationUpdater<R> {
+        application_updater::TauriApplicationUpdater::new(
+            app,
+            self.network_services.proxy_settings(),
+        )
     }
 
     pub(crate) fn discovery(&self) -> &DiscoveryGateway {

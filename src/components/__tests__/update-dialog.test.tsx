@@ -18,6 +18,7 @@ vi.mock('@/lifecycle/useWindowLifecycle', () => ({
 vi.mock('@/hooks/useTauriApi', () => ({
   checkApplicationUpdate: vi.fn(),
   downloadAndInstallApplicationUpdate: vi.fn(),
+  cancelApplicationUpdateDownload: vi.fn(),
 }));
 
 describe('UpdateDialog', () => {
@@ -52,11 +53,14 @@ describe('UpdateDialog', () => {
   });
 
   it('announces Backend-owned download progress', () => {
-    useUpdaterStore.setState({ status: 'downloading', error: null });
+    const cancelDownload = vi.fn().mockResolvedValue(undefined);
+    useUpdaterStore.setState({ status: 'downloading', error: null, cancelDownload });
     render(<UpdateDialog open />);
 
     expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite');
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('37');
+    fireEvent.click(screen.getByRole('button', { name: 'settings.update.cancel' }));
+    expect(cancelDownload).toHaveBeenCalledTimes(1);
   });
 
   it('blocks update installation and restart while the wizard is open', () => {

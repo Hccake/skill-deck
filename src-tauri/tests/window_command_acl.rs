@@ -99,6 +99,11 @@ fn check_application_update() -> &'static str {
 }
 
 #[tauri::command]
+fn cancel_application_update_download() -> &'static str {
+    "cancel-application-update-download"
+}
+
+#[tauri::command]
 fn get_github_credential_status() -> &'static str {
     "get-github-credential-status"
 }
@@ -159,6 +164,7 @@ fn test_app() -> App<MockRuntime> {
             open_recovery_resource,
             open_skill_resource,
             open_config_resource,
+            cancel_application_update_download,
             check_application_update,
             get_github_credential_status,
             save_github_credential,
@@ -276,6 +282,10 @@ fn main_window_allows_skill_repair_commands() {
     assert_eq!(
         invoke(&main, "open_config_resource"),
         Ok(Value::from("open-config-resource"))
+    );
+    assert_eq!(
+        invoke(&main, "cancel_application_update_download"),
+        Ok(Value::from("cancel-application-update-download"))
     );
     assert_eq!(
         invoke(&main, "get_github_credential_status"),
@@ -405,6 +415,10 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_denied(
         invoke(&wizard, "check_application_update"),
         "check_application_update",
+    );
+    assert_denied(
+        invoke(&wizard, "cancel_application_update_download"),
+        "cancel_application_update_download",
     );
     assert_denied(
         invoke(&wizard, "get_github_credential_status"),

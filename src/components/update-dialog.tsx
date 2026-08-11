@@ -32,6 +32,7 @@ export function UpdateDialog({ open }: { open: boolean }) {
     downloadProgress,
     failedOperation,
     downloadAndInstall,
+    cancelDownload,
     retry,
     dismiss,
   } = useUpdaterStore();
@@ -45,9 +46,9 @@ export function UpdateDialog({ open }: { open: boolean }) {
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
           className="sm:max-w-lg"
-          dismissible={status !== 'downloading'}
+          dismissible={!['downloading', 'cancelling'].includes(status)}
           closeLabel={t('common.close')}
-          aria-busy={status === 'downloading'}
+          aria-busy={['downloading', 'cancelling', 'installing'].includes(status)}
         >
         {/* rendering-conditional-render: 用显式三元避免 && 的 falsy 值风险 */}
         {status === 'available' ? (
@@ -100,7 +101,7 @@ export function UpdateDialog({ open }: { open: boolean }) {
               </Button>
             </DialogFooter>
           </>
-        ) : status === 'downloading' ? (
+        ) : status === 'downloading' || status === 'cancelling' ? (
           <>
             <DialogHeader>
               <DialogTitle>
@@ -129,6 +130,30 @@ export function UpdateDialog({ open }: { open: boolean }) {
                 className="cursor-pointer"
                 onClick={() => dismiss()}
               >
+                {t('settings.update.hide')}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={status === 'cancelling'}
+                onClick={() => void cancelDownload()}
+              >
+                {status === 'cancelling'
+                  ? t('settings.update.cancelling')
+                  : t('settings.update.cancel')}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : status === 'installing' ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>{t('settings.update.updatingTitle', { version: newVersion })}</DialogTitle>
+              <DialogDescription>{t('settings.update.installing')}</DialogDescription>
+            </DialogHeader>
+            <div className="py-4" role="status" aria-live="polite">
+              <Progress value={100} aria-label={t('settings.update.installing')} className="h-2" />
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => dismiss()}>
                 {t('settings.update.hide')}
               </Button>
             </DialogFooter>
