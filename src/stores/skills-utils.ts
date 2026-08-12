@@ -432,7 +432,8 @@ function buildRepairSource(
 function canRepairMissingSkillPath(
   skill: Pick<InstalledSkill, 'source' | 'sourceUrl'> & { updateReason?: string | null; gitRef?: string | null }
 ): boolean {
-  return skill.updateReason === 'missing-skill-path' && buildRepairSource(skill) !== null;
+  return (skill.updateReason === 'missing-skill-path' || skill.updateReason === 'missingSource')
+    && buildRepairSource(skill) !== null;
 }
 
 type SkillMaintenanceAction = 'direct-reinstall' | 'repair-source' | 'none';

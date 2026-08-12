@@ -26,7 +26,7 @@ import {
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 
 // 提升默认值避免重复创建 — rerender-memo-with-default-value 规则
-const EMPTY_CONFLICT_SET = new Set<string>();
+const EMPTY_DUPLICATE_LOCATION_SET = new Set<string>();
 const EMPTY_DISPLAY_NAMES = new Map<AgentId, string>();
 const EMPTY_SOURCE_DIAGNOSTICS: SourceUpdateCheckInfo[] = [];
 
@@ -36,7 +36,7 @@ interface SkillsSectionProps {
   /** 当前 Environment 的完整来源诊断，不受列表筛选影响。 */
   sourceDiagnostics?: SourceUpdateCheckInfo[];
   scope: InstalledSkillLocation;
-  conflictSkillNames?: Set<string>;
+  duplicateLocationSkillNames?: Set<string>;
   /** 项目目录是否存在（仅 project scope） */
   pathExists?: boolean;
   /** 项目路径（仅 project scope，用于提示信息） */
@@ -69,7 +69,7 @@ export const SkillsSection = memo(function SkillsSection({
   skills,
   sourceDiagnostics = EMPTY_SOURCE_DIAGNOSTICS,
   scope,
-  conflictSkillNames = EMPTY_CONFLICT_SET,
+  duplicateLocationSkillNames = EMPTY_DUPLICATE_LOCATION_SET,
   pathExists = true,
   projectPath,
   updatingSkills,
@@ -427,7 +427,7 @@ export const SkillsSection = memo(function SkillsSection({
                     key={skill.name}
                     skill={skill}
                     displayScope={scope}
-                    hasConflict={conflictSkillNames.has(skill.name)}
+                    hasDuplicateLocation={duplicateLocationSkillNames.has(skill.name)}
                     updateStatus={updateStatus}
                     projectPath={scope === 'project' ? projectPath : undefined}
                     agentDisplayNames={agentDisplayNames}

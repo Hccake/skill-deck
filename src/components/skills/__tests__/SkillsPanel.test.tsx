@@ -243,6 +243,7 @@ vi.mock('../SkillsSection', () => ({
     onManageAgents,
     onCheckUpdates,
     onPrepareUpdate,
+    duplicateLocationSkillNames,
     scope,
     emptyState,
   }: {
@@ -252,6 +253,7 @@ vi.mock('../SkillsSection', () => ({
     onManageAgents?: (skill: { name: string; scope: 'global' | 'project' }) => void;
     onCheckUpdates?: () => Promise<boolean>;
     onPrepareUpdate: (skillNames: string[], batch: boolean) => Promise<boolean>;
+    duplicateLocationSkillNames?: Set<string>;
     scope: 'global' | 'project';
     emptyState?: ReactNode;
   }) => (
@@ -261,6 +263,9 @@ vi.mock('../SkillsSection', () => ({
         <div key={`${skill.scope}:${skill.name}`}>
           <span data-testid={`phase:${skill.scope}:${skill.name}`}>
             {updatingSkills.get(`${skill.scope}:${skill.name}`) ?? 'idle'}
+          </span>
+          <span data-testid={`duplicate-location:${skill.scope}:${skill.name}`}>
+            {duplicateLocationSkillNames?.has(skill.name) ? 'duplicate' : 'single'}
           </span>
           <button
             type="button"
@@ -575,6 +580,23 @@ describe('SkillsPanel', () => {
       ['project-skill'],
       true,
     );
+  });
+
+  it('marks a Skill name that is installed in both Global and the current Project', () => {
+    mocks.workspaceContextState.selectedContext = ubuntuProject;
+    mocks.skillsDataState.snapshots = {
+      'wsl:ubuntu/global': snapshot([makeSkill('shared-skill')]),
+      'wsl:ubuntu/project:project-a': snapshot([
+        makeSkill('shared-skill', 'project'),
+        makeSkill('project-only', 'project'),
+      ]),
+    };
+
+    render(<SkillsPanel compact={false} />);
+
+    expect(screen.getByTestId('duplicate-location:global:shared-skill').textContent).toBe('duplicate');
+    expect(screen.getByTestId('duplicate-location:project:shared-skill').textContent).toBe('duplicate');
+    expect(screen.getByTestId('duplicate-location:project:project-only').textContent).toBe('single');
   });
 
   it('filters Global and Project sections with their own associated Agent projections', async () => {

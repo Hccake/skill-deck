@@ -253,15 +253,15 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
     ? agentDisplayNames.get(activeAgentFilter) ?? activeAgentFilter
     : undefined;
 
-  const conflictSkillNames = useMemo(() => {
+  const duplicateLocationSkillNames = useMemo(() => {
     const globalNames = new Set(globalSkills.map((s) => s.name));
-    const conflicts = new Set<string>();
+    const duplicates = new Set<string>();
     for (const skill of projectSkills) {
       if (globalNames.has(skill.name)) {
-        conflicts.add(skill.name);
+        duplicates.add(skill.name);
       }
     }
-    return conflicts;
+    return duplicates;
   }, [globalSkills, projectSkills]);
 
   const handleDeleteGlobal = useCallback((skill: InstalledSkill) => {
@@ -468,7 +468,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
               sourceDiagnostics={environmentSourceDiagnostics}
               scope="project"
               filterActive={hasActiveFilters}
-              conflictSkillNames={conflictSkillNames}
+              duplicateLocationSkillNames={duplicateLocationSkillNames}
               pathExists={projectPathExists}
               projectPath={projectPath}
               updatingSkills={updatingSkills}
@@ -495,7 +495,7 @@ export function SkillsPanel({ compact }: SkillsPanelProps) {
             sourceDiagnostics={environmentSourceDiagnostics}
             scope="global"
             filterActive={hasActiveFilters}
-            conflictSkillNames={conflictSkillNames}
+            duplicateLocationSkillNames={duplicateLocationSkillNames}
             updatingSkills={updatingSkills}
             isCheckingUpdates={isForceCheckingGlobal}
             isAutomaticCheckingUpdates={isAutomaticCheckingGlobal}

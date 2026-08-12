@@ -48,7 +48,26 @@ describe('product language boundary', () => {
       adapterTargetsAction: '同步 {{agents}} 使用的项目内 Skill',
       conflictingCopies: '发现已修改的副本',
     });
-    expect(zhCN.skills.card.extraCopies).toBe('部分 Agent 的目录中还保留链接或副本');
+    expect(zhCN.skills.card).toMatchObject({
+      sourceIncomplete: '来源信息不完整',
+      sourceMissingUpstream: '来源中已找不到此 Skill',
+      updateCheckIncomplete: '更新检查未完成',
+      duplicateLocations: '全局和项目中重复安装',
+      duplicateAgentInstall: '通用目录和 Agent 专用目录中均已安装',
+      sourceOpenFailed: '无法打开来源，请稍后重试。',
+    });
+    expect(en.skills.card).toMatchObject({
+      sourceIncomplete: 'Source information is incomplete',
+      sourceMissingUpstream: 'This Skill is no longer in the source',
+      updateCheckIncomplete: 'Update check incomplete',
+      duplicateLocations: 'Installed in both Global and Project',
+      duplicateAgentInstall: 'Installed in both common and Agent-specific directories',
+      sourceOpenFailed: 'Could not open the source. Try again later.',
+    });
+    expect(zhCN.skills.detail.extraCopiesNamedHint).toBe('的专用 Skill 目录中也安装了此 Skill。');
+    expect(zhCN.skills.detail.extraCopiesCountHint).toBe('{{count}} 个 Agent 的专用 Skill 目录中也安装了此 Skill。');
+    expect(serialized(zhCN.skills.detail)).not.toContain('可能不会');
+    expect(serialized(en.skills.detail)).not.toMatch(/may not update/i);
     expect(zhCN.settings.agents).toMatchObject({
       add: '添加 Agent 信息',
       description: '查看各 Agent 会读取哪些 Skill 目录，以及 Skill Deck 用来检测它们的位置；也可以补充尚未收录的 Agent 信息。',

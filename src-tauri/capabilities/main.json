@@ -6,6 +6,13 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" }
+      ]
+    },
     "os:default",
     "main-commands"
   ]

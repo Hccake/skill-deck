@@ -218,11 +218,55 @@ fn invoke_with_body(
 
 #[test]
 fn application_windows_do_not_receive_generic_http_plugin_permissions() {
-    let main = include_str!("../capabilities/main.json");
-    let wizard = include_str!("../capabilities/install-wizard.json");
+    for (label, source) in [
+        ("main", include_str!("../capabilities/main.json")),
+        (
+            "install-wizard",
+            include_str!("../capabilities/install-wizard.json"),
+        ),
+    ] {
+        let capability: Value = serde_json::from_str(source)
+            .unwrap_or_else(|error| panic!("{label} capability must be valid JSON: {error}"));
+        let permissions = capability["permissions"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{label} permissions must be an array"));
+        assert!(!permissions.iter().any(|permission| {
+            let identifier = permission
+                .as_str()
+                .or_else(|| permission.get("identifier").and_then(Value::as_str));
+            identifier.is_some_and(|identifier| {
+                identifier == "http:default" || identifier.starts_with("http:allow-")
+            })
+        }));
+    }
+}
 
-    assert!(!main.contains("http:"));
-    assert!(!wizard.contains("http:"));
+#[test]
+fn only_the_main_window_can_open_external_urls() {
+    let main: Value = serde_json::from_str(include_str!("../capabilities/main.json"))
+        .expect("main capability must be valid JSON");
+    let wizard = include_str!("../capabilities/install-wizard.json");
+    let permissions = main["permissions"]
+        .as_array()
+        .expect("main permissions must be an array");
+    let opener_permission = permissions
+        .iter()
+        .find(|permission| {
+            permission.get("identifier").and_then(Value::as_str) == Some("opener:allow-open-url")
+        })
+        .expect("main window must receive the scoped external URL permission");
+
+    assert_eq!(
+        opener_permission.get("allow"),
+        Some(&serde_json::json!([
+            { "url": "http://*" },
+            { "url": "https://*" }
+        ]))
+    );
+    assert!(!permissions
+        .iter()
+        .any(|permission| { permission.as_str() == Some("opener:allow-default-urls") }));
+    assert!(!wizard.contains("opener:"));
 }
 
 fn assert_denied(result: Result<Value, Value>, command: &str) {

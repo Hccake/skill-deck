@@ -215,7 +215,8 @@
       "moreOptions": "More options",
       "copyToProject": "Copy to Project",
       "repairSource": "Repair source",
-      "reinstall": "Reinstall"
+      "reinstall": "Reinstall",
+      "noMoreOptions": "No other actions"
     },
     "repairSourceDialog": {
       "title": "Repair {{name}} source",
@@ -245,7 +246,7 @@
       "enable": "Enable {{name}}",
       "disable": "Disable {{name}}"
     },
-    "externalLink": "opens in new tab",
+    "externalLink": "Open with the system default app",
     "globalSkills": "Global Skills",
     "projectSkills": "Project Skills",
     "pluginGroup": {
@@ -270,16 +271,16 @@
       "project": "Project skill",
       "global": "Global skill"
     },
-    "conflict": {
-      "alsoInGlobal": "Also installed globally",
-      "alsoInProject": "Also installed in this project"
-    },
     "projectUnavailableTitle": "Project skills unavailable",
     "projectUnavailableDescription": "The current system cannot access this project. Check its location, or switch to a system where the project has been added.",
     "updateCheckIncompleteCount": "{{count}} checks incomplete",
     "card": {
-      "extraCopies": "Some Agent directories still contain links or copies",
-      "extraCopiesHint": "Some Agent Skill directories still contain a link or copy for this Skill. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" to adjust them."
+      "sourceIncomplete": "Source information is incomplete",
+      "sourceMissingUpstream": "This Skill is no longer in the source",
+      "updateCheckIncomplete": "Update check incomplete",
+      "duplicateLocations": "Installed in both Global and Project",
+      "duplicateAgentInstall": "Installed in both common and Agent-specific directories",
+      "sourceOpenFailed": "Could not open the source. Try again later."
     },
     "detail": {
       "title": "Skill Details",
@@ -300,10 +301,10 @@
       "loadError": "Failed to load skill content",
       "emptyContent": "This skill has no content",
       "retry": "Retry",
-      "extraCopiesHint": "These Agents can already use this Skill, but their own directories still contain links or copies. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" in the top right to adjust them.",
-      "extraCopiesNamedHint": "still contain a link or copy for this Skill in their own directory. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" in the top right to adjust them.",
+      "extraCopiesHint": "These Agents can use this Skill from the common directory, and it is also installed in their own Skill directories.",
+      "extraCopiesNamedHint": "also have this Skill installed in their own Skill directories.",
       "extraCopiesAgentSummaryMore": "{{agents}} and {{count}} Agents total",
-      "extraCopiesCountHint": "{{count}} Agent Skill directories still contain links or copies. Independent copies may not update with the Skill in the common Skill directory. Use \"Manage linked Agents\" in the top right to review them."
+      "extraCopiesCountHint": "This Skill is also installed in {{count}} Agent-specific Skill directories."
     },
     "deleteConfirm": {
       "title": "Delete Skill",
@@ -464,7 +465,7 @@
       "reinstallRequired": "Reinstall required",
       "autoCheckUnavailable": "Auto-check unavailable",
       "checkFailed": "Check failed",
-      "checkIncomplete": "Check incomplete",
+      "checkIncomplete": "Update check incomplete",
       "deletedUpstream": "Deleted upstream",
       "deleted-upstream": "Deleted upstream"
     },

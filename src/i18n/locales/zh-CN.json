@@ -215,7 +215,8 @@
       "moreOptions": "更多选项",
       "copyToProject": "复制到项目",
       "repairSource": "修复来源",
-      "reinstall": "重新安装"
+      "reinstall": "重新安装",
+      "noMoreOptions": "暂无其他操作"
     },
     "repairSourceDialog": {
       "title": "修复 {{name}} 的来源",
@@ -245,7 +246,7 @@
       "enable": "启用 {{name}}",
       "disable": "禁用 {{name}}"
     },
-    "externalLink": "在新标签页中打开",
+    "externalLink": "使用系统默认应用打开",
     "globalSkills": "全局 Skill",
     "projectSkills": "项目 Skill",
     "pluginGroup": {
@@ -270,16 +271,16 @@
       "project": "项目 Skill",
       "global": "全局 Skill"
     },
-    "conflict": {
-      "alsoInGlobal": "同时安装在全局",
-      "alsoInProject": "同时安装在此项目"
-    },
     "projectUnavailableTitle": "无法读取项目 Skill",
     "projectUnavailableDescription": "当前系统无法访问该项目。请检查项目位置，或切换到已经添加该项目的系统。",
-    "updateCheckIncompleteCount": "{{count}} 个检查未完成",
+    "updateCheckIncompleteCount": "{{count}} 个更新检查未完成",
     "card": {
-      "extraCopies": "部分 Agent 的目录中还保留链接或副本",
-      "extraCopiesHint": "部分 Agent 的 Skill 目录中还保留此 Skill 的链接或副本。独立副本可能不会随通用 Skill 目录中的 Skill 更新，可通过“管理关联 Agent”调整。"
+      "sourceIncomplete": "来源信息不完整",
+      "sourceMissingUpstream": "来源中已找不到此 Skill",
+      "updateCheckIncomplete": "更新检查未完成",
+      "duplicateLocations": "全局和项目中重复安装",
+      "duplicateAgentInstall": "通用目录和 Agent 专用目录中均已安装",
+      "sourceOpenFailed": "无法打开来源，请稍后重试。"
     },
     "detail": {
       "title": "Skill 详情",
@@ -300,10 +301,10 @@
       "loadError": "加载 skill 内容失败",
       "emptyContent": "该 skill 没有内容",
       "retry": "重试",
-      "extraCopiesHint": "这些 Agent 已经可以使用此 Skill，但自己的目录中还保留链接或副本。独立副本可能不会随通用 Skill 目录中的 Skill 更新，可点击右上角“管理关联 Agent”调整。",
-      "extraCopiesNamedHint": "的 Skill 目录中还保留此 Skill 的链接或副本；独立副本可能不会随通用 Skill 目录中的 Skill 更新，可在右上角“管理关联 Agent”中调整。",
+      "extraCopiesHint": "这些 Agent 已经可以通过通用 Skill 目录使用此 Skill，同时自己的专用目录中也安装了此 Skill。",
+      "extraCopiesNamedHint": "的专用 Skill 目录中也安装了此 Skill。",
       "extraCopiesAgentSummaryMore": "{{agents}} 等 {{count}} 个 Agent",
-      "extraCopiesCountHint": "{{count}} 个 Agent 的 Skill 目录中还保留链接或副本。独立副本可能不会随通用 Skill 目录中的 Skill 更新，可在右上角“管理关联 Agent”中查看并调整。"
+      "extraCopiesCountHint": "{{count}} 个 Agent 的专用 Skill 目录中也安装了此 Skill。"
     },
     "deleteConfirm": {
       "title": "删除 Skill",
@@ -464,7 +465,7 @@
       "reinstallRequired": "需重新安装",
       "autoCheckUnavailable": "无法自动检查",
       "checkFailed": "检查失败",
-      "checkIncomplete": "检查未完成",
+      "checkIncomplete": "更新检查未完成",
       "deletedUpstream": "上游已删除",
       "deleted-upstream": "上游已删除"
     },
