@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import {
   ArrowUpCircle,
   CircleAlert,
-  Ellipsis,
   ExternalLink,
   Folder,
   FolderOutput,
@@ -31,13 +30,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { AgentId, InstalledSkill, InstalledSkillLocation } from '@/bindings';
 import {
@@ -200,10 +192,6 @@ export const SkillCard = memo(function SkillCard({
   const updatedAt = skill.updatedAt
     ? formatSkillCardDate(skill.updatedAt, i18n.language)
     : null;
-  const hasOtherMenuActions = (displayScope === 'project' && Boolean(onCopyToProject))
-    || Boolean(onManageAgents)
-    || Boolean(onDelete);
-
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     pointerDownRef.current = { x: event.clientX, y: event.clientY };
   }, []);
@@ -458,59 +446,54 @@ export const SkillCard = memo(function SkillCard({
               <Wrench className="size-3.5" aria-hidden="true" />
             </Button>
           ) : null}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 cursor-pointer text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label={t('skills.actions.moreOptions')}
-                title={t('skills.actions.moreOptions')}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <Ellipsis className="size-4" aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-              {displayScope === 'project' && onCopyToProject ? (
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  disabled={writeBlocked}
-                  onSelect={() => onCopyToProject(skill)}
-                >
-                  <FolderOutput aria-hidden="true" />
-                  {t('skills.actions.copyToProject')}
-                </DropdownMenuItem>
-              ) : null}
-              {onManageAgents ? (
-                <DropdownMenuItem
-                  className="cursor-pointer"
-                  disabled={writeBlocked}
-                  onSelect={() => onManageAgents(skill)}
-                >
-                  <Pencil aria-hidden="true" />
-                  {t('skills.manageAgents.action')}
-                </DropdownMenuItem>
-              ) : null}
-              {onDelete && ((displayScope === 'project' && onCopyToProject) || onManageAgents) ? (
-                <DropdownMenuSeparator />
-              ) : null}
-              {onDelete ? (
-                <DropdownMenuItem
-                  variant="destructive"
-                  className="cursor-pointer"
-                  disabled={writeBlocked}
-                  onSelect={() => onDelete(skill)}
-                >
-                  <Trash2 aria-hidden="true" />
-                  {t('skills.actions.delete')}
-                </DropdownMenuItem>
-              ) : null}
-              {!hasOtherMenuActions ? (
-                <DropdownMenuItem disabled>{t('skills.actions.noMoreOptions')}</DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {displayScope === 'project' && onCopyToProject ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 cursor-pointer text-muted-foreground hover:bg-primary/10 hover:text-primary"
+              aria-label={t('skills.actions.copyToProject')}
+              title={t('skills.actions.copyToProject')}
+              disabled={writeBlocked}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCopyToProject(skill);
+              }}
+            >
+              <FolderOutput className="size-3.5" aria-hidden="true" />
+            </Button>
+          ) : null}
+          {onManageAgents ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 cursor-pointer text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label={t('skills.manageAgents.action')}
+              title={t('skills.manageAgents.action')}
+              disabled={writeBlocked}
+              onClick={(event) => {
+                event.stopPropagation();
+                onManageAgents(skill);
+              }}
+            >
+              <Pencil className="size-3.5" aria-hidden="true" />
+            </Button>
+          ) : null}
+          {onDelete ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 cursor-pointer text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              aria-label={t('skills.actions.delete')}
+              title={t('skills.actions.delete')}
+              disabled={writeBlocked}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(skill);
+              }}
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            </Button>
+          ) : null}
         </div>
       </CardContent>
 

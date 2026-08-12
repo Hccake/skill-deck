@@ -212,11 +212,9 @@
     "actions": {
       "update": "Update",
       "delete": "Delete",
-      "moreOptions": "More options",
       "copyToProject": "Copy to Project",
       "repairSource": "Repair source",
-      "reinstall": "Reinstall",
-      "noMoreOptions": "No other actions"
+      "reinstall": "Reinstall"
     },
     "repairSourceDialog": {
       "title": "Repair {{name}} source",

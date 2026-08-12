@@ -212,11 +212,9 @@
     "actions": {
       "update": "更新",
       "delete": "删除",
-      "moreOptions": "更多选项",
       "copyToProject": "复制到项目",
       "repairSource": "修复来源",
-      "reinstall": "重新安装",
-      "noMoreOptions": "暂无其他操作"
+      "reinstall": "重新安装"
     },
     "repairSourceDialog": {
       "title": "修复 {{name}} 的来源",

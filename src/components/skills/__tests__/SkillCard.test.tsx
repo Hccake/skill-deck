@@ -148,10 +148,11 @@ describe('SkillCard', () => {
     expect(attention.querySelectorAll('svg')).toHaveLength(1);
   });
 
-  it('moves low-frequency actions into the more menu', async () => {
+  it('keeps copy, Agent management, and delete available as direct actions', async () => {
     const onCopyToProject = vi.fn();
     const onManageAgents = vi.fn();
     const onDelete = vi.fn();
+    const onClick = vi.fn();
     const user = userEvent.setup();
 
     render(
@@ -162,25 +163,20 @@ describe('SkillCard', () => {
           onCopyToProject={onCopyToProject}
           onManageAgents={onManageAgents}
           onDelete={onDelete}
+          onClick={onClick}
         />
       </TooltipProvider>
     );
 
-    expect(screen.queryByTitle('skills.actions.copyToProject')).toBeNull();
-    expect(screen.queryByTitle('skills.manageAgents.action')).toBeNull();
-    expect(screen.queryByTitle('skills.actions.delete')).toBeNull();
-
-    await user.click(screen.getByRole('button', { name: 'skills.actions.moreOptions' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'skills.actions.copyToProject' }));
+    await user.click(screen.getByRole('button', { name: 'skills.actions.copyToProject' }));
     expect(onCopyToProject).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
 
-    await user.click(screen.getByRole('button', { name: 'skills.actions.moreOptions' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'skills.manageAgents.action' }));
+    await user.click(screen.getByRole('button', { name: 'skills.manageAgents.action' }));
     expect(onManageAgents).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
 
-    await user.click(screen.getByRole('button', { name: 'skills.actions.moreOptions' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'skills.actions.delete' }));
+    await user.click(screen.getByRole('button', { name: 'skills.actions.delete' }));
     expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ name: 'toolkit' }));
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it('opens an actionable source with the desktop opener without selecting the card', async () => {
@@ -241,8 +237,7 @@ describe('SkillCard', () => {
     expect(screen.queryByRole('button', { name: 'local/toolkit' })).toBeNull();
   });
 
-  it('disables every card write action when writes are blocked', async () => {
-    const user = userEvent.setup();
+  it('disables every card write action when writes are blocked', () => {
     render(
       <TooltipProvider>
         <SkillCard
@@ -257,14 +252,13 @@ describe('SkillCard', () => {
       </TooltipProvider>
     );
 
-    expect((screen.getByTitle('skills.actions.update') as HTMLButtonElement).disabled).toBe(true);
-    await user.click(screen.getByRole('button', { name: 'skills.actions.moreOptions' }));
     for (const name of [
+      'skills.actions.update',
       'skills.actions.copyToProject',
       'skills.manageAgents.action',
       'skills.actions.delete',
     ]) {
-      expect(screen.getByRole('menuitem', { name }).getAttribute('data-disabled')).not.toBeNull();
+      expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
     }
   });
 
