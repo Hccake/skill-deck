@@ -151,6 +151,7 @@ test("release workflow prepares one draft and lets tauri-action upload each plat
 
   assert.ok(workflow.jobs["prepare-release"]);
   assert.ok(workflow.jobs["verify-release"]);
+  assert.equal(workflow.jobs["verify-release"].permissions.contents, "write");
   assert.deepEqual(build.needs, ["validate", "quality", "prepare-release"]);
   assert.equal(build.permissions.contents, "write");
   assert.doesNotMatch(
