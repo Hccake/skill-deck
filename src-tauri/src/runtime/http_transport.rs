@@ -247,9 +247,13 @@ impl HttpTransport {
                 response
                     .chunk()
                     .await
-                    .map_err(|_| HttpTransportError::Request {
+                    .map_err(|error| HttpTransportError::Request {
                         stage: "response_body",
-                        reason: "transport",
+                        reason: if error.is_timeout() {
+                            "timeout"
+                        } else {
+                            "transport"
+                        },
                     })?
             {
                 if body.len().saturating_add(chunk.len()) > max_body_bytes {
@@ -321,7 +325,7 @@ fn request_timeout() -> HttpTransportError {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, Once};
@@ -559,34 +563,80 @@ mod tests {
     #[tokio::test]
     async fn total_timeout_includes_response_body_reading() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("origin listener");
+        listener
+            .set_nonblocking(true)
+            .expect("configure origin listener");
         let target = format!(
             "http://{}/slow",
             listener.local_addr().expect("origin addr")
         );
         let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("origin request");
+            let accept_deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < accept_deadline,
+                            "origin request was not received before the deadline"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept origin request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("configure origin request timeout");
+            let mut request = BufReader::new(stream.try_clone().expect("clone origin stream"));
+            loop {
+                let mut line = String::new();
+                let bytes_read = request.read_line(&mut line).expect("read origin request");
+                assert_ne!(bytes_read, 0, "origin request ended before headers");
+                if line == "\r\n" {
+                    break;
+                }
+            }
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\no")
                 .expect("partial response");
-            thread::sleep(Duration::from_millis(250));
-            let _ = stream.write_all(b"kay");
+            stream.flush().expect("flush partial response");
+            thread::sleep(Duration::from_millis(500));
+            if stream.write_all(b"kay").is_ok() {
+                let _ = stream.flush();
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+            }
         });
         let started = std::time::Instant::now();
 
         let result = direct_client()
-            .get(HttpGetRequest::new(target, Duration::from_millis(40), 1024))
+            .get(HttpGetRequest::new(
+                target,
+                Duration::from_millis(200),
+                1024,
+            ))
             .await;
         let elapsed = started.elapsed();
 
         worker.join().expect("origin worker");
-        assert!(elapsed < Duration::from_millis(200));
-        assert!(matches!(
-            result,
-            Err(super::HttpTransportError::Request {
-                reason: "timeout",
-                ..
-            })
-        ));
+        assert!(elapsed < Duration::from_millis(400));
+        let error = match result {
+            Ok(response) => panic!(
+                "request unexpectedly succeeded with status {}",
+                response.status
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(
+                error,
+                super::HttpTransportError::Request {
+                    reason: "timeout",
+                    ..
+                }
+            ),
+            "unexpected timeout error: {error:?}"
+        );
     }
 
     #[tokio::test]
