@@ -180,21 +180,23 @@ mod tests {
     use std::sync::Mutex;
     use std::thread;
 
-    use tauri::test::{mock_builder, MockRuntime};
+    use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 
     use super::*;
     use crate::models::{NetworkProxySettings, ProxyMode};
 
+    const TEST_UPDATER_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ1NkM0MjI5RDUzMzU2MkMKUldRc1ZqUFZLVUpzMVRUYmF2dW0rcjJYbm5pWFp6cEplQWNDc09xb1pnb0ozejJmQUtqd2JjNTUK";
+
     fn test_app(manifest_urls: &[url::Url]) -> tauri::App<MockRuntime> {
-        let mut context = tauri::generate_context!();
-        let updater_config = context
-            .config_mut()
-            .plugins
-            .0
-            .get_mut("updater")
-            .expect("updater plugin config");
-        updater_config["endpoints"] = serde_json::json!(manifest_urls);
-        updater_config["dangerousInsecureTransportProtocol"] = serde_json::json!(true);
+        let mut context = mock_context(noop_assets());
+        context.config_mut().plugins.0.insert(
+            "updater".to_string(),
+            serde_json::json!({
+                "pubkey": TEST_UPDATER_PUBKEY,
+                "endpoints": manifest_urls,
+                "dangerousInsecureTransportProtocol": true
+            }),
+        );
         mock_builder()
             .plugin(tauri_plugin_updater::Builder::new().build())
             .build(context)
