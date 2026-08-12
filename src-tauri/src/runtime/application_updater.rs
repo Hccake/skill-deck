@@ -186,7 +186,8 @@ mod tests {
     use crate::models::{NetworkProxySettings, ProxyMode};
 
     fn test_app(manifest_urls: &[url::Url]) -> tauri::App<MockRuntime> {
-        let mut context = tauri::generate_context!();
+        // 测试上下文不嵌入 macOS Info.plist，避免与应用入口重复定义符号。
+        let mut context = tauri::generate_context!(test = true);
         let updater_config = context
             .config_mut()
             .plugins
