@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 export const MAX_UPDATER_MANIFEST_BYTES = 1024 * 1024;
 export const MAX_UPDATER_ASSET_BYTES = 256 * 1024 * 1024;
 
-const PLATFORM_ASSET_TEMPLATES = Object.freeze({
+const COMMON_PLATFORM_ASSET_TEMPLATES = Object.freeze({
   "darwin-aarch64": "skill-deck_{version}_macos_aarch64.app.tar.gz",
   "darwin-aarch64-app": "skill-deck_{version}_macos_aarch64.app.tar.gz",
   "darwin-x86_64": "skill-deck_{version}_macos_x64.app.tar.gz",
@@ -14,6 +14,14 @@ const PLATFORM_ASSET_TEMPLATES = Object.freeze({
   "linux-x86_64-appimage": "skill-deck_{version}_linux_amd64.AppImage",
   "linux-x86_64-deb": "skill-deck_{version}_linux_amd64.deb",
   "linux-x86_64-rpm": "skill-deck_{version}_linux_x86_64.rpm",
+});
+
+const NSIS_PLATFORM_ASSET_TEMPLATES = Object.freeze({
+  "windows-x86_64": "skill-deck_{version}_windows_x64-setup.exe",
+  "windows-x86_64-nsis": "skill-deck_{version}_windows_x64-setup.exe",
+});
+
+const STABLE_WINDOWS_PLATFORM_ASSET_TEMPLATES = Object.freeze({
   "windows-x86_64": "skill-deck_{version}_windows_x64.msi",
   "windows-x86_64-msi": "skill-deck_{version}_windows_x64.msi",
   "windows-x86_64-nsis": "skill-deck_{version}_windows_x64-setup.exe",
@@ -29,7 +37,7 @@ const INSTALLER_TEMPLATES = Object.freeze([
   "skill-deck_{version}_windows_x64.msi",
 ]);
 
-const RELEASE_ASSET_TEMPLATES = Object.freeze([
+const COMMON_RELEASE_ASSET_TEMPLATES = Object.freeze([
   "latest.json",
   "skill-deck_{version}_linux_amd64.AppImage",
   "skill-deck_{version}_linux_amd64.AppImage.sig",
@@ -45,6 +53,9 @@ const RELEASE_ASSET_TEMPLATES = Object.freeze([
   "skill-deck_{version}_macos_x64.dmg",
   "skill-deck_{version}_windows_x64-setup.exe",
   "skill-deck_{version}_windows_x64-setup.exe.sig",
+]);
+
+const MSI_RELEASE_ASSET_TEMPLATES = Object.freeze([
   "skill-deck_{version}_windows_x64.msi",
   "skill-deck_{version}_windows_x64.msi.sig",
 ]);
@@ -69,6 +80,10 @@ function validateVersion(version) {
   );
 }
 
+function isPrereleaseVersion(version) {
+  return version.split("+", 1)[0].includes("-");
+}
+
 export function documentedInstallerNames(version) {
   invariant(typeof version === "string" && version, "Missing release version");
   return INSTALLER_TEMPLATES.map((template) => render(template, version));
@@ -76,7 +91,10 @@ export function documentedInstallerNames(version) {
 
 export function expectedReleaseAssetNames(version) {
   validateVersion(version);
-  return RELEASE_ASSET_TEMPLATES.map((template) => render(template, version));
+  const templates = isPrereleaseVersion(version)
+    ? COMMON_RELEASE_ASSET_TEMPLATES
+    : [...COMMON_RELEASE_ASSET_TEMPLATES, ...MSI_RELEASE_ASSET_TEMPLATES];
+  return templates.map((template) => render(template, version));
 }
 
 function verifyDraftState({ release, tag, expectedPrerelease }) {
@@ -112,7 +130,7 @@ function readRemoteAssets(release, expectedNames, repository) {
   invariant(Array.isArray(release.assets), "Release assets must be an array");
   invariant(
     release.assets.length === expectedNames.length,
-    `Expected 17 Release assets, found ${release.assets.length}`,
+    `Expected ${expectedNames.length} Release assets, found ${release.assets.length}`,
   );
 
   const assets = new Map();
@@ -133,11 +151,14 @@ function readRemoteAssets(release, expectedNames, repository) {
 }
 
 function expectedPlatformAssets(version) {
+  const windowsTemplates = isPrereleaseVersion(version)
+    ? NSIS_PLATFORM_ASSET_TEMPLATES
+    : STABLE_WINDOWS_PLATFORM_ASSET_TEMPLATES;
   return Object.fromEntries(
-    Object.entries(PLATFORM_ASSET_TEMPLATES).map(([platform, template]) => [
-      platform,
-      render(template, version),
-    ]),
+    Object.entries({
+      ...COMMON_PLATFORM_ASSET_TEMPLATES,
+      ...windowsTemplates,
+    }).map(([platform, template]) => [platform, render(template, version)]),
   );
 }
 
@@ -218,7 +239,7 @@ async function verifyCompleteRelease({
   const expectedKeys = Object.keys(platformAssets).sort();
   invariant(
     platformKeys.length === expectedKeys.length,
-    `Expected 11 updater platform keys, found ${platformKeys.length}`,
+    `Expected ${expectedKeys.length} updater platform keys, found ${platformKeys.length}`,
   );
   invariant(
     platformKeys.every((key, index) => key === expectedKeys[index]),

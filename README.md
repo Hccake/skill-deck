@@ -92,7 +92,7 @@ Skill availability is determined by its installation location and agent associat
 
 Download the installer for your platform from [GitHub Releases](https://github.com/hccake/skill-deck/releases):
 
-- **Windows**: `skill-deck_x.x.x_windows_x64-setup.exe` or `skill-deck_x.x.x_windows_x64.msi`
+- **Windows**: `skill-deck_x.x.x_windows_x64-setup.exe`; stable releases also provide `skill-deck_x.x.x_windows_x64.msi`
 - **macOS Apple Silicon**: `skill-deck_x.x.x_macos_aarch64.dmg`
 - **macOS Intel**: `skill-deck_x.x.x_macos_x64.dmg`
   > macOS builds are currently unsigned. If macOS blocks the app after installation, run:

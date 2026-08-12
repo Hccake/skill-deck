@@ -18,11 +18,12 @@ const verifierPath = fileURLToPath(
   new URL("../verify-release-assets.mjs", import.meta.url),
 );
 const version = "1.7.0-beta.4";
+const stableVersion = "1.7.0";
 const tag = `v${version}`;
 const repository = "hccake/skill-deck";
 const notes = "## Changes\n\n- Complete updater matrix.\n";
 
-const platformAssets = Object.freeze({
+const commonPlatformAssets = Object.freeze({
   "darwin-aarch64": `skill-deck_${version}_macos_aarch64.app.tar.gz`,
   "darwin-aarch64-app": `skill-deck_${version}_macos_aarch64.app.tar.gz`,
   "darwin-x86_64": `skill-deck_${version}_macos_x64.app.tar.gz`,
@@ -31,12 +32,30 @@ const platformAssets = Object.freeze({
   "linux-x86_64-appimage": `skill-deck_${version}_linux_amd64.AppImage`,
   "linux-x86_64-deb": `skill-deck_${version}_linux_amd64.deb`,
   "linux-x86_64-rpm": `skill-deck_${version}_linux_x86_64.rpm`,
-  "windows-x86_64": `skill-deck_${version}_windows_x64.msi`,
-  "windows-x86_64-msi": `skill-deck_${version}_windows_x64.msi`,
+  "windows-x86_64": `skill-deck_${version}_windows_x64-setup.exe`,
   "windows-x86_64-nsis": `skill-deck_${version}_windows_x64-setup.exe`,
 });
 
-async function createCompleteFixture() {
+function platformAssetsFor(releaseVersion) {
+  const renderVersion = (name) => name.replaceAll(version, releaseVersion);
+  const assets = Object.fromEntries(
+    Object.entries(commonPlatformAssets).map(([platform, name]) => [
+      platform,
+      renderVersion(name),
+    ]),
+  );
+  if (!releaseVersion.includes("-")) {
+    const msi = `skill-deck_${releaseVersion}_windows_x64.msi`;
+    assets["windows-x86_64"] = msi;
+    assets["windows-x86_64-msi"] = msi;
+  }
+  return assets;
+}
+
+async function createCompleteFixture(releaseVersion = version) {
+  const fixtureTag = `v${releaseVersion}`;
+  const fixturePrerelease = releaseVersion.includes("-");
+  const platformAssets = platformAssetsFor(releaseVersion);
   const root = await mkdtemp(path.join(os.tmpdir(), "skill-deck-release-"));
   const signaturesDirectory = path.join(root, "release-downloads");
   await mkdir(signaturesDirectory);
@@ -54,7 +73,7 @@ async function createCompleteFixture() {
     );
   }
 
-  const releaseAssetNames = expectedReleaseAssetNames(version);
+  const releaseAssetNames = expectedReleaseAssetNames(releaseVersion);
   const assetApiUrls = new Map(
     releaseAssetNames.map((name, index) => [
       name,
@@ -62,7 +81,7 @@ async function createCompleteFixture() {
     ]),
   );
   const manifest = {
-    version,
+    version: releaseVersion,
     notes,
     pub_date: "2026-08-08T12:00:00.000Z",
     platforms: Object.fromEntries(
@@ -83,9 +102,9 @@ async function createCompleteFixture() {
   await writeFile(notesFile, notes);
 
   const release = {
-    tagName: tag,
+    tagName: fixtureTag,
     isDraft: true,
-    isPrerelease: true,
+    isPrerelease: fixturePrerelease,
     body: notes.trimEnd(),
     assets: releaseAssetNames.map((name) => ({
       name,
@@ -101,10 +120,13 @@ async function createCompleteFixture() {
     notesFile,
     manifest,
     release,
+    version: releaseVersion,
+    tag: fixtureTag,
+    expectedPrerelease: fixturePrerelease,
   };
 }
 
-test("declares the 17 uploaded assets and seven documented installers", () => {
+test("prereleases omit MSI assets that cannot represent SemVer prerelease identifiers", () => {
   assert.deepEqual(expectedReleaseAssetNames(version), [
     "latest.json",
     `skill-deck_${version}_linux_amd64.AppImage`,
@@ -121,17 +143,31 @@ test("declares the 17 uploaded assets and seven documented installers", () => {
     `skill-deck_${version}_macos_x64.dmg`,
     `skill-deck_${version}_windows_x64-setup.exe`,
     `skill-deck_${version}_windows_x64-setup.exe.sig`,
-    `skill-deck_${version}_windows_x64.msi`,
-    `skill-deck_${version}_windows_x64.msi.sig`,
   ]);
-  assert.deepEqual(documentedInstallerNames(version), [
-    `skill-deck_${version}_macos_aarch64.dmg`,
-    `skill-deck_${version}_macos_x64.dmg`,
-    `skill-deck_${version}_linux_amd64.AppImage`,
-    `skill-deck_${version}_linux_amd64.deb`,
-    `skill-deck_${version}_linux_x86_64.rpm`,
-    `skill-deck_${version}_windows_x64-setup.exe`,
-    `skill-deck_${version}_windows_x64.msi`,
+});
+
+test("stable releases retain the complete MSI and NSIS asset contract", () => {
+  const assetNames = expectedReleaseAssetNames(stableVersion);
+
+  assert.equal(assetNames.length, 17);
+  assert.ok(assetNames.includes(`skill-deck_${stableVersion}_windows_x64.msi`));
+  assert.ok(
+    assetNames.includes(`skill-deck_${stableVersion}_windows_x64.msi.sig`),
+  );
+  assert.ok(
+    assetNames.includes(`skill-deck_${stableVersion}_windows_x64-setup.exe`),
+  );
+});
+
+test("documents every stable installer offered to users", () => {
+  assert.deepEqual(documentedInstallerNames(stableVersion), [
+    `skill-deck_${stableVersion}_macos_aarch64.dmg`,
+    `skill-deck_${stableVersion}_macos_x64.dmg`,
+    `skill-deck_${stableVersion}_linux_amd64.AppImage`,
+    `skill-deck_${stableVersion}_linux_amd64.deb`,
+    `skill-deck_${stableVersion}_linux_x86_64.rpm`,
+    `skill-deck_${stableVersion}_windows_x64-setup.exe`,
+    `skill-deck_${stableVersion}_windows_x64.msi`,
   ]);
 });
 
@@ -212,6 +248,25 @@ test("accepts the complete official tauri-action release contract", async () => 
   }
 });
 
+test("accepts the complete stable release contract with MSI and NSIS", async () => {
+  const fixture = await createCompleteFixture(stableVersion);
+  try {
+    await verifyReleaseAssets({
+      mode: "complete",
+      release: fixture.release,
+      manifest: fixture.manifest,
+      signaturesDirectory: fixture.signaturesDirectory,
+      notes,
+      version: fixture.version,
+      tag: fixture.tag,
+      repository,
+      expectedPrerelease: fixture.expectedPrerelease,
+    });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("rejects an updater manifest larger than 1 MiB", async () => {
   const fixture = await createCompleteFixture();
   try {
@@ -240,7 +295,7 @@ test("rejects an updater manifest larger than 1 MiB", async () => {
 test("rejects an updater asset larger than 256 MiB", async () => {
   const fixture = await createCompleteFixture();
   try {
-    const assetName = platformAssets["linux-x86_64"];
+    const assetName = platformAssetsFor(version)["linux-x86_64"];
     fixture.release.assets.find((asset) => asset.name === assetName).size =
       MAX_UPDATER_ASSET_BYTES + 1;
     await assert.rejects(
@@ -267,7 +322,7 @@ for (const [name, mutate, expected] of [
   [
     "missing Release asset",
     ({ release }) => release.assets.pop(),
-    /Expected 17 Release assets/i,
+    /Expected 15 Release assets/i,
   ],
   [
     "empty Release asset",
@@ -279,7 +334,7 @@ for (const [name, mutate, expected] of [
   [
     "missing updater platform",
     ({ manifest }) => delete manifest.platforms["linux-x86_64-deb"],
-    /Expected 11 updater platform keys/i,
+    /Expected 10 updater platform keys/i,
   ],
   [
     "wrong updater URL",

@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { parse } from "yaml";
 
-import { documentedInstallerNames } from "../verify-release-assets.mjs";
+import {
+  documentedInstallerNames,
+  expectedReleaseAssetNames,
+} from "../verify-release-assets.mjs";
 
 const workflowUrl = new URL(
   "../../.github/workflows/release.yml",
@@ -179,21 +182,22 @@ test("release workflow prepares one draft and lets tauri-action upload each plat
   assert.equal(workflow.jobs.aggregate, undefined);
 });
 
-test("release workflow builds every public installer with explicit bundle arguments", async () => {
-  const workflow = await readFile(workflowUrl, "utf8");
-  const build =
-    workflow.match(/\n  build-release:[\s\S]*?(?=\n  verify-release:)/)?.[0] ??
-    "";
-
-  assert.match(build, /args: --target aarch64-apple-darwin --bundles app,dmg/);
-  assert.match(build, /args: --target x86_64-apple-darwin --bundles app,dmg/);
-  assert.match(build, /args: --bundles appimage,deb,rpm/);
-  assert.match(build, /args: --bundles nsis,msi/);
-  assert.match(
-    build,
-    /releaseId: \$\{\{ needs\.prepare-release\.outputs\.release_id \}\}/,
+test("release workflow omits MSI for prereleases and retains it for stable releases", async () => {
+  const workflow = await readWorkflow(workflowUrl);
+  const build = workflow.jobs["build-release"];
+  const windows = build.strategy.matrix.include.find(
+    (entry) => entry.runner === "windows-latest",
   );
-  assert.doesNotMatch(workflow, /Expected 8 installer\/signature files/);
+  const action = build.steps.find((step) =>
+    step.uses?.startsWith("tauri-apps/tauri-action@"),
+  );
+
+  assert.equal(windows.args, "--bundles nsis,msi");
+  assert.equal(windows.prerelease_args, "--bundles nsis");
+  assert.equal(
+    action.with.args,
+    "${{ needs.validate.outputs.prerelease == 'true' && matrix.prerelease_args || matrix.args }}",
+  );
 });
 
 test("release helpers come from the workflow commit instead of the tagged application commit", async () => {
@@ -304,14 +308,11 @@ test("release workflow derives and enforces GitHub prerelease state from the ver
 });
 
 test("release verification checks the complete remote asset and updater manifest contract", async () => {
-  const [workflow, verifier] = await Promise.all([
-    readFile(workflowUrl, "utf8"),
-    readFile(releaseVerifierUrl, "utf8"),
-  ]);
+  const workflow = await readFile(workflowUrl, "utf8");
   const verify = workflow.match(/\n  verify-release:[\s\S]*/)?.[0] ?? "";
 
-  assert.match(verifier, /Expected 17 Release assets/i);
-  assert.match(verifier, /Expected 11 updater platform keys/i);
+  assert.equal(expectedReleaseAssetNames("1.7.0-beta.4").length, 15);
+  assert.equal(expectedReleaseAssetNames("1.7.0").length, 17);
   assert.match(verify, /gh release download[\s\S]*latest\.json/);
   assert.match(verify, /gh release download[\s\S]*\*\.sig/);
   assert.match(verify, /--mode complete/);

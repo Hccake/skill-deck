@@ -93,7 +93,7 @@ Skill 是否可用取决于它的安装位置以及 Agent 是否读取该位置�
 
 从 [GitHub Releases](https://github.com/hccake/skill-deck/releases) 下载对应平台的安装包：
 
-- **Windows**：`skill-deck_x.x.x_windows_x64-setup.exe` 或 `skill-deck_x.x.x_windows_x64.msi`
+- **Windows**：`skill-deck_x.x.x_windows_x64-setup.exe`；稳定版本还会提供 `skill-deck_x.x.x_windows_x64.msi`
 - **macOS Apple Silicon**：`skill-deck_x.x.x_macos_aarch64.dmg`
 - **macOS Intel**：`skill-deck_x.x.x_macos_x64.dmg`
   > macOS 构建目前没有 Apple 开发者签名。如果安装后被系统拦截，可执行：
