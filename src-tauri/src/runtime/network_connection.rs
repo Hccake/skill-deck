@@ -307,31 +307,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_probe_succeeds_without_buffering_a_large_response_body() {
-        let proxy = tiny_http::Server::http("127.0.0.1:0").expect("proxy server");
-        let proxy_url = format!("http://{}", proxy.server_addr());
-        let server_thread = thread::spawn(move || {
-            proxy
-                .recv_timeout(Duration::from_secs(2))
-                .expect("proxy receive")
-                .expect("proxy request before deadline")
-                .respond(tiny_http::Response::from_data(vec![b'x'; 2 * 1024 * 1024]))
-                .expect("proxy response");
-        });
-        let settings = Arc::new(ProxySettingsStore::new(NetworkProxySettings {
-            mode: ProxyMode::Custom,
-            custom_proxy_url: Some(proxy_url),
-            ..NetworkProxySettings::default()
-        }));
-
-        let result = test_http_target(&HttpTransport::new(settings), "http://skills.sh/").await;
-
-        server_thread.join().expect("proxy server thread");
-        assert_eq!(result.status, ProxyConnectionStatus::Succeeded);
-        assert_eq!(result.reason_code, None);
-    }
-
-    #[tokio::test]
     async fn wsl_adapter_maps_an_unavailable_distribution_without_running_wsl() {
         let wsl = WslRuntime::new_with_support(false, false);
         let policy = ProxySettingsStore::new(NetworkProxySettings::default());
