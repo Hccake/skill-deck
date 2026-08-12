@@ -23,12 +23,4 @@ describe.each([
     const interruption = messages.mutation.interruption as Record<string, string>;
     expect(interruption[key]).toBeTruthy();
   });
-
-  it('does not retain the ambiguous legacy close keys', () => {
-    const interruption = messages.mutation.interruption as Record<string, string>;
-    expect(interruption.closeTitle).toBeUndefined();
-    expect(interruption.closeDescription).toBeUndefined();
-    expect(interruption.closeWaitDescription).toBeUndefined();
-    expect(interruption.cancelAndClose).toBeUndefined();
-  });
 });

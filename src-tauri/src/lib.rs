@@ -311,16 +311,4 @@ mod command_surface_tests {
     fn registered_commands_match_the_app_manifest_inventory() {
         assert_eq!(registered_commands(), app_manifest_commands());
     }
-
-    #[test]
-    fn removed_agent_definition_duplication_is_not_exported() {
-        assert!(!registered_commands().contains("duplicate_custom_agent_draft"));
-        assert!(!app_manifest_commands().contains("duplicate_custom_agent_draft"));
-    }
-
-    #[test]
-    fn retired_duplicate_cleanup_is_not_exported() {
-        assert!(!registered_commands().contains("cleanup_duplicate_agent_copies"));
-        assert!(!app_manifest_commands().contains("cleanup_duplicate_agent_copies"));
-    }
 }

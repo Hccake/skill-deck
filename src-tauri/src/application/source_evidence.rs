@@ -1769,8 +1769,11 @@ fn coordinator_unavailable() -> AppError {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    use std::future::{poll_fn, Future};
+    use std::pin::Pin;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::task::Poll;
     use std::time::Duration;
 
     use super::*;
@@ -2003,13 +2006,7 @@ mod tests {
 
     #[tokio::test]
     async fn force_requests_join_the_same_inflight_detection() {
-        let detector = Arc::new(ScriptedDetector::delayed(
-            modified(
-                "revision-1",
-                [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
-            ),
-            Duration::from_millis(60),
-        ));
+        let (detector, mut started) = ControlledBatchDetector::new(BTreeSet::new());
         let coordinator = Arc::new(coordinator(
             detector.clone(),
             Arc::new(AtomicU64::new(1_000)),
@@ -2026,16 +2023,16 @@ mod tests {
                     .await
             })
         };
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        let right = coordinator
-            .check(
-                request("acme/tools", EvidenceCheckMode::Force),
-                CancellationSignal::default(),
-            )
-            .await;
+        started.recv().await.expect("first detection started");
+        let mut right = Box::pin(coordinator.check(
+            request("acme/tools", EvidenceCheckMode::Force),
+            CancellationSignal::default(),
+        ));
+        assert_pending(right.as_mut()).await;
+        detector.release_one();
 
         assert!(left.await.unwrap().is_ok());
-        assert!(right.is_ok());
+        assert!(right.await.is_ok());
         assert_eq!(detector.calls(), 1);
     }
 
@@ -3361,13 +3358,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_one_waiter_does_not_cancel_shared_detection() {
-        let detector = Arc::new(ScriptedDetector::delayed(
-            modified(
-                "revision-1",
-                [("skills/alpha", SkillRevision::GitTreeOid("tree-a".into()))],
-            ),
-            Duration::from_millis(60),
-        ));
+        let (detector, mut started) = ControlledBatchDetector::new(BTreeSet::new());
         let coordinator = Arc::new(coordinator(
             detector.clone(),
             Arc::new(AtomicU64::new(1_000)),
@@ -3385,26 +3376,32 @@ mod tests {
                     .await
             })
         };
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        let surviving_waiter = {
-            let coordinator = coordinator.clone();
-            tokio::spawn(async move {
-                coordinator
-                    .check(
-                        request("acme/tools", EvidenceCheckMode::Force),
-                        CancellationSignal::default(),
-                    )
-                    .await
-            })
-        };
+        started.recv().await.expect("shared detection started");
+        let mut surviving_waiter = Box::pin(coordinator.check(
+            request("acme/tools", EvidenceCheckMode::Force),
+            CancellationSignal::default(),
+        ));
+        assert_pending(surviving_waiter.as_mut()).await;
         cancellation.cancel();
 
         assert!(matches!(
             cancelled_waiter.await.unwrap(),
             Err(crate::error::AppError::MutationCancelled)
         ));
-        assert!(surviving_waiter.await.unwrap().is_ok());
+        detector.release_one();
+        assert!(surviving_waiter.await.is_ok());
         assert_eq!(detector.calls(), 1);
+    }
+
+    async fn assert_pending<F>(mut future: Pin<&mut F>)
+    where
+        F: Future,
+    {
+        poll_fn(|context| match future.as_mut().poll(context) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("future completed before the shared detection was released"),
+        })
+        .await;
     }
 
     struct ControlledBatchDetector {
@@ -3441,6 +3438,10 @@ mod tests {
 
         fn release_one(&self) {
             self.release.add_permits(1);
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
         }
     }
 

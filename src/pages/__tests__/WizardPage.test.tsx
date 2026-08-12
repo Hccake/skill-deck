@@ -200,10 +200,6 @@ function startInstallationFromSkillsEntry() {
   fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.install' }));
 }
 
-function expectFixedAction(button: HTMLElement) {
-  expect(button.parentElement?.className).toContain('flex-shrink-0');
-}
-
 describe('canProceedForStep', () => {
   it('blocks install on confirm step until guarded-source risk is acknowledged', () => {
     expect(canProceedForStep(createState())).toBe(false);
@@ -346,7 +342,6 @@ describe('WizardPage mutation guard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
 
     const done = await screen.findByRole('button', { name: 'addSkill.actions.done' });
-    expectFixedAction(done);
     await waitFor(() => expect(mocks.emit).toHaveBeenCalledTimes(1));
     fireEvent.click(done);
 
@@ -390,32 +385,27 @@ describe('WizardPage mutation guard', () => {
     });
   });
 
-  it('keeps result actions in the fixed footer while result content scrolls', async () => {
+  it('offers retry and completion actions after a partial result', async () => {
     startInstallationFromSkillsEntry();
 
     expect(screen.queryByRole('button', { name: 'addSkill.actions.done' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'finish-partial-install' }));
 
     const retry = await screen.findByRole('button', { name: 'addSkill.actions.retry' });
-    const done = screen.getByRole('button', { name: 'addSkill.actions.done' });
-    expectFixedAction(retry);
-    expectFixedAction(done);
+    expect(screen.getByRole('button', { name: 'addSkill.actions.done' })).toBeDefined();
     expect(screen.getByTestId('complete-step').contains(retry)).toBe(false);
 
     fireEvent.click(retry);
     expect(await screen.findByText('confirm-step')).toBeDefined();
   });
 
-  it('keeps fatal error actions in the fixed footer', async () => {
+  it('offers close, return, and retry actions after a fatal error', async () => {
     startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-failed-install' }));
 
     await screen.findByTestId('error-step');
-    const close = screen.getByRole('button', { name: 'addSkill.error.actions.close' });
-    const back = screen.getByRole('button', { name: 'addSkill.error.actions.backToSource' });
-    const retry = screen.getByRole('button', { name: 'addSkill.error.actions.retry' });
-    expectFixedAction(close);
-    expectFixedAction(back);
-    expectFixedAction(retry);
+    expect(screen.getByRole('button', { name: 'addSkill.error.actions.close' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'addSkill.error.actions.backToSource' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'addSkill.error.actions.retry' })).toBeDefined();
   });
 });

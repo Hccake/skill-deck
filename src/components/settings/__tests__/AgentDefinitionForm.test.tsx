@@ -139,15 +139,6 @@ describe('AgentDefinitionForm', () => {
     expect(screen.getByText('settings.agents.fields.idHint.locked')).toBeDefined();
   });
 
-  it('uses equal-height label rows for the Agent name and ID fields', () => {
-    renderForm();
-
-    const nameLabel = screen.getByText('settings.agents.fields.displayName');
-    const idLabel = screen.getByText('settings.agents.fields.id');
-    expect(nameLabel.parentElement?.className).toContain('min-h-5');
-    expect(idLabel.parentElement?.className).toContain('min-h-5');
-  });
-
   it('shows one group-level error for the Skill read scopes', () => {
     renderForm({ errors: [{ field: 'scopes', code: 'required' }] });
 

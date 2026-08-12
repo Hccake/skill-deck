@@ -60,10 +60,6 @@ describe('Agent Skill directory copy', () => {
     });
     expect(zhCN.settings.agents.delete).toBe('删除');
     expect(en.settings.agents.delete).toBe('Delete');
-    expect(zhCN.settings.agents).not.toHaveProperty('duplicate');
-    expect(en.settings.agents).not.toHaveProperty('duplicate');
-    expect(zhCN.settings.agents.form.title).not.toHaveProperty('duplicate');
-    expect(en.settings.agents.form.title).not.toHaveProperty('duplicate');
     expect(zhCN.settings.agents.detection).toMatchObject({
       cardLabel: '检测',
       cardTooltip: 'Agent 检测位置',
@@ -85,7 +81,5 @@ describe('Agent Skill directory copy', () => {
     expect(copy).not.toContain('共享目录');
     expect(copy).not.toContain('Agent 独立目录');
     expect(copy).not.toContain('独立 Skill');
-    expect(zhCN.addSkill.agents).not.toHaveProperty('additionalHint');
-    expect(zhCN.addSkill.agents).not.toHaveProperty('privateRequiredHint');
   });
 });

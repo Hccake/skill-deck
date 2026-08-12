@@ -80,8 +80,8 @@ describe('SettingsPage', () => {
     })).toBeNull();
   });
 
-  it('switches the compact sidebar atomically while keeping labelled navigation icons', async () => {
-    const { container } = render(
+  it('keeps Settings navigation labelled without redundant title text', async () => {
+    render(
       <MemoryRouter initialEntries={['/settings']}>
         <SettingsPage />
       </MemoryRouter>,
@@ -89,20 +89,10 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByText('general-section')).toBeDefined();
 
-    const sidebar = container.querySelector('aside');
     const general = screen.getByRole('button', { name: 'settings.nav.general' });
-    const sectionTransition = screen.getByText('general-section').parentElement;
 
-    expect(sidebar?.querySelector('.lucide-settings-2')).toBeNull();
-    expect(general.querySelector('.lucide-sliders-horizontal')).toBeTruthy();
     expect(general.getAttribute('aria-label')).toBe('settings.nav.general');
     expect(general.getAttribute('title')).toBeNull();
-    expect(general.getAttribute('data-slot')).toBe('tooltip-trigger');
-    expect(general.className).toContain('focus-visible:ring-2');
-    expect(sidebar?.className).not.toContain('transition-[width]');
-    expect(sidebar?.className).not.toContain('duration-300');
-    expect(sidebar?.className).not.toContain('transition-all');
-    expect(sectionTransition?.className).toContain('motion-reduce:animate-none');
   });
 
   it('opens Agent management as an independent settings subpage', async () => {

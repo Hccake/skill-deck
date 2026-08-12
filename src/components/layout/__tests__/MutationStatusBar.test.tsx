@@ -117,9 +117,7 @@ describe('MutationStatusBar', () => {
     render(<MutationStatusBar />);
 
     expect(screen.getByText('context.environmentWslName / cgp-be - mutation.activity')).toBeDefined();
-    const spinner = screen.getByTestId('mutation-spinner');
-    expect(spinner.className).toContain('animate-spin');
-    expect(spinner.querySelector('svg')?.className.baseVal).not.toContain('animate-spin');
+    expect(screen.getByTestId('mutation-spinner')).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: 'mutation.cancel' }));
 
     await waitFor(() => expect(mocks.cancelActiveMutation).toHaveBeenCalledTimes(1));

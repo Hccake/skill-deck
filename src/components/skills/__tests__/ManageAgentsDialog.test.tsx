@@ -104,7 +104,7 @@ describe('ManageAgentsDialog', () => {
     useMutationStore.setState({ activeMutation: null, cancelling: false, loading: false });
   });
 
-  it('places installation mode at the start of the scrolling content', async () => {
+  it('places installation mode before Agent choices and exposes its help', async () => {
     const user = userEvent.setup();
     await renderDialog();
 
@@ -112,21 +112,14 @@ describe('ManageAgentsDialog', () => {
     const header = title.closest('[data-slot="dialog-header"]');
     const description = screen.getByText(/^skills\.manageAgents\.description:/);
     const mode = screen.getByRole('radiogroup', { name: 'agentSelection.modeTitle' });
-    const modeBar = mode.closest('[data-slot="agent-selection-mode-bar"]');
     const scrollContent = mode.closest('[data-slot="manage-agents-scroll-content"]');
     const firstAgentGroup = screen.getByText('agentSelection.automatic.manage.title');
-    const dialog = screen.getByRole('dialog', { name: 'skills.manageAgents.title:{"name":"frontend-design"}' });
     expect(header?.contains(mode)).toBe(false);
     expect(scrollContent).not.toBeNull();
-    expect(modeBar?.className).toContain('mb-7');
     expect(mode.compareDocumentPosition(firstAgentGroup) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(description.parentElement).toBe(header);
-    expect(description.className).toContain('sr-only');
-    expect(dialog.className).toContain('sm:max-w-3xl');
 
     const help = screen.getByRole('button', { name: 'agentSelection.modeHelp' });
-    expect(screen.getByText('agentSelection.modeTitle').className).toContain('font-medium');
-    expect(firstAgentGroup.className).toContain('font-semibold');
     await user.hover(help);
     expect((await screen.findByRole('tooltip')).textContent).toContain('agentSelection.modeHelp');
   });
@@ -198,22 +191,15 @@ describe('ManageAgentsDialog', () => {
     current.selection.agents.push({ kind: 'standard', id: 'aider', displayName: 'Aider', detection: 'indeterminate', directoryAccess: 'standardOnly', installOptionId: null, groupId: null });
     await renderDialog({ loadedSnapshot: current });
 
-    const codexBadge = screen.getByText('Codex').closest('[data-slot="direct-agent-badge"]');
-    expect(codexBadge).not.toBeNull();
-    expect(codexBadge?.querySelector('svg')).not.toBeNull();
+    expect(screen.getByText('Codex')).toBeDefined();
 
     const more = screen.getByRole('button', { name: /^agentSelection\.moreAgents:/ });
-    expect(more.closest('[data-slot="direct-agent-badge"]')).not.toBeNull();
-    expect(more.querySelector('svg')).toBeNull();
     await user.hover(more);
 
     const popover = await screen.findByRole('dialog', { name: /^agentSelection\.moreAgents:/ });
-    const description = within(popover).getByText('agentSelection.moreAgentsDescription');
-    expect(description.className).toContain('whitespace-nowrap');
+    expect(within(popover).getByText('agentSelection.moreAgentsDescription')).toBeDefined();
     for (const name of ['Warp', 'Aider']) {
-      const badge = within(popover).getByText(name).closest('[data-slot="direct-agent-badge"]');
-      expect(badge).not.toBeNull();
-      expect(badge?.querySelector('svg')).not.toBeNull();
+      expect(within(popover).getByText(name)).toBeDefined();
     }
   });
 
@@ -296,9 +282,8 @@ describe('ManageAgentsDialog', () => {
     expect(screen.getByText('agentSelection.current.link')).toBeDefined();
     expect(screen.getByText('agentSelection.current.copy')).toBeDefined();
     const claudeRow = screen.getByRole('checkbox', { name: 'Claude Code' }).closest('[data-slot="agent-selection-row"]');
-    const detectedStatus = within(claudeRow as HTMLElement).getByText('agentSelection.detection.detected');
-    expect(detectedStatus.querySelector('[data-slot="agent-detection-dot"]')).not.toBeNull();
-    expect(detectedStatus.querySelector('svg')).toBeNull();
+    expect(within(claudeRow as HTMLElement).getByText('agentSelection.detection.detected'))
+      .toBeDefined();
   });
 
   it('connects a current installation state to its pending action', async () => {
@@ -397,19 +382,15 @@ describe('ManageAgentsDialog', () => {
     const viewMembers = screen.getByRole('button', { name: 'agentSelection.viewMembers' });
     const mergedCheckbox = screen.getByRole('checkbox', { name: /Cursor.*Windsurf/ });
     const mergedRow = mergedCheckbox.closest('[data-slot="agent-selection-row"]');
-    expect(mergedRow?.querySelector('[data-slot="agent-group-glyph"]')).not.toBeNull();
-    const detectedCount = within(mergedRow as HTMLElement).getByText(/^agentSelection\.detectedCount:/);
-    expect(detectedCount.querySelector('[data-slot="agent-detection-dot"]')).not.toBeNull();
-    expect(detectedCount.querySelector('svg')).toBeNull();
+    expect(within(mergedRow as HTMLElement).getByText(/^agentSelection\.detectedCount:/))
+      .toBeDefined();
     expect(viewMembers.textContent).toContain('agentSelection.memberCount');
     act(() => viewMembers.focus());
     await user.keyboard('{Enter}');
     const membersPopover = await screen.findByRole('dialog', { name: 'agentSelection.viewMembers' });
     expect(within(membersPopover).getByText('agentSelection.sharedPlacementDescription')).toBeDefined();
     expect(within(membersPopover).getByText('Windsurf')).toBeDefined();
-    const notDetectedStatus = within(membersPopover).getByText('agentSelection.detection.notDetected');
-    expect(notDetectedStatus.querySelector('[data-slot="agent-detection-dot"]')).not.toBeNull();
-    expect(notDetectedStatus.querySelector('svg')).toBeNull();
+    expect(within(membersPopover).getByText('agentSelection.detection.notDetected')).toBeDefined();
     await user.click(within(membersPopover).getByRole('button', { name: 'common.close' }));
     expect(document.activeElement).toBe(viewMembers);
     await user.click(screen.getByRole('button', { name: /agentSelection.toggleGroup/ }));

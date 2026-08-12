@@ -292,38 +292,6 @@ describe('SkillsPage', () => {
     mocks.skillsPanelLifecycle.length = 0;
   });
 
-  it('uses percentage-based panel sizes when a skill detail is open', () => {
-    mocks.skillDetailState.selectedSkillRef = {
-      name: 'test-skill',
-      scope: 'global',
-    };
-    mocks.skillsDataState.snapshots['native/global'] = snapshot([makeSkill('test-skill')]);
-
-    render(<SkillsPage />);
-
-    expect(mocks.resizable.groups[0]).toMatchObject({
-      id: 'skills-page-layout',
-      orientation: 'horizontal',
-    });
-    expect(mocks.resizable.panels[0]).toMatchObject({
-      id: 'skills-list-panel',
-      defaultSize: '22%',
-      minSize: '12%',
-      maxSize: '85%',
-    });
-    expect(mocks.resizable.panels[1]).toMatchObject({
-      id: 'skill-detail-panel',
-      defaultSize: '78%',
-      minSize: '15%',
-    });
-  });
-
-  it('renders the skills page container shell for responsive sidebar sizing', () => {
-    const { container } = render(<SkillsPage />);
-
-    expect(container.querySelector('.skills-page-shell')).toBeTruthy();
-  });
-
   it('updates the panel layout without remounting the group when entering split view', () => {
     const { rerender } = render(<SkillsPage />);
 

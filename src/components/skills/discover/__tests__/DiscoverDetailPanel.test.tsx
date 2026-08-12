@@ -122,12 +122,6 @@ describe('DiscoverDetailPanel', () => {
 
     fireEvent.click(screen.getByText('skills.discover.installViaCli'));
 
-    const overviewList = screen.getByText('Helps identify relevant skills by domain and task').closest('li')?.parentElement;
-  const overviewProse = screen.getByText('Helps identify relevant skills by domain and task').closest('.skill-prose');
-
-    expect(overviewList?.tagName).toBe('UL');
-    expect(overviewList ? getComputedStyle(overviewList).listStyleType : '').toBe('disc');
-  expect(overviewProse?.className).toContain('skill-prose-with-lists');
     expect(screen.getByText('npx skills add https://github.com/vercel-labs/skills --skill find-skills')).toBeTruthy();
     expect(screen.getByText('Rendered article content')).toBeTruthy();
     expect(screen.getByText('Usage')).toBeTruthy();

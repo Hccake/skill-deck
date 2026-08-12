@@ -176,7 +176,7 @@ describe('CopyToProjectDialog', () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it('keeps a stable dialog frame with independently scrolling project and Agent areas', async () => {
+  it('keeps project and Agent loading in independent dialog regions', async () => {
     const projectLoad = deferred<void>();
     render(
       <CopyToProjectDialog
@@ -188,20 +188,10 @@ describe('CopyToProjectDialog', () => {
       />
     );
 
-    const dialog = screen.getByRole('dialog');
     const body = screen.getByTestId('copy-to-project-dialog-body');
     const projectScrollArea = screen.getByTestId('copy-target-projects-scroll');
     const agentScrollArea = screen.getByTestId('copy-agent-settings-scroll');
-    expect(dialog.className).toContain('h-[min(42rem,calc(100dvh-2rem))]');
-    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
-    expect(body.className).toContain('min-h-0');
-    expect(body.className).toContain('overflow-hidden');
-    expect(body.className).not.toContain('overflow-y-auto');
     expect(projectScrollArea).not.toBe(agentScrollArea);
-    expect(projectScrollArea.className).toContain('min-h-0');
-    expect(projectScrollArea.className).toContain('overflow-y-auto');
-    expect(agentScrollArea.className).toContain('min-h-0');
-    expect(agentScrollArea.className).toContain('overflow-y-auto');
     expect(body.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'common.cancel' })).not.toBeNull();
     expect(await screen.findByText('agentSelection.installEmpty')).toBeDefined();

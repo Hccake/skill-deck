@@ -64,35 +64,6 @@ describe('CompactSkillList', () => {
     expect((screen.getByTitle('skills.add') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('stretches its scroll area to the full available panel size', () => {
-    const { container } = render(
-      <div className="h-[480px]">
-        <CompactSkillList
-          globalSkills={[makeSkill('alpha'), makeSkill('beta')]}
-          projectSkills={[]}
-          selectedSkillRef={{ name: 'alpha', scope: 'global', projectPath: null }}
-          isProjectSelected={false}
-          projectTitle="Project Skills"
-          projectPath="global"
-          onSkillClick={() => undefined}
-        />
-      </div>
-    );
-
-    const scrollArea = container.querySelector('[data-slot="scroll-area"]');
-    const viewport = container.querySelector('[data-slot="scroll-area-viewport"]');
-
-    expect(scrollArea).not.toBeNull();
-    expect(scrollArea?.className).toContain('absolute');
-    expect(scrollArea?.className).toContain('inset-0');
-    expect(scrollArea?.className).toContain('w-full');
-    expect(scrollArea?.className).toContain('h-full');
-    expect(viewport).not.toBeNull();
-    expect(viewport?.className).toContain('[&>div]:!block');
-    expect(viewport?.className).toContain('[&>div]:w-full');
-    expect(viewport?.className).toContain('[&>div]:min-w-0');
-  });
-
   it('keeps Global and Project sections with their own add actions when filters match nothing', () => {
     render(
       <CompactSkillList

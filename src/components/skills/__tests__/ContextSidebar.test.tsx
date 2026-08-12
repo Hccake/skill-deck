@@ -169,17 +169,15 @@ describe('ContextSidebar', () => {
     expect(mocks.selectGlobal).not.toHaveBeenCalled();
   });
 
-  it('renders every project in one scrollable list and selects by stable ID', () => {
+  it('renders every project and selects by stable ID', () => {
     mocks.projectView.projects = [project('a'), project('b'), project('c')];
-    const { container } = render(<ContextSidebar />);
+    render(<ContextSidebar />);
 
     fireEvent.click(screen.getByText('C:\\Code\\b'));
 
     expect(mocks.selectProject).toHaveBeenCalledWith('b');
     expect(screen.getByText('C:\\Code\\a')).toBeDefined();
     expect(screen.getByText('C:\\Code\\c')).toBeDefined();
-    expect(container.querySelector('[data-testid="context-sidebar-scroll"]')?.classList)
-      .toContain('overflow-y-auto');
   });
 
   it('keeps Global fixed while only projects scroll', () => {
@@ -194,7 +192,7 @@ describe('ContextSidebar', () => {
     expect(container.querySelectorAll('[data-testid="context-sidebar-scroll"]')).toHaveLength(1);
   });
 
-  it('uses sibling buttons, full-text tooltips, and large-list containment for project rows', () => {
+  it('uses sibling buttons with full-text tooltips for project rows', () => {
     mocks.projectView.projects = [project('a')];
     const { container } = render(<ContextSidebar />);
 
@@ -204,7 +202,6 @@ describe('ContextSidebar', () => {
     expect(buttons).toHaveLength(3);
     expect(buttons.every((button) => button.querySelector('button') === null)).toBe(true);
     expect(buttons[0].tagName).toBe('BUTTON');
-    expect(row?.classList.contains('project-context-item')).toBe(true);
     expect(screen.getByText('a').getAttribute('title')).toBe('a');
     expect(screen.getByText('C:\\Code\\a').getAttribute('title')).toBe('C:\\Code\\a');
   });

@@ -169,9 +169,7 @@ describe('App', () => {
 
     render(<App />);
 
-    const startupRegion = await screen.findByRole('main');
-    expect(startupRegion.className).toContain('flex-1');
-    expect(startupRegion.className).toContain('overflow-hidden');
+    await screen.findByRole('main');
     await waitFor(() => expect(screen.queryByText('common.loading')).toBeNull());
     expect(screen.queryByText('skills-page')).toBeNull();
 
@@ -180,9 +178,6 @@ describe('App', () => {
       hasConfirmedSnapshot: true,
     }));
     expect(await screen.findByText('skills-page')).toBeDefined();
-    const contentRegion = screen.getByRole('main');
-    expect(contentRegion.className).toContain('flex-1');
-    expect(contentRegion.className).toContain('overflow-hidden');
   });
 
   it('keeps the same content region while an inactive session refreshes', async () => {

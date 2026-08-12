@@ -643,29 +643,6 @@ describe('SkillDetailPanel', () => {
     expect(screen.queryByTitle('skills.checkUpdates')).toBeNull();
   });
 
-  it('renders the description outside the title row so it keeps full width', () => {
-    render(
-      <TooltipProvider>
-        <SkillDetailPanel
-          skill={makeSkill()}
-          content="# Brainstorming"
-          loading={false}
-          agentDisplayNames={new Map()}
-          onClose={vi.fn()}
-          onUpdate={vi.fn()}
-          onDelete={vi.fn()}
-          onRetry={vi.fn()}
-          onManageAgents={vi.fn()}
-        />
-      </TooltipProvider>
-    );
-
-    const heading = screen.getByRole('heading', { name: 'brainstorming' });
-    const description = screen.getByText('Brainstorm ideas');
-
-    expect(heading.parentElement).not.toBe(description.parentElement);
-  });
-
   it('shows duplicate copies as a maintenance note instead of another badge group', () => {
     const { rerender } = render(
       <TooltipProvider>

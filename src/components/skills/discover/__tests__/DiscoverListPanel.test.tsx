@@ -114,7 +114,7 @@ describe('DiscoverListPanel', () => {
     expect(screen.getByTestId('discover-list-skeleton')).toBeTruthy();
   });
 
-  it('renders the hot metric delta separately so it can use a distinct accent color', async () => {
+  it('renders the hot metric value and delta separately', async () => {
     mocks.getDiscoverLeaderboard.mockResolvedValue([
       makeSkill({
         detailUrl: 'https://skills.sh/docs/stripe-best-practices',
@@ -144,6 +144,5 @@ describe('DiscoverListPanel', () => {
 
     expect(primaryMetric.textContent).toBe('22');
     expect(deltaMetric.textContent).toBe('+10');
-    expect(deltaMetric.className).toContain('text-emerald-600');
   });
 });

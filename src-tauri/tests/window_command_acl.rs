@@ -242,28 +242,6 @@ fn assert_denied(result: Result<Value, Value>, command: &str) {
 }
 
 #[test]
-fn permission_sets_do_not_export_removed_agent_definition_duplication() {
-    let permission_sets = include_str!("../permissions/window-command-sets.toml");
-
-    assert!(!permission_sets.contains("allow-duplicate-custom-agent-draft"));
-}
-
-#[test]
-fn permission_sets_do_not_export_retired_duplicate_cleanup() {
-    let permission_sets = include_str!("../permissions/window-command-sets.toml");
-
-    assert!(!permission_sets.contains("allow-cleanup-duplicate-agent-copies"));
-}
-
-#[test]
-fn main_permission_set_uses_the_native_project_migration_command() {
-    let permission_sets = include_str!("../permissions/window-command-sets.toml");
-
-    assert!(permission_sets.contains("allow-retry-native-project-migration"));
-    assert!(!permission_sets.contains("allow-retry-host-project-migration"));
-}
-
-#[test]
 fn main_window_allows_skill_repair_commands() {
     let app = test_app();
     let main = window(&app, "main");

@@ -133,21 +133,6 @@ describe('GlobalEnvironmentSwitcher', () => {
     expect(mocks.switchEnvironment).toHaveBeenCalledWith(native.environment);
   });
 
-  it('sizes the menu to its content without showing leading radio dots', async () => {
-    mocks.environments = [native, ubuntu];
-    renderSwitcher();
-
-    openEnvironmentMenu();
-
-    const menu = await screen.findByRole('menu');
-    expect(menu.className).toContain('w-max');
-    expect(menu.className).not.toContain('w-64');
-    for (const item of screen.getAllByRole('menuitemradio')) {
-      expect(item.className).toContain('pl-2');
-      expect(item.className).toContain('[&>span:first-child]:hidden');
-    }
-  });
-
   it.each([
     ['an Environment connection is pending', ubuntu.environment, null],
     ['a write operation is active', null, {

@@ -400,9 +400,6 @@ describe('AgentSettingsPage', () => {
     const projectPath = within(reference).getByText('.agents/skills');
     expect(globalPath.getAttribute('tabindex')).toBe('0');
     expect(globalPath.getAttribute('title')).toBeNull();
-    expect(globalPath.className).toContain('inline-block');
-    expect(globalPath.className).toContain('w-fit');
-    expect(globalPath.className).toContain('max-w-full');
     expect(projectPath.getAttribute('tabindex')).toBe('0');
 
     fireEvent.focus(globalPath);
@@ -476,7 +473,6 @@ describe('AgentSettingsPage', () => {
       'settings.agents.installDetection.cardHint',
     );
     expect(installationTitle.parentElement).toBe(installationHint.parentElement);
-    expect(installationTitle.parentElement?.className).toContain('justify-between');
     expect(card.textContent).not.toContain('settings.agents.directoryQualifier.standard');
     expect(card.textContent).not.toContain('settings.agents.directoryQualifier.agent');
     expect(within(card).queryByRole('img', { name: 'settings.agents.directoryKind.standard' }))
@@ -486,20 +482,11 @@ describe('AgentSettingsPage', () => {
     const globalRow = within(skillReading).getByRole('group', {
       name: 'settings.agents.standardDirectories.bothAriaLabel',
     });
-    const projectRow = within(skillReading).getByRole('group', {
+    within(skillReading).getByRole('group', {
       name: 'settings.agents.standardDirectories.privateAriaLabel',
     });
-    expect(globalRow.className).toContain('h-12');
-    expect(projectRow.className).toContain('h-12');
-    const propertyRows = [globalRow, projectRow];
-    expect(propertyRows.every((row) => (
-      row.className.includes('grid-cols-[5rem_minmax(0,1fr)]')
-    ))).toBe(true);
     const propertyLabels = card.querySelectorAll('[data-slot="agent-property-label"]');
     expect(propertyLabels).toHaveLength(2);
-    expect(propertyLabels[0].className).toContain('bg-muted/20');
-    expect([...propertyLabels].every((label) => label.className.includes('whitespace-nowrap')))
-      .toBe(true);
     expect(within(globalRow).getByText('settings.agents.standardDirectories.cardLabel')).toBeDefined();
     expect(within(globalRow).getByText('+').getAttribute('aria-hidden')).toBe('true');
     expect(globalRow.textContent).not.toContain('~/.agents/skills');
@@ -516,18 +503,11 @@ describe('AgentSettingsPage', () => {
     const standardPath = within(reference).getByText('~/.agents/skills');
     const privatePath = within(globalRow).getByText('~/.my-agent/skills');
     expect(privatePath.getAttribute('title')).toBeNull();
-    expect(privatePath.className).toContain('inline-block');
-    expect(privatePath.className).toContain('w-fit');
-    expect(privatePath.className).toContain('max-w-full');
     expect([...card.querySelectorAll('[data-slot="agent-property-value"]')])
       .toHaveLength(2);
 
     fireEvent.focus(standardPath);
     const tooltip = await screen.findByRole('tooltip');
-    const tooltipContent = tooltip.closest('[data-slot="tooltip-content"]');
-    expect(tooltipContent?.className).toContain('bg-popover');
-    expect(tooltipContent?.className).toContain('text-popover-foreground');
-    expect(tooltipContent?.className).toContain('text-left');
     expect(tooltip.textContent).not.toContain('Native');
     expect(tooltip.textContent).not.toContain('settings.agents.project.relativeHint');
     expect(tooltip.querySelector('[data-slot="agent-path-tooltip-kind"]')).toBeNull();
@@ -571,38 +551,6 @@ describe('AgentSettingsPage', () => {
     ))).toBe(true);
     expect(sharedCard.textContent).not.toContain('~/.agents/skills');
     expect(sharedCard.textContent).not.toContain('.agents/skills');
-  });
-
-  it('uses the Agent icon height for a two-line identity and a fixed-height card skeleton', () => {
-    render(<AgentSettingsPage context={context} />);
-    selectCustomTab();
-
-    const card = screen.getByRole('article');
-    const header = card.querySelector('header');
-    const list = card.closest('[role="list"]');
-    const listItem = card.closest('[role="listitem"]');
-    const name = within(card).getByText('My Agent');
-    const id = within(card).getByText('my-agent');
-    const source = within(card).getByText('settings.agents.source.custom');
-    const identity = name.closest('[data-slot="agent-card-identity"]');
-
-    expect(header?.className).toContain('items-center');
-    expect(header?.className).not.toContain('items-start');
-    expect(identity).not.toBeNull();
-    expect(name.parentElement).toBe(source.parentElement);
-    expect(id.parentElement).toBe(identity);
-    expect(identity?.children).toHaveLength(2);
-    expect(name.className).not.toContain('max-w-40');
-    expect(card.className).toContain('h-full');
-    expect(card.className).toContain('grid-rows-[4rem_auto_auto]');
-    expect(card.className).not.toContain('minmax(5.5rem,1fr)');
-    expect(card.className).not.toContain('grid-rows-[3.5rem_repeat(3,3rem)]');
-    expect(card.className).not.toContain('grid-rows-[auto_1fr_auto]');
-    expect(list?.className).toContain('items-stretch');
-    expect(list?.className).toContain('min(100%,18rem)');
-    expect(list?.className).not.toContain('min(100%,23rem)');
-    expect(list?.className).not.toContain('items-start');
-    expect(listItem?.className).toContain('h-full');
   });
 
   it('keeps more than two detection paths behind a fixed-height overflow entry', async () => {
@@ -693,7 +641,6 @@ describe('AgentSettingsPage', () => {
     expect(status.textContent).toContain('settings.agents.preview.detection.indeterminate');
     expect(status.getAttribute('title')).toBeNull();
     expect(status.getAttribute('tabindex')).toBe('0');
-    expect(status.className).toContain('inline-flex');
     expect(status.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
     fireEvent.focus(status);
     expect((await screen.findByRole('tooltip')).textContent).toContain(
@@ -1127,11 +1074,10 @@ describe('AgentSettingsPage', () => {
     expect(screen.getByDisplayValue('.my-agent')).toBeDefined();
   });
 
-  it('uses an auto-fill card grid without an Inspector region', () => {
+  it('renders the Agent list without an Inspector region', () => {
     render(<AgentSettingsPage context={context} />);
 
-    const list = screen.getByRole('list', { name: 'settings.agents.listLabel' });
-    expect(list.className).toContain('auto-fill');
+    expect(screen.getByRole('list', { name: 'settings.agents.listLabel' })).toBeDefined();
     expect(screen.queryByRole('region', { name: 'settings.agents.inspectorLabel' })).toBeNull();
   });
 

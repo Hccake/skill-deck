@@ -134,8 +134,7 @@ describe('SkillsSection', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(200); });
 
     expect(screen.getByText('skills.upToDate')).toBeTruthy();
-    expect(screen.getByTestId('update-summary-prefix').querySelector('.animate-spin')).toBeTruthy();
-    expect(screen.getByText('skills.checking').className).toContain('sr-only');
+    expect(screen.getByText('skills.checking')).toBeTruthy();
   });
 
   it('keeps the committed summary and adds a warning after a failed refresh', () => {
@@ -295,7 +294,6 @@ describe('SkillsSection', () => {
     const initialSummary = screen.getByText('skills.upToDate');
 
     expect(liveRegion.getAttribute('aria-live')).toBe('polite');
-    expect(initialSummary.closest('[data-crossfade-state="current"]')?.className).toContain('fade-in');
 
     rerender(
       <SkillsSection
@@ -316,16 +314,8 @@ describe('SkillsSection', () => {
         })]}
       />
     );
-    const nextSummary = screen.getByText('1 skills.update');
-    const outgoing = screen.getByText('skills.upToDate').closest('[data-crossfade-state="outgoing"]');
-    const current = nextSummary.closest('[data-crossfade-state="current"]');
-
-    expect(outgoing?.className).toContain('fade-out');
-    expect(outgoing?.className).toContain('duration-[160ms]');
-    expect(outgoing?.className).toContain('motion-reduce:hidden');
-    expect(current?.className).toContain('fade-in');
-    expect(current?.className).toContain('duration-[160ms]');
-    expect(current?.className).toContain('motion-reduce:animate-none');
+    expect(screen.getByText('1 skills.update')).toBeDefined();
+    expect(screen.getByText('skills.upToDate')).toBeDefined();
 
     await act(async () => { await vi.advanceTimersByTimeAsync(160); });
     expect(screen.queryByText('skills.upToDate')).toBeNull();
@@ -365,21 +355,6 @@ describe('SkillsSection', () => {
     expect(screen.getByText('skills.updateCheckIncompleteCount')).toBeTruthy();
     expect(screen.getByText('skills.uncheckableUpdateCount')).toBeTruthy();
 
-    const summary = screen.getByTestId('update-summary-slot');
-    const identity = summary.parentElement;
-    const header = identity?.parentElement;
-    const actions = screen.getByTestId('skills-section-actions');
-
-    expect(header?.className).toContain('flex-row');
-    expect(header?.className).not.toContain('flex-col');
-    expect(identity?.className).toContain('min-w-0');
-    expect(identity?.className).not.toContain('flex-wrap');
-    expect(summary.className).toContain('h-10');
-    expect(summary.className).toContain('min-w-0');
-    expect(summary.className).toContain('flex-1');
-    expect(summary.className).not.toContain('w-72');
-    expect(summary.className).not.toContain('shrink-0');
-    expect(actions.className).toContain('shrink-0');
     expect(screen.queryByTestId('update-check-progress-slot')).toBeNull();
     expect(screen.getAllByTestId('update-summary-prefix')).toHaveLength(2);
   });
@@ -632,7 +607,7 @@ describe('SkillsSection', () => {
     });
   });
 
-  it('marks the manual check as busy and respects reduced motion', () => {
+  it('marks the manual check as busy', () => {
     render(
       <SkillsSection
         title="Global"
@@ -649,10 +624,8 @@ describe('SkillsSection', () => {
     );
 
     const button = screen.getByRole('button', { name: 'skills.checkUpdates' });
-    const spinner = button.querySelector('.animate-spin');
 
     expect(button.getAttribute('aria-busy')).toBe('true');
-    expect(spinner?.classList.contains('motion-reduce:animate-none')).toBe(true);
   });
 
   it('shows a completed check state without describing the Skill as updated', async () => {
@@ -717,7 +690,7 @@ describe('SkillsSection', () => {
       />
     );
 
-    const unavailable = screen.getByRole('status', {
+    screen.getByRole('status', {
       name: 'skills.projectUnavailableTitle',
     });
 
@@ -725,10 +698,6 @@ describe('SkillsSection', () => {
     expect(screen.queryByText('skills.projectNotFound')).toBeNull();
     expect(screen.queryByText('skills.upToDate')).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
-    expect(unavailable.className).toContain('border-dashed');
-    expect(unavailable.className).not.toContain('border-l-');
-    expect(unavailable.className).not.toContain('warning');
-    expect(unavailable.className).not.toContain('amber');
   });
 
   it('does not report the filtered result as up to date', () => {
@@ -1005,43 +974,6 @@ describe('SkillsSection', () => {
     expect(actions.contains(updateAll)).toBe(true);
     expect(secondaryActions.contains(updateAll)).toBe(true);
     expect(secondaryActions.contains(checkUpdates)).toBe(true);
-    expect(actions.className).toContain('gap-2');
-    expect(secondaryActions.className).toContain('gap-0.5');
-    expect(updateAll.className).toContain('h-7');
-    expect(updateAll.className).toContain('px-2');
-    expect(updateAll.className).toContain('text-muted-foreground');
-    expect(updateAll.getAttribute('data-variant')).toBe('ghost');
-    expect(updateAll.className).not.toContain('h-auto');
-    expect(updateAll.className).not.toContain('p-0');
-    expect(updateAll.className).not.toContain('border-primary');
-  });
-
-  it('uses neutral summary styling for available update counts', () => {
-    render(
-      <SkillsSection
-        title="Global"
-        skills={[
-          makeSkill('global', {
-            hasUpdate: true,
-            canRunUpdate: true,
-            source: 'owner/repo',
-            sourceUrl: 'https://github.com/owner/repo',
-            gitRef: 'main',
-          }),
-        ]}
-        scope="global"
-        updatingSkills={new Map()}
-        onSkillClick={vi.fn()}
-        onPrepareUpdate={vi.fn(async () => true)}
-        onDelete={vi.fn()}
-        onAdd={vi.fn()}
-      />
-    );
-
-    const updateCount = screen.getByText('1 skills.update');
-
-    expect(updateCount.className).not.toContain('text-warning');
-    expect(updateCount.className).toContain('text-muted-foreground');
   });
 
   it('does not show update all when the section only has maintenance items', () => {

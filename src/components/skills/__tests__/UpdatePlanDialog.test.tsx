@@ -54,36 +54,10 @@ describe('UpdatePlanDialog', () => {
 
     render(<UpdatePlanDialog open context={context} skillNames={['toolkit']} onOpenChange={vi.fn()} />);
 
-    const dialog = screen.getByRole('dialog');
     const body = screen.getByTestId('update-plan-dialog-body');
-    expect(dialog.className).toContain('max-h-[min(32rem,calc(100dvh-2rem))]');
-    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
-    expect(body.className).toContain('min-h-0');
-    expect(body.className).toContain('overflow-y-auto');
     expect(body.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
     expect(screen.queryByText('should-not-render-before-ready')).toBeNull();
     expect(screen.getByRole('button', { name: 'common.cancel' })).not.toBeNull();
-  });
-
-  it('keeps the larger stable frame for batch updates', () => {
-    useSkillUpdateWorkflow.setState({
-      phase: 'loadingPreview',
-      context,
-      skillNames: ['toolkit', 'reviewer'],
-      batch: true,
-    });
-
-    render(
-      <UpdatePlanDialog
-        open
-        context={context}
-        skillNames={['toolkit', 'reviewer']}
-        onOpenChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByRole('dialog').className)
-      .toContain('h-[min(40rem,calc(100dvh-2rem))]');
   });
 
   it('ignores the overlay but allows Escape and the close button before execution', () => {

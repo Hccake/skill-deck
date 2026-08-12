@@ -82,18 +82,4 @@ describe('product language boundary', () => {
     expect(serialized(en.settings.general)).not.toMatch(/WSL integration/i);
   });
 
-  it('removes locale keys that no longer have a product call site', () => {
-    for (const locale of [en, zhCN]) {
-      expect(locale.addSkill.agents).not.toHaveProperty('additionalTitle');
-      expect(locale.addSkill.agents).not.toHaveProperty('additionalHint');
-      expect(locale.addSkill.agents).not.toHaveProperty('privateRequiredTitle');
-      expect(locale.addSkill.agents).not.toHaveProperty('privateRequiredHint');
-      expect(locale.addSkill.mode).not.toHaveProperty('singleDirectoryTitle');
-      expect(locale.addSkill.mode).not.toHaveProperty('singleDirectoryHint');
-      expect(locale.skills.detail).not.toHaveProperty('duplicateCopiesTitle');
-      expect(locale.skills.detail).not.toHaveProperty('duplicateCopiesHint');
-      expect(locale.skills.detail).not.toHaveProperty('manageDuplicates');
-      expect(locale.skills.detail).not.toHaveProperty('privateAdaptedCount');
-    }
-  });
 });

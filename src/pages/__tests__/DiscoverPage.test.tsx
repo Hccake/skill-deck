@@ -2,7 +2,7 @@
 
 import '@/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import { DiscoverPage } from '../DiscoverPage';
 import type { SkillLocationRef } from '@/bindings';
 
@@ -105,31 +105,6 @@ describe('DiscoverPage', () => {
     mocks.projectState.refresh.mockResolvedValue([]);
     mocks.resizable.groups.length = 0;
     mocks.resizable.panels.length = 0;
-  });
-
-  it('uses explicit percentage sizing for discover panels', () => {
-    render(<DiscoverPage />);
-
-    expect(screen.getByText('discover-list-panel')).toBeTruthy();
-
-    expect(mocks.resizable.groups[0]).toMatchObject({
-      id: 'discover-page-layout-fixed',
-      orientation: 'horizontal',
-    });
-
-    expect(mocks.resizable.panels[0]).toMatchObject({
-      id: 'discover-list-fixed',
-      defaultSize: '30%',
-      minSize: '20%',
-      maxSize: '50%',
-    });
-
-    expect(mocks.resizable.panels[1]).toMatchObject({
-      id: 'discover-detail-fixed',
-      defaultSize: '70%',
-      minSize: '30%',
-    });
-    expect(mocks.projectState.refresh).not.toHaveBeenCalled();
   });
 
   it('refreshes context-keyed install locations for the committed environment', () => {

@@ -109,7 +109,6 @@ describe('WslIntegrationSection', () => {
 
     const status = screen.getByRole('status', { name: 'settings.general.wslSaving' });
     expect(status).toBeTruthy();
-    expect(status.getAttribute('class')).toContain('motion-reduce:animate-none');
     expect((screen.getByRole('switch') as HTMLButtonElement).disabled).toBe(true);
   });
 

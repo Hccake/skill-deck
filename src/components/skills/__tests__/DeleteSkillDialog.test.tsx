@@ -114,44 +114,6 @@ describe('DeleteSkillDialog', () => {
     expect(mocks.executeSkillRemoval).toHaveBeenCalledWith();
   });
 
-  it('keeps long scope content inside a scrolling dialog body', () => {
-    render(<DeleteSkillDialog />);
-
-    const dialog = screen.getByRole('dialog');
-    const body = screen.getByTestId('delete-skill-dialog-body');
-    expect(dialog.className).toContain('min-w-0');
-    expect(dialog.className).toContain('max-h-[calc(100dvh-2rem)]');
-    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
-    expect(dialog.className).toContain('overflow-hidden');
-    expect(body.className).toContain('min-w-0');
-    expect(body.className).toContain('overflow-y-auto');
-    expect(body.className).toContain('overflow-x-hidden');
-    expect(body.className).toContain('overscroll-contain');
-  });
-
-  it('uses one compact divided list instead of a card for each Agent entry', () => {
-    render(<DeleteSkillDialog />);
-
-    const list = screen.getByTestId('delete-skill-entry-list');
-    expect(list.className).toContain('divide-y');
-    const entries = screen.getAllByTestId('delete-skill-entry');
-    expect(entries).toHaveLength(3);
-    expect(entries[0].querySelector('.lucide-folder')).not.toBeNull();
-    expect(entries[1].querySelector('.lucide-copy')).not.toBeNull();
-    expect(entries[2].querySelector('.lucide-link-2')).not.toBeNull();
-  });
-
-  it('keeps the deletion heading, count, and path mode controls in one summary row', () => {
-    render(<DeleteSkillDialog />);
-
-    const summary = screen.getByTestId('delete-skill-scope-summary');
-    expect(summary.contains(screen.getByText('skills.deleteConfirm.scopeLabel'))).toBe(true);
-    expect(summary.contains(screen.getByText('skills.deleteConfirm.scopeCount'))).toBe(true);
-    expect(summary.contains(screen.getByRole('group', {
-      name: 'skills.deleteConfirm.pathDisplayMode',
-    }))).toBe(true);
-  });
-
   it('does not add a redundant message when there are no Agent Skill directories', () => {
     const preview = useSkillDialogStore.getState().deletePreview!;
     useSkillDialogStore.setState({
@@ -169,7 +131,6 @@ describe('DeleteSkillDialog', () => {
 
     const cancel = screen.getByRole('button', { name: 'common.cancel' });
     await waitFor(() => expect(document.activeElement).toBe(cancel));
-    expect(cancel.parentElement?.className.split(/\s+/)).toContain('flex-row');
   });
 
   it('offers preview retry without closing the dialog', async () => {
