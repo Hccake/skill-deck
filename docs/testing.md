@@ -16,6 +16,8 @@ Skill Deck 需要在 Windows、macOS 和 Linux 上处理文件、启动进程并
 
 测试名称应与实际运行方式一致。Tauri 模拟运行时（`MockRuntime`）、前端模拟实现（mock）和本地测试服务器不会启动原生 WebView，使用这些能力的测试不属于桌面应用验收。具体限制见 [Tauri 测试说明](https://v2.tauri.app/develop/tests/)。
 
+Rust 单元测试使用 `MockRuntime` 构建 Tauri 应用时，测试夹具只提供被测行为需要的配置和资源。优先使用 Tauri 的测试上下文；确需通过 `generate_context!` 读取应用配置时，使用测试模式，避免测试二进制生成只属于真实应用运行时的资源。
+
 ## 选择和编写测试
 
 1. 先确定需要防止的错误、预期结果和需要区分的失败类型，再选择测试类型。
