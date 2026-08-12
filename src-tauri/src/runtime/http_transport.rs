@@ -321,8 +321,8 @@ fn request_timeout() -> HttpTransportError {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-    use std::net::TcpListener;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{SocketAddr, TcpListener, TcpStream};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, Once};
     use std::thread;
@@ -340,6 +340,26 @@ mod tests {
     static TEST_LOGGER: PreCancelLogger = PreCancelLogger;
 
     struct PreCancelLogger;
+
+    struct StalledResponse {
+        target: String,
+        address: SocketAddr,
+        headers_sent: tokio::sync::oneshot::Receiver<()>,
+        release: std::sync::mpsc::Sender<()>,
+        worker: thread::JoinHandle<()>,
+    }
+
+    impl StalledResponse {
+        fn finish(self) {
+            let _ = self.release.send(());
+            if let Ok(mut stream) =
+                TcpStream::connect_timeout(&self.address, Duration::from_secs(1))
+            {
+                let _ = stream.write_all(b"GET /cleanup HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            }
+            self.worker.join().expect("origin worker");
+        }
+    }
 
     impl log::Log for PreCancelLogger {
         fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
@@ -379,6 +399,42 @@ mod tests {
         HttpTransport::new(Arc::new(ProxySettingsStore::new(
             NetworkProxySettings::default(),
         )))
+    }
+
+    fn stalled_response() -> StalledResponse {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("origin listener");
+        let address = listener.local_addr().expect("origin addr");
+        let target = format!("http://{address}/stalled");
+        let (headers_sent_tx, headers_sent_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("origin request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("origin request timeout");
+            let mut request = BufReader::new(stream.try_clone().expect("clone origin stream"));
+            loop {
+                let mut line = String::new();
+                let bytes_read = request.read_line(&mut line).expect("read origin request");
+                assert_ne!(bytes_read, 0, "origin request ended before headers");
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
+                .expect("response headers");
+            stream.flush().expect("flush response headers");
+            let _ = headers_sent_tx.send(());
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+        });
+        StalledResponse {
+            target,
+            address,
+            headers_sent: headers_sent_rx,
+            release: release_tx,
+            worker,
+        }
     }
 
     #[test]
@@ -558,35 +614,63 @@ mod tests {
 
     #[tokio::test]
     async fn total_timeout_includes_response_body_reading() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("origin listener");
-        let target = format!(
-            "http://{}/slow",
-            listener.local_addr().expect("origin addr")
-        );
-        let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("origin request");
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\no")
-                .expect("partial response");
-            thread::sleep(Duration::from_millis(250));
-            let _ = stream.write_all(b"kay");
+        let mut stalled = stalled_response();
+        let client = direct_client();
+        let target = stalled.target.clone();
+        let request = tokio::spawn(async move {
+            client
+                .get(HttpGetRequest::new(
+                    target,
+                    Duration::from_millis(500),
+                    1024,
+                ))
+                .await
         });
-        let started = std::time::Instant::now();
+        let headers_sent =
+            tokio::time::timeout(Duration::from_secs(2), &mut stalled.headers_sent).await;
+        let request_result = tokio::time::timeout(Duration::from_secs(2), request).await;
+        stalled.finish();
+        headers_sent
+            .expect("response headers sent before deadline")
+            .expect("response headers signal");
+        let result = request_result
+            .expect("request completed before test deadline")
+            .expect("request task");
+        assert!(
+            matches!(
+                result,
+                Err(super::HttpTransportError::Request {
+                    reason: "timeout",
+                    ..
+                })
+            ),
+            "request should time out while reading the response body"
+        );
+    }
 
-        let result = direct_client()
-            .get(HttpGetRequest::new(target, Duration::from_millis(40), 1024))
-            .await;
-        let elapsed = started.elapsed();
+    #[tokio::test]
+    async fn status_only_returns_after_headers_without_reading_the_body() {
+        let mut stalled = stalled_response();
 
-        worker.join().expect("origin worker");
-        assert!(elapsed < Duration::from_millis(200));
-        assert!(matches!(
-            result,
-            Err(super::HttpTransportError::Request {
-                reason: "timeout",
-                ..
-            })
-        ));
+        let headers_sent = tokio::time::timeout(Duration::from_secs(2), &mut stalled.headers_sent);
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            direct_client().get(HttpGetRequest::status_only(
+                stalled.target.clone(),
+                Duration::from_secs(10),
+            )),
+        )
+        .await;
+        let headers_sent = headers_sent.await;
+        stalled.finish();
+        headers_sent
+            .expect("response headers sent before deadline")
+            .expect("response headers signal");
+        let response = result
+            .expect("status-only request returned after response headers")
+            .expect("status-only response");
+        assert_eq!(response.status, reqwest::StatusCode::OK);
+        assert!(response.body.is_empty());
     }
 
     #[tokio::test]
