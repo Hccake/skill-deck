@@ -193,15 +193,19 @@ jobs:
         include:
           - runner: macos-latest
             args: --target aarch64-apple-darwin --bundles app,dmg
+            prerelease_args: --target aarch64-apple-darwin --bundles app,dmg
             asset_platform: macos
           - runner: macos-latest
             args: --target x86_64-apple-darwin --bundles app,dmg
+            prerelease_args: --target x86_64-apple-darwin --bundles app,dmg
             asset_platform: macos
           - runner: ubuntu-22.04
             args: --bundles appimage,deb,rpm
+            prerelease_args: --bundles appimage,deb,rpm
             asset_platform: linux
           - runner: windows-latest
             args: --bundles nsis,msi
+            prerelease_args: --bundles nsis
             asset_platform: windows
     runs-on: ${{ matrix.runner }}
     steps:
@@ -239,7 +243,7 @@ jobs:
           updaterJsonPreferNsis: false
           retryAttempts: 3
           releaseAssetNamePattern: skill-deck_[version]_${{ matrix.asset_platform }}_[arch][setup][ext]
-          args: ${{ matrix.args }}
+          args: ${{ needs.validate.outputs.prerelease == 'true' && matrix.prerelease_args || matrix.args }}
 
   verify-release:
     needs: [validate, prepare-release, build-release]
