@@ -348,12 +348,12 @@ mod tests {
     use std::collections::BTreeMap;
     #[cfg(unix)]
     use std::fs;
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
     #[cfg(unix)]
     use std::process::Command;
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn git(cwd: &std::path::Path, args: &[&str]) -> String {
         let output = Command::new("git")
             .current_dir(cwd)
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(workspace.deferred_source_cleanup_count(), 1);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn git_acquisition_reports_cloned_head_even_if_source_advances_after_clone() {
         let temp = tempfile::tempdir().expect("temp");
@@ -718,7 +718,7 @@ mod tests {
         assert!(destination.join("keep").is_file());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn failed_git_acquisition_removes_its_managed_temporary_root() {
         let managed_root = std::path::PathBuf::from(format!(
@@ -744,7 +744,7 @@ mod tests {
         assert!(!managed_root.exists());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn git_timeout_starts_when_the_clone_process_starts() {
         let temp = tempfile::tempdir().expect("fake Git temp dir");
@@ -788,7 +788,7 @@ mod tests {
         assert!(!managed_root.exists());
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn git_probe_uses_a_stable_diagnostic_locale() {
         let temp = tempfile::tempdir().expect("fake Git temp dir");
