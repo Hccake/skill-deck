@@ -1,30 +1,46 @@
 <div align="center">
-  <!-- TODO: Add Logo -->
-  <!-- <img src="docs/images/logo.svg" alt="Skill Deck Logo" width="120"> -->
+  <img src="src-tauri/app-icon.png" alt="Skill Deck" width="96">
+
   <h1>Skill Deck</h1>
+
   <p>
-    <strong>A desktop Skill manager that works alongside skills CLI.</strong>
+    <strong>A cross-platform desktop app for managing AI Agent Skills</strong>
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
-    <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-compatible-green" alt="skills CLI compatible">
+    Manage Skills across global and project locations, track their sources and updates,<br>
+    and control which agents can read them.
   </p>
 
-  <a href="README.zh-CN.md">中文</a>
+  <p>
+    <a href="https://github.com/hccake/skill-deck/releases/latest">
+      <img src="https://img.shields.io/github/v/release/hccake/skill-deck" alt="Latest release">
+    </a>
+    <a href="https://github.com/hccake/skill-deck/actions/workflows/quality.yml">
+      <img src="https://github.com/hccake/skill-deck/actions/workflows/quality.yml/badge.svg?branch=main" alt="Build status">
+    </a>
+    <a href="LICENSE">
+      <img src="https://img.shields.io/github/license/hccake/skill-deck" alt="License">
+    </a>
+  </p>
+
+  <p>
+    <a href="https://github.com/hccake/skill-deck/releases/latest">Download latest release</a>
+    ·
+    <a href="#-quick-start">Quick start</a>
+    ·
+    <a href="README.zh-CN.md">中文</a>
+  </p>
 </div>
 
 ---
 
-Skill Deck is a cross-platform desktop application for browsing, installing, reading, updating, copying, and removing Skills used by AI agents. It also manages how Skills are made available to agents.
+## ✨ Core capabilities
 
-[`skills` CLI](https://github.com/vercel-labs/skills) is a third-party tool independently maintained by the `vercel-labs/skills` project. Skill Deck can read the Skill directories and compatible lock data it uses while implementing all runtime capabilities independently. Use Skill Deck on its own or alongside the CLI.
-
-**Key highlights:**
-- **Cross-platform desktop app** — Windows, macOS, and Linux, with optional WSL environments on Windows
-- **Works alongside skills CLI** — Both tools can read and write the same Skill directories and compatible lock data
-- **Complete Skill workflows** — Installation, updates, source repair, project copy, agent management, and in-app updates
+- **Discover and install** — Browse available Skills, review their sources, documentation, and security information, or install from GitHub, Git, local directories, and Well-known URLs
+- **Browse and maintain** — Read installed Skill content, check and apply updates, and select a new source when the saved source no longer works
+- **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects
+- **Cross-platform management** — Manage Skills on Windows, macOS, and Linux; Windows users can also switch to installed WSL distributions
 
 ---
 
@@ -67,30 +83,9 @@ Skill Deck is a cross-platform desktop application for browsing, installing, rea
 
 ---
 
-## ✨ Features
+## 📥 Installation
 
-- 🗂 **Skills workspace** — Browse installed Skills with their content, sources, update status, and associated agents
-- 🧠 **Agent filtering and management** — Filter Skills by agent and add or remove agent access for installed Skills
-- 🌍 **Global and Project locations** — Manage Global Skills and each project's Project Skills in the current Environment
-- 🐧 **Optional WSL Environments** — Switch between the Native Environment and installed WSL distributions on Windows
-- 🔍 **Discover and install** — Use GitHub, Git, local paths, Well-known URLs, or `skills add` commands
-- ♻️ **Updates and source repair** — Check for updates and select a new source when saved source information no longer works
-- 📋 **Cross-project copy** — Copy a Project Skill to one or more target projects
-- 📦 **Two installation modes** — Choose symbolic links or file copies for each target
-- 🧩 **Custom agent support** — Add Skill locations and detection conditions for agents not included with Skill Deck
-- 🌐 **Bilingual interface** — Use Simplified Chinese or English in the main window and installation wizard
-- ⚙️ **Proxy settings** — Connect online services directly or through a custom proxy, with explicit Native and per-distribution WSL Git behavior
-- 🔄 **In-app updates** — Check, download, and install new versions from GitHub Releases
-
-Skill availability is determined by its installation location and agent associations.
-
----
-
-## 📦 Installation
-
-### Option 1: Download pre-built binaries (recommended)
-
-Download the installer for your platform from [GitHub Releases](https://github.com/hccake/skill-deck/releases):
+Download the latest release from [GitHub Releases](https://github.com/hccake/skill-deck/releases/latest) and choose the installer for your platform:
 
 - **Windows**: `skill-deck_x.x.x_windows_x64-setup.exe`; stable releases also provide `skill-deck_x.x.x_windows_x64.msi`
 - **macOS Apple Silicon**: `skill-deck_x.x.x_macos_aarch64.dmg`
@@ -101,55 +96,54 @@ Download the installer for your platform from [GitHub Releases](https://github.c
   > ```
 - **Linux**: `skill-deck_x.x.x_linux_amd64.deb`, `skill-deck_x.x.x_linux_x86_64.rpm`, or `skill-deck_x.x.x_linux_amd64.AppImage`
 
-### Option 2: Build from source
-
-See the [contribution guide](CONTRIBUTING.md#开发环境) for the current development environment. Node.js, pnpm, and Rust versions follow CI, `package.json`, and `src-tauri/Cargo.toml`.
-
-```bash
-# Clone the repo
-git clone https://github.com/hccake/skill-deck.git
-cd skill-deck
-
-# Install dependencies
-pnpm install --frozen-lockfile
-
-# Run in development mode
-pnpm tauri dev
-
-# Build for production
-pnpm tauri build
-```
-
-Build output is located at `src-tauri/target/release/bundle/`.
-
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick start
 
-### 1. Add a project
+### 1. Choose an install entry point
 
-Use the add button in the Projects section of the sidebar and select the project directory to manage. Skip this step when managing Global Skills.
+Choose a Skill from the Discover page, or open the install entry in Global Skills or a target project. When installing a Project Skill, add or select the project in the sidebar first.
 
-### 2. Prepare a Skill source
+### 2. Provide a Skill source
 
-Copy the source of the Skill you want to install. For example:
+Choose an online result or enter a Skill source. For example:
+
 - `https://github.com/vercel-labs/skills`
 - `vercel-labs/skills` (GitHub shorthand)
 - `/path/to/local/skill` (local path)
 
-You can also paste a supported `skills` CLI install command. Skill Deck parses its source, Skill names, and target agents:
+You can also paste a [`skills` CLI](https://github.com/vercel-labs/skills) `skills add` command. Skill Deck parses its source, Skill names, and target agents, then lets you confirm and adjust them before installation:
 
 ```bash
 npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 ```
 
-### 3. Install a Skill
+### 3. Confirm and install
 
-Use the add action for Global Skills or the target project, enter the Skill source, select the Skills, target agents, and installation mode, then confirm the preview and run the installation. When a CLI command is pasted, the wizard preselects its `--skill` and `--agent` options; you can still adjust them before confirmation.
+Select the Skills, target agents, and installation mode, review the change preview, and run the installation. After installation, the selected agents can read the Skill; you can continue reading, updating, and managing agents from the Skills workspace.
 
-### 4. Use with an agent
+---
 
-After installation, each selected agent reads the Skill from the standard Skill directory or its own Skill directory, depending on its definition and the selected installation mode.
+## 📚 Docs and feedback
+
+- Read the [changelog](./CHANGELOG.md) for user-visible changes in each release
+- Report a problem or suggest an improvement through [GitHub Issues](https://github.com/hccake/skill-deck/issues)
+- See the [project documentation](./docs/README.md) for product behavior, compatibility, and development conventions
+
+---
+
+## 🛠️ Development and contribution
+
+See the [contribution guide](./CONTRIBUTING.md) for the development environment, dependency versions, validation requirements, and contribution workflow.
+
+```bash
+git clone https://github.com/hccake/skill-deck.git
+cd skill-deck
+pnpm install --frozen-lockfile
+pnpm tauri dev
+```
+
+Use `pnpm tauri build` for a production build. Build output is located at `src-tauri/target/release/bundle/`.
 
 ---
 

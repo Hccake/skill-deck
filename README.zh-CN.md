@@ -1,35 +1,49 @@
 <div align="center">
-  <!-- TODO: 添加 Logo -->
-  <!-- <img src="docs/images/logo.svg" alt="Skill Deck Logo" width="120"> -->
+  <img src="src-tauri/app-icon.png" alt="Skill Deck" width="96">
+
   <h1>Skill Deck</h1>
+
   <p>
-    <strong>可与 skills CLI 配合使用的 Skill 管理桌面应用</strong>
+    <strong>跨平台的 AI Agent Skill 管理桌面应用</strong>
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/Tauri-v2-blue" alt="Tauri v2">
-    <img src="https://img.shields.io/badge/React-19-61dafb" alt="React 19">
-    <img src="https://img.shields.io/badge/skills%20CLI-compatible-green" alt="skills CLI compatible">
+    集中管理全局与项目 Skill，跟踪来源和更新，并管理哪些 Agent 能够读取它们。
   </p>
 
-  <a href="README.md">English</a>
+  <p>
+    <a href="https://github.com/hccake/skill-deck/releases/latest">
+      <img src="https://img.shields.io/github/v/release/hccake/skill-deck" alt="Latest release">
+    </a>
+    <a href="https://github.com/hccake/skill-deck/actions/workflows/quality.yml">
+      <img src="https://github.com/hccake/skill-deck/actions/workflows/quality.yml/badge.svg?branch=main" alt="Build status">
+    </a>
+    <a href="LICENSE">
+      <img src="https://img.shields.io/github/license/hccake/skill-deck" alt="License">
+    </a>
+  </p>
+
+  <p>
+    <a href="https://github.com/hccake/skill-deck/releases/latest">下载最新版本</a>
+    ·
+    <a href="#-快速开始">快速开始</a>
+    ·
+    <a href="README.md">English</a>
+  </p>
 </div>
 
 ---
 
-Skill Deck 是一款跨平台桌面应用，用于浏览、安装、阅读、更新、复制和移除 AI Agent 使用的 Skill，也可以管理哪些 Agent 能够读取这些 Skill。
+## ✨ 核心能力
 
-[`skills` CLI](https://github.com/vercel-labs/skills) 是由 `vercel-labs/skills` 项目独立维护的第三方工具。Skill Deck 可以读写该工具使用的 Skill 目录和兼容 lock 数据。两个工具独立运行，用户可以单独使用 Skill Deck，也可以根据需要搭配使用。
-
-主要特点：
-
-- **跨平台桌面应用**：支持 Windows、macOS 和 Linux；Windows 用户还可以按需使用已安装的 WSL 发行版。
-- **可与 skills CLI 配合使用**：两个工具可以分别读写同一 Skill 目录和兼容 lock 数据。
-- **完整 Skill 工作流**：提供安装、更新、来源修复、跨项目复制、Agent 关联管理和应用内更新。
+- **发现与安装**：从在线目录发现 Skill，查看来源、说明和安全信息，或者从 GitHub、Git、本地目录和约定地址（Well-known 地址）安装
+- **浏览与维护**：阅读已安装 Skill 的完整内容，检查并执行更新，在来源失效时重新选择来源
+- **项目与 Agent 管理**：统一查看全局与项目 Skill，按 Agent 筛选，调整 Skill 可供哪些 Agent 使用，并在项目之间复制 Skill
+- **跨平台管理**：在 Windows、macOS 和 Linux 上管理 Skill；Windows 用户还可以切换到已安装的 WSL 发行版
 
 ---
 
-## 界面预览
+## 🖼️ 界面预览
 
 <p align="center">
   <img src="docs/images/skill_selected.png" alt="Skill 详情视图" width="900">
@@ -68,30 +82,9 @@ Skill Deck 是一款跨平台桌面应用，用于浏览、安装、阅读、更
 
 ---
 
-## ✨ 功能
+## 📥 下载与安装
 
-- 🗂 **Skills 工作台**：集中浏览已安装的 Skill，并查看内容、来源、更新状态和关联 Agent
-- 🧠 **Agent 筛选与关联**：按 Agent 筛选 Skill，并调整哪些 Agent 能够读取已安装的 Skill
-- 🌍 **全局与项目**：分别管理当前 Environment 中的全局 Skill 和各个项目的项目 Skill
-- 🐧 **可选 WSL Environment**：Windows 用户可以在 Windows 与已安装的 WSL 发行版之间切换
-- 🔍 **发现与安装**：支持 GitHub、Git、本地路径、Well-known 地址和 `skills add` 命令
-- ♻️ **更新与来源修复**：检查可用更新，并在来源记录失效时重新选择来源
-- 📋 **跨项目复制**：将项目 Skill 复制到一个或多个目标项目
-- 📦 **两种安装方式**：按目标选择符号链接或文件复制
-- 🧩 **补充 Agent 信息**：为尚未收录的 Agent 添加 Skill 读取位置和 Agent 检测位置
-- 🌐 **中英文界面**：主窗口与安装向导可以切换简体中文和英语
-- ⚙️ **代理设置**：在线服务可以直连或使用自定义代理，本机 Git 和各 WSL 发行版可以独立使用显式代理或现有 Git 配置
-- 🔄 **应用内更新**：检查、下载并安装 GitHub Release 中的新版本
-
-Skill 是否可用取决于它的安装位置以及 Agent 是否读取该位置。
-
----
-
-## 📦 安装
-
-### 方式一：下载预编译包（推荐）
-
-从 [GitHub Releases](https://github.com/hccake/skill-deck/releases) 下载对应平台的安装包：
+从 [GitHub Releases](https://github.com/hccake/skill-deck/releases/latest) 下载最新版本，并选择对应平台的安装包：
 
 - **Windows**：`skill-deck_x.x.x_windows_x64-setup.exe`；稳定版本还会提供 `skill-deck_x.x.x_windows_x64.msi`
 - **macOS Apple Silicon**：`skill-deck_x.x.x_macos_aarch64.dmg`
@@ -102,56 +95,54 @@ Skill 是否可用取决于它的安装位置以及 Agent 是否读取该位置�
   > ```
 - **Linux**：`skill-deck_x.x.x_linux_amd64.deb`、`skill-deck_x.x.x_linux_x86_64.rpm` 或 `skill-deck_x.x.x_linux_amd64.AppImage`
 
-### 方式二：从源码构建
-
-开发环境和准确版本要求见[贡献指南](./CONTRIBUTING.md#开发环境)。Node.js、pnpm 和 Rust 版本分别以 CI、`package.json` 和 `src-tauri/Cargo.toml` 中的当前配置为准。
-
-```bash
-# 克隆仓库
-git clone https://github.com/hccake/skill-deck.git
-cd skill-deck
-
-# 安装依赖
-pnpm install --frozen-lockfile
-
-# 启动桌面开发模式
-pnpm tauri dev
-
-# 构建生产版本
-pnpm tauri build
-```
-
-构建产物位于 `src-tauri/target/release/bundle/`。
-
 ---
 
 ## 🚀 快速开始
 
-### 1. 添加项目
+### 1. 选择安装入口
 
-在侧栏的“项目”区域点击添加按钮，选择需要管理的代码项目目录。管理全局 Skill 时可以跳过此步骤。
+可以从“发现”页面选择 Skill，也可以在“全局 Skill”或目标项目中打开安装入口。安装项目 Skill 时，先在侧栏添加或选择对应项目。
 
-### 2. 准备 Skill 来源
+### 2. 提供 Skill 来源
 
-复制需要安装的 Skill 来源，例如：
+选择在线搜索结果，或者输入需要安装的 Skill 来源，例如：
 
 - `https://github.com/vercel-labs/skills`
 - `vercel-labs/skills`（GitHub 简写）
-- `/path/to/local/skill`（本地路径）
+- `/path/to/local/skill`（本地目录）
 
-也可以粘贴受支持的 `skills` CLI 安装命令。Skill Deck 会解析其中的来源、Skill 和目标 Agent：
+也可以直接粘贴 [`skills` CLI](https://github.com/vercel-labs/skills) 的 `skills add` 安装命令。Skill Deck 会解析其中的来源、Skill 和目标 Agent，并在安装前提供确认和调整：
 
 ```bash
 npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 ```
 
-### 3. 安装 Skill
+### 3. 确认并安装
 
-在“全局 Skill”或目标项目区域点击新增入口，输入来源并选择 Skill、目标 Agent 和安装方式，然后确认预览并执行安装。粘贴 CLI 命令时，向导会预选命令中的 `--skill` 和 `--agent` 参数，确认前仍可调整。
+选择需要安装的 Skill、目标 Agent 和安装方式，检查变更预览，然后执行安装。安装完成后，关联的 Agent 即可读取该 Skill；你也可以在 Skills 工作台中继续阅读、检查更新和管理 Agent。
 
-### 4. 在 Agent 中使用
+---
 
-安装完成后，对应 Agent 会从通用 Skill 目录或 Agent 专用 Skill 目录读取内容。实际读取位置取决于 Skill Deck 记录的读取信息和本次安装选择。
+## 📚 文档与反馈
+
+- 查看[版本记录](./CHANGELOG.md)了解各版本的用户可见变化
+- 通过 [GitHub Issues](https://github.com/hccake/skill-deck/issues) 报告问题或提出建议
+- 从[项目文档](./docs/README.md)了解产品行为、兼容范围和开发约定
+
+---
+
+## 🛠️ 开发与贡献
+
+开发环境、依赖版本、验证要求和贡献流程见[贡献指南](./CONTRIBUTING.md)。
+
+```bash
+git clone https://github.com/hccake/skill-deck.git
+cd skill-deck
+pnpm install --frozen-lockfile
+pnpm tauri dev
+```
+
+生产构建使用 `pnpm tauri build`，构建产物位于 `src-tauri/target/release/bundle/`。
 
 ---
 
