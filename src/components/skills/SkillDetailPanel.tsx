@@ -457,13 +457,23 @@ export const SkillDetailPanel = memo(function SkillDetailPanel({
                 <span className="font-heading text-[10px] uppercase font-bold text-muted-foreground tracking-[0.2em]">
                   {t('skills.detail.installPath')}
                 </span>
-                <div className="flex items-center gap-1 mt-1">
-                  <code className="text-sm font-mono text-accent-foreground bg-sidebar px-2 py-1 truncate">
-                    {skill.canonicalPath}
-                  </code>
+                <div className="flex min-w-0 items-center gap-1 mt-1">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon-xs" className="h-5 w-5 text-muted-foreground hover:bg-muted/50 border-none shadow-none" onClick={handleCopyPath}>
+                      <code
+                        tabIndex={0}
+                        className="min-w-0 flex-1 truncate bg-sidebar px-2 py-1 font-mono text-sm text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                      >
+                        {skill.canonicalPath}
+                      </code>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-all text-left text-wrap">
+                      <p className="font-mono">{skill.canonicalPath}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon-xs" className="h-5 w-5 shrink-0 text-muted-foreground hover:bg-muted/50 border-none shadow-none" onClick={handleCopyPath}>
                         {copied ? (
                           <Check className="h-3 w-3 text-success" />
                         ) : (

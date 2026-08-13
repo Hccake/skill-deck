@@ -53,6 +53,34 @@ describe('SkillDetailPanel', () => {
     vi.useRealTimers();
   });
 
+  it('keeps a long install path on one line and reveals the full path on focus', async () => {
+    const canonicalPath = 'C:\\Users\\cheng\\AppData\\Roaming\\Skill Deck\\skills\\a-very-long-skill-name';
+
+    render(
+      <TooltipProvider>
+        <SkillDetailPanel
+          skill={makeSkill({ canonicalPath })}
+          content="# Brainstorming"
+          loading={false}
+          agentDisplayNames={new Map()}
+          onClose={vi.fn()}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+          onRetry={vi.fn()}
+          onManageAgents={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    const path = screen.getByText(canonicalPath, { selector: 'code' });
+    expect(path.className).toContain('truncate');
+    expect(path.getAttribute('tabindex')).toBe('0');
+    expect(path.getAttribute('title')).toBeNull();
+
+    fireEvent.focus(path);
+    expect((await screen.findByRole('tooltip')).textContent).toContain(canonicalPath);
+  });
+
   it('disables detail write actions while keeping close available', () => {
     useMutationStore.setState({
       activeMutation: {
