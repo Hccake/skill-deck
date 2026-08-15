@@ -543,12 +543,12 @@ export type AgentStorageIssue = { code: string; message: string; readOnly: boole
 export type AgentTargetFallbackPreview = { agentId: AgentId; targetId: string; requestedMode: InstallMode; forecastMode: InstallMode; reason: FallbackReasonCode | null }
 export type AgentTargetMutationResult = { targetId: string; agentId: AgentId; status: MutationUnitStatus; actualMode: InstallMode | null; fallbackReason: FallbackReasonCode | null; error: ErrorReport | null }
 export type AgentTargetPreview = { agentId: AgentId; targetId: string; displayPath: ResourceLocator; ownDirectorySelected: boolean; availability: DetectionState; blockingReason: OperationErrorCode | null }
-export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
+export type AppError = { kind: "io"; data: { message: string } } | { kind: "yaml"; data: { message: string } } | { kind: "json"; data: { message: string } } | { kind: "invalidSkillMd"; data: { message: string } } | { kind: "path"; data: { message: string } } | { kind: "invalidSource"; data: { value: string } } | { kind: "sourceAcquisitionFailed"; data: { wellKnownReason: SourceAcquisitionFailureReason; downloadReason: SourceAcquisitionFailureReason } } | { kind: "wellKnownSourceFailed"; data: { reason: SourceAcquisitionFailureReason } } | { kind: "directDownloadFailed"; data: { reason: DirectDownloadFailureReason } } | { kind: "directDownloadUnsupportedOperation" } | { kind: "directDownloadConflict"; data: { target: string } } | { kind: "invalidProxySettings"; data: { code: string } } | { kind: "discoveryRequestFailed"; data: { reason: string } } | { kind: "gitCloneFailed"; data: { message: string } } | { kind: "gitAuthFailed"; data: { message: string } } | { kind: "gitRepoNotFound"; data: { repo: string } } | { kind: "gitRefNotFound"; data: { refName: string } } | { kind: "gitTimeout"; data: { timeoutSecs: number } } | { kind: "gitNetworkError"; data: { message: string } } |
 /**
  * GitHub API 调用失败,带机器可读的 reason 让前端可以区分文案。
  * reason 当前取值: `rate-limited` / `network-error` / `auth` / `http-<code>`。
  */
-{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "installRiskConfirmationRequired"; data: { code: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "installWizardActive" } | { kind: "installWizardSessionUnavailable" } | { kind: "applicationTerminating" } | { kind: "wslIntegrationBusy"; data: { reason: WslIntegrationBusyReason } } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "agentSelectionInvalid"; data: { reason: AgentSelectionInvalidReason } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "environmentChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "contextChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "externalLockChanged"; data: { target: LockConflictTarget } } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
+{ kind: "gitHubApiError"; data: { reason: string; message: string } } | { kind: "pathNotFound"; data: { path: string } } | { kind: "directDownloadRedirectConfirmationRequired"; data: { host: string } } | { kind: "noSkillsFound" } | { kind: "mutationBusy" } | { kind: "installWizardActive" } | { kind: "installWizardSessionUnavailable" } | { kind: "applicationTerminating" } | { kind: "wslIntegrationBusy"; data: { reason: WslIntegrationBusyReason } } | { kind: "mutationCancelled" } | { kind: "environmentDiscoveryFailed"; data: { message: string } } | { kind: "wslCommandTimedOut" } | { kind: "wslOutputLimitExceeded"; data: { stream: string; limit: number } } | { kind: "wslCommandFailed"; data: { exitCode: number | null; stderr: string } } | { kind: "environmentUnavailable"; data: { environment: EnvironmentRef; message: string } } | { kind: "storageMappingUnsupported"; data: { path: string; environment: EnvironmentRef } } | { kind: "projectMigrationFailed"; data: { message: string } } | { kind: "lockConflict"; data: { target: LockConflictTarget } } | { kind: "invalidAgent"; data: { agent: string } } | { kind: "agentSelectionInvalid"; data: { reason: AgentSelectionInvalidReason } } | { kind: "configurationReadOnly" } | { kind: "validation"; data: { field: string | null; message: string } } | { kind: "environmentChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "contextChanged"; data: { expected_revision: string; actual_revision: string } } | { kind: "storageUnsupported"; data: { path: string } } | { kind: "capabilityUnavailable"; data: { capability: string; path: string | null } } | { kind: "unsafePath"; data: { path: string; reason: string } } | { kind: "unsafeSourceLink"; data: { path: string } } | { kind: "selfCopy" } | { kind: "payloadSessionExpired"; data: { session_id: string } } | { kind: "payloadStorageRequiresCleanup"; data: { environment: EnvironmentRef } } | { kind: "staleContext" } | { kind: "staleRegistry" } | { kind: "staleEnvironment" } | { kind: "stalePayload" } | { kind: "staleTarget" } | { kind: "externalLockChanged"; data: { target: LockConflictTarget } } | { kind: "executionFailed"; data: { message: string } } | { kind: "restoreFailed"; data: { message: string } } | { kind: "recoveryRequired"; data: { recovery_resource_id: RecoveryResourceId; message: string } } | { kind: "configurationCorrupted"; data: { message: string } } | { kind: "staleAgentRuntime"; data: { expected_registry_revision: string; actual_registry_revision: string; expected_environment_revision: string; actual_environment_revision: string } } | { kind: "custom"; data: { message: string } }
 export type ApplicationUpdateInfo = { version: string; body: string | null }
 export type ApplicationUpdateProgress = { event: "started"; data: { content_length: number | null } } | { event: "progress"; data: { chunk_length: number } } | { event: "downloaded" } | { event: "installing" } | { event: "finished" }
 export type ApplicationUpdateResult = { version: string; installed: boolean }
@@ -616,6 +616,7 @@ export type DefaultSelectionWarning = "readFailed"
 export type DetectionReason = "projectContextRequired" | "environmentUnavailable"
 export type DetectionSpec = { kind: "anyPathExists"; paths: PathSpec[] }
 export type DetectionState = "detected" | "notDetected" | "indeterminate"
+export type DirectDownloadFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "downloadTooLarge" | "archiveTooLarge" | "tooManyEntries" | "unsafeArchive" | "invalidContent" | "emptyContent"
 export type DirectoryPresenceState = "present" | "missing" | "legacyPath" | "brokenLink" | "conflictingEntry" | "unsafePath" | "environmentUnavailable" | "projectNotSelected"
 export type DisabledAgentConflict = { definition: CustomAgentDefinition; builtin: AgentDefinition; raw: unknown }
 export type DiscoverLeaderboardPayload = { leaderboardHtml: string; officialCreators: string[] | null }
@@ -651,6 +652,10 @@ sourceType: string;
  */
 sourceUrl: string;
 /**
+ * 跨主机重定向后的实际下载主机；同主机跳转不返回该字段。
+ */
+redirectedDownloadHost?: string | null;
+/**
  * Git ref（branch/tag）
  */
 gitRef?: string | null;
@@ -658,10 +663,6 @@ gitRef?: string | null;
  * @skill 语法提取的名称（用于预选）
  */
 skillFilter: string | null;
-/**
- * 安装前风险策略
- */
-riskPolicy: InstallRiskPolicy;
 /**
  * 可用的 skills 列表
  */
@@ -680,16 +681,8 @@ export type InstallAgentSelectionSnapshot = { selection: AgentSelectionSnapshot;
 export type InstallMode = "symlink" | "copy"
 export type InstallPreview = { token: PreviewToken; skills: InstallSkillPreview[] }
 export type InstallPreviewOutcome = { status: "ready"; preview: InstallPreview } | { status: "selectionStale"; snapshot: InstallAgentSelectionSnapshot }
-export type InstallRequest = { context: SkillLocationRef; source: string; discoverySession: DiscoverySessionHandle; payloads: AcquiredPayloadHandle[]; skills: string[]; agentSelection: AgentSelectionSubmission; acknowledgeRisk: boolean }
+export type InstallRequest = { context: SkillLocationRef; source: string; discoverySession: DiscoverySessionHandle; payloads: AcquiredPayloadHandle[]; skills: string[]; agentSelection: AgentSelectionSubmission; acknowledgeRedirect: boolean }
 export type InstallResponse = { units: MutationUnitResult[]; warnings: SourceSuppressionWarningCode[] }
-/**
- * 风险策略种类
- */
-export type InstallRiskKind = "none" | "require-confirmation"
-/**
- * 安装风险策略
- */
-export type InstallRiskPolicy = { kind: InstallRiskKind; code?: string | null }
 export type InstallSkillPreview = { skillName: string; payload: AcquiredPayloadHandle; overwriteTargets: string[]; blockingReasons: OperationErrorCode[]; fallbackForecasts: AgentTargetFallbackPreview[] }
 export type InstallWizardSessionSnapshot = { revision: number; active: boolean }
 /**
@@ -867,6 +860,7 @@ export type SkillLocation = { scope: "global" } | { scope: "project"; project_id
 export type SkillLocationRef = { environment: EnvironmentRef; scope: SkillLocation }
 export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
 export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness }
+export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "limitExceeded" | "invalidContent" | "unavailable"
 export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
 export type SourceUpdateCheckInfo = { source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"

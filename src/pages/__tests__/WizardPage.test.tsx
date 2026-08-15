@@ -4,7 +4,7 @@ import '@/test-utils';
 import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/types';
+import { getStepFlow } from '@/components/skills/add-skill/types';
 import type { WizardState } from '@/components/skills/add-skill/types';
 import { parseWizardContext } from '@/components/skills/add-skill/wizard-context';
 import { useMutationStore } from '@/stores/mutation';
@@ -154,39 +154,6 @@ vi.mock('@/components/skills/add-skill/ErrorStep', () => ({
   ErrorStep: () => <div data-testid="error-step">error-step</div>,
 }));
 
-function createState(overrides: Partial<WizardState> = {}): WizardState {
-  return {
-    step: 'confirm',
-    entryPoint: 'skills-panel',
-    scope: 'global',
-    projectPath: undefined,
-    context: {
-      environment: { kind: 'native' },
-      scope: { scope: 'global' },
-    },
-    source: 'openclaw/community-skills',
-    fetchStatus: 'success',
-    fetchError: null,
-    gitRef: null,
-    availableSkills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null }],
-    selectedSkills: ['demo'],
-    skillFilter: null,
-    skillSearchQuery: '',
-    overwrites: {},
-    preparation: {
-      status: 'ready',
-      prepared: { request: {} as never, preview: {} as never },
-    },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
-    installResults: null,
-    installError: undefined,
-    riskPolicy: { kind: 'require-confirmation', code: 'openclaw' },
-    riskAcknowledged: false,
-    ...overrides,
-  };
-}
-
 function startInstallationFromSkillsEntry() {
   render(
     <MemoryRouter initialEntries={['/wizard?entryPoint=skills-panel']}>
@@ -199,13 +166,6 @@ function startInstallationFromSkillsEntry() {
   }
   fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.install' }));
 }
-
-describe('canProceedForStep', () => {
-  it('blocks install on confirm step until guarded-source risk is acknowledged', () => {
-    expect(canProceedForStep(createState())).toBe(false);
-    expect(canProceedForStep(createState({ riskAcknowledged: true }))).toBe(true);
-  });
-});
 
 describe('getStepFlow', () => {
   it('uses the selected context directly for Skills entry', () => {

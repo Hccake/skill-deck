@@ -169,6 +169,7 @@ mod tests {
                 source_type: "github".to_string(),
                 source_url: Some("https://github.com/acme/tools".to_string()),
                 ref_name: Some("main".to_string()),
+                redirected_download_host: None,
             },
             BTreeMap::new(),
             (),

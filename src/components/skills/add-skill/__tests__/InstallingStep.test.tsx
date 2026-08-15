@@ -51,7 +51,7 @@ function makePreparedInstall(): PreparedInstall {
       adapterTargets: ['eve:root', 'eve:research'],
     }],
     requestedMode: 'copy',
-    acknowledgeRisk: false,
+    acknowledgeRedirect: false,
   } as never;
   const preview = {
     token: {
@@ -79,8 +79,6 @@ function makeState(prepared = makePreparedInstall()): WizardState {
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
-    riskPolicy: null,
-    riskAcknowledged: false,
     availableSkills: [],
     selectedSkills: ['demo'],
     skillFilter: null,

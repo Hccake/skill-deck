@@ -53,7 +53,8 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
       skills: state.selectedSkills,
       explicitAgentIds: state.preSelectedAgents,
       agentSelection: agentSelection.submission,
-      acknowledgeRisk: state.riskAcknowledged,
+      acknowledgeRedirect:
+        !state.redirectedDownloadHost || state.redirectAcknowledged === true,
     }).then((outcome) => {
       if (cancelled || requestId !== requestIdRef.current) return;
       if (outcome.status === 'selectionStale') {
@@ -77,13 +78,20 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
       updateStateRef.current({ preparation: outcome, overwrites });
     });
     return () => { cancelled = true; };
-  }, [agentSelection, preparationAttempt, selection, state.availableSkills, state.context, state.discoverySession, state.preSelectedAgents, state.riskAcknowledged, state.selectedSkills, state.source]);
+  }, [agentSelection, preparationAttempt, selection, state.availableSkills, state.context, state.discoverySession, state.preSelectedAgents, state.redirectAcknowledged, state.redirectedDownloadHost, state.selectedSkills, state.source]);
 
   const availableSkillMap = useMemo(
     () => new Map(state.availableSkills.map((skill) => [skill.name, skill])),
     [state.availableSkills],
   );
   const overwriteCount = state.selectedSkills.filter((name) => (state.overwrites[name] ?? []).length > 0).length;
+  const blockedSkills = new Set(
+    state.preparation.status === 'ready'
+      ? state.preparation.prepared.preview.skills
+        .filter((skill) => (skill.blockingReasons?.length ?? 0) > 0)
+        .map((skill) => skill.skillName)
+      : [],
+  );
   const projected = selection ? projectAgentSelectionView(selection) : null;
   const directAgents = projected?.directAgents.map((agent) => agent.displayName) ?? [];
   const selectedSet = new Set(agentSelection.submission.selectedOptionIds);
@@ -114,18 +122,24 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
         </Alert>
       ) : null}
 
-      {state.riskPolicy?.kind === 'require-confirmation' ? (
+      {state.redirectedDownloadHost ? (
         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-3">
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
-            <div className="space-y-1">
-              <p className="text-sm font-medium">{t('addSkill.risk.openclawTitle')}</p>
-              <p className="text-sm text-muted-foreground">{t('addSkill.risk.openclawBody')}</p>
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium">{t('addSkill.confirm.redirectTitle')}</p>
+              <p className="text-sm text-muted-foreground">
+                {t('addSkill.confirm.redirectBody', { host: state.redirectedDownloadHost })}
+              </p>
             </div>
           </div>
           <label className="flex cursor-pointer items-start gap-2 text-sm">
-            <Checkbox checked={state.riskAcknowledged} onCheckedChange={(checked) => updateState({ riskAcknowledged: checked === true })} className="mt-0.5" />
-            <span>{t('addSkill.risk.openclawAcknowledge')}</span>
+            <Checkbox
+              checked={state.redirectAcknowledged}
+              onCheckedChange={(checked) => updateState({ redirectAcknowledged: checked === true })}
+              className="mt-0.5"
+            />
+            <span>{t('addSkill.confirm.redirectAcknowledge')}</span>
           </label>
         </div>
       ) : null}
@@ -153,7 +167,11 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
               <div key={name} className="flex min-h-10 items-center gap-3 border-b px-3 py-2.5 last:border-b-0">
                 <Package className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{name}</span>
-                {(state.overwrites[name] ?? []).length > 0 ? <Badge variant="outline">{t('addSkill.confirm.overwriteGroup')}</Badge> : null}
+                {blockedSkills.has(name) ? (
+                  <Badge variant="destructive">{t('addSkill.confirm.directDownloadConflict')}</Badge>
+                ) : (state.overwrites[name] ?? []).length > 0 ? (
+                  <Badge variant="outline">{t('addSkill.confirm.overwriteGroup')}</Badge>
+                ) : null}
                 {skill?.digestVerified ? <Badge variant="outline">{t('addSkill.confirm.trust.digestVerified')}</Badge> : null}
               </div>
             );

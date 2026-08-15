@@ -159,9 +159,59 @@ impl ErrorReport {
             }
             AppError::InvalidSkillMd { message }
             | AppError::InvalidSource { value: message }
-            | AppError::InstallRiskConfirmationRequired { code: message }
             | AppError::InvalidAgent { agent: message } => {
                 Self::with_details(OperationErrorCode::Validation, false, message)
+            }
+            AppError::DirectDownloadRedirectConfirmationRequired { host } => {
+                let mut report = Self::new(OperationErrorCode::Validation);
+                report.field = Some("acknowledgeRedirect".to_string());
+                report.parameters.insert("host".to_string(), host);
+                report
+            }
+            AppError::SourceAcquisitionFailed {
+                well_known_reason,
+                download_reason,
+            } => {
+                let mut report = Self::new(OperationErrorCode::ExecutionFailed);
+                report.parameters.insert(
+                    "wellKnownReason".to_string(),
+                    well_known_reason.code().to_string(),
+                );
+                report.parameters.insert(
+                    "downloadReason".to_string(),
+                    download_reason.code().to_string(),
+                );
+                report
+            }
+            AppError::WellKnownSourceFailed { reason } => {
+                let mut report = Self::new(OperationErrorCode::ExecutionFailed);
+                report
+                    .parameters
+                    .insert("reason".to_string(), reason.code().to_string());
+                report
+            }
+            AppError::DirectDownloadFailed { reason } => {
+                let mut report = Self::new(OperationErrorCode::ExecutionFailed);
+                report
+                    .parameters
+                    .insert("reason".to_string(), reason.code().to_string());
+                report
+            }
+            AppError::DirectDownloadUnsupportedOperation => {
+                let mut report = Self::new(OperationErrorCode::Validation);
+                report.parameters.insert(
+                    "reason".to_string(),
+                    "direct-download-unsupported-operation".to_string(),
+                );
+                report
+            }
+            AppError::DirectDownloadConflict { target } => {
+                let mut report = Self::new(OperationErrorCode::Validation);
+                report
+                    .parameters
+                    .insert("reason".to_string(), "direct-download-conflict".to_string());
+                report.parameters.insert("target".to_string(), target);
+                report
             }
             AppError::NoSkillsFound => Self::new(OperationErrorCode::Validation),
             AppError::EnvironmentUnavailable {

@@ -40,6 +40,7 @@ pub struct DiscoverySourceDescriptor {
     pub source_type: String,
     pub source_url: Option<String>,
     pub ref_name: Option<String>,
+    pub redirected_download_host: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1638,6 +1639,7 @@ mod tests {
                         source_type: "local".to_string(),
                         source_url: None,
                         ref_name: None,
+                        redirected_download_host: None,
                     },
                     BTreeMap::new(),
                     DropCounter(drops.clone()),
@@ -1695,6 +1697,7 @@ mod tests {
                         source_type: "git".to_string(),
                         source_url: Some("https://example.com/repo.git".to_string()),
                         ref_name: None,
+                        redirected_download_host: None,
                     },
                     BTreeMap::new(),
                     (),

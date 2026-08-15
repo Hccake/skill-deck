@@ -1324,7 +1324,31 @@
         "timeout": "在 {{timeout}} 秒内未完成克隆。仓库可能过大，或当前网络较慢。",
         "auth": "认证失败。请检查凭据或仓库访问权限。",
         "refNotFound": "未找到指定的分支或标签",
-        "invalidSource": "无效的来源格式: {{value}}"
+        "invalidSource": "无效的来源格式: {{value}}",
+        "acquisitionFailed": "无法读取该来源。Well-known 读取失败：{{wellKnownReason}}；直接下载失败：{{downloadReason}}",
+        "acquisitionReason": {
+          "notFound": "未找到内容",
+          "authenticationRequired": "需要认证",
+          "timeout": "请求超时",
+          "network": "网络请求失败",
+          "limitExceeded": "内容超过安全限制",
+          "invalidContent": "内容不是有效的 Skill",
+          "unavailable": "来源不可用"
+        },
+        "downloadFailure": {
+          "notFound": "未找到下载内容。",
+          "authenticationRequired": "下载内容需要认证。",
+          "timeout": "下载请求超时。",
+          "network": "网络异常导致下载失败。",
+          "downloadTooLarge": "下载内容超过 10 MiB 限制。",
+          "archiveTooLarge": "归档解压后的内容超过 25 MiB 限制。",
+          "tooManyEntries": "归档包含超过 1000 个条目。",
+          "unsafeArchive": "归档包含不安全的路径、链接或冲突条目。",
+          "invalidContent": "下载内容不是有效的 SKILL.md、ZIP、tar 或 tar.gz 来源。",
+          "emptyContent": "下载内容为空。"
+        },
+        "downloadUnsupportedOperation": "直接下载来源只支持全新安装。",
+        "downloadConflict": "目标目录已有同名 Skill，直接下载无法覆盖：{{target}}"
       }
     },
     "skills": {
@@ -1429,12 +1453,11 @@
       "retryPreparation": "重新准备",
       "conflictZone": "已有目标目录",
       "freshZone": "新增写入",
-      "overwriteGroup": "目标目录已存在"
-    },
-    "risk": {
-      "openclawTitle": "OpenClaw 来源需要额外确认",
-      "openclawBody": "该来源包含未经审核的社区提交内容。Skill 拥有完整 agent 权限，可能带来安全风险。",
-      "openclawAcknowledge": "我已理解风险，并允许继续安装此来源中的 Skill"
+      "overwriteGroup": "目标目录已存在",
+      "directDownloadConflict": "不能覆盖",
+      "redirectTitle": "下载地址已跳转到其他站点",
+      "redirectBody": "Skill 内容将从 {{host}} 下载。请确认你信任该站点后再继续。",
+      "redirectAcknowledge": "我信任这个下载站点，并允许继续安装"
     },
     "installing": {
       "title": "安装中...",
@@ -1517,7 +1540,7 @@
       "externalLockChanged": "Skill lock 已被外部修改，请刷新后重试。",
       "lockConflict": "Skill lock 中的 {{skill}} 已发生变化，请刷新后重试。",
       "agentDefaultsConflict": "Skill lock 中的 Agent 默认设置已发生变化，请刷新后重试。",
-      "riskConfirmationRequired": "该来源需要先确认风险后才能安装",
+      "redirectConfirmationRequired": "下载地址已跳转到 {{host}}，请确认后再安装",
       "parseFailed": "解析失败",
       "suggestion": {
         "checkSkillName": "检查 skill 名称是否正确",
@@ -1535,7 +1558,7 @@
         "checkPermission": "检查目标目录的写入权限",
         "checkAgentName": "检查 agent 名称是否正确",
         "reselectAgents": "返回上一步重新选择 agents",
-        "reviewRiskAndConfirm": "请返回确认步骤，阅读风险提示并手动确认",
+        "reviewRedirectAndConfirm": "请返回确认步骤，检查实际下载站点并手动确认",
         "chooseAccessiblePath": "请选择所选系统能够访问的路径",
         "chooseWritableConfiguration": "请选择可以写入 Agent 信息的系统",
         "retryOrContact": "请检查错误信息并重试，如果问题持续请查看日志"

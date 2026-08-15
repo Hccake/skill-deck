@@ -108,6 +108,7 @@ impl InstalledSkillPayloadAcquirer {
                         source_type: "installed".to_string(),
                         source_url: None,
                         ref_name: None,
+                        redirected_download_host: None,
                     },
                     BTreeMap::new(),
                     (),

@@ -40,6 +40,19 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t('addSkill.source.error.network');
     case 'invalidSource':
       return t('addSkill.source.error.invalidSource', { value: error.data.value });
+    case 'sourceAcquisitionFailed':
+      return t('addSkill.source.error.acquisitionFailed', {
+        wellKnownReason: t(`addSkill.source.error.acquisitionReason.${error.data.wellKnownReason}`),
+        downloadReason: t(`addSkill.source.error.acquisitionReason.${error.data.downloadReason}`),
+      });
+    case 'wellKnownSourceFailed':
+      return t(`addSkill.source.error.acquisitionReason.${error.data.reason}`);
+    case 'directDownloadFailed':
+      return t(`addSkill.source.error.downloadFailure.${error.data.reason}`);
+    case 'directDownloadUnsupportedOperation':
+      return t('addSkill.source.error.downloadUnsupportedOperation');
+    case 'directDownloadConflict':
+      return t('addSkill.source.error.downloadConflict', { target: error.data.target });
     case 'invalidProxySettings':
       return t(`settings.proxy.errors.${error.data.code}`);
     case 'discoveryRequestFailed':
@@ -50,8 +63,8 @@ export function formatAppError(error: AppError, t: TFunction): string {
       return t(`agentSelection.error.${error.data.reason}`);
     case 'pathNotFound':
       return t('addSkill.error.pathNotFound', { path: error.data.path });
-    case 'installRiskConfirmationRequired':
-      return t('addSkill.error.riskConfirmationRequired');
+    case 'directDownloadRedirectConfirmationRequired':
+      return t('addSkill.error.redirectConfirmationRequired', { host: error.data.host });
     case 'mutationBusy':
       return t('addSkill.error.mutationBusy');
     case 'installWizardActive':

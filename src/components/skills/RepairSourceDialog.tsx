@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, RefreshCw, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -20,7 +19,7 @@ import { useMutationStore } from '@/stores/mutation';
 import { useBusinessWriteBlocked } from '@/hooks/useBusinessWriteBlocked';
 import { RecoveryActions } from '@/components/recovery/RecoveryActions';
 import type { RepairSourceDraft } from '@/stores/skills-utils';
-import type { FetchResult, RecoveryAction } from '@/bindings';
+import type { RecoveryAction } from '@/bindings';
 import { repairSkillSource } from '@/workflows/skill-repair';
 import { sameContext } from '@/lib/context';
 
@@ -30,8 +29,6 @@ type ValidationOwner = 'manual' | 'repair' | null;
 type RepairFeedback = 'failed' | 'stopped' | 'recoveryRequired' | null;
 interface ValidationResult {
   ok: boolean;
-  requiresRiskConfirmation: boolean;
-  fetchResult: FetchResult | null;
 }
 
 export function RepairSourceDialog() {
@@ -58,8 +55,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   const [source, setSource] = useState(target.source);
   const [validateState, setValidateState] = useState<ValidateState>('idle');
   const [validationOwner, setValidationOwner] = useState<ValidationOwner>(null);
-  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
-  const [requiresRiskConfirmation, setRequiresRiskConfirmation] = useState(false);
   const [repairPhase, setRepairPhase] = useState<RepairPhase>('idle');
   const [repairFeedback, setRepairFeedback] = useState<RepairFeedback>(null);
   const [repairErrorMessage, setRepairErrorMessage] = useState<string | null>(null);
@@ -77,14 +72,13 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     !writeBlocked
     && !isWorking
     && !recoveryRequired
-    && validateState !== 'missing'
-    && (!requiresRiskConfirmation || riskAcknowledged);
+    && validateState !== 'missing';
 
   const validateSource = useCallback(async (owner: Exclude<ValidationOwner, null>): Promise<ValidationResult> => {
     if (!source.trim()) {
       setValidateState('error');
       setValidationOwner(null);
-      return { ok: false, requiresRiskConfirmation: false, fetchResult: null };
+      return { ok: false };
     }
 
     setValidationOwner(owner);
@@ -92,20 +86,14 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
     try {
       const result = await fetchAvailable(target.context, source.trim(), crypto.randomUUID());
       const hasSkill = result.skills.some((skill) => skill.name === target.skillName);
-      const nextRequiresRiskConfirmation = result.riskPolicy.kind === 'require-confirmation';
-      setRequiresRiskConfirmation(nextRequiresRiskConfirmation);
       setValidateState(hasSkill ? 'valid' : 'missing');
       setValidationOwner(null);
-      return {
-        ok: hasSkill,
-        requiresRiskConfirmation: nextRequiresRiskConfirmation,
-        fetchResult: result,
-      };
+      return { ok: hasSkill };
     } catch (error) {
       console.error('[RepairSourceDialog] Failed to validate source:', error);
       setValidateState('error');
       setValidationOwner(null);
-      return { ok: false, requiresRiskConfirmation: false, fetchResult: null };
+      return { ok: false };
     }
   }, [source, target]);
 
@@ -131,7 +119,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
         agents: target.agents,
         privateAdaptedAgents: target.privateAdaptedAgents,
         privateCopyAgents: target.privateCopyAgents,
-        acknowledgeRisk: riskAcknowledged,
         operationId,
         stopRequested: () => stopRequestedRef.current || operationIdRef.current !== operationId,
         onPhase: (phase) => setRepairPhase(phase),
@@ -157,8 +144,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
       }
       if (outcome.status === 'missing') {
         setValidateState('missing');
-      } else if (outcome.status === 'riskRequired') {
-        setRequiresRiskConfirmation(true);
       } else if (outcome.status === 'stopped') {
         setRepairFeedback('stopped');
       } else if (outcome.status === 'failed') {
@@ -174,7 +159,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
   }, [
     closeRepairSource,
     markSourceRepairSucceeded,
-    riskAcknowledged,
     source,
     isWorking,
     syncSkills,
@@ -245,8 +229,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
             onChange={(event) => {
               setSource(event.target.value);
               setValidateState('idle');
-              setRiskAcknowledged(false);
-              setRequiresRiskConfirmation(false);
               setRepairFeedback(null);
               setRepairErrorMessage(null);
               setRecovery([]);
@@ -259,13 +241,6 @@ function RepairSourceDialogContent({ target }: { target: RepairSourceDraft }) {
             {validateState === 'valid' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />}
             <span>{statusLabel}</span>
           </div>
-        ) : null}
-
-        {requiresRiskConfirmation ? (
-          <label className="flex items-start gap-2 text-sm leading-5">
-            <Checkbox checked={riskAcknowledged} onCheckedChange={(checked) => setRiskAcknowledged(checked === true)} />
-            <span>{t('addSkill.risk.openclawAcknowledge')}</span>
-          </label>
         ) : null}
 
         {repairFeedback ? (

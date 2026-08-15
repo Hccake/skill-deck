@@ -185,7 +185,10 @@ impl SourceIdentity {
         source: String,
         git_ref: Option<String>,
     ) -> Result<Self, AppError> {
-        if matches!(source_type, SourceType::Local | SourceType::WellKnown) {
+        if matches!(
+            source_type,
+            SourceType::Local | SourceType::WellKnown | SourceType::Download
+        ) {
             return Err(invalid_identity(
                 "source does not have a remote Git identity",
             ));
@@ -308,6 +311,7 @@ fn parse_source_type(value: &str) -> Result<SourceType, AppError> {
         "git" => Ok(SourceType::Git),
         "local" => Ok(SourceType::Local),
         "well-known" | "wellknown" | "direct-url" | "directurl" => Ok(SourceType::WellKnown),
+        "download" => Ok(SourceType::Download),
         _ => Err(invalid_identity("unsupported source type")),
     }
 }

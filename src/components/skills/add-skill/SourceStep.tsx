@@ -140,8 +140,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         gitRef: result.gitRef ?? null,
         discoverySession: result.discoverySession,
         preparation: { status: 'idle' },
-        riskPolicy: result.riskPolicy ?? null,
-        riskAcknowledged: false,
+        redirectedDownloadHost: result.redirectedDownloadHost ?? null,
+        redirectAcknowledged: false,
         preSelectedSkills: parsed.skills,
         preSelectedAgents: parsed.agents,
       });
@@ -153,8 +153,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       updateState({
         fetchStatus: 'error',
         fetchError: toAppError(error),
-        riskPolicy: null,
-        riskAcknowledged: false,
+        redirectedDownloadHost: null,
+        redirectAcknowledged: false,
         discoverySession: undefined,
         preparation: { status: 'idle' },
       });

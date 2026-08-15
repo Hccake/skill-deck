@@ -20,7 +20,6 @@ use crate::application::remove_runtime::{build_runtime_remove_service, RuntimeRe
 use crate::application::resources::{build_runtime_resource_service, RuntimeResourceService};
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
-use crate::application::source_acquisition::SourceDiscoveryService;
 use crate::application::update_runtime::{
     build_runtime_source_evidence_coordinator, build_runtime_update_check_service,
     build_runtime_update_service, RuntimeUpdateCheckService, RuntimeUpdatePayloadAcquirer,
@@ -43,6 +42,7 @@ use crate::storage::github_credentials::KeyringGithubCredentialStore;
 
 pub(crate) mod application_updater;
 pub(crate) mod discovery;
+pub(crate) mod download;
 pub(crate) mod git_source;
 pub(crate) mod github;
 pub(crate) mod github_client;
@@ -50,11 +50,13 @@ pub(crate) mod http_transport;
 pub mod maintenance;
 pub(crate) mod network_connection;
 pub(crate) mod proxy_settings;
+pub(crate) mod source_acquisition;
 pub(crate) mod wellknown;
 pub(crate) mod wellknown_protocol;
 pub(crate) mod wsl_source;
 
 use maintenance::{RuntimeMaintenanceCoordinator, RuntimeMaintenanceTasks};
+use source_acquisition::SourceDiscoveryService;
 
 struct RuntimeNetworkServices {
     proxy_settings: Arc<ProxySettingsStore>,
@@ -131,6 +133,7 @@ impl RuntimeServiceGraph {
         let wsl_integration_enabled = cfg!(target_os = "windows") && config.wsl_integration_enabled;
         let network_services = RuntimeNetworkServices::new(config.network_proxy);
         let http = network_services.http_client();
+        let download = download::RuntimeDownloadAccess::new(http.clone());
         let git_source = network_services.git_source();
         let wsl = Arc::new(WslRuntime::new_with_support(
             cfg!(target_os = "windows"),
@@ -145,11 +148,13 @@ impl RuntimeServiceGraph {
                 wsl.clone(),
                 network_services.proxy_settings(),
                 network_services.wellknown(),
+                download.clone(),
             ));
         let source_discovery = SourceDiscoveryService::new(
             payloads.clone(),
             git_source.clone(),
             network_services.wellknown(),
+            download,
             wsl_source.clone(),
         );
         let admission = Arc::new(RuntimeAdmissionCoordinator::default());

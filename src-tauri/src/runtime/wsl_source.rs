@@ -3,13 +3,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::application::download_source::materialize_download;
 use crate::application::payload_session::{
     DiscoverySkillSnapshot, DiscoverySourceDescriptor, DiscoverySourceLocation,
     PayloadSessionManager, PayloadSessionStorage, RetainedDiscoverySource,
 };
 use crate::application::source_acquisition::{
-    invalid_source, retain_discovered_source, snapshot_fingerprint, source_identifier,
-    ManagedDownloadedDirectory,
+    attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
+    snapshot_fingerprint, source_identifier, ManagedDownloadedDirectory,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
 use crate::application::wellknown_access::WellKnownAccess;
@@ -18,8 +19,8 @@ use crate::core::mutation::CancellationSignal;
 use crate::core::plugin_manifest::get_relative_plugin_search_dirs;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::{
-    resolve_clone_timeout_secs, select_discovered_skills, source_risk_policy, DiscoverOptions,
-    DiscoveryDocument, DiscoveryInventory,
+    resolve_clone_timeout_secs, select_discovered_skills, DiscoverOptions, DiscoveryDocument,
+    DiscoveryInventory,
 };
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
@@ -31,7 +32,8 @@ use crate::environment::wsl::operations::source_acquisition::{
 };
 use crate::environment::wsl::{WslRuntime, WslSession, WslWorkspace};
 use crate::error::AppError;
-use crate::models::{AvailableSkill, FetchResult, InstallRiskPolicy, ParsedSource, SourceType};
+use crate::models::{AvailableSkill, FetchResult, ParsedSource, SourceType};
+use crate::runtime::download::RuntimeDownloadAccess;
 use crate::runtime::proxy_settings::ProxySettingsStore;
 
 pub(crate) struct RuntimeWslSourceAccess {
@@ -39,6 +41,7 @@ pub(crate) struct RuntimeWslSourceAccess {
     environments: Arc<WslRuntime>,
     settings: Arc<ProxySettingsStore>,
     wellknown: Arc<dyn WellKnownAccess>,
+    download: RuntimeDownloadAccess,
 }
 
 impl RuntimeWslSourceAccess {
@@ -47,12 +50,14 @@ impl RuntimeWslSourceAccess {
         environments: Arc<WslRuntime>,
         settings: Arc<ProxySettingsStore>,
         wellknown: Arc<dyn WellKnownAccess>,
+        download: RuntimeDownloadAccess,
     ) -> Self {
         Self {
             sessions,
             environments,
             settings,
             wellknown,
+            download,
         }
     }
 }
@@ -68,7 +73,27 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
         Box::pin(async move {
             match parsed.source_type {
                 SourceType::WellKnown => {
-                    self.discover_wellknown(distro_name, parsed, requested_source, cancellation)
+                    attempt_wellknown_then_download(
+                        self.discover_wellknown(
+                            distro_name,
+                            parsed.clone(),
+                            requested_source.clone(),
+                            cancellation.clone(),
+                        ),
+                        || {
+                            self.discover_download(
+                                distro_name,
+                                parsed,
+                                requested_source,
+                                cancellation,
+                            )
+                        },
+                        "WSL",
+                    )
+                    .await
+                }
+                SourceType::Download => {
+                    self.discover_download(distro_name, parsed, requested_source, cancellation)
                         .await
                 }
                 _ => {
@@ -115,6 +140,52 @@ impl RuntimeWslSourceAccess {
                         owner,
                         Some(storage),
                         Some(fetched.trust_metadata),
+                        None,
+                    )
+                    .await
+                }
+            })
+            .await
+    }
+
+    async fn discover_download(
+        &self,
+        distro_name: &str,
+        mut parsed: ParsedSource,
+        requested_source: String,
+        cancellation: CancellationSignal,
+    ) -> Result<FetchResult, AppError> {
+        let workspace = self.environments.workspace(distro_name)?;
+        let fetched = self.download.fetch(&parsed.url, &cancellation).await?;
+        let materialized = materialize_download(&fetched.bytes)?;
+        let root = materialized.keep();
+        let owner = ManagedDownloadedDirectory::new(root.clone());
+        let redirected_download_host = redirected_host(&parsed.url, &fetched.final_url);
+        parsed.source_type = SourceType::Download;
+        let environment = EnvironmentRef::Wsl {
+            distro_name: distro_name.to_string(),
+        };
+        let sessions = self.sessions.clone();
+        workspace
+            .clone()
+            .with_access(move || {
+                let workspace = workspace.clone();
+                async move {
+                    let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
+                    retain_discovered_source(
+                        sessions,
+                        environment,
+                        parsed,
+                        requested_source,
+                        DiscoverySourceLocation::Native {
+                            root: root.clone(),
+                            ref_revision: None,
+                        },
+                        root,
+                        owner,
+                        Some(storage),
+                        None,
+                        redirected_download_host,
                     )
                     .await
                 }
@@ -206,9 +277,9 @@ impl RuntimeWslSourceAccess {
                         discovery_session,
                         source_type: prepared.source_type,
                         source_url: prepared.source_url,
+                        redirected_download_host: None,
                         git_ref: prepared.git_ref,
                         skill_filter: prepared.skill_filter,
-                        risk_policy: prepared.risk_policy,
                         skills: prepared.skills,
                     })
                 }
@@ -225,7 +296,6 @@ struct PreparedWslDiscovery {
     source_url: String,
     git_ref: Option<String>,
     skill_filter: Option<String>,
-    risk_policy: InstallRiskPolicy,
     skills: Vec<AvailableSkill>,
 }
 
@@ -308,9 +378,9 @@ async fn prepare_native_wsl_source(
         source_type: parsed.source_type.to_string(),
         source_url: (!parsed.url.is_empty()).then(|| parsed.url.clone()),
         ref_name: parsed.git_ref.clone(),
+        redirected_download_host: None,
     };
     let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
-    let risk_policy = source_risk_policy(&parsed);
     let retained = RetainedDiscoverySource::new(
         DiscoverySourceLocation::WslNative {
             distro_name: session.distro_name.clone(),
@@ -329,7 +399,6 @@ async fn prepare_native_wsl_source(
         source_url: parsed.url,
         git_ref: parsed.git_ref,
         skill_filter: parsed.skill_filter,
-        risk_policy,
         skills: discovered.into_iter().map(AvailableSkill::from).collect(),
     })
 }
@@ -494,7 +563,9 @@ pub(crate) fn wsl_acquisition_source(
                 git_ref: parsed.git_ref.clone(),
             })
         }
-        SourceType::WellKnown => Err(invalid_source("Well-known sources use Native HTTP")),
+        SourceType::WellKnown | SourceType::Download => {
+            Err(invalid_source("HTTP sources use Native HTTP"))
+        }
     }
 }
 

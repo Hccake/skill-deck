@@ -795,7 +795,7 @@ mod tests {
         let fake_git = temp.path().join("git");
         fs::write(
             &fake_git,
-            "#!/bin/sh\n[ \"${LC_ALL-}\" = C ] || exit 73\nprintf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\tHEAD\\n'\n",
+            "#!/bin/sh\n[ \"${LC_ALL-}\" = C ] || exit 73\n[ \"${GIT_ALLOW_PROTOCOL-}\" = https:http:ssh:git:file ] || exit 74\nprintf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\tHEAD\\n'\n",
         )
         .expect("fake Git");
         let mut permissions = fs::metadata(&fake_git)
@@ -832,6 +832,37 @@ mod tests {
             output.stdout,
             b"1\0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn git_acquisition_blocks_ext_protocol_before_running_its_helper() {
+        let temp = tempfile::tempdir().expect("temp");
+        let marker = temp.path().join("ext-helper-ran");
+        let managed_root = std::path::PathBuf::from(format!(
+            "/tmp/skill-deck-discovery-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let destination = managed_root.join("repo");
+
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::WSL_SOURCE_ACQUISITION_SCRIPT)
+            .arg("--")
+            .arg("git")
+            .arg(format!("ext::touch {}", marker.display()))
+            .arg(&destination)
+            .arg("")
+            .arg("Ubuntu")
+            .arg("5")
+            .arg("preserve")
+            .arg("")
+            .output()
+            .expect("acquisition script");
+
+        assert_eq!(output.status.code(), Some(68));
+        assert!(!marker.exists());
+        assert!(!managed_root.exists());
     }
 
     #[test]

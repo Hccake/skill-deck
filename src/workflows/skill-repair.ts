@@ -20,7 +20,6 @@ export interface RepairSkillSourceRequest {
   agents?: AgentId[];
   privateAdaptedAgents?: AgentId[];
   privateCopyAgents?: AgentId[];
-  acknowledgeRisk: boolean;
   operationId: string;
   stopRequested: () => boolean;
   onPhase?: (phase: 'validating' | 'preparing' | 'installing') => void;
@@ -31,7 +30,6 @@ export type RepairOutcome =
   | { status: 'succeeded'; response: InstallResponse }
   | { status: 'stopped' }
   | { status: 'missing' }
-  | { status: 'riskRequired' }
   | { status: 'recoveryRequired'; response: InstallResponse; recovery: RecoveryAction[] }
   | {
     status: 'failed';
@@ -90,10 +88,6 @@ export async function repairSkillSource(
 
   const skill = available.skills.find((item) => item.name === request.skillName);
   if (!skill) return { status: 'missing' };
-  if (available.riskPolicy.kind === 'require-confirmation' && !request.acknowledgeRisk) {
-    return { status: 'riskRequired' };
-  }
-
   let preparation: InstallPreparationOutcome;
   request.onPhase?.('preparing');
   try {
@@ -117,9 +111,7 @@ export async function repairSkillSource(
         ),
         requestedMode: 'copy',
       },
-      acknowledgeRisk: available.riskPolicy.kind === 'require-confirmation'
-        ? request.acknowledgeRisk
-        : true,
+      acknowledgeRedirect: false,
     });
   } catch (error) {
     return { status: 'failed', stage: 'preparation', error: toAppError(error) };

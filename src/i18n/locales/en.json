@@ -1324,7 +1324,31 @@
         "timeout": "Clone timed out after {{timeout}}s. The repository may be too large or the network may be slow.",
         "auth": "Authentication failed. Check your credentials or repository access.",
         "refNotFound": "Branch or tag not found",
-        "invalidSource": "Invalid source format: {{value}}"
+        "invalidSource": "Invalid source format: {{value}}",
+        "acquisitionFailed": "The source could not be read. Well-known failed: {{wellKnownReason}}; direct download failed: {{downloadReason}}",
+        "acquisitionReason": {
+          "notFound": "not found",
+          "authenticationRequired": "authentication required",
+          "timeout": "request timed out",
+          "network": "network request failed",
+          "limitExceeded": "content exceeded a safety limit",
+          "invalidContent": "content is not a valid Skill",
+          "unavailable": "source is unavailable"
+        },
+        "downloadFailure": {
+          "notFound": "The download was not found.",
+          "authenticationRequired": "The download requires authentication.",
+          "timeout": "The download timed out.",
+          "network": "The download failed because of a network error.",
+          "downloadTooLarge": "The download exceeds the 10 MiB limit.",
+          "archiveTooLarge": "The extracted archive exceeds the 25 MiB limit.",
+          "tooManyEntries": "The archive contains more than 1,000 entries.",
+          "unsafeArchive": "The archive contains an unsafe path, link, or conflicting entry.",
+          "invalidContent": "The downloaded content is not a valid SKILL.md, ZIP, tar, or tar.gz source.",
+          "emptyContent": "The downloaded content is empty."
+        },
+        "downloadUnsupportedOperation": "Direct download sources only support new installs.",
+        "downloadConflict": "A matching Skill already exists at this target, so direct download cannot replace it: {{target}}"
       }
     },
     "skills": {
@@ -1429,12 +1453,11 @@
       "retryPreparation": "Retry preparation",
       "conflictZone": "Existing targets",
       "freshZone": "New writes",
-      "overwriteGroup": "Target exists"
-    },
-    "risk": {
-      "openclawTitle": "OpenClaw sources require extra confirmation",
-      "openclawBody": "This source contains unreviewed community submissions. Skills run with full agent permissions and may be unsafe.",
-      "openclawAcknowledge": "I understand the risk and want to continue installing skills from this source"
+      "overwriteGroup": "Target exists",
+      "directDownloadConflict": "Cannot overwrite",
+      "redirectTitle": "Download redirected to another site",
+      "redirectBody": "The Skill content will be downloaded from {{host}}. Continue only if you trust this site.",
+      "redirectAcknowledge": "I trust this download site and want to continue"
     },
     "installing": {
       "title": "Installing...",
@@ -1517,7 +1540,7 @@
       "externalLockChanged": "The Skill lock changed outside Skill Deck. Refresh and try again.",
       "lockConflict": "{{skill}} changed in the Skill lock. Refresh and try again.",
       "agentDefaultsConflict": "Agent defaults changed in the Skill lock. Refresh and try again.",
-      "riskConfirmationRequired": "This source requires risk confirmation before installation",
+      "redirectConfirmationRequired": "Confirm the download redirect to {{host}} before installation",
       "parseFailed": "Parse failed",
       "suggestion": {
         "checkSkillName": "Check that the skill name is correct",
@@ -1535,7 +1558,7 @@
         "checkPermission": "Check write permissions for the target directory",
         "checkAgentName": "Check that the agent name is correct",
         "reselectAgents": "Go back and reselect agents",
-        "reviewRiskAndConfirm": "Go back to the confirmation step, review the risk warning, and confirm manually",
+        "reviewRedirectAndConfirm": "Go back to the confirmation step, review the download site, and confirm manually",
         "chooseAccessiblePath": "Choose a path that is accessible from the selected system",
         "chooseWritableConfiguration": "Choose a system with writable Agent information",
         "retryOrContact": "Check the error details and retry, or check logs if the issue persists"

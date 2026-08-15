@@ -5,7 +5,6 @@ import { Channel } from '@tauri-apps/api/core';
 import type {
   AgentId, AgentRuntimeSnapshot, ListSkillsResult, InstalledSkillLocation,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
-  InstallRiskPolicy, InstallRiskKind,
   AgentDeleteImpact,
   AgentDeleteResult,
   AgentOperationWarning,
@@ -36,7 +35,6 @@ import type {
 export type {
   AgentId, AgentRuntimeSnapshot, ListSkillsResult, InstalledSkillLocation,
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
-  InstallRiskPolicy, InstallRiskKind,
   SkillLocationRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
   EnvironmentRef, AddProjectResult, InstallWizardSessionSnapshot, MutationSnapshot,
   RegisteredProject, ProjectInfo,

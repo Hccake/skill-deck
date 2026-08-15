@@ -8,7 +8,6 @@ import type {
   InstallResponse,
   SkillLocationRef,
 } from '@/bindings';
-import type { InstallRiskPolicy } from '@/hooks/useTauriApi';
 import type {
   InstallPreparationOutcome,
 } from '@/workflows/skill-install-preparation';
@@ -61,8 +60,8 @@ export interface WizardState {
   fetchError: AppError | null;
   gitRef: string | null;
   discoverySession?: DiscoverySessionHandle;
-  riskPolicy: InstallRiskPolicy | null;
-  riskAcknowledged: boolean;
+  redirectedDownloadHost?: string | null;
+  redirectAcknowledged?: boolean;
 
   // Skills
   availableSkills: AvailableSkill[];
@@ -95,7 +94,10 @@ export function canProceedForStep(state: WizardState): boolean {
       return true;
     case 'confirm':
       return state.preparation.status === 'ready'
-        && (state.riskPolicy?.kind !== 'require-confirmation' || state.riskAcknowledged);
+        && (state.preparation.prepared.preview.skills?.every(
+          (skill) => (skill.blockingReasons?.length ?? 0) === 0,
+        ) ?? true)
+        && (!state.redirectedDownloadHost || state.redirectAcknowledged === true);
     default:
       return false;
   }

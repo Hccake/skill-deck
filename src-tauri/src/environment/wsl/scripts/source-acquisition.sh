@@ -1,6 +1,7 @@
 #!/bin/sh
 LC_ALL=C
-export LC_ALL
+GIT_ALLOW_PROTOCOL=https:http:ssh:git:file
+export LC_ALL GIT_ALLOW_PROTOCOL
 
 subcommand=$1
 shift

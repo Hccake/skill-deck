@@ -14,6 +14,7 @@ pub enum SourceType {
     Git,
     Local,
     WellKnown,
+    Download,
 }
 
 impl<'de> Deserialize<'de> for SourceType {
@@ -28,10 +29,11 @@ impl<'de> Deserialize<'de> for SourceType {
             "git" => Ok(SourceType::Git),
             "local" => Ok(SourceType::Local),
             "well-known" | "wellknown" => Ok(SourceType::WellKnown),
+            "download" => Ok(SourceType::Download),
             "direct-url" | "directurl" => Ok(SourceType::WellKnown),
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["github", "gitlab", "git", "local", "well-known"],
+                &["github", "gitlab", "git", "local", "well-known", "download"],
             )),
         }
     }
@@ -45,6 +47,7 @@ impl std::fmt::Display for SourceType {
             SourceType::Git => write!(f, "git"),
             SourceType::Local => write!(f, "local"),
             SourceType::WellKnown => write!(f, "well-known"),
+            SourceType::Download => write!(f, "download"),
         }
     }
 }
@@ -113,6 +116,7 @@ mod tests {
             ("\"git\"", SourceType::Git),
             ("\"local\"", SourceType::Local),
             ("\"well-known\"", SourceType::WellKnown),
+            ("\"download\"", SourceType::Download),
             ("\"wellknown\"", SourceType::WellKnown),
             ("\"direct-url\"", SourceType::WellKnown),
             ("\"directurl\"", SourceType::WellKnown),

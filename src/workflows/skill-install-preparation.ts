@@ -21,7 +21,7 @@ export interface InstallPreparationInput {
   skills: string[];
   explicitAgentIds: import('@/bindings').AgentId[];
   agentSelection: AgentSelectionSubmission;
-  acknowledgeRisk: boolean;
+  acknowledgeRedirect: boolean;
 }
 
 export interface PreparedInstall {
@@ -71,7 +71,7 @@ export async function prepareInstall(
     payloads,
     skills: input.skills,
     agentSelection: input.agentSelection,
-    acknowledgeRisk: input.acknowledgeRisk,
+    acknowledgeRedirect: input.acknowledgeRedirect,
   };
 
   try {

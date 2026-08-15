@@ -23,7 +23,7 @@ const input: InstallPreparationInput = {
     selectedOptionIds: ['cursor'],
     requestedMode: 'copy',
   },
-  acknowledgeRisk: true,
+  acknowledgeRedirect: true,
 };
 
 function api(overrides: Partial<InstallPreparationApi> = {}): InstallPreparationApi {
@@ -90,7 +90,7 @@ describe('prepareInstall', () => {
           source: input.source,
           skills: input.skills,
           agentSelection: input.agentSelection,
-          acknowledgeRisk: true,
+          acknowledgeRedirect: true,
         }),
         preview,
       },

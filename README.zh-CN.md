@@ -36,7 +36,7 @@
 
 ## ✨ 核心能力
 
-- **发现与安装**：从在线目录发现 Skill，查看来源、说明和安全信息，或者从 GitHub、Git、本地目录和约定地址（Well-known 地址）安装
+- **发现与安装**：从在线目录发现 Skill，查看来源、说明和安全信息，或者从 GitHub、Git、本地目录、约定地址（Well-known 地址）、原始 `SKILL.md` 文件和 ZIP、tar 归档安装
 - **浏览与维护**：阅读已安装 Skill 的完整内容，检查并执行更新，在来源失效时重新选择来源
 - **项目与 Agent 管理**：统一查看全局与项目 Skill，按 Agent 筛选，调整 Skill 可供哪些 Agent 使用，并在项目之间复制 Skill
 - **跨平台管理**：在 Windows、macOS 和 Linux 上管理 Skill；Windows 用户还可以切换到已安装的 WSL 发行版
@@ -109,6 +109,7 @@
 
 - `https://github.com/vercel-labs/skills`
 - `vercel-labs/skills`（GitHub 简写）
+- `https://example.com/SKILL.md` 或 ZIP、tar 归档地址
 - `/path/to/local/skill`（本地目录）
 
 也可以直接粘贴 [`skills` CLI](https://github.com/vercel-labs/skills) 的 `skills add` 安装命令。Skill Deck 会解析其中的来源、Skill 和目标 Agent，并在安装前提供确认和调整：
@@ -119,7 +120,7 @@ npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 
 ### 3. 确认并安装
 
-选择需要安装的 Skill、目标 Agent 和安装方式，检查变更预览，然后执行安装。安装完成后，关联的 Agent 即可读取该 Skill；你也可以在 Skills 工作台中继续阅读、检查更新和管理 Agent。
+选择需要安装的 Skill、目标 Agent 和安装方式，检查变更预览，然后执行安装。下载地址发生跨主机重定向时，需要明确确认最终下载主机。直接下载属于一次性全新安装来源，安装后不提供更新、重新安装或来源修复操作。安装完成后，关联的 Agent 即可读取该 Skill；你也可以在 Skills 工作台中继续阅读和管理 Agent。
 
 ---
 

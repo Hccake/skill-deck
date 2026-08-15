@@ -4,6 +4,7 @@
 //! path on websites, with fallback to the legacy `.well-known/skills/` path.
 //! This is the Rust equivalent of the CLI's `providers/wellknown.ts`.
 
+use crate::application::download_source::{extract_archive, ArchiveFormat, ArchiveLimits};
 use crate::application::wellknown_access::{
     extract_hostname, WellKnownFetchResult, WellKnownTrustMetadata,
 };
@@ -14,9 +15,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Cursor, Read};
-use std::path::PathBuf;
-use std::path::{Component, Path};
+use std::path::Path;
 use std::time::Duration;
 use url::Url;
 
@@ -326,35 +325,6 @@ enum WellKnownArchiveFormat {
     TarGz,
 }
 
-#[derive(Debug, Default)]
-struct ArchiveExtractionState {
-    files: usize,
-    unpacked_bytes: u64,
-}
-
-impl ArchiveExtractionState {
-    fn track_file(&mut self, bytes: u64) -> Result<(), AppError> {
-        if self.files >= MAX_ARCHIVE_FILES {
-            return Err(AppError::InvalidSource {
-                value: "archive-too-many-files: archive contains too many files".to_string(),
-            });
-        }
-        self.unpacked_bytes =
-            self.unpacked_bytes
-                .checked_add(bytes)
-                .ok_or_else(|| AppError::InvalidSource {
-                    value: "archive-too-large: archive exceeds maximum unpacked size".to_string(),
-                })?;
-        if self.unpacked_bytes > MAX_ARCHIVE_UNPACKED_BYTES {
-            return Err(AppError::InvalidSource {
-                value: "archive-too-large: archive exceeds maximum unpacked size".to_string(),
-            });
-        }
-        self.files += 1;
-        Ok(())
-    }
-}
-
 fn detect_archive_format(
     bytes: &[u8],
     artifact_url: &str,
@@ -378,166 +348,29 @@ fn detect_archive_format(
     None
 }
 
-fn normalize_archive_path(raw_path: &str) -> Result<PathBuf, AppError> {
-    if raw_path.trim().is_empty() || raw_path.contains('\0') || raw_path.contains('\\') {
-        return Err(AppError::InvalidSource {
-            value: format!("unsafe-archive-path: {raw_path}"),
-        });
-    }
-
-    let path = Path::new(raw_path);
-    if path.is_absolute() {
-        return Err(AppError::InvalidSource {
-            value: format!("unsafe-archive-path: {raw_path}"),
-        });
-    }
-
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(part) => normalized.push(part),
-            _ => {
-                return Err(AppError::InvalidSource {
-                    value: format!("unsafe-archive-path: {raw_path}"),
-                });
-            }
-        }
-    }
-
-    if normalized.as_os_str().is_empty() {
-        return Err(AppError::InvalidSource {
-            value: format!("unsafe-archive-path: {raw_path}"),
-        });
-    }
-
-    Ok(normalized)
-}
-
-fn write_archive_file(
-    target_dir: &Path,
-    relative_path: &str,
-    content: &[u8],
-    state: &mut ArchiveExtractionState,
-) -> Result<(), AppError> {
-    let relative = normalize_archive_path(relative_path)?;
-    state.track_file(content.len() as u64)?;
-    let target_path = target_dir.join(relative);
-    if !target_path.starts_with(target_dir) {
-        return Err(AppError::InvalidSource {
-            value: format!("unsafe-archive-path: {relative_path}"),
-        });
-    }
-    if let Some(parent) = target_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(target_path, content)?;
-    Ok(())
-}
-
 fn extract_archive_to_skill_dir(
     bytes: &[u8],
     format: WellKnownArchiveFormat,
     target_dir: &Path,
 ) -> Result<(), AppError> {
     fs::create_dir_all(target_dir)?;
-    let mut state = ArchiveExtractionState::default();
-
-    match format {
-        WellKnownArchiveFormat::Zip => extract_zip_archive(bytes, target_dir, &mut state)?,
-        WellKnownArchiveFormat::TarGz => extract_targz_archive(bytes, target_dir, &mut state)?,
-    }
+    extract_archive(
+        bytes,
+        match format {
+            WellKnownArchiveFormat::Zip => ArchiveFormat::Zip,
+            WellKnownArchiveFormat::TarGz => ArchiveFormat::TarGz,
+        },
+        target_dir,
+        ArchiveLimits {
+            max_unpacked_bytes: MAX_ARCHIVE_UNPACKED_BYTES,
+            max_entries: MAX_ARCHIVE_FILES,
+        },
+    )?;
 
     if crate::core::skill_paths::find_skill_md_case_insensitive(target_dir).is_none() {
         return Err(AppError::InvalidSource {
             value: "Archive missing root SKILL.md".to_string(),
         });
-    }
-
-    Ok(())
-}
-
-fn extract_zip_archive(
-    bytes: &[u8],
-    target_dir: &Path,
-    state: &mut ArchiveExtractionState,
-) -> Result<(), AppError> {
-    let reader = Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(reader).map_err(|e| AppError::InvalidSource {
-        value: format!("Invalid zip archive: {e}"),
-    })?;
-
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| AppError::InvalidSource {
-            value: format!("Invalid zip entry: {e}"),
-        })?;
-        if file.is_dir() {
-            continue;
-        }
-        if file.enclosed_name().is_none() {
-            return Err(AppError::InvalidSource {
-                value: format!("unsafe-archive-path: {}", file.name()),
-            });
-        }
-        if let Some(mode) = file.unix_mode() {
-            if mode & 0o170000 == 0o120000 {
-                return Err(AppError::InvalidSource {
-                    value: "Archive links are not supported".to_string(),
-                });
-            }
-        }
-
-        let name = file.name().to_string();
-        let mut content = Vec::new();
-        file.read_to_end(&mut content)
-            .map_err(|e| AppError::InvalidSource {
-                value: format!("Invalid zip entry: {e}"),
-            })?;
-        write_archive_file(target_dir, &name, &content, state)?;
-    }
-
-    Ok(())
-}
-
-fn extract_targz_archive(
-    bytes: &[u8],
-    target_dir: &Path,
-    state: &mut ArchiveExtractionState,
-) -> Result<(), AppError> {
-    let decoder = flate2::read::GzDecoder::new(Cursor::new(bytes));
-    let mut archive = tar::Archive::new(decoder);
-
-    let entries = archive.entries().map_err(|e| AppError::InvalidSource {
-        value: format!("Invalid tar.gz archive: {e}"),
-    })?;
-
-    for entry in entries {
-        let mut entry = entry.map_err(|e| AppError::InvalidSource {
-            value: format!("Invalid tar.gz entry: {e}"),
-        })?;
-        let entry_type = entry.header().entry_type();
-        if entry_type.is_dir() {
-            continue;
-        }
-        if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(AppError::InvalidSource {
-                value: "Archive links are not supported".to_string(),
-            });
-        }
-        if !entry_type.is_file() {
-            continue;
-        }
-
-        let path = entry.path().map_err(|e| AppError::InvalidSource {
-            value: format!("Invalid tar.gz path: {e}"),
-        })?;
-        let path = path.to_string_lossy().to_string();
-        let mut content = Vec::new();
-        entry
-            .read_to_end(&mut content)
-            .map_err(|e| AppError::InvalidSource {
-                value: format!("Invalid tar.gz entry: {e}"),
-            })?;
-        write_archive_file(target_dir, &path, &content, state)?;
     }
 
     Ok(())
@@ -692,11 +525,8 @@ async fn download_v2_entry(
         .await
         .map_err(|error| map_network_error(error, "无法下载 well-known Skill 制品"))?;
     if !response.status.is_success() {
-        return Err(AppError::InvalidSource {
-            value: format!(
-                "http-{}: failed to download well-known artifact",
-                response.status.as_u16()
-            ),
+        return Err(AppError::WellKnownSourceFailed {
+            reason: source_failure_reason_from_status(response.status.as_u16()),
         });
     }
 
@@ -742,6 +572,10 @@ async fn fetch_index(
         });
     }
 
+    let mut saw_authentication_required = false;
+    let mut transport_failure = None;
+    let mut saw_not_found = false;
+
     for candidate in &candidates {
         if cancellation.is_cancelled() {
             return Err(AppError::MutationCancelled);
@@ -755,10 +589,28 @@ async fn fetch_index(
             .await
         {
             Ok(r) if r.status.is_success() => r,
+            Ok(r) if matches!(r.status.as_u16(), 401 | 403) => {
+                saw_authentication_required = true;
+                continue;
+            }
+            Ok(r) if r.status.as_u16() == 404 => {
+                saw_not_found = true;
+                continue;
+            }
             Err(error) if network_request_was_cancelled(&error) => {
                 return Err(AppError::MutationCancelled);
             }
-            _ => continue,
+            Err(error) => {
+                log::warn!("Well-known index request failed: {error}");
+                transport_failure
+                    .get_or_insert_with(|| source_failure_reason_from_http_error(&error));
+                continue;
+            }
+            Ok(r) => {
+                transport_failure
+                    .get_or_insert_with(|| source_failure_reason_from_status(r.status.as_u16()));
+                continue;
+            }
         };
 
         let raw: serde_json::Value = match serde_json::from_slice(&resp.body) {
@@ -773,6 +625,19 @@ async fn fetch_index(
         }
     }
 
+    if saw_authentication_required {
+        return Err(AppError::WellKnownSourceFailed {
+            reason: crate::error::SourceAcquisitionFailureReason::AuthenticationRequired,
+        });
+    }
+    if let Some(reason) = transport_failure {
+        return Err(AppError::WellKnownSourceFailed { reason });
+    }
+    if saw_not_found {
+        return Err(AppError::WellKnownSourceFailed {
+            reason: crate::error::SourceAcquisitionFailureReason::NotFound,
+        });
+    }
     Err(AppError::InvalidSource {
         value: format!("No well-known skills index found at: {url}"),
     })
@@ -782,9 +647,36 @@ fn map_network_error(error: HttpTransportError, message: &str) -> AppError {
     if network_request_was_cancelled(&error) {
         AppError::MutationCancelled
     } else {
-        AppError::GitNetworkError {
-            message: message.to_string(),
+        log::warn!("{message}: {error}");
+        AppError::WellKnownSourceFailed {
+            reason: source_failure_reason_from_http_error(&error),
         }
+    }
+}
+
+fn source_failure_reason_from_http_error(
+    error: &HttpTransportError,
+) -> crate::error::SourceAcquisitionFailureReason {
+    use crate::error::SourceAcquisitionFailureReason;
+
+    match error {
+        HttpTransportError::Request {
+            reason: "timeout", ..
+        } => SourceAcquisitionFailureReason::Timeout,
+        HttpTransportError::ResponseTooLarge => SourceAcquisitionFailureReason::LimitExceeded,
+        HttpTransportError::Settings(_) | HttpTransportError::Request { .. } => {
+            SourceAcquisitionFailureReason::Network
+        }
+    }
+}
+
+fn source_failure_reason_from_status(status: u16) -> crate::error::SourceAcquisitionFailureReason {
+    use crate::error::SourceAcquisitionFailureReason;
+
+    match status {
+        401 | 403 => SourceAcquisitionFailureReason::AuthenticationRequired,
+        404 => SourceAcquisitionFailureReason::NotFound,
+        _ => SourceAcquisitionFailureReason::Network,
     }
 }
 
@@ -1053,31 +945,12 @@ mod tests {
         let err = extract_archive_to_skill_dir(&bytes, WellKnownArchiveFormat::Zip, temp.path())
             .expect_err("traversal path should be rejected");
 
-        assert!(err.to_string().contains("unsafe-archive-path"));
-    }
-
-    #[test]
-    fn test_archive_limits_reject_too_many_files() {
-        let mut state = ArchiveExtractionState::default();
-        for _ in 0..MAX_ARCHIVE_FILES {
-            state.track_file(0).unwrap();
-        }
-
-        let err = state
-            .track_file(0)
-            .expect_err("1001st file should be rejected");
-
-        assert!(err.to_string().contains("too many files"));
-    }
-
-    #[test]
-    fn test_archive_limits_reject_too_many_unpacked_bytes() {
-        let mut state = ArchiveExtractionState::default();
-        let err = state
-            .track_file(MAX_ARCHIVE_UNPACKED_BYTES + 1)
-            .expect_err("oversized archive should be rejected");
-
-        assert!(err.to_string().contains("archive-too-large"));
+        assert!(matches!(
+            err,
+            AppError::DirectDownloadFailed {
+                reason: crate::error::DirectDownloadFailureReason::UnsafeArchive
+            }
+        ));
     }
 
     fn spawn_response_server(response: &'static str) -> String {
@@ -1259,7 +1132,12 @@ mod tests {
             .await
             .expect_err("non-success artifact response should be reported");
 
-            assert!(err.to_string().contains("http-404"));
+            assert!(matches!(
+                err,
+                AppError::WellKnownSourceFailed {
+                    reason: crate::error::SourceAcquisitionFailureReason::NotFound,
+                }
+            ));
         });
     }
 
@@ -1532,6 +1410,30 @@ mod tests {
                 .iter()
                 .all(|&a| legacy_indices.iter().all(|&l| a < l)),
             "agent-skills candidates must come before legacy skills candidates"
+        );
+    }
+
+    #[test]
+    fn maps_well_known_transport_failures_to_stable_reasons() {
+        use crate::error::SourceAcquisitionFailureReason;
+
+        assert_eq!(
+            source_failure_reason_from_http_error(&HttpTransportError::Request {
+                stage: "request",
+                reason: "timeout",
+            }),
+            SourceAcquisitionFailureReason::Timeout
+        );
+        assert_eq!(
+            source_failure_reason_from_http_error(&HttpTransportError::Request {
+                stage: "request",
+                reason: "request-failed",
+            }),
+            SourceAcquisitionFailureReason::Network
+        );
+        assert_eq!(
+            source_failure_reason_from_http_error(&HttpTransportError::ResponseTooLarge),
+            SourceAcquisitionFailureReason::LimitExceeded
         );
     }
 }

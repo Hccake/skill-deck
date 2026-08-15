@@ -24,7 +24,6 @@ pub mod skill_paths;
 pub mod skill_payload;
 pub mod source_identity;
 pub mod source_parser;
-pub mod source_policy;
 pub mod update_metadata;
 
 pub use app_config::*;
@@ -33,5 +32,4 @@ pub use git::*;
 pub use github_api::*;
 pub use source_identity::*;
 pub use source_parser::*;
-pub use source_policy::*;
 pub use update_metadata::*;

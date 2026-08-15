@@ -47,8 +47,6 @@ function createState(): WizardState {
     fetchStatus: 'idle',
     fetchError: null,
     gitRef: null,
-    riskPolicy: null,
-    riskAcknowledged: false,
     availableSkills: [],
     selectedSkills: [],
     skillFilter: null,

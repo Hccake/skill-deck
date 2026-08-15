@@ -37,7 +37,7 @@
 
 ## ✨ Core capabilities
 
-- **Discover and install** — Browse available Skills, review their sources, documentation, and security information, or install from GitHub, Git, local directories, and Well-known URLs
+- **Discover and install** — Browse available Skills, review their sources, documentation, and security information, or install from GitHub, Git, local directories, Well-known URLs, raw `SKILL.md` files, and ZIP/tar archives
 - **Browse and maintain** — Read installed Skill content, check and apply updates, and select a new source when the saved source no longer works
 - **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects
 - **Cross-platform management** — Manage Skills on Windows, macOS, and Linux; Windows users can also switch to installed WSL distributions
@@ -110,6 +110,7 @@ Choose an online result or enter a Skill source. For example:
 
 - `https://github.com/vercel-labs/skills`
 - `vercel-labs/skills` (GitHub shorthand)
+- `https://example.com/SKILL.md` or a ZIP/tar archive URL
 - `/path/to/local/skill` (local path)
 
 You can also paste a [`skills` CLI](https://github.com/vercel-labs/skills) `skills add` command. Skill Deck parses its source, Skill names, and target agents, then lets you confirm and adjust them before installation:
@@ -120,7 +121,7 @@ npx skills add vercel-labs/agent-skills --skill frontend-design -a claude-code
 
 ### 3. Confirm and install
 
-Select the Skills, target agents, and installation mode, review the change preview, and run the installation. After installation, the selected agents can read the Skill; you can continue reading, updating, and managing agents from the Skills workspace.
+Select the Skills, target agents, and installation mode, review the change preview, and run the installation. Cross-host download redirects require explicit confirmation. Direct downloads are one-time, new-install sources and do not provide update, reinstall, or source-repair actions afterward. After installation, the selected agents can read the Skill; you can continue reading and managing agents from the Skills workspace.
 
 ---
 

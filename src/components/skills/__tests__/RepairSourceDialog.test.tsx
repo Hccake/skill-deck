@@ -102,7 +102,6 @@ describe('RepairSourceDialog', () => {
       sourceUrl: 'https://github.com/owner/repo',
       gitRef: null,
       skillFilter: null,
-      riskPolicy: { kind: 'none', code: null },
       skills: [{
         name: 'toolkit',
         installDirName: 'toolkit',
@@ -239,21 +238,6 @@ describe('RepairSourceDialog', () => {
     expect(useSkillDialogStore.getState().repairSourceTarget).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.stop' }));
     expect(cancelActiveMutation).toHaveBeenCalledTimes(1);
-  });
-
-  it('requires explicit acknowledgement for guarded sources', async () => {
-    mocks.fetchAvailable.mockResolvedValue({
-      ...(await mocks.fetchAvailable()),
-      riskPolicy: { kind: 'require-confirmation', code: 'guarded' },
-    });
-    openDialog('guarded/repo');
-    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
-
-    await screen.findByRole('checkbox');
-    expect(mocks.installSkills).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: 'skills.repairSourceDialog.repair' }));
-    await waitFor(() => expect(mocks.installSkills).toHaveBeenCalled());
   });
 
   it('blocks repair while another mutation is active', () => {

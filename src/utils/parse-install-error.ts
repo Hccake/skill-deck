@@ -18,6 +18,26 @@ export function parseInstallError(
   const { selectedSkills = [], availableSkills = [] } = context;
 
   switch (error.kind) {
+    case 'sourceAcquisitionFailed':
+      return {
+        message: t('addSkill.source.error.acquisitionFailed', {
+          wellKnownReason: t(`addSkill.source.error.acquisitionReason.${error.data.wellKnownReason}`),
+          downloadReason: t(`addSkill.source.error.acquisitionReason.${error.data.downloadReason}`),
+        }),
+        suggestions: [t('addSkill.error.suggestion.checkNetwork')],
+      };
+
+    case 'directDownloadFailed':
+      return { message: t(`addSkill.source.error.downloadFailure.${error.data.reason}`) };
+
+    case 'directDownloadUnsupportedOperation':
+      return { message: t('addSkill.source.error.downloadUnsupportedOperation') };
+
+    case 'directDownloadConflict':
+      return {
+        message: t('addSkill.source.error.downloadConflict', { target: error.data.target }),
+      };
+
     case 'noSkillsFound': {
       const availableNames = availableSkills.map(s => s.name);
       return {
@@ -113,6 +133,15 @@ export function parseInstallError(
         ],
       };
 
+    case 'wellKnownSourceFailed':
+      return {
+        message: t(`addSkill.source.error.acquisitionReason.${error.data.reason}`),
+        suggestions: [
+          t('addSkill.error.suggestion.checkNetwork'),
+          t('addSkill.error.suggestion.checkRepo'),
+        ],
+      };
+
     case 'io':
       return {
         message: t('addSkill.error.ioFailed'),
@@ -154,12 +183,11 @@ export function parseInstallError(
         ],
       };
 
-    case 'installRiskConfirmationRequired':
+    case 'directDownloadRedirectConfirmationRequired':
       return {
-        message: t('addSkill.error.riskConfirmationRequired'),
-        details: error.data.code,
+        message: t('addSkill.error.redirectConfirmationRequired', { host: error.data.host }),
         suggestions: [
-          t('addSkill.error.suggestion.reviewRiskAndConfirm'),
+          t('addSkill.error.suggestion.reviewRedirectAndConfirm'),
         ],
       };
 

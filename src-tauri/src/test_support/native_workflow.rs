@@ -85,6 +85,68 @@ struct VerifyFailureEntryExecutor {
     inner: NativePreparedEntryExecutor,
 }
 
+struct SelectiveVerifyFailureEntryExecutor {
+    inner: NativePreparedEntryExecutor,
+    failing_skill: String,
+}
+
+struct SelectiveVerifyStaged {
+    inner: NativePreparedEntrySet,
+    fail_verify: bool,
+}
+
+impl PreparedEntryExecutor for SelectiveVerifyFailureEntryExecutor {
+    type Staged = SelectiveVerifyStaged;
+
+    fn stage<'a>(
+        &'a self,
+        unit: &'a ExecutionUnit,
+        payloads: &'a BTreeMap<PayloadId, PinnedPayloadLease>,
+        cancellation: CancellationSignal,
+    ) -> BoxFuture<'a, Result<Self::Staged, AppError>> {
+        Box::pin(async move {
+            Ok(SelectiveVerifyStaged {
+                inner: self.inner.stage(unit, payloads, cancellation).await?,
+                fail_verify: unit.skill_name == self.failing_skill,
+            })
+        })
+    }
+
+    fn recheck_entries<'a>(
+        &'a self,
+        staged: &'a Self::Staged,
+    ) -> BoxFuture<'a, Result<(), AppError>> {
+        self.inner.recheck_entries(&staged.inner)
+    }
+
+    fn swap<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        self.inner.swap(&mut staged.inner)
+    }
+
+    fn verify<'a>(&'a self, staged: &'a Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        Box::pin(async move {
+            self.inner.verify(&staged.inner).await?;
+            if staged.fail_verify {
+                return Err(AppError::ExecutionFailed {
+                    message: "injected direct-download verification failure".to_string(),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    fn restore<'a>(&'a self, staged: &'a mut Self::Staged) -> BoxFuture<'a, Result<(), AppError>> {
+        self.inner.restore(&mut staged.inner)
+    }
+
+    fn cleanup<'a>(
+        &'a self,
+        staged: Self::Staged,
+    ) -> BoxFuture<'a, Result<Vec<MutationWarning>, AppError>> {
+        self.inner.cleanup(staged.inner)
+    }
+}
+
 impl PreparedEntryExecutor for VerifyFailureEntryExecutor {
     type Staged = NativePreparedEntrySet;
 
@@ -133,6 +195,13 @@ struct VerifyFailurePlanExecutor {
     environments: Arc<WslRuntime>,
     facts: RuntimePlanningFactSource,
     recovery_root: PathBuf,
+}
+
+struct SelectiveVerifyFailurePlanExecutor {
+    environments: Arc<WslRuntime>,
+    facts: RuntimePlanningFactSource,
+    recovery_root: PathBuf,
+    failing_skill: String,
 }
 
 struct LockFailurePlanExecutor {
@@ -214,6 +283,42 @@ impl MutationPlanExecutor for VerifyFailurePlanExecutor {
                     plan.operation_id.clone(),
                     recovery,
                 ),
+            };
+            MutationCoordinator::new(
+                entries,
+                crate::application::plan_runner::RuntimeLockCommitter::new(
+                    self.environments.clone(),
+                ),
+                self.facts.clone(),
+            )
+            .execute(plan, cancellation)
+            .await
+        })
+    }
+}
+
+impl MutationPlanExecutor for SelectiveVerifyFailurePlanExecutor {
+    fn execute<'a>(
+        &'a self,
+        plan: MutationPlan,
+        cancellation: CancellationSignal,
+    ) -> InstallFuture<'a, Vec<MutationUnitResult>> {
+        Box::pin(async move {
+            let recovery: Arc<dyn RecoveryMarkerStore> = Arc::new(
+                NativeRecoveryMarkerStore::new(&self.recovery_root)
+                    .expect("native direct-download recovery store"),
+            );
+            let entries = SelectiveVerifyFailureEntryExecutor {
+                inner: NativePreparedEntryExecutor::new(
+                    if cfg!(windows) {
+                        ExecutionBackend::NativeWindows
+                    } else {
+                        ExecutionBackend::NativeUnix
+                    },
+                    plan.operation_id.clone(),
+                    recovery,
+                ),
+                failing_skill: self.failing_skill.clone(),
             };
             MutationCoordinator::new(
                 entries,
@@ -409,7 +514,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         payloads: vec![handle_v1],
         skills: vec!["demo".to_string()],
         agent_selection,
-        acknowledge_risk: true,
+        acknowledge_redirect: true,
     };
     let InstallPreviewOutcome::Ready {
         preview: install_preview,
@@ -1133,6 +1238,369 @@ async fn native_workflows_share_one_runtime_and_preserve_skill_deck_metadata() {
 }
 
 #[cfg(test)]
+async fn discover_http_source_returning(
+    status: u16,
+) -> Result<crate::models::FetchResult, AppError> {
+    use std::thread;
+    use std::time::Duration;
+
+    use crate::application::wellknown_access::WellKnownAccess;
+    use crate::application::wsl_source_access::UnavailableWslSourceAccess;
+    use crate::models::NetworkProxySettings;
+    use crate::runtime::download::RuntimeDownloadAccess;
+    use crate::runtime::git_source::ProcessGitTransport;
+    use crate::runtime::http_transport::HttpTransport;
+    use crate::runtime::proxy_settings::ProxySettingsStore;
+    use crate::runtime::source_acquisition::SourceDiscoveryService;
+    use crate::runtime::wellknown::RuntimeWellKnownAccess;
+
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("HTTP server");
+    let source = format!(
+        "http://{}/missing",
+        server.server_addr().to_ip().expect("server address")
+    );
+    let worker = thread::spawn(move || {
+        for _ in 0..5 {
+            let request = server
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive request")
+                .expect("request");
+            request
+                .respond(tiny_http::Response::empty(tiny_http::StatusCode(status)))
+                .expect("HTTP response");
+        }
+    });
+
+    let payloads = Arc::new(PayloadSessionManager::in_memory(
+        PayloadSessionLimits {
+            ttl_ms: 60_000,
+            max_sessions: 4,
+            max_bytes: 4 * 1024 * 1024,
+        },
+        || 1_000,
+    ));
+    let proxy = Arc::new(ProxySettingsStore::new(NetworkProxySettings::default()));
+    let http = HttpTransport::new(proxy.clone());
+    let result = SourceDiscoveryService::new(
+        payloads,
+        Arc::new(ProcessGitTransport::new(proxy)),
+        Arc::new(RuntimeWellKnownAccess::new(http.clone())) as Arc<dyn WellKnownAccess>,
+        RuntimeDownloadAccess::new(http),
+        Arc::new(UnavailableWslSourceAccess),
+    )
+    .discover(project_context("source"), source, |_| {})
+    .await;
+    worker.join().expect("HTTP worker");
+
+    result
+}
+
+#[cfg(test)]
+async fn discover_unreachable_http_source() -> Result<crate::models::FetchResult, AppError> {
+    use crate::application::wellknown_access::WellKnownAccess;
+    use crate::application::wsl_source_access::UnavailableWslSourceAccess;
+    use crate::models::NetworkProxySettings;
+    use crate::runtime::download::RuntimeDownloadAccess;
+    use crate::runtime::git_source::ProcessGitTransport;
+    use crate::runtime::http_transport::HttpTransport;
+    use crate::runtime::proxy_settings::ProxySettingsStore;
+    use crate::runtime::source_acquisition::SourceDiscoveryService;
+    use crate::runtime::wellknown::RuntimeWellKnownAccess;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve local port");
+    let address = listener.local_addr().expect("local address");
+    drop(listener);
+
+    let payloads = Arc::new(PayloadSessionManager::in_memory(
+        PayloadSessionLimits {
+            ttl_ms: 60_000,
+            max_sessions: 4,
+            max_bytes: 4 * 1024 * 1024,
+        },
+        || 1_000,
+    ));
+    let proxy = Arc::new(ProxySettingsStore::new(NetworkProxySettings::default()));
+    let http = HttpTransport::new(proxy.clone());
+    SourceDiscoveryService::new(
+        payloads,
+        Arc::new(ProcessGitTransport::new(proxy)),
+        Arc::new(RuntimeWellKnownAccess::new(http.clone())) as Arc<dyn WellKnownAccess>,
+        RuntimeDownloadAccess::new(http),
+        Arc::new(UnavailableWslSourceAccess),
+    )
+    .discover(
+        project_context("source"),
+        format!("http://{address}/unreachable"),
+        |_| {},
+    )
+    .await
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn http_source_reports_real_failure_reasons_for_both_attempts() {
+    use crate::error::SourceAcquisitionFailureReason;
+
+    assert!(matches!(
+        discover_http_source_returning(404).await,
+        Err(AppError::SourceAcquisitionFailed {
+            well_known_reason: SourceAcquisitionFailureReason::NotFound,
+            download_reason: SourceAcquisitionFailureReason::NotFound,
+        })
+    ));
+    assert!(matches!(
+        discover_http_source_returning(401).await,
+        Err(AppError::SourceAcquisitionFailed {
+            well_known_reason: SourceAcquisitionFailureReason::AuthenticationRequired,
+            download_reason: SourceAcquisitionFailureReason::AuthenticationRequired,
+        })
+    ));
+    assert!(matches!(
+        discover_http_source_returning(500).await,
+        Err(AppError::SourceAcquisitionFailed {
+            well_known_reason: SourceAcquisitionFailureReason::Network,
+            download_reason: SourceAcquisitionFailureReason::Network,
+        })
+    ));
+    assert!(matches!(
+        discover_unreachable_http_source().await,
+        Err(AppError::SourceAcquisitionFailed {
+            well_known_reason: SourceAcquisitionFailureReason::Network,
+            download_reason: SourceAcquisitionFailureReason::Network,
+        })
+    ));
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn direct_download_flows_from_http_discovery_through_install_without_lock() {
+    use std::thread;
+    use std::time::Duration;
+
+    use crate::application::source_acquisition::{
+        AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService,
+    };
+    use crate::application::wellknown_access::WellKnownAccess;
+    use crate::application::wsl_source_access::UnavailableWslSourceAccess;
+    use crate::models::NetworkProxySettings;
+    use crate::runtime::download::RuntimeDownloadAccess;
+    use crate::runtime::git_source::ProcessGitTransport;
+    use crate::runtime::http_transport::HttpTransport;
+    use crate::runtime::proxy_settings::ProxySettingsStore;
+    use crate::runtime::source_acquisition::SourceDiscoveryService;
+    use crate::runtime::wellknown::RuntimeWellKnownAccess;
+
+    let temp = tempfile::tempdir().expect("download workflow tempdir");
+    let project_path = temp.path().join("project");
+    let projects_path = temp.path().join("state/projects.json");
+    let global_lock_path = temp.path().join("state/global-lock.json");
+    let recovery_root = temp.path().join("recovery");
+    fs::create_dir_all(project_path.join(".builtin")).unwrap();
+    write_json(
+        &projects_path,
+        &json!({
+            "schemaVersion": 1,
+            "projects": [project("source", &project_path, "Source")]
+        }),
+    )
+    .unwrap();
+
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("HTTP server");
+    let source = format!(
+        "http://{}/artifact",
+        server.server_addr().to_ip().expect("server address")
+    );
+    let mut archive_bytes = Vec::new();
+    {
+        let mut archive = zip::ZipWriter::new(std::io::Cursor::new(&mut archive_bytes));
+        for skill in ["alpha", "beta"] {
+            archive
+                .start_file(
+                    format!("{skill}/SKILL.md"),
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .expect("archive entry");
+            std::io::Write::write_all(
+                &mut archive,
+                format!("---\nname: {skill}\ndescription: Direct {skill}\n---\n# {skill}\n")
+                    .as_bytes(),
+            )
+            .expect("archive content");
+        }
+        archive.finish().expect("finish archive");
+    }
+    let worker = thread::spawn(move || {
+        for _ in 0..5 {
+            let request = server
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive request")
+                .expect("request");
+            if request.url() == "/artifact" {
+                request
+                    .respond(tiny_http::Response::from_data(archive_bytes))
+                    .expect("download response");
+                return;
+            }
+            request
+                .respond(tiny_http::Response::empty(404))
+                .expect("well-known response");
+        }
+        panic!("direct download request was not received");
+    });
+
+    let environments = Arc::new(WslRuntime::default());
+    let registry = Arc::new(StaticRegistry(Arc::new(test_registry())));
+    let facts = RuntimePlanningFactSource::with_native_snapshot(
+        registry,
+        environments.clone(),
+        NativeRuntimeSnapshot {
+            home: temp.path().join("home"),
+            config_home: temp.path().join("config"),
+            projects_path,
+            global_lock_path,
+            environment_variables: BTreeMap::new(),
+        },
+    );
+    let targets = RuntimeTargetFactResolver::new(environments.clone());
+    let payloads = Arc::new(PayloadSessionManager::in_memory(
+        PayloadSessionLimits {
+            ttl_ms: 60_000,
+            max_sessions: 4,
+            max_bytes: 4 * 1024 * 1024,
+        },
+        || 1_000,
+    ));
+    let proxy = Arc::new(ProxySettingsStore::new(NetworkProxySettings::default()));
+    let http = HttpTransport::new(proxy.clone());
+    let discovery = SourceDiscoveryService::new(
+        payloads.clone(),
+        Arc::new(ProcessGitTransport::new(proxy)),
+        Arc::new(RuntimeWellKnownAccess::new(http.clone())) as Arc<dyn WellKnownAccess>,
+        RuntimeDownloadAccess::new(http),
+        Arc::new(UnavailableWslSourceAccess),
+    )
+    .discover(project_context("source"), source.clone(), |_| {})
+    .await
+    .expect("discover direct download");
+    worker.join().expect("HTTP worker");
+    assert_eq!(discovery.source_type, "download");
+    let serialized_discovery =
+        serde_json::to_value(&discovery).expect("serialize discovery result");
+    assert!(serialized_discovery.get("riskPolicy").is_none());
+
+    let skill_paths = discovery
+        .skills
+        .iter()
+        .map(|skill| skill.relative_path.clone())
+        .collect::<Vec<_>>();
+    let skill_names = discovery
+        .skills
+        .iter()
+        .map(|skill| skill.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(skill_names, ["alpha", "beta"]);
+    let handles = SelectedPayloadAcquisitionService::new(payloads.clone())
+        .acquire(AcquireSelectedPayloadsRequest {
+            discovery_session: discovery.discovery_session.clone(),
+            skill_paths,
+        })
+        .await
+        .expect("pin downloaded payload");
+    let context = project_context("source");
+    let selection_facts = InstallPlanningFactSource::current(&facts, &context)
+        .await
+        .expect("Agent selection facts");
+    let agent_selection = test_submission_for_agents_and_own_directories(
+        &context,
+        &selection_facts.agent_runtime,
+        &selection_facts.eve_targets,
+        &targets,
+        &[],
+        InstallMode::Copy,
+    )
+    .await;
+    let install = InstallService::new(
+        payloads.clone(),
+        ConcreteInstallPlanner::new(facts.clone(), targets, payloads, fixed_time),
+        SelectiveVerifyFailurePlanExecutor {
+            environments: environments.clone(),
+            facts: facts.clone(),
+            recovery_root: recovery_root.clone(),
+            failing_skill: "beta".to_string(),
+        },
+    );
+    let request = InstallRequest {
+        context,
+        source,
+        discovery_session: discovery.discovery_session,
+        payloads: handles,
+        skills: skill_names,
+        agent_selection,
+        acknowledge_redirect: true,
+    };
+    fs::create_dir_all(project_path.join(".agents/skills/alpha")).unwrap();
+    fs::write(
+        project_path.join(".agents/skills/alpha/SKILL.md"),
+        "existing",
+    )
+    .unwrap();
+    let InstallPreviewOutcome::Ready {
+        preview: stale_preview,
+    } = install
+        .preview(InstallOperation::Install, &request)
+        .await
+        .expect("preview direct download")
+    else {
+        panic!("expected ready direct-download preview");
+    };
+    assert!(!stale_preview.skills[0].blocking_reasons.is_empty());
+    fs::remove_dir_all(project_path.join(".agents/skills/alpha")).unwrap();
+    assert!(matches!(
+        install
+            .execute(
+                InstallOperation::Install,
+                &request,
+                stale_preview.token,
+                CancellationSignal::default(),
+            )
+            .await,
+        Err(AppError::StaleContext)
+    ));
+
+    let InstallPreviewOutcome::Ready { preview } = install
+        .preview(InstallOperation::Install, &request)
+        .await
+        .expect("refresh direct-download preview")
+    else {
+        panic!("expected refreshed direct-download preview");
+    };
+    assert!(preview
+        .skills
+        .iter()
+        .all(|skill| skill.blocking_reasons.is_empty()));
+    let response = install
+        .execute(
+            InstallOperation::Install,
+            &request,
+            preview.token,
+            CancellationSignal::default(),
+        )
+        .await
+        .expect("execute direct-download batch");
+    assert_eq!(response.units.len(), 2);
+    assert_eq!(response.units[0].skill_name, "alpha");
+    assert_eq!(response.units[0].status, MutationUnitStatus::Succeeded);
+    assert_eq!(response.units[1].skill_name, "beta");
+    assert_eq!(response.units[1].status, MutationUnitStatus::Failed);
+    assert!(response.units.iter().all(|unit| !unit.lock_committed));
+    assert!(project_path.join(".agents/skills/alpha/SKILL.md").is_file());
+    assert!(!project_path.join(".agents/skills/beta").exists());
+    assert!(!project_path.join("skills-lock.json").exists());
+    assert_no_staging_leaks(temp.path()).unwrap();
+    assert_recovery_graph_is_empty(&recovery_root).unwrap();
+}
+
+#[cfg(test)]
 mod update_lifecycle {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1150,7 +1618,7 @@ mod update_lifecycle {
     use crate::application::plan_runner::{RuntimeLockCommitter, RuntimePlanExecutor};
     use crate::application::resources::SkillIdentity;
     use crate::application::source_acquisition::{
-        AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService, SourceDiscoveryService,
+        AcquireSelectedPayloadsRequest, SelectedPayloadAcquisitionService,
     };
     use crate::application::source_evidence::{
         EvidenceDetectionRequest, EvidenceFuture, SourceEvidenceCoordinator, SourceEvidenceDetector,
@@ -1174,6 +1642,7 @@ mod update_lifecycle {
     use crate::environment::runtime::ExecutionBackend;
     use crate::error::AppError;
     use crate::models::{ParsedSource, SourceType};
+    use crate::runtime::source_acquisition::SourceDiscoveryService;
 
     struct CountingDetector {
         inner: RuntimeSourceEvidenceDetector,
@@ -1502,7 +1971,7 @@ mod update_lifecycle {
                     payloads: vec![handle],
                     skills: vec![skill_name.to_string()],
                     agent_selection,
-                    acknowledge_risk: true,
+                    acknowledge_redirect: true,
                 };
                 let preview_outcome = install
                     .preview(InstallOperation::Install, &request)

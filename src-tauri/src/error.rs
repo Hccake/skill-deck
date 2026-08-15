@@ -28,6 +28,66 @@ pub enum AgentSelectionInvalidReason {
     ResultNotAllowed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum SourceAcquisitionFailureReason {
+    NotFound,
+    AuthenticationRequired,
+    Timeout,
+    Network,
+    LimitExceeded,
+    InvalidContent,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub enum DirectDownloadFailureReason {
+    NotFound,
+    AuthenticationRequired,
+    Timeout,
+    Network,
+    DownloadTooLarge,
+    ArchiveTooLarge,
+    TooManyEntries,
+    UnsafeArchive,
+    InvalidContent,
+    EmptyContent,
+}
+
+impl DirectDownloadFailureReason {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NotFound => "notFound",
+            Self::AuthenticationRequired => "authenticationRequired",
+            Self::Timeout => "timeout",
+            Self::Network => "network",
+            Self::DownloadTooLarge => "downloadTooLarge",
+            Self::ArchiveTooLarge => "archiveTooLarge",
+            Self::TooManyEntries => "tooManyEntries",
+            Self::UnsafeArchive => "unsafeArchive",
+            Self::InvalidContent => "invalidContent",
+            Self::EmptyContent => "emptyContent",
+        }
+    }
+}
+
+impl SourceAcquisitionFailureReason {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NotFound => "notFound",
+            Self::AuthenticationRequired => "authenticationRequired",
+            Self::Timeout => "timeout",
+            Self::Network => "network",
+            Self::LimitExceeded => "limitExceeded",
+            Self::InvalidContent => "invalidContent",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 impl AgentSelectionInvalidReason {
     pub fn code(self) -> &'static str {
         match self {
@@ -125,6 +185,28 @@ pub enum AppError {
     #[error("Invalid source: {value}")]
     InvalidSource { value: String },
 
+    #[error("Source acquisition failed during Well-known and direct download attempts")]
+    SourceAcquisitionFailed {
+        #[serde(rename = "wellKnownReason")]
+        well_known_reason: SourceAcquisitionFailureReason,
+        #[serde(rename = "downloadReason")]
+        download_reason: SourceAcquisitionFailureReason,
+    },
+
+    #[error("Well-known source acquisition failed: {reason:?}")]
+    WellKnownSourceFailed {
+        reason: SourceAcquisitionFailureReason,
+    },
+
+    #[error("Direct download failed: {reason:?}")]
+    DirectDownloadFailed { reason: DirectDownloadFailureReason },
+
+    #[error("Direct download sources only support new installs")]
+    DirectDownloadUnsupportedOperation,
+
+    #[error("Direct download cannot replace an existing target: {target}")]
+    DirectDownloadConflict { target: String },
+
     #[error("Invalid proxy settings: {code}")]
     InvalidProxySettings { code: String },
 
@@ -167,8 +249,8 @@ pub enum AppError {
     #[error("Path not found: {path}")]
     PathNotFound { path: String },
 
-    #[error("Installation requires explicit risk confirmation: {code}")]
-    InstallRiskConfirmationRequired { code: String },
+    #[error("Direct download redirect to {host} requires confirmation")]
+    DirectDownloadRedirectConfirmationRequired { host: String },
 
     #[error("No skills found")]
     NoSkillsFound,

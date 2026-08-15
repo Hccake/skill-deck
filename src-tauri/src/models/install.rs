@@ -119,32 +119,14 @@ pub struct FetchResult {
     pub source_type: String,
     /// 规范化 URL
     pub source_url: String,
+    /// 跨主机重定向后的实际下载主机；同主机跳转不返回该字段。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirected_download_host: Option<String>,
     /// Git ref（branch/tag）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
     /// @skill 语法提取的名称（用于预选）
     pub skill_filter: Option<String>,
-    /// 安装前风险策略
-    pub risk_policy: InstallRiskPolicy,
     /// 可用的 skills 列表
     pub skills: Vec<AvailableSkill>,
-}
-
-/// 安装风险策略
-#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct InstallRiskPolicy {
-    pub kind: InstallRiskKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-}
-
-/// 风险策略种类
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-#[specta(rename_all = "kebab-case")]
-pub enum InstallRiskKind {
-    None,
-    RequireConfirmation,
 }

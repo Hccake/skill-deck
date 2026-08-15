@@ -112,8 +112,6 @@ function createState(): WizardState {
     preSelectedAgents: [],
     installResults: null,
     installError: undefined,
-    riskPolicy: null,
-    riskAcknowledged: false,
   };
 }
 
@@ -135,8 +133,8 @@ function Harness({
         onNext={onNext}
         autoFetch={autoFetch}
       />
-      <div data-testid="risk-policy">{state.riskPolicy?.kind ?? 'none'}</div>
       <div data-testid="discovery-session">{state.discoverySession?.sessionId ?? 'none'}</div>
+      <div data-testid="redirect-host">{state.redirectedDownloadHost ?? 'none'}</div>
     </>
   );
 }
@@ -153,7 +151,7 @@ describe('SourceStep', () => {
     for (const key of Object.keys(skillSnapshots)) delete skillSnapshots[key];
   });
 
-  it('stores risk policy from fetchAvailable for Native Global', async () => {
+  it('stores the discovery session returned for Native Global', async () => {
     const onNext = vi.fn();
 
     fetchAvailableMock.mockResolvedValue({
@@ -162,7 +160,6 @@ describe('SourceStep', () => {
       sourceUrl: 'https://github.com/openclaw/community-skills',
       gitRef: null,
       skillFilter: null,
-      riskPolicy: { kind: 'require-confirmation', code: 'openclaw' },
       skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
     });
 
@@ -177,7 +174,6 @@ describe('SourceStep', () => {
 
     await waitFor(() => {
       expect(onNext).toHaveBeenCalled();
-      expect(screen.getByTestId('risk-policy').textContent).toBe('require-confirmation');
       expect(screen.getByTestId('discovery-session').textContent).toBe('discovery-1');
     });
     expect(fetchAvailableMock).toHaveBeenCalledWith(
@@ -185,6 +181,30 @@ describe('SourceStep', () => {
       'openclaw/community-skills',
       expect.any(String),
     );
+  });
+
+  it('stores the final host when a download redirects across hosts', async () => {
+    const onNext = vi.fn();
+    fetchAvailableMock.mockResolvedValue({
+      discoverySession,
+      sourceType: 'download',
+      sourceUrl: 'https://example.com/SKILL.md',
+      redirectedDownloadHost: 'cdn.example.net',
+      gitRef: null,
+      skillFilter: null,
+      skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' }],
+    });
+
+    render(<Harness onNext={onNext} />);
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'https://example.com/SKILL.md' },
+    });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(onNext).toHaveBeenCalled();
+      expect(screen.getByTestId('redirect-host').textContent).toBe('cdn.example.net');
+    });
   });
 
   it('fetches a selected search result without waiting for a timer tick', async () => {
@@ -197,7 +217,6 @@ describe('SourceStep', () => {
       sourceUrl: 'https://github.com/openclaw/community-skills',
       gitRef: null,
       skillFilter: 'demo',
-      riskPolicy: { kind: 'none', code: null },
       skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
     });
 
@@ -228,7 +247,6 @@ describe('SourceStep', () => {
       sourceUrl: 'https://github.com/owner/repo',
       gitRef: null,
       skillFilter: null,
-      riskPolicy: { kind: 'none', code: null },
       skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' }],
     });
 
@@ -302,7 +320,6 @@ describe('SourceStep', () => {
         sourceUrl: 'https://github.com/owner/repo',
         gitRef: null,
         skillFilter: null,
-        riskPolicy: { kind: 'none', code: null },
         skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' }],
       });
     });
@@ -332,7 +349,6 @@ describe('SourceStep', () => {
       sourceUrl: 'https://github.com/owner/repo',
       gitRef: null,
       skillFilter: null,
-      riskPolicy: { kind: 'none', code: null },
       skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' }],
     });
     await Promise.resolve();

@@ -30,6 +30,19 @@ describe('formatAppError', () => {
     expect(rendered).toContain('-suffix');
   });
 
+  it('renders direct-download failures from stable localized reason codes', () => {
+    expect(formatAppError({
+      kind: 'sourceAcquisitionFailed',
+      data: { wellKnownReason: 'notFound', downloadReason: 'limitExceeded' },
+    }, t as never)).toBe(
+      'addSkill.source.error.acquisitionFailed{"wellKnownReason":"addSkill.source.error.acquisitionReason.notFound","downloadReason":"addSkill.source.error.acquisitionReason.limitExceeded"}'
+    );
+    expect(formatAppError({
+      kind: 'directDownloadFailed',
+      data: { reason: 'unsafeArchive' },
+    }, t as never)).toBe('addSkill.source.error.downloadFailure.unsafeArchive');
+  });
+
   it.each([
     [
       {

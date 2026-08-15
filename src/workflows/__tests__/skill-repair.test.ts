@@ -27,7 +27,6 @@ function request(stopRequested = () => false) {
     agents: ['claude-code'],
     privateAdaptedAgents: ['claude-code'],
     privateCopyAgents: [],
-    acknowledgeRisk: true,
     operationId: 'repair-1',
     stopRequested,
   };
@@ -37,7 +36,6 @@ function api() {
   return {
     fetchAvailable: vi.fn().mockResolvedValue({
       discoverySession: { sessionId: 'discovery-1' },
-      riskPolicy: { kind: 'none', code: null },
       skills: [{ name: 'toolkit', relativePath: 'skills/toolkit' }],
     }),
     prepareInstall: vi.fn().mockResolvedValue({

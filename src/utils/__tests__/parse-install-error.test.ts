@@ -56,6 +56,17 @@ describe('parseInstallError', () => {
     expect(result.suggestions).toContain('addSkill.error.suggestion.adjustCloneTimeout');
   });
 
+  it('uses stable direct-download reason codes without exposing backend details', () => {
+    const result = parseInstallError({
+      kind: 'directDownloadFailed',
+      data: { reason: 'archiveTooLarge' },
+    }, t as never);
+
+    expect(result).toEqual({
+      message: 'addSkill.source.error.downloadFailure.archiveTooLarge',
+    });
+  });
+
   it.each<[AppError, string, string | undefined]>([
     [
       { kind: 'applicationTerminating' },

@@ -175,11 +175,12 @@ pub(crate) fn resolve_clone_timeout_secs() -> u64 {
         .unwrap_or(DEFAULT_CLONE_TIMEOUT_SECS)
 }
 
-fn clone_env_pairs() -> [(&'static str, &'static str); 3] {
+fn clone_env_pairs() -> [(&'static str, &'static str); 4] {
     [
         ("GIT_TERMINAL_PROMPT", "0"),
         ("GIT_LFS_SKIP_SMUDGE", "1"),
         ("LC_ALL", "C"),
+        ("GIT_ALLOW_PROTOCOL", "https:http:ssh:git:file"),
     ]
 }
 
@@ -881,6 +882,28 @@ mod tests {
         assert!(envs.contains(&("GIT_TERMINAL_PROMPT", "0")));
         assert!(envs.contains(&("GIT_LFS_SKIP_SMUDGE", "1")));
         assert!(envs.contains(&("LC_ALL", "C")));
+        assert!(envs.contains(&("GIT_ALLOW_PROTOCOL", "https:http:ssh:git:file")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_clone_blocks_ext_protocol_before_running_its_helper() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("ext-helper-ran");
+        let source = format!("ext::touch {}", marker.display());
+
+        let result = clone_repo_with_progress_options(
+            &source,
+            None,
+            |_| {},
+            CancellationSignal::default(),
+            None,
+            Duration::from_secs(5),
+            5,
+        );
+
+        assert!(result.is_err());
+        assert!(!marker.exists());
     }
 
     #[test]

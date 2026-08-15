@@ -19,10 +19,7 @@ use crate::application::payload_session::{
 };
 use crate::application::source_evidence::{RemoteEvidenceKey, SourceSuppressionWarningCode};
 use crate::core::mutation::CancellationSignal;
-use crate::core::{
-    ensure_install_risk_acknowledged, parse_source, source_risk_policy, NormalizedUpdateMetadata,
-    SourceIdentity,
-};
+use crate::core::{parse_source, NormalizedUpdateMetadata, SourceIdentity};
 use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
 use crate::error::AppError;
 use crate::models::SourceType;
@@ -37,7 +34,7 @@ pub struct InstallRequest {
     pub payloads: Vec<AcquiredPayloadHandle>,
     pub skills: Vec<String>,
     pub agent_selection: AgentSelectionSubmission,
-    pub acknowledge_risk: bool,
+    pub acknowledge_redirect: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -228,7 +225,7 @@ fn source_evidence_key(source: &str) -> Result<Option<RemoteEvidenceKey>, AppErr
     let parsed = parse_source(source)?;
     if matches!(
         parsed.source_type,
-        SourceType::Local | SourceType::WellKnown
+        SourceType::Local | SourceType::WellKnown | SourceType::Download
     ) {
         return Ok(None);
     }
@@ -269,8 +266,6 @@ pub fn validate_install_request(request: &InstallRequest) -> Result<(), AppError
     {
         return Err(validation("invalid source, session, or Environment"));
     }
-    let parsed = parse_source(&request.source)?;
-    ensure_install_risk_acknowledged(&source_risk_policy(&parsed), request.acknowledge_risk)?;
     let mut skills = BTreeSet::new();
     if request
         .skills
@@ -336,8 +331,11 @@ mod tests {
             payloads: Vec::new(),
             skills: vec!["demo".to_string(), "demo".to_string()],
             agent_selection: selection(InstallMode::Copy),
-            acknowledge_risk: true,
+            acknowledge_redirect: true,
         };
+        let serialized = serde_json::to_value(&request).expect("serialize install request");
+        assert_eq!(serialized["acknowledgeRedirect"], true);
+        assert!(serialized.get("acknowledgeRisk").is_none());
         assert!(validate_install_request(&request).is_err());
 
         let mut mismatched = request;
@@ -349,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn guarded_source_requires_explicit_risk_acknowledgement() {
+    fn openclaw_source_uses_the_standard_install_policy() {
         let request = InstallRequest {
             context: SkillLocationRef {
                 environment: EnvironmentRef::Native,
@@ -365,18 +363,10 @@ mod tests {
             payloads: Vec::new(),
             skills: vec!["demo".to_string()],
             agent_selection: selection(InstallMode::Copy),
-            acknowledge_risk: false,
+            acknowledge_redirect: false,
         };
 
-        assert!(matches!(
-            validate_install_request(&request),
-            Err(AppError::InstallRiskConfirmationRequired { .. })
-        ));
-        let acknowledged = InstallRequest {
-            acknowledge_risk: true,
-            ..request
-        };
-        assert!(validate_install_request(&acknowledged).is_ok());
+        assert!(validate_install_request(&request).is_ok());
     }
 
     struct Planner {
@@ -510,7 +500,7 @@ mod tests {
             payloads: vec![handle.clone()],
             skills: vec!["demo".to_string()],
             agent_selection: selection(InstallMode::Copy),
-            acknowledge_risk: true,
+            acknowledge_redirect: true,
         };
         let rebuilds = Arc::new(AtomicUsize::new(0));
         let executions = Arc::new(AtomicUsize::new(0));

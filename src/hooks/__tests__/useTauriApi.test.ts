@@ -163,7 +163,7 @@ describe('useTauriApi unwrap logic', () => {
         selectedOptionIds: ['my-agent-item'],
         requestedMode: 'copy',
       },
-      acknowledgeRisk: true,
+      acknowledgeRedirect: true,
     };
     const preview = { status: 'ready', preview: { token: previewToken, skills: [] } } as const;
     const response = { units: [] };

@@ -285,6 +285,17 @@ fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
 
     let host = url.host_str().unwrap_or("");
 
+    if is_hosted_artifact_url(&url) {
+        return Ok(ParsedSource {
+            source_type: SourceType::Download,
+            url: input.to_string(),
+            subpath: None,
+            local_path: None,
+            git_ref: None,
+            skill_filter: None,
+        });
+    }
+
     // GitHub URL
     if host == "github.com" || host == "www.github.com" {
         return parse_github_url(input, &url);
@@ -293,6 +304,10 @@ fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
     // GitLab URL
     if host == "gitlab.com" || host.contains("gitlab") {
         return parse_gitlab_url(input, &url);
+    }
+
+    if url.path().trim_end_matches('/').ends_with(".git") {
+        return parse_git_url(input);
     }
 
     // Well-known fallback
@@ -304,6 +319,27 @@ fn parse_url(input: &str) -> Result<ParsedSource, AppError> {
         git_ref: None,
         skill_filter: None,
     })
+}
+
+fn is_hosted_artifact_url(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    let path = url.path();
+    if matches!(
+        host.as_str(),
+        "raw.githubusercontent.com" | "codeload.github.com" | "objects.githubusercontent.com"
+    ) {
+        return true;
+    }
+    if host == "github.com" {
+        let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+        return parts.len() >= 4 && matches!(parts[2], "archive" | "raw")
+            || parts.len() >= 5 && parts[2] == "releases" && parts[3] == "download"
+            || parts.len() >= 6
+                && parts[2] == "releases"
+                && parts[3] == "latest"
+                && parts[4] == "download";
+    }
+    host == "gitlab.com" && (path.contains("/-/archive/") || path.contains("/-/raw/"))
 }
 
 /// 解析 Git URL (git@github.com:owner/repo.git)
@@ -508,6 +544,7 @@ pub fn get_owner_repo(parsed: &ParsedSource) -> Option<String> {
             }
             None
         }
+        SourceType::Download => None,
         _ => None,
     }
 }
@@ -577,6 +614,41 @@ mod tests {
     fn test_parse_direct_url_becomes_wellknown() {
         let result = parse_source("https://example.com/docs/SKILL.md").unwrap();
         assert_eq!(result.source_type, SourceType::WellKnown);
+    }
+
+    #[test]
+    fn hosted_artifact_urls_are_direct_download_sources() {
+        for source in [
+            "https://raw.githubusercontent.com/owner/repo/main/SKILL.md",
+            "https://codeload.github.com/owner/repo/tar.gz/main",
+            "https://objects.githubusercontent.com/github-production-release-asset/demo.zip",
+            "https://github.com/owner/repo/archive/refs/heads/main.zip",
+            "https://github.com/owner/repo/raw/main/SKILL.md",
+            "https://github.com/owner/repo/releases/download/v1/skills.tar.gz",
+            "https://github.com/owner/repo/releases/latest/download/skills.tar.gz",
+            "https://gitlab.com/owner/repo/-/raw/main/SKILL.md",
+            "https://gitlab.com/owner/repo/-/archive/main/repo-main.tar.gz",
+        ] {
+            let parsed = parse_source(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+            assert_eq!(parsed.source_type, SourceType::Download, "{source}");
+            assert_eq!(parsed.url, source);
+        }
+
+        assert_ne!(
+            parse_source("https://github.com/owner/repo/releases/latest/tag")
+                .unwrap()
+                .source_type,
+            SourceType::Download
+        );
+    }
+
+    #[test]
+    fn enterprise_https_git_requires_dot_git_suffix() {
+        let git = parse_source("https://git.example.com/platform/skills.git").unwrap();
+        assert_eq!(git.source_type, SourceType::Git);
+
+        let website = parse_source("https://git.example.com/platform/skills").unwrap();
+        assert_eq!(website.source_type, SourceType::WellKnown);
     }
 
     #[test]

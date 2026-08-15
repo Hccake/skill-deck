@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,19 +16,16 @@ use crate::application::payload_session::{
     PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey, RetainedDiscoverySource,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
-use crate::application::wellknown_access::{
-    extract_hostname, WellKnownAccess, WellKnownTrustMetadata,
-};
+use crate::application::wellknown_access::{extract_hostname, WellKnownTrustMetadata};
 use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_from_payload};
 use crate::core::{
-    compute_local_tree_sha, discover_skills, get_owner_repo, parse_source, source_risk_policy,
-    CloneProgress, DiscoverOptions,
+    compute_local_tree_sha, discover_skills, get_owner_repo, CloneProgress, DiscoverOptions,
 };
 use crate::environment::types::{EnvironmentRef, SkillLocationRef};
-use crate::error::AppError;
+use crate::error::{AppError, SourceAcquisitionFailureReason};
 use crate::models::{AvailableSkill, FetchResult, ParsedSource, SourceType};
 
 const EXCLUDED_SOURCE_FILES: &[&str] = &["metadata.json"];
@@ -38,13 +36,6 @@ const EXCLUDED_SOURCE_DIRS: &[&str] = &[".git", "__pycache__", "__pypackages__"]
 pub struct AcquireSelectedPayloadsRequest {
     pub discovery_session: DiscoverySessionHandle,
     pub skill_paths: Vec<String>,
-}
-
-pub struct SourceDiscoveryService {
-    sessions: Arc<PayloadSessionManager>,
-    git: GitSourceDiscovery,
-    wellknown: Arc<dyn WellKnownAccess>,
-    wsl_source: Arc<dyn WslSourceAccess>,
 }
 
 #[derive(Clone)]
@@ -80,7 +71,7 @@ impl GitSourceDiscovery {
     {
         if matches!(
             parsed.source_type,
-            SourceType::Local | SourceType::WellKnown
+            SourceType::Local | SourceType::WellKnown | SourceType::Download
         ) {
             return Err(invalid_source("Git source discovery requires a Git source"));
         }
@@ -108,15 +99,16 @@ impl GitSourceDiscovery {
                 let ref_revision = cloned.ref_revision.clone();
                 retain_discovered_source(
                     self.sessions.clone(),
-                    context.environment,
-                    parsed,
-                    requested_source,
+                    context.environment.clone(),
+                    parsed.clone(),
+                    requested_source.clone(),
                     DiscoverySourceLocation::Native {
                         root: root.clone(),
                         ref_revision,
                     },
                     root,
                     cloned,
+                    None,
                     None,
                     None,
                 )
@@ -131,158 +123,80 @@ impl GitSourceDiscovery {
     }
 }
 
-impl SourceDiscoveryService {
-    pub fn new(
-        sessions: Arc<PayloadSessionManager>,
-        git_transport: Arc<dyn GitSourceTransport>,
-        wellknown: Arc<dyn WellKnownAccess>,
-        wsl_source: Arc<dyn WslSourceAccess>,
-    ) -> Self {
-        Self {
-            git: GitSourceDiscovery::new(sessions.clone(), git_transport, Arc::clone(&wsl_source)),
-            sessions,
-            wellknown,
-            wsl_source,
+pub(crate) async fn attempt_wellknown_then_download<T, WellKnownFuture, DownloadFuture>(
+    well_known: WellKnownFuture,
+    download: impl FnOnce() -> DownloadFuture,
+    environment_label: &str,
+) -> Result<T, AppError>
+where
+    WellKnownFuture: Future<Output = Result<T, AppError>>,
+    DownloadFuture: Future<Output = Result<T, AppError>>,
+{
+    let well_known_error = match well_known.await {
+        Ok(result) => return Ok(result),
+        Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+        Err(error) => error,
+    };
+    let well_known_reason = source_acquisition_failure_reason(&well_known_error);
+    match download().await {
+        Ok(result) => Ok(result),
+        Err(AppError::MutationCancelled) => Err(AppError::MutationCancelled),
+        Err(download_error) => {
+            log::warn!(
+                "{environment_label} Well-known and direct download acquisition failed: well-known={well_known_error}; download={download_error}"
+            );
+            Err(AppError::SourceAcquisitionFailed {
+                well_known_reason,
+                download_reason: source_acquisition_failure_reason(&download_error),
+            })
         }
     }
+}
 
-    #[cfg(test)]
-    pub(crate) fn with_git_transport(
-        sessions: Arc<PayloadSessionManager>,
-        git_transport: Arc<dyn GitSourceTransport>,
-    ) -> Self {
-        Self {
-            git: GitSourceDiscovery::new(
-                sessions.clone(),
-                git_transport,
-                Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
-            ),
-            sessions,
-            wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
-            wsl_source: Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
+pub(crate) fn source_acquisition_failure_reason(
+    error: &AppError,
+) -> SourceAcquisitionFailureReason {
+    match error {
+        AppError::GitRepoNotFound { .. } | AppError::PathNotFound { .. } => {
+            SourceAcquisitionFailureReason::NotFound
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_git_transport_and_wellknown(
-        sessions: Arc<PayloadSessionManager>,
-        git_transport: Arc<dyn GitSourceTransport>,
-        wellknown: Arc<dyn WellKnownAccess>,
-    ) -> Self {
-        Self {
-            git: GitSourceDiscovery::new(
-                sessions.clone(),
-                git_transport,
-                Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
-            ),
-            sessions,
-            wellknown,
-            wsl_source: Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
+        AppError::GitAuthFailed { .. } => SourceAcquisitionFailureReason::AuthenticationRequired,
+        AppError::GitTimeout { .. } | AppError::WslCommandTimedOut => {
+            SourceAcquisitionFailureReason::Timeout
         }
-    }
-
-    pub async fn discover<P>(
-        &self,
-        context: SkillLocationRef,
-        requested_source: String,
-        on_progress: P,
-    ) -> Result<FetchResult, AppError>
-    where
-        P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
-    {
-        self.discover_with_cancellation(
-            context,
-            requested_source,
-            on_progress,
-            CancellationSignal::default(),
-        )
-        .await
-    }
-
-    pub async fn discover_with_cancellation<P>(
-        &self,
-        context: SkillLocationRef,
-        requested_source: String,
-        on_progress: P,
-        cancellation: CancellationSignal,
-    ) -> Result<FetchResult, AppError>
-    where
-        P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
-    {
-        let parsed = parse_source(&requested_source)?;
-        self.discover_parsed_with_cancellation(
-            context,
-            parsed,
-            requested_source,
-            on_progress,
-            cancellation,
-        )
-        .await
-    }
-
-    pub(crate) async fn discover_parsed_with_cancellation<P>(
-        &self,
-        context: SkillLocationRef,
-        parsed: ParsedSource,
-        requested_source: String,
-        on_progress: P,
-        cancellation: CancellationSignal,
-    ) -> Result<FetchResult, AppError>
-    where
-        P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
-    {
-        match (&context.environment, parsed.source_type.clone()) {
-            (EnvironmentRef::Native, SourceType::Local) => {
-                let root = parsed
-                    .local_path
-                    .clone()
-                    .ok_or_else(|| invalid_source("Missing local path"))?;
-                retain_discovered_source(
-                    self.sessions.clone(),
-                    context.environment,
-                    parsed,
-                    requested_source,
-                    DiscoverySourceLocation::Native {
-                        root: root.clone(),
-                        ref_revision: None,
-                    },
-                    root,
-                    (),
-                    None,
-                    None,
-                )
-                .await
-            }
-            (EnvironmentRef::Native, SourceType::WellKnown) => {
-                let fetched = self.wellknown.fetch(&parsed.url, &cancellation).await?;
-                let root = fetched.repo_path.clone();
-                retain_discovered_source(
-                    self.sessions.clone(),
-                    context.environment,
-                    parsed,
-                    requested_source,
-                    DiscoverySourceLocation::Native {
-                        root: root.clone(),
-                        ref_revision: None,
-                    },
-                    root.clone(),
-                    ManagedDownloadedDirectory::new(root),
-                    None,
-                    Some(fetched.trust_metadata),
-                )
-                .await
-            }
-            (EnvironmentRef::Native, _) => {
-                self.git
-                    .discover(context, parsed, requested_source, on_progress, cancellation)
-                    .await
-            }
-            (EnvironmentRef::Wsl { distro_name }, _) => {
-                self.wsl_source
-                    .discover(distro_name, parsed, requested_source, cancellation)
-                    .await
-            }
+        AppError::GitNetworkError { .. } | AppError::DiscoveryRequestFailed { .. } => {
+            SourceAcquisitionFailureReason::Network
         }
+        AppError::InvalidSkillMd { .. } | AppError::NoSkillsFound => {
+            SourceAcquisitionFailureReason::InvalidContent
+        }
+        AppError::DirectDownloadFailed { reason } => match reason {
+            crate::error::DirectDownloadFailureReason::NotFound => {
+                SourceAcquisitionFailureReason::NotFound
+            }
+            crate::error::DirectDownloadFailureReason::AuthenticationRequired => {
+                SourceAcquisitionFailureReason::AuthenticationRequired
+            }
+            crate::error::DirectDownloadFailureReason::Timeout => {
+                SourceAcquisitionFailureReason::Timeout
+            }
+            crate::error::DirectDownloadFailureReason::Network => {
+                SourceAcquisitionFailureReason::Network
+            }
+            crate::error::DirectDownloadFailureReason::DownloadTooLarge
+            | crate::error::DirectDownloadFailureReason::ArchiveTooLarge
+            | crate::error::DirectDownloadFailureReason::TooManyEntries => {
+                SourceAcquisitionFailureReason::LimitExceeded
+            }
+            crate::error::DirectDownloadFailureReason::UnsafeArchive
+            | crate::error::DirectDownloadFailureReason::InvalidContent
+            | crate::error::DirectDownloadFailureReason::EmptyContent => {
+                SourceAcquisitionFailureReason::InvalidContent
+            }
+        },
+        AppError::WellKnownSourceFailed { reason } => *reason,
+        AppError::InvalidSource { .. } => SourceAcquisitionFailureReason::InvalidContent,
+        _ => SourceAcquisitionFailureReason::Unavailable,
     }
 }
 
@@ -297,6 +211,7 @@ pub(crate) async fn retain_discovered_source<O>(
     owner: O,
     storage: Option<Arc<dyn PayloadSessionStorage>>,
     trust_metadata: Option<std::collections::HashMap<String, WellKnownTrustMetadata>>,
+    redirected_download_host: Option<String>,
 ) -> Result<FetchResult, AppError>
 where
     O: Send + Sync + 'static,
@@ -311,11 +226,15 @@ where
     .map_err(|error| AppError::ExecutionFailed {
         message: format!("native source discovery task failed: {error}"),
     })??;
+    if discovered.is_empty() {
+        return Err(AppError::NoSkillsFound);
+    }
     let descriptor = DiscoverySourceDescriptor {
         source: source_identifier(&parsed, &requested_source),
         source_type: parsed.source_type.to_string(),
         source_url: (!parsed.url.is_empty()).then(|| parsed.url.clone()),
         ref_name: parsed.git_ref.clone(),
+        redirected_download_host: redirected_download_host.clone(),
     };
     let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
     let retained = RetainedDiscoverySource::new(location, descriptor, catalog, owner);
@@ -342,11 +261,18 @@ where
         discovery_session,
         source_type: parsed.source_type.to_string(),
         source_url: parsed.url.clone(),
+        redirected_download_host,
         git_ref: parsed.git_ref.clone(),
         skill_filter: parsed.skill_filter.clone(),
-        risk_policy: source_risk_policy(&parsed),
         skills,
     })
+}
+
+pub(crate) fn redirected_host(requested: &str, final_url: &str) -> Option<String> {
+    let requested = url::Url::parse(requested).ok()?;
+    let final_url = url::Url::parse(final_url).ok()?;
+    (requested.host_str()? != final_url.host_str()?)
+        .then(|| final_url.host_str().unwrap().to_string())
 }
 
 fn build_discovery_catalog(
@@ -407,6 +333,10 @@ pub(crate) fn snapshot_fingerprint(
         descriptor.source_type.as_str(),
         descriptor.source_url.as_deref().unwrap_or_default(),
         descriptor.ref_name.as_deref().unwrap_or_default(),
+        descriptor
+            .redirected_download_host
+            .as_deref()
+            .unwrap_or_default(),
     ] {
         hasher.update(value.as_bytes());
         hasher.update([0]);
@@ -857,103 +787,224 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
+    use std::io::Write;
     use tempfile::tempdir;
 
     use super::*;
+    use crate::application::download_source::materialize_download;
     use crate::application::payload_session::{
         BackendAcquiredPayload, DiscoverySkillSnapshot, DiscoverySourceDescriptor,
         DiscoverySourceLocation, InMemoryPayloadSessionStorage, PayloadSessionLimits,
         PayloadSessionManager, PayloadSessionStorage, PayloadStorageFuture, PayloadStorageKey,
         RetainedDiscoverySource,
     };
-    use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchFuture};
     use crate::core::mutation::CancellationSignal;
+    use crate::core::parse_source;
     use crate::core::skill_payload::{build_skill_payload, SkillPayload};
     use crate::environment::types::EnvironmentRef;
     use crate::environment::types::{SkillLocation, SkillLocationRef};
     use crate::environment::wsl::operations::source_acquisition::WslAcquisitionSource;
     use crate::models::SourceType;
+    use crate::runtime::source_acquisition::SourceDiscoveryService;
     use crate::runtime::wsl_source::{build_wsl_discovery_catalog, wsl_acquisition_source};
 
-    struct FixtureWellKnownAccess {
-        root: PathBuf,
-        requested_urls: Mutex<Vec<String>>,
+    fn valid_skill(name: &str) -> Vec<u8> {
+        format!("---\nname: {name}\ndescription: Demo\n---\n").into_bytes()
     }
 
-    impl WellKnownAccess for FixtureWellKnownAccess {
-        fn fetch<'a>(
-            &'a self,
-            url: &'a str,
-            _cancellation: &'a CancellationSignal,
-        ) -> WellKnownFetchFuture<'a> {
-            self.requested_urls
-                .lock()
-                .expect("requested urls")
-                .push(url.to_string());
-            Box::pin(async move {
-                Ok(crate::application::wellknown_access::WellKnownFetchResult {
-                    repo_path: self.root.clone(),
-                    trust_metadata: HashMap::new(),
-                })
-            })
+    fn zip_entries(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut bytes);
+            for (path, content) in entries {
+                writer
+                    .start_file(*path, zip::write::SimpleFileOptions::default())
+                    .expect("zip entry");
+                writer.write_all(content).expect("zip content");
+            }
+            writer.finish().expect("finish zip");
+        }
+        bytes.into_inner()
+    }
+
+    fn tar_entries(entries: &[(&str, &[u8])], gzip: bool) -> Vec<u8> {
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            for (path, content) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(content.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, *path, *content)
+                    .expect("tar entry");
+            }
+            builder.finish().expect("finish tar");
+        }
+        if !gzip {
+            return tar_bytes;
+        }
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&tar_bytes).expect("gzip tar");
+        encoder.finish().expect("finish gzip")
+    }
+
+    #[test]
+    fn direct_download_materializes_skill_markdown_and_supported_archives() {
+        let cases = [
+            ("skill-md", valid_skill("single")),
+            (
+                "zip",
+                zip_entries(&[
+                    ("alpha/SKILL.md", &valid_skill("alpha")),
+                    ("beta/SKILL.md", &valid_skill("beta")),
+                ]),
+            ),
+            (
+                "tar",
+                tar_entries(&[("demo/SKILL.md", &valid_skill("demo"))], false),
+            ),
+            (
+                "tar-gz",
+                tar_entries(&[("demo/SKILL.md", &valid_skill("demo"))], true),
+            ),
+        ];
+
+        for (case, bytes) in cases {
+            let materialized =
+                materialize_download(&bytes).unwrap_or_else(|error| panic!("{case}: {error}"));
+            let discovered = discover_skills(materialized.path(), None, DiscoverOptions::default())
+                .unwrap_or_else(|error| panic!("{case}: {error}"));
+            assert!(!discovered.is_empty(), "{case}");
         }
     }
 
-    #[tokio::test]
-    async fn native_well_known_discovery_uses_injected_access_port() {
-        let downloaded = tempdir().expect("downloaded");
-        fs::write(
-            downloaded.path().join("SKILL.md"),
-            b"---\nname: demo\ndescription: Demo\n---\n",
-        )
-        .expect("skill");
-        let root = downloaded.keep();
-        let access = Arc::new(FixtureWellKnownAccess {
-            root,
-            requested_urls: Mutex::new(Vec::new()),
-        });
-        let manager = Arc::new(PayloadSessionManager::new(
-            Arc::new(InMemoryPayloadSessionStorage::default()),
-            PayloadSessionLimits {
-                ttl_ms: 60_000,
-                max_sessions: 4,
-                max_bytes: 1024 * 1024,
-            },
-            || 1_000,
+    #[test]
+    fn direct_download_rejects_archive_path_collisions() {
+        for bytes in [
+            zip_entries(&[
+                ("demo/SKILL.md", &valid_skill("demo")),
+                ("demo/./SKILL.md", &valid_skill("other")),
+            ]),
+            zip_entries(&[("demo", b"file"), ("demo/SKILL.md", &valid_skill("demo"))]),
+            zip_entries(&[
+                ("Demo/SKILL.md", &valid_skill("demo")),
+                ("demo/skill.md", &valid_skill("other")),
+            ]),
+        ] {
+            assert!(matches!(
+                materialize_download(&bytes),
+                Err(AppError::DirectDownloadFailed { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn direct_download_rejects_unsafe_paths_and_archive_links() {
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_mode(0o777);
+            header.set_link_name("../outside").unwrap();
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "demo/SKILL.md", std::io::empty())
+                .unwrap();
+            builder.finish().unwrap();
+        }
+
+        for bytes in [
+            zip_entries(&[("../SKILL.md", &valid_skill("demo"))]),
+            zip_entries(&[("C:\\SKILL.md", &valid_skill("demo"))]),
+            tar_bytes,
+        ] {
+            assert!(matches!(
+                materialize_download(&bytes),
+                Err(AppError::DirectDownloadFailed { .. })
+            ));
+        }
+
+        let mut hard_link = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut hard_link);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Link);
+            header.set_size(0);
+            header.set_mode(0o644);
+            header.set_link_name("other/SKILL.md").unwrap();
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "demo/SKILL.md", std::io::empty())
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        assert!(matches!(
+            materialize_download(&hard_link),
+            Err(AppError::DirectDownloadFailed { .. })
         ));
-        let service = SourceDiscoveryService::with_git_transport_and_wellknown(
-            manager,
-            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
-            access.clone(),
-        );
+    }
 
-        let result = service
-            .discover(
-                SkillLocationRef {
-                    environment: EnvironmentRef::Native,
-                    scope: SkillLocation::Global,
-                },
-                "http://127.0.0.1:8787/skills".to_string(),
-                |_| {},
-            )
-            .await
-            .expect("discover");
+    #[tokio::test]
+    async fn shared_http_attempt_state_machine_covers_wsl_success_cancel_and_double_failure() {
+        let download_calls = AtomicUsize::new(0);
+        let success = attempt_wellknown_then_download(
+            async { Err::<&str, _>(AppError::NoSkillsFound) },
+            || {
+                download_calls.fetch_add(1, Ordering::SeqCst);
+                async { Ok("downloaded") }
+            },
+            "WSL",
+        )
+        .await
+        .unwrap();
+        assert_eq!(success, "downloaded");
+        assert_eq!(download_calls.load(Ordering::SeqCst), 1);
 
-        assert_eq!(result.skills.len(), 1);
-        assert_eq!(
-            access
-                .requested_urls
-                .lock()
-                .expect("requested urls")
-                .as_slice(),
-            ["http://127.0.0.1:8787/skills"]
-        );
+        let cancelled_calls = AtomicUsize::new(0);
+        let cancelled = attempt_wellknown_then_download(
+            async { Err::<(), _>(AppError::MutationCancelled) },
+            || {
+                cancelled_calls.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+            "WSL",
+        )
+        .await;
+        assert_eq!(cancelled, Err(AppError::MutationCancelled));
+        assert_eq!(cancelled_calls.load(Ordering::SeqCst), 0);
+
+        let failure = attempt_wellknown_then_download(
+            async {
+                Err::<(), _>(AppError::DirectDownloadFailed {
+                    reason: crate::error::DirectDownloadFailureReason::NotFound,
+                })
+            },
+            || async {
+                Err::<(), _>(AppError::DirectDownloadFailed {
+                    reason: crate::error::DirectDownloadFailureReason::ArchiveTooLarge,
+                })
+            },
+            "WSL",
+        )
+        .await;
+        assert!(matches!(
+            failure,
+            Err(AppError::SourceAcquisitionFailed {
+                well_known_reason: SourceAcquisitionFailureReason::NotFound,
+                download_reason: SourceAcquisitionFailureReason::LimitExceeded,
+            })
+        ));
     }
 
     #[derive(Default)]
     struct SourceAcquiringStorage {
         payloads: Mutex<HashMap<PayloadStorageKey, SkillPayload>>,
         acquisitions: AtomicUsize,
+        stores: AtomicUsize,
         upstream_revision: Option<String>,
     }
 
@@ -986,6 +1037,7 @@ mod tests {
             payload: SkillPayload,
         ) -> PayloadStorageFuture<'a, Result<u64, AppError>> {
             Box::pin(async move {
+                self.stores.fetch_add(1, Ordering::SeqCst);
                 let bytes = payload.blobs.values().map(|blob| blob.len() as u64).sum();
                 self.payloads
                     .lock()
@@ -1101,6 +1153,7 @@ mod tests {
                 source_type: "github".to_string(),
                 source_url: Some("https://github.com/owner/repo.git".to_string()),
                 ref_name: None,
+                redirected_download_host: None,
             },
             &DiscoverySkillSnapshot {
                 skill_name: "demo".to_string(),
@@ -1125,6 +1178,7 @@ mod tests {
                 source_type: "git".to_string(),
                 source_url: Some("https://example.com/owner/repo.git".to_string()),
                 ref_name: Some("main".to_string()),
+                redirected_download_host: None,
             },
             &DiscoverySkillSnapshot {
                 skill_name: "demo".to_string(),
@@ -1408,6 +1462,7 @@ mod tests {
                         source_type: "github".to_string(),
                         source_url: Some("https://github.com/owner/repo.git".to_string()),
                         ref_name: Some("main".to_string()),
+                        redirected_download_host: None,
                     },
                     skills,
                     source,
@@ -1497,6 +1552,7 @@ mod tests {
                         source_type: "github".to_string(),
                         source_url: Some("git@github.com:owner/repo.git".to_string()),
                         ref_name: None,
+                        redirected_download_host: None,
                     },
                     skills,
                     source,
@@ -1535,6 +1591,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wsl_direct_download_bridges_the_materialized_payload_into_wsl_storage() {
+        let source = tempdir().expect("download source");
+        fs::write(
+            source.path().join("SKILL.md"),
+            b"---\nname: demo\ndescription: Demo\n---\n",
+        )
+        .expect("skill");
+        let fingerprint = compute_source_metadata_fingerprint(source.path()).expect("fingerprint");
+        let storage = Arc::new(SourceAcquiringStorage::default());
+        let manager = Arc::new(PayloadSessionManager::new(
+            Arc::new(InMemoryPayloadSessionStorage::default()),
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1024 * 1024,
+            },
+            || 2_500,
+        ));
+        let discovery = manager
+            .discover_with_source(
+                EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu-24.04".to_string(),
+                },
+                "wsl-download-fingerprint",
+                storage.clone(),
+                RetainedDiscoverySource::new(
+                    DiscoverySourceLocation::Native {
+                        root: source.path().to_path_buf(),
+                        ref_revision: None,
+                    },
+                    DiscoverySourceDescriptor {
+                        source: "https://example.com/SKILL.md".to_string(),
+                        source_type: "download".to_string(),
+                        source_url: Some("https://example.com/SKILL.md".to_string()),
+                        ref_name: None,
+                        redirected_download_host: None,
+                    },
+                    BTreeMap::from([(
+                        "SKILL.md".to_string(),
+                        DiscoverySkillSnapshot {
+                            skill_name: "demo".to_string(),
+                            install_dir_name: "demo".to_string(),
+                            relative_path: "SKILL.md".to_string(),
+                            plugin_name: None,
+                            source_metadata_fingerprint: fingerprint,
+                        },
+                    )]),
+                    source,
+                ),
+            )
+            .await
+            .expect("discovery");
+
+        let handles = SelectedPayloadAcquisitionService::new(manager.clone())
+            .acquire(AcquireSelectedPayloadsRequest {
+                discovery_session: discovery,
+                skill_paths: vec!["SKILL.md".to_string()],
+            })
+            .await
+            .expect("bridge payload");
+
+        assert_eq!(storage.acquisitions.load(Ordering::SeqCst), 0);
+        assert_eq!(storage.stores.load(Ordering::SeqCst), 1);
+        let lease = manager.pin_verified(&handles[0]).await.expect("pin");
+        assert_eq!(lease.planning_metadata().source_type, "download");
+        assert_eq!(lease.planning_metadata().upstream_revision, None);
+    }
+
+    #[tokio::test]
     async fn native_local_discovery_and_selected_acquisition_share_one_source_snapshot() {
         let source = tempdir().expect("source");
         let skill_root = source.path().join("skills/demo");
@@ -1553,11 +1678,9 @@ mod tests {
             },
             || 3_000,
         ));
-        let discovery_service = SourceDiscoveryService::new(
+        let discovery_service = SourceDiscoveryService::with_git_transport(
             manager.clone(),
             Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
-            Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
-            Arc::new(crate::application::wsl_source_access::UnavailableWslSourceAccess),
         );
 
         let fetched = discovery_service

@@ -155,6 +155,23 @@ where
     ) -> Result<BuiltInstallOutcome, AppError> {
         let facts = self.facts.current(&request.context).await?;
         validate_facts(request, &facts, &payloads)?;
+        let uses_direct_download = payloads
+            .iter()
+            .any(|payload| payload.planning_metadata().source_type == "download");
+        if include_plan && uses_direct_download && !request.acknowledge_redirect {
+            let redirected_download_host = self
+                .payloads
+                .source_snapshot(&request.discovery_session)?
+                .descriptor()
+                .redirected_download_host
+                .clone();
+            if let Some(host) = redirected_download_host {
+                return Err(AppError::DirectDownloadRedirectConfirmationRequired { host });
+            }
+        }
+        if operation != InstallOperation::Install && uses_direct_download {
+            return Err(AppError::DirectDownloadUnsupportedOperation);
+        }
         let catalog = build_agent_selection_catalog(
             &request.context,
             &facts.agent_runtime,
@@ -244,6 +261,7 @@ where
             let payload = &payloads[seed.canonical_payload_index];
             let metadata = payload.planning_metadata();
             let slice = &target_facts[seed.fact_start..seed.fact_start + seed.fact_count];
+            let direct_download_conflict = direct_download_conflict(payload, slice);
             preview_skills.push(InstallSkillPreview {
                 skill_name: metadata.skill_name.clone(),
                 payload: request.payloads[seed.canonical_payload_index].clone(),
@@ -252,10 +270,17 @@ where
                     .filter(|fact| fact.fingerprint.0 != "entry-v1-missing")
                     .map(|fact| fact.destination.native_path.clone())
                     .collect(),
-                blocking_reasons: Vec::new(),
+                blocking_reasons: direct_download_conflict
+                    .is_some()
+                    .then_some(crate::application::mutation::result::OperationErrorCode::Validation)
+                    .into_iter()
+                    .collect(),
                 fallback_forecasts: Vec::new(),
             });
             if include_plan {
+                if let Some(target) = direct_download_conflict {
+                    return Err(AppError::DirectDownloadConflict { target });
+                }
                 units.push(build_unit(
                     request,
                     &facts,
@@ -283,6 +308,19 @@ where
         });
         Ok(BuiltInstallOutcome::Ready(BuiltInstall { preview, plan }))
     }
+}
+
+fn direct_download_conflict(
+    payload: &PinnedPayloadLease,
+    facts: &[ResolvedTargetFact],
+) -> Option<String> {
+    if payload.planning_metadata().source_type != "download" {
+        return None;
+    }
+    facts
+        .iter()
+        .find(|fact| fact.fingerprint.0 != "entry-v1-missing")
+        .map(|fact| fact.destination.native_path.clone())
 }
 
 fn validate_facts(
@@ -422,7 +460,9 @@ fn build_unit(
             required_agents: required_agent_entries,
             expected_targets,
         },
-        lock_mutation: Some(lock_mutation(facts, metadata, agent_plan, now)?),
+        lock_mutation: (metadata.source_type != "download")
+            .then(|| lock_mutation(facts, metadata, agent_plan, now))
+            .transpose()?,
     })
 }
 
@@ -551,7 +591,8 @@ mod tests {
     use crate::application::install::{InstallPlanner, InstallRequest};
     use crate::application::mutation::plan::RuntimeRevisions;
     use crate::application::payload_session::{
-        PayloadPlanningMetadata, PayloadSessionLimits, PayloadSessionManager,
+        DiscoverySourceDescriptor, DiscoverySourceLocation, PayloadPlanningMetadata,
+        PayloadSessionLimits, PayloadSessionManager, RetainedDiscoverySource,
     };
     use crate::core::agent_definition::{
         AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, PathSpec,
@@ -675,7 +716,7 @@ mod tests {
             payloads: vec![handle.clone()],
             skills: vec!["demo".to_string()],
             agent_selection,
-            acknowledge_risk: true,
+            acknowledge_redirect: true,
         };
 
         let preview_lease = manager.pin_verified(&handle).await.unwrap();
@@ -747,6 +788,189 @@ mod tests {
             "cli-computed-hash"
         );
         assert_ne!(payload_id.as_str(), "cli-computed-hash");
+    }
+
+    #[tokio::test]
+    async fn direct_download_only_plans_new_install_without_lock_mutation() {
+        let temp = tempdir().unwrap();
+        let physical_root = fs::canonicalize(temp.path()).unwrap();
+        let canonical_root = physical_root.join(".agents/skills");
+        fs::create_dir_all(&canonical_root).unwrap();
+        let source = temp.path().join("source/demo");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), b"---\nname: demo\n---\nbody").unwrap();
+        let payload = build_skill_payload(&source).unwrap();
+        let manager = Arc::new(PayloadSessionManager::in_memory(
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1_000_000,
+            },
+            || 1_000,
+        ));
+        let discovery = manager
+            .discover_with_retained_source(
+                EnvironmentRef::Native,
+                "download-fingerprint",
+                RetainedDiscoverySource::new(
+                    DiscoverySourceLocation::Native {
+                        root: source.clone(),
+                        ref_revision: None,
+                    },
+                    DiscoverySourceDescriptor {
+                        source: "https://example.com/SKILL.md".to_string(),
+                        source_type: "download".to_string(),
+                        source_url: Some("https://example.com/SKILL.md".to_string()),
+                        ref_name: None,
+                        redirected_download_host: Some("cdn.example.net".to_string()),
+                    },
+                    BTreeMap::new(),
+                    (),
+                ),
+            )
+            .await
+            .unwrap();
+        let handle = manager
+            .acquire_payload_with_metadata(
+                &discovery,
+                "SKILL.md",
+                payload,
+                PayloadPlanningMetadata {
+                    skill_name: "demo".to_string(),
+                    install_dir_name: "demo".to_string(),
+                    source: "https://example.com/SKILL.md".to_string(),
+                    source_type: "download".to_string(),
+                    source_url: Some("https://example.com/SKILL.md".to_string()),
+                    ref_name: None,
+                    skill_path: "SKILL.md".to_string(),
+                    plugin_name: None,
+                    computed_hash: "download-computed-hash".to_string(),
+                    upstream_revision: None,
+                },
+            )
+            .await
+            .unwrap();
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+        let facts = InstallPlanningFacts {
+            resolved_context: ResolvedContext {
+                context: context.clone(),
+                project: None,
+                home: locator(&physical_root),
+                skill_root: locator(&canonical_root),
+                lock: locator(&physical_root.join(".agents/.skill-lock.json")),
+            },
+            agent_runtime: runtime(
+                physical_root
+                    .join(".custom/skills")
+                    .to_string_lossy()
+                    .as_ref(),
+            ),
+            revisions: RuntimeRevisions {
+                registry: "registry-1".to_string(),
+                environment: "environment-1".to_string(),
+                context: ContextSnapshotRevision::parse("context-v1-download").unwrap(),
+            },
+            lock_schema: LockSchema::Global,
+            lock_document: LosslessLockDocument::empty(LockSchema::Global),
+            eve_targets: Vec::new(),
+        };
+        let target_resolver = RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default()));
+        let agent_selection = test_submission_for_agents(
+            &context,
+            &facts.agent_runtime,
+            &facts.eve_targets,
+            &target_resolver,
+            &[],
+            InstallMode::Copy,
+        )
+        .await;
+        let planner = ConcreteInstallPlanner::new(
+            Facts(facts),
+            target_resolver,
+            Arc::clone(&manager),
+            || "2026-08-13T00:00:00.000Z".to_string(),
+        );
+        let request = InstallRequest {
+            context,
+            source: "https://example.com/SKILL.md".to_string(),
+            discovery_session: discovery,
+            payloads: vec![handle.clone()],
+            skills: vec!["demo".to_string()],
+            agent_selection,
+            acknowledge_redirect: false,
+        };
+
+        let unacknowledged = planner
+            .rebuild(
+                InstallOperation::Install,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
+            .await;
+        assert!(matches!(
+            unacknowledged,
+            Err(AppError::DirectDownloadRedirectConfirmationRequired { host })
+                if host == "cdn.example.net"
+        ));
+        let request = InstallRequest {
+            acknowledge_redirect: true,
+            ..request
+        };
+
+        let (_, plan) = planner
+            .rebuild(
+                InstallOperation::Install,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
+            .await
+            .unwrap();
+        assert!(plan.units[0].lock_mutation.is_none());
+
+        let repair = planner
+            .preview(
+                InstallOperation::Repair,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
+            .await;
+        assert!(matches!(
+            repair,
+            Err(AppError::DirectDownloadUnsupportedOperation)
+        ));
+
+        fs::create_dir_all(canonical_root.join("demo")).unwrap();
+        let conflict_preview = planner
+            .preview(
+                InstallOperation::Install,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
+            .await
+            .unwrap();
+        let InstallPreviewOutcome::Ready { preview } = conflict_preview else {
+            panic!("expected ready conflict preview");
+        };
+        assert_eq!(preview.skills[0].overwrite_targets.len(), 1);
+        assert_eq!(
+            preview.skills[0].blocking_reasons,
+            vec![crate::application::mutation::result::OperationErrorCode::Validation]
+        );
+
+        let conflict = planner
+            .rebuild(
+                InstallOperation::Install,
+                &request,
+                vec![manager.pin_verified(&handle).await.unwrap()],
+            )
+            .await;
+        assert!(matches!(
+            conflict,
+            Err(AppError::DirectDownloadConflict { .. })
+        ));
     }
 
     #[tokio::test]
@@ -856,7 +1080,7 @@ mod tests {
             payloads: vec![handle.clone()],
             skills: vec!["demo".to_string()],
             agent_selection,
-            acknowledge_risk: true,
+            acknowledge_redirect: true,
         };
 
         let preview = planner

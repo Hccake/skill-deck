@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import '@/test-utils';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,7 +37,7 @@ const acquirePayloads = vi.mocked(acquireSelectedPayloads);
 const preview = vi.mocked(previewInstall);
 const getSelection = vi.mocked(getInstallAgentSelection);
 
-function readyPreview(overwriteTargets: string[] = []): InstallPreviewOutcome {
+function readyPreview(overwriteTargets: string[] = [], blockingReasons: string[] = []): InstallPreviewOutcome {
   return {
     status: 'ready',
     preview: {
@@ -47,7 +47,7 @@ function readyPreview(overwriteTargets: string[] = []): InstallPreviewOutcome {
         environmentRevision: 'environment-1',
         contextRevision: 'context-1',
       },
-      skills: [{ skillName: 'demo', overwriteTargets } as never],
+      skills: [{ skillName: 'demo', overwriteTargets, blockingReasons } as never],
     },
   };
 }
@@ -83,8 +83,8 @@ function state(overrides: Partial<WizardState> = {}): WizardState {
       sourceFingerprint: 'source-1',
       expiresAtEpochMs: 1000,
     },
-    riskPolicy: { kind: 'none', code: null },
-    riskAcknowledged: false,
+    redirectedDownloadHost: null,
+    redirectAcknowledged: false,
     availableSkills: [{ name: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null, installDirName: 'demo' }],
     selectedSkills: ['demo'],
     skillFilter: null,
@@ -153,6 +153,16 @@ function renderConfirm(
   return { updateState };
 }
 
+function StatefulConfirmHarness() {
+  const [current, setCurrent] = useState(state());
+  return (
+    <ConfirmHarness
+      current={current}
+      updateState={(updates) => setCurrent((value) => ({ ...value, ...updates }))}
+    />
+  );
+}
+
 describe('ConfirmStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -217,6 +227,13 @@ describe('ConfirmStep', () => {
     })));
   });
 
+  it('shows a direct-download conflict on the affected Skill row', async () => {
+    preview.mockResolvedValue(readyPreview(['/existing/demo'], ['validation']));
+    render(<StatefulConfirmHarness />);
+
+    expect(await screen.findByText('addSkill.confirm.directDownloadConflict')).toBeDefined();
+  });
+
   it('shows the standard readers and selected placement from the snapshot', async () => {
     renderConfirm();
 
@@ -248,16 +265,18 @@ describe('ConfirmStep', () => {
     expect(screen.queryByText('agentSelection.title')).toBeNull();
   });
 
-  it('keeps risk acknowledgement in the wizard state', async () => {
+  it('requires explicit confirmation for a cross-host download redirect', async () => {
     const user = userEvent.setup();
     const updateState = vi.fn();
     renderConfirm(
-      state({ riskPolicy: { kind: 'require-confirmation', code: 'openclaw' } }),
+      state({ redirectedDownloadHost: 'cdn.example.net' }),
       updateState,
     );
 
-    await user.click(await screen.findByRole('checkbox'));
-    expect(updateState).toHaveBeenCalledWith({ riskAcknowledged: true });
+    expect(await screen.findByText('addSkill.confirm.redirectTitle')).toBeDefined();
+    expect(screen.getByText(/addSkill\.confirm\.redirectBody/)).toBeDefined();
+    await user.click(screen.getByRole('checkbox'));
+    expect(updateState).toHaveBeenCalledWith({ redirectAcknowledged: true });
   });
 
   it('reports payload failures without attempting preview', async () => {
