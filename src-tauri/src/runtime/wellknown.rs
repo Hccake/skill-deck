@@ -1,4 +1,6 @@
-use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchFuture};
+use crate::application::wellknown_access::{
+    WellKnownAccess, WellKnownCheckFuture, WellKnownFetchFuture,
+};
 use crate::core::mutation::CancellationSignal;
 use crate::runtime::http_transport::HttpTransport;
 use crate::runtime::wellknown_protocol::fetch_wellknown_skills_with_client;
@@ -24,5 +26,21 @@ impl WellKnownAccess for RuntimeWellKnownAccess {
             url,
             cancellation,
         ))
+    }
+
+    fn check<'a>(
+        &'a self,
+        url: &'a str,
+        skill_names: &'a [String],
+        cancellation: &'a CancellationSignal,
+    ) -> WellKnownCheckFuture<'a> {
+        Box::pin(
+            crate::runtime::wellknown_protocol::check_wellknown_updates_with_client(
+                &self.http,
+                url,
+                skill_names,
+                cancellation,
+            ),
+        )
     }
 }

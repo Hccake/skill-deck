@@ -50,7 +50,7 @@ use crate::environment::types::{
 };
 use crate::error::AppError;
 use crate::models::InstallMode;
-use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
+use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState, PreparedLockMutation};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -236,7 +236,7 @@ where
         let source_lock_entry = source
             .facts
             .lock_document
-            .entry_snapshot(&request.skill_name)
+            .entry_snapshot(&source.resolved.lock_key)
             .value()
             .cloned();
         let handle = self
@@ -350,7 +350,7 @@ where
                 .observed
                 .facts
                 .lock_document
-                .entry_snapshot(&request.skill_name)
+                .entry_snapshot(&loaded.observed.resolved.lock_key)
                 .value()
                 .cloned(),
             project_identity: self
@@ -406,10 +406,8 @@ where
             let context = project_context(&request.target_environment, project_id);
             let target = async {
                 let initial_facts = self.facts.current(&context).await?;
-                let canonical_destination = join_entry(
-                    &initial_facts.resolved_context.skill_root,
-                    &request.skill_name,
-                );
+                let canonical_destination =
+                    copy_target_canonical_destination(&initial_facts, &request.skill_name)?;
                 let canonical_facts = self
                     .targets
                     .resolve(&context, std::slice::from_ref(&canonical_destination), None)
@@ -471,15 +469,18 @@ where
                     AgentSelectionResolution::Stale => return Err(AppError::StaleTarget),
                 };
                 let agent_plan = target_selection.entry_plan(true);
+                let install_dir_name = crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
+                    &request.skill_name,
+                )?;
                 let destinations = std::iter::once(join_entry(
                     &facts.resolved_context.skill_root,
-                    &request.skill_name,
+                    &install_dir_name,
                 ))
                 .chain(
                     agent_plan
                         .required_agent_roots
                         .iter()
-                        .map(|target| join_entry(&target.root, &request.skill_name)),
+                        .map(|target| join_entry(&target.root, &install_dir_name)),
                 )
                 .collect::<Vec<_>>();
                 let target_facts = self.targets.resolve(&context, &destinations, None).await?;
@@ -643,6 +644,20 @@ where
     }
 }
 
+fn copy_target_canonical_destination(
+    facts: &InstallPlanningFacts,
+    skill_name: &str,
+) -> Result<ResourceLocator, AppError> {
+    let resolved = crate::application::installed_skill_resolver::InstalledSkillResolver::resolve(
+        skill_name,
+        &facts.lock_document,
+    )?;
+    Ok(join_entry(
+        &facts.resolved_context.skill_root,
+        &resolved.install_dir_name,
+    ))
+}
+
 struct BuiltCopy {
     token: PreviewToken,
     previews: Vec<CopyTargetPreview>,
@@ -763,6 +778,8 @@ pub struct NormalizedCopyMetadata {
     pub skill_path: Option<String>,
     pub upstream_revision: Option<String>,
     pub plugin_name: Option<String>,
+    pub source_base_url: Option<String>,
+    pub well_known_digest: Option<String>,
 }
 
 pub fn validate_copy_request(request: &CopyRequest) -> Result<(), AppError> {
@@ -1012,16 +1029,45 @@ fn build_copy_unit(
         .filter(|entry| entry.target_id.starts_with("eve:"))
         .map(|entry| entry.target_id.clone())
         .collect::<Vec<_>>();
+    let resolved = crate::application::installed_skill_resolver::InstalledSkillResolver::resolve(
+        &request.skill_name,
+        &target.facts.lock_document,
+    )?;
+    let replacement = project_lock_replacement_at(
+        source_lock_entry,
+        computed_hash,
+        &eve_target_ids,
+        target
+            .facts
+            .resolved_context
+            .project
+            .as_ref()
+            .map(|project| project.native_path.as_str()),
+    );
     let lock_mutation = PreparedLockMutation {
         target: target.facts.resolved_context.lock.clone(),
         legacy_target: None,
         schema: target.facts.lock_schema,
-        skill_name: request.skill_name.clone(),
-        replacement: project_lock_replacement(source_lock_entry, computed_hash, &eve_target_ids),
+        entry: match replacement {
+            Some(replacement) if resolved.requires_lock_key_migration() => {
+                LockEntryMutation::MoveAndReplace {
+                    from: resolved.lock_key.clone(),
+                    to: resolved.skill_name.clone(),
+                    replacement,
+                }
+            }
+            Some(replacement) => LockEntryMutation::Replace {
+                key: resolved.lock_key.clone(),
+                replacement,
+            },
+            None => LockEntryMutation::Remove {
+                key: resolved.lock_key.clone(),
+            },
+        },
         root_replacements: BTreeMap::new(),
         expected: LockExpectedState::capture(
             &target.facts.lock_document,
-            [&request.skill_name],
+            [resolved.lock_key.as_str(), resolved.skill_name.as_str()],
             std::iter::empty::<&str>(),
         ),
     };
@@ -1122,24 +1168,50 @@ fn normalize_copy_metadata(source: Option<&Value>) -> Option<NormalizedCopyMetad
             .flatten()
         }),
         plugin_name: text("pluginName"),
+        source_base_url: text("sourceBaseUrl"),
+        well_known_digest: text("wellKnownDigest"),
     })
 }
 
+#[cfg(test)]
 fn project_lock_replacement(
     source: Option<&Value>,
     computed_hash: &str,
     eve_target_ids: &[String],
 ) -> Option<Value> {
+    project_lock_replacement_at(source, computed_hash, eve_target_ids, None)
+}
+
+fn project_lock_replacement_at(
+    source: Option<&Value>,
+    computed_hash: &str,
+    eve_target_ids: &[String],
+    project_root: Option<&str>,
+) -> Option<Value> {
     let metadata = normalize_copy_metadata(source)?;
     let mut entry = Map::new();
-    entry.insert("source".to_string(), Value::String(metadata.source));
+    let is_well_known = metadata.source_type == "well-known";
+    let source = if metadata.source_type == "local" {
+        project_root
+            .map(|root| {
+                crate::core::portable_project_path::serialize_project_source(root, &metadata.source)
+            })
+            .unwrap_or(metadata.source)
+    } else {
+        metadata.source
+    };
+    entry.insert("source".to_string(), Value::String(source));
     entry.insert(
         "sourceType".to_string(),
         Value::String(metadata.source_type),
     );
     entry.insert(
         "sourceUrl".to_string(),
-        serde_json::json!(metadata.source_url),
+        serde_json::json!(if is_well_known {
+            metadata.source_base_url.clone()
+        } else {
+            metadata.source_url.clone()
+        }),
     );
     entry.insert("ref".to_string(), serde_json::json!(metadata.ref_name));
     entry.insert(
@@ -1156,6 +1228,9 @@ fn project_lock_replacement(
     );
     if let Some(remote_hash) = metadata.upstream_revision {
         entry.insert("remoteHash".to_string(), Value::String(remote_hash));
+    }
+    if let Some(digest) = metadata.well_known_digest {
+        entry.insert("wellKnownDigest".to_string(), Value::String(digest));
     }
     let subagents = eve_target_ids
         .iter()
@@ -1437,6 +1512,39 @@ mod tests {
     }
 
     #[test]
+    fn target_project_lock_maps_global_well_known_index_and_digest() {
+        let source = serde_json::json!({
+            "source": "skills.example.com",
+            "sourceType": "well-known",
+            "sourceUrl": "https://cdn.example.com/demo/SKILL.md",
+            "sourceBaseUrl": "https://skills.example.com/catalog/index.json",
+            "wellKnownDigest": "sha256:v2",
+            "skillFolderHash": ""
+        });
+
+        let target = project_lock_replacement(Some(&source), "target-computed", &[]).unwrap();
+
+        assert_eq!(target["sourceUrl"], source["sourceBaseUrl"]);
+        assert_eq!(target["wellKnownDigest"], source["wellKnownDigest"]);
+        assert_ne!(target["sourceUrl"], source["sourceUrl"]);
+    }
+
+    #[test]
+    fn target_project_lock_relativizes_a_local_source() {
+        let source = serde_json::json!({
+            "source": "/work/shared/skills",
+            "sourceType": "local",
+            "skillFolderHash": "local-hash"
+        });
+
+        let target =
+            project_lock_replacement_at(Some(&source), "target-computed", &[], Some("/work/app"))
+                .unwrap();
+
+        assert_eq!(target["source"], "../shared/skills");
+    }
+
+    #[test]
     fn target_lock_records_selected_eve_targets() {
         let source = serde_json::json!({
             "source": "owner/repo",
@@ -1684,7 +1792,7 @@ mod tests {
                     .map(|unit| {
                         unit.lock_mutation
                             .as_ref()
-                            .and_then(|lock| lock.replacement.clone())
+                            .and_then(|lock| lock.replacement().cloned())
                     })
                     .collect::<Vec<_>>();
                 let has_lock_mutations = plan
@@ -1791,6 +1899,25 @@ mod tests {
             lock_document,
             eve_targets: Vec::new(),
         }
+    }
+
+    #[test]
+    fn copy_target_destination_uses_the_resolved_install_directory() {
+        let temp = tempdir().unwrap();
+        let target = context(EnvironmentRef::Native, "target");
+        let mut facts = planning_facts(target, temp.path(), false);
+        facts.lock_document = LosslessLockDocument::parse(
+            br#"{"version":1,"skills":{"ce-review":{"source":"owner/repo"}}}"#,
+        )
+        .unwrap();
+
+        let destination = copy_target_canonical_destination(&facts, "ce:review").unwrap();
+
+        assert!(std::path::Path::new(&destination.native_path).ends_with(
+            std::path::Path::new(".agents")
+                .join("skills")
+                .join("ce-review")
+        ));
     }
 
     async fn preview_with_source_lock(

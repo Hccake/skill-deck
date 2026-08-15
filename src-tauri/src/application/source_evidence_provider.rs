@@ -13,6 +13,7 @@ use crate::application::source_evidence::{
     RemoteSnapshotId, SkillRevision, SourceEvidenceDetector, SourceSnapshotFacts,
 };
 use crate::application::source_snapshot_reuse::{PayloadAcquisitionKey, SourceSnapshotReuseIndex};
+use crate::application::wellknown_access::WellKnownAccess;
 #[cfg(test)]
 use crate::application::wsl_source_access::UnavailableWslSourceAccess;
 use crate::application::wsl_source_access::WslSourceAccess;
@@ -31,6 +32,7 @@ pub struct RuntimeSourceEvidenceDetector {
     github: Arc<dyn GithubTreeAccess>,
     git_transport: Arc<dyn GitSourceTransport>,
     wsl_source: Arc<dyn WslSourceAccess>,
+    wellknown: Arc<dyn WellKnownAccess>,
 }
 
 impl RuntimeSourceEvidenceDetector {
@@ -40,6 +42,7 @@ impl RuntimeSourceEvidenceDetector {
         github: Arc<dyn GithubTreeAccess>,
         git_transport: Arc<dyn GitSourceTransport>,
         wsl_source: Arc<dyn WslSourceAccess>,
+        wellknown: Arc<dyn WellKnownAccess>,
     ) -> Self {
         Self {
             payloads,
@@ -47,6 +50,7 @@ impl RuntimeSourceEvidenceDetector {
             github,
             git_transport,
             wsl_source,
+            wellknown,
         }
     }
 
@@ -62,6 +66,7 @@ impl RuntimeSourceEvidenceDetector {
             github: Arc::new(UnavailableGithubAccess),
             git_transport,
             wsl_source: Arc::new(UnavailableWslSourceAccess),
+            wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
         }
     }
 
@@ -79,6 +84,7 @@ impl RuntimeSourceEvidenceDetector {
                 crate::application::git_transport::UnavailableGitSourceTransport,
             ),
             wsl_source: Arc::new(UnavailableWslSourceAccess),
+            wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
         }
     }
 
@@ -327,6 +333,68 @@ impl RuntimeSourceEvidenceDetector {
             },
         ))
     }
+
+    async fn detect_wellknown(
+        &self,
+        request: EvidenceDetectionRequest,
+        cancellation: CancellationSignal,
+    ) -> Result<EvidenceDetectionOutcome, AppError> {
+        let skill_names = request
+            .requested_skill_paths
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let evidence = match self
+            .wellknown
+            .check(request.acquisition.source(), &skill_names, &cancellation)
+            .await
+        {
+            Ok(evidence) => evidence,
+            Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+            Err(_) => {
+                return Ok(failure(
+                    EvidenceFailureReason::SourceUnavailable,
+                    "Well-known index request failed",
+                    None,
+                    false,
+                ));
+            }
+        };
+        let complete_skill_path_catalog = evidence
+            .complete_skill_catalog
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let skill_revisions = evidence
+            .digests
+            .into_iter()
+            .map(|(name, digest)| (name, SkillRevision::WellKnownDigest(digest)))
+            .collect::<BTreeMap<_, _>>();
+        let revision_projection = skill_revisions
+            .iter()
+            .filter_map(|(name, revision)| match revision {
+                SkillRevision::WellKnownDigest(value) => Some((name, value)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let revision = crate::application::mutation::plan::stable_digest(&(
+            &evidence.index_url,
+            &complete_skill_path_catalog,
+            revision_projection,
+        ))?;
+        Ok(EvidenceDetectionOutcome::Modified(
+            RemoteEvidenceObservation {
+                snapshot_id: RemoteSnapshotId::new(
+                    NormalizedRef::Default,
+                    evidence.index_url,
+                    revision,
+                ),
+                provider_validation: None,
+                complete_skill_path_catalog,
+                skill_revisions,
+                snapshot_facts: None,
+            },
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -361,6 +429,7 @@ fn clone_skill_revision(
         SourceProvider::Gitlab | SourceProvider::Git => {
             Some(SkillRevision::CliContentHash(computed_hash))
         }
+        SourceProvider::WellKnown => None,
     }
 }
 
@@ -378,6 +447,9 @@ impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
                 }
                 (_, SourceProvider::Github | SourceProvider::Gitlab | SourceProvider::Git) => {
                     self.detect_by_clone(request, _previous, cancellation).await
+                }
+                (_, SourceProvider::WellKnown) => {
+                    self.detect_wellknown(request, cancellation).await
                 }
             }
         })

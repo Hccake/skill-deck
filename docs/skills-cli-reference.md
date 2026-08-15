@@ -59,7 +59,9 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 |---|---|---|
 | `source` | `skills` CLI | 规范化后的来源标识 |
 | `sourceType` | `skills` CLI | GitHub、GitLab、Git、Local 或 Well-known 等来源类型 |
-| `sourceUrl` | `skills` CLI | 需要保留时记录的原始来源 URL |
+| `sourceUrl` | `skills` CLI | Git 等来源需要保留时记录原始来源 URL；Well-known 来源记录具体 Skill 的制品地址 |
+| `sourceBaseUrl` | `skills` CLI v1.5.22 Well-known 字段 | 用于定位 Well-known 索引的输入地址 |
+| `wellKnownDigest` | `skills` CLI v1.5.22 Well-known 字段 | 索引提供或根据旧版内容计算的 Skill 版本摘要 |
 | `ref` | `skills` CLI | 分支或标签 |
 | `skillPath` | `skills` CLI | 来源中指向 Skill 目录的相对路径，保留磁盘实际大小写 |
 | `skillFolderHash` | `skills` CLI | 用于跟踪来源版本的哈希 |
@@ -83,7 +85,8 @@ Skill Deck 写入 `lastSelectedAgents` 时，只包含当前参考版本能够�
 | `skillPath` | `skills` CLI | 来源中指向 Skill 目录的相对路径 |
 | `computedHash` | `skills` CLI | 当前项目 Skill 目录的内容哈希 |
 | `subagents` | `skills` CLI | Eve 根 Agent 或具名子 Agent 的安装位置 |
-| `sourceUrl` | Skill Deck 扩展 | 完整的原始来源地址 |
+| `sourceUrl` | Skill Deck 扩展；`skills` CLI v1.5.22 Well-known 字段 | Git 等来源使用完整的原始来源地址；Well-known 来源使用能够重新定位索引的输入地址 |
+| `wellKnownDigest` | `skills` CLI v1.5.22 Well-known 字段 | 索引提供或根据旧版内容计算的 Skill 版本摘要 |
 | `remoteHash` | Skill Deck 扩展 | 来源能够提供的远端版本标识 |
 | `pluginName` | Skill Deck 扩展 | 用于界面展示的 plugin 信息 |
 
@@ -99,17 +102,20 @@ Eve 的用户选择和目标模型见[Agent 模型](./agent-model.md#eve-专用�
 
 `computedHash` 按确定顺序组合相对路径和文件内容并计算 SHA-256，同时排除 `.git`、`node_modules` 等不属于 Skill 内容的目录。Skill Deck 从本次已经固定的完整内容计算同样的哈希。
 
+项目 lock 中的 Local 来源尽可能保存相对于项目根目录的路径，并统一使用 `/` 分隔符。读取时根据当前项目根目录解析，因此项目整体移动后仍可定位同一相对来源；Windows 来源与项目不在同一盘符或来源使用 UNC 地址时保留绝对路径。
+
 Skill Deck 仍可读取旧的 `<project>/.agents/.skill-lock.json`，并在下次修改该项目 lock 时迁移到当前路径。旧路径只属于 Skill Deck 的读取兼容，第三方 CLI 使用 `<project>/skills-lock.json`。
 
-## 三个哈希字段的用途
+## 版本字段的用途
 
 | 字段 | 解决的问题 |
 |---|---|
 | 全局 `skillFolderHash` | 保存 `skills` CLI 用于跟踪来源版本的值；GitHub 来源使用 Skill 目录的 Git tree object ID，GitLab 和普通 Git 使用兼容内容哈希 |
 | 项目 `computedHash` | 判断当前项目中的 Skill 内容是否变化 |
 | Skill Deck `remoteHash` | 保存来源能够提供的远端版本标识；GitHub 来源使用 Skill 目录的 tree object ID |
+| `wellKnownDigest` | 保存 Well-known 索引提供或根据旧版内容计算的版本摘要 |
 
-这三个字段不能互相替代。`computedHash` 描述当前本地内容，`skillFolderHash` 和 `remoteHash` 描述安装时保存的来源版本信息。远端版本如何获取、缺少比较信息时显示什么状态，由[更新检查](./update-checking.md)说明。
+这些字段不能互相替代。`computedHash` 描述当前本地内容，`skillFolderHash`、`remoteHash` 和 `wellKnownDigest` 描述安装时保存的来源版本信息。远端版本如何获取、缺少比较信息时显示什么状态，由[更新检查](./update-checking.md)说明。
 
 ## 修改 lock 文件后的数据保留情况
 
@@ -123,6 +129,8 @@ Skill Deck 修改全局或项目 lock 时，只替换本次操作负责的根字
 - 其他进程在本次操作期间写入、且不与本次修改冲突的内容。
 
 尚未纳入兼容范围的字段会作为未知内容继续保留。如果其他进程修改了本次操作负责的同一字段或 Skill 记录，Skill Deck 会报告冲突，不会覆盖对方的修改。多个进程同时修改 lock 文件时的完整处理规则见[执行与恢复](./execution-and-recovery.md#原子写入与-lock-提交)。
+
+来源类型发生变化时，Skill Deck 会清除原来源已经失效的已知字段，并继续保留未知字段。Skill 原始名称是新记录的 lock 键，安全化后的名称只用于磁盘目录；读取旧记录时，应用先精确匹配原始名称，再兼容与安装目录同名的旧安全化键。其他安全化后相同的名称不会被猜测为当前 Skill。后续正常安装、更新、复制、移除或管理 Agent 的事务会完成必要的键迁移，不提供独立迁移页面。
 
 ### 使用 `skills` CLI 修改 lock 文件
 

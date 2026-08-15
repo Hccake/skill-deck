@@ -91,6 +91,7 @@ impl ProviderThrottleKey {
 pub enum SkillRevision {
     GitTreeOid(String),
     CliContentHash(String),
+    WellKnownDigest(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -357,6 +358,7 @@ enum PersistedSourceProvider {
     Github,
     Gitlab,
     Git,
+    WellKnown,
 }
 
 impl From<&SourceProvider> for PersistedSourceProvider {
@@ -365,6 +367,7 @@ impl From<&SourceProvider> for PersistedSourceProvider {
             SourceProvider::Github => Self::Github,
             SourceProvider::Gitlab => Self::Gitlab,
             SourceProvider::Git => Self::Git,
+            SourceProvider::WellKnown => Self::WellKnown,
         }
     }
 }
@@ -375,6 +378,7 @@ impl From<PersistedSourceProvider> for SourceProvider {
             PersistedSourceProvider::Github => Self::Github,
             PersistedSourceProvider::Gitlab => Self::Gitlab,
             PersistedSourceProvider::Git => Self::Git,
+            PersistedSourceProvider::WellKnown => Self::WellKnown,
         }
     }
 }
@@ -547,6 +551,7 @@ impl PersistedEnvironmentThrottleKey {
 enum PersistedSkillRevision {
     GitTreeOid(String),
     CliContentHash(String),
+    WellKnownDigest(String),
 }
 
 impl From<&SkillRevision> for PersistedSkillRevision {
@@ -554,6 +559,7 @@ impl From<&SkillRevision> for PersistedSkillRevision {
         match value {
             SkillRevision::GitTreeOid(value) => Self::GitTreeOid(value.clone()),
             SkillRevision::CliContentHash(value) => Self::CliContentHash(value.clone()),
+            SkillRevision::WellKnownDigest(value) => Self::WellKnownDigest(value.clone()),
         }
     }
 }
@@ -563,6 +569,7 @@ impl From<PersistedSkillRevision> for SkillRevision {
         match value {
             PersistedSkillRevision::GitTreeOid(value) => Self::GitTreeOid(value),
             PersistedSkillRevision::CliContentHash(value) => Self::CliContentHash(value),
+            PersistedSkillRevision::WellKnownDigest(value) => Self::WellKnownDigest(value),
         }
     }
 }

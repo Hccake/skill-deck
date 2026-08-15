@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "ce:review": {
+      "source": "skills.example.com",
+      "sourceUrl": "https://skills.example.com/catalog",
+      "sourceType": "well-known",
+      "computedHash": "project-content-hash",
+      "wellKnownDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "futureEntry": {
+        "keep": true
+      }
+    }
+  }
+}

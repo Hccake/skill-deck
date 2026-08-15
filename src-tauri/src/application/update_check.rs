@@ -88,13 +88,7 @@ where
                             requested_skill_paths: group
                                 .skills
                                 .iter()
-                                .filter_map(|skill| {
-                                    skill
-                                        .metadata
-                                        .skill_path
-                                        .as_deref()
-                                        .map(normalize_skill_folder_path)
-                                })
+                                .filter_map(evidence_path)
                                 .collect(),
                             acquisition: Arc::new(group.identity.acquisition().clone()),
                             acquisition_transport_identity: group
@@ -208,6 +202,11 @@ fn filter_entries(
 fn metadata_entries(
     facts: InstallPlanningFacts,
 ) -> Result<Vec<(String, NormalizedUpdateMetadata)>, AppError> {
+    let project_root = facts
+        .resolved_context
+        .project
+        .as_ref()
+        .map(|project| project.native_path.clone());
     let value = facts.lock_document.into_value();
     let skills = value
         .get("skills")
@@ -222,9 +221,19 @@ fn metadata_entries(
                 LockSchema::Global => normalize_global_lock_entry(&serde_json::from_value::<
                     SkillLockEntry,
                 >(raw.clone())?),
-                LockSchema::Project => normalize_local_lock_entry(&serde_json::from_value::<
-                    LocalSkillLockEntry,
-                >(raw.clone())?),
+                LockSchema::Project => {
+                    let mut entry = serde_json::from_value::<LocalSkillLockEntry>(raw.clone())?;
+                    if entry.source_type == "local" {
+                        if let Some(project_root) = &project_root {
+                            entry.source =
+                                crate::core::portable_project_path::resolve_project_source(
+                                    project_root,
+                                    &entry.source,
+                                );
+                        }
+                    }
+                    normalize_local_lock_entry(&entry)
+                }
             };
             Ok((name.clone(), metadata))
         })
@@ -292,12 +301,7 @@ fn info_from_evidence(skill: UpdateCheckSkill, result: &EvidenceCheckResult) -> 
             result.freshness,
         );
     };
-    let path = skill
-        .metadata
-        .skill_path
-        .as_deref()
-        .map(normalize_skill_folder_path)
-        .unwrap_or_default();
+    let path = evidence_path(&skill).unwrap_or_default();
     if !evidence.complete_skill_path_catalog.contains(&path) {
         return info(
             skill.name,
@@ -311,7 +315,8 @@ fn info_from_evidence(skill: UpdateCheckSkill, result: &EvidenceCheckResult) -> 
     let revision = evidence.skill_revisions.get(&path).and_then(|revision| {
         match (skill.metadata.source_type.as_str(), revision) {
             ("github", SkillRevision::GitTreeOid(value))
-            | ("git" | "gitlab", SkillRevision::CliContentHash(value)) => Some(value.as_str()),
+            | ("git" | "gitlab", SkillRevision::CliContentHash(value))
+            | ("well-known", SkillRevision::WellKnownDigest(value)) => Some(value.as_str()),
             _ => None,
         }
     });
@@ -340,11 +345,27 @@ fn info_from_evidence(skill: UpdateCheckSkill, result: &EvidenceCheckResult) -> 
     )
 }
 
+fn evidence_path(skill: &UpdateCheckSkill) -> Option<String> {
+    if skill.metadata.source_type == "well-known" {
+        Some(skill.name.clone())
+    } else {
+        skill
+            .metadata
+            .skill_path
+            .as_deref()
+            .map(normalize_skill_folder_path)
+    }
+}
+
 fn source_info(group: &UpdateCheckGroup, result: &EvidenceCheckResult) -> SourceUpdateCheckInfo {
     let evidence = result.evidence.as_ref();
     SourceUpdateCheckInfo {
         source: group.identity.sanitized_display().to_string(),
-        requested_ref: Some(match group.identity.normalized_ref() {
+        requested_ref: (!matches!(
+            group.identity.remote().provider(),
+            crate::core::SourceProvider::WellKnown
+        ))
+        .then(|| match group.identity.normalized_ref() {
             NormalizedRef::Default => "HEAD".to_string(),
             NormalizedRef::Named(value) => value.clone(),
         }),
@@ -607,6 +628,7 @@ mod tests {
                     skill_path: Some("skills/toolkit".to_string()),
                     remote_hash: Some("old-hash".to_string()),
                     computed_hash: None,
+                    well_known_digest: None,
                 },
             ),
             (
@@ -619,6 +641,7 @@ mod tests {
                     skill_path: Some("skills/legacy".to_string()),
                     remote_hash: None,
                     computed_hash: None,
+                    well_known_digest: None,
                 },
             ),
         ]);
@@ -777,6 +800,7 @@ mod tests {
                 skill_path: Some("skills/alpha".to_string()),
                 remote_hash: Some("tree-old".to_string()),
                 computed_hash: None,
+                well_known_digest: None,
             },
         };
         let result = |catalog: BTreeSet<String>,
@@ -840,6 +864,73 @@ mod tests {
         );
         assert_eq!(stale.status, SkillUpdateCheckStatus::CannotCheck);
         assert_eq!(stale.freshness, EvidenceFreshness::Stale);
+    }
+
+    #[test]
+    fn well_known_digest_reports_current_changed_and_deleted_upstream() {
+        let skill = || UpdateCheckSkill {
+            name: "demo".to_string(),
+            metadata: NormalizedUpdateMetadata {
+                source: "skills.example.com".to_string(),
+                source_type: "well-known".to_string(),
+                source_url: Some("https://skills.example.com/catalog/index.json".to_string()),
+                ref_name: None,
+                skill_path: None,
+                remote_hash: None,
+                computed_hash: Some("local-content".to_string()),
+                well_known_digest: Some("sha256:old".to_string()),
+            },
+        };
+        let evidence = |catalog: BTreeSet<String>, digest: Option<&str>| EvidenceCheckResult {
+            evidence: Some(crate::application::source_evidence::RemoteEvidenceEntry {
+                checked_at_epoch_ms: 1_000,
+                expires_at_epoch_ms: 901_000,
+                snapshot_id: crate::application::source_evidence::RemoteSnapshotId::new(
+                    NormalizedRef::Default,
+                    "https://skills.example.com/catalog/index.json",
+                    "catalog-revision",
+                ),
+                provider_validation: None,
+                complete_skill_path_catalog: catalog,
+                skill_revisions: digest
+                    .map(|digest| {
+                        BTreeMap::from([(
+                            "demo".to_string(),
+                            SkillRevision::WellKnownDigest(digest.to_string()),
+                        )])
+                    })
+                    .unwrap_or_default(),
+            }),
+            evidence_is_fresh: true,
+            freshness: EvidenceFreshness::Fresh,
+            last_attempt: None,
+        };
+
+        let current = info_from_evidence(
+            skill(),
+            &evidence(BTreeSet::from(["demo".to_string()]), Some("sha256:old")),
+        );
+        assert_eq!(current.status, SkillUpdateCheckStatus::UpToDate);
+
+        let changed = info_from_evidence(
+            skill(),
+            &evidence(BTreeSet::from(["demo".to_string()]), Some("sha256:new")),
+        );
+        assert_eq!(changed.status, SkillUpdateCheckStatus::UpdateAvailable);
+
+        let deleted = info_from_evidence(skill(), &evidence(BTreeSet::new(), None));
+        assert_eq!(deleted.status, SkillUpdateCheckStatus::DeletedUpstream);
+        assert_eq!(deleted.reason, Some(UpdateCheckReasonCode::DeletedUpstream));
+
+        let group = UpdateCheckGroup {
+            identity: Arc::new(SourceIdentity::from_metadata(&skill().metadata).unwrap()),
+            skills: vec![skill()],
+        };
+        let source = source_info(
+            &group,
+            &evidence(BTreeSet::from(["demo".to_string()]), Some("sha256:old")),
+        );
+        assert_eq!(source.requested_ref, None);
     }
 
     #[tokio::test]

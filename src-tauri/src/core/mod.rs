@@ -17,6 +17,7 @@ pub mod lossless_lock;
 pub mod mutation;
 pub mod paths;
 pub mod plugin_manifest;
+pub mod portable_project_path;
 pub mod projects;
 pub mod skill;
 pub mod skill_lock;

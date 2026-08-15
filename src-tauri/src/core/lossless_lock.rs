@@ -18,6 +18,8 @@ const GLOBAL_ENTRY_FIELDS: &[&str] = &[
     "installedAt",
     "updatedAt",
     "pluginName",
+    "sourceBaseUrl",
+    "wellKnownDigest",
 ];
 
 const PROJECT_ENTRY_FIELDS: &[&str] = &[
@@ -30,6 +32,7 @@ const PROJECT_ENTRY_FIELDS: &[&str] = &[
     "skillPath",
     "subagents",
     "pluginName",
+    "wellKnownDigest",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,6 +124,38 @@ impl LosslessLockDocument {
             });
         }
         self.skills_mut().remove(skill_name);
+        Ok(())
+    }
+
+    pub fn move_and_replace_entry(
+        &mut self,
+        schema: LockSchema,
+        from: &str,
+        to: &str,
+        expected_from: &LockEntrySnapshot,
+        expected_to: &LockEntrySnapshot,
+        replacement: Value,
+    ) -> Result<(), AppError> {
+        self.validate_entry_snapshot(from, expected_from)?;
+        self.validate_entry_snapshot(to, expected_to)?;
+        let replacement = merge_entry_fields(schema, self.skills().get(from), replacement);
+        self.skills_mut().remove(from);
+        self.skills_mut().insert(to.to_string(), replacement);
+        Ok(())
+    }
+
+    pub fn validate_entry_snapshot(
+        &self,
+        skill_name: &str,
+        expected: &LockEntrySnapshot,
+    ) -> Result<(), AppError> {
+        if self.skills().get(skill_name) != expected.0.as_ref() {
+            return Err(AppError::LockConflict {
+                target: LockConflictTarget::Skill {
+                    skill_name: skill_name.to_string(),
+                },
+            });
+        }
         Ok(())
     }
 
@@ -311,6 +346,46 @@ mod tests {
         assert_eq!(entry["futureEntry"]["revision"], 4);
         assert_eq!(value["skills"]["review"]["futureEntry"]["keep"], true);
         assert_eq!(value["futureRoot"]["schema"], 8);
+    }
+
+    #[test]
+    fn cli_v1_5_22_well_known_fields_are_known_and_unknown_fields_remain_lossless() {
+        let cases = [
+            (
+                LockSchema::Global,
+                include_bytes!("../../tests/fixtures/locks/cli-v1.5.22-global-well-known.json")
+                    .as_slice(),
+            ),
+            (
+                LockSchema::Project,
+                include_bytes!("../../tests/fixtures/locks/cli-v1.5.22-project-well-known.json")
+                    .as_slice(),
+            ),
+        ];
+
+        for (schema, bytes) in cases {
+            let mut document = LosslessLockDocument::parse(bytes).expect("parse CLI fixture");
+            let snapshot = document.entry_snapshot("ce:review");
+            document
+                .replace_entry(
+                    schema,
+                    "ce:review",
+                    &snapshot,
+                    json!({
+                        "source": "owner/repo",
+                        "sourceType": "github",
+                        "sourceUrl": "https://github.com/owner/repo",
+                        "skillPath": "skills/review"
+                    }),
+                )
+                .expect("replace Well-known entry");
+
+            let value = document.into_value();
+            let entry = &value["skills"]["ce:review"];
+            assert!(entry.get("sourceBaseUrl").is_none());
+            assert!(entry.get("wellKnownDigest").is_none());
+            assert_eq!(entry["futureEntry"]["keep"], true);
+        }
     }
 
     #[test]

@@ -570,11 +570,13 @@ mod tests {
             target: target.clone(),
             legacy_target: None,
             schema: LockSchema::Project,
-            skill_name: "demo".to_string(),
-            replacement: Some(serde_json::json!({
-                "source": "owner/repo",
-                "computedHash": "computed"
-            })),
+            entry: crate::storage::lock_plan::LockEntryMutation::Replace {
+                key: "demo".to_string(),
+                replacement: serde_json::json!({
+                    "source": "owner/repo",
+                    "computedHash": "computed"
+                }),
+            },
             root_replacements: BTreeMap::new(),
             expected: LockExpectedState::capture(&document, ["demo"], std::iter::empty::<&str>()),
         };

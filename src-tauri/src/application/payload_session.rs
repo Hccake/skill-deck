@@ -57,6 +57,8 @@ pub struct RetainedDiscoverySource {
     location: DiscoverySourceLocation,
     descriptor: DiscoverySourceDescriptor,
     skills: BTreeMap<String, DiscoverySkillSnapshot>,
+    well_known_metadata:
+        HashMap<String, crate::application::wellknown_access::WellKnownTrustMetadata>,
     _owner: Arc<dyn Send + Sync>,
 }
 
@@ -71,8 +73,24 @@ impl RetainedDiscoverySource {
             location,
             descriptor,
             skills,
+            well_known_metadata: HashMap::new(),
             _owner: Arc::new(owner),
         }
+    }
+
+    pub(crate) fn with_well_known_metadata(
+        mut self,
+        metadata: HashMap<String, crate::application::wellknown_access::WellKnownTrustMetadata>,
+    ) -> Self {
+        self.well_known_metadata = metadata;
+        self
+    }
+
+    pub(crate) fn well_known_metadata(
+        &self,
+        skill_name: &str,
+    ) -> Option<&crate::application::wellknown_access::WellKnownTrustMetadata> {
+        self.well_known_metadata.get(skill_name)
     }
 
     pub fn location(&self) -> &DiscoverySourceLocation {
@@ -137,6 +155,13 @@ pub struct PayloadPlanningMetadata {
     pub computed_hash: String,
     /// Provider 可比较的上游版本，例如 Git tree object ID。
     pub upstream_revision: Option<String>,
+    pub well_known: Option<WellKnownPlanningMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WellKnownPlanningMetadata {
+    pub artifact_url: String,
+    pub digest: String,
 }
 
 impl PayloadPlanningMetadata {
@@ -159,6 +184,7 @@ impl PayloadPlanningMetadata {
             plugin_name: None,
             computed_hash: String::new(),
             upstream_revision: None,
+            well_known: None,
         }
     }
 
@@ -2001,6 +2027,7 @@ mod tests {
             plugin_name: None,
             computed_hash: "computed-v1".to_string(),
             upstream_revision: Some("tree-v1".to_string()),
+            well_known: None,
         };
         let handle = manager
             .acquire_payload_with_metadata(&discovery, "skills/demo", payload(), metadata.clone())
@@ -2057,6 +2084,7 @@ mod tests {
             plugin_name: None,
             computed_hash: "canonical-computed-hash".to_string(),
             upstream_revision: Some("canonical-tree-hash".to_string()),
+            well_known: None,
         };
         let handle = manager
             .acquire_payload_with_metadata(
@@ -2511,6 +2539,7 @@ mod tests {
                 plugin_name: None,
                 computed_hash: "computed-sha256".to_string(),
                 upstream_revision: upstream_revision.map(str::to_string),
+                well_known: None,
             };
 
         assert_eq!(

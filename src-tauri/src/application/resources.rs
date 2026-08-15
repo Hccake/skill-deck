@@ -76,22 +76,22 @@ where
     }
 
     pub async fn open_skill(&self, identity: &SkillIdentity) -> Result<(), AppError> {
-        validate_skill_name(&identity.skill_name)?;
+        let install_dir_name = validate_skill_name(&identity.skill_name)?;
         let resolved = self.source.resolve(&identity.context).await?;
         let target = crate::application::skill_entries::join_entry(
             &resolved.canonical_skills_root,
-            &identity.skill_name,
+            &install_dir_name,
         );
         let target = self.resolve_directory(&identity.context, target).await?;
         self.opener.open(target).await
     }
 
     pub async fn read_skill(&self, identity: &SkillIdentity) -> Result<String, AppError> {
-        validate_skill_name(&identity.skill_name)?;
+        let install_dir_name = validate_skill_name(&identity.skill_name)?;
         let resolved = self.source.resolve(&identity.context).await?;
         let target = crate::application::skill_entries::join_entry(
             &resolved.canonical_skills_root,
-            &identity.skill_name,
+            &install_dir_name,
         );
         let target = self.resolve_directory(&identity.context, target).await?;
         self.reader.read_skill(target).await
@@ -133,20 +133,8 @@ where
     }
 }
 
-fn validate_skill_name(name: &str) -> Result<(), AppError> {
-    if name.is_empty()
-        || name.len() > 255
-        || name == "."
-        || name == ".."
-        || name.contains(['/', '\\', '\0'])
-        || crate::core::skill::sanitize_name(name) != name
-    {
-        return Err(AppError::UnsafePath {
-            path: name.to_string(),
-            reason: "Skill identity must contain one normalized entry name".to_string(),
-        });
-    }
-    Ok(())
+fn validate_skill_name(name: &str) -> Result<String, AppError> {
+    crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(name)
 }
 
 #[derive(Clone)]
@@ -390,6 +378,29 @@ mod tests {
                     .to_string_lossy()
             )]
         );
+    }
+
+    #[tokio::test]
+    async fn raw_skill_identity_opens_the_sanitized_install_directory() {
+        let opener = RecordingOpener::default();
+        let opened = opener.0.clone();
+        let service = ResourceService::new(
+            StaticSource,
+            DirectoryTargets,
+            opener,
+            RecordingReader::default(),
+        );
+
+        service
+            .open_skill(&SkillIdentity {
+                context: context(),
+                skill_name: "ce:review".to_string(),
+            })
+            .await
+            .unwrap();
+
+        assert!(std::path::Path::new(&opened.lock().unwrap()[0].native_path)
+            .ends_with(std::path::Path::new("ce-review")));
     }
 
     #[tokio::test]

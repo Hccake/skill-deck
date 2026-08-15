@@ -27,6 +27,10 @@ pub struct SkillLockEntry {
     /// 原始安装 URL
     #[serde(default)]
     pub source_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub well_known_digest: Option<String>,
     /// Branch or tag ref used for installation
     #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
     pub ref_name: Option<String>,

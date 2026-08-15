@@ -38,7 +38,7 @@ use crate::environment::runtime::ObservedEntryId;
 use crate::environment::types::{same_environment_identity, SkillLocationRef};
 use crate::error::{AgentSelectionInvalidReason, AppError};
 use crate::models::InstallMode;
-use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
+use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState, PreparedLockMutation};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -509,10 +509,14 @@ where
         request: &ResolvedManageSelection,
     ) -> Result<ResolvedAdditions, AppError> {
         let plan = request.add_plan.clone();
+        let install_dir_name =
+            crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
+                &request.skill_name,
+            )?;
         let destinations = plan
             .required_agent_roots
             .iter()
-            .map(|target| join_entry(&target.root, &request.skill_name))
+            .map(|target| join_entry(&target.root, &install_dir_name))
             .collect::<Vec<_>>();
         let facts = if destinations.is_empty() {
             Vec::new()
@@ -587,7 +591,7 @@ where
                 .resolved_options
                 .get(option_id)
                 .expect("catalog option has an internal target");
-            join_entry(&option.root, skill_name)
+            join_entry(&option.root, &observed.resolved.install_dir_name)
         })
         .collect::<Vec<_>>();
     let option_facts = if destinations.is_empty() {
@@ -708,7 +712,7 @@ fn manage_preview(
         snapshot
             .facts
             .lock_document
-            .entry_snapshot(&request.skill_name)
+            .entry_snapshot(&snapshot.resolved.lock_key)
             .value()
             .cloned(),
     ))?;
@@ -913,7 +917,7 @@ fn manage_lock_mutation(
         snapshot
             .facts
             .lock_document
-            .entry_snapshot(&request.skill_name)
+            .entry_snapshot(&snapshot.resolved.lock_key)
             .value()
             .cloned(),
         &subagents,
@@ -925,12 +929,25 @@ fn manage_lock_mutation(
         target: snapshot.facts.resolved_context.lock.clone(),
         legacy_target: None,
         schema: snapshot.facts.lock_schema,
-        skill_name: request.skill_name.clone(),
-        replacement: Some(replacement),
+        entry: if snapshot.resolved.requires_lock_key_migration() {
+            LockEntryMutation::MoveAndReplace {
+                from: snapshot.resolved.lock_key.clone(),
+                to: snapshot.resolved.skill_name.clone(),
+                replacement,
+            }
+        } else {
+            LockEntryMutation::Replace {
+                key: snapshot.resolved.lock_key.clone(),
+                replacement,
+            }
+        },
         root_replacements: BTreeMap::new(),
         expected: LockExpectedState::capture(
             &snapshot.facts.lock_document,
-            [&request.skill_name],
+            [
+                snapshot.resolved.lock_key.as_str(),
+                snapshot.resolved.skill_name.as_str(),
+            ],
             std::iter::empty::<&str>(),
         ),
     }))

@@ -556,10 +556,10 @@ mod tests {
                 self.log
                     .lock()
                     .unwrap()
-                    .push(format!("lock:{}", mutation.skill_name));
+                    .push(format!("lock:{}", mutation.skill_name()));
                 if self.failure == Failure::Lock
                     || (self.failure == Failure::LockAndRestoreRequired
-                        && mutation.skill_name == "first")
+                        && mutation.skill_name() == "first")
                 {
                     Err(AppError::ExecutionFailed {
                         message: "lock failed".to_string(),
@@ -691,11 +691,13 @@ mod tests {
             },
             legacy_target: None,
             schema: LockSchema::Project,
-            skill_name: unit_id.to_string(),
-            replacement: Some(serde_json::json!({
-                "source": "test",
-                "computedHash": "hash"
-            })),
+            entry: crate::storage::lock_plan::LockEntryMutation::Replace {
+                key: unit_id.to_string(),
+                replacement: serde_json::json!({
+                    "source": "test",
+                    "computedHash": "hash"
+                }),
+            },
             root_replacements: BTreeMap::new(),
             expected: LockExpectedState::capture(&document, [unit_id], std::iter::empty::<&str>()),
         }

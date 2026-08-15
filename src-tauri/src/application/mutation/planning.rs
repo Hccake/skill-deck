@@ -458,8 +458,10 @@ mod tests {
             target: destination(&lock_target),
             legacy_target: None,
             schema: LockSchema::Project,
-            skill_name: "alpha".to_string(),
-            replacement: Some(serde_json::json!({ "source": "owner/repo" })),
+            entry: crate::storage::lock_plan::LockEntryMutation::Replace {
+                key: "alpha".to_string(),
+                replacement: serde_json::json!({ "source": "owner/repo" }),
+            },
             root_replacements: BTreeMap::new(),
             expected: LockExpectedState {
                 entry_snapshots: BTreeMap::new(),
@@ -515,10 +517,10 @@ mod tests {
             lock_target.components().collect::<Vec<_>>()
         );
         assert_eq!(prepared_lock.schema, LockSchema::Project);
-        assert_eq!(prepared_lock.skill_name, "alpha");
+        assert_eq!(prepared_lock.skill_name(), "alpha");
         assert_eq!(
-            prepared_lock.replacement,
-            Some(serde_json::json!({ "source": "owner/repo" }))
+            prepared_lock.replacement(),
+            Some(&serde_json::json!({ "source": "owner/repo" }))
         );
     }
 }

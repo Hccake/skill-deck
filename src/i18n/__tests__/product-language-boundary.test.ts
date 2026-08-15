@@ -32,6 +32,27 @@ describe('product language boundary', () => {
     expect(serialized(en.settings.agents)).not.toMatch(/Agent definitions?|Custom Agents?/i);
   });
 
+  it('describes concurrent changes without exposing lock storage', () => {
+    expect(zhCN.addSkill.error).toMatchObject({
+      externalLockChanged: 'Skill 信息已发生变化，请刷新后重试。',
+      lockConflict: '「{{skill}}」的信息已发生变化，请刷新后重试。',
+      agentDefaultsConflict: 'Agent 默认选择已发生变化，请刷新后重试。',
+    });
+    expect(en.addSkill.error).toMatchObject({
+      externalLockChanged: 'Skill information changed. Refresh and try again.',
+      lockConflict: '{{skill}} changed. Refresh and try again.',
+      agentDefaultsConflict: 'The default Agent selection changed. Refresh and try again.',
+    });
+    expect(zhCN.mutation.result.errors.externalLockChanged)
+      .toBe('Skill 信息已发生变化，请刷新后重试。');
+    expect(en.mutation.result.errors.externalLockChanged)
+      .toBe('Skill information changed. Refresh and try again.');
+    expect(zhCN.crossStorage.description)
+      .toBe('当前通过 {{environment}} 管理项目，项目文件实际存储在 {{owner}}。Windows 与 WSL 同时修改时，可能产生文件冲突。');
+    expect(en.crossStorage.description)
+      .toBe('This project is managed from {{environment}}, while its files are stored in {{owner}}. Concurrent Windows and WSL edits can cause file conflicts.');
+  });
+
   it('uses task language for installation, update, and duplicate-copy guidance', () => {
     expect(zhCN.addSkill.scopeSelect).toMatchObject({
       title: '选择 Skill 位置',

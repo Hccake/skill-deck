@@ -1124,6 +1124,7 @@ fn metadata(computed_hash: &str, remote_hash: &str) -> PayloadPlanningMetadata {
         plugin_name: Some("integration".to_string()),
         computed_hash: computed_hash.to_string(),
         upstream_revision: Some(remote_hash.to_string()),
+        well_known: None,
     }
 }
 

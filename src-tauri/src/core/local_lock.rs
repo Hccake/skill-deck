@@ -48,6 +48,8 @@ pub struct LocalSkillLockEntry {
     /// 原始来源 URL（GUI 扩展，用于 SSH/private repo 保真）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub well_known_digest: Option<String>,
     /// SHA-256 本地文件内容哈希
     pub computed_hash: String,
 
@@ -155,6 +157,7 @@ fn read_and_convert_legacy_lock(path: &Path) -> Result<LocalSkillLockFile, AppEr
                 } else {
                     Some(entry.source_url)
                 },
+                well_known_digest: entry.well_known_digest,
                 computed_hash: String::new(), // 旧版没有 SHA-256，留空
                 remote_hash: if entry.skill_folder_hash.is_empty() {
                     None
@@ -254,6 +257,7 @@ mod tests {
                 ref_name: None,
                 source_type: "github".to_string(),
                 source_url: None,
+                well_known_digest: None,
                 computed_hash: "hash-z".to_string(),
                 remote_hash: None,
                 skill_path: None,
@@ -268,6 +272,7 @@ mod tests {
                 ref_name: None,
                 source_type: "github".to_string(),
                 source_url: None,
+                well_known_digest: None,
                 computed_hash: "hash-a".to_string(),
                 remote_hash: None,
                 skill_path: None,
@@ -292,6 +297,7 @@ mod tests {
             ref_name: None,
             source_type: "github".to_string(),
             source_url: None,
+            well_known_digest: None,
             computed_hash: "abc123".to_string(),
             remote_hash: None,
             skill_path: None,
@@ -370,6 +376,7 @@ mod tests {
                 ref_name: None,
                 source_type: "github".to_string(),
                 source_url: None,
+                well_known_digest: None,
                 computed_hash: "abc123".to_string(),
                 remote_hash: Some("tree-sha".to_string()),
                 skill_path: Some("skills/test/SKILL.md".to_string()),
@@ -439,6 +446,7 @@ mod tests {
             ref_name: Some("feature-branch".to_string()),
             source_type: "github".to_string(),
             source_url: None,
+            well_known_digest: None,
             computed_hash: "abc123".to_string(),
             remote_hash: None,
             skill_path: None,

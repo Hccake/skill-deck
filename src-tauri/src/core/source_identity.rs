@@ -11,6 +11,7 @@ pub enum SourceProvider {
     Github,
     Gitlab,
     Git,
+    WellKnown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -124,6 +125,7 @@ impl AcquisitionDescriptor {
                 SourceProvider::Github => SourceType::GitHub,
                 SourceProvider::Gitlab => SourceType::GitLab,
                 SourceProvider::Git => SourceType::Git,
+                SourceProvider::WellKnown => SourceType::WellKnown,
             },
             url: self.source.clone(),
             subpath: None,
@@ -185,10 +187,7 @@ impl SourceIdentity {
         source: String,
         git_ref: Option<String>,
     ) -> Result<Self, AppError> {
-        if matches!(
-            source_type,
-            SourceType::Local | SourceType::WellKnown | SourceType::Download
-        ) {
+        if matches!(source_type, SourceType::Local | SourceType::Download) {
             return Err(invalid_identity(
                 "source does not have a remote Git identity",
             ));
@@ -294,6 +293,9 @@ fn remote_location(
 }
 
 fn provider_for(source_type: &SourceType, authority: &str) -> SourceProvider {
+    if *source_type == SourceType::WellKnown {
+        return SourceProvider::WellKnown;
+    }
     let host = authority.split(':').next().unwrap_or(authority);
     if host.eq_ignore_ascii_case("github.com") {
         SourceProvider::Github
@@ -367,6 +369,7 @@ mod tests {
             skill_path: Some("skills/demo/SKILL.md".into()),
             remote_hash: None,
             computed_hash: Some("installed-hash".into()),
+            well_known_digest: None,
         };
         let identity = SourceIdentity::from_metadata(&metadata).unwrap();
 
@@ -389,6 +392,7 @@ mod tests {
             skill_path: Some("skills/demo".into()),
             remote_hash: Some("old".into()),
             computed_hash: None,
+            well_known_digest: None,
         };
         let identity = SourceIdentity::from_metadata(&metadata).unwrap();
         let rendered = format!("{identity:?} {}", identity.sanitized_display());

@@ -237,7 +237,8 @@ where
         redirected_download_host: redirected_download_host.clone(),
     };
     let source_fingerprint = snapshot_fingerprint(&descriptor, &catalog);
-    let retained = RetainedDiscoverySource::new(location, descriptor, catalog, owner);
+    let retained = RetainedDiscoverySource::new(location, descriptor, catalog, owner)
+        .with_well_known_metadata(trust_metadata.clone().unwrap_or_default());
     let discovery_session = match storage {
         Some(storage) => {
             sessions
@@ -548,6 +549,7 @@ impl SelectedPayloadAcquisitionService {
                         skill,
                         acquired.computed_hash,
                         upstream_revision,
+                        source.well_known_metadata(&skill.skill_name),
                     );
                     handles.push(
                         self.sessions
@@ -594,6 +596,7 @@ fn prepare_native_selections(
             skill,
             compute_cli_project_hash_from_payload(&payload)?,
             upstream_revision,
+            source.well_known_metadata(&skill.skill_name),
         );
         prepared.push(PreparedNativeSelection::Acquired(Box::new(
             PreparedNativePayload {
@@ -611,7 +614,16 @@ fn planning_metadata(
     skill: &DiscoverySkillSnapshot,
     computed_hash: String,
     upstream_revision: Option<String>,
+    well_known: Option<&WellKnownTrustMetadata>,
 ) -> PayloadPlanningMetadata {
+    let well_known = well_known.and_then(|metadata| {
+        Some(
+            crate::application::payload_session::WellKnownPlanningMetadata {
+                artifact_url: metadata.artifact_url.clone()?,
+                digest: metadata.digest.clone()?,
+            },
+        )
+    });
     PayloadPlanningMetadata {
         skill_name: skill.skill_name.clone(),
         install_dir_name: skill.install_dir_name.clone(),
@@ -623,6 +635,7 @@ fn planning_metadata(
         plugin_name: skill.plugin_name.clone(),
         computed_hash,
         upstream_revision,
+        well_known,
     }
 }
 
@@ -1164,6 +1177,7 @@ mod tests {
             },
             "payload-sha256".to_string(),
             None,
+            None,
         );
 
         assert_eq!(metadata.computed_hash, "payload-sha256");
@@ -1188,6 +1202,7 @@ mod tests {
                 source_metadata_fingerprint: "fingerprint".to_string(),
             },
             "cli-computed-hash".to_string(),
+            None,
             None,
         );
 

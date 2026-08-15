@@ -71,14 +71,19 @@ impl NormalizedWellKnownEntry {
         }
     }
 
-    fn trust_metadata(&self) -> WellKnownTrustMetadata {
+    fn trust_metadata(&self, digest: String) -> WellKnownTrustMetadata {
         match self {
-            Self::Legacy { .. } => WellKnownTrustMetadata {
+            Self::Legacy { name, base_url, .. } => WellKnownTrustMetadata {
                 well_known_version: Some("0.1.0".to_string()),
                 well_known_entry_type: Some("legacy".to_string()),
                 artifact_url_host: None,
                 digest_verified: None,
                 trust_reason: Some("legacy".to_string()),
+                artifact_url: Some(format!(
+                    "{}/{name}/SKILL.md",
+                    base_url.trim_end_matches('/')
+                )),
+                digest: Some(digest),
             },
             Self::V2 {
                 entry_type,
@@ -90,9 +95,16 @@ impl NormalizedWellKnownEntry {
                 artifact_url_host: extract_hostname(artifact_url),
                 digest_verified: Some(true),
                 trust_reason: Some("digest-verified".to_string()),
+                artifact_url: Some(artifact_url.clone()),
+                digest: Some(digest),
             },
         }
     }
+}
+
+struct FetchedWellKnownIndex {
+    index_url: String,
+    entries: Vec<NormalizedWellKnownEntry>,
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +136,26 @@ fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
     let Ok(parsed) = Url::parse(url) else {
         return vec![];
     };
+
+    if parsed.path().trim_end_matches('/').ends_with("/index.json") {
+        let mut index_url = parsed;
+        index_url.set_fragment(None);
+        let index_url = index_url.to_string();
+        let base_url = index_url
+            .trim_end_matches(INDEX_FILE)
+            .trim_end_matches('/')
+            .to_string();
+        let well_known_path = WELL_KNOWN_PATHS
+            .iter()
+            .find(|path| base_url.ends_with(**path))
+            .copied()
+            .unwrap_or_default();
+        return vec![IndexUrlCandidate {
+            index_url,
+            base_url,
+            well_known_path: well_known_path.to_string(),
+        }];
+    }
 
     let origin = parsed.origin().ascii_serialization();
     let path = parsed.path().trim_end_matches('/');
@@ -390,7 +422,8 @@ pub(crate) async fn fetch_wellknown_skills_with_client(
 ) -> Result<WellKnownFetchResult, AppError> {
     let operation_id = uuid::Uuid::new_v4().simple().to_string();
 
-    let entries = fetch_index(http, url, cancellation, &operation_id).await?;
+    let fetched_index = fetch_index(http, url, cancellation, &operation_id).await?;
+    let entries = fetched_index.entries;
 
     if entries.is_empty() {
         return Err(AppError::NoSkillsFound);
@@ -425,13 +458,103 @@ pub(crate) async fn fetch_wellknown_skills_with_client(
                 download_v2_entry(&download, name, entry_type, artifact_url, digest).await?;
             }
         }
-        trust_metadata.insert(entry.name().to_string(), entry.trust_metadata());
+        let digest = match entry {
+            NormalizedWellKnownEntry::V2 { digest, .. } => digest.clone(),
+            NormalizedWellKnownEntry::Legacy { name, .. } => {
+                compute_legacy_skill_digest(&temp_path.join(name))?
+            }
+        };
+        trust_metadata.insert(entry.name().to_string(), entry.trust_metadata(digest));
     }
 
     Ok(WellKnownFetchResult {
         repo_path: temp_path,
         trust_metadata,
     })
+}
+
+pub(crate) async fn check_wellknown_updates_with_client(
+    http: &HttpTransport,
+    url: &str,
+    skill_names: &[String],
+    cancellation: &CancellationSignal,
+) -> Result<crate::application::wellknown_access::WellKnownIndexEvidence, AppError> {
+    let operation_id = uuid::Uuid::new_v4().simple().to_string();
+    let fetched = fetch_index(http, url, cancellation, &operation_id).await?;
+    let complete_skill_catalog = fetched
+        .entries
+        .iter()
+        .map(|entry| entry.name().to_string())
+        .collect::<Vec<_>>();
+    let requested = skill_names
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let temp = tempfile::TempDir::new()?;
+    let download = WellKnownDownloadContext {
+        http,
+        temp_path: temp.path(),
+        cancellation,
+        operation_id: &operation_id,
+    };
+    let mut digests = HashMap::new();
+    for entry in &fetched.entries {
+        if !requested.contains(entry.name()) {
+            continue;
+        }
+        match entry {
+            NormalizedWellKnownEntry::V2 { name, digest, .. } => {
+                digests.insert(name.clone(), digest.clone());
+            }
+            NormalizedWellKnownEntry::Legacy {
+                name,
+                files,
+                base_url,
+                ..
+            } => {
+                download_legacy_entry(&download, name, files, base_url).await?;
+                digests.insert(
+                    name.clone(),
+                    compute_legacy_skill_digest(&temp.path().join(name))?,
+                );
+            }
+        }
+    }
+    Ok(
+        crate::application::wellknown_access::WellKnownIndexEvidence {
+            index_url: fetched.index_url,
+            complete_skill_catalog,
+            digests,
+        },
+    )
+}
+
+fn compute_legacy_skill_digest(root: &Path) -> Result<String, AppError> {
+    let mut files = walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppError::Path {
+            message: error.to_string(),
+        })?;
+    files.retain(|entry| entry.file_type().is_file());
+    files.sort_by_key(|entry| entry.path().to_path_buf());
+    let mut hash = Sha256::new();
+    for entry in files {
+        let relative = entry
+            .path()
+            .strip_prefix(root)
+            .map_err(|error| AppError::Path {
+                message: error.to_string(),
+            })?
+            .to_string_lossy()
+            .replace('\\', "/");
+        hash.update(relative.as_bytes());
+        hash.update([0]);
+        hash.update(fs::read(entry.path())?);
+        hash.update([0]);
+    }
+    Ok(format!("sha256:{:x}", hash.finalize()))
 }
 
 struct WellKnownDownloadContext<'a> {
@@ -564,7 +687,7 @@ async fn fetch_index(
     url: &str,
     cancellation: &CancellationSignal,
     operation_id: &str,
-) -> Result<Vec<NormalizedWellKnownEntry>, AppError> {
+) -> Result<FetchedWellKnownIndex, AppError> {
     let candidates = build_index_urls(url);
     if candidates.is_empty() {
         return Err(AppError::InvalidSource {
@@ -621,7 +744,10 @@ async fn fetch_index(
         if let Some(entries) =
             normalize_wellknown_index(&raw, resp.final_url.as_str(), &candidate.well_known_path)
         {
-            return Ok(entries);
+            return Ok(FetchedWellKnownIndex {
+                index_url: resp.final_url.to_string(),
+                entries,
+            });
         }
     }
 
@@ -711,6 +837,16 @@ mod tests {
         assert_eq!(index.skills.len(), 1);
         assert_eq!(index.skills[0].name, "my-skill");
         assert_eq!(index.skills[0].files, vec!["SKILL.md"]);
+    }
+
+    #[test]
+    fn persisted_index_url_is_requested_directly() {
+        let index_url = "https://example.com/catalog/index.json";
+
+        let candidates = build_index_urls(index_url);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].index_url, index_url);
     }
 
     #[test]
@@ -1035,6 +1171,112 @@ mod tests {
                 skill
             );
             fs::remove_dir_all(result.repo_path).expect("remove downloaded source");
+        });
+    }
+
+    #[test]
+    fn v2_update_check_reads_only_the_index_digest() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let digest = format!("sha256:{}", "a".repeat(64));
+            let expected_digest = digest.clone();
+            let worker = thread::spawn(move || {
+                let index = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("index receive")
+                    .expect("index request");
+                assert_eq!(index.url(), "/.well-known/agent-skills/index.json");
+                index
+                    .respond(tiny_http::Response::from_string(format!(
+                        r#"{{
+                          "$schema": "{DISCOVERY_SCHEMA_V2}",
+                          "skills": [{{
+                            "name": "demo",
+                            "description": "Demo",
+                            "type": "skill-md",
+                            "url": "demo/SKILL.md",
+                            "digest": "{digest}"
+                          }}]
+                        }}"#
+                    )))
+                    .expect("index response");
+                assert!(server
+                    .recv_timeout(Duration::from_millis(300))
+                    .expect("artifact probe")
+                    .is_none());
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let evidence = check_wellknown_updates_with_client(
+                &http,
+                &base_url,
+                &["demo".to_string()],
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect("v2 evidence");
+
+            worker.join().expect("worker");
+            assert_eq!(evidence.complete_skill_catalog, vec!["demo"]);
+            assert_eq!(evidence.digests.get("demo"), Some(&expected_digest));
+        });
+    }
+
+    #[test]
+    fn legacy_update_check_downloads_only_requested_installed_skills() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let beta = b"---\nname: beta\ndescription: Beta\n---\n";
+            let worker = thread::spawn(move || {
+                let index = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("index receive")
+                    .expect("index request");
+                index
+                    .respond(tiny_http::Response::from_string(
+                        r#"{
+                          "skills": [
+                            {"name":"alpha","description":"Alpha","files":["SKILL.md"]},
+                            {"name":"beta","description":"Beta","files":["SKILL.md"]}
+                          ]
+                        }"#,
+                    ))
+                    .expect("index response");
+
+                let artifact = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("artifact receive")
+                    .expect("requested artifact");
+                assert_eq!(artifact.url(), "/.well-known/agent-skills/beta/SKILL.md");
+                artifact
+                    .respond(tiny_http::Response::from_data(beta))
+                    .expect("artifact response");
+                assert!(server
+                    .recv_timeout(Duration::from_millis(300))
+                    .expect("unexpected request probe")
+                    .is_none());
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let evidence = check_wellknown_updates_with_client(
+                &http,
+                &base_url,
+                &["beta".to_string()],
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect("legacy evidence");
+
+            worker.join().expect("worker");
+            assert_eq!(evidence.complete_skill_catalog, vec!["alpha", "beta"]);
+            assert_eq!(evidence.digests.len(), 1);
+            assert!(evidence.digests.contains_key("beta"));
         });
     }
 

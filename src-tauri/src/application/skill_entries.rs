@@ -3,6 +3,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
+use crate::application::installed_skill_resolver::{
+    InstalledSkillResolver, ResolvedInstalledSkill,
+};
 use crate::application::mutation::plan::stable_digest;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, DiscoverySourceDescriptor, DiscoverySourceLocation,
@@ -37,6 +40,7 @@ pub struct ObservedPlannedEntry {
 
 #[derive(Clone)]
 pub struct ObservedSkillSnapshot {
+    pub resolved: ResolvedInstalledSkill,
     pub facts: InstallPlanningFacts,
     pub canonical: ResolvedTargetFact,
     pub entries: Vec<ObservedPlannedEntry>,
@@ -88,7 +92,7 @@ impl InstalledSkillPayloadAcquirer {
                         &discovery,
                         skill_name,
                         payload,
-                        installed_metadata(skill_name, computed_hash),
+                        installed_metadata(skill_name, computed_hash)?,
                     )
                     .await
             }
@@ -132,7 +136,7 @@ impl InstalledSkillPayloadAcquirer {
                         skill_name.clone(),
                         acquired.manifest,
                         acquired.total_bytes,
-                        installed_metadata(&skill_name, acquired.computed_hash),
+                        installed_metadata(&skill_name, acquired.computed_hash)?,
                     )
                     .await
             }
@@ -174,10 +178,13 @@ impl InstalledSkillPayloadAcquirer {
     }
 }
 
-fn installed_metadata(skill_name: &str, computed_hash: String) -> PayloadPlanningMetadata {
-    PayloadPlanningMetadata {
+fn installed_metadata(
+    skill_name: &str,
+    computed_hash: String,
+) -> Result<PayloadPlanningMetadata, AppError> {
+    Ok(PayloadPlanningMetadata {
         skill_name: skill_name.to_string(),
-        install_dir_name: skill_name.to_string(),
+        install_dir_name: InstalledSkillResolver::install_dir_name(skill_name)?,
         source: "installed-canonical".to_string(),
         source_type: "installed".to_string(),
         source_url: None,
@@ -186,7 +193,8 @@ fn installed_metadata(skill_name: &str, computed_hash: String) -> PayloadPlannin
         plugin_name: None,
         computed_hash,
         upstream_revision: None,
-    }
+        well_known: None,
+    })
 }
 
 impl<F, T> SkillEntryObserver<F, T> {
@@ -224,7 +232,12 @@ where
         skill_name: &str,
         facts: InstallPlanningFacts,
     ) -> Result<ObservedSkillSnapshot, AppError> {
-        let mut destinations = vec![join_entry(&facts.resolved_context.skill_root, skill_name)];
+        let resolved_identity = InstalledSkillResolver::resolve(skill_name, &facts.lock_document)?;
+        let install_dir_name = &resolved_identity.install_dir_name;
+        let mut destinations = vec![join_entry(
+            &facts.resolved_context.skill_root,
+            install_dir_name,
+        )];
         let mut owners = Vec::new();
         for (agent_id, agent) in &facts.agent_runtime.agents {
             let scope = match &context.scope {
@@ -242,7 +255,7 @@ where
                     environment: context.environment.clone(),
                     native_path: root.to_string(),
                 },
-                skill_name,
+                install_dir_name,
             ));
             owners.push(ObservedEntryOwner {
                 agent_id: agent_id.clone(),
@@ -262,7 +275,7 @@ where
                             environment: context.environment.clone(),
                             native_path: target.path.clone(),
                         },
-                        skill_name,
+                        install_dir_name,
                     ));
                     owners.push(ObservedEntryOwner {
                         agent_id: eve_id.clone(),
@@ -285,6 +298,7 @@ where
             .collect();
         let entries = group_observed_entries(&canonical, candidates)?;
         Ok(ObservedSkillSnapshot {
+            resolved: resolved_identity,
             facts,
             canonical,
             entries,
@@ -601,6 +615,13 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.relative_path == "scripts/run.sh"));
+    }
+
+    #[test]
+    fn installed_payload_metadata_uses_the_resolved_install_directory() {
+        let metadata = installed_metadata("ce:review", "computed".to_string()).unwrap();
+
+        assert_eq!(metadata.install_dir_name, "ce-review");
     }
 
     fn candidate(fact: ResolvedTargetFact, id: &str) -> ObservedEntryCandidate {

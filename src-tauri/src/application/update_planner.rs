@@ -38,11 +38,12 @@ use crate::environment::types::{
 };
 use crate::error::AppError;
 use crate::models::InstallMode;
-use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
+use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState, PreparedLockMutation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockedUpdateSkill {
     pub name: String,
+    pub lock_key: String,
     pub source: String,
     pub source_type: String,
     pub source_url: Option<String>,
@@ -52,6 +53,7 @@ pub struct LockedUpdateSkill {
     pub computed_hash: Option<String>,
     pub installed_at: Option<String>,
     pub subagents: Option<Vec<String>>,
+    pub well_known_digest: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +83,7 @@ impl LockedUpdateSkill {
             skill_path: Some(self.skill_path.clone()),
             remote_hash: self.remote_hash.clone(),
             computed_hash: self.computed_hash.clone(),
+            well_known_digest: self.well_known_digest.clone(),
         }
     }
 
@@ -377,21 +380,27 @@ fn locked_skills(
         .skill_names
         .iter()
         .map(|name| {
+            let resolved =
+                crate::application::installed_skill_resolver::InstalledSkillResolver::resolve(
+                    name,
+                    &facts.lock_document,
+                )?;
             let raw = facts
                 .lock_document
-                .entry_snapshot(name)
+                .entry_snapshot(&resolved.lock_key)
                 .value()
                 .cloned()
                 .ok_or_else(|| AppError::InvalidSource {
                     value: format!("Skill '{name}' not found in lock file"),
                 })?;
-            locked_skill(name, facts.lock_schema, &raw)
+            locked_skill(name, &resolved.lock_key, facts.lock_schema, &raw)
         })
         .collect()
 }
 
 fn locked_skill(
     name: &str,
+    lock_key: &str,
     schema: LockSchema,
     raw: &Value,
 ) -> Result<LockedUpdateSkill, AppError> {
@@ -402,11 +411,16 @@ fn locked_skill(
         })?;
     let source = string_field(object, "source").unwrap_or_default();
     let source_type = string_field(object, "sourceType").unwrap_or_default();
-    let source_url = recover_source_url(
-        &source,
-        &source_type,
-        string_field(object, "sourceUrl").as_deref(),
-    );
+    let stored_source_url = if source_type == "well-known" && schema == LockSchema::Global {
+        string_field(object, "sourceBaseUrl")
+    } else {
+        string_field(object, "sourceUrl")
+    };
+    let source_url = if source_type == "well-known" {
+        stored_source_url
+    } else {
+        recover_source_url(&source, &source_type, stored_source_url.as_deref())
+    };
     let skill_path = string_field(object, "skillPath").unwrap_or_default();
     let remote_hash = match schema {
         LockSchema::Global => string_field(object, "skillFolderHash"),
@@ -436,6 +450,7 @@ fn locked_skill(
     };
     let skill = LockedUpdateSkill {
         name: name.to_string(),
+        lock_key: lock_key.to_string(),
         source,
         source_type,
         source_url,
@@ -447,6 +462,7 @@ fn locked_skill(
             .flatten(),
         installed_at: string_field(object, "installedAt"),
         subagents,
+        well_known_digest: string_field(object, "wellKnownDigest"),
     };
     if !skill.capability().can_run_update {
         return Err(AppError::InvalidSource {
@@ -471,6 +487,14 @@ fn validate_payloads(
     handles: &[AcquiredPayloadHandle],
     payloads: &[PinnedPayloadLease],
 ) -> Result<(), AppError> {
+    let install_dir_names = locked
+        .iter()
+        .map(|skill| {
+            crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
+                &skill.name,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     if facts.resolved_context.context != request.context
         || !same_environment_identity(
             &facts.agent_runtime.environment,
@@ -483,7 +507,7 @@ fn validate_payloads(
         || payloads.iter().enumerate().any(|(index, payload)| {
             payload.planning_metadata().validate().is_err()
                 || payload.planning_metadata().skill_name != locked[index].name
-                || payload.planning_metadata().install_dir_name != locked[index].name
+                || payload.planning_metadata().install_dir_name != install_dir_names[index]
                 || !same_environment_identity(
                     &handles[index].environment,
                     &request.context.environment,
@@ -533,7 +557,14 @@ fn planning_seeds(
     for (index, skill) in locked.iter().enumerate() {
         let start = destinations.len();
         let mut candidates = vec![CandidateKind::Canonical];
-        destinations.push(join_entry(&facts.resolved_context.skill_root, &skill.name));
+        let install_dir_name =
+            crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
+                &skill.name,
+            )?;
+        destinations.push(join_entry(
+            &facts.resolved_context.skill_root,
+            &install_dir_name,
+        ));
         for (agent_id, agent) in &facts.agent_runtime.agents {
             if agent.definition.adapter != AgentAdapter::Standard {
                 continue;
@@ -551,7 +582,7 @@ fn planning_seeds(
                     environment: request.context.environment.clone(),
                     native_path: root.to_string(),
                 },
-                &skill.name,
+                &install_dir_name,
             ));
             candidates.push(CandidateKind::Private {
                 target_id: target_id.clone(),
@@ -565,7 +596,7 @@ fn planning_seeds(
         for (_target_id, root, owner) in
             eve_adapter_roots(&facts.agent_runtime, skill, &request.context.environment)?
         {
-            destinations.push(join_entry(&root, &skill.name));
+            destinations.push(join_entry(&root, &install_dir_name));
             candidates.push(CandidateKind::Adapter { owner });
         }
         seeds.push(SkillSeed {
@@ -781,7 +812,9 @@ fn lock_mutation(
         LockSchema::Global => json!({
             "source": metadata.source,
             "sourceType": metadata.source_type,
-            "sourceUrl": metadata.source_url,
+            "sourceUrl": metadata.well_known.as_ref().map(|value| value.artifact_url.clone()).or_else(|| metadata.source_url.clone()),
+            "sourceBaseUrl": metadata.well_known.as_ref().and(metadata.source_url.clone()),
+            "wellKnownDigest": metadata.well_known.as_ref().map(|value| value.digest.clone()),
             "ref": metadata.ref_name,
             "skillPath": metadata.skill_path,
             "skillFolderHash": metadata.global_skill_folder_hash(),
@@ -791,9 +824,27 @@ fn lock_mutation(
         }),
         LockSchema::Project => {
             let mut entry = serde_json::Map::new();
-            entry.insert("source".to_string(), json!(metadata.source));
+            let source = if metadata.source_type == "local" {
+                facts
+                    .resolved_context
+                    .project
+                    .as_ref()
+                    .map(|project| {
+                        crate::core::portable_project_path::serialize_project_source(
+                            &project.native_path,
+                            &metadata.source,
+                        )
+                    })
+                    .unwrap_or_else(|| metadata.source.clone())
+            } else {
+                metadata.source.clone()
+            };
+            entry.insert("source".to_string(), json!(source));
             entry.insert("sourceType".to_string(), json!(metadata.source_type));
             entry.insert("sourceUrl".to_string(), json!(metadata.source_url));
+            if let Some(well_known) = &metadata.well_known {
+                entry.insert("wellKnownDigest".to_string(), json!(well_known.digest));
+            }
             entry.insert("ref".to_string(), json!(metadata.ref_name));
             entry.insert("skillPath".to_string(), json!(metadata.skill_path));
             entry.insert("computedHash".to_string(), json!(metadata.computed_hash));
@@ -811,12 +862,22 @@ fn lock_mutation(
         target: facts.resolved_context.lock.clone(),
         legacy_target: None,
         schema: facts.lock_schema,
-        skill_name: locked.name.clone(),
-        replacement: Some(replacement),
+        entry: if locked.lock_key != locked.name {
+            LockEntryMutation::MoveAndReplace {
+                from: locked.lock_key.clone(),
+                to: locked.name.clone(),
+                replacement,
+            }
+        } else {
+            LockEntryMutation::Replace {
+                key: locked.lock_key.clone(),
+                replacement,
+            }
+        },
         root_replacements: BTreeMap::new(),
         expected: LockExpectedState::capture(
             &facts.lock_document,
-            [&locked.name],
+            [locked.lock_key.as_str(), locked.name.as_str()],
             std::iter::empty::<&str>(),
         ),
     })
@@ -947,7 +1008,7 @@ fn observed_digest(
                     &skill.name,
                     facts
                         .lock_document
-                        .entry_snapshot(&skill.name)
+                        .entry_snapshot(&skill.lock_key)
                         .value()
                         .cloned(),
                 )
@@ -970,7 +1031,7 @@ fn skill_observed_digest(
         manifest_digest_entries(target_facts, manifests),
         facts
             .lock_document
-            .entry_snapshot(&locked.name)
+            .entry_snapshot(&locked.lock_key)
             .value()
             .cloned(),
     ))
@@ -1153,6 +1214,7 @@ mod tests {
                         plugin_name: None,
                         computed_hash: "new-computed".to_string(),
                         upstream_revision: Some("new-remote".to_string()),
+                        well_known: None,
                     },
                 )
                 .await
@@ -1270,8 +1332,7 @@ mod tests {
                     .lock_mutation
                     .as_ref()
                     .unwrap()
-                    .replacement
-                    .as_ref()
+                    .replacement()
                     .unwrap()["remoteHash"],
                 "new-remote"
             );
@@ -1366,6 +1427,7 @@ mod tests {
         let runtime = eve_runtime(project.to_string_lossy().as_ref());
         let mut skill = LockedUpdateSkill {
             name: "demo".to_string(),
+            lock_key: "demo".to_string(),
             source: "owner/repo".to_string(),
             source_type: "github".to_string(),
             source_url: Some("https://github.com/owner/repo".to_string()),
@@ -1375,6 +1437,7 @@ mod tests {
             computed_hash: None,
             installed_at: None,
             subagents: None,
+            well_known_digest: None,
         };
 
         skill.subagents = Some(vec!["".to_string()]);
@@ -1409,7 +1472,7 @@ mod tests {
             "computedHash": "old"
         });
 
-        let legacy = locked_skill("demo", LockSchema::Project, &base).unwrap();
+        let legacy = locked_skill("demo", "demo", LockSchema::Project, &base).unwrap();
         assert_eq!(
             eve_adapter_roots(&runtime, &legacy, &EnvironmentRef::Native)
                 .unwrap()
@@ -1422,7 +1485,8 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .insert("subagents".to_string(), json!([]));
-        let explicit_empty = locked_skill("demo", LockSchema::Project, &explicit_empty).unwrap();
+        let explicit_empty =
+            locked_skill("demo", "demo", LockSchema::Project, &explicit_empty).unwrap();
         assert!(
             eve_adapter_roots(&runtime, &explicit_empty, &EnvironmentRef::Native)
                 .unwrap()
@@ -1438,6 +1502,7 @@ mod tests {
         runtime.agents.values_mut().next().unwrap().detection = DetectionState::NotDetected;
         let skill = LockedUpdateSkill {
             name: "demo".to_string(),
+            lock_key: "demo".to_string(),
             source: "owner/repo".to_string(),
             source_type: "github".to_string(),
             source_url: Some("https://github.com/owner/repo".to_string()),
@@ -1447,6 +1512,7 @@ mod tests {
             computed_hash: Some("old".to_string()),
             installed_at: None,
             subagents: None,
+            well_known_digest: None,
         };
 
         assert!(eve_adapter_roots(&runtime, &skill, &EnvironmentRef::Native)
@@ -1465,6 +1531,7 @@ mod tests {
     fn locked_skill_rejects_malformed_eve_placement() {
         for subagents in [json!("root"), json!(["", 1])] {
             let result = locked_skill(
+                "demo",
                 "demo",
                 LockSchema::Project,
                 &json!({
@@ -1489,6 +1556,7 @@ mod tests {
     fn global_lock_ignores_project_only_eve_placement() {
         assert!(locked_skill(
             "demo",
+            "demo",
             LockSchema::Global,
             &json!({
                 "source": "owner/repo",
@@ -1506,6 +1574,7 @@ mod tests {
     fn gitlab_lock_uses_computed_hash_for_remote_precheck() {
         let skill = LockedUpdateSkill {
             name: "demo".to_string(),
+            lock_key: "demo".to_string(),
             source: "https://gitlab.com/owner/repo".to_string(),
             source_type: "gitlab".to_string(),
             source_url: Some("https://gitlab.com/owner/repo".to_string()),
@@ -1515,6 +1584,7 @@ mod tests {
             computed_hash: Some("content-v1".to_string()),
             installed_at: None,
             subagents: None,
+            well_known_digest: None,
         };
 
         let capability = skill.capability();
@@ -1526,6 +1596,7 @@ mod tests {
     #[test]
     fn project_generic_git_lock_uses_computed_hash_as_update_baseline() {
         let skill = locked_skill(
+            "demo",
             "demo",
             LockSchema::Project,
             &json!({

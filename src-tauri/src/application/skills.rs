@@ -3,10 +3,12 @@
 use std::sync::Arc;
 
 use crate::application::agents::{AgentCommandError, ManagedAgentRegistry};
+use crate::application::installed_skill_resolver::InstalledSkillResolver;
 use crate::application::skill_read::{
     build_skill_read_plan, discover_eve_skill_targets, project_skill_snapshot, ListSkillsResult,
 };
 use crate::core::local_lock::LocalSkillLockEntry;
+use crate::core::lossless_lock::LosslessLockDocument;
 use crate::core::skill::InstalledSkill;
 use crate::core::skill_lock::SkillLockEntry;
 use crate::environment::context_resolver::{ContextResolver, ResolvedContext};
@@ -34,16 +36,26 @@ enum LockKind {
     LegacyProject,
 }
 
+#[cfg(test)]
 fn enrich_environment_skills_from_lock(
+    skills: Vec<InstalledSkill>,
+    bytes: Option<&[u8]>,
+    kind: LockKind,
+) -> Result<Vec<InstalledSkill>, AppError> {
+    enrich_environment_skills_from_lock_at(skills, bytes, kind, None)
+}
+
+fn enrich_environment_skills_from_lock_at(
     mut skills: Vec<InstalledSkill>,
     bytes: Option<&[u8]>,
     kind: LockKind,
-) -> Vec<InstalledSkill> {
+    project_root: Option<&str>,
+) -> Result<Vec<InstalledSkill>, AppError> {
     let Some(bytes) = bytes else {
-        return skills;
+        return Ok(skills);
     };
     let Ok(root) = serde_json::from_slice::<serde_json::Value>(bytes) else {
-        return skills;
+        return Ok(skills);
     };
     let minimum_version = match kind {
         LockKind::Global => 3,
@@ -51,17 +63,21 @@ fn enrich_environment_skills_from_lock(
         LockKind::LegacyProject => 0,
     };
     let Some(version) = root.get("version").and_then(serde_json::Value::as_u64) else {
-        return skills;
+        return Ok(skills);
     };
     if version < minimum_version {
-        return skills;
+        return Ok(skills);
     }
     let Some(entries) = root.get("skills").and_then(serde_json::Value::as_object) else {
-        return skills;
+        return Ok(skills);
+    };
+    let Ok(document) = LosslessLockDocument::parse(bytes) else {
+        return Ok(skills);
     };
 
     for skill in &mut skills {
-        let Some(value) = entries.get(&skill.name).cloned() else {
+        let resolved = InstalledSkillResolver::resolve(&skill.name, &document)?;
+        let Some(value) = entries.get(&resolved.lock_key).cloned() else {
             continue;
         };
         let enriched =
@@ -71,7 +87,18 @@ fn enrich_environment_skills_from_lock(
                     .map(|entry| skill.clone().with_lock_entry(Some(&entry))),
                 LockKind::Project => serde_json::from_value::<LocalSkillLockEntry>(value)
                     .ok()
-                    .map(|entry| skill.clone().with_local_lock_entry(Some(&entry))),
+                    .map(|mut entry| {
+                        if entry.source_type == "local" {
+                            if let Some(project_root) = project_root {
+                                entry.source =
+                                    crate::core::portable_project_path::resolve_project_source(
+                                        project_root,
+                                        &entry.source,
+                                    );
+                            }
+                        }
+                        skill.clone().with_local_lock_entry(Some(&entry))
+                    }),
                 LockKind::LegacyProject => serde_json::from_value::<SkillLockEntry>(value)
                     .ok()
                     .map(|entry| {
@@ -80,6 +107,7 @@ fn enrich_environment_skills_from_lock(
                             ref_name: entry.ref_name,
                             source_type: entry.source_type,
                             source_url: (!entry.source_url.is_empty()).then_some(entry.source_url),
+                            well_known_digest: entry.well_known_digest,
                             computed_hash: String::new(),
                             remote_hash: (!entry.skill_folder_hash.is_empty())
                                 .then_some(entry.skill_folder_hash),
@@ -94,7 +122,7 @@ fn enrich_environment_skills_from_lock(
             *skill = enriched;
         }
     }
-    skills
+    Ok(skills)
 }
 
 #[cfg(test)]
@@ -103,7 +131,9 @@ fn enrich_environment_skills_from_lock(
     reason = "lock enrichment tests stay adjacent to their private projection helper"
 )]
 mod environment_tests {
-    use super::{enrich_environment_skills_from_lock, LockKind};
+    use super::{
+        enrich_environment_skills_from_lock, enrich_environment_skills_from_lock_at, LockKind,
+    };
     use crate::core::agent_definition::AgentId;
     use crate::core::skill::{InstalledSkill, InstalledSkillLocation};
 
@@ -187,6 +217,7 @@ mod environment_tests {
         }"#;
 
         let skill = enrich_environment_skills_from_lock(vec![skill], Some(lock), LockKind::Global)
+            .unwrap()
             .pop()
             .expect("enriched skill");
 
@@ -227,10 +258,75 @@ mod environment_tests {
         }"#;
 
         let skill = enrich_environment_skills_from_lock(vec![skill], Some(lock), LockKind::Project)
+            .unwrap()
             .pop()
             .expect("skill");
 
         assert_eq!(skill.source, None);
+    }
+
+    #[test]
+    fn enriches_raw_skill_name_from_a_unique_legacy_sanitized_lock_key() {
+        let skill = installed_skill(
+            "ce:review",
+            "Review",
+            "/work/app/.agents/skills/ce-review",
+            InstalledSkillLocation::Project,
+            Vec::new(),
+        );
+        let lock = br#"{
+          "version": 1,
+          "skills": {
+            "ce-review": {
+              "source": "skills.example.com",
+              "sourceType": "well-known",
+              "sourceUrl": "https://skills.example.com/catalog",
+              "computedHash": "abc",
+              "wellKnownDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        }"#;
+
+        let skill = enrich_environment_skills_from_lock(vec![skill], Some(lock), LockKind::Project)
+            .unwrap()
+            .pop()
+            .expect("skill");
+
+        assert_eq!(skill.name, "ce:review");
+        assert_eq!(skill.source.as_deref(), Some("skills.example.com"));
+    }
+
+    #[test]
+    fn project_local_source_is_resolved_from_the_current_project_root() {
+        let skill = installed_skill(
+            "toolkit",
+            "Toolkit",
+            "/new/work/app/.agents/skills/toolkit",
+            InstalledSkillLocation::Project,
+            Vec::new(),
+        );
+        let lock = br#"{
+          "version": 1,
+          "skills": {
+            "toolkit": {
+              "source": "../shared/skills",
+              "sourceType": "local",
+              "computedHash": "abc"
+            }
+          }
+        }"#;
+
+        let skill = enrich_environment_skills_from_lock_at(
+            vec![skill],
+            Some(lock),
+            LockKind::Project,
+            Some("/new/work/app"),
+        )
+        .unwrap()
+        .pop()
+        .expect("skill");
+
+        assert_eq!(skill.source.as_deref(), Some("/new/work/shared/skills"));
     }
 }
 
@@ -312,7 +408,14 @@ async fn enrich_from_context_lock(
             }
         }
     }
-    result.skills =
-        enrich_environment_skills_from_lock(result.skills, lock_bytes.as_deref(), lock_kind);
+    result.skills = enrich_environment_skills_from_lock_at(
+        result.skills,
+        lock_bytes.as_deref(),
+        lock_kind,
+        context
+            .project
+            .as_ref()
+            .map(|project| project.native_path.as_str()),
+    )?;
     Ok(result)
 }

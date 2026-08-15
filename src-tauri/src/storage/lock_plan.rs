@@ -62,14 +62,68 @@ impl LockExpectedState {
 }
 
 #[derive(Debug, Clone)]
+pub enum LockEntryMutation {
+    Replace {
+        key: String,
+        replacement: Value,
+    },
+    Remove {
+        key: String,
+    },
+    MoveAndReplace {
+        from: String,
+        to: String,
+        replacement: Value,
+    },
+}
+
+impl LockEntryMutation {
+    fn affected_keys(&self) -> Vec<&str> {
+        match self {
+            Self::Replace { key, .. } | Self::Remove { key } => vec![key],
+            Self::MoveAndReplace { from, to, .. } => vec![from, to],
+        }
+    }
+
+    #[cfg(test)]
+    pub fn target_key(&self) -> &str {
+        match self {
+            Self::Replace { key, .. } | Self::Remove { key } => key,
+            Self::MoveAndReplace { to, .. } => to,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn replacement(&self) -> Option<&Value> {
+        match self {
+            Self::Replace { replacement, .. } | Self::MoveAndReplace { replacement, .. } => {
+                Some(replacement)
+            }
+            Self::Remove { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PreparedLockMutation {
     pub target: ResourceLocator,
     pub legacy_target: Option<ResourceLocator>,
     pub schema: LockSchema,
-    pub skill_name: String,
-    pub replacement: Option<Value>,
+    pub entry: LockEntryMutation,
     pub root_replacements: BTreeMap<String, Value>,
     pub expected: LockExpectedState,
+}
+
+impl PreparedLockMutation {
+    #[cfg(test)]
+    pub fn skill_name(&self) -> &str {
+        self.entry.target_key()
+    }
+
+    #[cfg(test)]
+    pub fn replacement(&self) -> Option<&Value> {
+        self.entry.replacement()
+    }
 }
 
 pub struct LockPlanCommitter<I> {
@@ -89,21 +143,53 @@ where
         prepared: PreparedLockMutation,
     ) -> Result<LockCommitReceipt, AppError> {
         let mut latest = self.load_latest(&prepared).await?;
-        let expected_entry = prepared
-            .expected
-            .entry_snapshots
-            .get(&prepared.skill_name)
-            .ok_or_else(|| AppError::InvalidSource {
-                value: format!("lock plan did not capture Skill '{}'", prepared.skill_name),
+        for key in prepared.entry.affected_keys() {
+            let expected = prepared.expected.entry_snapshots.get(key).ok_or_else(|| {
+                AppError::InvalidSource {
+                    value: format!("lock plan did not capture Skill '{key}'"),
+                }
             })?;
-        match prepared.replacement {
-            Some(replacement) => latest.replace_entry(
+            latest.validate_entry_snapshot(key, expected)?;
+        }
+        match prepared.entry {
+            LockEntryMutation::Replace { key, replacement } => latest.replace_entry(
                 prepared.schema,
-                &prepared.skill_name,
-                expected_entry,
+                &key,
+                prepared
+                    .expected
+                    .entry_snapshots
+                    .get(&key)
+                    .expect("validated snapshot"),
                 replacement,
             )?,
-            None => latest.remove_entry(&prepared.skill_name, expected_entry)?,
+            LockEntryMutation::Remove { key } => latest.remove_entry(
+                &key,
+                prepared
+                    .expected
+                    .entry_snapshots
+                    .get(&key)
+                    .expect("validated snapshot"),
+            )?,
+            LockEntryMutation::MoveAndReplace {
+                from,
+                to,
+                replacement,
+            } => latest.move_and_replace_entry(
+                prepared.schema,
+                &from,
+                &to,
+                prepared
+                    .expected
+                    .entry_snapshots
+                    .get(&from)
+                    .expect("validated snapshot"),
+                prepared
+                    .expected
+                    .entry_snapshots
+                    .get(&to)
+                    .expect("validated snapshot"),
+                replacement,
+            )?,
         }
         for (field, replacement) in &prepared.root_replacements {
             let expected = prepared.expected.root_snapshots.get(field).ok_or_else(|| {
@@ -271,13 +357,15 @@ mod tests {
             target: locator(),
             legacy_target: None,
             schema: LockSchema::Project,
-            skill_name: "demo".to_string(),
-            replacement: Some(json!({
+            entry: LockEntryMutation::Replace {
+                key: "demo".to_string(),
+                replacement: json!({
                 "source": "new",
                 "sourceType": "local",
                 "computedHash": "new",
                 "remoteHash": "remote"
-            })),
+                }),
+            },
             root_replacements: Default::default(),
             expected,
         }
@@ -367,11 +455,87 @@ mod tests {
         expected.advance(&receipt);
 
         let mut second = mutation(expected);
-        second.replacement = Some(json!({
-            "source": "second",
-            "sourceType": "local",
-            "computedHash": "second"
-        }));
+        second.entry = LockEntryMutation::Replace {
+            key: "demo".to_string(),
+            replacement: json!({
+                "source": "second",
+                "sourceType": "local",
+                "computedHash": "second"
+            }),
+        };
         committer.commit(second).await.expect("second commit");
+    }
+
+    #[tokio::test]
+    async fn move_and_replace_validates_both_keys_and_preserves_old_unknown_fields() {
+        let (io, committer, document) = setup();
+        let expected = LockExpectedState::capture(
+            &document,
+            ["demo", "ce:review"],
+            std::iter::empty::<&str>(),
+        );
+        let prepared = PreparedLockMutation {
+            target: locator(),
+            legacy_target: None,
+            schema: LockSchema::Project,
+            entry: LockEntryMutation::MoveAndReplace {
+                from: "demo".to_string(),
+                to: "ce:review".to_string(),
+                replacement: json!({
+                    "source": "new",
+                    "sourceType": "well-known",
+                    "computedHash": "new"
+                }),
+            },
+            root_replacements: Default::default(),
+            expected,
+        };
+
+        committer.commit(prepared).await.expect("move entry");
+        let moved: Value =
+            serde_json::from_slice(&io.files.lock().unwrap()[&locator().native_path]).unwrap();
+        assert!(moved["skills"].get("demo").is_none());
+        assert_eq!(moved["skills"]["ce:review"]["source"], "new");
+        assert_eq!(moved["skills"]["ce:review"]["futureEntry"], 7);
+    }
+
+    #[tokio::test]
+    async fn move_and_replace_rejects_a_change_to_either_key_without_writing() {
+        for changed_key in ["demo", "ce:review"] {
+            let (io, committer, document) = setup();
+            let expected = LockExpectedState::capture(
+                &document,
+                ["demo", "ce:review"],
+                std::iter::empty::<&str>(),
+            );
+            let mut external = initial();
+            external["skills"][changed_key] = json!({ "source": "external" });
+            let external_bytes = serde_json::to_vec(&external).unwrap();
+            io.files
+                .lock()
+                .unwrap()
+                .insert(locator().native_path, external_bytes.clone());
+
+            let result = committer
+                .commit(PreparedLockMutation {
+                    target: locator(),
+                    legacy_target: None,
+                    schema: LockSchema::Project,
+                    entry: LockEntryMutation::MoveAndReplace {
+                        from: "demo".to_string(),
+                        to: "ce:review".to_string(),
+                        replacement: json!({ "source": "new" }),
+                    },
+                    root_replacements: Default::default(),
+                    expected,
+                })
+                .await;
+
+            assert!(matches!(result, Err(AppError::LockConflict { .. })));
+            assert_eq!(
+                io.files.lock().unwrap()[&locator().native_path],
+                external_bytes
+            );
+        }
     }
 }

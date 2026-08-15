@@ -191,6 +191,7 @@ impl RuntimeServiceGraph {
             github_tree_access,
             git_source.clone(),
             wsl_source.clone(),
+            network_services.wellknown(),
         )?;
         let agent_selection_facts =
             RuntimePlanningFactSource::for_current_user(registry.clone(), wsl.clone());
@@ -213,6 +214,7 @@ impl RuntimeServiceGraph {
             update_evidence.clone(),
             git_source.clone(),
             wsl_source.clone(),
+            network_services.wellknown(),
         );
         let update = build_runtime_update_service(
             payloads.clone(),

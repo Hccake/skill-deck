@@ -17,6 +17,7 @@ pub mod install_planner;
 pub mod install_runtime;
 pub mod install_wizard_session;
 pub mod install_wizard_workflow;
+pub mod installed_skill_resolver;
 pub mod manage_agents;
 pub mod manage_agents_runtime;
 pub mod mutation;

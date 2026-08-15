@@ -1319,6 +1319,7 @@ Content.
             ref_name: None,
             source_type: "github".to_string(),
             source_url: None,
+            well_known_digest: None,
             computed_hash: String::new(),
             remote_hash: Some("tree123".to_string()),
             skill_path: Some("skills/demo/SKILL.md".to_string()),

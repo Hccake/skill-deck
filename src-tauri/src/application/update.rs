@@ -181,6 +181,7 @@ pub fn derive_update_capability_from_metadata(
     capability.reason = match core.reason.as_deref() {
         None => None,
         Some("missing-remote-hash") => Some(UpdateCapabilityReasonCode::MissingRemoteHash),
+        Some("missing-source") => Some(UpdateCapabilityReasonCode::MissingSource),
         Some(_)
             if metadata.source.is_empty()
                 || metadata.skill_path.as_deref().unwrap_or("").is_empty() =>
@@ -946,6 +947,7 @@ mod tests {
                 skill_path: Some("skills/demo".to_string()),
                 remote_hash: None,
                 computed_hash: None,
+                well_known_digest: None,
             });
 
         assert_eq!(
@@ -1172,6 +1174,7 @@ mod tests {
     fn locked_update_skill(name: &str, source_url: &str) -> LockedUpdateSkill {
         LockedUpdateSkill {
             name: name.to_string(),
+            lock_key: name.to_string(),
             source: "owner/repo".to_string(),
             source_type: "github".to_string(),
             source_url: Some(source_url.to_string()),
@@ -1181,6 +1184,7 @@ mod tests {
             computed_hash: None,
             installed_at: None,
             subagents: None,
+            well_known_digest: None,
         }
     }
 
@@ -1194,6 +1198,7 @@ mod tests {
                     token: self.token.clone(),
                     source_candidates: vec![LockedUpdateSkill {
                         name: "demo".to_string(),
+                        lock_key: "demo".to_string(),
                         source: "owner/repo".to_string(),
                         source_type: "github".to_string(),
                         source_url: Some("https://github.com/owner/repo.git".to_string()),
@@ -1203,6 +1208,7 @@ mod tests {
                         computed_hash: None,
                         installed_at: None,
                         subagents: None,
+                        well_known_digest: None,
                     }],
                     skills: vec![
                         crate::application::update_planner::LocalUpdateSkillInspection {

@@ -237,6 +237,7 @@ fn source_evidence_key(source: &str) -> Result<Option<RemoteEvidenceKey>, AppErr
         skill_path: None,
         remote_hash: None,
         computed_hash: None,
+        well_known_digest: None,
     };
     let identity = SourceIdentity::from_metadata(&metadata)?;
     Ok(Some(RemoteEvidenceKey::from_identity(&identity)))

@@ -20,7 +20,7 @@ use crate::environment::planning::TargetFactResolver;
 use crate::environment::runtime::ObservedEntryId;
 use crate::environment::types::{ResourceLocator, SkillLocationRef};
 use crate::error::AppError;
-use crate::storage::lock_plan::{LockExpectedState, PreparedLockMutation};
+use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState, PreparedLockMutation};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -157,25 +157,22 @@ where
                     .collect(),
             })
             .collect();
-        let lock_mutation = (remove_canonical
-            && snapshot
-                .facts
-                .lock_document
-                .entry_snapshot(&request.skill_name)
-                .value()
-                .is_some())
-        .then(|| PreparedLockMutation {
-            target: snapshot.facts.resolved_context.lock.clone(),
-            legacy_target: None,
-            schema: snapshot.facts.lock_schema,
-            skill_name: request.skill_name.clone(),
-            replacement: None,
-            root_replacements: BTreeMap::new(),
-            expected: LockExpectedState::capture(
-                &snapshot.facts.lock_document,
-                [&request.skill_name],
-                std::iter::empty::<&str>(),
-            ),
+        let lock_key = &snapshot.resolved.lock_key;
+        let lock_mutation = (remove_canonical && snapshot.resolved.lock_entry_exists).then(|| {
+            PreparedLockMutation {
+                target: snapshot.facts.resolved_context.lock.clone(),
+                legacy_target: None,
+                schema: snapshot.facts.lock_schema,
+                entry: LockEntryMutation::Remove {
+                    key: lock_key.clone(),
+                },
+                root_replacements: BTreeMap::new(),
+                expected: LockExpectedState::capture(
+                    &snapshot.facts.lock_document,
+                    [lock_key],
+                    std::iter::empty::<&str>(),
+                ),
+            }
         });
         let plan = assemble_plan(MutationPlanDraft {
             kind: MutationKind::Remove,
@@ -261,7 +258,7 @@ fn remove_preview(
         snapshot
             .facts
             .lock_document
-            .entry_snapshot(skill_name)
+            .entry_snapshot(&snapshot.resolved.lock_key)
             .value()
             .cloned(),
     ))?;
