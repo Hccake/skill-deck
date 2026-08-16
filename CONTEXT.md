@@ -25,6 +25,13 @@ _Avoid_: 上游 CLI、Skill Deck CLI
 **Skill 来源（Source）**：
 Skill 内容的提供位置，例如 Git 仓库、本地目录或 Well-known 地址。一个来源可以包含一个或多个 Skill。
 
+**Well-known 来源**：
+通过约定地址提供 Skill 索引、制品声明和版本证据的 Skill 来源。
+
+**直接下载来源（Download Source）**：
+直接提供一个 `SKILL.md` 文件或 Skill 归档的网络来源，不提供 Well-known 索引。
+_Avoid_: 直接 URL 来源、制品来源
+
 **已安装 Skill**：
 已经安装到某个 Skill 位置并由 Skill Deck 管理的一份 Skill。Agent 能否读取它，取决于 Agent 的读取位置和该 Skill 的实际安装目录。
 
