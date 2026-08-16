@@ -41,8 +41,8 @@ case "$subcommand" in
       || fail 'Skill Deck requires readlink with -f and -- support in the WSL environment'
     stat -Lc '%d:%i:%f:%s:%Y:%y' -- / >/dev/null 2>&1 \
       || fail 'Skill Deck requires GNU-compatible stat in the WSL environment'
-    printf '3\0'; id -un | tr -d '\n'; printf '\0'; id -u | tr -d '\n'; printf '\0'
-    printf '%s\0' "$HOME" "${XDG_STATE_HOME:-}" "${XDG_CONFIG_HOME:-$HOME/.config}" "${CODEX_HOME:-}" "${CLAUDE_CONFIG_DIR:-}" "${VIBE_HOME:-}" "${HERMES_HOME:-}" "${AUTOHAND_HOME:-}"
+    printf '4\0'; id -un | tr -d '\n'; printf '\0'; id -u | tr -d '\n'; printf '\0'
+    printf '%s\0' "$HOME" "${XDG_STATE_HOME:-}" "${XDG_CONFIG_HOME:-$HOME/.config}" "${CODEX_HOME:-}" "${CLAUDE_CONFIG_DIR:-}" "${VIBE_HOME:-}" "${HERMES_HOME:-}" "${AUTOHAND_HOME:-}" "${GROK_HOME:-}"
     if [ "$probe_root_created" = 1 ]; then
       rm -rf -- "$probe_root" 2>/dev/null || true
     fi

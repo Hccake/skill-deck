@@ -13,10 +13,10 @@ Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两�
 | 项目 | 当前值 |
 |---|---|
 | 参考仓库 | `vercel-labs/skills` |
-| package 版本 | `1.5.13` |
-| Git tag | `v1.5.13` |
-| Git 提交 | `9a7d8acfbf29f9cced7fb5a504da1d65b484aed3` |
-| 开发依赖 | `skills: 1.5.13` |
+| package 版本 | `1.5.22` |
+| Git tag | `v1.5.22` |
+| Git 提交 | `a4d243c3d4f86cdf9385dd1b6a0733f6937e70b5` |
+| 开发依赖 | `skills: 1.5.22` |
 
 仓库通过精确固定的开发依赖运行兼容测试，桌面应用不会加载这个依赖。Eve 项目可以把 Skill 安装到根 Agent 或具名子 Agent；当前测试会调用实际 CLI，检查版本，并在离线临时项目中覆盖这两类位置、同时选择多个位置、只选择其他 Agent，以及从本机 Git 来源更新后重新安装。
 

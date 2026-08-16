@@ -53,10 +53,12 @@ pub enum AgentType {
     GeminiCli,
     GithubCopilot,
     Goose,
+    Grok,
     HermesAgent,
     IflowCli,
     Junie,
     Kilo,
+    Kimchi,
     KimiCodeCli,
     KiroCli,
     Kode,
@@ -65,6 +67,7 @@ pub enum AgentType {
     Lingma,
     Loaf,
     Mcpjam,
+    MiniMaxCode,
     MistralVibe,
     Moxby,
     Mux,
@@ -87,6 +90,7 @@ pub enum AgentType {
     Warp,
     Windsurf,
     Zed,
+    Zcode,
     Zencoder,
     Zenflow,
     Pochi,
@@ -129,10 +133,12 @@ impl std::fmt::Display for AgentType {
             Self::GeminiCli => "gemini-cli",
             Self::GithubCopilot => "github-copilot",
             Self::Goose => "goose",
+            Self::Grok => "grok",
             Self::HermesAgent => "hermes-agent",
             Self::IflowCli => "iflow-cli",
             Self::Junie => "junie",
             Self::Kilo => "kilo",
+            Self::Kimchi => "kimchi",
             Self::KimiCodeCli => "kimi-code-cli",
             Self::KiroCli => "kiro-cli",
             Self::Kode => "kode",
@@ -141,6 +147,7 @@ impl std::fmt::Display for AgentType {
             Self::Lingma => "lingma",
             Self::Loaf => "loaf",
             Self::Mcpjam => "mcpjam",
+            Self::MiniMaxCode => "minimax-code",
             Self::MistralVibe => "mistral-vibe",
             Self::Moxby => "moxby",
             Self::Mux => "mux",
@@ -163,6 +170,7 @@ impl std::fmt::Display for AgentType {
             Self::Warp => "warp",
             Self::Windsurf => "windsurf",
             Self::Zed => "zed",
+            Self::Zcode => "zcode",
             Self::Zencoder => "zencoder",
             Self::Zenflow => "zenflow",
             Self::Pochi => "pochi",
@@ -210,10 +218,12 @@ impl std::str::FromStr for AgentType {
             "gemini-cli" => Ok(Self::GeminiCli),
             "github-copilot" => Ok(Self::GithubCopilot),
             "goose" => Ok(Self::Goose),
+            "grok" => Ok(Self::Grok),
             "hermes-agent" => Ok(Self::HermesAgent),
             "iflow-cli" => Ok(Self::IflowCli),
             "junie" => Ok(Self::Junie),
             "kilo" => Ok(Self::Kilo),
+            "kimchi" => Ok(Self::Kimchi),
             "kimi-code-cli" | "kimi-cli" => Ok(Self::KimiCodeCli),
             "kiro-cli" => Ok(Self::KiroCli),
             "kode" => Ok(Self::Kode),
@@ -222,6 +232,7 @@ impl std::str::FromStr for AgentType {
             "lingma" => Ok(Self::Lingma),
             "loaf" => Ok(Self::Loaf),
             "mcpjam" => Ok(Self::Mcpjam),
+            "minimax-code" => Ok(Self::MiniMaxCode),
             "mistral-vibe" => Ok(Self::MistralVibe),
             "moxby" => Ok(Self::Moxby),
             "mux" => Ok(Self::Mux),
@@ -244,6 +255,7 @@ impl std::str::FromStr for AgentType {
             "warp" => Ok(Self::Warp),
             "windsurf" => Ok(Self::Windsurf),
             "zed" => Ok(Self::Zed),
+            "zcode" => Ok(Self::Zcode),
             "zencoder" => Ok(Self::Zencoder),
             "zenflow" => Ok(Self::Zenflow),
             "pochi" => Ok(Self::Pochi),
@@ -290,10 +302,12 @@ impl AgentType {
             Self::GeminiCli,
             Self::GithubCopilot,
             Self::Goose,
+            Self::Grok,
             Self::HermesAgent,
             Self::IflowCli,
             Self::Junie,
             Self::Kilo,
+            Self::Kimchi,
             Self::KimiCodeCli,
             Self::KiroCli,
             Self::Kode,
@@ -302,6 +316,7 @@ impl AgentType {
             Self::Lingma,
             Self::Loaf,
             Self::Mcpjam,
+            Self::MiniMaxCode,
             Self::MistralVibe,
             Self::Moxby,
             Self::Mux,
@@ -324,6 +339,7 @@ impl AgentType {
             Self::Warp,
             Self::Windsurf,
             Self::Zed,
+            Self::Zcode,
             Self::Zencoder,
             Self::Zenflow,
             Self::Pochi,
@@ -533,6 +549,12 @@ impl AgentType {
                 skills_dir: ".goose/skills",
                 global_skills_dir: Some(PATHS.config_home.join("goose").join("skills")),
             },
+            Self::Grok => AgentConfig {
+                name: "grok",
+                display_name: "Grok Build",
+                skills_dir: ".grok/skills",
+                global_skills_dir: Some(Self::grok_home().join("skills")),
+            },
             Self::HermesAgent => AgentConfig {
                 name: "hermes-agent",
                 display_name: "Hermes Agent",
@@ -556,6 +578,19 @@ impl AgentType {
                 display_name: "Kilo Code",
                 skills_dir: ".kilocode/skills",
                 global_skills_dir: Some(PATHS.home.join(".kilocode").join("skills")),
+            },
+            Self::Kimchi => AgentConfig {
+                name: "kimchi",
+                display_name: "Kimchi",
+                skills_dir: ".kimchi/skills",
+                global_skills_dir: Some(
+                    PATHS
+                        .home
+                        .join(".config")
+                        .join("kimchi")
+                        .join("harness")
+                        .join("skills"),
+                ),
             },
             Self::KimiCodeCli => AgentConfig {
                 name: "kimi-code-cli",
@@ -604,6 +639,12 @@ impl AgentType {
                 display_name: "MCPJam",
                 skills_dir: ".mcpjam/skills",
                 global_skills_dir: Some(PATHS.home.join(".mcpjam").join("skills")),
+            },
+            Self::MiniMaxCode => AgentConfig {
+                name: "minimax-code",
+                display_name: "MiniMax Code",
+                skills_dir: ".minimax/skills",
+                global_skills_dir: Some(PATHS.home.join(".minimax").join("skills")),
             },
             Self::MistralVibe => AgentConfig {
                 name: "mistral-vibe",
@@ -739,6 +780,12 @@ impl AgentType {
                 skills_dir: ".agents/skills",
                 global_skills_dir: Some(PATHS.home.join(".agents").join("skills")),
             },
+            Self::Zcode => AgentConfig {
+                name: "zcode",
+                display_name: "ZCode",
+                skills_dir: ".zcode/skills",
+                global_skills_dir: Some(PATHS.home.join(".zcode").join("skills")),
+            },
             Self::Zencoder => AgentConfig {
                 name: "zencoder",
                 display_name: "Zencoder",
@@ -829,6 +876,15 @@ impl AgentType {
             .unwrap_or_else(|| PATHS.home.join(".autohand"))
     }
 
+    fn grok_home() -> PathBuf {
+        std::env::var("GROK_HOME")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PATHS.home.join(".grok"))
+    }
+
     /// 检测 Agent 是否已安装
     /// 完整对应 CLI: 每个 agent 的 detectInstalled 函数
     #[cfg(test)]
@@ -876,10 +932,12 @@ impl AgentType {
             Self::GeminiCli => PATHS.home.join(".gemini").exists(),
             Self::GithubCopilot => PATHS.home.join(".copilot").exists(),
             Self::Goose => PATHS.config_home.join("goose").exists(),
+            Self::Grok => Self::grok_home().exists(),
             Self::HermesAgent => Self::hermes_home().exists(),
             Self::IflowCli => PATHS.home.join(".iflow").exists(),
             Self::Junie => PATHS.home.join(".junie").exists(),
             Self::Kilo => PATHS.home.join(".kilocode").exists(),
+            Self::Kimchi => PATHS.home.join(".config").join("kimchi").exists(),
             Self::KimiCodeCli => {
                 PATHS.home.join(".kimi-code").exists() || PATHS.home.join(".kimi").exists()
             }
@@ -890,6 +948,10 @@ impl AgentType {
             Self::Lingma => PATHS.home.join(".lingma").exists(),
             Self::Loaf => PATHS.home.join(".loaf").exists(),
             Self::Mcpjam => PATHS.home.join(".mcpjam").exists(),
+            Self::MiniMaxCode => {
+                PATHS.home.join(".minimax").exists()
+                    || std::path::Path::new("/Applications/MiniMax Code.app").exists()
+            }
             Self::MistralVibe => Self::mistral_vibe_home().exists(),
             Self::Moxby => PATHS.home.join(".moxby").exists(),
             Self::Mux => PATHS.home.join(".mux").exists(),
@@ -924,6 +986,10 @@ impl AgentType {
                         .map(|value| PathBuf::from(value).join("zed").exists())
                         .unwrap_or(false)
             }
+            Self::Zcode => {
+                PATHS.home.join(".zcode").exists()
+                    || std::path::Path::new("/Applications/ZCode.app").exists()
+            }
             Self::Zencoder => PATHS.home.join(".zencoder").exists(),
             Self::Zenflow => PATHS.home.join(".zencoder").exists(),
             Self::Pochi => PATHS.home.join(".pochi").exists(),
@@ -945,16 +1011,16 @@ impl AgentType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    mod cli_1_5_10 {
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    mod cli_compatibility {
         use super::*;
-        use std::sync::Mutex;
-
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
 
         #[test]
-        fn test_cli_1_5_10_agent_count() {
-            assert_eq!(AgentType::all().count(), 71);
+        fn current_cli_agent_count_is_complete() {
+            assert_eq!(AgentType::all().count(), 75);
         }
 
         #[test]
@@ -1017,6 +1083,25 @@ mod tests {
             match original {
                 Some(value) => std::env::set_var("AUTOHAND_HOME", value),
                 None => std::env::remove_var("AUTOHAND_HOME"),
+            }
+        }
+
+        #[test]
+        fn grok_home_env_is_used_for_global_skills_dir() {
+            let _guard = ENV_LOCK.lock().unwrap();
+            let original = std::env::var_os("GROK_HOME");
+            let temp = tempfile::tempdir().unwrap();
+            std::env::set_var("GROK_HOME", temp.path());
+
+            let config = AgentType::Grok.config();
+            assert_eq!(
+                config.global_skills_dir.as_deref(),
+                Some(temp.path().join("skills").as_path())
+            );
+
+            match original {
+                Some(value) => std::env::set_var("GROK_HOME", value),
+                None => std::env::remove_var("GROK_HOME"),
             }
         }
 
@@ -1088,9 +1173,58 @@ mod tests {
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
         assert_eq!(
-            count, 71,
-            "Should have 71 real agent types after syncing CLI 1.5.13"
+            count, 75,
+            "Should have 75 real agent types after syncing CLI 1.5.22"
         );
+    }
+
+    #[test]
+    fn cli_1_5_22_agents_are_parseable_and_configured() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original_grok_home = std::env::var_os("GROK_HOME");
+        std::env::remove_var("GROK_HOME");
+        let agents = [
+            (
+                "grok",
+                "Grok Build",
+                ".grok/skills",
+                PATHS.home.join(".grok/skills"),
+            ),
+            (
+                "kimchi",
+                "Kimchi",
+                ".kimchi/skills",
+                PATHS.home.join(".config/kimchi/harness/skills"),
+            ),
+            (
+                "minimax-code",
+                "MiniMax Code",
+                ".minimax/skills",
+                PATHS.home.join(".minimax/skills"),
+            ),
+            (
+                "zcode",
+                "ZCode",
+                ".zcode/skills",
+                PATHS.home.join(".zcode/skills"),
+            ),
+        ];
+
+        for (id, display_name, project_path, global_path) in agents {
+            let agent: AgentType = id.parse().expect("v1.5.22 Agent must be registered");
+            let config = agent.config();
+
+            assert_eq!(agent.to_string(), id);
+            assert_eq!(config.name, id);
+            assert_eq!(config.display_name, display_name);
+            assert_eq!(config.skills_dir, project_path);
+            assert_eq!(config.global_skills_dir, Some(global_path));
+        }
+
+        match original_grok_home {
+            Some(value) => std::env::set_var("GROK_HOME", value),
+            None => std::env::remove_var("GROK_HOME"),
+        }
     }
 
     #[test]

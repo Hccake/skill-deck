@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **新增直接下载来源** — 可以从原始 `SKILL.md` 文件和 ZIP、tar、tar.gz 归档地址安装 Skill，并在跨主机重定向时确认最终下载主机。
+- **扩展 Agent 支持** — 随应用提供 Grok Build、Kimchi、MiniMax Code 和 ZCode 的 Skill 读取位置与检测信息。
+
+### Changed
+
+- **改进 Skill 集合的发现与选择** — 常见 Skill 容器目录支持更深的分类层级；`skills.sh` Pack 默认选中其中全部 Skill，并继续允许用户在安装前调整选择。
+
 ## [1.7.0] - 2026-08-13
 
 ### Added

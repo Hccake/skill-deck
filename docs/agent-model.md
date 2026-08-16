@@ -57,7 +57,7 @@ Agent 在全局或 Project 中使用的扫描方式由以下稳定值表示：
 
 Agent 在全局和 Project 中分别声明支持情况和扫描方式，`Both` 表示该 Agent 在其中一种场景下同时扫描通用 Skill 目录和 Agent 专用 Skill 目录。界面使用相应的中文说明，并分开展示检测结果和目录检查结果。
 
-这些信息只保存跨 Environment 共享的声明。实际路径、检测结果和目录状态在当前 Environment 中解析；切换 Environment 后，同一份信息会得到新的运行时结果。符号链接或复制属于每次 Skill 安装和维护操作，见[Skill 生命周期](./skill-lifecycle.md)。
+注册表中的 Skill 读取位置和 Agent 检测位置在所有 Environment 间共享。实际路径、检测结果和目录状态在当前 Environment 中解析；切换 Environment 后，同一份声明会得到新的运行时结果。符号链接或复制属于每次 Skill 安装和维护操作，见[Skill 生命周期](./skill-lifecycle.md)。
 
 ### 自定义路径
 

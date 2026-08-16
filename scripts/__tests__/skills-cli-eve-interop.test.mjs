@@ -134,7 +134,7 @@ test("uses the pinned Vercel Skills CLI", () => {
     env: cliEnvironment(join(repoRoot, ".tmp-skills-cli-home")),
   });
 
-  assert.equal(result.stdout.trim(), "1.5.13");
+  assert.equal(result.stdout.trim(), "1.5.22");
 });
 
 test("installs Eve root placement without writing redundant metadata", async (t) => {
@@ -194,7 +194,7 @@ test("does not create Eve placement when Eve is not targeted", async (t) => {
 
 test("replays Eve placement when updating from an offline Git source", async (t) => {
   const fixture = await createFixture(t);
-  const gitSource = join(fixture.root, "source-repository");
+  const gitSource = join(fixture.root, "source-repository.git");
   await writeSkill(gitSource, "version one");
   run("git", ["init"], { cwd: gitSource });
   run("git", ["config", "user.email", "skill-deck@example.invalid"], { cwd: gitSource });

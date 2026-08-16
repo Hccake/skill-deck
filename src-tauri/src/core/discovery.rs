@@ -37,10 +37,13 @@ const CLI_AGENT_PROJECT_SKILL_DIRS: &[&str] = &[
     ".continue/skills",
     ".github/skills",
     ".goose/skills",
+    ".grok/skills",
     ".iflow/skills",
     ".junie/skills",
+    ".kimchi/skills",
     ".kilocode/skills",
     ".kiro/skills",
+    ".minimax/skills",
     ".mux/skills",
     ".neovate/skills",
     ".opencode/skills",
@@ -50,6 +53,7 @@ const CLI_AGENT_PROJECT_SKILL_DIRS: &[&str] = &[
     ".roo/skills",
     ".trae/skills",
     ".windsurf/skills",
+    ".zcode/skills",
     ".zencoder/skills",
 ];
 
@@ -1055,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    fn test_priority_search_dirs_match_cli_1_5_9_agent_dirs() {
+    fn priority_search_dirs_match_cli_1_5_22_agent_dirs() {
         let temp = tempdir().unwrap();
         let dirs = get_priority_search_dirs(temp.path());
         let expected = [
@@ -1068,10 +1072,13 @@ mod tests {
             ".continue/skills",
             ".github/skills",
             ".goose/skills",
+            ".grok/skills",
             ".iflow/skills",
             ".junie/skills",
+            ".kimchi/skills",
             ".kilocode/skills",
             ".kiro/skills",
+            ".minimax/skills",
             ".mux/skills",
             ".neovate/skills",
             ".opencode/skills",
@@ -1081,6 +1088,7 @@ mod tests {
             ".roo/skills",
             ".trae/skills",
             ".windsurf/skills",
+            ".zcode/skills",
             ".zencoder/skills",
         ];
 

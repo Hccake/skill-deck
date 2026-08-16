@@ -1071,7 +1071,7 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
     if fields.last().is_some_and(String::is_empty) {
         fields.pop();
     }
-    if fields.len() != 11 || fields.first().map(String::as_str) != Some("3") {
+    if fields.len() != 12 || fields.first().map(String::as_str) != Some("4") {
         return Err(AppError::Custom {
             message: "invalid WSL session response".to_string(),
         });
@@ -1082,6 +1082,7 @@ pub fn parse_wsl_session_output(distro_name: &str, bytes: &[u8]) -> Result<WslSe
         ("VIBE_HOME", 8),
         ("HERMES_HOME", 9),
         ("AUTOHAND_HOME", 10),
+        ("GROK_HOME", 11),
     ]
     .into_iter()
     .filter(|(_, index)| !fields[*index].is_empty())
@@ -1941,7 +1942,7 @@ mod tests {
 
     #[test]
     fn parses_versioned_session_output() {
-        let output = b"3\0alice\x001000\0/home/alice\0/home/alice/.state\0/home/alice/.config\0/opt/codex\0/opt/claude\0\0\0\0";
+        let output = b"4\0alice\x001000\0/home/alice\0/home/alice/.state\0/home/alice/.config\0/opt/codex\0/opt/claude\0\0\0\0/opt/grok\0";
         let session = parse_wsl_session_output("Ubuntu", output).expect("parse session");
 
         assert_eq!(session.user, "alice");
@@ -1954,6 +1955,7 @@ mod tests {
         assert_eq!(session.config_home, "/home/alice/.config");
         assert_eq!(session.environment["CODEX_HOME"], "/opt/codex");
         assert_eq!(session.environment["CLAUDE_CONFIG_DIR"], "/opt/claude");
+        assert_eq!(session.environment["GROK_HOME"], "/opt/grok");
     }
 
     #[test]
@@ -1961,6 +1963,7 @@ mod tests {
         for output in [
             b"1\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\x001\0".as_slice(),
             b"2\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\x001\x001\x001\x001\x001\x001\0".as_slice(),
+            b"3\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0".as_slice(),
         ] {
             assert!(parse_wsl_session_output("Ubuntu", output).is_err());
         }
@@ -1969,10 +1972,10 @@ mod tests {
     #[test]
     fn rejects_invalid_current_session_payloads() {
         for output in [
-            b"3\0alice\0not-a-uid\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0".as_slice(),
-            b"3\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0unexpected\0"
+            b"4\0alice\0not-a-uid\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0\0".as_slice(),
+            b"4\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0\0unexpected\0"
                 .as_slice(),
-            b"3\0\xff\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0".as_slice(),
+            b"4\0\xff\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0\0".as_slice(),
         ] {
             assert!(parse_wsl_session_output("Ubuntu", output).is_err());
         }
@@ -2000,7 +2003,8 @@ mod tests {
                 .arg("-c")
                 .arg(include_str!("wsl/scripts/session.sh"))
                 .arg("--")
-                .arg("session"),
+                .arg("session")
+                .env("GROK_HOME", "/opt/grok"),
             std::time::Duration::from_secs(10),
         )
         .expect("session script");
@@ -2010,11 +2014,12 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(output.stdout.starts_with(b"3\0"));
+        assert!(output.stdout.starts_with(b"4\0"));
         let session = parse_wsl_session_output("Ubuntu", &output.stdout)
             .expect("parse bundled session output");
         assert!(!session.user.is_empty());
         assert!(session.home.starts_with('/'));
+        assert_eq!(session.environment["GROK_HOME"], "/opt/grok");
     }
 
     #[cfg(target_os = "linux")]
@@ -2169,7 +2174,7 @@ printf '/\n'
 
     #[test]
     fn parses_empty_xdg_state_home_without_shifting_fields() {
-        let output = b"3\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0";
+        let output = b"4\0alice\x001000\0/home/alice\0\0/home/alice/.config\0\0\0\0\0\0\0";
         let session = parse_wsl_session_output("Ubuntu", output).expect("parse session");
 
         assert_eq!(session.xdg_state_home, None);

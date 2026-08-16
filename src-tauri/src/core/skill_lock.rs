@@ -295,7 +295,7 @@ mod tests {
         AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, PathSpec,
         ScopeDefinition,
     };
-    use crate::core::agent_registry::AgentRegistrySnapshot;
+    use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
     use once_cell::sync::Lazy;
     use std::collections::BTreeMap;
     use std::sync::Mutex;
@@ -738,6 +738,47 @@ mod tests {
 
         assert_eq!(defaults.global, vec!["cursor"]);
         assert_eq!(defaults.project, vec!["opencode"]);
+    }
+
+    #[test]
+    fn cli_agent_ids_are_preserved_while_effective_targets_use_the_registry() {
+        let lock = parse_skill_lock_file(
+            r#"{
+                "version": 3,
+                "skills": {},
+                "lastSelectedAgents": [
+                    "grok", "kimchi", "minimax-code", "zcode", "future-agent"
+                ],
+                "defaultTargetAgents": {
+                    "global": ["minimax-code", "future-agent", "grok", "codebuddy"],
+                    "project": ["zcode", "future-agent", "kimchi"]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            lock.last_selected_agents,
+            Some(vec![
+                "grok".to_string(),
+                "kimchi".to_string(),
+                "minimax-code".to_string(),
+                "zcode".to_string(),
+                "future-agent".to_string(),
+            ])
+        );
+        let stored = lock.default_target_agents.unwrap();
+        assert!(stored.global.contains(&"future-agent".to_string()));
+        assert!(stored.project.contains(&"future-agent".to_string()));
+
+        let registry = AgentRegistry::new(Vec::new());
+        assert_eq!(
+            effective_default_target_agents(&stored, registry.snapshot()),
+            DefaultTargetAgents {
+                global: vec!["minimax-code".to_string(), "codebuddy".to_string()],
+                project: vec!["zcode".to_string()],
+            }
+        );
     }
 
     #[test]

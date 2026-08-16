@@ -2049,6 +2049,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wsl_environment_variable_path_uses_the_session_value() {
+        let environment_path = PathSpec::EnvironmentVariable {
+            name: "GROK_HOME".to_string(),
+            relative_path: "skills".to_string(),
+            fallback: Box::new(PathSpec::home(".grok/skills")),
+        };
+        let snapshot = registry(
+            "registry-1",
+            vec![definition(
+                "grok",
+                scope(true, true, Some(environment_path)),
+                scope(false, false, None),
+                vec![PathSpec::EnvironmentVariable {
+                    name: "GROK_HOME".to_string(),
+                    relative_path: String::new(),
+                    fallback: Box::new(PathSpec::home(".grok")),
+                }],
+            )],
+        );
+        let mut context = runtime_context(
+            EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            },
+            EnvironmentStatus::Available,
+            "environment-1",
+        );
+        context
+            .environment_variables
+            .insert("GROK_HOME".to_string(), "/opt/grok".to_string());
+        let (resolver, _) = resolver_with_present_paths(context, ["/opt/grok", "/opt/grok/skills"]);
+
+        let resolved = resolver.resolve_registry(&snapshot, None).await.unwrap();
+        let grok = &resolved.agents[&AgentId::parse("grok").unwrap()];
+
+        assert_eq!(
+            grok.global.private_path.as_deref(),
+            Some("/opt/grok/skills")
+        );
+        assert_eq!(grok.detection, super::DetectionState::Detected);
+    }
+
+    #[tokio::test]
     async fn first_existing_uses_the_first_present_candidate_and_stable_fallback() {
         let snapshot = registry(
             "registry-1",

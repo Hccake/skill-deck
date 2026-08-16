@@ -2653,7 +2653,10 @@ mod tests {
             home: "/home/alice".to_string(),
             xdg_state_home: Some("/home/alice/.local/state".to_string()),
             config_home: "/home/alice/.config".to_string(),
-            environment: BTreeMap::from([("CODEX_HOME".to_string(), "/opt/codex".to_string())]),
+            environment: BTreeMap::from([
+                ("CODEX_HOME".to_string(), "/opt/codex".to_string()),
+                ("GROK_HOME".to_string(), "/opt/grok".to_string()),
+            ]),
             runtime_generation: 0,
         };
         let resolved = ResolvedContext {
@@ -2697,6 +2700,7 @@ mod tests {
         assert_eq!(context.home, "/home/alice");
         assert_eq!(context.config_home, "/home/alice/.config");
         assert_eq!(context.environment_variables["CODEX_HOME"], "/opt/codex");
+        assert_eq!(context.environment_variables["GROK_HOME"], "/opt/grok");
         assert_eq!(context.wsl_workspace, Some(workspace));
         assert_ne!(context.revision, "compatibility-native");
     }

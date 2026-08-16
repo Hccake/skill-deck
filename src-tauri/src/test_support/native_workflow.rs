@@ -44,8 +44,8 @@ use crate::application::update::{
 };
 use crate::application::update_planner::ConcreteUpdatePlanner;
 use crate::core::agent_definition::{
-    AgentAdapter, AgentDefinition, AgentId, AgentSource, CustomAgentDefinition, CustomPathBase,
-    CustomPathSpec, CustomScopeDefinition, DetectionSpec, PathSpec, ScopeDefinition, ScopeLocation,
+    AgentDefinition, AgentId, CustomAgentDefinition, CustomPathBase, CustomPathSpec,
+    CustomScopeDefinition, ScopeLocation,
 };
 use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
 use crate::core::agent_settings::CustomAgentRecord;
@@ -385,7 +385,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
     let config_home = root.join("config");
 
     for project in [&source_project, &target_project] {
-        fs::create_dir_all(project.join(".builtin"))?;
+        fs::create_dir_all(project.join(".codebuddy"))?;
+        fs::create_dir_all(project.join(".minimax"))?;
         fs::create_dir_all(project.join(".custom"))?;
     }
     fs::create_dir_all(source_project.join("agent/subagents/research/skills"))?;
@@ -503,7 +504,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         &selection_facts.agent_runtime,
         &selection_facts.eve_targets,
         &targets,
-        &["builtin-test", "custom-test", "eve"],
+        &["codebuddy", "minimax-code", "custom-test", "eve"],
         InstallMode::Copy,
     )
     .await;
@@ -534,7 +535,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .await?;
     assert_succeeded(&installed.units);
     assert_payload_tree(&source_project.join(".agents/skills/demo"), "v1")?;
-    assert_payload_tree(&source_project.join(".builtin/skills/demo"), "v1")?;
+    assert_payload_tree(&source_project.join(".codebuddy/skills/demo"), "v1")?;
+    assert_payload_tree(&source_project.join(".minimax/skills/demo"), "v1")?;
     assert_payload_tree(&source_project.join(".custom/skills/demo"), "v1")?;
     assert!(source_project
         .join("agent/subagents/research/skills/demo")
@@ -560,7 +562,7 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         owners,
-        BTreeSet::from(["builtin-test", "custom-test", "eve"])
+        BTreeSet::from(["codebuddy", "custom-test", "eve", "minimax-code"])
     );
 
     let update = UpdateService::new(
@@ -598,7 +600,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
             .collect::<Vec<_>>(),
     );
     assert_payload_tree(&source_project.join(".agents/skills/demo"), "v2")?;
-    assert_payload_tree(&source_project.join(".builtin/skills/demo"), "v2")?;
+    assert_payload_tree(&source_project.join(".codebuddy/skills/demo"), "v2")?;
+    assert_payload_tree(&source_project.join(".minimax/skills/demo"), "v2")?;
     assert_payload_tree(&source_project.join(".custom/skills/demo"), "v2")?;
     assert!(source_project
         .join("agent/subagents/research/skills/demo")
@@ -623,13 +626,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .iter()
         .filter(|entry| {
             entry.public.owners.iter().any(|owner| {
-                matches!(owner.agent_id.as_str(), "builtin-test" | "custom-test")
-                    || owner.logical_target_id.starts_with("eve:")
+                matches!(
+                    owner.agent_id.as_str(),
+                    "codebuddy" | "minimax-code" | "custom-test"
+                ) || owner.logical_target_id.starts_with("eve:")
             })
         })
         .map(|entry| entry.public.entry_id.clone())
         .collect::<Vec<_>>();
-    assert_eq!(removed_entries.len(), 4, "four physical Agent entries");
+    assert_eq!(removed_entries.len(), 5, "five physical Agent entries");
     let manage_selection = manage.selection(&source_context, "demo").await?;
     let remove_all_selection = manage_submission(&manage_selection, |_| false, InstallMode::Copy);
     let manage_preview_request = ManageAgentsPreviewRequest {
@@ -660,7 +665,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         stale_error,
         AppError::StaleContext | AppError::StaleTarget
     ));
-    assert!(source_project.join(".builtin/skills/demo").exists());
+    assert!(source_project.join(".codebuddy/skills/demo").exists());
+    assert!(source_project.join(".minimax/skills/demo").exists());
     assert!(source_project.join(".custom/skills/demo").exists());
 
     let refreshed_entries = observer
@@ -670,13 +676,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .into_iter()
         .filter(|entry| {
             entry.public.owners.iter().any(|owner| {
-                matches!(owner.agent_id.as_str(), "builtin-test" | "custom-test")
-                    || owner.logical_target_id.starts_with("eve:")
+                matches!(
+                    owner.agent_id.as_str(),
+                    "codebuddy" | "minimax-code" | "custom-test"
+                ) || owner.logical_target_id.starts_with("eve:")
             })
         })
         .map(|entry| entry.public.entry_id)
         .collect::<Vec<_>>();
-    assert_eq!(refreshed_entries.len(), 4);
+    assert_eq!(refreshed_entries.len(), 5);
     let refreshed_selection = manage.selection(&source_context, "demo").await?;
     let refreshed_submission =
         manage_submission(&refreshed_selection, |_| false, InstallMode::Copy);
@@ -713,7 +721,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .await?;
     assert_eq!(failed.units.len(), 1, "Manage Agents failure stays atomic");
     assert_eq!(failed.units[0].status, MutationUnitStatus::Failed);
-    assert!(source_project.join(".builtin/skills/demo").exists());
+    assert!(source_project.join(".codebuddy/skills/demo").exists());
+    assert!(source_project.join(".minimax/skills/demo").exists());
     assert!(source_project.join(".custom/skills/demo").exists());
     assert!(source_project
         .join(".custom/skills/demo/external-change.txt")
@@ -758,7 +767,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .await?;
     assert_eq!(lock_failed.units[0].status, MutationUnitStatus::Failed);
     assert!(lock_attempted.load(std::sync::atomic::Ordering::SeqCst));
-    assert!(source_project.join(".builtin/skills/demo").exists());
+    assert!(source_project.join(".codebuddy/skills/demo").exists());
+    assert!(source_project.join(".minimax/skills/demo").exists());
     assert!(source_project.join(".custom/skills/demo").exists());
     assert!(source_project
         .join("agent/subagents/research/skills/demo")
@@ -834,13 +844,15 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .into_iter()
         .filter(|entry| {
             entry.public.owners.iter().any(|owner| {
-                matches!(owner.agent_id.as_str(), "builtin-test" | "custom-test")
-                    || owner.logical_target_id == "eve:root"
+                matches!(
+                    owner.agent_id.as_str(),
+                    "codebuddy" | "minimax-code" | "custom-test"
+                ) || owner.logical_target_id == "eve:root"
             })
         })
         .map(|entry| entry.public.entry_id)
         .collect::<Vec<_>>();
-    assert_eq!(remaining_entries.len(), 3);
+    assert_eq!(remaining_entries.len(), 4);
     let final_selection = manage.selection(&source_context, "demo").await?;
     let final_submission = manage_submission(&final_selection, |_| false, InstallMode::Copy);
     let final_manage_request = ManageAgentsPreviewRequest {
@@ -868,7 +880,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         "Manage Agents must stay atomic per Skill"
     );
     assert_succeeded(&managed.units);
-    assert!(!source_project.join(".builtin/skills/demo").exists());
+    assert!(!source_project.join(".codebuddy/skills/demo").exists());
+    assert!(!source_project.join(".minimax/skills/demo").exists());
     assert!(!source_project.join(".custom/skills/demo").exists());
     assert!(!source_project
         .join("agent/subagents/research/skills/demo")
@@ -938,10 +951,9 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
                 .install_options
                 .iter()
                 .filter(|option| {
-                    option
-                        .agent_ids
-                        .iter()
-                        .any(|agent| matches!(agent.as_str(), "builtin-test" | "custom-test"))
+                    option.agent_ids.iter().any(|agent| {
+                        matches!(agent.as_str(), "codebuddy" | "minimax-code" | "custom-test")
+                    })
                 })
                 .map(|option| option.id.clone())
                 .collect(),
@@ -966,7 +978,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .await?;
     assert_succeeded(&copied.units);
     assert_payload_tree(&target_project.join(".agents/skills/demo"), "v2")?;
-    assert_payload_tree(&target_project.join(".builtin/skills/demo"), "v2")?;
+    assert_payload_tree(&target_project.join(".codebuddy/skills/demo"), "v2")?;
+    assert_payload_tree(&target_project.join(".minimax/skills/demo"), "v2")?;
     assert_payload_tree(&target_project.join(".custom/skills/demo"), "v2")?;
     let target_lock = read_json(&target_project.join("skills-lock.json"))?;
     assert_eq!(target_lock["targetFutureRoot"], "keep");
@@ -998,7 +1011,8 @@ async fn run_native_workflow_integration() -> Result<(), AppError> {
         .await?;
     assert_succeeded(&removed.units);
     assert!(!source_project.join(".agents/skills/demo").exists());
-    assert!(!source_project.join(".builtin/skills/demo").exists());
+    assert!(!source_project.join(".codebuddy/skills/demo").exists());
+    assert!(!source_project.join(".minimax/skills/demo").exists());
     assert_no_staging_leaks(root)?;
     assert_recovery_graph_is_empty(&recovery_root)?;
     Ok(())
@@ -1033,23 +1047,8 @@ fn project_context(id: &str) -> SkillLocationRef {
 }
 
 pub(crate) fn test_registry() -> AgentRegistrySnapshot {
-    let builtin = AgentDefinition {
-        id: AgentId::parse("builtin-test").expect("built-in id"),
-        display_name: "Built-in Test".to_string(),
-        source: AgentSource::Builtin,
-        aliases: Vec::new(),
-        global: disabled_scope(),
-        project: ScopeDefinition {
-            enabled: true,
-            reads_standard: true,
-            private_path: Some(PathSpec::project(".builtin/skills")),
-        },
-        detection: DetectionSpec::AnyPathExists {
-            paths: vec![PathSpec::project(".builtin")],
-        },
-        legacy_paths: Vec::new(),
-        adapter: AgentAdapter::Standard,
-    };
+    let codebuddy = builtin_definition("codebuddy");
+    let minimax = builtin_definition("minimax-code");
     let custom = CustomAgentDefinition {
         id: AgentId::parse("custom-test").expect("custom id"),
         display_name: "Custom Test".to_string(),
@@ -1068,21 +1067,20 @@ pub(crate) fn test_registry() -> AgentRegistrySnapshot {
         },
         detection_paths: vec![CustomPathSpec::based(CustomPathBase::Project, ".custom")],
     };
-    let eve = builtin_agent_definitions()
-        .into_iter()
-        .find(|definition| definition.id.as_str() == "eve")
-        .expect("built-in Eve definition");
-    AgentRegistry::build(vec![builtin, eve], vec![CustomAgentRecord::valid(custom)])
-        .snapshot()
-        .clone()
+    let eve = builtin_definition("eve");
+    AgentRegistry::build(
+        vec![codebuddy, minimax, eve],
+        vec![CustomAgentRecord::valid(custom)],
+    )
+    .snapshot()
+    .clone()
 }
 
-fn disabled_scope() -> ScopeDefinition {
-    ScopeDefinition {
-        enabled: false,
-        reads_standard: false,
-        private_path: None,
-    }
+fn builtin_definition(id: &str) -> AgentDefinition {
+    builtin_agent_definitions()
+        .into_iter()
+        .find(|definition| definition.id.as_str() == id)
+        .unwrap_or_else(|| panic!("missing built-in Agent definition for {id}"))
 }
 
 fn manage_submission(
@@ -1396,7 +1394,8 @@ async fn direct_download_flows_from_http_discovery_through_install_without_lock(
     let projects_path = temp.path().join("state/projects.json");
     let global_lock_path = temp.path().join("state/global-lock.json");
     let recovery_root = temp.path().join("recovery");
-    fs::create_dir_all(project_path.join(".builtin")).unwrap();
+    fs::create_dir_all(project_path.join(".codebuddy")).unwrap();
+    fs::create_dir_all(project_path.join(".minimax")).unwrap();
     write_json(
         &projects_path,
         &json!({
@@ -1799,8 +1798,10 @@ mod update_lifecycle {
             let recovery_root = root.path().join("recovery");
             let home = root.path().join("home");
             let config_home = root.path().join("config");
-            fs::create_dir_all(project_path.join(".builtin"))
-                .expect("create built-in fixture root");
+            fs::create_dir_all(project_path.join(".codebuddy"))
+                .expect("create CodeBuddy fixture root");
+            fs::create_dir_all(project_path.join(".minimax"))
+                .expect("create MiniMax Code fixture root");
             fs::create_dir_all(project_path.join(".custom")).expect("create custom fixture root");
             fs::create_dir_all(projects_path.parent().expect("state parent"))
                 .expect("create state root");
@@ -1961,7 +1962,7 @@ mod update_lifecycle {
                     &selection_facts.agent_runtime,
                     &selection_facts.eve_targets,
                     &self.targets,
-                    &["builtin-test", "custom-test"],
+                    &["codebuddy", "minimax-code", "custom-test"],
                     InstallMode::Copy,
                 )
                 .await;
@@ -1994,7 +1995,7 @@ mod update_lifecycle {
             }
             assert_eq!(self.clone_count(), 1);
             fs::write(
-                self.project_path.join(".builtin/skills/alpha/SKILL.md"),
+                self.project_path.join(".codebuddy/skills/alpha/SKILL.md"),
                 b"local alpha conflict\n",
             )
             .expect("write preserved conflict");
@@ -2085,7 +2086,7 @@ mod update_lifecycle {
                 .preview(&request)
                 .await
                 .expect("confirm update preview");
-            assert_eq!(preview.skills[0].clean_copy_count, 1);
+            assert_eq!(preview.skills[0].clean_copy_count, 2);
             assert_eq!(preview.skills[0].overwrite_private_entries.len(), 1);
             let response = service
                 .execute(
@@ -2099,7 +2100,7 @@ mod update_lifecycle {
                 .await
                 .expect("confirm lifecycle update");
             assert_eq!(
-                fs::read_to_string(self.project_path.join(".builtin/skills/alpha/SKILL.md"))
+                fs::read_to_string(self.project_path.join(".codebuddy/skills/alpha/SKILL.md"),)
                     .expect("read preserved conflict"),
                 "local alpha conflict\n"
             );
@@ -2226,7 +2227,7 @@ mod update_lifecycle {
                 .find(|skill| skill.skill_name == "beta")
                 .expect("beta update preview");
             assert_eq!(alpha.overwrite_private_entries.len(), 2);
-            assert_eq!(beta.clean_copy_count, 2);
+            assert_eq!(beta.clean_copy_count, 3);
             let response = service
                 .execute(
                     &UpdateExecutionRequest {

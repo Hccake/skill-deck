@@ -13,7 +13,7 @@ pub fn builtin_agent_definitions() -> Vec<AgentDefinition> {
 fn build_definition(agent: AgentType) -> AgentDefinition {
     let config = agent.config();
     let (global, legacy_paths) = global_definition(agent, &config);
-    let project = project_definition(&config);
+    let project = project_definition(agent, &config);
     let adapter = if agent == AgentType::Eve {
         AgentAdapter::Eve
     } else {
@@ -33,7 +33,7 @@ fn build_definition(agent: AgentType) -> AgentDefinition {
     }
 }
 
-fn project_definition(config: &AgentConfig) -> ScopeDefinition {
+fn project_definition(agent: AgentType, config: &AgentConfig) -> ScopeDefinition {
     if config.skills_dir == ".agents/skills" {
         ScopeDefinition {
             enabled: true,
@@ -43,7 +43,7 @@ fn project_definition(config: &AgentConfig) -> ScopeDefinition {
     } else {
         ScopeDefinition {
             enabled: true,
-            reads_standard: false,
+            reads_standard: agent == AgentType::Kimchi,
             private_path: Some(PathSpec::project(config.skills_dir)),
         }
     }
@@ -106,6 +106,8 @@ fn global_path(agent: AgentType, config: &AgentConfig) -> PathSpec {
         AgentType::MistralVibe => environment_variable_path("VIBE_HOME", ".vibe/skills"),
         AgentType::HermesAgent => environment_variable_path("HERMES_HOME", ".hermes/skills"),
         AgentType::AutohandCode => environment_variable_path("AUTOHAND_HOME", ".autohand/skills"),
+        AgentType::Grok => environment_variable_path("GROK_HOME", ".grok/skills"),
+        AgentType::Kimchi => PathSpec::home(".config/kimchi/harness/skills"),
         _ => path_from_native(config.global_skills_dir.as_ref().expect("global path")),
     }
 }
@@ -189,6 +191,8 @@ fn detection_definition(agent: AgentType, config: &AgentConfig) -> DetectionSpec
         AgentType::Firebender => vec![PathSpec::home(".firebender")],
         AgentType::GeminiCli => vec![PathSpec::home(".gemini")],
         AgentType::GithubCopilot => vec![PathSpec::home(".copilot")],
+        AgentType::Grok => vec![environment_variable_path("GROK_HOME", ".grok")],
+        AgentType::Kimchi => vec![PathSpec::home(".config/kimchi")],
         AgentType::KimiCodeCli => vec![PathSpec::home(".kimi-code"), PathSpec::home(".kimi")],
         AgentType::Loaf => vec![PathSpec::home(".loaf")],
         AgentType::Opencode => vec![PathSpec::config_home("opencode")],
@@ -200,6 +204,9 @@ fn detection_definition(agent: AgentType, config: &AgentConfig) -> DetectionSpec
         AgentType::Warp => vec![PathSpec::home(".warp")],
         AgentType::ClaudeCode => vec![environment_variable_path("CLAUDE_CONFIG_DIR", ".claude")],
         AgentType::MistralVibe => vec![environment_variable_path("VIBE_HOME", ".vibe")],
+        AgentType::MiniMaxCode => {
+            home_with_macos_application_detection(".minimax", "/Applications/MiniMax Code.app")
+        }
         AgentType::HermesAgent => vec![environment_variable_path("HERMES_HOME", ".hermes")],
         AgentType::AutohandCode => vec![environment_variable_path("AUTOHAND_HOME", ".autohand")],
         AgentType::Jazz => vec![PathSpec::project(".jazz"), PathSpec::home(".jazz")],
@@ -213,12 +220,28 @@ fn detection_definition(agent: AgentType, config: &AgentConfig) -> DetectionSpec
                 PathSpec::config_home("zed"),
             ),
         ],
+        AgentType::Zcode => {
+            home_with_macos_application_detection(".zcode", "/Applications/ZCode.app")
+        }
         _ => vec![parent_path(&path_from_native(
             config.global_skills_dir.as_ref().expect("detection path"),
         ))],
     };
 
     DetectionSpec::AnyPathExists { paths }
+}
+
+fn home_with_macos_application_detection(home_path: &str, application_path: &str) -> Vec<PathSpec> {
+    let paths = vec![PathSpec::home(home_path)];
+    #[cfg(target_os = "macos")]
+    let paths = {
+        let mut paths = paths;
+        paths.push(PathSpec::absolute(application_path));
+        paths
+    };
+    #[cfg(not(target_os = "macos"))]
+    let _ = application_path;
+    paths
 }
 
 fn parent_path(path: &PathSpec) -> PathSpec {
@@ -266,6 +289,8 @@ fn official_standard_support(agent: AgentType) -> bool {
             | AgentType::Zed
             | AgentType::Firebender
             | AgentType::KimiCodeCli
+            | AgentType::Grok
+            | AgentType::Kimchi
     )
 }
 
@@ -318,7 +343,7 @@ mod tests {
                 assert!(project.reads_standard);
                 assert!(project.private_path.is_none());
             } else {
-                assert!(!project.reads_standard);
+                assert_eq!(project.reads_standard, agent == AgentType::Kimchi);
                 assert!(project.private_path.is_some());
             }
         }
@@ -333,6 +358,104 @@ mod tests {
                 "detection paths missing for {}",
                 definition.id
             );
+        }
+    }
+
+    #[test]
+    fn cli_1_5_22_agents_have_confirmed_scope_and_detection_rules() {
+        let grok = definition(AgentType::Grok);
+        assert_eq!(
+            grok.project,
+            expected_scope(false, Some(PathSpec::project(".grok/skills")))
+        );
+        assert_eq!(
+            grok.global,
+            expected_scope(
+                true,
+                Some(expected_environment_path(
+                    "GROK_HOME",
+                    "skills",
+                    ".grok/skills",
+                )),
+            )
+        );
+        assert_eq!(
+            grok.detection,
+            DetectionSpec::AnyPathExists {
+                paths: vec![expected_environment_path("GROK_HOME", "", ".grok")],
+            }
+        );
+
+        let kimchi = definition(AgentType::Kimchi);
+        assert_eq!(
+            kimchi.project,
+            expected_scope(true, Some(PathSpec::project(".kimchi/skills")))
+        );
+        assert_eq!(
+            kimchi.global,
+            expected_scope(true, Some(PathSpec::home(".config/kimchi/harness/skills")),)
+        );
+        assert_eq!(
+            kimchi.detection,
+            DetectionSpec::AnyPathExists {
+                paths: vec![PathSpec::home(".config/kimchi")],
+            }
+        );
+
+        for (agent, private_path, app_path) in [
+            (
+                AgentType::MiniMaxCode,
+                ".minimax/skills",
+                "/Applications/MiniMax Code.app",
+            ),
+            (AgentType::Zcode, ".zcode/skills", "/Applications/ZCode.app"),
+        ] {
+            let definition = definition(agent);
+            assert_eq!(
+                definition.project,
+                expected_scope(false, Some(PathSpec::project(private_path)))
+            );
+            assert_eq!(
+                definition.global,
+                expected_scope(false, Some(PathSpec::home(private_path)))
+            );
+            let mut detection_paths = vec![PathSpec::home(parent_relative(private_path))];
+            if cfg!(target_os = "macos") {
+                detection_paths.push(PathSpec::absolute(app_path));
+            }
+            assert_eq!(
+                definition.detection,
+                DetectionSpec::AnyPathExists {
+                    paths: detection_paths,
+                }
+            );
+        }
+
+        let codebuddy = definition(AgentType::Codebuddy);
+        assert_eq!(
+            codebuddy.project,
+            expected_scope(false, Some(PathSpec::project(".codebuddy/skills")))
+        );
+        assert_eq!(
+            codebuddy.global,
+            expected_scope(false, Some(PathSpec::home(".codebuddy/skills")))
+        );
+        assert_eq!(
+            codebuddy.detection,
+            DetectionSpec::AnyPathExists {
+                paths: vec![
+                    PathSpec::project(".codebuddy"),
+                    PathSpec::home(".codebuddy"),
+                ],
+            }
+        );
+    }
+
+    fn expected_scope(reads_standard: bool, private_path: Option<PathSpec>) -> ScopeDefinition {
+        ScopeDefinition {
+            enabled: true,
+            reads_standard,
+            private_path,
         }
     }
 
@@ -422,13 +545,13 @@ mod tests {
             let definition = definition(agent);
             let config = agent.config();
 
-            assert_eq!(definition.project, expected_project_scope(&config));
+            assert_eq!(definition.project, expected_project_scope(agent, &config));
             assert_eq!(definition.global, expected_global_scope(agent, &config));
             assert_eq!(definition.detection, expected_detection(agent, &config));
         }
     }
 
-    fn expected_project_scope(config: &AgentConfig) -> ScopeDefinition {
+    fn expected_project_scope(agent: AgentType, config: &AgentConfig) -> ScopeDefinition {
         if config.skills_dir == ".agents/skills" {
             ScopeDefinition {
                 enabled: true,
@@ -438,7 +561,7 @@ mod tests {
         } else {
             ScopeDefinition {
                 enabled: true,
-                reads_standard: false,
+                reads_standard: agent == AgentType::Kimchi,
                 private_path: Some(PathSpec::project(config.skills_dir)),
             }
         }
@@ -480,6 +603,8 @@ mod tests {
                 | AgentType::Zed
                 | AgentType::Firebender
                 | AgentType::KimiCodeCli
+                | AgentType::Grok
+                | AgentType::Kimchi
         )
     }
 
@@ -506,6 +631,8 @@ mod tests {
             AgentType::AutohandCode => {
                 expected_environment_path("AUTOHAND_HOME", "skills", ".autohand/skills")
             }
+            AgentType::Grok => expected_environment_path("GROK_HOME", "skills", ".grok/skills"),
+            AgentType::Kimchi => PathSpec::home(".config/kimchi/harness/skills"),
             _ => native_path_spec(config.global_skills_dir.as_ref().expect("global path")),
         }
     }
@@ -569,10 +696,12 @@ mod tests {
             AgentType::GeminiCli => vec![PathSpec::home(".gemini")],
             AgentType::GithubCopilot => vec![PathSpec::home(".copilot")],
             AgentType::Goose => vec![PathSpec::config_home("goose")],
+            AgentType::Grok => vec![expected_environment_path("GROK_HOME", "", ".grok")],
             AgentType::HermesAgent => vec![expected_environment_path("HERMES_HOME", "", ".hermes")],
             AgentType::IflowCli => vec![PathSpec::home(".iflow")],
             AgentType::Junie => vec![PathSpec::home(".junie")],
             AgentType::Kilo => vec![PathSpec::home(".kilocode")],
+            AgentType::Kimchi => vec![PathSpec::home(".config/kimchi")],
             AgentType::KimiCodeCli => vec![PathSpec::home(".kimi-code"), PathSpec::home(".kimi")],
             AgentType::KiroCli => vec![PathSpec::home(".kiro")],
             AgentType::Kode => vec![PathSpec::home(".kode")],
@@ -581,6 +710,9 @@ mod tests {
             AgentType::Lingma => vec![PathSpec::home(".lingma")],
             AgentType::Loaf => vec![PathSpec::home(".loaf")],
             AgentType::Mcpjam => vec![PathSpec::home(".mcpjam")],
+            AgentType::MiniMaxCode => {
+                expected_macos_detection(".minimax", "/Applications/MiniMax Code.app")
+            }
             AgentType::MistralVibe => vec![expected_environment_path("VIBE_HOME", "", ".vibe")],
             AgentType::Moxby => vec![PathSpec::home(".moxby")],
             AgentType::Mux => vec![PathSpec::home(".mux")],
@@ -618,6 +750,7 @@ mod tests {
                     fallback: Box::new(PathSpec::config_home("zed")),
                 },
             ],
+            AgentType::Zcode => expected_macos_detection(".zcode", "/Applications/ZCode.app"),
             AgentType::Zencoder => vec![PathSpec::home(".zencoder")],
             AgentType::Zenflow => vec![PathSpec::home(".zencoder")],
             AgentType::Pochi => vec![PathSpec::home(".pochi")],
@@ -628,6 +761,14 @@ mod tests {
             _ => vec![parent_path(&expected_global_path(agent, config))],
         };
         DetectionSpec::AnyPathExists { paths }
+    }
+
+    fn expected_macos_detection(home_path: &str, application_path: &str) -> Vec<PathSpec> {
+        let mut paths = vec![PathSpec::home(home_path)];
+        if cfg!(target_os = "macos") {
+            paths.push(PathSpec::absolute(application_path));
+        }
+        paths
     }
 
     fn expected_environment_path(name: &str, relative_path: &str, fallback: &str) -> PathSpec {
