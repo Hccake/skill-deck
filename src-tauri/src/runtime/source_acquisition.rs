@@ -5,7 +5,7 @@ use crate::application::git_transport::GitSourceTransport;
 use crate::application::payload_session::{DiscoverySourceLocation, PayloadSessionManager};
 use crate::application::source_acquisition::{
     attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
-    GitSourceDiscovery, ManagedDownloadedDirectory,
+    GitSourceDiscovery, ManagedDownloadedDirectory, RetainedSourceOptions,
 };
 use crate::application::wellknown_access::WellKnownAccess;
 use crate::application::wsl_source_access::WslSourceAccess;
@@ -133,10 +133,7 @@ impl SourceDiscoveryService {
                     },
                     root,
                     (),
-                    None,
-                    None,
-                    None,
-                    false,
+                    RetainedSourceOptions::default(),
                 )
                 .await
             }
@@ -163,10 +160,10 @@ impl SourceDiscoveryService {
                             },
                             root.clone(),
                             ManagedDownloadedDirectory::new(root),
-                            None,
-                            Some(fetched.trust_metadata),
-                            None,
-                            false,
+                            RetainedSourceOptions {
+                                trust_metadata: Some(fetched.trust_metadata),
+                                ..Default::default()
+                            },
                         )
                         .await
                     },
@@ -229,10 +226,10 @@ impl SourceDiscoveryService {
             },
             root.clone(),
             ManagedDownloadedDirectory::new(root),
-            None,
-            None,
-            redirected_download_host,
-            false,
+            RetainedSourceOptions {
+                redirected_download_host,
+                ..Default::default()
+            },
         )
         .await
     }

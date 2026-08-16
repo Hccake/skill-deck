@@ -109,10 +109,10 @@ impl GitSourceDiscovery {
                     },
                     root,
                     cloned,
-                    None,
-                    None,
-                    None,
-                    full_depth,
+                    RetainedSourceOptions {
+                        full_depth,
+                        ..Default::default()
+                    },
                 )
                 .await
             }
@@ -208,6 +208,14 @@ pub(crate) fn source_acquisition_failure_reason(
     }
 }
 
+#[derive(Default)]
+pub(crate) struct RetainedSourceOptions {
+    pub(crate) storage: Option<Arc<dyn PayloadSessionStorage>>,
+    pub(crate) trust_metadata: Option<std::collections::HashMap<String, WellKnownTrustMetadata>>,
+    pub(crate) redirected_download_host: Option<String>,
+    pub(crate) full_depth: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn retain_discovered_source<O>(
     sessions: Arc<PayloadSessionManager>,
@@ -217,14 +225,17 @@ pub(crate) async fn retain_discovered_source<O>(
     location: DiscoverySourceLocation,
     native_root: PathBuf,
     owner: O,
-    storage: Option<Arc<dyn PayloadSessionStorage>>,
-    trust_metadata: Option<std::collections::HashMap<String, WellKnownTrustMetadata>>,
-    redirected_download_host: Option<String>,
-    full_depth: bool,
+    options: RetainedSourceOptions,
 ) -> Result<FetchResult, AppError>
 where
     O: Send + Sync + 'static,
 {
+    let RetainedSourceOptions {
+        storage,
+        trust_metadata,
+        redirected_download_host,
+        full_depth,
+    } = options;
     let scan_root = native_root.clone();
     let scan_subpath = parsed.subpath.clone();
     let scan_include_internal = parsed.skill_filter.is_some();

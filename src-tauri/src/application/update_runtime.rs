@@ -11,7 +11,7 @@ use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanE
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
 use crate::application::source_acquisition::{
     retain_discovered_source, AcquireSelectedPayloadsRequest, GitSourceDiscovery,
-    ManagedDownloadedDirectory, SelectedPayloadAcquisitionService,
+    ManagedDownloadedDirectory, RetainedSourceOptions, SelectedPayloadAcquisitionService,
 };
 use crate::application::source_evidence::{
     RemoteSnapshotId, SkillRevision, SourceEvidenceCoordinator, SourceSnapshotFacts,
@@ -264,10 +264,11 @@ impl RuntimeUpdatePayloadAcquirer {
                         },
                         root,
                         owner,
-                        None,
-                        Some(fetched.trust_metadata),
-                        None,
-                        true,
+                        RetainedSourceOptions {
+                            trust_metadata: Some(fetched.trust_metadata),
+                            full_depth: true,
+                            ..Default::default()
+                        },
                     )
                     .await
                     .map(|discovery| discovery.discovery_session)

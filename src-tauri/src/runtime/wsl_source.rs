@@ -10,7 +10,7 @@ use crate::application::payload_session::{
 };
 use crate::application::source_acquisition::{
     attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
-    snapshot_fingerprint, source_identifier, ManagedDownloadedDirectory,
+    snapshot_fingerprint, source_identifier, ManagedDownloadedDirectory, RetainedSourceOptions,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
 use crate::application::wellknown_access::WellKnownAccess;
@@ -154,10 +154,12 @@ impl RuntimeWslSourceAccess {
                         },
                         root,
                         owner,
-                        Some(storage),
-                        Some(fetched.trust_metadata),
-                        None,
-                        full_depth,
+                        RetainedSourceOptions {
+                            storage: Some(storage),
+                            trust_metadata: Some(fetched.trust_metadata),
+                            full_depth,
+                            ..Default::default()
+                        },
                     )
                     .await
                 }
@@ -201,10 +203,12 @@ impl RuntimeWslSourceAccess {
                         },
                         root,
                         owner,
-                        Some(storage),
-                        None,
-                        redirected_download_host,
-                        full_depth,
+                        RetainedSourceOptions {
+                            storage: Some(storage),
+                            redirected_download_host,
+                            full_depth,
+                            ..Default::default()
+                        },
                     )
                     .await
                 }
