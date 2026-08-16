@@ -24,6 +24,9 @@ const SKIP_DIRS: &[&str] = &["node_modules", ".git", "dist", "build", "__pycache
 /// 最大递归深度（与 CLI 一致）
 const MAX_DEPTH: usize = 5;
 
+/// 已知 Skill 容器的默认搜索深度（与 CLI 一致）
+const DEFAULT_SKILL_CONTAINER_DEPTH: usize = 3;
+
 const CLI_AGENT_PROJECT_SKILL_DIRS: &[&str] = &[
     ".agents/skills",
     ".claude/skills",
@@ -91,7 +94,7 @@ pub struct DiscoveryInventory {
 
 struct PrioritySearchDir {
     path: PathBuf,
-    bounded_depth_two: bool,
+    max_depth: usize,
 }
 
 impl From<DiscoveredSkill> for AvailableSkill {
@@ -298,23 +301,23 @@ fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
     let mut dirs = vec![
         PrioritySearchDir {
             path: search_path.to_path_buf(),
-            bounded_depth_two: false,
+            max_depth: 1,
         },
         PrioritySearchDir {
             path: search_path.join("skills"),
-            bounded_depth_two: true,
+            max_depth: DEFAULT_SKILL_CONTAINER_DEPTH,
         },
         PrioritySearchDir {
             path: search_path.join("skills/.curated"),
-            bounded_depth_two: true,
+            max_depth: DEFAULT_SKILL_CONTAINER_DEPTH,
         },
         PrioritySearchDir {
             path: search_path.join("skills/.experimental"),
-            bounded_depth_two: true,
+            max_depth: DEFAULT_SKILL_CONTAINER_DEPTH,
         },
         PrioritySearchDir {
             path: search_path.join("skills/.system"),
-            bounded_depth_two: true,
+            max_depth: DEFAULT_SKILL_CONTAINER_DEPTH,
         },
     ];
 
@@ -323,7 +326,7 @@ fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
             .iter()
             .map(|dir| PrioritySearchDir {
                 path: search_path.join(dir),
-                bounded_depth_two: true,
+                max_depth: DEFAULT_SKILL_CONTAINER_DEPTH,
             }),
     );
 
@@ -397,24 +400,14 @@ impl<'a> DiscoverySelector<'a> {
         }
 
         let mut priority_dirs = get_priority_search_dir_specs(Path::new(""));
-        priority_dirs.extend(self.plugin_search_dirs.iter().cloned().map(|path| {
-            PrioritySearchDir {
-                path,
-                bounded_depth_two: false,
-            }
-        }));
+        priority_dirs.extend(
+            self.plugin_search_dirs
+                .iter()
+                .cloned()
+                .map(|path| PrioritySearchDir { path, max_depth: 1 }),
+        );
         for priority in priority_dirs {
-            for child in self.immediate_child_dirs(&priority.path) {
-                if self.try_add(&child) != CandidateResult::Missing {
-                    continue;
-                }
-                if !priority.bounded_depth_two || is_skipped_directory(&child) {
-                    continue;
-                }
-                for grandchild in self.immediate_child_dirs(&child) {
-                    self.try_add(&grandchild);
-                }
-            }
+            self.walk_priority_dir(&priority.path, priority.max_depth, 1);
         }
 
         if self.skills.is_empty() || self.options.full_depth {
@@ -436,6 +429,18 @@ impl<'a> DiscoverySelector<'a> {
         }
 
         Ok(self.skills)
+    }
+
+    fn walk_priority_dir(&mut self, parent: &Path, max_depth: usize, depth: usize) {
+        for child in self.immediate_child_dirs(parent) {
+            if self.try_add(&child) != CandidateResult::Missing
+                || depth >= max_depth
+                || is_skipped_directory(&child)
+            {
+                continue;
+            }
+            self.walk_priority_dir(&child, max_depth, depth + 1);
+        }
     }
 
     fn immediate_child_dirs(&self, parent: &Path) -> Vec<PathBuf> {
@@ -653,6 +658,96 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_skills_honors_default_container_depth_three() {
+        let temp = tempdir().unwrap();
+        let shallow_dir = temp.path().join("skills/shallow");
+        let skill_dir = temp.path().join("skills/specialized/database/demo");
+        let too_deep_dir = temp.path().join("skills/too/deep/default/demo");
+        fs::create_dir_all(&shallow_dir).unwrap();
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&too_deep_dir).unwrap();
+        fs::write(
+            shallow_dir.join("SKILL.md"),
+            "---\nname: shallow-demo\ndescription: Shallow\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: catalog-demo\ndescription: Demo\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            too_deep_dir.join("SKILL.md"),
+            "---\nname: deep-demo\ndescription: Deep\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| (skill.name.as_str(), skill.relative_path.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("shallow-demo", "skills/shallow/SKILL.md"),
+                ("catalog-demo", "skills/specialized/database/demo/SKILL.md"),
+            ]
+        );
+
+        let mut full_depth = discover_skills(
+            temp.path(),
+            None,
+            DiscoverOptions {
+                full_depth: true,
+                ..DiscoverOptions::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|skill| skill.name)
+        .collect::<Vec<_>>();
+        full_depth.sort();
+        assert_eq!(
+            full_depth,
+            vec!["catalog-demo", "deep-demo", "shallow-demo"]
+        );
+    }
+
+    #[test]
+    fn priority_search_boundaries_match_cli() {
+        let skill = |relative_path: &str, name: &str| DiscoveryDocument {
+            relative_path: relative_path.to_string(),
+            content: format!("---\nname: {name}\ndescription: Test skill\n---\n").into_bytes(),
+        };
+        let inventory = DiscoveryInventory {
+            search_prefix: PathBuf::new(),
+            skill_documents: vec![
+                skill("direct/SKILL.md", "root-direct"),
+                skill("examples/category/hidden/SKILL.md", "root-nested"),
+                skill("plugins/catalog/direct/SKILL.md", "plugin-direct"),
+                skill("plugins/catalog/category/hidden/SKILL.md", "plugin-nested"),
+                skill("skills/node_modules/hidden/SKILL.md", "skipped"),
+            ],
+            marketplace_document: None,
+            plugin_document: Some(
+                r#"{"name":"demo","skills":["./plugins/catalog/direct"]}"#.to_string(),
+            ),
+            local_lock_document: None,
+        };
+
+        let skills = select_discovered_skills(&inventory, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root-direct", "plugin-direct"]
+        );
+    }
+
+    #[test]
     fn test_discover_skills_depth_one_skill_shadows_nested_skill() {
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join("skills/demo/inner")).unwrap();
@@ -671,6 +766,38 @@ mod tests {
 
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "demo");
+    }
+
+    #[test]
+    fn invalid_skill_in_priority_container_stops_nested_discovery() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("skills/broken/inner")).unwrap();
+        fs::create_dir_all(temp.path().join("skills/visible")).unwrap();
+        fs::write(
+            temp.path().join("skills/broken/SKILL.md"),
+            "not frontmatter",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("skills/broken/inner/SKILL.md"),
+            "---\nname: hidden\ndescription: Hidden\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("skills/visible/SKILL.md"),
+            "---\nname: visible\ndescription: Visible\n---\n",
+        )
+        .unwrap();
+
+        let skills = discover_skills(temp.path(), None, DiscoverOptions::default()).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["visible"]
+        );
     }
 
     #[test]

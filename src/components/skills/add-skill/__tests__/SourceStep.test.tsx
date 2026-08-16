@@ -135,6 +135,7 @@ function Harness({
       />
       <div data-testid="discovery-session">{state.discoverySession?.sessionId ?? 'none'}</div>
       <div data-testid="redirect-host">{state.redirectedDownloadHost ?? 'none'}</div>
+      <div data-testid="selected-skills">{state.selectedSkills.join(',')}</div>
     </>
   );
 }
@@ -205,6 +206,49 @@ describe('SourceStep', () => {
       expect(onNext).toHaveBeenCalled();
       expect(screen.getByTestId('redirect-host').textContent).toBe('cdn.example.net');
     });
+  });
+
+  it.each([
+    {
+      source: 'https://skills.sh/p/frontend',
+      skillFilter: null,
+      expected: 'alpha,beta',
+    },
+    {
+      source: 'https://skills.sh/p/frontend@alpha',
+      skillFilter: 'alpha',
+      expected: 'alpha',
+    },
+    {
+      source: 'skills add https://skills.sh/p/frontend --skill beta',
+      skillFilter: null,
+      expected: 'beta',
+    },
+    {
+      source: 'owner/repo',
+      skillFilter: null,
+      expected: '',
+    },
+  ])('derives the initial selection for $source', async ({ source, skillFilter, expected }) => {
+    const onNext = vi.fn();
+    fetchAvailableMock.mockResolvedValue({
+      discoverySession,
+      sourceType: 'well-known',
+      sourceUrl: 'https://skills.sh/p/frontend',
+      gitRef: null,
+      skillFilter,
+      skills: [
+        { name: 'alpha', installDirName: 'alpha', description: 'Alpha', relativePath: 'alpha' },
+        { name: 'beta', installDirName: 'beta', description: 'Beta', relativePath: 'beta' },
+      ],
+    });
+
+    render(<Harness onNext={onNext} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: source } });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+
+    await waitFor(() => expect(onNext).toHaveBeenCalled());
+    expect(screen.getByTestId('selected-skills').textContent).toBe(expected);
   });
 
   it('fetches a selected search result without waiting for a timer tick', async () => {

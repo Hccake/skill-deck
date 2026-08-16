@@ -267,13 +267,14 @@ impl RuntimeUpdatePayloadAcquirer {
                         None,
                         Some(fetched.trust_metadata),
                         None,
+                        true,
                     )
                     .await
                     .map(|discovery| discovery.discovery_session)
                 }
                 EnvironmentRef::Wsl { distro_name } => self
                     .wsl_source
-                    .discover(distro_name, parsed, source, cancellation)
+                    .discover(distro_name, parsed, source, true, cancellation)
                     .await
                     .map(|discovery| discovery.discovery_session),
             };
@@ -283,7 +284,14 @@ impl RuntimeUpdatePayloadAcquirer {
             Arc::clone(&self.git_transport),
             Arc::clone(&self.wsl_source),
         )
-        .discover(group.context.clone(), parsed, source, |_| {}, cancellation)
+        .discover(
+            group.context.clone(),
+            parsed,
+            source,
+            true,
+            |_| {},
+            cancellation,
+        )
         .await
         .map(|discovery| discovery.discovery_session)
     }

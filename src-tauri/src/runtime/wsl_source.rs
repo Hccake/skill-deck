@@ -68,6 +68,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
         distro_name: &'a str,
         parsed: ParsedSource,
         requested_source: String,
+        full_depth: bool,
         cancellation: CancellationSignal,
     ) -> WslSourceFuture<'a> {
         Box::pin(async move {
@@ -78,6 +79,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
                             distro_name,
                             parsed.clone(),
                             requested_source.clone(),
+                            full_depth,
                             cancellation.clone(),
                         ),
                         || {
@@ -85,6 +87,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
                                 distro_name,
                                 parsed,
                                 requested_source,
+                                full_depth,
                                 cancellation,
                             )
                         },
@@ -93,12 +96,24 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
                     .await
                 }
                 SourceType::Download => {
-                    self.discover_download(distro_name, parsed, requested_source, cancellation)
-                        .await
+                    self.discover_download(
+                        distro_name,
+                        parsed,
+                        requested_source,
+                        full_depth,
+                        cancellation,
+                    )
+                    .await
                 }
                 _ => {
-                    self.discover_native(distro_name, parsed, requested_source, cancellation)
-                        .await
+                    self.discover_native(
+                        distro_name,
+                        parsed,
+                        requested_source,
+                        full_depth,
+                        cancellation,
+                    )
+                    .await
                 }
             }
         })
@@ -111,6 +126,7 @@ impl RuntimeWslSourceAccess {
         distro_name: &str,
         parsed: ParsedSource,
         requested_source: String,
+        full_depth: bool,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError> {
         let workspace = self.environments.workspace(distro_name)?;
@@ -141,6 +157,7 @@ impl RuntimeWslSourceAccess {
                         Some(storage),
                         Some(fetched.trust_metadata),
                         None,
+                        full_depth,
                     )
                     .await
                 }
@@ -153,6 +170,7 @@ impl RuntimeWslSourceAccess {
         distro_name: &str,
         mut parsed: ParsedSource,
         requested_source: String,
+        full_depth: bool,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError> {
         let workspace = self.environments.workspace(distro_name)?;
@@ -186,6 +204,7 @@ impl RuntimeWslSourceAccess {
                         Some(storage),
                         None,
                         redirected_download_host,
+                        full_depth,
                     )
                     .await
                 }
@@ -198,6 +217,7 @@ impl RuntimeWslSourceAccess {
         distro_name: &str,
         parsed: ParsedSource,
         requested_source: String,
+        full_depth: bool,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError> {
         let workspace = self.environments.workspace(distro_name)?;
@@ -262,6 +282,7 @@ impl RuntimeWslSourceAccess {
                         session,
                         workspace,
                         native,
+                        full_depth,
                         cancellation,
                     )
                     .await?;
@@ -305,6 +326,7 @@ async fn prepare_native_wsl_source(
     session: WslSession,
     workspace: WslWorkspace,
     native: WslNativeSource,
+    full_depth: bool,
     cancellation: CancellationSignal,
 ) -> Result<PreparedWslDiscovery, AppError> {
     let root = native_root_with_subpath(native.native_root(), parsed.subpath.as_deref())?;
@@ -361,6 +383,7 @@ async fn prepare_native_wsl_source(
         &response,
         parsed.subpath.as_deref(),
         parsed.skill_filter.is_some(),
+        full_depth,
     )?;
     let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
     for skill in catalog.values_mut() {
@@ -472,6 +495,7 @@ pub(crate) fn build_wsl_discovery_catalog(
     response: &ScanResponse,
     subpath: Option<&str>,
     include_internal: bool,
+    full_depth: bool,
 ) -> Result<
     (
         Vec<crate::core::DiscoveredSkill>,
@@ -526,7 +550,7 @@ pub(crate) fn build_wsl_discovery_catalog(
         &inventory,
         DiscoverOptions {
             include_internal,
-            full_depth: false,
+            full_depth,
         },
     )?;
     let mut catalog = BTreeMap::new();

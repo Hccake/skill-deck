@@ -14,6 +14,7 @@ pub(crate) trait WslSourceAccess: Send + Sync {
         distro_name: &'a str,
         parsed: ParsedSource,
         requested_source: String,
+        full_depth: bool,
         cancellation: CancellationSignal,
     ) -> WslSourceFuture<'a>;
 }
@@ -28,6 +29,7 @@ impl WslSourceAccess for UnavailableWslSourceAccess {
         _distro_name: &'a str,
         _parsed: ParsedSource,
         _requested_source: String,
+        _full_depth: bool,
         _cancellation: CancellationSignal,
     ) -> WslSourceFuture<'a> {
         Box::pin(async {

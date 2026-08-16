@@ -91,6 +91,7 @@ Environment 切换、全局 Skill 和已添加项目的完整规则见[Environme
 - 来源步骤提供“在线搜索”和“手动输入”两种方式。在线搜索用于按名称查找 Skill；选择搜索结果后，向导立即读取其来源并预选该 Skill。手动输入支持 GitHub、Git、本地路径、Well-known 地址、原始 `SKILL.md` 与 ZIP、tar、tar.gz 归档地址，以及受支持的 `skills add` 命令。
 - 普通 HTTP 或 HTTPS 地址先按 Well-known 协议读取；未发现有效 Skill 时，应用继续尝试直接下载该地址。明确的 GitHub 或 GitLab 文件和归档地址直接进入下载流程。
 - 一个来源包含多个 Skill 时，向导列出全部可安装项。用户可以保留预选项，也可以改为选择一个或多个其他 Skill。
+- `skills.sh/p/...` Pack 链接没有指定具体 Skill 时，向导初始选中其中的全部 Skill。用户仍会经过 Skill 选择页和确认页，可以搜索、取消单项、全选或清空；Pack 不会自动开始安装。链接或 `skills add` 命令已经指定具体 Skill 时，只预选明确指定的项目。
 
 ### 从 Discover 安装
 

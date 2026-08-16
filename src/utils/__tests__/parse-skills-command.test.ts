@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSkillsCommand } from '../parse-skills-command';
+import { isSkillsShPackUrl, parseSkillsCommand } from '../parse-skills-command';
 
 describe('parseSkillsCommand', () => {
   it('keeps ordinary source input unchanged apart from surrounding whitespace', () => {
@@ -83,5 +83,18 @@ describe('parseSkillsCommand', () => {
       agents: [],
       isCommand: true,
     });
+  });
+});
+
+describe('isSkillsShPackUrl', () => {
+  it.each([
+    ['https://skills.sh/p/frontend', true],
+    ['https://www.skills.sh/p/frontend', true],
+    ['https://skills.sh/p/', false],
+    ['https://skills.sh/acme/review', false],
+    ['https://example.com/p/frontend', false],
+    ['owner/repo', false],
+  ])('classifies %s as %s', (source, expected) => {
+    expect(isSkillsShPackUrl(source)).toBe(expected);
   });
 });

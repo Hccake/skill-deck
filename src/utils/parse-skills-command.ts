@@ -29,6 +29,16 @@ const VALUE_FLAGS = new Set([
   '-a', '--agent',
 ]);
 
+export function isSkillsShPackUrl(source: string): boolean {
+  try {
+    const parsed = new URL(source);
+    const hostname = parsed.hostname.replace(/^www\./, '');
+    return hostname === 'skills.sh' && /^\/p\/[^/]+/.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 将命令字符串拆分为 token 列表，正确处理单引号和双引号。
  *

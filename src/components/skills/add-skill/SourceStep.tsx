@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { fetchAvailable } from '@/hooks/useTauriApi';
-import { parseSkillsCommand } from '@/utils/parse-skills-command';
+import { isSkillsShPackUrl, parseSkillsCommand } from '@/utils/parse-skills-command';
 import { formatAppError } from '@/utils/format-app-error';
 import { toAppError } from '@/utils/to-app-error';
 import { SkillSearch } from '../skill-search/SkillSearch';
@@ -129,7 +129,10 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
       const preselectedFromCommand = parsed.skills.filter(name =>
         result.skills.some(s => s.name === name)
       );
-      const preselected = [...new Set([...preselectedFromFilter, ...preselectedFromCommand])];
+      const hasExplicitSkillSelection = Boolean(result.skillFilter) || parsed.skills.length > 0;
+      const preselected = !hasExplicitSkillSelection && isSkillsShPackUrl(actualSource)
+        ? result.skills.map(skill => skill.name)
+        : [...new Set([...preselectedFromFilter, ...preselectedFromCommand])];
 
       updateState({
         source: actualSource, // 保存解析后的 source（去除命令前缀）

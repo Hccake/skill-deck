@@ -63,6 +63,7 @@ impl GitSourceDiscovery {
         context: SkillLocationRef,
         parsed: ParsedSource,
         requested_source: String,
+        full_depth: bool,
         on_progress: P,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError>
@@ -111,12 +112,19 @@ impl GitSourceDiscovery {
                     None,
                     None,
                     None,
+                    full_depth,
                 )
                 .await
             }
             EnvironmentRef::Wsl { distro_name } => {
                 self.wsl_source
-                    .discover(distro_name, parsed, requested_source, cancellation)
+                    .discover(
+                        distro_name,
+                        parsed,
+                        requested_source,
+                        full_depth,
+                        cancellation,
+                    )
                     .await
             }
         }
@@ -212,6 +220,7 @@ pub(crate) async fn retain_discovered_source<O>(
     storage: Option<Arc<dyn PayloadSessionStorage>>,
     trust_metadata: Option<std::collections::HashMap<String, WellKnownTrustMetadata>>,
     redirected_download_host: Option<String>,
+    full_depth: bool,
 ) -> Result<FetchResult, AppError>
 where
     O: Send + Sync + 'static,
@@ -220,7 +229,12 @@ where
     let scan_subpath = parsed.subpath.clone();
     let scan_include_internal = parsed.skill_filter.is_some();
     let (discovered, catalog) = tokio::task::spawn_blocking(move || {
-        build_discovery_catalog(&scan_root, scan_subpath.as_deref(), scan_include_internal)
+        build_discovery_catalog(
+            &scan_root,
+            scan_subpath.as_deref(),
+            scan_include_internal,
+            full_depth,
+        )
     })
     .await
     .map_err(|error| AppError::ExecutionFailed {
@@ -280,6 +294,7 @@ fn build_discovery_catalog(
     native_root: &Path,
     subpath: Option<&str>,
     include_internal: bool,
+    full_depth: bool,
 ) -> Result<
     (
         Vec<crate::core::DiscoveredSkill>,
@@ -292,7 +307,7 @@ fn build_discovery_catalog(
         subpath,
         DiscoverOptions {
             include_internal,
-            full_depth: false,
+            full_depth,
         },
     )?;
     let physical_root = fs::canonicalize(native_root)?;
@@ -1250,7 +1265,7 @@ mod tests {
         };
 
         let (discovered, catalog) =
-            build_wsl_discovery_catalog(&response, None, false).expect("catalog");
+            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
 
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].relative_path, "skills/demo/SKILL.md");
@@ -1286,7 +1301,8 @@ mod tests {
             total_content_bytes: 42,
         };
 
-        let (discovered, _) = build_wsl_discovery_catalog(&response, None, false).expect("catalog");
+        let (discovered, _) =
+            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
 
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].relative_path, "SKILL.md");
@@ -1325,7 +1341,8 @@ mod tests {
             total_content_bytes: 0,
         };
 
-        let (discovered, _) = build_wsl_discovery_catalog(&response, None, false).expect("catalog");
+        let (discovered, _) =
+            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
 
         assert_eq!(
             discovered
@@ -1366,7 +1383,8 @@ mod tests {
             total_content_bytes: 0,
         };
 
-        let (discovered, _) = build_wsl_discovery_catalog(&response, None, false).expect("catalog");
+        let (discovered, _) =
+            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
 
         assert_eq!(
             discovered
@@ -1374,6 +1392,48 @@ mod tests {
                 .map(|skill| skill.name.as_str())
                 .collect::<Vec<_>>(),
             vec!["root"]
+        );
+    }
+
+    #[test]
+    fn wsl_full_depth_keeps_nested_candidates_beside_root_skill() {
+        use crate::environment::wsl::operations::scan::{
+            ScanResponse, ScannedEntry, ScannedEntryKind,
+        };
+
+        let file = |relative_path: &str, content: &[u8]| ScannedEntry {
+            root_index: 0,
+            relative_path: relative_path.to_string(),
+            kind: ScannedEntryKind::File,
+            resolved_target: None,
+            size: content.len() as u64,
+            mode: 0o644,
+            modified_seconds: 10,
+            content_bytes: content.to_vec(),
+            truncated: false,
+            error_code: None,
+        };
+        let response = ScanResponse {
+            entries: vec![
+                file("SKILL.md", b"---\nname: root\ndescription: Root\n---\n"),
+                file(
+                    "plugins/example/skills/deep/SKILL.md",
+                    b"---\nname: deep\ndescription: Deep\n---\n",
+                ),
+            ],
+            root_count: 1,
+            total_content_bytes: 0,
+        };
+
+        let (discovered, _) =
+            build_wsl_discovery_catalog(&response, None, false, true).expect("catalog");
+
+        assert_eq!(
+            discovered
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root", "deep"]
         );
     }
 
@@ -1418,7 +1478,7 @@ mod tests {
         };
 
         let (discovered, _) =
-            build_wsl_discovery_catalog(&response, Some(".agents/skills/demo"), false)
+            build_wsl_discovery_catalog(&response, Some(".agents/skills/demo"), false, false)
                 .expect("catalog");
 
         assert_eq!(
@@ -1675,15 +1735,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_local_discovery_and_selected_acquisition_share_one_source_snapshot() {
+    async fn native_root_skill_discovery_acquires_complete_directory_payload() {
         let source = tempdir().expect("source");
-        let skill_root = source.path().join("skills/demo");
-        fs::create_dir_all(&skill_root).expect("skill root");
+        let skill_root = source.path();
+        fs::create_dir_all(skill_root.join("scripts")).expect("scripts");
+        fs::create_dir_all(skill_root.join("assets")).expect("assets");
         fs::write(
             skill_root.join("SKILL.md"),
             b"---\nname: demo\ndescription: Demo skill\n---\n",
         )
         .expect("skill");
+        fs::write(skill_root.join("scripts/run.sh"), b"#!/bin/sh\necho demo\n").expect("script");
+        fs::write(skill_root.join("assets/data.bin"), [0, 159, 146, 150]).expect("asset");
         let manager = Arc::new(PayloadSessionManager::new(
             Arc::new(InMemoryPayloadSessionStorage::default()),
             PayloadSessionLimits {
@@ -1711,7 +1774,7 @@ mod tests {
             .expect("discover");
 
         assert_eq!(fetched.skills.len(), 1);
-        assert_eq!(fetched.skills[0].relative_path, "skills/demo/SKILL.md");
+        assert_eq!(fetched.skills[0].relative_path, "SKILL.md");
         assert_eq!(
             fetched.discovery_session.environment,
             EnvironmentRef::Native
@@ -1727,5 +1790,15 @@ mod tests {
         assert_eq!(handles.len(), 1);
         let lease = manager.pin_verified(&handles[0]).await.expect("pin");
         assert_eq!(lease.planning_metadata().upstream_revision, None);
+        assert!(lease
+            .manifest()
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == "scripts/run.sh"));
+        assert!(lease
+            .manifest()
+            .entries
+            .iter()
+            .any(|entry| entry.relative_path == "assets/data.bin"));
     }
 }

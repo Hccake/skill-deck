@@ -136,6 +136,7 @@ impl SourceDiscoveryService {
                     None,
                     None,
                     None,
+                    false,
                 )
                 .await
             }
@@ -165,6 +166,7 @@ impl SourceDiscoveryService {
                             None,
                             Some(fetched.trust_metadata),
                             None,
+                            false,
                         )
                         .await
                     },
@@ -186,12 +188,19 @@ impl SourceDiscoveryService {
             }
             (EnvironmentRef::Native, _) => {
                 self.git
-                    .discover(context, parsed, requested_source, on_progress, cancellation)
+                    .discover(
+                        context,
+                        parsed,
+                        requested_source,
+                        false,
+                        on_progress,
+                        cancellation,
+                    )
                     .await
             }
             (EnvironmentRef::Wsl { distro_name }, _) => {
                 self.wsl_source
-                    .discover(distro_name, parsed, requested_source, cancellation)
+                    .discover(distro_name, parsed, requested_source, false, cancellation)
                     .await
             }
         }
@@ -223,6 +232,7 @@ impl SourceDiscoveryService {
             None,
             None,
             redirected_download_host,
+            false,
         )
         .await
     }

@@ -256,6 +256,7 @@ impl RuntimeSourceEvidenceDetector {
                     },
                     parsed,
                     source,
+                    true,
                     |_| {},
                     cancellation.clone(),
                 )
@@ -1167,6 +1168,51 @@ mod tests {
             1
         );
         assert_eq!(git_transport.clone_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn clone_detector_finds_locked_nested_skill_beside_root_skill() {
+        let locked_path = "plugins/example/skills/deep-skill";
+        let remote = SkillTreeFixture::new(&[locked_path]);
+        remote.add_root_skill("root-skill");
+        let parsed = ParsedSource {
+            source_type: SourceType::Git,
+            url: remote.source(),
+            subpath: None,
+            local_path: None,
+            git_ref: Some("main".to_string()),
+            skill_filter: None,
+        };
+        let identity = SourceIdentity::from_parsed(&parsed).unwrap();
+        let detector = RuntimeSourceEvidenceDetector::with_git_transport(
+            payloads(),
+            Arc::new(SourceSnapshotReuseIndex::default()),
+            Arc::new(DeterministicGitTransport::for_fixture(&remote)),
+        );
+
+        let outcome = detector
+            .detect(
+                EvidenceDetectionRequest {
+                    environment: EnvironmentRef::Native,
+                    key: RemoteEvidenceKey::from_identity(&identity),
+                    requested_skill_paths: BTreeSet::from([locked_path.to_string()]),
+                    acquisition: Arc::new(identity.acquisition().clone()),
+                    acquisition_transport_identity: identity.acquisition_transport().clone(),
+                },
+                None,
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap();
+
+        let EvidenceDetectionOutcome::Modified(evidence) = outcome else {
+            panic!("expected modified evidence, got {outcome:?}");
+        };
+        assert!(evidence.complete_skill_path_catalog.contains(locked_path));
+        assert!(matches!(
+            evidence.skill_revisions.get(locked_path),
+            Some(SkillRevision::CliContentHash(_))
+        ));
     }
 
     #[tokio::test]

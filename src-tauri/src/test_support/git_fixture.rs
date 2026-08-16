@@ -44,6 +44,14 @@ impl SkillTreeFixture {
         "https://git-fixture.invalid/skill-deck/remote.git".to_string()
     }
 
+    pub(crate) fn add_root_skill(&self, name: &str) {
+        fs::write(
+            self.work.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: root test skill\n---\n"),
+        )
+        .expect("write root Skill");
+    }
+
     pub(crate) fn commit_change(&self, skill: &str) {
         let revision = self.revision.fetch_add(1, Ordering::SeqCst) + 1;
         write_skill(&self.work, skill, &format!("v{revision}")).expect("write changed Skill");
