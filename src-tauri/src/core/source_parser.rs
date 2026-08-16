@@ -23,8 +23,10 @@ use url::Url;
 
 /// Source 别名映射
 /// 对应 CLI: source-parser.ts SOURCE_ALIASES
-const SOURCE_ALIASES: &[(&str, &str)] =
-    &[("coinbase/agentWallet", "coinbase/agentic-wallet-skills")];
+const SOURCE_ALIASES: &[(&str, &str)] = &[
+    ("coinbase/agentWallet", "coinbase/agentic-wallet-skills"),
+    ("vercel-labs/vercel-skills", "vercel-labs/agent-skills"),
+];
 
 /// 解析 source 别名
 fn resolve_alias(source: &str) -> String {
@@ -560,6 +562,18 @@ mod tests {
         assert_eq!(result.url, "https://github.com/owner/repo");
         assert!(result.subpath.is_none());
         assert!(result.skill_filter.is_none());
+    }
+
+    #[test]
+    fn resolves_vercel_skills_repository_alias_to_the_canonical_source() {
+        let result = parse_source("vercel-labs/vercel-skills").unwrap();
+
+        assert_eq!(result.source_type, SourceType::GitHub);
+        assert_eq!(result.url, "https://github.com/vercel-labs/agent-skills");
+        assert_eq!(
+            get_owner_repo(&result),
+            Some("vercel-labs/agent-skills".to_string())
+        );
     }
 
     #[test]
