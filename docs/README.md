@@ -8,7 +8,7 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 |---|---|---|
 | [`CONTEXT.md`](../CONTEXT.md) | Skill Deck 的统一领域词汇，只定义概念身份与边界 | 领域术语、概念边界或推荐用词变化 |
 | [产品行为与交互](./product.md) | 用户看到的核心概念、页面能力、用户工作流、反馈规则、Agent 筛选交互和产品限制 | 用户可见能力、交互语义或产品限制变化 |
-| [Agent 模型](./agent-model.md) | Agent 注册表、Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组和默认目标 | Agent 模型、解析规则或选择语义变化 |
+| [Agent 模型](./agent-model.md) | Agent 注册表、Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组和安装初始选择 | Agent 模型、解析规则或选择语义变化 |
 | [Environment、Skill 位置与项目管理](./environments-and-projects.md) | 应用所在系统、Windows 与 WSL 切换、全局 Skill、项目 Skill、已添加项目、路径解析和跨文件系统访问 | Windows/WSL 切换、全局或项目行为、已添加项目、路径或文件访问规则变化 |
 | [Skill 生命周期](./skill-lifecycle.md) | 来源、发现、安装、读取、更新、来源修复、管理 Agent、复制和移除 | Skill 从来源进入本地后的业务流程变化 |
 | [更新检查](./update-checking.md) | 远端版本比较、缓存、重试、限流、凭据和状态文件 | 远端版本比较或检查策略变化 |
@@ -26,7 +26,7 @@ Skill Deck 的长期文档说明当前产品、领域规则和系统约束。每
 |---|---|
 | 修改领域术语或概念边界 | [`CONTEXT.md`](../CONTEXT.md)，再进入对应领域主文档 |
 | 修改用户可见功能、页面交互或 Agent 筛选 | [产品行为与交互](./product.md)，再按涉及概念进入对应主文档 |
-| 修改 Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组或默认目标 | [Agent 模型](./agent-model.md) |
+| 修改 Skill 读取位置、Agent 检测位置、关联 Agent、筛选候选、选择分组或安装初始选择 | [Agent 模型](./agent-model.md) |
 | 修改应用所在系统、Windows/WSL 切换、全局或项目行为、已添加项目、路径解析或跨文件系统访问 | [Environment、Skill 位置与项目管理](./environments-and-projects.md) |
 | 修改来源、发现、安装、更新、来源修复、管理 Agent、复制或移除 | [Skill 生命周期](./skill-lifecycle.md)；涉及远端检查时增加[更新检查](./update-checking.md)，涉及写入机制时增加[执行与恢复](./execution-and-recovery.md) |
 | 修改路由、跨窗口通信、Tauri 命令、WSL 传输或顶层依赖 | [系统架构](./architecture.md) |

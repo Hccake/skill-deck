@@ -53,7 +53,7 @@ function api() {
         agents: [], installOptions: [], groups: [], initialSelectedOptionIds: [],
         unavailableExplicitAgents: [], userModeOptionIds: [], revision: 'selection-1',
       },
-      defaultSelectionWarning: null,
+      selectionHistoryWarning: null,
     }),
   };
 }
@@ -120,7 +120,7 @@ describe('repairSkillSource', () => {
         userModeOptionIds: ['cursor-own-directory'],
         revision: 'selection-1',
       },
-      defaultSelectionWarning: null,
+      selectionHistoryWarning: null,
     });
 
     await repairSkillSource({

@@ -30,6 +30,7 @@ mod native_workflow_integration_support;
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .commands(collect_commands![
+            commands::agent_selection::confirm_install_agent_selection,
             commands::agent_selection::get_install_agent_selection,
             commands::source_acquisition::acquire_selected_payloads,
             commands::agents::list_agents,

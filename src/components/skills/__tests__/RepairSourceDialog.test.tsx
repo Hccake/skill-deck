@@ -115,7 +115,7 @@ describe('RepairSourceDialog', () => {
         agents: [], installOptions: [], groups: [], initialSelectedOptionIds: ['claude-item'],
         unavailableExplicitAgents: [], userModeOptionIds: ['claude-item'], revision: 'selection-1',
       },
-      defaultSelectionWarning: null,
+      selectionHistoryWarning: null,
     });
     mocks.previewInstall.mockResolvedValue({ status: 'ready', preview: { token, skills: [] } });
     mocks.installSkills.mockResolvedValue({

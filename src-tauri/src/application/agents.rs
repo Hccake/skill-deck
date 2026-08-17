@@ -20,10 +20,7 @@ use crate::environment::agent_environment::{
 };
 use crate::environment::context_resolver::{ContextResolver, ResolvedContext};
 use crate::environment::directory_inspection::{inspect_native, inspect_wsl, DirectoryInspection};
-use crate::environment::lock_io::EnvironmentLockIo;
-use crate::environment::types::{
-    EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
-};
+use crate::environment::types::{EnvironmentRef, EnvironmentStatus, SkillLocationRef};
 use crate::environment::wsl::{WslRuntime, WslSession};
 use crate::error::AppError;
 use crate::models::Scope;
@@ -58,19 +55,11 @@ pub struct CustomAgentDraftValidation {
     pub resolved: ResolvedAgent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct AgentOperationWarning {
-    pub code: String,
-}
-
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
 pub struct AgentDeleteResult {
     pub settings: AgentSettingsSnapshot,
-    pub warnings: Vec<AgentOperationWarning>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -79,7 +68,6 @@ pub struct AgentDeleteResult {
 pub struct AgentDeleteScopeImpact {
     pub scope: Scope,
     pub paths: Vec<AgentDeletePathImpact>,
-    pub default_referenced: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -134,11 +122,6 @@ impl AgentRegistrySnapshotSource for ManagedAgentRegistry {
 struct CapturedCustomDelete {
     registry: Arc<AgentRegistry>,
     definition: CustomAgentDefinition,
-}
-
-struct WslDeletePreviewContexts {
-    runtime: ResolvedContext,
-    defaults: ResolvedContext,
 }
 
 impl ManagedAgentRegistry {
@@ -610,23 +593,20 @@ pub fn save_custom_agent(
     )
 }
 
-pub async fn delete_custom_agent(
+pub fn delete_custom_agent(
     context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    environment_registry: &WslRuntime,
 ) -> Result<AgentDeleteResult, AgentCommandError> {
-    delete_custom_agent_with_cleanup(
+    delete_custom_agent_with_controller_result(
         registry,
         controller,
-        environment_registry,
         context,
         id,
         expected_registry_revision,
     )
-    .await
 }
 
 pub async fn delete_invalid_custom_agent(
@@ -662,7 +642,6 @@ fn delete_invalid_custom_agent_with_controller(
     )?;
     Ok(AgentDeleteResult {
         settings: registry.settings_snapshot(context.environment),
-        warnings: Vec::new(),
     })
 }
 
@@ -678,11 +657,6 @@ pub async fn preview_custom_agent_delete(
     let snapshot = delete_preview_snapshot(&definition, &captured.registry.snapshot().revision)?;
     match &context.environment {
         EnvironmentRef::Native => {
-            let defaults = crate::application::default_agents::read_raw_default_target_agents(
-                context.clone(),
-                environment_registry,
-            )
-            .await?;
             let resolved = ContextResolver::resolve_native(context)?;
             let project_path = resolved
                 .project
@@ -698,7 +672,6 @@ pub async fn preview_custom_agent_delete(
                 &runtime,
                 definition.id,
                 definition.display_name,
-                defaults,
                 &inspections,
             ))
         }
@@ -714,62 +687,23 @@ pub async fn preview_custom_agent_delete(
                     async move {
                         let agent_id = definition.id.clone();
                         let display_name = definition.display_name.clone();
-                        let context_workspace = workspace.clone();
-                        let (defaults, runtime, inspections) = collect_wsl_delete_preview_facts(
-                            &session,
-                            move |session| {
-                                let context = context.clone();
-                                let snapshot = snapshot.clone();
-                                let session = session.clone();
-                                async move {
-                                    let contexts =
-                                        resolve_wsl_delete_preview_contexts(&session, context)
-                                            .await?;
-                                    let project_path = contexts
-                                        .runtime
-                                        .project
-                                        .as_ref()
-                                        .map(|project| project.native_path.clone());
-                                    let runtime =
-                                        AgentEnvironmentResolver::from_active_wsl_session(
-                                            wsl_environment_context(
-                                                &contexts.runtime,
-                                                session.clone(),
-                                                context_workspace,
-                                            ),
-                                            session,
-                                        )
-                                        .resolve_registry(&snapshot, project_path.as_deref())
-                                        .await?;
-                                    Ok((contexts, runtime))
-                                }
-                            },
-                            |session, primary| {
-                                let session = session.clone();
-                                async move {
-                                    crate::application::default_agents::read_raw_default_target_agents_with_io(
-                                        EnvironmentLockIo::ActiveWsl(session),
-                                        crate::core::lock_repository::LockTarget {
-                                            primary,
-                                            legacy: None,
-                                            schema: crate::core::lossless_lock::LockSchema::Global,
-                                        },
-                                    )
-                                    .await
-                                }
-                            },
-                            |session, runtime| {
-                                let session = session.clone();
-                                let paths = delete_impact_resolved_paths(runtime, &agent_id);
-                                async move { inspect_wsl(&session, &paths).await }
-                            },
+                        let resolved = ContextResolver::resolve_wsl(context, &session).await?;
+                        let project_path = resolved
+                            .project
+                            .as_ref()
+                            .map(|project| project.native_path.clone());
+                        let runtime = AgentEnvironmentResolver::from_active_wsl_session(
+                            wsl_environment_context(&resolved, session.clone(), workspace),
+                            session.clone(),
                         )
+                        .resolve_registry(&snapshot, project_path.as_deref())
                         .await?;
+                        let paths = delete_impact_resolved_paths(&runtime, &agent_id);
+                        let inspections = inspect_wsl(&session, &paths).await?;
                         Ok(build_delete_impact(
                             &runtime,
                             agent_id,
                             display_name,
-                            defaults,
                             &inspections,
                         ))
                     }
@@ -778,78 +712,6 @@ pub async fn preview_custom_agent_delete(
                 .map_err(AgentCommandError::from)
         }
     }
-}
-
-async fn resolve_wsl_delete_preview_contexts(
-    session: &WslSession,
-    selected_context: SkillLocationRef,
-) -> Result<WslDeletePreviewContexts, AppError> {
-    resolve_wsl_delete_preview_contexts_with(
-        session,
-        selected_context,
-        |context, session| async move { ContextResolver::resolve_wsl(context, &session).await },
-    )
-    .await
-}
-
-async fn resolve_wsl_delete_preview_contexts_with<Resolve, ResolveFuture>(
-    session: &WslSession,
-    selected_context: SkillLocationRef,
-    mut resolve: Resolve,
-) -> Result<WslDeletePreviewContexts, AppError>
-where
-    Resolve: FnMut(SkillLocationRef, WslSession) -> ResolveFuture,
-    ResolveFuture: std::future::Future<Output = Result<ResolvedContext, AppError>>,
-{
-    let runtime = resolve(selected_context.clone(), session.clone()).await?;
-    let defaults = resolve(
-        SkillLocationRef {
-            environment: selected_context.environment,
-            scope: SkillLocation::Global,
-        },
-        session.clone(),
-    )
-    .await?;
-    Ok(WslDeletePreviewContexts { runtime, defaults })
-}
-
-async fn collect_wsl_delete_preview_facts<
-    ResolveRuntime,
-    ResolveRuntimeFuture,
-    ReadDefaults,
-    ReadDefaultsFuture,
-    Inspect,
-    InspectFuture,
->(
-    session: &WslSession,
-    resolve_runtime: ResolveRuntime,
-    read_defaults: ReadDefaults,
-    inspect: Inspect,
-) -> Result<
-    (
-        Option<crate::core::skill_lock::DefaultTargetAgents>,
-        AgentRuntimeSnapshot,
-        BTreeMap<String, DirectoryInspection>,
-    ),
-    AppError,
->
-where
-    ResolveRuntime: FnOnce(&WslSession) -> ResolveRuntimeFuture,
-    ResolveRuntimeFuture: std::future::Future<
-        Output = Result<(WslDeletePreviewContexts, AgentRuntimeSnapshot), AppError>,
-    >,
-    ReadDefaults: FnOnce(&WslSession, ResourceLocator) -> ReadDefaultsFuture,
-    ReadDefaultsFuture: std::future::Future<
-        Output = Result<Option<crate::core::skill_lock::DefaultTargetAgents>, AppError>,
-    >,
-    Inspect: FnOnce(&WslSession, &AgentRuntimeSnapshot) -> InspectFuture,
-    InspectFuture:
-        std::future::Future<Output = Result<BTreeMap<String, DirectoryInspection>, AppError>>,
-{
-    let (contexts, runtime) = resolve_runtime(session).await?;
-    let defaults = read_defaults(session, contexts.defaults.lock).await?;
-    let inspections = inspect(session, &runtime).await?;
-    Ok((defaults, runtime, inspections))
 }
 
 fn settings_snapshot(
@@ -1003,32 +865,10 @@ fn delete_custom_agent_inner(
     Ok(registry.settings_snapshot(environment))
 }
 
-async fn delete_definition_then_cleanup<D, C, CleanupFuture>(
-    delete_definition: D,
-    cleanup_defaults: C,
-) -> Result<AgentDeleteResult, AgentCommandError>
-where
-    D: FnOnce() -> Result<AgentSettingsSnapshot, AgentCommandError>,
-    C: FnOnce() -> CleanupFuture,
-    CleanupFuture: std::future::Future<Output = Result<(), AppError>>,
-{
-    let settings = delete_definition()?;
-    let warnings = cleanup_defaults()
-        .await
-        .err()
-        .map(|_| AgentOperationWarning {
-            code: "defaultCleanupFailed".to_string(),
-        })
-        .into_iter()
-        .collect();
-    Ok(AgentDeleteResult { settings, warnings })
-}
-
 fn build_delete_impact(
     runtime: &AgentRuntimeSnapshot,
     agent_id: AgentId,
     display_name: String,
-    defaults: Option<crate::core::skill_lock::DefaultTargetAgents>,
     inspections: &BTreeMap<String, DirectoryInspection>,
 ) -> AgentDeleteImpact {
     let resolved = runtime
@@ -1045,23 +885,9 @@ fn build_delete_impact(
             Scope::Global => &resolved.definition.global,
             Scope::Project => &resolved.definition.project,
         };
-        let default_referenced = defaults.as_ref().is_some_and(|defaults| match scope {
-            Scope::Global => defaults
-                .global
-                .iter()
-                .any(|candidate| candidate == agent_id.as_str()),
-            Scope::Project => defaults
-                .project
-                .iter()
-                .any(|candidate| candidate == agent_id.as_str()),
-        });
         let paths =
             delete_scope_path_impacts(definition_scope, resolved_scope, scope.clone(), inspections);
-        AgentDeleteScopeImpact {
-            scope,
-            paths,
-            default_referenced,
-        }
+        AgentDeleteScopeImpact { scope, paths }
     })
     .collect();
 
@@ -1205,10 +1031,9 @@ fn delete_custom_agent_with_controller(
     )
 }
 
-async fn delete_custom_agent_with_cleanup(
+fn delete_custom_agent_with_controller_result(
     registry: &ManagedAgentRegistry,
     controller: &RuntimeAdmissionCoordinator,
-    environment_registry: &WslRuntime,
     context: SkillLocationRef,
     id: AgentId,
     expected_registry_revision: String,
@@ -1216,32 +1041,13 @@ async fn delete_custom_agent_with_cleanup(
     registry.preflight_delete(&id, &expected_registry_revision)?;
     let _guard =
         controller.begin_mutation(MutationKind::ManageAgentDefinitions, context.clone())?;
-    let environment = context.environment.clone();
-    delete_definition_then_cleanup(
-        || {
-            delete_custom_agent_inner(
-                registry,
-                environment,
-                id.clone(),
-                expected_registry_revision,
-            )
-        },
-        || {
-            let context = context.clone();
-            let id = id.clone();
-            let post_delete_registry = registry.registry_snapshot(true);
-            async move {
-                crate::application::default_agents::remove_default_target_agent_reference(
-                    context,
-                    &id,
-                    environment_registry,
-                    &post_delete_registry,
-                )
-                .await
-            }
-        },
-    )
-    .await
+    let settings = delete_custom_agent_inner(
+        registry,
+        context.environment,
+        id,
+        expected_registry_revision,
+    )?;
+    Ok(AgentDeleteResult { settings })
 }
 
 fn delete_preview_snapshot(
@@ -1322,7 +1128,7 @@ mod tests {
     use crate::environment::agent_environment::{
         AgentEnvironmentResolver, DetectionState, EnvironmentContext,
     };
-    use crate::environment::types::EnvironmentStatus;
+    use crate::environment::types::{EnvironmentStatus, ResourceLocator, SkillLocation};
     use serde_json::json;
 
     #[test]
@@ -1374,68 +1180,6 @@ mod tests {
             availability: EnvironmentStatus::Available,
             revision: "native-test-revision".to_string(),
             wsl_workspace: None,
-        }
-    }
-
-    fn wsl_session() -> WslSession {
-        WslSession {
-            distro_name: "Ubuntu".to_string(),
-            user: "alice".to_string(),
-            uid: 1000,
-            home: "/home/alice".to_string(),
-            xdg_state_home: Some("/home/alice/.local/state".to_string()),
-            config_home: "/home/alice/.config".to_string(),
-            environment: BTreeMap::new(),
-            runtime_generation: 0,
-        }
-    }
-
-    fn resolved_wsl_context(session: &WslSession) -> ResolvedContext {
-        let environment = EnvironmentRef::Wsl {
-            distro_name: session.distro_name.clone(),
-        };
-        ResolvedContext {
-            context: SkillLocationRef {
-                environment: environment.clone(),
-                scope: SkillLocation::Global,
-            },
-            project: None,
-            home: ResourceLocator {
-                environment: environment.clone(),
-                native_path: session.home.clone(),
-            },
-            skill_root: ResourceLocator {
-                environment: environment.clone(),
-                native_path: format!("{}/.agents/skills", session.home),
-            },
-            lock: ResourceLocator {
-                environment,
-                native_path: format!("{}/.agents/.skill-lock.json", session.home),
-            },
-        }
-    }
-
-    fn resolved_wsl_context_for(
-        session: &WslSession,
-        context: SkillLocationRef,
-        lock_path: &str,
-    ) -> ResolvedContext {
-        let mut resolved = resolved_wsl_context(session);
-        resolved.context = context;
-        resolved.lock.native_path = lock_path.to_string();
-        resolved
-    }
-
-    fn empty_wsl_runtime(session: &WslSession) -> AgentRuntimeSnapshot {
-        AgentRuntimeSnapshot {
-            registry_revision: "registry".to_string(),
-            environment_revision: "environment".to_string(),
-            environment: EnvironmentRef::Wsl {
-                distro_name: session.distro_name.clone(),
-            },
-            availability: EnvironmentStatus::Available,
-            project_path: None,
-            agents: BTreeMap::new(),
         }
     }
 
@@ -1758,59 +1502,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_definition_delete_reports_default_cleanup_failure_as_a_warning() {
-        let result = delete_definition_then_cleanup(
-            || Ok(settings_after_delete()),
-            || async {
-                Err(AppError::Io {
-                    message: "locked".to_string(),
-                })
-            },
-        )
-        .await
-        .expect("definition deletion remains successful");
-
-        assert_eq!(result.settings.registry_revision, "after-delete");
-        assert_eq!(result.warnings[0].code, "defaultCleanupFailed");
-    }
-
-    #[tokio::test]
-    async fn definition_delete_failure_does_not_attempt_default_cleanup() {
-        let cleanup_called = std::sync::atomic::AtomicBool::new(false);
-        let result = delete_definition_then_cleanup(
-            || {
-                Err(AgentCommandError::Application {
-                    error: AppError::Io {
-                        message: "definition locked".to_string(),
-                    },
-                })
-            },
-            || async {
-                cleanup_called.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(())
-            },
-        )
-        .await
-        .expect_err("definition failure must be returned");
-
-        assert!(matches!(result, AgentCommandError::Application { .. }));
-        assert!(!cleanup_called.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    fn settings_after_delete() -> AgentSettingsSnapshot {
-        AgentSettingsSnapshot {
-            registry_revision: "after-delete".to_string(),
-            active_builtin: Vec::new(),
-            active_custom: Vec::new(),
-            disabled_conflicts: Vec::new(),
-            invalid_custom_records: Vec::new(),
-            current_environment: EnvironmentRef::Native,
-            custom_storage_issue: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn delete_impact_reports_paths_counts_and_default_references() {
+    async fn delete_impact_reports_paths_and_counts() {
         let temp = tempfile::tempdir().expect("tempdir");
         let project = temp.path().join("project");
         std::fs::create_dir_all(temp.path().join(".agents/skills")).unwrap();
@@ -1844,10 +1536,6 @@ mod tests {
             &runtime,
             definition.id.clone(),
             definition.display_name.clone(),
-            Some(crate::core::skill_lock::DefaultTargetAgents {
-                global: vec![definition.id.to_string()],
-                project: Vec::new(),
-            }),
             &inspections,
         );
 
@@ -1862,11 +1550,9 @@ mod tests {
             PathSpec::home(".agents/skills")
         );
         assert_eq!(impact.scopes[0].paths[0].observed_skill_count, Some(2));
-        assert!(impact.scopes[0].default_referenced);
         assert_eq!(impact.scopes[1].scope, Scope::Project);
         assert_eq!(impact.scopes[1].paths[0].kind, AgentDeletePathKind::Private);
         assert_eq!(impact.scopes[1].paths[0].observed_skill_count, Some(1));
-        assert!(!impact.scopes[1].default_referenced);
         assert!(impact.loses_management_capability);
         assert!(!impact.files_will_be_deleted);
     }
@@ -1891,7 +1577,6 @@ mod tests {
             &runtime,
             definition.id,
             definition.display_name,
-            None,
             &std::collections::BTreeMap::new(),
         );
 
@@ -1933,13 +1618,8 @@ mod tests {
         )
         .await;
 
-        let impact = build_delete_impact(
-            &runtime,
-            definition.id,
-            definition.display_name,
-            None,
-            &inspected,
-        );
+        let impact =
+            build_delete_impact(&runtime, definition.id, definition.display_name, &inspected);
 
         assert_eq!(inspected.len(), 1);
         assert_eq!(impact.scopes[0].paths.len(), 2);
@@ -1958,113 +1638,6 @@ mod tests {
         );
         assert_eq!(impact.scopes[0].paths[0].observed_skill_count, Some(1));
         assert_eq!(impact.scopes[0].paths[1].observed_skill_count, Some(1));
-    }
-
-    #[tokio::test]
-    async fn wsl_preview_facts_reuse_one_session_for_defaults_runtime_and_inspection() {
-        let session = wsl_session();
-        let expected_distro = session.distro_name.clone();
-        let observed = Arc::new(Mutex::new(Vec::new()));
-        let resolved = resolved_wsl_context(&session);
-        let default_lock = resolved.lock.clone();
-        let contexts = WslDeletePreviewContexts {
-            runtime: resolved.clone(),
-            defaults: resolved,
-        };
-        let runtime = empty_wsl_runtime(&session);
-        let defaults = Some(crate::core::skill_lock::DefaultTargetAgents {
-            global: vec!["codex".to_string()],
-            project: Vec::new(),
-        });
-        let inspected = BTreeMap::new();
-
-        let (returned_defaults, returned_runtime, returned_inspected) =
-            collect_wsl_delete_preview_facts(
-                &session,
-                {
-                    let observed = Arc::clone(&observed);
-                    let expected_distro = expected_distro.clone();
-                    move |received| {
-                        assert_eq!(received.distro_name, expected_distro);
-                        observed.lock().unwrap().push("runtime");
-                        std::future::ready(Ok((contexts, runtime)))
-                    }
-                },
-                {
-                    let observed = Arc::clone(&observed);
-                    let expected_distro = expected_distro.clone();
-                    let defaults = defaults.clone();
-                    move |received, lock| {
-                        assert_eq!(received.distro_name, expected_distro);
-                        assert_eq!(lock, default_lock);
-                        observed.lock().unwrap().push("defaults");
-                        std::future::ready(Ok(defaults))
-                    }
-                },
-                {
-                    let observed = Arc::clone(&observed);
-                    move |received, _| {
-                        assert_eq!(received.distro_name, expected_distro);
-                        observed.lock().unwrap().push("inspection");
-                        std::future::ready(Ok(inspected))
-                    }
-                },
-            )
-            .await
-            .expect("collect WSL preview facts");
-
-        assert_eq!(returned_defaults, defaults);
-        assert_eq!(returned_runtime, empty_wsl_runtime(&session));
-        assert_eq!(returned_inspected, BTreeMap::new());
-        assert_eq!(
-            *observed.lock().unwrap(),
-            vec!["runtime", "defaults", "inspection"]
-        );
-    }
-
-    #[tokio::test]
-    async fn wsl_project_preview_uses_the_global_context_lock_for_defaults() {
-        let session = wsl_session();
-        let selected_context = SkillLocationRef {
-            environment: EnvironmentRef::Wsl {
-                distro_name: session.distro_name.clone(),
-            },
-            scope: SkillLocation::Project {
-                project_id: "project-1".to_string(),
-            },
-        };
-        let observed_scopes = Arc::new(Mutex::new(Vec::new()));
-
-        let contexts =
-            resolve_wsl_delete_preview_contexts_with(&session, selected_context.clone(), {
-                let observed_scopes = Arc::clone(&observed_scopes);
-                move |context, session| {
-                    observed_scopes.lock().unwrap().push(context.scope.clone());
-                    let lock = match context.scope {
-                        SkillLocation::Global => "/home/alice/.local/state/skills/.skill-lock.json",
-                        SkillLocation::Project { .. } => "/work/project/skills-lock.json",
-                    };
-                    std::future::ready(Ok(resolved_wsl_context_for(&session, context, lock)))
-                }
-            })
-            .await
-            .expect("resolve selected and global contexts");
-
-        assert_eq!(contexts.runtime.context, selected_context);
-        assert_eq!(contexts.defaults.context.scope, SkillLocation::Global);
-        assert_eq!(
-            contexts.defaults.lock.native_path,
-            "/home/alice/.local/state/skills/.skill-lock.json"
-        );
-        assert_eq!(
-            *observed_scopes.lock().unwrap(),
-            vec![
-                SkillLocation::Project {
-                    project_id: "project-1".to_string(),
-                },
-                SkillLocation::Global,
-            ]
-        );
     }
 
     #[test]
@@ -2202,13 +1775,8 @@ mod tests {
                 &delete_impact_resolved_paths(&runtime, &definition.id),
             )
             .await;
-            let impact = build_delete_impact(
-                &runtime,
-                definition.id,
-                definition.display_name,
-                None,
-                &inspected,
-            );
+            let impact =
+                build_delete_impact(&runtime, definition.id, definition.display_name, &inspected);
             let paths = &impact.scopes[1].paths;
 
             assert_eq!(paths[0].kind, AgentDeletePathKind::Standard);
@@ -2341,31 +1909,26 @@ mod tests {
         assert_eq!(preview.revision, actual_revision);
     }
 
-    #[tokio::test]
-    async fn invalid_async_delete_does_not_admit_default_cleanup() {
+    #[test]
+    fn invalid_delete_does_not_publish_mutation_state() {
         let (_temp, repository) = repository_with_records(vec![CustomAgentRecord::valid(
             custom_definition("kept-agent", ".kept-agent"),
         )]);
         let service = ManagedAgentRegistry::from_repository(repository);
         let controller = RuntimeAdmissionCoordinator::default();
-        let environments = WslRuntime::default();
         let revision = service.registry_snapshot(true).revision.clone();
 
-        let error = delete_custom_agent_with_cleanup(
+        let error = delete_custom_agent_with_controller_result(
             &service,
             &controller,
-            &environments,
             SkillLocationRef {
-                environment: EnvironmentRef::Wsl {
-                    distro_name: "missing-session".to_string(),
-                },
+                environment: EnvironmentRef::Native,
                 scope: SkillLocation::Global,
             },
             AgentId::parse("codex").unwrap(),
             revision,
         )
-        .await
-        .expect_err("invalid definition must fail before environment cleanup");
+        .expect_err("invalid definition must fail before mutation admission");
 
         assert_eq!(
             error,
@@ -2376,7 +1939,6 @@ mod tests {
             }
         );
         assert_eq!(controller.snapshot().revision, 0);
-        assert!(environments.get("missing-session").is_none());
     }
 
     #[test]

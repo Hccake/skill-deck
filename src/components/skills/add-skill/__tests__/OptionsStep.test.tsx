@@ -39,7 +39,7 @@ function selectionSnapshot(): InstallAgentSelectionSnapshot {
       unavailableExplicitAgents: [{ agentId: 'old-agent', reason: 'definitionMissing' }],
       userModeOptionIds: ['claude', 'cursor'],
     }),
-    defaultSelectionWarning: null,
+    selectionHistoryWarning: null,
   };
 }
 
@@ -225,9 +225,9 @@ describe('OptionsStep', () => {
 
   it('shows a saved-default warning without blocking the selection', async () => {
     const snapshot = selectionSnapshot();
-    snapshot.defaultSelectionWarning = 'readFailed';
+    snapshot.selectionHistoryWarning = 'readFailed';
     await renderStep(snapshot);
-    expect(screen.getByText('addSkill.agents.defaultLoadWarning')).toBeDefined();
+    expect(screen.getByText('addSkill.agents.historyLoadWarning')).toBeDefined();
     expect(screen.getByRole('checkbox', { name: 'Claude Code' })).toBeDefined();
   });
 

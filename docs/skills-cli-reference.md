@@ -28,8 +28,8 @@ Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两�
 |---|---|---|
 | Skill 目录 | 通用 Skill 目录和完整 Skill 内容 | 内容快照、风险检查、恢复数据以及 Windows 与 WSL 之间的写入 |
 | 来源 | 简写、Git URL、本地路径、通过约定地址发现（Well-known）、`ref` 和 Skill 子路径的兼容含义 | 获取进度、信任信息、缓存和界面反馈 |
-| Agent | 当前参考版本已知的 Agent ID，以及写入 lock 的兼容选择信息 | 用户添加的 Agent 信息、检测结果、关联关系和默认目标 |
-| 全局 lock | `skills` CLI v3 路径和共同字段 | `defaultTargetAgents`，以及修改 lock 时保留未涉及的内容 |
+| Agent | 当前参考版本已知的 Agent ID，以及写入 lock 的兼容选择信息 | 用户添加的 Agent 信息、检测结果、关联关系和安装选项 |
+| 全局 lock | `skills` CLI v3 路径和共同字段 | 修改 lock 时无损保留未涉及的内容 |
 | 项目 lock | `skills` CLI v1 字段、排序、内容哈希和 Eve 安装位置 | `sourceUrl`、`remoteHash`、`pluginName` 和旧路径迁移 |
 | 安装与更新 | 来源、Skill 子路径、通用目录和兼容 lock 记录 | 预览、批量执行、取消、恢复和具体错误反馈 |
 
@@ -69,9 +69,9 @@ Skill Deck 的运行状态、预览信息、内容快照、恢复记录和用户
 | `updatedAt` | `skills` CLI | 最近更新时间 |
 | `pluginName` | `skills` CLI | 能够识别时记录的 plugin 名称 |
 | `lastSelectedAgents` | `skills` CLI | CLI 最近一次选择的 Agent ID |
-| `defaultTargetAgents` | Skill Deck 扩展 | 保存全局和项目位置各自的默认 Agent ID |
+| `defaultTargetAgents` | 旧版 Skill Deck | 当前版本不读取、不写入且不清理；重写全局 lock 时原样保留 |
 
-Skill Deck 写入 `lastSelectedAgents` 时，只包含当前参考版本能够识别的 Agent ID。用户添加的 Agent ID 可以保存在 `defaultTargetAgents` 中，不会写入第三方字段。默认目标的选择和回退规则见[Agent 模型](./agent-model.md#默认目标)。
+Skill Deck 在用户确认安装目标后写入 `lastSelectedAgents`，内容只包含当前参考版本能够识别的内置 Agent ID。全局安装和项目安装共用当前 Environment 的全局字段；明确指定 Agent 的安装入口不会更新该字段。初始选择和失败处理规则见[Agent 模型](./agent-model.md#安装初始选择与最近选择)。
 
 ## 项目 lock 与 Eve 安装位置
 

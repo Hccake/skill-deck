@@ -5,6 +5,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "check_application_update",
     "check_updates",
     "clear_github_credential",
+    "confirm_install_agent_selection",
     "confirm_recovery_resource_resolved",
     "connect_environment",
     "copy_skill_to_projects",

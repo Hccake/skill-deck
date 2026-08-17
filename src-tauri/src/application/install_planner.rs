@@ -186,7 +186,7 @@ where
                     return Ok(BuiltInstallOutcome::SelectionStale(
                         InstallAgentSelectionSnapshot {
                             selection: catalog.snapshot,
-                            default_selection_warning: None,
+                            selection_history_warning: None,
                         },
                     ));
                 }

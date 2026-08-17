@@ -839,7 +839,6 @@
       "deleteDescription": "此操作只会从 Skill Deck 中移除用户添加的 Agent 信息。",
       "deleteFilesSafe": "不会删除已安装的 Skill 文件，也不会删除 Agent 专用 Skill 目录。",
       "deleteManagementWarning": "当前与此 Agent 关联的 Skill 可能无法继续被检测或管理，重新添加相同信息后可恢复。",
-      "deleteDefaultReferenced": "当前默认目标",
       "deleteObservedSkillCount": "检测到 {{count}}{{suffix}} 个 Skill",
       "deletePathUnavailable": "当前系统无法解析此路径",
       "deletePathUnavailableReasons": {
@@ -851,7 +850,7 @@
         "private": "此 Agent 的 Skill 目录"
       },
       "deleteConfirmId": "输入 Agent ID 以确认",
-      "deleteConfirmHint": "请输入 {{id}}。此操作只删除保存的信息和默认引用，不删除文件。",
+      "deleteConfirmHint": "请输入 {{id}}。此操作只删除保存的信息，不删除文件。",
       "confirmDelete": "删除信息",
       "scope": {
         "both": "Global 与 Project",
@@ -1003,9 +1002,6 @@
         "reload": "重新加载并检查",
         "deletedTitle": "此 Agent 信息已被删除",
         "deletedDescription": "重新加载时未找到正在编辑的信息。当前草稿不会覆盖外部删除；请返回 Agent 列表后重新添加。"
-      },
-      "warnings": {
-        "defaultCleanupFailed": "Agent 已删除，但旧的默认引用暂未清理；下次保存默认设置时会自动清理。"
       },
       "dirtyNavigation": {
         "title": "放弃未保存的更改？",
@@ -1371,7 +1367,9 @@
       "privateCopySelected": "已选 {{count}} 个",
       "targetTitle": "目标 Agent",
       "loadError": "无法加载所选系统中的 Agent。",
-      "defaultLoadWarning": "未能读取默认目标，已使用随应用提供的推荐项。你仍可调整本次安装目标。",
+      "historyLoadWarning": "未能读取最近使用的 Agent。你仍可为本次安装选择目标。",
+      "historySaveWarning": "可以继续安装，但未能保存最近使用的 Agent。",
+      "historySaveError": "未能确认 Agent 选择，请重试。",
       "concreteTargetsTitle": "项目内目标",
       "concreteTargetsHint": "选择要安装到的项目内目标，例如 Eve root 或 subagent。",
       "expandOtherAgents": "显示其他 {{count}} 个 Agent",

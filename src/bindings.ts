@@ -6,6 +6,14 @@
 
 
 export const commands = {
+async confirmInstallAgentSelection(context: SkillLocationRef, submission: AgentSelectionSubmission, explicitAgentIds: string[]) : Promise<Result<ConfirmInstallAgentSelectionOutcome, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_install_agent_selection", { context, submission, explicitAgentIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getInstallAgentSelection(context: SkillLocationRef, explicitAgentIds: string[]) : Promise<Result<InstallAgentSelectionSnapshot, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_install_agent_selection", { context, explicitAgentIds }) };
@@ -519,19 +527,19 @@ export type AgentDefinition = { id: AgentId; displayName: string; source: AgentS
 export type AgentDeleteImpact = { agentId: AgentId; displayName: string; registryRevision: string; environmentRevision: string; scopes: AgentDeleteScopeImpact[]; losesManagementCapability: boolean; filesWillBeDeleted: boolean }
 export type AgentDeletePathImpact = { kind: AgentDeletePathKind; logicalPath: PathSpec; resolvedPath: string | null; presence: DirectoryPresenceState; observedSkillCount: number | null; observedSkillCountTruncated: boolean; unavailableReason: DetectionReason | null }
 export type AgentDeletePathKind = "standard" | "private"
-export type AgentDeleteResult = { settings: AgentSettingsSnapshot; warnings: AgentOperationWarning[] }
-export type AgentDeleteScopeImpact = { scope: Scope; paths: AgentDeletePathImpact[]; defaultReferenced: boolean }
+export type AgentDeleteResult = { settings: AgentSettingsSnapshot }
+export type AgentDeleteScopeImpact = { scope: Scope; paths: AgentDeletePathImpact[] }
 export type AgentFieldError = { field: string; code: string }
 export type AgentId = string
 export type AgentInstallOption = { id: AgentInstallOptionId; kind: AgentInstallOptionKind; agentIds: AgentId[]; displayName: string; path: string; groupId: string | null; selectable: boolean; modeConstraint: AgentSelectionModeConstraint; disabledReason: AgentSelectionDisabledReason | null }
 export type AgentInstallOptionId = string
 export type AgentInstallOptionKind = "standardDirectory" | "groupLocation"
-export type AgentOperationWarning = { code: string }
 export type AgentRuntimeSnapshot = { registryRevision: string; environmentRevision: string; environment: EnvironmentRef; availability: EnvironmentStatus; projectPath: string | null; agents: Partial<{ [key in AgentId]: ResolvedAgent }> }
 export type AgentSelectionAgent = { kind: AgentSelectionAgentKind; id: AgentId; displayName: string; detection: DetectionState; directoryAccess: SkillDirectoryAccess | null; installOptionId: AgentInstallOptionId | null; groupId: string | null }
 export type AgentSelectionAgentKind = "standard" | "grouped"
 export type AgentSelectionDisabledReason = "placementConflict"
 export type AgentSelectionGroup = { id: string; agentId: AgentId; displayName: string; optionIds: AgentInstallOptionId[]; detection: DetectionState }
+export type AgentSelectionHistoryWarning = "readFailed" | "writeFailed"
 export type AgentSelectionInvalidReason = "duplicateOption" | "optionUnavailable" | "placementConflict" | "optionMissing" | "resultNotAllowed"
 export type AgentSelectionModeConstraint = "userSelectable" | "copyOnly"
 export type AgentSelectionRevision = string
@@ -599,6 +607,7 @@ trustReason?: string | null }
 export type BackendActivitySnapshot = { revision: number; mutation: ActiveMutation | null; lifecycle: ActiveLifecycleLease | null }
 export type CheckUpdateCapability = { canRunUpdate: boolean; canCheckForUpdates: boolean; reason: UpdateCapabilityReasonCode | null }
 export type ConfigResourceKind = "contextRoot" | "canonicalSkillsRoot"
+export type ConfirmInstallAgentSelectionOutcome = { status: "ready"; warning: AgentSelectionHistoryWarning | null } | { status: "selectionStale"; snapshot: InstallAgentSelectionSnapshot }
 export type ContextSnapshotRevision = string
 export type CopyAgentSelectionSnapshot = { selection: AgentSelectionSnapshot }
 export type CopyExecutionRequest = { request: CopyRequest; token: PreviewToken; payload: AcquiredPayloadHandle }
@@ -612,7 +621,6 @@ export type CustomAgentDraftValidation = { registryRevision: string; environment
 export type CustomPathBase = "home" | "configHome" | "project"
 export type CustomPathSpec = { kind: "based"; base: CustomPathBase; relativePath: string } | { kind: "absolute"; path: string }
 export type CustomScopeDefinition = { enabled: boolean; location: ScopeLocation; privatePath: CustomPathSpec | null }
-export type DefaultSelectionWarning = "readFailed"
 export type DetectionReason = "projectContextRequired" | "environmentUnavailable"
 export type DetectionSpec = { kind: "anyPathExists"; paths: PathSpec[] }
 export type DetectionState = "detected" | "notDetected" | "indeterminate"
@@ -674,7 +682,7 @@ export type GithubCredentialSource = "keyring" | "githubTokenEnv" | "ghTokenEnv"
 export type GithubCredentialStatus = { source: GithubCredentialSource; storage: GithubCredentialStorageStatus; validation: GithubCredentialValidationStatus; account: string | null; rateLimitRemaining: number | null; rateLimitLimit: number | null; rateLimitResetAtEpochMs: number | null; retryAtEpochMs: number | null }
 export type GithubCredentialStorageStatus = "available" | "unavailable"
 export type GithubCredentialValidationStatus = "unconfigured" | "verified" | "invalid" | "rateLimited" | "unavailable"
-export type InstallAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; defaultSelectionWarning: DefaultSelectionWarning | null }
+export type InstallAgentSelectionSnapshot = { selection: AgentSelectionSnapshot; selectionHistoryWarning: AgentSelectionHistoryWarning | null }
 /**
  * 安装模式
  */

@@ -71,9 +71,7 @@ pub async fn delete_custom_agent(
         expected_registry_revision,
         runtime.agents(),
         runtime.admission(),
-        runtime.wsl(),
     )
-    .await
 }
 
 #[tauri::command]

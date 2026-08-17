@@ -7,7 +7,6 @@ import type {
   SkillUpdateInfo, FetchResult, InstallMode, SkillDeckConfig,
   AgentDeleteImpact,
   AgentDeleteResult,
-  AgentOperationWarning,
   AgentSettingsSnapshot,
   CustomAgentDefinition,
   CustomAgentDraftValidation,
@@ -15,6 +14,7 @@ import type {
   InstallWizardSessionSnapshot, MutationSnapshot,
   RegisteredProject, ProjectInfo, ActiveMutation,
   SkillIdentity,
+  AgentSelectionSubmission, ConfirmInstallAgentSelectionOutcome,
   InstallRequest, InstallPreview, InstallPreviewOutcome, InstallResponse,
   InstallAgentSelectionSnapshot, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
@@ -38,9 +38,10 @@ export type {
   SkillLocationRef, EnvironmentDiscoverySnapshot, EnvironmentInfo,
   EnvironmentRef, AddProjectResult, InstallWizardSessionSnapshot, MutationSnapshot,
   RegisteredProject, ProjectInfo,
-  ActiveMutation, AgentDeleteImpact, AgentDeleteResult, AgentOperationWarning,
+  ActiveMutation, AgentDeleteImpact, AgentDeleteResult,
   AgentSettingsSnapshot, CustomAgentDefinition, CustomAgentDraftValidation,
-  SkillIdentity, InstallRequest, InstallPreview, InstallPreviewOutcome, InstallResponse,
+  SkillIdentity, AgentSelectionSubmission, ConfirmInstallAgentSelectionOutcome,
+  InstallRequest, InstallPreview, InstallPreviewOutcome, InstallResponse,
   InstallAgentSelectionSnapshot, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
   UpdateCheckRequest, UpdateCheckResponse,
@@ -277,6 +278,18 @@ export async function getInstallAgentSelection(
   explicitAgentIds: string[],
 ): Promise<InstallAgentSelectionSnapshot> {
   return unwrap(await commands.getInstallAgentSelection(context, explicitAgentIds));
+}
+
+export async function confirmInstallAgentSelection(
+  context: SkillLocationRef,
+  submission: AgentSelectionSubmission,
+  explicitAgentIds: string[],
+): Promise<ConfirmInstallAgentSelectionOutcome> {
+  return unwrap(await commands.confirmInstallAgentSelection(
+    context,
+    submission,
+    explicitAgentIds,
+  ));
 }
 
 /**

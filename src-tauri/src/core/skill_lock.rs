@@ -1,14 +1,10 @@
 // .skill-lock.json 读取
 
 use serde::{Deserialize, Serialize};
-use specta::Type;
 #[cfg(test)]
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use super::paths::PATHS;
-use crate::core::agent_definition::{AgentDefinition, AgentId, AgentSource, ScopeDefinition};
-use crate::core::agent_registry::AgentRegistrySnapshot;
 
 /// Lock 文件版本号
 /// 对应 CLI: CURRENT_VERSION = 3 (skill-lock.ts:9)
@@ -62,69 +58,6 @@ pub struct DismissedPrompts {
     pub find_skills_prompt: Option<bool>,
 }
 
-/// GUI 使用的 scope-aware 默认安装目标
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct DefaultTargetAgents {
-    pub global: Vec<String>,
-    pub project: Vec<String>,
-}
-
-pub fn effective_default_target_agents(
-    stored: &DefaultTargetAgents,
-    snapshot: &AgentRegistrySnapshot,
-) -> DefaultTargetAgents {
-    DefaultTargetAgents {
-        global: effective_scope_defaults(&stored.global, snapshot, |definition| &definition.global),
-        project: effective_scope_defaults(&stored.project, snapshot, |definition| {
-            &definition.project
-        }),
-    }
-}
-
-pub fn builtin_last_selected_projection(
-    effective: &DefaultTargetAgents,
-    snapshot: &AgentRegistrySnapshot,
-) -> Vec<String> {
-    let mut seen = HashSet::new();
-    effective
-        .global
-        .iter()
-        .chain(&effective.project)
-        .filter(|id| seen.insert((*id).clone()))
-        .filter(|id| {
-            AgentId::parse((*id).clone())
-                .ok()
-                .and_then(|id| snapshot.active_definitions.get(&id))
-                .is_some_and(|definition| definition.source == AgentSource::Builtin)
-        })
-        .cloned()
-        .collect()
-}
-
-fn effective_scope_defaults(
-    stored: &[String],
-    snapshot: &AgentRegistrySnapshot,
-    scope: impl Fn(&AgentDefinition) -> &ScopeDefinition,
-) -> Vec<String> {
-    let mut seen = HashSet::new();
-    stored
-        .iter()
-        .filter(|id| seen.insert((*id).clone()))
-        .filter(|id| {
-            AgentId::parse((*id).clone())
-                .ok()
-                .and_then(|id| snapshot.active_definitions.get(&id))
-                .map(&scope)
-                .is_some_and(|scope| {
-                    scope.enabled && !scope.reads_standard && scope.private_path.is_some()
-                })
-        })
-        .cloned()
-        .collect()
-}
-
 /// Skill Lock 文件结构
 /// 对应 CLI: SkillLockFile (skill-lock.ts:46-55)
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -137,8 +70,6 @@ pub struct SkillLockFile {
     pub dismissed: Option<DismissedPrompts>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_selected_agents: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_target_agents: Option<DefaultTargetAgents>,
 }
 
 #[cfg(test)]
@@ -151,7 +82,6 @@ impl SkillLockFile {
             skills: HashMap::new(),
             dismissed: None,
             last_selected_agents: None,
-            default_target_agents: None,
         }
     }
 }
@@ -177,10 +107,6 @@ pub(crate) fn parse_skill_lock_file(content: &str) -> Result<SkillLockFile, serd
                 .get("lastSelectedAgents")
                 .cloned()
                 .and_then(|value| serde_json::from_value(value).ok());
-            let default_target_agents = value
-                .get("defaultTargetAgents")
-                .cloned()
-                .and_then(|value| serde_json::from_value(value).ok());
             let Some(skills) = value.get("skills").and_then(serde_json::Value::as_object) else {
                 return Err(original_error);
             };
@@ -199,7 +125,6 @@ pub(crate) fn parse_skill_lock_file(content: &str) -> Result<SkillLockFile, serd
                 skills,
                 dismissed,
                 last_selected_agents,
-                default_target_agents,
             })
         }
     }
@@ -291,183 +216,11 @@ pub fn get_skill_from_lock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::agent_definition::{
-        AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, PathSpec,
-        ScopeDefinition,
-    };
-    use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
     use once_cell::sync::Lazy;
-    use std::collections::BTreeMap;
     use std::sync::Mutex;
     use tempfile::tempdir;
 
     static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-    fn scope(enabled: bool, reads_standard: bool, private_path: bool) -> ScopeDefinition {
-        ScopeDefinition {
-            enabled,
-            reads_standard,
-            private_path: private_path.then(|| PathSpec::home(".agent/skills")),
-        }
-    }
-
-    fn definition(
-        id: &str,
-        source: AgentSource,
-        global: ScopeDefinition,
-        project: ScopeDefinition,
-    ) -> AgentDefinition {
-        AgentDefinition {
-            id: AgentId::parse(id).unwrap(),
-            display_name: id.to_string(),
-            source,
-            aliases: Vec::new(),
-            global,
-            project,
-            detection: DetectionSpec::AnyPathExists {
-                paths: vec![PathSpec::home(format!(".{id}"))],
-            },
-            legacy_paths: Vec::new(),
-            adapter: AgentAdapter::Standard,
-        }
-    }
-
-    fn registry_snapshot(definitions: Vec<AgentDefinition>) -> AgentRegistrySnapshot {
-        AgentRegistrySnapshot {
-            revision: "registry-revision".to_string(),
-            active_definitions: definitions
-                .into_iter()
-                .map(|definition| (definition.id.clone(), definition))
-                .collect::<BTreeMap<_, _>>(),
-        }
-    }
-
-    #[test]
-    fn effective_defaults_filter_missing_conflicting_disabled_and_non_private_ids_stably() {
-        let private = scope(true, false, true);
-        let standard = scope(true, true, false);
-        let both = scope(true, true, true);
-        let disabled = scope(false, false, true);
-        let snapshot = registry_snapshot(vec![
-            definition(
-                "builtin-private",
-                AgentSource::Builtin,
-                private.clone(),
-                standard.clone(),
-            ),
-            definition(
-                "custom-private",
-                AgentSource::Custom,
-                private.clone(),
-                private.clone(),
-            ),
-            definition(
-                "private-to-both",
-                AgentSource::Builtin,
-                both,
-                standard.clone(),
-            ),
-            definition(
-                "disabled-private",
-                AgentSource::Builtin,
-                disabled,
-                standard.clone(),
-            ),
-            definition(
-                "not-detected-private",
-                AgentSource::Builtin,
-                private.clone(),
-                standard.clone(),
-            ),
-            definition(
-                "indeterminate-private",
-                AgentSource::Custom,
-                standard.clone(),
-                private,
-            ),
-        ]);
-        let stored = DefaultTargetAgents {
-            global: vec![
-                "builtin-private".to_string(),
-                "deleted-agent".to_string(),
-                "conflicting-custom".to_string(),
-                "private-to-both".to_string(),
-                "disabled-private".to_string(),
-                "not-detected-private".to_string(),
-                "builtin-private".to_string(),
-                "custom-private".to_string(),
-            ],
-            project: vec![
-                "indeterminate-private".to_string(),
-                "custom-private".to_string(),
-                "indeterminate-private".to_string(),
-            ],
-        };
-
-        assert_eq!(
-            effective_default_target_agents(&stored, &snapshot),
-            DefaultTargetAgents {
-                global: vec![
-                    "builtin-private".to_string(),
-                    "not-detected-private".to_string(),
-                    "custom-private".to_string(),
-                ],
-                project: vec![
-                    "indeterminate-private".to_string(),
-                    "custom-private".to_string(),
-                ],
-            }
-        );
-    }
-
-    #[test]
-    fn builtin_projection_excludes_custom_and_preserves_first_effective_order() {
-        let private = scope(true, false, true);
-        let disabled = scope(false, false, true);
-        let snapshot = registry_snapshot(vec![
-            definition(
-                "builtin-a",
-                AgentSource::Builtin,
-                private.clone(),
-                private.clone(),
-            ),
-            definition(
-                "builtin-b",
-                AgentSource::Builtin,
-                private.clone(),
-                private.clone(),
-            ),
-            definition(
-                "custom-private",
-                AgentSource::Custom,
-                private.clone(),
-                private,
-            ),
-            definition(
-                "disabled-builtin",
-                AgentSource::Builtin,
-                disabled.clone(),
-                disabled,
-            ),
-        ]);
-        let effective = DefaultTargetAgents {
-            global: vec![
-                "custom-private".to_string(),
-                "builtin-b".to_string(),
-                "builtin-a".to_string(),
-            ],
-            project: vec![
-                "builtin-a".to_string(),
-                "custom-private".to_string(),
-                "builtin-b".to_string(),
-            ],
-        };
-
-        assert_eq!(
-            builtin_last_selected_projection(&effective, &snapshot),
-            vec!["builtin-b".to_string(), "builtin-a".to_string()]
-        );
-    }
 
     #[test]
     fn test_empty_lock_file() {
@@ -620,10 +373,6 @@ mod tests {
         assert!(lock.skills.contains_key("valid-skill"));
         assert!(!lock.skills.contains_key("invalid-skill"));
         assert_eq!(lock.last_selected_agents, Some(vec!["codex".to_string()]));
-        assert_eq!(
-            lock.default_target_agents.as_ref().unwrap().project,
-            vec!["cursor"]
-        );
     }
 
     #[test]
@@ -719,66 +468,6 @@ mod tests {
         assert_eq!(entry.source, "owner/repo");
         assert_eq!(entry.installed_at, "");
         assert_eq!(entry.updated_at, "");
-    }
-
-    #[test]
-    fn test_deserialize_default_target_agents() {
-        let json = r#"{
-            "version": 3,
-            "skills": {},
-            "lastSelectedAgents": ["claude-code"],
-            "defaultTargetAgents": {
-                "global": ["cursor"],
-                "project": ["opencode"]
-            }
-        }"#;
-
-        let lock: SkillLockFile = serde_json::from_str(json).unwrap();
-        let defaults = lock.default_target_agents.unwrap();
-
-        assert_eq!(defaults.global, vec!["cursor"]);
-        assert_eq!(defaults.project, vec!["opencode"]);
-    }
-
-    #[test]
-    fn cli_agent_ids_are_preserved_while_effective_targets_use_the_registry() {
-        let lock = parse_skill_lock_file(
-            r#"{
-                "version": 3,
-                "skills": {},
-                "lastSelectedAgents": [
-                    "grok", "kimchi", "minimax-code", "zcode", "future-agent"
-                ],
-                "defaultTargetAgents": {
-                    "global": ["minimax-code", "future-agent", "grok", "codebuddy"],
-                    "project": ["zcode", "future-agent", "kimchi"]
-                }
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            lock.last_selected_agents,
-            Some(vec![
-                "grok".to_string(),
-                "kimchi".to_string(),
-                "minimax-code".to_string(),
-                "zcode".to_string(),
-                "future-agent".to_string(),
-            ])
-        );
-        let stored = lock.default_target_agents.unwrap();
-        assert!(stored.global.contains(&"future-agent".to_string()));
-        assert!(stored.project.contains(&"future-agent".to_string()));
-
-        let registry = AgentRegistry::new(Vec::new());
-        assert_eq!(
-            effective_default_target_agents(&stored, registry.snapshot()),
-            DefaultTargetAgents {
-                global: vec!["minimax-code".to_string(), "codebuddy".to_string()],
-                project: vec!["zcode".to_string()],
-            }
-        );
     }
 
     #[test]

@@ -29,6 +29,11 @@ fn get_install_agent_selection() -> &'static str {
 }
 
 #[tauri::command]
+fn confirm_install_agent_selection() -> &'static str {
+    "confirm-install-agent-selection"
+}
+
+#[tauri::command]
 fn get_manage_agent_selection() -> &'static str {
     "get-manage-agent-selection"
 }
@@ -155,6 +160,7 @@ fn test_app() -> App<MockRuntime> {
             save_custom_agent,
             fetch_available,
             acquire_selected_payloads,
+            confirm_install_agent_selection,
             get_install_agent_selection,
             get_manage_agent_selection,
             list_environment_projects,
@@ -367,6 +373,10 @@ fn main_window_allows_skill_repair_commands() {
         invoke(&main, "get_install_agent_selection"),
         Ok(Value::from("get-install-agent-selection"))
     );
+    assert_denied(
+        invoke(&main, "confirm_install_agent_selection"),
+        "confirm_install_agent_selection",
+    );
     assert_eq!(
         invoke(&main, "get_manage_agent_selection"),
         Ok(Value::from("get-manage-agent-selection"))
@@ -397,6 +407,10 @@ fn install_wizard_allows_install_discovery_but_not_settings_recovery_or_updater(
     assert_eq!(
         invoke(&wizard, "get_install_agent_selection"),
         Ok(Value::from("get-install-agent-selection"))
+    );
+    assert_eq!(
+        invoke(&wizard, "confirm_install_agent_selection"),
+        Ok(Value::from("confirm-install-agent-selection"))
     );
     assert_eq!(
         invoke(&wizard, "acquire_selected_payloads"),

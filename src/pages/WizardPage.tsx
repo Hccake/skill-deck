@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { RotateCw } from 'lucide-react';
 import { emit } from '@tauri-apps/api/event';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { StepIndicator } from '@/components/skills/add-skill/StepIndicator';
 import { ScopeBadge } from '@/components/skills/add-skill/ScopeBadge';
@@ -21,7 +22,10 @@ import { canProceedForStep, getStepFlow } from '@/components/skills/add-skill/ty
 import { useMutationMonitor } from '@/hooks/useMutationMonitor';
 import { useMutationStore } from '@/stores/mutation';
 import { useWindowLifecycle } from '@/lifecycle/useWindowLifecycle';
-import { getInstallAgentSelection } from '@/hooks/useTauriApi';
+import {
+  confirmInstallAgentSelection,
+  getInstallAgentSelection,
+} from '@/hooks/useTauriApi';
 import {
   useAgentSelectionSession,
   type InstallAgentSelectionSessionRequest,
@@ -119,6 +123,7 @@ export function WizardPage() {
 
   // 用于强制 InstallingStep 重新挂载（重试安装时递增）
   const [installKey, setInstallKey] = useState(0);
+  const [confirmingAgentSelection, setConfirmingAgentSelection] = useState(false);
 
   const updateState = useCallback(
     (updates: Partial<WizardState> | ((prev: WizardState) => Partial<WizardState>)) => {
@@ -162,6 +167,32 @@ export function WizardPage() {
       goToStep(steps[currentStepIndex + 1]);
     }
   }, [currentStepIndex, steps, goToStep]);
+
+  const handleOptionsNext = useCallback(async () => {
+    if (agentSelection.status !== 'ready') return;
+    setConfirmingAgentSelection(true);
+    try {
+      const outcome = await confirmInstallAgentSelection(
+        state.context,
+        agentSelection.submission,
+        state.preSelectedAgents,
+      );
+      if (outcome.status === 'selectionStale') {
+        agentSelection.acceptSnapshot(outcome.snapshot);
+        return;
+      }
+      if (outcome.warning === 'writeFailed') {
+        toast.warning(t('addSkill.agents.historySaveWarning'));
+      }
+      agentSelection.confirmCurrentSelection();
+      goNext();
+    } catch (error) {
+      console.error('Failed to confirm Agent selection:', error);
+      toast.error(t('addSkill.agents.historySaveError'));
+    } finally {
+      setConfirmingAgentSelection(false);
+    }
+  }, [agentSelection, goNext, state.context, state.preSelectedAgents, t]);
 
   const goBack = useCallback(() => {
     if (currentStepIndex > 0) {
@@ -290,6 +321,7 @@ export function WizardPage() {
         return (
           <OptionsStep
             agentSelection={agentSelection}
+            disabled={confirmingAgentSelection}
           />
         );
       case 'confirm':
@@ -341,7 +373,7 @@ export function WizardPage() {
               entryPoint={state.entryPoint}
               currentStep={state.step}
               orientation="vertical"
-              onStepClick={handleStepClick}
+              onStepClick={confirmingAgentSelection ? undefined : handleStepClick}
             />
           )}
         </div>
@@ -354,7 +386,7 @@ export function WizardPage() {
                 projectPath={state.projectPath}
                 environment={state.context.environment}
                 environmentName={state.environmentName}
-                onClick={handleScopeBadgeClick}
+                onClick={confirmingAgentSelection ? undefined : handleScopeBadgeClick}
               />
           )}
         </div>
@@ -401,11 +433,19 @@ export function WizardPage() {
               </>
             ) : (
               <>
-                <Button variant="outline" onClick={closeWizard}>
+                <Button
+                  variant="outline"
+                  onClick={closeWizard}
+                  disabled={confirmingAgentSelection}
+                >
                   {t('addSkill.actions.cancel')}
                 </Button>
                 {currentStepIndex > 0 && (
-                  <Button variant="outline" onClick={goBack}>
+                  <Button
+                    variant="outline"
+                    onClick={goBack}
+                    disabled={confirmingAgentSelection}
+                  >
                     {t('addSkill.actions.back')}
                   </Button>
                 )}
@@ -422,7 +462,11 @@ export function WizardPage() {
                     )}
                   </Button>
                 ) : (
-                  <Button onClick={goNext} disabled={!canProceed} className="min-w-[100px]">
+                  <Button
+                    onClick={state.step === 'options' ? handleOptionsNext : goNext}
+                    disabled={!canProceed || confirmingAgentSelection}
+                    className="min-w-[100px]"
+                  >
                     {t('addSkill.actions.next')}
                   </Button>
                 )}

@@ -47,12 +47,6 @@ impl LockEntrySnapshot {
     }
 }
 
-impl LockRootSnapshot {
-    pub fn value(&self) -> Option<&Value> {
-        self.0.as_ref()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct LosslessLockDocument {
     root: Value,

@@ -76,5 +76,6 @@ permissions = [
 identifier = "install-wizard-commands"
 description = "Application commands available to the install wizard"
 permissions = [
-  "shared-business-commands"
+  "shared-business-commands",
+  "allow-confirm-install-agent-selection"
 ]

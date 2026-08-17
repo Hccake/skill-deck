@@ -513,9 +513,6 @@ export function AgentSettingsPage({
       setDeleteImpact(null);
       setDeleteConfirmation('');
       toast.success(t('settings.agents.deleted'));
-      for (const warning of result.warnings) {
-        toast.warning(t(`settings.agents.warnings.${warning.code}`));
-      }
     } catch (error) {
       const commandError = asAgentCommandError(error);
       if (commandError?.kind === 'staleRegistryRevision' && deleteTarget) {
@@ -543,9 +540,6 @@ export function AgentSettingsPage({
       if (!result) return;
       setInvalidRecord(null);
       toast.success(t('settings.agents.deleted'));
-      for (const warning of result.warnings) {
-        toast.warning(t(`settings.agents.warnings.${warning.code}`));
-      }
     } catch {
       toast.error(t('settings.agents.invalidDeleteError'));
     } finally {

@@ -105,7 +105,7 @@ describe('prepareInstall', () => {
         agents: [], installOptions: [], groups: [], initialSelectedOptionIds: [],
         unavailableExplicitAgents: [], userModeOptionIds: [], revision: 'selection-2',
       },
-      defaultSelectionWarning: null,
+      selectionHistoryWarning: null,
     } as const;
     const latestSnapshot = {
       ...staleSnapshot,
@@ -114,7 +114,7 @@ describe('prepareInstall', () => {
         initialSelectedOptionIds: ['new-item'],
         revision: 'selection-3',
       },
-      defaultSelectionWarning: 'readFailed' as const,
+      selectionHistoryWarning: 'readFailed' as const,
     };
     const preparationApi = api({
       previewInstall: vi.fn().mockResolvedValue({ status: 'selectionStale', snapshot: staleSnapshot }),

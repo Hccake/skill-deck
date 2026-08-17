@@ -79,12 +79,7 @@ export function AgentDeleteDialog({
               <p className="font-medium text-success">{t('settings.agents.deleteFilesSafe')}</p>
               {impact.scopes.map((scope) => (
                 <section key={scope.scope} className="space-y-2 rounded-md border border-border/60 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium">{t(`settings.agents.${scope.scope}.title`)}</p>
-                    {scope.defaultReferenced ? (
-                      <span className="text-xs text-warning">{t('settings.agents.deleteDefaultReferenced')}</span>
-                    ) : null}
-                  </div>
+                  <p className="font-medium">{t(`settings.agents.${scope.scope}.title`)}</p>
                   {scope.paths.map((path, index) => (
                     <div key={`${path.kind}:${index}`} className="space-y-1 text-xs">
                       <p className="text-muted-foreground">{t(`settings.agents.deletePathKind.${path.kind}`)}</p>

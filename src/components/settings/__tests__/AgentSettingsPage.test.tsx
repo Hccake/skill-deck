@@ -1136,7 +1136,7 @@ describe('AgentSettingsPage', () => {
       environmentRevision: 'environment-1', losesManagementCapability: true,
       filesWillBeDeleted: false,
       scopes: [{
-        scope: 'project', defaultReferenced: false,
+        scope: 'project',
         paths: [{
           kind: 'private', logicalPath: { kind: 'project', relativePath: '.my-agent/skills' },
           resolvedPath: null, presence: 'projectNotSelected', observedSkillCount: null,
@@ -1454,13 +1454,13 @@ describe('AgentSettingsPage', () => {
       .every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
   });
 
-  it('requires the Agent ID after showing delete paths, counts and default references', async () => {
+  it('requires the Agent ID after showing delete paths and counts', async () => {
     actions.loadDeleteImpact.mockResolvedValue({
       agentId: 'my-agent', displayName: 'My Agent', registryRevision: 'registry-1',
       environmentRevision: 'environment-1', losesManagementCapability: true,
       filesWillBeDeleted: false,
       scopes: [{
-        scope: 'global', defaultReferenced: true,
+        scope: 'global',
         paths: [{
           kind: 'private', logicalPath: { kind: 'home', relativePath: '.my-agent/skills' },
           resolvedPath: '/home/me/.my-agent/skills', presence: 'present',
@@ -1468,13 +1468,12 @@ describe('AgentSettingsPage', () => {
         }],
       }],
     } as never);
-    actions.deleteAgent.mockResolvedValue([{ code: 'defaultCleanupFailed' }] as never);
+    actions.deleteAgent.mockResolvedValue({ settings: snapshot } as never);
     render(<AgentSettingsPage context={context} />);
     selectCustomDeleteAction();
 
     expect(await screen.findByText('/home/me/.my-agent/skills')).toBeDefined();
     expect(screen.getByText('settings.agents.deleteObservedSkillCount')).toBeDefined();
-    expect(screen.getByText('settings.agents.deleteDefaultReferenced')).toBeDefined();
     const confirmButton = screen.getByRole('button', { name: 'settings.agents.confirmDelete' }) as HTMLButtonElement;
     expect(confirmButton.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('settings.agents.deleteConfirmId'), {
@@ -1483,7 +1482,6 @@ describe('AgentSettingsPage', () => {
     fireEvent.click(confirmButton);
 
     await waitFor(() => expect(actions.deleteAgent).toHaveBeenCalled());
-    expect(toasts.warning).toHaveBeenCalledWith('settings.agents.warnings.defaultCleanupFailed');
   });
 
   it('keeps a stale draft for explicit reload and review instead of overwriting', async () => {

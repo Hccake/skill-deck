@@ -16,8 +16,6 @@ const api = vi.hoisted(() => ({
   previewCustomAgentDelete: vi.fn(),
   deleteCustomAgent: vi.fn(),
   deleteInvalidCustomAgent: vi.fn(),
-  getDefaultTargetAgents: vi.fn(),
-  saveDefaultTargetAgents: vi.fn(),
   listSkills: vi.fn(),
   checkUpdates: vi.fn(),
   previewUpdate: vi.fn(),

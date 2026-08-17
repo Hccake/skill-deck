@@ -839,7 +839,6 @@
       "deleteDescription": "This removes the Agent information you added from Skill Deck.",
       "deleteFilesSafe": "Installed Skill files and Agent directories will not be deleted.",
       "deleteManagementWarning": "Skills currently associated with this Agent may no longer be detected or managed until the same information is added again.",
-      "deleteDefaultReferenced": "Current default target",
       "deleteObservedSkillCount": "{{count}}{{suffix}} Skill(s) detected",
       "deletePathUnavailable": "This path cannot be resolved on the current system",
       "deletePathUnavailableReasons": {
@@ -851,7 +850,7 @@
         "private": "Agent directory"
       },
       "deleteConfirmId": "Enter the Agent ID to confirm",
-      "deleteConfirmHint": "Enter {{id}}. This removes only the saved information and default references, not files.",
+      "deleteConfirmHint": "Enter {{id}}. This removes only the saved information, not files.",
       "confirmDelete": "Delete information",
       "scope": {
         "both": "Global and Project",
@@ -1003,9 +1002,6 @@
         "reload": "Reload and review",
         "deletedTitle": "This Agent information was deleted",
         "deletedDescription": "The information being edited was not found after reloading. This draft will not overwrite the external deletion; return to the Agent list and add it again if needed."
-      },
-      "warnings": {
-        "defaultCleanupFailed": "The Agent was deleted, but old default references could not be cleaned up. They will be removed the next time defaults are saved."
       },
       "dirtyNavigation": {
         "title": "Discard unsaved changes?",
@@ -1371,7 +1367,9 @@
       "privateCopySelected": "{{count}} selected",
       "targetTitle": "Target agents",
       "loadError": "Could not load Agents on the selected system.",
-      "defaultLoadWarning": "Default targets could not be loaded, so built-in recommendations are being used. You can still adjust the targets for this install.",
+      "historyLoadWarning": "Recent Agent choices could not be loaded. You can still choose targets for this install.",
+      "historySaveWarning": "The installation can continue, but recent Agent choices could not be saved.",
+      "historySaveError": "Agent choices could not be confirmed. Try again.",
       "concreteTargetsTitle": "Project-local targets",
       "concreteTargetsHint": "Choose the project-local targets to install to, such as Eve root or subagents.",
       "expandOtherAgents": "Show {{count}} other Agents",

@@ -63,7 +63,7 @@ function agentSnapshot(): InstallAgentSelectionSnapshot {
       initialSelectedOptionIds: ['cursor-item'],
       userModeOptionIds: ['cursor-item'],
     }),
-    defaultSelectionWarning: null,
+    selectionHistoryWarning: null,
   };
 }
 

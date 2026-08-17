@@ -147,8 +147,9 @@ pub struct AgentSelectionSubmission {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
-pub enum DefaultSelectionWarning {
+pub enum AgentSelectionHistoryWarning {
     ReadFailed,
+    WriteFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -156,7 +157,19 @@ pub enum DefaultSelectionWarning {
 #[specta(rename_all = "camelCase")]
 pub struct InstallAgentSelectionSnapshot {
     pub selection: AgentSelectionSnapshot,
-    pub default_selection_warning: Option<DefaultSelectionWarning>,
+    pub selection_history_warning: Option<AgentSelectionHistoryWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "status", rename_all = "camelCase")]
+#[specta(tag = "status", rename_all = "camelCase")]
+pub enum ConfirmInstallAgentSelectionOutcome {
+    Ready {
+        warning: Option<AgentSelectionHistoryWarning>,
+    },
+    SelectionStale {
+        snapshot: InstallAgentSelectionSnapshot,
+    },
 }
 
 #[derive(Debug, Clone)]

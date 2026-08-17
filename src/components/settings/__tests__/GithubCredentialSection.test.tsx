@@ -41,8 +41,6 @@ vi.mock('@/hooks/useTauriApi', () => ({
   saveGithubCredential: (...args: unknown[]) => mockSaveGithubCredential(...args),
   clearGithubCredential: (...args: unknown[]) => mockClearGithubCredential(...args),
   getInstallWizardSession: (...args: unknown[]) => mockGetInstallWizardSession(...args),
-  getDefaultTargetAgents: vi.fn(),
-  saveDefaultTargetAgents: vi.fn(),
   listAgentSelectionGroups: vi.fn(),
   getAgentSettingsSnapshot: vi.fn(),
   listAgents: vi.fn(),

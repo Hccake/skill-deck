@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   requestAction: vi.fn().mockResolvedValue(undefined),
   emit: vi.fn().mockResolvedValue(undefined),
   refreshProjects: vi.fn().mockResolvedValue([]),
+  confirmSelection: vi.fn(),
   getSelection: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock('@/hooks/useMutationMonitor', () => ({
 }));
 
 vi.mock('@/hooks/useTauriApi', () => ({
+  confirmInstallAgentSelection: (...args: unknown[]) => mocks.confirmSelection(...args),
   getInstallAgentSelection: (...args: unknown[]) => mocks.getSelection(...args),
 }));
 
@@ -36,6 +38,13 @@ vi.mock('@/hooks/useAgentSelectionSession', () => ({
   useAgentSelectionSession: () => ({
     status: 'ready',
     requiresReconfirmation: false,
+    submission: {
+      revision: 'selection-revision',
+      selectedOptionIds: [],
+      requestedMode: 'symlink',
+    },
+    acceptSnapshot: vi.fn(),
+    confirmCurrentSelection: vi.fn(),
   }),
 }));
 
@@ -154,7 +163,7 @@ vi.mock('@/components/skills/add-skill/ErrorStep', () => ({
   ErrorStep: () => <div data-testid="error-step">error-step</div>,
 }));
 
-function startInstallationFromSkillsEntry() {
+async function startInstallationFromSkillsEntry() {
   render(
     <MemoryRouter initialEntries={['/wizard?entryPoint=skills-panel']}>
       <WizardPage />
@@ -163,6 +172,9 @@ function startInstallationFromSkillsEntry() {
   fireEvent.click(screen.getByRole('button', { name: 'prepare-source' }));
   for (let step = 0; step < 3; step += 1) {
     fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.next' }));
+    if (step === 2) {
+      await screen.findByRole('button', { name: 'addSkill.actions.install' });
+    }
   }
   fireEvent.click(screen.getByRole('button', { name: 'addSkill.actions.install' }));
 }
@@ -205,8 +217,9 @@ describe('WizardPage mutation guard', () => {
     vi.clearAllMocks();
     mocks.getSelection.mockResolvedValue({
       selection: makeAgentSelectionSnapshot(),
-      defaultSelectionWarning: null,
+      selectionHistoryWarning: null,
     });
+    mocks.confirmSelection.mockResolvedValue({ status: 'ready', warning: null });
     useMutationStore.setState({
       activeMutation: null,
       loading: false,
@@ -281,7 +294,7 @@ describe('WizardPage mutation guard', () => {
   });
 
   it('notifies the main window as soon as an installation succeeds', async () => {
-    startInstallationFromSkillsEntry();
+    await startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
 
     await screen.findByTestId('complete-step');
@@ -298,7 +311,7 @@ describe('WizardPage mutation guard', () => {
   });
 
   it('does not notify the main window again when the completed wizard closes', async () => {
-    startInstallationFromSkillsEntry();
+    await startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
 
     const done = await screen.findByRole('button', { name: 'addSkill.actions.done' });
@@ -314,7 +327,7 @@ describe('WizardPage mutation guard', () => {
   it('retries a failed main-window notification before closing the completed wizard', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     mocks.emit.mockRejectedValueOnce(new Error('event unavailable'));
-    startInstallationFromSkillsEntry();
+    await startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-successful-install' }));
 
     const done = await screen.findByRole('button', { name: 'addSkill.actions.done' });
@@ -329,7 +342,7 @@ describe('WizardPage mutation guard', () => {
   });
 
   it('notifies the main window about successful skills in a partial installation', async () => {
-    startInstallationFromSkillsEntry();
+    await startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-partial-install' }));
 
     await screen.findByTestId('complete-step');
@@ -346,7 +359,7 @@ describe('WizardPage mutation guard', () => {
   });
 
   it('offers retry and completion actions after a partial result', async () => {
-    startInstallationFromSkillsEntry();
+    await startInstallationFromSkillsEntry();
 
     expect(screen.queryByRole('button', { name: 'addSkill.actions.done' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'finish-partial-install' }));
@@ -360,7 +373,7 @@ describe('WizardPage mutation guard', () => {
   });
 
   it('offers close, return, and retry actions after a fatal error', async () => {
-    startInstallationFromSkillsEntry();
+    await startInstallationFromSkillsEntry();
     fireEvent.click(screen.getByRole('button', { name: 'finish-failed-install' }));
 
     await screen.findByTestId('error-step');

@@ -6,9 +6,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface OptionsStepProps {
   agentSelection: AgentSelectionSessionController<InstallAgentSelectionSnapshot>;
+  disabled?: boolean;
 }
 
-export function OptionsStep({ agentSelection }: OptionsStepProps) {
+export function OptionsStep({ agentSelection, disabled = false }: OptionsStepProps) {
   const { t } = useTranslation();
 
   if (agentSelection.status !== 'ready') {
@@ -24,9 +25,9 @@ export function OptionsStep({ agentSelection }: OptionsStepProps) {
     );
   }
 
-  const warning = agentSelection.snapshot.defaultSelectionWarning ? (
+  const warning = agentSelection.snapshot.selectionHistoryWarning ? (
     <Alert>
-      <AlertDescription>{t('addSkill.agents.defaultLoadWarning')}</AlertDescription>
+      <AlertDescription>{t('addSkill.agents.historyLoadWarning')}</AlertDescription>
     </Alert>
   ) : null;
 
@@ -34,6 +35,7 @@ export function OptionsStep({ agentSelection }: OptionsStepProps) {
     <AgentSelectionPanel
       usage="install"
       controller={agentSelection}
+      disabled={disabled}
       layout="wizard"
       title={t('agentSelection.installTitle')}
       notice={warning}

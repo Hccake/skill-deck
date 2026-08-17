@@ -91,6 +91,7 @@ export function AgentSelectionPanel<TSnapshot extends AgentSelectionEnvelope>({
           size="sm"
           className="shrink-0"
           onClick={controller.confirmCurrentSelection}
+          disabled={disabled}
         >
           {t('agentSelection.confirmCurrentSelection')}
         </Button>
