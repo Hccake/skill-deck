@@ -26,7 +26,7 @@ use crate::core::lossless_lock::LockSchema;
 use crate::core::mutation::MutationKind;
 use crate::core::update_metadata::recover_source_url;
 use crate::environment::agent_environment::{
-    AgentRuntimeSnapshot, DetectionState, ResolvedAgentScope,
+    AgentRuntimeSnapshot, DetectionState, DirectoryPresenceState, ResolvedAgentScope,
 };
 use crate::environment::content_manifest::{
     ContentManifestHash, ContentManifestReader, ContentManifestTarget,
@@ -39,6 +39,8 @@ use crate::environment::types::{
 use crate::error::AppError;
 use crate::models::InstallMode;
 use crate::storage::lock_plan::{LockEntryMutation, LockExpectedState, PreparedLockMutation};
+
+const UPDATE_PLANNER_CONTRACT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockedUpdateSkill {
@@ -153,13 +155,8 @@ where
 #[derive(Clone)]
 enum CandidateKind {
     Canonical,
-    Private {
-        target_id: String,
-        owner: ObservedEntryOwner,
-    },
-    Adapter {
-        owner: ObservedEntryOwner,
-    },
+    Private { owners: Vec<ObservedEntryOwner> },
+    Adapter { owner: ObservedEntryOwner },
 }
 
 struct SkillSeed {
@@ -235,8 +232,8 @@ where
         let mut conflicts = BTreeMap::<PhysicalTargetKey, ObservedPhysicalEntry>::new();
         let mut adapter_targets = BTreeMap::<String, ObservedEntryOwner>::new();
         for (fact, candidate) in facts.iter().zip(candidates).skip(1) {
-            let (target_id, owner) = match candidate {
-                CandidateKind::Private { target_id, owner } => (target_id, owner),
+            let owners = match candidate {
+                CandidateKind::Private { owners } => owners,
                 CandidateKind::Adapter { owner }
                     if fact.entry_kind == TargetEntryKind::Directory =>
                 {
@@ -262,7 +259,9 @@ where
                 false
             };
             let grouped = if is_clean { &mut clean } else { &mut conflicts };
-            insert_private_entry(grouped, fact, target_id, owner)?;
+            for owner in owners {
+                insert_private_entry(grouped, fact, owner)?;
+            }
         }
         let clean_copies = clean.into_values().collect::<Vec<_>>();
         let blocking_reasons = (canonical.entry_kind == TargetEntryKind::Directory
@@ -526,7 +525,7 @@ fn private_entries(
     let canonical_key = facts.first().map(|fact| &fact.key);
     let mut grouped = BTreeMap::<PhysicalTargetKey, ObservedPhysicalEntry>::new();
     for (fact, candidate) in facts.iter().zip(candidates) {
-        let CandidateKind::Private { target_id, owner } = candidate else {
+        let CandidateKind::Private { owners } = candidate else {
             continue;
         };
         if fact.entry_kind != TargetEntryKind::Directory
@@ -534,7 +533,9 @@ fn private_entries(
         {
             continue;
         }
-        insert_private_entry(&mut grouped, fact, target_id, owner)?;
+        for owner in owners {
+            insert_private_entry(&mut grouped, fact, owner)?;
+        }
     }
     for entry in grouped.values_mut() {
         entry
@@ -547,11 +548,87 @@ fn private_entries(
     Ok(grouped.into_values().collect())
 }
 
+fn private_update_roots(
+    runtime: &AgentRuntimeSnapshot,
+    scope: &SkillLocation,
+    environment: &EnvironmentRef,
+) -> Result<BTreeMap<String, Vec<ObservedEntryOwner>>, AppError> {
+    let mut private_roots = BTreeMap::<String, Vec<ObservedEntryOwner>>::new();
+    for (agent_id, agent) in &runtime.agents {
+        if agent.definition.adapter != AgentAdapter::Standard {
+            continue;
+        }
+        let scope = agent_scope(runtime, agent_id, scope)?;
+        if !scope.enabled {
+            continue;
+        }
+        let Some(root) = scope.private_path.as_deref() else {
+            continue;
+        };
+        match scope.private_presence {
+            Some(DirectoryPresenceState::Present | DirectoryPresenceState::LegacyPath) => {}
+            Some(DirectoryPresenceState::Missing) => continue,
+            Some(DirectoryPresenceState::BrokenLink) => {
+                return Err(AppError::UnsafePath {
+                    path: root.to_string(),
+                    reason: "Agent private Skill root is a broken link".to_string(),
+                });
+            }
+            Some(DirectoryPresenceState::ConflictingEntry) => {
+                return Err(AppError::UnsafePath {
+                    path: root.to_string(),
+                    reason: "Agent private Skill root is not a directory".to_string(),
+                });
+            }
+            Some(DirectoryPresenceState::UnsafePath) => {
+                return Err(AppError::UnsafePath {
+                    path: root.to_string(),
+                    reason: "Agent private Skill root cannot be resolved safely".to_string(),
+                });
+            }
+            Some(DirectoryPresenceState::EnvironmentUnavailable) | None => {
+                return Err(AppError::EnvironmentUnavailable {
+                    environment: environment.clone(),
+                    message: format!("Agent private Skill root is unavailable: {root}"),
+                });
+            }
+            Some(DirectoryPresenceState::ProjectNotSelected) => {
+                return Err(AppError::Validation {
+                    field: Some("context.scope".to_string()),
+                    message: format!(
+                        "Agent private Skill root requires a selected project: {root}"
+                    ),
+                });
+            }
+        }
+        let target_id = format!("agent:{}:private", agent_id.as_str());
+        private_roots
+            .entry(root.to_string())
+            .or_default()
+            .push(ObservedEntryOwner {
+                agent_id: agent_id.clone(),
+                display_name: agent.definition.display_name.clone(),
+                logical_target_id: target_id,
+            });
+    }
+    for owners in private_roots.values_mut() {
+        owners.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
+        owners.dedup_by(|left, right| left.agent_id == right.agent_id);
+    }
+    Ok(private_roots)
+}
+
 fn planning_seeds(
     facts: &InstallPlanningFacts,
     request: &UpdateRequest,
     locked: &[LockedUpdateSkill],
 ) -> Result<(Vec<ResourceLocator>, Vec<SkillSeed>), AppError> {
+    let private_roots = private_update_roots(
+        &facts.agent_runtime,
+        &request.context.scope,
+        &request.context.environment,
+    )?;
+
     let mut destinations = Vec::new();
     let mut seeds = Vec::with_capacity(locked.len());
     for (index, skill) in locked.iter().enumerate() {
@@ -565,32 +642,16 @@ fn planning_seeds(
             &facts.resolved_context.skill_root,
             &install_dir_name,
         ));
-        for (agent_id, agent) in &facts.agent_runtime.agents {
-            if agent.definition.adapter != AgentAdapter::Standard {
-                continue;
-            }
-            let scope = agent_scope(&facts.agent_runtime, agent_id, &request.context.scope)?;
-            if !scope.enabled {
-                continue;
-            }
-            let Some(root) = scope.private_path.as_deref() else {
-                continue;
-            };
-            let target_id = format!("agent:{}:private", agent_id.as_str());
+        for (root, owners) in &private_roots {
             destinations.push(join_entry(
                 &ResourceLocator {
                     environment: request.context.environment.clone(),
-                    native_path: root.to_string(),
+                    native_path: root.clone(),
                 },
                 &install_dir_name,
             ));
             candidates.push(CandidateKind::Private {
-                target_id: target_id.clone(),
-                owner: ObservedEntryOwner {
-                    agent_id: agent_id.clone(),
-                    display_name: agent.definition.display_name.clone(),
-                    logical_target_id: target_id,
-                },
+                owners: owners.clone(),
             });
         }
         for (_target_id, root, owner) in
@@ -621,7 +682,7 @@ fn inspection_token(
         request,
         revisions: facts.revisions.clone(),
         observed_state_digest: observed_digest(target_facts, facts, locked, manifests)?,
-        planner_contract_version: 1,
+        planner_contract_version: UPDATE_PLANNER_CONTRACT_VERSION,
     })
 }
 
@@ -661,7 +722,6 @@ async fn read_manifest_once<R: ContentManifestReader>(
 fn insert_private_entry(
     grouped: &mut BTreeMap<PhysicalTargetKey, ObservedPhysicalEntry>,
     fact: &ResolvedTargetFact,
-    target_id: &str,
     owner: &ObservedEntryOwner,
 ) -> Result<(), AppError> {
     let entry_id = observed_entry_id(&fact.key, &fact.fingerprint)?;
@@ -676,9 +736,7 @@ fn insert_private_entry(
             owners: Vec::new(),
             will_break_if_canonical_removed: false,
         });
-    let mut owner = owner.clone();
-    owner.logical_target_id = target_id.to_string();
-    entry.owners.push(owner);
+    entry.owners.push(owner.clone());
     entry
         .owners
         .sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
@@ -735,7 +793,7 @@ fn build_unit(
     let mut private = Vec::new();
     for (fact, candidate) in target_facts.iter().zip(candidates).skip(1) {
         match candidate {
-            CandidateKind::Private { owner, .. }
+            CandidateKind::Private { owners }
                 if fact.entry_kind == TargetEntryKind::Directory
                     && selected.contains(&observed_entry_id(&fact.key, &fact.fingerprint)?) =>
             {
@@ -746,7 +804,7 @@ fn build_unit(
                         payload_id: payload.manifest().payload_id().clone(),
                         requested_mode: InstallMode::Copy,
                     },
-                    owner_agent_ids: vec![owner.agent_id.clone()],
+                    owner_agent_ids: owners.iter().map(|owner| owner.agent_id.clone()).collect(),
                 });
             }
             CandidateKind::Adapter { owner, .. }
@@ -1086,7 +1144,8 @@ mod tests {
     };
     use crate::core::lossless_lock::LockSchema;
     use crate::environment::agent_environment::{
-        AgentRuntimeSnapshot, DetectionState, ResolvedAgent, ResolvedAgentScope,
+        AgentRuntimeSnapshot, DetectionState, DirectoryPresenceState, ResolvedAgent,
+        ResolvedAgentScope,
     };
     use crate::environment::types::{EnvironmentRef, EnvironmentStatus};
 
@@ -1225,7 +1284,7 @@ mod tests {
                     project_id: "project-1".to_string(),
                 },
             };
-            let mut facts = InstallPlanningFacts {
+            let facts = InstallPlanningFacts {
             resolved_context: ResolvedContext {
                 context: context.clone(),
                 project: None,
@@ -1246,15 +1305,6 @@ mod tests {
             .unwrap(),
             eve_targets: Vec::new(),
         };
-            for index in 0..75 {
-                let missing_root = physical_root.join(format!(".missing-{index}/skills"));
-                let (id, resolved) = agent(
-                    &format!("missing-agent-{index}"),
-                    &format!("Missing Agent {index}"),
-                    &missing_root,
-                );
-                facts.agent_runtime.agents.insert(id, resolved);
-            }
             let manifest_reads = Arc::new(Mutex::new(BTreeMap::new()));
             let planner = ConcreteUpdatePlanner::new(
                 Facts(facts),
@@ -1291,7 +1341,7 @@ mod tests {
                 .all(|reads| *reads == 1));
 
             assert_eq!(inspection.skills[0].clean_copies.len(), 1);
-            assert_eq!(inspection.skills[0].clean_copies[0].owners.len(), 2);
+            assert_eq!(inspection.skills[0].clean_copies[0].owners.len(), 3);
             let execution = UpdateExecutionRequest {
                 request: request.clone(),
                 overwrite_private_entries: vec![inspection.skills[0].clean_copies[0]
@@ -1326,6 +1376,14 @@ mod tests {
                     .destination
                     .native_path,
                 copy_root.join("demo").to_string_lossy()
+            );
+            assert_eq!(
+                plan.units[0].required_agent_entries[0].owner_agent_ids,
+                vec![
+                    AgentId::parse("alias-agent").unwrap(),
+                    AgentId::parse("copy-agent").unwrap(),
+                    AgentId::parse("copy-alias-agent").unwrap(),
+                ]
             );
             assert_eq!(
                 plan.units[0]
@@ -1369,6 +1427,7 @@ mod tests {
                 project_path: None,
                 agents: BTreeMap::from([
                     agent("copy-agent", "Copy Agent", copy_root),
+                    agent("copy-alias-agent", "Copy Alias Agent", copy_root),
                     agent("link-agent", "Link Agent", link_root),
                     agent("alias-agent", "Alias Agent", alias_root),
                 ]),
@@ -1384,7 +1443,11 @@ mod tests {
                 private_path: Some(root.to_string_lossy().into_owned()),
                 read_paths: Vec::new(),
                 standard_presence: None,
-                private_presence: None,
+                private_presence: Some(if root.is_dir() {
+                    DirectoryPresenceState::Present
+                } else {
+                    DirectoryPresenceState::Missing
+                }),
                 legacy_paths: Vec::new(),
             };
             (
@@ -1415,6 +1478,175 @@ mod tests {
                     detection_reason: None,
                     global: scope.clone(),
                     project: scope,
+                },
+            )
+        }
+    }
+
+    mod planning_tests {
+        use super::*;
+
+        #[test]
+        fn missing_private_roots_are_excluded_and_shared_roots_keep_all_owners() {
+            let mut agents = vec![
+                agent(
+                    "shared-agent-a",
+                    "/home/alice/.shared/skills",
+                    DirectoryPresenceState::Present,
+                ),
+                agent(
+                    "shared-agent-b",
+                    "/home/alice/.shared/skills",
+                    DirectoryPresenceState::Present,
+                ),
+            ];
+            for index in 0..75 {
+                agents.push(agent(
+                    &format!("missing-agent-{index}"),
+                    &format!("/home/alice/.missing-{index}/skills"),
+                    DirectoryPresenceState::Missing,
+                ));
+            }
+
+            let roots =
+                private_update_roots(&runtime(agents), &SkillLocation::Global, &wsl_environment())
+                    .unwrap();
+
+            assert_eq!(roots.len(), 1);
+            let owners = roots.get("/home/alice/.shared/skills").unwrap();
+            assert_eq!(
+                owners
+                    .iter()
+                    .map(|owner| owner.agent_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["shared-agent-a", "shared-agent-b"]
+            );
+        }
+
+        #[test]
+        fn unusable_private_roots_are_rejected_before_target_projection() {
+            for (presence, path) in [
+                (
+                    DirectoryPresenceState::BrokenLink,
+                    "/home/alice/.broken/skills",
+                ),
+                (
+                    DirectoryPresenceState::ConflictingEntry,
+                    "/home/alice/.conflicting/skills",
+                ),
+                (
+                    DirectoryPresenceState::UnsafePath,
+                    "/home/alice/.unsafe/skills",
+                ),
+            ] {
+                let error = private_update_roots(
+                    &runtime(vec![agent("unusable-agent", path, presence)]),
+                    &SkillLocation::Global,
+                    &wsl_environment(),
+                )
+                .err()
+                .unwrap();
+
+                assert!(matches!(
+                    error,
+                    AppError::UnsafePath { path: actual, .. } if actual == path
+                ));
+            }
+        }
+
+        #[test]
+        fn unavailable_private_root_is_reported_before_target_projection() {
+            let environment = wsl_environment();
+            let error = private_update_roots(
+                &runtime(vec![agent(
+                    "unavailable-agent",
+                    "/home/alice/.unavailable/skills",
+                    DirectoryPresenceState::EnvironmentUnavailable,
+                )]),
+                &SkillLocation::Global,
+                &environment,
+            )
+            .err()
+            .unwrap();
+
+            assert!(matches!(
+                error,
+                AppError::EnvironmentUnavailable { environment: actual, message }
+                    if actual == environment
+                        && message.contains("/home/alice/.unavailable/skills")
+            ));
+        }
+
+        fn wsl_environment() -> EnvironmentRef {
+            EnvironmentRef::Wsl {
+                distro_name: "Ubuntu".to_string(),
+            }
+        }
+
+        fn runtime(agents: Vec<(AgentId, ResolvedAgent)>) -> AgentRuntimeSnapshot {
+            AgentRuntimeSnapshot {
+                registry_revision: "registry-1".to_string(),
+                environment_revision: "environment-1".to_string(),
+                environment: wsl_environment(),
+                availability: EnvironmentStatus::Available,
+                project_path: None,
+                agents: agents.into_iter().collect(),
+            }
+        }
+
+        fn agent(
+            id: &str,
+            private_root: &str,
+            presence: DirectoryPresenceState,
+        ) -> (AgentId, ResolvedAgent) {
+            let id = AgentId::parse(id).unwrap();
+            let disabled = ResolvedAgentScope {
+                enabled: false,
+                reads_standard: false,
+                standard_path: None,
+                private_path: None,
+                read_paths: Vec::new(),
+                standard_presence: None,
+                private_presence: None,
+                legacy_paths: Vec::new(),
+            };
+            (
+                id.clone(),
+                ResolvedAgent {
+                    definition: AgentDefinition {
+                        id,
+                        display_name: "Test Agent".to_string(),
+                        source: AgentSource::Custom,
+                        aliases: Vec::new(),
+                        global: ScopeDefinition {
+                            enabled: true,
+                            reads_standard: false,
+                            private_path: Some(PathSpec::home(".test/skills")),
+                        },
+                        project: ScopeDefinition {
+                            enabled: false,
+                            reads_standard: false,
+                            private_path: None,
+                        },
+                        detection: DetectionSpec::AnyPathExists {
+                            paths: vec![PathSpec::home(".test")],
+                        },
+                        legacy_paths: Vec::new(),
+                        adapter: AgentAdapter::Standard,
+                    },
+                    detection: DetectionState::Detected,
+                    detection_reason: None,
+                    global: ResolvedAgentScope {
+                        enabled: true,
+                        reads_standard: false,
+                        standard_path: Some("/home/alice/.agents/skills".to_string()),
+                        private_path: Some(private_root.to_string()),
+                        read_paths: vec![private_root.to_string()],
+                        standard_presence: Some(DirectoryPresenceState::Present),
+                        private_presence: Some(presence),
+                        legacy_paths: Vec::new(),
+                    },
+                    project: disabled,
                 },
             )
         }
