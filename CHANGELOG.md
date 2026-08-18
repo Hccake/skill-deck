@@ -10,7 +10,7 @@
 ### Added
 
 - **新增直接下载来源** — 可以从原始 `SKILL.md` 文件和 ZIP、tar、tar.gz 归档地址安装 Skill，并在跨主机重定向时确认最终下载主机。
-- **扩展 Agent 支持** — 随应用提供 Grok Build、Kimchi、MiniMax Code 和 ZCode 的 Skill 读取位置与检测信息。
+- **扩展 Agent 支持** — 随应用提供 Grok Build、Kimchi、MiniMax Code、ZCode 和 Posit Assistant 的 Skill 读取位置与检测信息。
 
 ### Changed
 

@@ -202,6 +202,21 @@ describe('OptionsStep', () => {
     expect(screen.getByRole('checkbox', { name: 'Zed' })).toBeDefined();
   });
 
+  it('shows Posit Assistant as direct use with an optional own directory', async () => {
+    const user = userEvent.setup();
+    const snapshot = selectionSnapshot();
+    snapshot.selection.agents.push({ kind: 'standard', id: 'posit-assistant', displayName: 'Posit Assistant', detection: 'detected', directoryAccess: 'both', installOptionId: 'posit-assistant', groupId: null });
+    snapshot.selection.installOptions.push({ id: 'posit-assistant', kind: 'standardDirectory', agentIds: ['posit-assistant'], displayName: 'Posit Assistant', path: '~/.posit/assistant/skills', groupId: null, selectable: true, modeConstraint: 'userSelectable', disabledReason: null });
+    snapshot.selection.userModeOptionIds.push('posit-assistant');
+
+    await renderStep(snapshot);
+
+    const directSection = screen.getByText('agentSelection.automatic.install.title').closest('section');
+    expect(within(directSection as HTMLElement).getByText('Posit Assistant')).toBeDefined();
+    await user.click(within(directSection as HTMLElement).getByRole('button', { name: /agentSelection\.ownDirectory\.title/ }));
+    expect(screen.getByRole('checkbox', { name: 'Posit Assistant' }).getAttribute('data-state')).toBe('unchecked');
+  });
+
   it('shows grouped placements as copy-only choices', async () => {
     const user = userEvent.setup();
     const snapshot = selectionSnapshot();

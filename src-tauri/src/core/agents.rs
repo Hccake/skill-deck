@@ -76,6 +76,7 @@ pub enum AgentType {
     Opencode,
     Openhands,
     Pi,
+    PositAssistant,
     Promptscript,
     Qoder,
     QoderCn,
@@ -156,6 +157,7 @@ impl std::fmt::Display for AgentType {
             Self::Opencode => "opencode",
             Self::Openhands => "openhands",
             Self::Pi => "pi",
+            Self::PositAssistant => "posit-assistant",
             Self::Promptscript => "promptscript",
             Self::Qoder => "qoder",
             Self::QoderCn => "qoder-cn",
@@ -241,6 +243,7 @@ impl std::str::FromStr for AgentType {
             "opencode" => Ok(Self::Opencode),
             "openhands" => Ok(Self::Openhands),
             "pi" => Ok(Self::Pi),
+            "posit-assistant" => Ok(Self::PositAssistant),
             "promptscript" => Ok(Self::Promptscript),
             "qoder" => Ok(Self::Qoder),
             "qoder-cn" => Ok(Self::QoderCn),
@@ -325,6 +328,7 @@ impl AgentType {
             Self::Opencode,
             Self::Openhands,
             Self::Pi,
+            Self::PositAssistant,
             Self::Promptscript,
             Self::Qoder,
             Self::QoderCn,
@@ -694,6 +698,12 @@ impl AgentType {
                 skills_dir: ".pi/skills",
                 global_skills_dir: Some(PATHS.home.join(".pi").join("agent").join("skills")),
             },
+            Self::PositAssistant => AgentConfig {
+                name: "posit-assistant",
+                display_name: "Posit Assistant",
+                skills_dir: ".posit/assistant/skills",
+                global_skills_dir: Some(PATHS.home.join(".posit/assistant/skills")),
+            },
             Self::Promptscript => AgentConfig {
                 name: "promptscript",
                 display_name: "PromptScript",
@@ -960,6 +970,9 @@ impl AgentType {
             Self::Opencode => PATHS.config_home.join("opencode").exists(),
             Self::Openhands => PATHS.home.join(".openhands").exists(),
             Self::Pi => PATHS.home.join(".pi").join("agent").exists(),
+            Self::PositAssistant => {
+                PATHS.home.join(".posit/assistant").exists() || PATHS.home.join(".positai").exists()
+            }
             Self::Promptscript => {
                 cwd.join(".promptscript").exists() || cwd.join("promptscript.yaml").exists()
             }
@@ -1020,7 +1033,23 @@ mod tests {
 
         #[test]
         fn current_cli_agent_count_is_complete() {
-            assert_eq!(AgentType::all().count(), 75);
+            assert_eq!(AgentType::all().count(), 76);
+        }
+
+        #[test]
+        fn posit_assistant_parse_display_and_config() {
+            let agent: AgentType = "posit-assistant".parse().expect("Posit Assistant ID");
+            assert_eq!(agent, AgentType::PositAssistant);
+            assert_eq!(agent.to_string(), "posit-assistant");
+
+            let config = agent.config();
+            assert_eq!(config.name, "posit-assistant");
+            assert_eq!(config.display_name, "Posit Assistant");
+            assert_eq!(config.skills_dir, ".posit/assistant/skills");
+            assert_eq!(
+                config.global_skills_dir,
+                Some(PATHS.home.join(".posit/assistant/skills"))
+            );
         }
 
         #[test]
@@ -1173,8 +1202,8 @@ mod tests {
     fn test_agent_type_all_count() {
         let count = AgentType::all().count();
         assert_eq!(
-            count, 75,
-            "Should have 75 real agent types after syncing CLI 1.5.22"
+            count, 76,
+            "Should have 76 real agent types after adding Posit Assistant"
         );
     }
 

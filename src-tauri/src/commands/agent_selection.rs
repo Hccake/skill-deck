@@ -433,6 +433,10 @@ mod tests {
             &AgentId::parse("eve").unwrap(),
             AgentSource::Builtin
         ));
+        assert!(is_cli_history_agent(
+            &AgentId::parse("posit-assistant").unwrap(),
+            AgentSource::Builtin
+        ));
     }
 
     #[test]

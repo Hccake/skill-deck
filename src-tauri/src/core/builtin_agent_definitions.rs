@@ -43,7 +43,7 @@ fn project_definition(agent: AgentType, config: &AgentConfig) -> ScopeDefinition
     } else {
         ScopeDefinition {
             enabled: true,
-            reads_standard: agent == AgentType::Kimchi,
+            reads_standard: matches!(agent, AgentType::Kimchi | AgentType::PositAssistant),
             private_path: Some(PathSpec::project(config.skills_dir)),
         }
     }
@@ -196,6 +196,10 @@ fn detection_definition(agent: AgentType, config: &AgentConfig) -> DetectionSpec
         AgentType::KimiCodeCli => vec![PathSpec::home(".kimi-code"), PathSpec::home(".kimi")],
         AgentType::Loaf => vec![PathSpec::home(".loaf")],
         AgentType::Opencode => vec![PathSpec::config_home("opencode")],
+        AgentType::PositAssistant => vec![
+            PathSpec::home(".posit/assistant"),
+            PathSpec::home(".positai"),
+        ],
         AgentType::Promptscript => vec![
             PathSpec::project(".promptscript"),
             PathSpec::project("promptscript.yaml"),
@@ -291,6 +295,7 @@ fn official_standard_support(agent: AgentType) -> bool {
             | AgentType::KimiCodeCli
             | AgentType::Grok
             | AgentType::Kimchi
+            | AgentType::PositAssistant
     )
 }
 
@@ -343,7 +348,10 @@ mod tests {
                 assert!(project.reads_standard);
                 assert!(project.private_path.is_none());
             } else {
-                assert_eq!(project.reads_standard, agent == AgentType::Kimchi);
+                assert_eq!(
+                    project.reads_standard,
+                    matches!(agent, AgentType::Kimchi | AgentType::PositAssistant)
+                );
                 assert!(project.private_path.is_some());
             }
         }
@@ -446,6 +454,28 @@ mod tests {
                 paths: vec![
                     PathSpec::project(".codebuddy"),
                     PathSpec::home(".codebuddy"),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn posit_assistant_reads_standard_and_private_directories_in_both_scopes() {
+        let posit = definition(AgentType::PositAssistant);
+        assert_eq!(
+            posit.global,
+            expected_scope(true, Some(PathSpec::home(".posit/assistant/skills")),)
+        );
+        assert_eq!(
+            posit.project,
+            expected_scope(true, Some(PathSpec::project(".posit/assistant/skills")),)
+        );
+        assert_eq!(
+            posit.detection,
+            DetectionSpec::AnyPathExists {
+                paths: vec![
+                    PathSpec::home(".posit/assistant"),
+                    PathSpec::home(".positai"),
                 ],
             }
         );
@@ -561,7 +591,7 @@ mod tests {
         } else {
             ScopeDefinition {
                 enabled: true,
-                reads_standard: agent == AgentType::Kimchi,
+                reads_standard: matches!(agent, AgentType::Kimchi | AgentType::PositAssistant),
                 private_path: Some(PathSpec::project(config.skills_dir)),
             }
         }
@@ -605,6 +635,7 @@ mod tests {
                 | AgentType::KimiCodeCli
                 | AgentType::Grok
                 | AgentType::Kimchi
+                | AgentType::PositAssistant
         )
     }
 
@@ -721,6 +752,10 @@ mod tests {
             AgentType::Opencode => vec![PathSpec::config_home("opencode")],
             AgentType::Openhands => vec![PathSpec::home(".openhands")],
             AgentType::Pi => vec![PathSpec::home(".pi/agent")],
+            AgentType::PositAssistant => vec![
+                PathSpec::home(".posit/assistant"),
+                PathSpec::home(".positai"),
+            ],
             AgentType::Promptscript => vec![
                 PathSpec::project(".promptscript"),
                 PathSpec::project("promptscript.yaml"),
