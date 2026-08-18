@@ -44,6 +44,7 @@ function createState(): WizardState {
       scope: { scope: 'global' },
     },
     source: '',
+    sourceInput: '',
     fetchStatus: 'idle',
     fetchError: null,
     gitRef: null,
@@ -53,8 +54,7 @@ function createState(): WizardState {
     skillSearchQuery: '',
     overwrites: {},
     preparation: { status: 'idle' },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
+    agentSelectionIntent: { wildcardRequested: false, explicitAgentIds: [] },
     installResults: null,
     installError: undefined,
   };

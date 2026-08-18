@@ -14,7 +14,7 @@ import type {
   InstallWizardSessionSnapshot, MutationSnapshot,
   RegisteredProject, ProjectInfo, ActiveMutation,
   SkillIdentity,
-  AgentSelectionSubmission, ConfirmInstallAgentSelectionOutcome,
+  AgentSelectionIntent, AgentSelectionSubmission, ConfirmInstallAgentSelectionOutcome,
   InstallRequest, InstallPreview, InstallPreviewOutcome, InstallResponse,
   InstallAgentSelectionSnapshot, PreviewToken,
   RemovePreview, RemoveRequest, RemoveResponse,
@@ -30,6 +30,7 @@ import type {
   GithubCredentialClearResult, GithubCredentialSaveResult, GithubCredentialStatus,
   NetworkProxySettings, ProxyConnectionTestResult,
   DiscoverSearchPayload, DiscoverLeaderboardPayload, DiscoverLeaderboardTab,
+  SourceSelectionIntent,
 } from '@/bindings';
 
 export type {
@@ -259,8 +260,12 @@ export async function fetchAvailable(
   context: SkillLocationRef,
   source: string,
   operationId: string,
+  selectionIntent: SourceSelectionIntent = {
+    wildcardRequested: false,
+    explicitSkillNames: [],
+  },
 ): Promise<FetchResult> {
-  return unwrap(await commands.fetchAvailable(context, source, operationId));
+  return unwrap(await commands.fetchAvailable(context, source, operationId, selectionIntent));
 }
 
 export async function acquireSelectedPayloads(
@@ -275,20 +280,20 @@ export async function previewInstall(request: InstallRequest): Promise<InstallPr
 
 export async function getInstallAgentSelection(
   context: SkillLocationRef,
-  explicitAgentIds: string[],
+  agentSelectionIntent: AgentSelectionIntent,
 ): Promise<InstallAgentSelectionSnapshot> {
-  return unwrap(await commands.getInstallAgentSelection(context, explicitAgentIds));
+  return unwrap(await commands.getInstallAgentSelection(context, agentSelectionIntent));
 }
 
 export async function confirmInstallAgentSelection(
   context: SkillLocationRef,
   submission: AgentSelectionSubmission,
-  explicitAgentIds: string[],
+  agentSelectionIntent: AgentSelectionIntent,
 ): Promise<ConfirmInstallAgentSelectionOutcome> {
   return unwrap(await commands.confirmInstallAgentSelection(
     context,
     submission,
-    explicitAgentIds,
+    agentSelectionIntent,
   ));
 }
 

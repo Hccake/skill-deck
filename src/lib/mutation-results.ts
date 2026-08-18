@@ -13,6 +13,7 @@ type Translate = (
 
 const ERROR_CODES = new Set<OperationErrorCode>([
   'validation',
+  'wellKnownScopeNotFound',
   'environmentUnavailable',
   'environmentChanged',
   'contextChanged',

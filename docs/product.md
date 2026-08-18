@@ -89,8 +89,8 @@ Environment 切换、全局 Skill 和已添加项目的完整规则见[Environme
 
 - 全局 Skill 与当前项目 Skill 区域分别提供添加按钮。用户点击哪个区域的按钮，向导就固定使用打开时的 Environment 和对应的全局或项目位置，并从来源步骤开始。
 - 来源步骤提供“在线搜索”和“手动输入”两种方式。在线搜索用于按名称查找 Skill；选择搜索结果后，向导立即读取其来源并预选该 Skill。手动输入支持 GitHub、Git、本地路径、Well-known 地址、原始 `SKILL.md` 与 ZIP、tar、tar.gz 归档地址，以及受支持的 `skills add` 命令。
-- 普通 HTTP 或 HTTPS 地址先按 Well-known 协议读取；未发现有效 Skill 时，应用继续尝试直接下载该地址。明确的 GitHub 或 GitLab 文件和归档地址直接进入下载流程。
-- 一个来源包含多个 Skill 时，向导列出全部可安装项。用户可以保留预选项，也可以改为选择一个或多个其他 Skill。
+- 普通 HTTP 或 HTTPS 地址先按 Well-known 协议读取。带页面路径的 scoped 地址只读取该路径下的 catalog；该 scope 没有可用 Skill、但站点根目录存在有效 catalog 时，应用提示用户检查 scoped 地址，不会改用根目录内容。站点没有可识别的 Well-known catalog 时，应用继续尝试直接下载原地址。明确的 GitHub 或 GitLab 文件和归档地址直接进入下载流程。
+- 一个来源包含多个 Skill 时，向导默认列出其中的公开 Skill。wildcard 表示选择全部公开 Skill；用户通过来源语法或 `skills add` 命令明确指定名称时，列表会额外包含同名的 internal Skill，其他 internal Skill 仍然隐藏。wildcard 与精确名称混用时仍按批量公开选择处理。用户可以保留预选项，也可以改为选择一个或多个其他 Skill。
 - `skills.sh/p/...` Pack 链接没有指定具体 Skill 时，向导初始选中其中的全部 Skill。用户仍会经过 Skill 选择页和确认页，可以搜索、取消单项、全选或清空；Pack 不会自动开始安装。链接或 `skills add` 命令已经指定具体 Skill 时，只预选明确指定的项目。
 
 ### 从 Discover 安装

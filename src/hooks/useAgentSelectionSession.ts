@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentSelectionSnapshot,
+  AgentSelectionIntent,
   AgentSelectionSubmission,
   AgentInstallOptionId,
-  AgentId,
   AppError,
   InstallMode,
   ManageInstallOptionState,
@@ -29,7 +29,7 @@ export type AgentSelectionSessionRequest =
   | {
     kind: 'install';
     context: SkillLocationRef;
-    explicitAgentIds: AgentId[];
+    intent: AgentSelectionIntent;
   }
   | {
     kind: 'copy';
@@ -57,7 +57,10 @@ export type ManageAgentSelectionSessionRequest = Extract<
 
 function sessionRequestKey(request: AgentSelectionSessionRequest): string {
   const subject = request.kind === 'install'
-    ? [...new Set(request.explicitAgentIds)].sort()
+    ? [
+        request.intent.wildcardRequested,
+        [...new Set(request.intent.explicitAgentIds)].sort(),
+      ]
     : request.skillName;
   return JSON.stringify([request.kind, contextKey(request.context), subject]);
 }

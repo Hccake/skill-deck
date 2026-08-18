@@ -59,6 +59,7 @@ function state(response: InstallResponse): WizardState {
     scope: 'global',
     context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
     source: 'owner/repo',
+    sourceInput: 'owner/repo',
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
@@ -68,8 +69,7 @@ function state(response: InstallResponse): WizardState {
     skillSearchQuery: '',
     overwrites: {},
     preparation: { status: 'idle' },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
+    agentSelectionIntent: { wildcardRequested: false, explicitAgentIds: [] },
     installResults: response,
   };
 }

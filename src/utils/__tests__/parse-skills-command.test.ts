@@ -7,6 +7,8 @@ describe('parseSkillsCommand', () => {
       source: 'owner/repo@reviewer',
       skills: [],
       agents: [],
+      wildcardRequested: false,
+      agentWildcardRequested: false,
       isCommand: false,
     });
   });
@@ -18,18 +20,22 @@ describe('parseSkillsCommand', () => {
         source: 'owner/repo',
         skills: [],
         agents: [],
+        wildcardRequested: false,
+        agentWildcardRequested: false,
         isCommand: true,
       });
     },
   );
 
-  it('recognizes the npx command prefix and ignores boolean installation flags', () => {
+  it('maps --all to both Skill and Agent wildcard selection', () => {
     expect(parseSkillsCommand(
       'npx skills add owner/repo --global --yes --all --list',
     )).toEqual({
       source: 'owner/repo',
       skills: [],
       agents: [],
+      wildcardRequested: true,
+      agentWildcardRequested: true,
       isCommand: true,
     });
   });
@@ -41,6 +47,21 @@ describe('parseSkillsCommand', () => {
       source: 'owner/repo',
       skills: ['reviewer', 'writer'],
       agents: ['codex', 'claude-code'],
+      wildcardRequested: false,
+      agentWildcardRequested: false,
+      isCommand: true,
+    });
+  });
+
+  it('collects every value following one variadic Skill or Agent flag', () => {
+    expect(parseSkillsCommand(
+      'skills add owner/repo --skill reviewer writer --agent codex claude-code',
+    )).toEqual({
+      source: 'owner/repo',
+      skills: ['reviewer', 'writer'],
+      agents: ['codex', 'claude-code'],
+      wildcardRequested: false,
+      agentWildcardRequested: false,
       isCommand: true,
     });
   });
@@ -52,6 +73,8 @@ describe('parseSkillsCommand', () => {
       source: 'owner/repo',
       skills: ['Convex Best Practices'],
       agents: ['custom agent'],
+      wildcardRequested: false,
+      agentWildcardRequested: false,
       isCommand: true,
     });
   });
@@ -63,6 +86,34 @@ describe('parseSkillsCommand', () => {
       source: 'owner/repo',
       skills: [],
       agents: [],
+      wildcardRequested: true,
+      agentWildcardRequested: true,
+      isCommand: true,
+    });
+  });
+
+  it('preserves exact names but lets a Skill wildcard dominate mixed selection', () => {
+    expect(parseSkillsCommand(
+      'skills add owner/repo --skill internal-one --skill * --skill internal-two',
+    )).toEqual({
+      source: 'owner/repo',
+      skills: ['internal-one', 'internal-two'],
+      agents: [],
+      wildcardRequested: true,
+      agentWildcardRequested: false,
+      isCommand: true,
+    });
+  });
+
+  it('lets wildcard dominate variadic exact values regardless of order', () => {
+    expect(parseSkillsCommand(
+      'skills add owner/repo --skill internal-one * internal-two --agent codex * claude-code',
+    )).toEqual({
+      source: 'owner/repo',
+      skills: ['internal-one', 'internal-two'],
+      agents: ['codex', 'claude-code'],
+      wildcardRequested: true,
+      agentWildcardRequested: true,
       isCommand: true,
     });
   });
@@ -72,6 +123,8 @@ describe('parseSkillsCommand', () => {
       source: '',
       skills: ['reviewer'],
       agents: [],
+      wildcardRequested: false,
+      agentWildcardRequested: false,
       isCommand: true,
     });
   });
@@ -81,6 +134,8 @@ describe('parseSkillsCommand', () => {
       source: 'owner/repo',
       skills: [],
       agents: [],
+      wildcardRequested: false,
+      agentWildcardRequested: false,
       isCommand: true,
     });
   });

@@ -10,7 +10,8 @@ use crate::application::payload_session::{
 };
 use crate::application::source_acquisition::{
     attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
-    snapshot_fingerprint, source_identifier, ManagedDownloadedDirectory, RetainedSourceOptions,
+    snapshot_fingerprint, source_identifier, InternalSkillVisibility, ManagedDownloadedDirectory,
+    RetainedSourceOptions, SourceDiscoveryPolicy,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
 use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchError};
@@ -68,7 +69,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
         distro_name: &'a str,
         parsed: ParsedSource,
         requested_source: String,
-        full_depth: bool,
+        policy: SourceDiscoveryPolicy,
         cancellation: CancellationSignal,
     ) -> WslSourceFuture<'a> {
         Box::pin(async move {
@@ -79,7 +80,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
                             distro_name,
                             parsed.clone(),
                             requested_source.clone(),
-                            full_depth,
+                            policy.clone(),
                             cancellation.clone(),
                         ),
                         || {
@@ -87,7 +88,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
                                 distro_name,
                                 parsed,
                                 requested_source,
-                                full_depth,
+                                policy,
                                 cancellation,
                             )
                         },
@@ -100,7 +101,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
                         distro_name,
                         parsed,
                         requested_source,
-                        full_depth,
+                        policy,
                         cancellation,
                     )
                     .await
@@ -110,7 +111,7 @@ impl WslSourceAccess for RuntimeWslSourceAccess {
                         distro_name,
                         parsed,
                         requested_source,
-                        full_depth,
+                        policy,
                         cancellation,
                     )
                     .await
@@ -126,7 +127,7 @@ impl RuntimeWslSourceAccess {
         distro_name: &str,
         parsed: ParsedSource,
         requested_source: String,
-        full_depth: bool,
+        policy: SourceDiscoveryPolicy,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, WellKnownFetchError> {
         let workspace = self
@@ -160,7 +161,8 @@ impl RuntimeWslSourceAccess {
                         RetainedSourceOptions {
                             storage: Some(storage),
                             trust_metadata: Some(fetched.trust_metadata),
-                            full_depth,
+                            full_depth: policy.full_depth,
+                            internal_skill_visibility: policy.internal_skill_visibility,
                             ..Default::default()
                         },
                     )
@@ -176,7 +178,7 @@ impl RuntimeWslSourceAccess {
         distro_name: &str,
         mut parsed: ParsedSource,
         requested_source: String,
-        full_depth: bool,
+        policy: SourceDiscoveryPolicy,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError> {
         let workspace = self.environments.workspace(distro_name)?;
@@ -210,7 +212,8 @@ impl RuntimeWslSourceAccess {
                         RetainedSourceOptions {
                             storage: Some(storage),
                             redirected_download_host,
-                            full_depth,
+                            full_depth: policy.full_depth,
+                            internal_skill_visibility: policy.internal_skill_visibility,
                             ..Default::default()
                         },
                     )
@@ -225,7 +228,7 @@ impl RuntimeWslSourceAccess {
         distro_name: &str,
         parsed: ParsedSource,
         requested_source: String,
-        full_depth: bool,
+        policy: SourceDiscoveryPolicy,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError> {
         let workspace = self.environments.workspace(distro_name)?;
@@ -247,6 +250,7 @@ impl RuntimeWslSourceAccess {
                 let sessions = sessions.clone();
                 let environment = environment.clone();
                 let settings = settings.clone();
+                let policy = policy.clone();
                 let proxy_distro = proxy_distro.clone();
                 async move {
                     let _clone_permit = match &acquisition {
@@ -290,7 +294,7 @@ impl RuntimeWslSourceAccess {
                         session,
                         workspace,
                         native,
-                        full_depth,
+                        policy,
                         cancellation,
                     )
                     .await?;
@@ -334,7 +338,7 @@ async fn prepare_native_wsl_source(
     session: WslSession,
     workspace: WslWorkspace,
     native: WslNativeSource,
-    full_depth: bool,
+    policy: SourceDiscoveryPolicy,
     cancellation: CancellationSignal,
 ) -> Result<PreparedWslDiscovery, AppError> {
     let root = native_root_with_subpath(native.native_root(), parsed.subpath.as_deref())?;
@@ -390,8 +394,8 @@ async fn prepare_native_wsl_source(
     let (discovered, mut catalog) = build_wsl_discovery_catalog(
         &response,
         parsed.subpath.as_deref(),
-        parsed.skill_filter.is_some(),
-        full_depth,
+        &policy.internal_skill_visibility,
+        policy.full_depth,
     )?;
     let storage = Arc::new(WslPayloadSessionStorage::new(workspace));
     for skill in catalog.values_mut() {
@@ -502,7 +506,7 @@ fn native_root_with_subpath(root: &str, subpath: Option<&str>) -> Result<String,
 pub(crate) fn build_wsl_discovery_catalog(
     response: &ScanResponse,
     subpath: Option<&str>,
-    include_internal: bool,
+    internal_skill_visibility: &InternalSkillVisibility,
     full_depth: bool,
 ) -> Result<
     (
@@ -557,10 +561,13 @@ pub(crate) fn build_wsl_discovery_catalog(
     let discovered = select_discovered_skills(
         &inventory,
         DiscoverOptions {
-            include_internal,
+            include_internal: internal_skill_visibility.scans_internal(),
             full_depth,
         },
-    )?;
+    )?
+    .into_iter()
+    .filter(|skill| internal_skill_visibility.allows(&skill.name, skill.internal))
+    .collect::<Vec<_>>();
     let mut catalog = BTreeMap::new();
     for skill in &discovered {
         catalog.insert(

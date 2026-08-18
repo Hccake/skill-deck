@@ -99,6 +99,7 @@ function createState(): WizardState {
     context: nativeGlobal,
     projectPath: undefined,
     source: '',
+    sourceInput: '',
     fetchStatus: 'idle',
     fetchError: null,
     gitRef: null,
@@ -108,8 +109,7 @@ function createState(): WizardState {
     skillSearchQuery: '',
     overwrites: {},
     preparation: { status: 'idle' },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
+    agentSelectionIntent: { wildcardRequested: false, explicitAgentIds: [] },
     installResults: null,
     installError: undefined,
   };
@@ -136,6 +136,7 @@ function Harness({
       <div data-testid="discovery-session">{state.discoverySession?.sessionId ?? 'none'}</div>
       <div data-testid="redirect-host">{state.redirectedDownloadHost ?? 'none'}</div>
       <div data-testid="selected-skills">{state.selectedSkills.join(',')}</div>
+      <div data-testid="fetch-status">{state.fetchStatus}</div>
     </>
   );
 }
@@ -181,7 +182,99 @@ describe('SourceStep', () => {
       nativeGlobal,
       'openclaw/community-skills',
       expect.any(String),
+      { wildcardRequested: false, explicitSkillNames: [] },
     );
+  });
+
+  it('enables manual fetch from the current source input', async () => {
+    fetchAvailableMock.mockResolvedValue({
+      discoverySession,
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/openclaw/community-skills',
+      gitRef: null,
+      skillFilter: null,
+      skills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md' }],
+    });
+
+    render(<Harness onNext={() => undefined} />);
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'openclaw/community-skills' },
+    });
+    const fetchButton = screen.getByRole('button', {
+      name: 'addSkill.source.actions.fetch',
+    });
+    expect((fetchButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(fetchButton);
+
+    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(
+      nativeGlobal,
+      'openclaw/community-skills',
+      expect.any(String),
+      { wildcardRequested: false, explicitSkillNames: [] },
+    ));
+  });
+
+  it('invalidates a successful discovery when the source input changes', () => {
+    render(
+      <Harness
+        onNext={() => undefined}
+        initialState={{
+          ...createState(),
+          sourceInput: 'owner/source-a',
+          source: 'owner/source-a',
+          fetchStatus: 'success',
+          discoverySession,
+          availableSkills: [
+            { name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' },
+          ],
+          selectedSkills: ['demo'],
+          agentSelectionIntent: {
+            wildcardRequested: true,
+            explicitAgentIds: [],
+          },
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'owner/source-b' },
+    });
+
+    expect(screen.getByTestId('fetch-status').textContent).toBe('idle');
+    expect(screen.getByTestId('discovery-session').textContent).toBe('none');
+    expect(screen.getByTestId('selected-skills').textContent).toBe('');
+  });
+
+  it('does not auto-fetch partial edits after returning to a prefilled source', async () => {
+    render(
+      <Harness
+        onNext={() => undefined}
+        autoFetch
+        initialState={{
+          ...createState(),
+          sourceInput: 'owner/source-a',
+          source: 'owner/source-a',
+          fetchStatus: 'success',
+          discoverySession,
+          availableSkills: [
+            { name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'SKILL.md' },
+          ],
+          selectedSkills: ['demo'],
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'o' },
+    });
+
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(fetchAvailableMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox')).toHaveProperty('value', 'o');
   });
 
   it('stores the final host when a download redirects across hosts', async () => {
@@ -273,6 +366,7 @@ describe('SourceStep', () => {
       nativeGlobal,
       'openclaw/community-skills@demo',
       expect.any(String),
+      { wildcardRequested: false, explicitSkillNames: [] },
     );
 
     await waitFor(() => {
@@ -296,7 +390,7 @@ describe('SourceStep', () => {
 
     render(
       <SourceStep
-        state={{ ...createState(), source: 'owner/repo', context }}
+        state={{ ...createState(), sourceInput: 'owner/repo', context }}
         updateState={() => undefined}
         onNext={() => undefined}
         autoFetch
@@ -307,7 +401,98 @@ describe('SourceStep', () => {
       context,
       'owner/repo',
       expect.any(String),
+      { wildcardRequested: false, explicitSkillNames: [] },
     ));
+  });
+
+  it('sends wildcard and exact Skill selectors as one request intent', async () => {
+    fetchAvailableMock.mockResolvedValue({
+      discoverySession,
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      gitRef: null,
+      skillFilter: null,
+      skills: [
+        { name: 'public-one', installDirName: 'public-one', description: 'Public one', relativePath: 'public-one/SKILL.md' },
+        { name: 'public-two', installDirName: 'public-two', description: 'Public two', relativePath: 'public-two/SKILL.md' },
+      ],
+    });
+
+    render(<Harness onNext={() => undefined} />);
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'skills add owner/repo --skill internal-one --skill * --skill internal-two' },
+    });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+
+    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledWith(
+      nativeGlobal,
+      'owner/repo',
+      expect.any(String),
+      {
+        wildcardRequested: true,
+        explicitSkillNames: ['internal-one', 'internal-two'],
+      },
+    ));
+    expect(screen.getByTestId('selected-skills').textContent).toBe('public-one,public-two');
+  });
+
+  it('preserves CLI Skill selection intent when the same input is fetched again', async () => {
+    fetchAvailableMock.mockResolvedValue({
+      discoverySession,
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      gitRef: null,
+      skillFilter: null,
+      skills: [
+        { name: 'public-one', installDirName: 'public-one', description: 'Public one', relativePath: 'public-one/SKILL.md' },
+      ],
+    });
+
+    render(<Harness onNext={() => undefined} />);
+    const sourceInput = screen.getByRole('textbox');
+    fireEvent.change(sourceInput, {
+      target: { value: 'skills add owner/repo --skill internal-one * internal-two' },
+    });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    await waitFor(() => expect(fetchAvailableMock).toHaveBeenCalledTimes(2));
+
+    expect(fetchAvailableMock.mock.calls.map((call) => call[3])).toEqual([
+      { wildcardRequested: true, explicitSkillNames: ['internal-one', 'internal-two'] },
+      { wildcardRequested: true, explicitSkillNames: ['internal-one', 'internal-two'] },
+    ]);
+  });
+
+  it('stores Agent wildcard selection imported through --all', async () => {
+    const updateState = vi.fn();
+    fetchAvailableMock.mockResolvedValue({
+      discoverySession,
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/owner/repo',
+      gitRef: null,
+      skillFilter: null,
+      skills: [
+        { name: 'public-one', installDirName: 'public-one', description: 'Public one', relativePath: 'public-one/SKILL.md' },
+      ],
+    });
+
+    render(
+      <SourceStep
+        state={{ ...createState(), sourceInput: 'skills add owner/repo --all' }}
+        updateState={updateState}
+        onNext={() => undefined}
+        autoFetch
+      />,
+    );
+
+    await waitFor(() => expect(updateState).toHaveBeenCalledWith(expect.objectContaining({
+      agentSelectionIntent: {
+        wildcardRequested: true,
+        explicitAgentIds: [],
+      },
+    })));
   });
 
   it('ignores progress events from a previous source fetch operation', async () => {
@@ -317,7 +502,7 @@ describe('SourceStep', () => {
     render(
       <Harness
         onNext={() => undefined}
-        initialState={{ ...createState(), source: 'owner/repo' }}
+        initialState={{ ...createState(), sourceInput: 'owner/repo' }}
         autoFetch
       />
     );
@@ -326,6 +511,7 @@ describe('SourceStep', () => {
       expect(eventMocks.listeners).toHaveLength(1);
       expect(fetchAvailableMock).toHaveBeenCalled();
     });
+    expect(screen.getByText('owner/repo')).toBeTruthy();
     const operationId = fetchAvailableMock.mock.calls[0][2] as string;
     const emitProgress = eventMocks.listeners[0];
 
@@ -376,7 +562,7 @@ describe('SourceStep', () => {
     const onNext = vi.fn();
     const { unmount } = render(
       <SourceStep
-        state={{ ...createState(), source: 'owner/repo' }}
+        state={{ ...createState(), sourceInput: 'owner/repo' }}
         updateState={updateState}
         onNext={onNext}
         autoFetch

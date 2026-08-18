@@ -53,7 +53,7 @@ function ReadyOptions({
   const request = {
     kind: 'install' as const,
     context: { environment: { kind: 'native' as const }, scope: { scope: 'global' as const } },
-    explicitAgentIds: [],
+    intent: { wildcardRequested: false, explicitAgentIds: [] },
   };
   const agentSelection = useAgentSelectionSession({
     active: true,

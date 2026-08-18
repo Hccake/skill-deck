@@ -6,17 +6,17 @@
 
 
 export const commands = {
-async confirmInstallAgentSelection(context: SkillLocationRef, submission: AgentSelectionSubmission, explicitAgentIds: string[]) : Promise<Result<ConfirmInstallAgentSelectionOutcome, AppError>> {
+async confirmInstallAgentSelection(context: SkillLocationRef, submission: AgentSelectionSubmission, agentSelectionIntent: AgentSelectionIntent) : Promise<Result<ConfirmInstallAgentSelectionOutcome, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("confirm_install_agent_selection", { context, submission, explicitAgentIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("confirm_install_agent_selection", { context, submission, agentSelectionIntent }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async getInstallAgentSelection(context: SkillLocationRef, explicitAgentIds: string[]) : Promise<Result<InstallAgentSelectionSnapshot, AppError>> {
+async getInstallAgentSelection(context: SkillLocationRef, agentSelectionIntent: AgentSelectionIntent) : Promise<Result<InstallAgentSelectionSnapshot, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_install_agent_selection", { context, explicitAgentIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_install_agent_selection", { context, agentSelectionIntent }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -193,9 +193,9 @@ async clearGithubCredential() : Promise<Result<GithubCredentialClearResult, AppE
     else return { status: "error", error: e  as any };
 }
 },
-async fetchAvailable(context: SkillLocationRef, source: string, operationId: string) : Promise<Result<FetchResult, AppError>> {
+async fetchAvailable(context: SkillLocationRef, source: string, operationId: string, selectionIntent: SourceSelectionIntent) : Promise<Result<FetchResult, AppError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("fetch_available", { context, source, operationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("fetch_available", { context, source, operationId, selectionIntent }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -540,6 +540,7 @@ export type AgentSelectionAgentKind = "standard" | "grouped"
 export type AgentSelectionDisabledReason = "placementConflict"
 export type AgentSelectionGroup = { id: string; agentId: AgentId; displayName: string; optionIds: AgentInstallOptionId[]; detection: DetectionState }
 export type AgentSelectionHistoryWarning = "readFailed" | "writeFailed"
+export type AgentSelectionIntent = { wildcardRequested: boolean; explicitAgentIds: string[] }
 export type AgentSelectionInvalidReason = "duplicateOption" | "optionUnavailable" | "placementConflict" | "optionMissing" | "resultNotAllowed"
 export type AgentSelectionModeConstraint = "userSelectable" | "copyOnly"
 export type AgentSelectionRevision = string
@@ -869,6 +870,7 @@ export type SkillLocationRef = { environment: EnvironmentRef; scope: SkillLocati
 export type SkillUpdateCheckStatus = "updateAvailable" | "upToDate" | "cannotCheck" | "deletedUpstream"
 export type SkillUpdateInfo = { name: string; source: string; hasUpdate: boolean; status: SkillUpdateCheckStatus; capability: CheckUpdateCapability; reason: UpdateCheckReasonCode | null; gitRef: string | null; sourceUrl: string | null; skillPath: string | null; freshness: EvidenceFreshness }
 export type SourceAcquisitionFailureReason = "notFound" | "authenticationRequired" | "timeout" | "network" | "limitExceeded" | "invalidContent" | "unavailable"
+export type SourceSelectionIntent = { wildcardRequested: boolean; explicitSkillNames: string[] }
 export type SourceSuppressionWarningCode = "suppressionCleanupFailed"
 export type SourceUpdateCheckInfo = { source: string; requestedRef: string | null; resolvedRef: string | null; refRevision: string | null; checkedAtEpochMs: number | null; expiresAtEpochMs: number | null; freshness: EvidenceFreshness; lastAttempt: EvidenceAttempt | null }
 export type StorageAccess = "native" | "crossStorage" | "unsupported" | "unknown"

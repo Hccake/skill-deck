@@ -5,7 +5,8 @@ use crate::application::git_transport::GitSourceTransport;
 use crate::application::github_access::GithubTreeAccess;
 use crate::application::payload_session::{DiscoverySourceLocation, PayloadSessionManager};
 use crate::application::source_acquisition::{
-    AcquireSelectedPayloadsRequest, GitSourceDiscovery, SelectedPayloadAcquisitionService,
+    AcquireSelectedPayloadsRequest, GitSourceDiscovery, InternalSkillVisibility,
+    SelectedPayloadAcquisitionService, SourceDiscoveryPolicy,
 };
 use crate::application::source_evidence::{
     EvidenceDetectionFailure, EvidenceDetectionOutcome, EvidenceDetectionRequest,
@@ -256,13 +257,17 @@ impl RuntimeSourceEvidenceDetector {
                     },
                     parsed,
                     source,
-                    true,
+                    SourceDiscoveryPolicy {
+                        full_depth: true,
+                        internal_skill_visibility: InternalSkillVisibility::All,
+                    },
                     |_| {},
                     cancellation.clone(),
                 )
                 .await;
                 let discovery = match discovery {
                     Ok(discovery) => discovery,
+                    Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
                     Err(error) => return Ok(git_failure(error)),
                 };
                 let snapshot = self

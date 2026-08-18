@@ -4,9 +4,9 @@ use tauri::State;
 
 use crate::application::agent_selection::{
     apply_initial_agent_selection, build_agent_selection_catalog,
-    resolve_agent_selection_submission, AgentSelectionHistoryWarning, AgentSelectionResolution,
-    AgentSelectionSubmission, ConfirmInstallAgentSelectionOutcome, InstallAgentSelectionSnapshot,
-    ResolvedAgentSelection,
+    resolve_agent_selection_submission, AgentSelectionHistoryWarning, AgentSelectionIntent,
+    AgentSelectionResolution, AgentSelectionSubmission, ConfirmInstallAgentSelectionOutcome,
+    InstallAgentSelectionSnapshot, ResolvedAgentSelection,
 };
 use crate::application::agent_selection_history;
 use crate::application::install_planner::InstallPlanningFactSource;
@@ -24,7 +24,7 @@ use crate::runtime::RuntimeServiceGraph;
 #[specta::specta]
 pub async fn get_install_agent_selection(
     context: SkillLocationRef,
-    explicit_agent_ids: Vec<String>,
+    agent_selection_intent: AgentSelectionIntent,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<InstallAgentSelectionSnapshot, AppError> {
     let facts = runtime.agent_selection_facts().current(&context).await?;
@@ -39,7 +39,7 @@ pub async fn get_install_agent_selection(
     Ok(load_initialized_install_agent_selection_snapshot(
         catalog,
         &context,
-        &explicit_agent_ids,
+        &agent_selection_intent,
         runtime.wsl(),
     )
     .await)
@@ -50,11 +50,11 @@ pub async fn get_install_agent_selection(
 pub async fn confirm_install_agent_selection(
     context: SkillLocationRef,
     submission: AgentSelectionSubmission,
-    explicit_agent_ids: Vec<String>,
+    agent_selection_intent: AgentSelectionIntent,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<ConfirmInstallAgentSelectionOutcome, AppError> {
     let (history_recording, facts) = read_confirmation_facts_after_admission(
-        &explicit_agent_ids,
+        &agent_selection_intent,
         runtime.admission(),
         context.clone(),
         || runtime.agent_selection_facts().current(&context),
@@ -73,7 +73,7 @@ pub async fn confirm_install_agent_selection(
             let snapshot = load_initialized_install_agent_selection_snapshot(
                 catalog,
                 &context,
-                &explicit_agent_ids,
+                &agent_selection_intent,
                 runtime.wsl(),
             )
             .await;
@@ -107,11 +107,11 @@ enum AgentSelectionHistoryRecording {
 }
 
 fn begin_agent_selection_history_recording(
-    explicit_agent_ids: &[String],
+    intent: &AgentSelectionIntent,
     admission: &RuntimeAdmissionCoordinator,
     context: SkillLocationRef,
 ) -> AgentSelectionHistoryRecording {
-    if !explicit_agent_ids.is_empty() {
+    if intent.is_imported() {
         return AgentSelectionHistoryRecording::Skipped;
     }
     match admission.begin_install_from_active_wizard(context) {
@@ -121,7 +121,7 @@ fn begin_agent_selection_history_recording(
 }
 
 async fn read_confirmation_facts_after_admission<T, Read, ReadFuture>(
-    explicit_agent_ids: &[String],
+    intent: &AgentSelectionIntent,
     admission: &RuntimeAdmissionCoordinator,
     context: SkillLocationRef,
     read: Read,
@@ -130,7 +130,7 @@ where
     Read: FnOnce() -> ReadFuture,
     ReadFuture: std::future::Future<Output = Result<T, AppError>>,
 {
-    let recording = begin_agent_selection_history_recording(explicit_agent_ids, admission, context);
+    let recording = begin_agent_selection_history_recording(intent, admission, context);
     let facts = read().await?;
     Ok((recording, facts))
 }
@@ -138,28 +138,20 @@ where
 async fn load_initialized_install_agent_selection_snapshot(
     catalog: crate::application::agent_selection::AgentSelectionCatalog,
     context: &SkillLocationRef,
-    explicit_agent_ids: &[String],
+    intent: &AgentSelectionIntent,
     wsl: &crate::environment::wsl::WslRuntime,
 ) -> InstallAgentSelectionSnapshot {
-    if !explicit_agent_ids.is_empty() {
-        return initialized_install_agent_selection_snapshot(
-            catalog,
-            explicit_agent_ids,
-            None,
-            None,
-        );
+    if intent.is_imported() {
+        return initialized_install_agent_selection_snapshot(catalog, intent, None, None);
     }
 
     match agent_selection_history::get_last_selected_agents(&context.environment, wsl).await {
-        Ok(history) => initialized_install_agent_selection_snapshot(
-            catalog,
-            explicit_agent_ids,
-            history.as_deref(),
-            None,
-        ),
+        Ok(history) => {
+            initialized_install_agent_selection_snapshot(catalog, intent, history.as_deref(), None)
+        }
         Err(_) => initialized_install_agent_selection_snapshot(
             catalog,
-            explicit_agent_ids,
+            intent,
             None,
             Some(AgentSelectionHistoryWarning::ReadFailed),
         ),
@@ -168,17 +160,14 @@ async fn load_initialized_install_agent_selection_snapshot(
 
 fn initialized_install_agent_selection_snapshot(
     mut catalog: crate::application::agent_selection::AgentSelectionCatalog,
-    explicit_agent_ids: &[String],
+    intent: &AgentSelectionIntent,
     last_selected_agent_ids: Option<&[String]>,
     selection_history_warning: Option<AgentSelectionHistoryWarning>,
 ) -> InstallAgentSelectionSnapshot {
-    let initial_agent_ids = initial_agent_ids(
-        &catalog.snapshot.agents,
-        explicit_agent_ids,
-        last_selected_agent_ids,
-    );
+    let initial_agent_ids =
+        initial_agent_ids(&catalog.snapshot.agents, intent, last_selected_agent_ids);
     apply_initial_agent_selection(&mut catalog, &initial_agent_ids);
-    if explicit_agent_ids.is_empty() {
+    if !intent.is_imported() || intent.wildcard_requested {
         catalog.snapshot.unavailable_explicit_agents.clear();
     }
 
@@ -252,11 +241,17 @@ fn is_cli_history_agent(agent_id: &AgentId, source: AgentSource) -> bool {
 
 fn initial_agent_ids(
     agents: &[crate::application::agent_selection::AgentSelectionAgent],
-    explicit_agent_ids: &[String],
+    intent: &AgentSelectionIntent,
     last_selected_agent_ids: Option<&[String]>,
 ) -> Vec<String> {
-    if !explicit_agent_ids.is_empty() {
-        return explicit_agent_ids.to_vec();
+    if intent.wildcard_requested {
+        return agents
+            .iter()
+            .map(|agent| agent.id.as_str().to_string())
+            .collect();
+    }
+    if !intent.explicit_agent_ids.is_empty() {
+        return intent.explicit_agent_ids.clone();
     }
 
     let detected_agent_ids = agents
@@ -286,8 +281,8 @@ mod tests {
     use super::*;
     use crate::application::agent_selection::{
         AgentInstallOption, AgentInstallOptionId, AgentInstallOptionKind, AgentSelectionAgent,
-        AgentSelectionAgentKind, AgentSelectionCatalog, AgentSelectionModeConstraint,
-        AgentSelectionRevision, SkillDirectoryAccess,
+        AgentSelectionAgentKind, AgentSelectionCatalog, AgentSelectionIntent,
+        AgentSelectionModeConstraint, AgentSelectionRevision, SkillDirectoryAccess,
     };
     use crate::application::runtime_admission::{
         RuntimeAdmissionCoordinator, WizardWindowObservation,
@@ -308,7 +303,7 @@ mod tests {
     fn multiple_detected_agents_without_history_start_unselected() {
         let agents = vec![agent("claude-code"), agent("codex")];
 
-        assert!(initial_agent_ids(&agents, &[], None).is_empty());
+        assert!(initial_agent_ids(&agents, &AgentSelectionIntent::default(), None).is_empty());
     }
 
     #[test]
@@ -317,7 +312,7 @@ mod tests {
         let history = vec!["codex".to_string(), "removed-agent".to_string()];
 
         assert_eq!(
-            initial_agent_ids(&agents, &[], Some(&history)),
+            initial_agent_ids(&agents, &AgentSelectionIntent::default(), Some(&history)),
             vec!["codex"]
         );
     }
@@ -326,7 +321,10 @@ mod tests {
     fn one_detected_agent_is_selected_without_history() {
         let agents = vec![agent("claude-code"), undetected_agent("codex")];
 
-        assert_eq!(initial_agent_ids(&agents, &[], None), vec!["claude-code"]);
+        assert_eq!(
+            initial_agent_ids(&agents, &AgentSelectionIntent::default(), None),
+            vec!["claude-code"]
+        );
     }
 
     #[test]
@@ -339,7 +337,7 @@ mod tests {
         ];
 
         assert_eq!(
-            initial_agent_ids(&agents, &[], None),
+            initial_agent_ids(&agents, &AgentSelectionIntent::default(), None),
             vec!["claude-code", "opencode", "codex"]
         );
     }
@@ -348,11 +346,30 @@ mod tests {
     fn explicit_agents_have_priority_over_detection_and_history() {
         let agents = vec![agent("claude-code"), agent("codex")];
         let explicit = vec!["claude-code".to_string()];
+        let intent = AgentSelectionIntent {
+            wildcard_requested: false,
+            explicit_agent_ids: explicit.clone(),
+        };
         let history = vec!["codex".to_string()];
 
         assert_eq!(
-            initial_agent_ids(&agents, &explicit, Some(&history)),
+            initial_agent_ids(&agents, &intent, Some(&history)),
             explicit
+        );
+    }
+
+    #[test]
+    fn agent_wildcard_selects_every_available_agent_without_using_history() {
+        let agents = vec![agent("claude-code"), undetected_agent("codex")];
+        let intent = AgentSelectionIntent {
+            wildcard_requested: true,
+            explicit_agent_ids: vec!["removed-agent".to_string()],
+        };
+        let history = vec!["claude-code".to_string()];
+
+        assert_eq!(
+            initial_agent_ids(&agents, &intent, Some(&history)),
+            vec!["claude-code", "codex"]
         );
     }
 
@@ -387,7 +404,10 @@ mod tests {
 
         let snapshot = initialized_install_agent_selection_snapshot(
             catalog,
-            &["cursor".to_string()],
+            &AgentSelectionIntent {
+                wildcard_requested: false,
+                explicit_agent_ids: vec!["cursor".to_string()],
+            },
             None,
             None,
         );
@@ -444,7 +464,10 @@ mod tests {
         let admission = RuntimeAdmissionCoordinator::default();
         let write_started = Cell::new(false);
         let recording = begin_agent_selection_history_recording(
-            &["codex".to_string()],
+            &AgentSelectionIntent {
+                wildcard_requested: false,
+                explicit_agent_ids: vec!["codex".to_string()],
+            },
             &admission,
             native_global(),
         );
@@ -465,13 +488,17 @@ mod tests {
         let admission = active_wizard_admission();
         let facts_read_with_permit = Cell::new(false);
 
-        let (recording, ()) =
-            read_confirmation_facts_after_admission(&[], &admission, native_global(), || async {
+        let (recording, ()) = read_confirmation_facts_after_admission(
+            &AgentSelectionIntent::default(),
+            &admission,
+            native_global(),
+            || async {
                 facts_read_with_permit.set(admission.active().is_some());
                 Ok(())
-            })
-            .await
-            .expect("read confirmation facts");
+            },
+        )
+        .await
+        .expect("read confirmation facts");
 
         assert!(facts_read_with_permit.get());
         assert!(admission.active().is_some());
@@ -489,13 +516,17 @@ mod tests {
         let facts_read = Cell::new(false);
         let write_started = Cell::new(false);
 
-        let (recording, ()) =
-            read_confirmation_facts_after_admission(&[], &admission, native_global(), || async {
+        let (recording, ()) = read_confirmation_facts_after_admission(
+            &AgentSelectionIntent::default(),
+            &admission,
+            native_global(),
+            || async {
                 facts_read.set(true);
                 Ok(())
-            })
-            .await
-            .expect("read confirmation facts");
+            },
+        )
+        .await
+        .expect("read confirmation facts");
 
         let warning = record_confirmed_agent_history(recording, Vec::new(), |_| async {
             write_started.set(true);
@@ -511,7 +542,11 @@ mod tests {
     #[tokio::test]
     async fn history_write_failure_is_non_blocking_after_wizard_admission() {
         let admission = active_wizard_admission();
-        let recording = begin_agent_selection_history_recording(&[], &admission, native_global());
+        let recording = begin_agent_selection_history_recording(
+            &AgentSelectionIntent::default(),
+            &admission,
+            native_global(),
+        );
 
         let warning =
             record_confirmed_agent_history(recording, vec!["codex".to_string()], |_| async {

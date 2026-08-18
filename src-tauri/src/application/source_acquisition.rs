@@ -40,6 +40,70 @@ pub struct AcquireSelectedPayloadsRequest {
     pub skill_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSelectionIntent {
+    pub wildcard_requested: bool,
+    pub explicit_skill_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) enum InternalSkillVisibility {
+    #[default]
+    PublicOnly,
+    Explicit(BTreeSet<String>),
+    All,
+}
+
+impl InternalSkillVisibility {
+    pub(crate) fn resolve(
+        selection: &SourceSelectionIntent,
+        source_skill_filter: Option<&str>,
+        install_internal_skills: bool,
+    ) -> Self {
+        if install_internal_skills {
+            return Self::All;
+        }
+        if selection.wildcard_requested {
+            return Self::PublicOnly;
+        }
+        let names = selection
+            .explicit_skill_names
+            .iter()
+            .map(String::as_str)
+            .chain(source_skill_filter)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        if names.is_empty() {
+            Self::PublicOnly
+        } else {
+            Self::Explicit(names)
+        }
+    }
+
+    pub(crate) fn allows(&self, skill_name: &str, internal: bool) -> bool {
+        if !internal {
+            return true;
+        }
+        match self {
+            Self::PublicOnly => false,
+            Self::Explicit(names) => names.contains(skill_name),
+            Self::All => true,
+        }
+    }
+
+    pub(crate) fn scans_internal(&self) -> bool {
+        !matches!(self, Self::PublicOnly)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SourceDiscoveryPolicy {
+    pub(crate) full_depth: bool,
+    pub(crate) internal_skill_visibility: InternalSkillVisibility,
+}
+
 #[derive(Clone)]
 pub(crate) struct GitSourceDiscovery {
     sessions: Arc<PayloadSessionManager>,
@@ -65,7 +129,7 @@ impl GitSourceDiscovery {
         context: SkillLocationRef,
         parsed: ParsedSource,
         requested_source: String,
-        full_depth: bool,
+        policy: SourceDiscoveryPolicy,
         on_progress: P,
         cancellation: CancellationSignal,
     ) -> Result<FetchResult, AppError>
@@ -112,7 +176,8 @@ impl GitSourceDiscovery {
                     root,
                     cloned,
                     RetainedSourceOptions {
-                        full_depth,
+                        full_depth: policy.full_depth,
+                        internal_skill_visibility: policy.internal_skill_visibility,
                         ..Default::default()
                     },
                 )
@@ -120,13 +185,7 @@ impl GitSourceDiscovery {
             }
             EnvironmentRef::Wsl { distro_name } => {
                 self.wsl_source
-                    .discover(
-                        distro_name,
-                        parsed,
-                        requested_source,
-                        full_depth,
-                        cancellation,
-                    )
+                    .discover(distro_name, parsed, requested_source, policy, cancellation)
                     .await
             }
         }
@@ -225,6 +284,7 @@ pub(crate) struct RetainedSourceOptions {
     pub(crate) trust_metadata: Option<std::collections::HashMap<String, WellKnownTrustMetadata>>,
     pub(crate) redirected_download_host: Option<String>,
     pub(crate) full_depth: bool,
+    pub(crate) internal_skill_visibility: InternalSkillVisibility,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -246,15 +306,15 @@ where
         trust_metadata,
         redirected_download_host,
         full_depth,
+        internal_skill_visibility,
     } = options;
     let scan_root = native_root.clone();
     let scan_subpath = parsed.subpath.clone();
-    let scan_include_internal = parsed.skill_filter.is_some();
     let (discovered, catalog) = tokio::task::spawn_blocking(move || {
         build_discovery_catalog(
             &scan_root,
             scan_subpath.as_deref(),
-            scan_include_internal,
+            &internal_skill_visibility,
             full_depth,
         )
     })
@@ -315,7 +375,7 @@ pub(crate) fn redirected_host(requested: &str, final_url: &str) -> Option<String
 fn build_discovery_catalog(
     native_root: &Path,
     subpath: Option<&str>,
-    include_internal: bool,
+    internal_skill_visibility: &InternalSkillVisibility,
     full_depth: bool,
 ) -> Result<
     (
@@ -328,10 +388,13 @@ fn build_discovery_catalog(
         native_root,
         subpath,
         DiscoverOptions {
-            include_internal,
+            include_internal: internal_skill_visibility.scans_internal(),
             full_depth,
         },
-    )?;
+    )?
+    .into_iter()
+    .filter(|skill| internal_skill_visibility.allows(&skill.name, skill.internal))
+    .collect::<Vec<_>>();
     let physical_root = fs::canonicalize(native_root)?;
     let mut catalog = std::collections::BTreeMap::new();
     for skill in &discovered {
@@ -1330,14 +1393,23 @@ mod tests {
                     "skills/private/SKILL.md",
                     b"---\nname: private\ndescription: Private\nmetadata:\n  internal: true\n---\n",
                 ),
+                file(
+                    "skills/other-private/SKILL.md",
+                    b"---\nname: other-private\ndescription: Other private\nmetadata:\n  internal: true\n---\n",
+                ),
                 file("skills/broken/SKILL.md", b"not frontmatter"),
             ],
             root_count: 1,
             total_content_bytes: 0,
         };
 
-        let (discovered, catalog) =
-            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
+        let (discovered, catalog) = build_wsl_discovery_catalog(
+            &response,
+            None,
+            &InternalSkillVisibility::PublicOnly,
+            false,
+        )
+        .expect("catalog");
 
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].relative_path, "skills/demo/SKILL.md");
@@ -1347,6 +1419,113 @@ mod tests {
                 .get("skills/demo/SKILL.md")
                 .and_then(|skill| skill.plugin_name.as_deref()),
             Some("toolkit")
+        );
+
+        let exact = InternalSkillVisibility::resolve(
+            &SourceSelectionIntent {
+                wildcard_requested: false,
+                explicit_skill_names: vec!["private".to_string()],
+            },
+            None,
+            false,
+        );
+        let (discovered, catalog) =
+            build_wsl_discovery_catalog(&response, None, &exact, false).expect("exact catalog");
+        assert_eq!(
+            discovered
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["demo", "private"])
+        );
+        assert_eq!(
+            catalog
+                .values()
+                .map(|skill| skill.skill_name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["demo", "private"])
+        );
+    }
+
+    #[test]
+    fn internal_visibility_policy_keeps_wildcard_public_and_exact_names_narrow() {
+        let exact = InternalSkillVisibility::resolve(
+            &SourceSelectionIntent {
+                wildcard_requested: false,
+                explicit_skill_names: vec!["private-one".to_string()],
+            },
+            Some("private-two"),
+            false,
+        );
+        assert!(exact.allows("public", false));
+        assert!(exact.allows("private-one", true));
+        assert!(exact.allows("private-two", true));
+        assert!(!exact.allows("private-three", true));
+
+        let wildcard = InternalSkillVisibility::resolve(
+            &SourceSelectionIntent {
+                wildcard_requested: true,
+                explicit_skill_names: vec!["private-one".to_string()],
+            },
+            Some("private-two"),
+            false,
+        );
+        assert!(wildcard.allows("public", false));
+        assert!(!wildcard.allows("private-one", true));
+        assert!(!wildcard.allows("private-two", true));
+
+        let all = InternalSkillVisibility::resolve(&SourceSelectionIntent::default(), None, true);
+        assert!(all.allows("private-three", true));
+    }
+
+    #[test]
+    fn native_catalog_contains_only_public_and_explicit_internal_skills() {
+        let source = tempdir().expect("source");
+        for (name, internal) in [
+            ("public", false),
+            ("private-one", true),
+            ("private-two", true),
+        ] {
+            let directory = source.path().join(name);
+            fs::create_dir_all(&directory).expect("skill directory");
+            fs::write(
+                directory.join("SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: Demo\n{}---\n",
+                    if internal {
+                        "metadata:\n  internal: true\n"
+                    } else {
+                        ""
+                    }
+                ),
+            )
+            .expect("skill document");
+        }
+
+        let visibility = InternalSkillVisibility::resolve(
+            &SourceSelectionIntent {
+                wildcard_requested: false,
+                explicit_skill_names: vec!["private-one".to_string()],
+            },
+            None,
+            false,
+        );
+        let (discovered, catalog) =
+            build_discovery_catalog(source.path(), None, &visibility, false).expect("catalog");
+
+        assert_eq!(
+            discovered
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["private-one", "public"])
+        );
+        assert_eq!(
+            catalog
+                .values()
+                .map(|skill| skill.skill_name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["private-one", "public"])
         );
     }
 
@@ -1373,8 +1552,13 @@ mod tests {
             total_content_bytes: 42,
         };
 
-        let (discovered, _) =
-            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
+        let (discovered, _) = build_wsl_discovery_catalog(
+            &response,
+            None,
+            &InternalSkillVisibility::PublicOnly,
+            false,
+        )
+        .expect("catalog");
 
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].relative_path, "SKILL.md");
@@ -1413,8 +1597,13 @@ mod tests {
             total_content_bytes: 0,
         };
 
-        let (discovered, _) =
-            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
+        let (discovered, _) = build_wsl_discovery_catalog(
+            &response,
+            None,
+            &InternalSkillVisibility::PublicOnly,
+            false,
+        )
+        .expect("catalog");
 
         assert_eq!(
             discovered
@@ -1455,8 +1644,13 @@ mod tests {
             total_content_bytes: 0,
         };
 
-        let (discovered, _) =
-            build_wsl_discovery_catalog(&response, None, false, false).expect("catalog");
+        let (discovered, _) = build_wsl_discovery_catalog(
+            &response,
+            None,
+            &InternalSkillVisibility::PublicOnly,
+            false,
+        )
+        .expect("catalog");
 
         assert_eq!(
             discovered
@@ -1497,8 +1691,13 @@ mod tests {
             total_content_bytes: 0,
         };
 
-        let (discovered, _) =
-            build_wsl_discovery_catalog(&response, None, false, true).expect("catalog");
+        let (discovered, _) = build_wsl_discovery_catalog(
+            &response,
+            None,
+            &InternalSkillVisibility::PublicOnly,
+            true,
+        )
+        .expect("catalog");
 
         assert_eq!(
             discovered
@@ -1549,9 +1748,13 @@ mod tests {
             total_content_bytes: 0,
         };
 
-        let (discovered, _) =
-            build_wsl_discovery_catalog(&response, Some(".agents/skills/demo"), false, false)
-                .expect("catalog");
+        let (discovered, _) = build_wsl_discovery_catalog(
+            &response,
+            Some(".agents/skills/demo"),
+            &InternalSkillVisibility::PublicOnly,
+            false,
+        )
+        .expect("catalog");
 
         assert_eq!(
             discovered
@@ -1872,5 +2075,89 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.relative_path == "assets/data.bin"));
+    }
+
+    #[tokio::test]
+    async fn hidden_internal_skill_cannot_be_acquired_from_a_public_discovery_session() {
+        let source = tempdir().expect("source");
+        for (name, internal) in [("public", false), ("private", true)] {
+            let directory = source.path().join(name);
+            fs::create_dir_all(&directory).expect("skill directory");
+            fs::write(
+                directory.join("SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: Demo\n{}---\n",
+                    if internal {
+                        "metadata:\n  internal: true\n"
+                    } else {
+                        ""
+                    }
+                ),
+            )
+            .expect("skill document");
+        }
+        let manager = Arc::new(PayloadSessionManager::new(
+            Arc::new(InMemoryPayloadSessionStorage::default()),
+            PayloadSessionLimits {
+                ttl_ms: 60_000,
+                max_sessions: 4,
+                max_bytes: 1024 * 1024,
+            },
+            || 4_000,
+        ));
+        let discovery_service = SourceDiscoveryService::with_git_transport(
+            manager.clone(),
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
+        );
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+
+        let public = discovery_service
+            .discover_with_selection(
+                context.clone(),
+                source.path().to_string_lossy().to_string(),
+                SourceSelectionIntent::default(),
+                |_| {},
+            )
+            .await
+            .expect("public discovery");
+        assert_eq!(
+            public
+                .skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["public"]
+        );
+        let hidden = SelectedPayloadAcquisitionService::new(manager.clone())
+            .acquire(AcquireSelectedPayloadsRequest {
+                discovery_session: public.discovery_session,
+                skill_paths: vec!["private/SKILL.md".to_string()],
+            })
+            .await;
+        assert!(matches!(hidden, Err(AppError::StalePayload)));
+
+        let exact = discovery_service
+            .discover_with_selection(
+                context,
+                source.path().to_string_lossy().to_string(),
+                SourceSelectionIntent {
+                    wildcard_requested: false,
+                    explicit_skill_names: vec!["private".to_string()],
+                },
+                |_| {},
+            )
+            .await
+            .expect("exact discovery");
+        assert_eq!(
+            exact
+                .skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["private", "public"])
+        );
     }
 }

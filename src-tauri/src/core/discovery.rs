@@ -75,6 +75,7 @@ pub struct DiscoveredSkill {
     pub relative_path: String,
     /// 所属 plugin 名称（来自 .claude-plugin/ manifest）
     pub plugin_name: Option<String>,
+    pub(crate) internal: bool,
 }
 
 /// Environment collector 读取的 discovery 文档。
@@ -476,7 +477,7 @@ impl<'a> DiscoverySelector<'a> {
             .metadata
             .as_ref()
             .is_some_and(|metadata| metadata.internal);
-        if internal && !self.options.include_internal && !should_install_internal_skills() {
+        if internal && !self.options.include_internal {
             return CandidateResult::Present;
         }
 
@@ -502,6 +503,7 @@ impl<'a> DiscoverySelector<'a> {
             description: parsed.description,
             relative_path,
             plugin_name: self.plugin_groupings.get(directory).cloned(),
+            internal,
         });
         CandidateResult::Added
     }
@@ -563,13 +565,6 @@ fn is_safe_relative_path(path: &Path) -> bool {
                 std::path::Component::Normal(_) | std::path::Component::CurDir
             )
         })
-}
-
-/// 检查是否应该安装 internal skills（与 CLI 一致）
-fn should_install_internal_skills() -> bool {
-    std::env::var("INSTALL_INTERNAL_SKILLS")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

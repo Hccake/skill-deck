@@ -17,7 +17,7 @@ const input: InstallPreparationInput = {
   },
   skillPaths: ['skills/demo/SKILL.md'],
   skills: ['demo'],
-  explicitAgentIds: ['cursor'],
+  agentSelectionIntent: { wildcardRequested: false, explicitAgentIds: ['cursor'] },
   agentSelection: {
     revision: 'selection-1',
     selectedOptionIds: ['cursor'],
@@ -127,7 +127,7 @@ describe('prepareInstall', () => {
     });
     expect(preparationApi.getInstallAgentSelection).toHaveBeenCalledWith(
       input.context,
-      input.explicitAgentIds,
+      input.agentSelectionIntent,
     );
   });
 });

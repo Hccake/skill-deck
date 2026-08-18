@@ -37,6 +37,7 @@ function makePreparedInstall(): PreparedInstall {
       scope: { scope: 'project', project_id: 'eve-app' },
     },
     source: 'owner/repo',
+    sourceInput: 'owner/repo',
     discoverySession: {
       sessionId: 'discovery-1',
       environment: { kind: 'native' },
@@ -94,8 +95,7 @@ function makeState(prepared = makePreparedInstall()): WizardState {
     otherAgentsSearchQuery: '',
     overwrites: {},
     preparation: { status: 'ready', prepared },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
+    agentSelectionIntent: { wildcardRequested: false, explicitAgentIds: [] },
     installResults: null,
   } as unknown as WizardState;
 }

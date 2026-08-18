@@ -11,7 +11,8 @@ use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanE
 use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
 use crate::application::source_acquisition::{
     retain_discovered_source, AcquireSelectedPayloadsRequest, GitSourceDiscovery,
-    ManagedDownloadedDirectory, RetainedSourceOptions, SelectedPayloadAcquisitionService,
+    InternalSkillVisibility, ManagedDownloadedDirectory, RetainedSourceOptions,
+    SelectedPayloadAcquisitionService, SourceDiscoveryPolicy,
 };
 use crate::application::source_evidence::{
     RemoteSnapshotId, SkillRevision, SourceEvidenceCoordinator, SourceSnapshotFacts,
@@ -269,6 +270,7 @@ impl RuntimeUpdatePayloadAcquirer {
                         RetainedSourceOptions {
                             trust_metadata: Some(fetched.trust_metadata),
                             full_depth: true,
+                            internal_skill_visibility: InternalSkillVisibility::All,
                             ..Default::default()
                         },
                     )
@@ -277,7 +279,16 @@ impl RuntimeUpdatePayloadAcquirer {
                 }
                 EnvironmentRef::Wsl { distro_name } => self
                     .wsl_source
-                    .discover(distro_name, parsed, source, true, cancellation)
+                    .discover(
+                        distro_name,
+                        parsed,
+                        source,
+                        SourceDiscoveryPolicy {
+                            full_depth: true,
+                            internal_skill_visibility: InternalSkillVisibility::All,
+                        },
+                        cancellation,
+                    )
                     .await
                     .map(|discovery| discovery.discovery_session),
             };
@@ -291,7 +302,10 @@ impl RuntimeUpdatePayloadAcquirer {
             group.context.clone(),
             parsed,
             source,
-            true,
+            SourceDiscoveryPolicy {
+                full_depth: true,
+                internal_skill_visibility: InternalSkillVisibility::All,
+            },
             |_| {},
             cancellation,
         )

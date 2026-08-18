@@ -1,7 +1,7 @@
 // src/components/skills/add-skill/types.ts
 
 import type {
-  AgentId,
+  AgentSelectionIntent,
   AppError,
   AvailableSkill,
   DiscoverySessionHandle,
@@ -55,6 +55,7 @@ export interface WizardState {
   environmentName?: string;
 
   // Source
+  sourceInput: string;
   source: string;
   fetchStatus: 'idle' | 'loading' | 'error' | 'success';
   fetchError: AppError | null;
@@ -73,9 +74,8 @@ export interface WizardState {
   overwrites: Record<string, string[]>;
   preparation: InstallPreparationState;
 
-  // CLI 预填值
-  preSelectedSkills: string[];
-  preSelectedAgents: AgentId[];
+  // CLI 导入的当前安装会话 Agent 选择意图
+  agentSelectionIntent: AgentSelectionIntent;
 
   // Installing
   installResults: InstallResponse | null;

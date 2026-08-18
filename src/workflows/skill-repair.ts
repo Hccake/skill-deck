@@ -95,14 +95,18 @@ export async function repairSkillSource(
       ...(request.privateAdaptedAgents ?? request.agents ?? []),
       ...(request.privateCopyAgents ?? []),
     ]);
-    const agentSnapshot = await api.getInstallAgentSelection(request.context, requestedAgents);
+    const agentSelectionIntent = {
+      wildcardRequested: false,
+      explicitAgentIds: requestedAgents,
+    };
+    const agentSnapshot = await api.getInstallAgentSelection(request.context, agentSelectionIntent);
     preparation = await api.prepareInstall({
       context: request.context,
       source: request.source.trim(),
       discoverySession: available.discoverySession,
       skillPaths: [skill.relativePath],
       skills: [request.skillName],
-      explicitAgentIds: requestedAgents,
+      agentSelectionIntent,
       agentSelection: {
         revision: agentSnapshot.selection.revision,
         selectedOptionIds: preserveOwnDirectoryOptions(

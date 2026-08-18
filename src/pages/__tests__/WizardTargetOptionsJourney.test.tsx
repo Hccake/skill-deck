@@ -45,11 +45,15 @@ vi.mock('@/components/skills/add-skill/SourceStep', () => ({
     updateState: (updates: Partial<WizardState>) => void;
   }) => (
     <button type="button" onClick={() => updateState({
+      sourceInput: state.source === 'test/repo' ? 'other/repo' : 'test/repo',
       source: state.source === 'test/repo' ? 'other/repo' : 'test/repo',
       fetchStatus: 'success',
       availableSkills: [{ name: 'demo', installDirName: 'demo', description: 'Demo', relativePath: 'skills/demo/SKILL.md', pluginName: null }],
       selectedSkills: ['demo'],
-      preSelectedAgents: state.source === 'test/repo' ? ['other-agent'] : [],
+      agentSelectionIntent: {
+        wildcardRequested: false,
+        explicitAgentIds: state.source === 'test/repo' ? ['other-agent'] : [],
+      },
     })}>
       prepare-source
     </button>
@@ -127,7 +131,7 @@ describe('Wizard Agent selection journey', () => {
     await waitFor(() => expect(mocks.confirmSelection).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ selectedOptionIds: ['private-item'] }),
-      [],
+      { wildcardRequested: false, explicitAgentIds: [] },
     ));
     expect(await screen.findByText('confirm-items:private-item')).toBeDefined();
   });
@@ -389,6 +393,9 @@ describe('Wizard Agent selection journey', () => {
 
     expect(await screen.findByRole('checkbox', { name: 'Other Agent' })).toBeDefined();
     expect(screen.queryByRole('checkbox', { name: 'Private Agent' })).toBeNull();
-    expect(mocks.getSelection).toHaveBeenNthCalledWith(2, expect.any(Object), ['other-agent']);
+    expect(mocks.getSelection).toHaveBeenNthCalledWith(2, expect.any(Object), {
+      wildcardRequested: false,
+      explicitAgentIds: ['other-agent'],
+    });
   });
 });

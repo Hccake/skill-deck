@@ -144,6 +144,20 @@ pub struct AgentSelectionSubmission {
     pub requested_mode: InstallMode,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct AgentSelectionIntent {
+    pub wildcard_requested: bool,
+    pub explicit_agent_ids: Vec<String>,
+}
+
+impl AgentSelectionIntent {
+    pub(crate) fn is_imported(&self) -> bool {
+        self.wildcard_requested || !self.explicit_agent_ids.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]

@@ -51,7 +51,7 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
       discoverySession: state.discoverySession,
       skillPaths,
       skills: state.selectedSkills,
-      explicitAgentIds: state.preSelectedAgents,
+      agentSelectionIntent: state.agentSelectionIntent,
       agentSelection: agentSelection.submission,
       acknowledgeRedirect:
         !state.redirectedDownloadHost || state.redirectAcknowledged === true,
@@ -78,7 +78,7 @@ export function ConfirmStep({ state, agentSelection, updateState, scope }: Confi
       updateStateRef.current({ preparation: outcome, overwrites });
     });
     return () => { cancelled = true; };
-  }, [agentSelection, preparationAttempt, selection, state.availableSkills, state.context, state.discoverySession, state.preSelectedAgents, state.redirectAcknowledged, state.redirectedDownloadHost, state.selectedSkills, state.source]);
+  }, [agentSelection, preparationAttempt, selection, state.agentSelectionIntent, state.availableSkills, state.context, state.discoverySession, state.redirectAcknowledged, state.redirectedDownloadHost, state.selectedSkills, state.source]);
 
   const availableSkillMap = useMemo(
     () => new Map(state.availableSkills.map((skill) => [skill.name, skill])),

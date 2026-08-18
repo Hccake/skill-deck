@@ -5,6 +5,7 @@ import {
 } from '@/hooks/useTauriApi';
 import type {
   AgentSelectionSubmission,
+  AgentSelectionIntent,
   AppError,
   SkillLocationRef,
   DiscoverySessionHandle,
@@ -19,7 +20,7 @@ export interface InstallPreparationInput {
   discoverySession: DiscoverySessionHandle;
   skillPaths: string[];
   skills: string[];
-  explicitAgentIds: import('@/bindings').AgentId[];
+  agentSelectionIntent: AgentSelectionIntent;
   agentSelection: AgentSelectionSubmission;
   acknowledgeRedirect: boolean;
 }
@@ -77,7 +78,7 @@ export async function prepareInstall(
   try {
     const outcome = await api.previewInstall(request);
     if (outcome.status === 'selectionStale') {
-      const snapshot = await api.getInstallAgentSelection(input.context, input.explicitAgentIds);
+      const snapshot = await api.getInstallAgentSelection(input.context, input.agentSelectionIntent);
       return { status: 'selectionStale', snapshot };
     }
     return { status: 'ready', prepared: { request, preview: outcome.preview } };

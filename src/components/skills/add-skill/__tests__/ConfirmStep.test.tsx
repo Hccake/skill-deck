@@ -74,6 +74,7 @@ function state(overrides: Partial<WizardState> = {}): WizardState {
     scope: 'global',
     context: { environment: { kind: 'native' }, scope: { scope: 'global' } },
     source: 'owner/repo',
+    sourceInput: 'owner/repo',
     fetchStatus: 'success',
     fetchError: null,
     gitRef: null,
@@ -91,8 +92,7 @@ function state(overrides: Partial<WizardState> = {}): WizardState {
     skillSearchQuery: '',
     overwrites: {},
     preparation: { status: 'preparing' },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
+    agentSelectionIntent: { wildcardRequested: false, explicitAgentIds: [] },
     installResults: null,
     ...overrides,
   };
@@ -114,7 +114,7 @@ function ConfirmHarness({
     request: {
       kind: 'install',
       context: current.context,
-      explicitAgentIds: current.preSelectedAgents,
+      intent: current.agentSelectionIntent,
     },
     load: async () => selection,
   });
@@ -213,7 +213,10 @@ describe('ConfirmStep', () => {
       step: 'options',
       preparation: { status: 'idle' },
     })));
-    expect(getSelection).toHaveBeenCalledWith(state().context, []);
+    expect(getSelection).toHaveBeenCalledWith(state().context, {
+      wildcardRequested: false,
+      explicitAgentIds: [],
+    });
   });
 
   it('publishes overwrite facts from the accepted preview', async () => {

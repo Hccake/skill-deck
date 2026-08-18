@@ -66,7 +66,8 @@ function createInitialState(params: {
     projectPath: params.projectPath,
     context: params.context,
     environmentName: params.environmentName,
-    source,
+    sourceInput: source,
+    source: '',
     fetchStatus: 'idle',
     fetchError: null,
     gitRef: null,
@@ -79,8 +80,7 @@ function createInitialState(params: {
     skillSearchQuery: '',
     overwrites: {},
     preparation: { status: 'idle' },
-    preSelectedSkills: [],
-    preSelectedAgents: [],
+    agentSelectionIntent: { wildcardRequested: false, explicitAgentIds: [] },
     installResults: null,
   };
 }
@@ -138,12 +138,12 @@ export function WizardPage() {
   const agentSelectionRequest = useMemo<InstallAgentSelectionSessionRequest>(() => ({
     kind: 'install',
     context: state.context,
-    explicitAgentIds: state.preSelectedAgents,
-  }), [state.context, state.preSelectedAgents]);
+    intent: state.agentSelectionIntent,
+  }), [state.context, state.agentSelectionIntent]);
   const loadAgentSelection = useCallback(
     (request: InstallAgentSelectionSessionRequest) => getInstallAgentSelection(
       request.context,
-      request.explicitAgentIds,
+      request.intent,
     ),
     [],
   );
@@ -175,7 +175,7 @@ export function WizardPage() {
       const outcome = await confirmInstallAgentSelection(
         state.context,
         agentSelection.submission,
-        state.preSelectedAgents,
+        state.agentSelectionIntent,
       );
       if (outcome.status === 'selectionStale') {
         agentSelection.acceptSnapshot(outcome.snapshot);
@@ -192,7 +192,7 @@ export function WizardPage() {
     } finally {
       setConfirmingAgentSelection(false);
     }
-  }, [agentSelection, goNext, state.context, state.preSelectedAgents, t]);
+  }, [agentSelection, goNext, state.agentSelectionIntent, state.context, t]);
 
   const goBack = useCallback(() => {
     if (currentStepIndex > 0) {

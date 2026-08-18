@@ -8,6 +8,10 @@ interface ParsedCommand {
   skills: string[];
   /** --agent / -a 指定的 agent ID 列表 */
   agents: string[];
+  /** 是否通过 --skill / -s 请求了 wildcard */
+  wildcardRequested: boolean;
+  /** 是否通过 --agent / -a 或 --all 请求了全部 Agent */
+  agentWildcardRequested: boolean;
   /** 是否识别为 CLI 命令 */
   isCommand: boolean;
 }
@@ -19,11 +23,10 @@ const COMMAND_PREFIX = /^(?:npx\s+)?skills\s+(?:add|install|a|i)\s+/i;
 const BOOLEAN_FLAGS = new Set([
   '-g', '--global',
   '-y', '--yes',
-  '--all',
   '-l', '--list',
 ]);
 
-/** 带值的 flag（遇到后消费下一个 token） */
+/** 带可变数量值的 flag（消费到下一个 flag 为止） */
 const VALUE_FLAGS = new Set([
   '-s', '--skill',
   '-a', '--agent',
@@ -94,7 +97,14 @@ export function parseSkillsCommand(input: string): ParsedCommand {
 
   const match = COMMAND_PREFIX.exec(trimmed);
   if (!match) {
-    return { source: trimmed, skills: [], agents: [], isCommand: false };
+    return {
+      source: trimmed,
+      skills: [],
+      agents: [],
+      wildcardRequested: false,
+      agentWildcardRequested: false,
+      isCommand: false,
+    };
   }
 
   // 剥离前缀后 tokenize
@@ -104,10 +114,19 @@ export function parseSkillsCommand(input: string): ParsedCommand {
   let source = '';
   const skills: string[] = [];
   const agents: string[] = [];
+  let wildcardRequested = false;
+  let agentWildcardRequested = false;
 
   let i = 0;
   while (i < tokens.length) {
     const token = tokens[i];
+
+    if (token === '--all') {
+      wildcardRequested = true;
+      agentWildcardRequested = true;
+      i++;
+      continue;
+    }
 
     if (BOOLEAN_FLAGS.has(token)) {
       i++;
@@ -115,18 +134,20 @@ export function parseSkillsCommand(input: string): ParsedCommand {
     }
 
     if (VALUE_FLAGS.has(token)) {
-      const value = tokens[i + 1];
-      if (value !== undefined) {
-        // '*' 通配符视为不预选
-        if (value !== '*') {
-          if (token === '-s' || token === '--skill') {
-            skills.push(value);
+      i++;
+      while (i < tokens.length && !tokens[i].startsWith('-')) {
+        const value = tokens[i];
+        if (token === '-s' || token === '--skill') {
+          if (value === '*') {
+            wildcardRequested = true;
           } else {
-            agents.push(value);
+            skills.push(value);
           }
+        } else if (value === '*') {
+          agentWildcardRequested = true;
+        } else {
+          agents.push(value);
         }
-        i += 2;
-      } else {
         i++;
       }
       continue;
@@ -139,5 +160,12 @@ export function parseSkillsCommand(input: string): ParsedCommand {
     i++;
   }
 
-  return { source, skills, agents, isCommand: true };
+  return {
+    source,
+    skills,
+    agents,
+    wildcardRequested,
+    agentWildcardRequested,
+    isCommand: true,
+  };
 }

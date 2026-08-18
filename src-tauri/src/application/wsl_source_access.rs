@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::application::source_acquisition::SourceDiscoveryPolicy;
 use crate::core::mutation::CancellationSignal;
 use crate::error::AppError;
 use crate::models::{FetchResult, ParsedSource};
@@ -14,7 +15,7 @@ pub(crate) trait WslSourceAccess: Send + Sync {
         distro_name: &'a str,
         parsed: ParsedSource,
         requested_source: String,
-        full_depth: bool,
+        policy: SourceDiscoveryPolicy,
         cancellation: CancellationSignal,
     ) -> WslSourceFuture<'a>;
 }
@@ -29,7 +30,7 @@ impl WslSourceAccess for UnavailableWslSourceAccess {
         _distro_name: &'a str,
         _parsed: ParsedSource,
         _requested_source: String,
-        _full_depth: bool,
+        _policy: SourceDiscoveryPolicy,
         _cancellation: CancellationSignal,
     ) -> WslSourceFuture<'a> {
         Box::pin(async {

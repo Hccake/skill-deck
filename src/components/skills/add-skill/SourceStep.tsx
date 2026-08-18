@@ -42,6 +42,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   const { t } = useTranslation();
   const [cloneProgress, setCloneProgress] = useState<CloneProgress | null>(null);
   const currentOperationIdRef = useRef<string | null>(null);
+  const autoFetchPendingRef = useRef(autoFetch && state.fetchStatus === 'idle');
 
   // 已安装 skill key 集合（用于 SkillSearch 组件）
   const globalKey = contextKey(globalContext(state.context.environment));
@@ -58,6 +59,11 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
     for (const s of projectSkills) keys.add(`${s.source ?? ''}::${s.name}`);
     return keys;
   }, [globalSkills, projectSkills]);
+  const loadingSource = useMemo(() => {
+    const parsed = parseSkillsCommand(state.sourceInput);
+    const source = parsed.isCommand ? parsed.source : state.sourceInput.trim();
+    return source.replace(/@[^@]+$/, '');
+  }, [state.sourceInput]);
 
   // 监听克隆进度事件
   useEffect(() => {
@@ -108,7 +114,15 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         return;
       }
 
-      const result = await fetchAvailable(state.context, actualSource, operationId);
+      const result = await fetchAvailable(
+        state.context,
+        actualSource,
+        operationId,
+        {
+          wildcardRequested: parsed.wildcardRequested,
+          explicitSkillNames: parsed.skills,
+        },
+      );
 
       if (currentOperationIdRef.current !== operationId) return;
 
@@ -130,12 +144,14 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         result.skills.some(s => s.name === name)
       );
       const hasExplicitSkillSelection = Boolean(result.skillFilter) || parsed.skills.length > 0;
-      const preselected = !hasExplicitSkillSelection && isSkillsShPackUrl(actualSource)
+      const preselected = parsed.wildcardRequested
+        ? result.skills.map(skill => skill.name)
+        : !hasExplicitSkillSelection && isSkillsShPackUrl(actualSource)
         ? result.skills.map(skill => skill.name)
         : [...new Set([...preselectedFromFilter, ...preselectedFromCommand])];
 
       updateState({
-        source: actualSource, // 保存解析后的 source（去除命令前缀）
+        source: actualSource,
         fetchStatus: 'success',
         availableSkills: result.skills,
         selectedSkills: preselected,
@@ -145,8 +161,10 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
         preparation: { status: 'idle' },
         redirectedDownloadHost: result.redirectedDownloadHost ?? null,
         redirectAcknowledged: false,
-        preSelectedSkills: parsed.skills,
-        preSelectedAgents: parsed.agents,
+        agentSelectionIntent: {
+          wildcardRequested: parsed.agentWildcardRequested,
+          explicitAgentIds: parsed.agents,
+        },
       });
 
       // 自动进入下一步
@@ -165,27 +183,52 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
   }, [updateState, onNext, state.context, t]);
 
   const handleFetch = useCallback(() => {
-    handleFetchWithSource(state.source);
-  }, [handleFetchWithSource, state.source]);
+    handleFetchWithSource(state.sourceInput);
+  }, [handleFetchWithSource, state.sourceInput]);
+
+  const handleSourceInputChange = useCallback((sourceInput: string) => {
+    currentOperationIdRef.current = null;
+    setCloneProgress(null);
+    updateState({
+      sourceInput,
+      source: '',
+      fetchStatus: 'idle',
+      fetchError: null,
+      gitRef: null,
+      availableSkills: [],
+      selectedSkills: [],
+      skillFilter: null,
+      discoverySession: undefined,
+      preparation: { status: 'idle' },
+      redirectedDownloadHost: null,
+      redirectAcknowledged: false,
+      overwrites: {},
+      agentSelectionIntent: {
+        wildcardRequested: false,
+        explicitAgentIds: [],
+      },
+    });
+  }, [updateState]);
 
   // autoFetch 仅在 fetchStatus 为 idle（从未 fetch 过）时触发
   // 回退再进入时 fetchStatus 已非 idle，不会重复触发，用户可自由修改 source
   useEffect(() => {
-    if (autoFetch && state.fetchStatus === 'idle' && state.source) {
+    if (autoFetchPendingRef.current && state.fetchStatus === 'idle' && state.sourceInput) {
+      autoFetchPendingRef.current = false;
       const frameId = requestAnimationFrame(() => {
-        handleFetchWithSource(state.source);
+        handleFetchWithSource(state.sourceInput);
       });
 
       return () => cancelAnimationFrame(frameId);
     }
-  }, [autoFetch, state.fetchStatus, state.source, handleFetchWithSource]);
+  }, [state.fetchStatus, state.sourceInput, handleFetchWithSource]);
 
   // 搜索结果选中处理（用于 SkillSearch 组件）
   const handleSearchSelect = useCallback((skill: SearchSkill) => {
     const newSource = `${skill.source}@${skill.name}`;
-    updateState({ source: newSource });
+    handleSourceInputChange(newSource);
     handleFetchWithSource(newSource);
-  }, [updateState, handleFetchWithSource]);
+  }, [handleFetchWithSource, handleSourceInputChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && state.fetchStatus !== 'loading') {
@@ -234,7 +277,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
             <div className="text-center space-y-2">
               <p className="text-sm font-medium text-foreground">{getPhaseText()}</p>
               <p className="text-xs text-muted-foreground font-mono truncate max-w-[280px] bg-muted/30 px-2 py-1 rounded-md">
-                {state.source.replace(/@[^@]+$/, '')}
+                {loadingSource}
               </p>
             </div>
           </div>
@@ -254,8 +297,8 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
             <TabsContent value="manual" className="m-0 px-2 mt-2">
               <div className="relative group">
                 <Input
-                  value={state.source}
-                  onChange={(e) => updateState({ source: e.target.value })}
+                  value={state.sourceInput}
+                  onChange={(e) => handleSourceInputChange(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={t('addSkill.source.placeholder')}
                   className="w-full h-14 pl-5 pr-[120px] text-base bg-card/80 backdrop-blur-sm border-muted-foreground/20 shadow-sm group-focus-within:shadow-md focus-visible:ring-primary/20 rounded-2xl transition-all"
@@ -263,7 +306,7 @@ export function SourceStep({ state, updateState, onNext, autoFetch }: SourceStep
                 <div className="absolute right-1.5 top-1.5 bottom-1.5">
                   <Button
                     onClick={handleFetch}
-                    disabled={!state.source.trim()}
+                    disabled={!state.sourceInput.trim()}
                     className="h-full px-6 shadow-sm rounded-xl font-medium"
                   >
                     {t('addSkill.source.actions.fetch')}

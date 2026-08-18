@@ -6,7 +6,7 @@ import { useAgentSelectionSession } from '@/hooks/useAgentSelectionSession';
 const nativeRequest = {
   kind: 'install' as const,
   context: { environment: { kind: 'native' as const }, scope: { scope: 'global' as const } },
-  explicitAgentIds: [],
+  intent: { wildcardRequested: false, explicitAgentIds: [] },
 };
 
 describe('useAgentSelectionSession', () => {

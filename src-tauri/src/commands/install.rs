@@ -1,5 +1,6 @@
 use tauri::{Emitter, State, WebviewWindow};
 
+use crate::application::source_acquisition::SourceSelectionIntent;
 use crate::core::CloneProgress;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
@@ -20,12 +21,13 @@ pub async fn fetch_available(
     context: SkillLocationRef,
     source: String,
     operation_id: String,
+    selection_intent: SourceSelectionIntent,
     runtime: State<'_, RuntimeServiceGraph>,
 ) -> Result<FetchResult, AppError> {
     let window = window.clone();
     runtime
         .source_discovery()
-        .discover(context, source, move |progress| {
+        .discover_with_selection(context, source, selection_intent, move |progress| {
             let _ = window.emit(
                 "clone-progress",
                 &SourceFetchProgressEvent {
