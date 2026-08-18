@@ -16,7 +16,9 @@ use crate::application::payload_session::{
     PayloadSessionManager, PayloadSessionStorage, PayloadStorageKey, RetainedDiscoverySource,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
-use crate::application::wellknown_access::{extract_hostname, WellKnownTrustMetadata};
+use crate::application::wellknown_access::{
+    extract_hostname, WellKnownFetchError, WellKnownTrustMetadata,
+};
 use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
@@ -137,14 +139,22 @@ pub(crate) async fn attempt_wellknown_then_download<T, WellKnownFuture, Download
     environment_label: &str,
 ) -> Result<T, AppError>
 where
-    WellKnownFuture: Future<Output = Result<T, AppError>>,
+    WellKnownFuture: Future<Output = Result<T, WellKnownFetchError>>,
     DownloadFuture: Future<Output = Result<T, AppError>>,
 {
-    let well_known_error = match well_known.await {
+    let well_known_failure = match well_known.await {
         Ok(result) => return Ok(result),
-        Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
         Err(error) => error,
     };
+    let allows_direct_download = well_known_failure.allows_direct_download();
+    let well_known_error = well_known_failure.into_error();
+    if matches!(
+        well_known_error,
+        AppError::MutationCancelled | AppError::WellKnownScopeNotFound { .. }
+    ) || !allows_direct_download
+    {
+        return Err(well_known_error);
+    }
     let well_known_reason = source_acquisition_failure_reason(&well_known_error);
     match download().await {
         Ok(result) => Ok(result),
@@ -203,6 +213,7 @@ pub(crate) fn source_acquisition_failure_reason(
             }
         },
         AppError::WellKnownSourceFailed { reason } => *reason,
+        AppError::WellKnownScopeNotFound { .. } => SourceAcquisitionFailureReason::NotFound,
         AppError::InvalidSource { .. } => SourceAcquisitionFailureReason::InvalidContent,
         _ => SourceAcquisitionFailureReason::Unavailable,
     }
@@ -991,7 +1002,7 @@ mod tests {
     async fn shared_http_attempt_state_machine_covers_wsl_success_cancel_and_double_failure() {
         let download_calls = AtomicUsize::new(0);
         let success = attempt_wellknown_then_download(
-            async { Err::<&str, _>(AppError::NoSkillsFound) },
+            async { Err::<&str, _>(WellKnownFetchError::unproven(AppError::NoSkillsFound)) },
             || {
                 download_calls.fetch_add(1, Ordering::SeqCst);
                 async { Ok("downloaded") }
@@ -1005,7 +1016,7 @@ mod tests {
 
         let cancelled_calls = AtomicUsize::new(0);
         let cancelled = attempt_wellknown_then_download(
-            async { Err::<(), _>(AppError::MutationCancelled) },
+            async { Err::<(), _>(WellKnownFetchError::unproven(AppError::MutationCancelled)) },
             || {
                 cancelled_calls.fetch_add(1, Ordering::SeqCst);
                 async { Ok(()) }
@@ -1018,9 +1029,11 @@ mod tests {
 
         let failure = attempt_wellknown_then_download(
             async {
-                Err::<(), _>(AppError::DirectDownloadFailed {
-                    reason: crate::error::DirectDownloadFailureReason::NotFound,
-                })
+                Err::<(), _>(WellKnownFetchError::unproven(
+                    AppError::DirectDownloadFailed {
+                        reason: crate::error::DirectDownloadFailureReason::NotFound,
+                    },
+                ))
             },
             || async {
                 Err::<(), _>(AppError::DirectDownloadFailed {
@@ -1037,6 +1050,54 @@ mod tests {
                 download_reason: SourceAcquisitionFailureReason::LimitExceeded,
             })
         ));
+
+        let scope_download_calls = AtomicUsize::new(0);
+        let scope_error = attempt_wellknown_then_download(
+            async {
+                Err::<(), _>(WellKnownFetchError::catalog_established(
+                    AppError::WellKnownScopeNotFound {
+                        scope_path: "/team".to_string(),
+                        root_url: "https://example.com".to_string(),
+                    },
+                ))
+            },
+            || {
+                scope_download_calls.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+            "Native",
+        )
+        .await;
+        assert_eq!(
+            scope_error,
+            Err(AppError::WellKnownScopeNotFound {
+                scope_path: "/team".to_string(),
+                root_url: "https://example.com".to_string(),
+            })
+        );
+        assert_eq!(scope_download_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn established_well_known_catalog_failure_does_not_fall_back_to_download() {
+        let download_calls = AtomicUsize::new(0);
+
+        let result = attempt_wellknown_then_download(
+            async {
+                Err::<(), _>(WellKnownFetchError::catalog_established(
+                    AppError::NoSkillsFound,
+                ))
+            },
+            || {
+                download_calls.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+            "Native",
+        )
+        .await;
+
+        assert_eq!(result, Err(AppError::NoSkillsFound));
+        assert_eq!(download_calls.load(Ordering::SeqCst), 0);
     }
 
     #[derive(Default)]

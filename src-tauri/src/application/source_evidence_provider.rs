@@ -352,6 +352,7 @@ impl RuntimeSourceEvidenceDetector {
         {
             Ok(evidence) => evidence,
             Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+            Err(error @ AppError::WellKnownScopeNotFound { .. }) => return Err(error),
             Err(_) => {
                 return Ok(failure(
                     EvidenceFailureReason::SourceUnavailable,

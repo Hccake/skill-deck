@@ -13,7 +13,7 @@ use crate::application::source_acquisition::{
     snapshot_fingerprint, source_identifier, ManagedDownloadedDirectory, RetainedSourceOptions,
 };
 use crate::application::source_clone_gate::shared_source_clone_gate;
-use crate::application::wellknown_access::WellKnownAccess;
+use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchError};
 use crate::application::wsl_source_access::{WslSourceAccess, WslSourceFuture};
 use crate::core::mutation::CancellationSignal;
 use crate::core::plugin_manifest::get_relative_plugin_search_dirs;
@@ -128,8 +128,11 @@ impl RuntimeWslSourceAccess {
         requested_source: String,
         full_depth: bool,
         cancellation: CancellationSignal,
-    ) -> Result<FetchResult, AppError> {
-        let workspace = self.environments.workspace(distro_name)?;
+    ) -> Result<FetchResult, WellKnownFetchError> {
+        let workspace = self
+            .environments
+            .workspace(distro_name)
+            .map_err(WellKnownFetchError::unproven)?;
         let fetched = self.wellknown.fetch(&parsed.url, &cancellation).await?;
         let root = fetched.repo_path.clone();
         let owner = ManagedDownloadedDirectory::new(root.clone());
@@ -165,6 +168,7 @@ impl RuntimeWslSourceAccess {
                 }
             })
             .await
+            .map_err(WellKnownFetchError::catalog_established)
     }
 
     async fn discover_download(

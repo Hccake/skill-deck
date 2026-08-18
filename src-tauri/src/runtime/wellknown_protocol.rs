@@ -6,7 +6,7 @@
 
 use crate::application::download_source::{extract_archive, ArchiveFormat, ArchiveLimits};
 use crate::application::wellknown_access::{
-    extract_hostname, WellKnownFetchResult, WellKnownTrustMetadata,
+    extract_hostname, WellKnownFetchError, WellKnownFetchResult, WellKnownTrustMetadata,
 };
 use crate::core::mutation::CancellationSignal;
 use crate::error::AppError;
@@ -119,6 +119,17 @@ struct IndexUrlCandidate {
     well_known_path: String,
 }
 
+struct ScopedWellKnownInput {
+    scope_path: String,
+    root_url: String,
+    scoped_candidate_count: usize,
+}
+
+struct IndexUrlPlan {
+    candidates: Vec<IndexUrlCandidate>,
+    scope: Option<ScopedWellKnownInput>,
+}
+
 /// Build candidate index URLs for a given page URL.
 ///
 /// For each well-known path (`agent-skills` first, then legacy `skills`), and
@@ -132,9 +143,12 @@ struct IndexUrlCandidate {
 ///
 /// The resulting list is ordered so that `agent-skills` candidates are tried
 /// before `skills` candidates (new path preferred, legacy as fallback).
-fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
+fn build_index_url_plan(url: &str) -> IndexUrlPlan {
     let Ok(parsed) = Url::parse(url) else {
-        return vec![];
+        return IndexUrlPlan {
+            candidates: vec![],
+            scope: None,
+        };
     };
 
     if parsed.path().trim_end_matches('/').ends_with("/index.json") {
@@ -150,11 +164,14 @@ fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
             .find(|path| base_url.ends_with(**path))
             .copied()
             .unwrap_or_default();
-        return vec![IndexUrlCandidate {
-            index_url,
-            base_url,
-            well_known_path: well_known_path.to_string(),
-        }];
+        return IndexUrlPlan {
+            candidates: vec![IndexUrlCandidate {
+                index_url,
+                base_url,
+                well_known_path: well_known_path.to_string(),
+            }],
+            scope: None,
+        };
     }
 
     let origin = parsed.origin().ascii_serialization();
@@ -162,15 +179,18 @@ fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
 
     let mut candidates = Vec::new();
 
-    for &wk_path in WELL_KNOWN_PATHS {
-        if !path.is_empty() {
+    if !path.is_empty() {
+        for &wk_path in WELL_KNOWN_PATHS {
             candidates.push(IndexUrlCandidate {
                 index_url: format!("{origin}{path}/{wk_path}/{INDEX_FILE}"),
                 base_url: format!("{origin}{path}/{wk_path}"),
                 well_known_path: wk_path.to_string(),
             });
         }
+    }
 
+    let scoped_candidate_count = candidates.len();
+    for &wk_path in WELL_KNOWN_PATHS {
         candidates.push(IndexUrlCandidate {
             index_url: format!("{origin}/{wk_path}/{INDEX_FILE}"),
             base_url: format!("{origin}/{wk_path}"),
@@ -178,7 +198,19 @@ fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
         });
     }
 
-    candidates
+    IndexUrlPlan {
+        candidates,
+        scope: (!path.is_empty()).then(|| ScopedWellKnownInput {
+            scope_path: path.to_string(),
+            root_url: origin,
+            scoped_candidate_count,
+        }),
+    }
+}
+
+#[cfg(test)]
+fn build_index_urls(url: &str) -> Vec<IndexUrlCandidate> {
+    build_index_url_plan(url).candidates
 }
 
 fn is_valid_skill_name(name: &str) -> bool {
@@ -265,6 +297,9 @@ fn normalize_wellknown_index(
     let schema = object.get("$schema").and_then(|value| value.as_str());
 
     if schema == Some(DISCOVERY_SCHEMA_V2) {
+        if skills.is_empty() {
+            return Some(Vec::new());
+        }
         let mut entries = Vec::new();
         for value in skills {
             let object = value.as_object()?;
@@ -297,6 +332,10 @@ fn normalize_wellknown_index(
 
     if schema.is_some() {
         return None;
+    }
+
+    if skills.is_empty() {
+        return Some(Vec::new());
     }
 
     let base_url = index_url
@@ -415,14 +454,44 @@ fn extract_archive_to_skill_dir(
 /// Fetch the well-known skills index from a URL, then download every declared
 /// file into a temporary directory. Returns the temp path and a hostname-based
 /// source identifier for lock-file storage.
+#[cfg(test)]
 pub(crate) async fn fetch_wellknown_skills_with_client(
     http: &HttpTransport,
     url: &str,
     cancellation: &CancellationSignal,
 ) -> Result<WellKnownFetchResult, AppError> {
+    fetch_wellknown_skills_attempt_with_client(http, url, cancellation)
+        .await
+        .map_err(WellKnownFetchError::into_error)
+}
+
+pub(crate) async fn fetch_wellknown_skills_attempt_with_client(
+    http: &HttpTransport,
+    url: &str,
+    cancellation: &CancellationSignal,
+) -> Result<WellKnownFetchResult, WellKnownFetchError> {
     let operation_id = uuid::Uuid::new_v4().simple().to_string();
 
-    let fetched_index = fetch_index(http, url, cancellation, &operation_id).await?;
+    let fetched_index = fetch_index(http, url, cancellation, &operation_id)
+        .await
+        .map_err(|error| {
+            if matches!(error, AppError::WellKnownScopeNotFound { .. }) {
+                WellKnownFetchError::catalog_established(error)
+            } else {
+                WellKnownFetchError::unproven(error)
+            }
+        })?;
+    materialize_fetched_index(http, fetched_index, cancellation, &operation_id)
+        .await
+        .map_err(WellKnownFetchError::catalog_established)
+}
+
+async fn materialize_fetched_index(
+    http: &HttpTransport,
+    fetched_index: FetchedWellKnownIndex,
+    cancellation: &CancellationSignal,
+    operation_id: &str,
+) -> Result<WellKnownFetchResult, AppError> {
     let entries = fetched_index.entries;
 
     if entries.is_empty() {
@@ -435,7 +504,7 @@ pub(crate) async fn fetch_wellknown_skills_with_client(
         http,
         temp_path: &temp_path,
         cancellation,
-        operation_id: &operation_id,
+        operation_id,
     };
 
     for entry in &entries {
@@ -679,17 +748,16 @@ async fn download_v2_entry(
     }
 }
 
-/// Try each candidate index URL in order; return the first that responds with
-/// a non-empty skills list, together with its `base_url` (which already
-/// includes the matched well-known path, e.g. `.well-known/agent-skills`).
+/// Try each candidate index URL in order; return the first valid catalog,
+/// including an empty one. The selected entries retain their resolved base URL.
 async fn fetch_index(
     http: &HttpTransport,
     url: &str,
     cancellation: &CancellationSignal,
     operation_id: &str,
 ) -> Result<FetchedWellKnownIndex, AppError> {
-    let candidates = build_index_urls(url);
-    if candidates.is_empty() {
+    let plan = build_index_url_plan(url);
+    if plan.candidates.is_empty() {
         return Err(AppError::InvalidSource {
             value: format!("Cannot build index URL from: {url}"),
         });
@@ -698,8 +766,9 @@ async fn fetch_index(
     let mut saw_authentication_required = false;
     let mut transport_failure = None;
     let mut saw_not_found = false;
+    let mut empty_scoped_catalog = None;
 
-    for candidate in &candidates {
+    for (candidate_index, candidate) in plan.candidates.iter().enumerate() {
         if cancellation.is_cancelled() {
             return Err(AppError::MutationCancelled);
         }
@@ -744,11 +813,30 @@ async fn fetch_index(
         if let Some(entries) =
             normalize_wellknown_index(&raw, resp.final_url.as_str(), &candidate.well_known_path)
         {
+            if let Some(scope) = &plan.scope {
+                if candidate_index >= scope.scoped_candidate_count {
+                    return Err(AppError::WellKnownScopeNotFound {
+                        scope_path: scope.scope_path.clone(),
+                        root_url: scope.root_url.clone(),
+                    });
+                }
+                if entries.is_empty() {
+                    empty_scoped_catalog = Some(FetchedWellKnownIndex {
+                        index_url: resp.final_url.to_string(),
+                        entries,
+                    });
+                    continue;
+                }
+            }
             return Ok(FetchedWellKnownIndex {
                 index_url: resp.final_url.to_string(),
                 entries,
             });
         }
+    }
+
+    if let Some(catalog) = empty_scoped_catalog {
+        return Ok(catalog);
     }
 
     if saw_authentication_required {
@@ -1103,6 +1191,123 @@ mod tests {
     }
 
     #[test]
+    fn valid_empty_catalog_is_established_protocol_evidence() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let worker = thread::spawn(move || {
+                let request = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("index receive")
+                    .expect("index request");
+                request
+                    .respond(tiny_http::Response::from_string(r#"{"skills":[]}"#))
+                    .expect("index response");
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let error = fetch_wellknown_skills_attempt_with_client(
+                &http,
+                &base_url,
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect_err("empty catalog should not produce a source");
+
+            worker.join().expect("worker");
+            assert!(matches!(
+                error,
+                WellKnownFetchError::CatalogEstablished(AppError::NoSkillsFound)
+            ));
+        });
+    }
+
+    #[test]
+    fn artifact_failure_after_valid_catalog_keeps_established_evidence() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let digest = format!("sha256:{}", "0".repeat(64));
+            let worker = thread::spawn(move || {
+                let index = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("index receive")
+                    .expect("index request");
+                index
+                    .respond(tiny_http::Response::from_string(format!(
+                        r#"{{
+                          "$schema": "{DISCOVERY_SCHEMA_V2}",
+                          "skills": [{{
+                            "name": "demo",
+                            "description": "Demo",
+                            "type": "skill-md",
+                            "url": "demo/SKILL.md",
+                            "digest": "{digest}"
+                          }}]
+                        }}"#
+                    )))
+                    .expect("index response");
+                let artifact = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("artifact receive")
+                    .expect("artifact request");
+                artifact
+                    .respond(tiny_http::Response::empty(404))
+                    .expect("artifact response");
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let error = fetch_wellknown_skills_attempt_with_client(
+                &http,
+                &base_url,
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect_err("artifact failure should fail acquisition");
+
+            worker.join().expect("worker");
+            assert!(matches!(error, WellKnownFetchError::CatalogEstablished(_)));
+        });
+    }
+
+    #[test]
+    fn missing_catalog_keeps_direct_download_fallback_eligible() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let worker = thread::spawn(move || {
+                for _ in WELL_KNOWN_PATHS {
+                    let request = server
+                        .recv_timeout(Duration::from_secs(2))
+                        .expect("index receive")
+                        .expect("index request");
+                    request
+                        .respond(tiny_http::Response::empty(404))
+                        .expect("index response");
+                }
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let error = fetch_wellknown_skills_attempt_with_client(
+                &http,
+                &base_url,
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect_err("missing catalog should fail Well-known acquisition");
+
+            worker.join().expect("worker");
+            assert!(matches!(error, WellKnownFetchError::Unproven(_)));
+        });
+    }
+
+    #[test]
     fn redirected_index_resolves_relative_artifact_from_the_final_url() {
         tauri::async_runtime::block_on(async {
             let server = tiny_http::Server::http("127.0.0.1:0").expect("origin server");
@@ -1171,6 +1376,268 @@ mod tests {
                 skill
             );
             fs::remove_dir_all(result.repo_path).expect("remove downloaded source");
+        });
+    }
+
+    #[test]
+    fn scoped_source_reports_scope_not_found_without_using_the_root_catalog() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let expected_root_url = base_url.clone();
+            let worker = thread::spawn(move || {
+                for expected_path in [
+                    "/collections/team/.well-known/agent-skills/index.json",
+                    "/collections/team/.well-known/skills/index.json",
+                ] {
+                    let request = server
+                        .recv_timeout(Duration::from_secs(2))
+                        .expect("scoped request receive")
+                        .expect("scoped index request");
+                    assert_eq!(request.url(), expected_path);
+                    request
+                        .respond(tiny_http::Response::empty(404))
+                        .expect("scoped response");
+                }
+
+                let root = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("root request receive")
+                    .expect("root index request");
+                assert_eq!(root.url(), "/.well-known/agent-skills/index.json");
+                root.respond(tiny_http::Response::from_string(
+                    r#"{
+                      "skills": [
+                        {"name":"root-only","description":"Root skill","files":["SKILL.md"]}
+                      ]
+                    }"#,
+                ))
+                .expect("root response");
+
+                assert!(server
+                    .recv_timeout(Duration::from_millis(300))
+                    .expect("artifact request probe")
+                    .is_none());
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let error = fetch_wellknown_skills_with_client(
+                &http,
+                &format!("{base_url}/collections/team?token=secret#private"),
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect_err("root catalog must not satisfy a scoped source");
+
+            worker.join().expect("worker");
+            assert_eq!(
+                error,
+                AppError::WellKnownScopeNotFound {
+                    scope_path: "/collections/team".to_string(),
+                    root_url: expected_root_url,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn empty_scoped_catalog_probes_root_before_reporting_scope_not_found() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let expected_root_url = base_url.clone();
+            let worker = thread::spawn(move || {
+                let scoped = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("scoped request receive")
+                    .expect("scoped index request");
+                assert_eq!(
+                    scoped.url(),
+                    "/collections/team/.well-known/agent-skills/index.json"
+                );
+                scoped
+                    .respond(tiny_http::Response::from_string(r#"{"skills":[]}"#))
+                    .expect("scoped response");
+
+                let scoped_legacy = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("scoped legacy request receive")
+                    .expect("scoped legacy index request");
+                assert_eq!(
+                    scoped_legacy.url(),
+                    "/collections/team/.well-known/skills/index.json"
+                );
+                scoped_legacy
+                    .respond(tiny_http::Response::empty(404))
+                    .expect("scoped legacy response");
+
+                let root = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("root request receive")
+                    .expect("root index request");
+                assert_eq!(root.url(), "/.well-known/agent-skills/index.json");
+                root.respond(tiny_http::Response::from_string(
+                    r#"{
+                      "skills": [
+                        {"name":"root-only","description":"Root skill","files":["SKILL.md"]}
+                      ]
+                    }"#,
+                ))
+                .expect("root response");
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let error = fetch_wellknown_skills_with_client(
+                &http,
+                &format!("{base_url}/collections/team"),
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect_err("root catalog should prove the scoped source is absent");
+
+            worker.join().expect("worker");
+            assert_eq!(
+                error,
+                AppError::WellKnownScopeNotFound {
+                    scope_path: "/collections/team".to_string(),
+                    root_url: expected_root_url,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn empty_scoped_v2_catalog_still_allows_a_scoped_legacy_catalog() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let skill = b"---\nname: demo\ndescription: Demo\n---\n";
+            let worker = thread::spawn(move || {
+                let scoped_v2 = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("scoped v2 request receive")
+                    .expect("scoped v2 index request");
+                scoped_v2
+                    .respond(tiny_http::Response::from_string(r#"{"skills":[]}"#))
+                    .expect("scoped v2 response");
+
+                let scoped_legacy = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("scoped legacy request receive")
+                    .expect("scoped legacy index request");
+                assert_eq!(
+                    scoped_legacy.url(),
+                    "/collections/team/.well-known/skills/index.json"
+                );
+                scoped_legacy
+                    .respond(tiny_http::Response::from_string(
+                        r#"{
+                          "skills": [
+                            {"name":"demo","description":"Demo","files":["SKILL.md"]}
+                          ]
+                        }"#,
+                    ))
+                    .expect("scoped legacy response");
+
+                let artifact = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("artifact request receive")
+                    .expect("artifact request");
+                assert_eq!(
+                    artifact.url(),
+                    "/collections/team/.well-known/skills/demo/SKILL.md"
+                );
+                artifact
+                    .respond(tiny_http::Response::from_data(skill))
+                    .expect("artifact response");
+
+                assert!(server
+                    .recv_timeout(Duration::from_millis(300))
+                    .expect("root request probe")
+                    .is_none());
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let result = fetch_wellknown_skills_with_client(
+                &http,
+                &format!("{base_url}/collections/team"),
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect("scoped legacy catalog should remain eligible");
+
+            worker.join().expect("worker");
+            assert_eq!(
+                fs::read(result.repo_path.join("demo/SKILL.md")).expect("downloaded skill"),
+                skill
+            );
+            fs::remove_dir_all(result.repo_path).expect("remove downloaded source");
+        });
+    }
+
+    #[test]
+    fn update_check_reports_scope_not_found_after_an_empty_scoped_catalog() {
+        tauri::async_runtime::block_on(async {
+            let server = tiny_http::Server::http("127.0.0.1:0").expect("server");
+            let base_url = format!("http://{}", server.server_addr());
+            let expected_root_url = base_url.clone();
+            let worker = thread::spawn(move || {
+                let scoped = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("scoped request receive")
+                    .expect("scoped index request");
+                scoped
+                    .respond(tiny_http::Response::from_string(r#"{"skills":[]}"#))
+                    .expect("scoped response");
+
+                let scoped_legacy = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("scoped legacy request receive")
+                    .expect("scoped legacy index request");
+                scoped_legacy
+                    .respond(tiny_http::Response::empty(404))
+                    .expect("scoped legacy response");
+
+                let root = server
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("root request receive")
+                    .expect("root index request");
+                root.respond(tiny_http::Response::from_string(
+                    r#"{
+                      "skills": [
+                        {"name":"root-only","description":"Root skill","files":["SKILL.md"]}
+                      ]
+                    }"#,
+                ))
+                .expect("root response");
+            });
+            let http = HttpTransport::new(Arc::new(ProxySettingsStore::new(
+                NetworkProxySettings::default(),
+            )));
+
+            let error = check_wellknown_updates_with_client(
+                &http,
+                &format!("{base_url}/collections/team"),
+                &["demo".to_string()],
+                &CancellationSignal::default(),
+            )
+            .await
+            .expect_err("root catalog should prove the scoped source is absent");
+
+            worker.join().expect("worker");
+            assert_eq!(
+                error,
+                AppError::WellKnownScopeNotFound {
+                    scope_path: "/collections/team".to_string(),
+                    root_url: expected_root_url,
+                }
+            );
         });
     }
 
@@ -1582,26 +2049,26 @@ mod tests {
         );
         assert_eq!(candidates[0].well_known_path, ".well-known/agent-skills");
 
-        // agent-skills root
+        // legacy skills path-relative
         assert_eq!(
             candidates[1].index_url,
-            "https://example.com/.well-known/agent-skills/index.json"
-        );
-        assert_eq!(
-            candidates[1].base_url,
-            "https://example.com/.well-known/agent-skills"
-        );
-
-        // legacy skills path-relative (fallback)
-        assert_eq!(
-            candidates[2].index_url,
             "https://example.com/docs/.well-known/skills/index.json"
         );
         assert_eq!(
-            candidates[2].base_url,
+            candidates[1].base_url,
             "https://example.com/docs/.well-known/skills"
         );
-        assert_eq!(candidates[2].well_known_path, ".well-known/skills");
+
+        // agent-skills root probe
+        assert_eq!(
+            candidates[2].index_url,
+            "https://example.com/.well-known/agent-skills/index.json"
+        );
+        assert_eq!(
+            candidates[2].base_url,
+            "https://example.com/.well-known/agent-skills"
+        );
+        assert_eq!(candidates[2].well_known_path, ".well-known/agent-skills");
 
         // legacy skills root
         assert_eq!(
@@ -1632,26 +2099,19 @@ mod tests {
     }
 
     #[test]
-    fn test_build_index_urls_agent_skills_tried_before_legacy() {
+    fn test_build_index_urls_keep_scope_before_root_and_new_protocol_before_legacy() {
         let candidates = build_index_urls("https://example.com/app");
-        // Verify ordering: all agent-skills candidates come before legacy skills
-        let agent_skills_indices: Vec<usize> = candidates
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.well_known_path.contains("agent-skills"))
-            .map(|(i, _)| i)
-            .collect();
-        let legacy_indices: Vec<usize> = candidates
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| !c.well_known_path.contains("agent-skills"))
-            .map(|(i, _)| i)
-            .collect();
-        assert!(
-            agent_skills_indices
+        assert_eq!(
+            candidates
                 .iter()
-                .all(|&a| legacy_indices.iter().all(|&l| a < l)),
-            "agent-skills candidates must come before legacy skills candidates"
+                .map(|candidate| candidate.index_url.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "https://example.com/app/.well-known/agent-skills/index.json",
+                "https://example.com/app/.well-known/skills/index.json",
+                "https://example.com/.well-known/agent-skills/index.json",
+                "https://example.com/.well-known/skills/index.json",
+            ]
         );
     }
 

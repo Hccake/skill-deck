@@ -27,6 +27,15 @@ export function parseInstallError(
         suggestions: [t('addSkill.error.suggestion.checkNetwork')],
       };
 
+    case 'wellKnownScopeNotFound':
+      return {
+        message: t('addSkill.source.error.scopeNotFound', {
+          scopePath: error.data.scopePath,
+          rootUrl: error.data.rootUrl,
+        }),
+        suggestions: [t('addSkill.error.suggestion.checkSource')],
+      };
+
     case 'directDownloadFailed':
       return { message: t(`addSkill.source.error.downloadFailure.${error.data.reason}`) };
 

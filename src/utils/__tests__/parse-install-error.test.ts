@@ -67,6 +67,18 @@ describe('parseInstallError', () => {
     });
   });
 
+  it('keeps a scoped Well-known mismatch distinct from a missing download', () => {
+    const result = parseInstallError({
+      kind: 'wellKnownScopeNotFound',
+      data: { scopePath: '/collections/team', rootUrl: 'https://example.com' },
+    } as unknown as AppError, t as never);
+
+    expect(result).toEqual({
+      message: 'addSkill.source.error.scopeNotFound{"scopePath":"/collections/team","rootUrl":"https://example.com"}',
+      suggestions: ['addSkill.error.suggestion.checkSource'],
+    });
+  });
+
   it.each<[AppError, string, string | undefined]>([
     [
       { kind: 'applicationTerminating' },

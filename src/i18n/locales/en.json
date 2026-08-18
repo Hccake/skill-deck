@@ -1228,6 +1228,7 @@
       "errors": {
         "unknown": "The operation failed for an unknown reason.",
         "validation": "The request is no longer valid. Review it and try again.",
+        "wellKnownScopeNotFound": "No Skills were found for {{scopePath}} on {{rootUrl}}. Check the scoped address.",
         "environmentUnavailable": "The selected environment is unavailable.",
         "environmentChanged": "The environment changed. Review the refreshed plan.",
         "contextChanged": "The selected context changed. Review the refreshed plan.",
@@ -1321,6 +1322,7 @@
         "auth": "Authentication failed. Check your credentials or repository access.",
         "refNotFound": "Branch or tag not found",
         "invalidSource": "Invalid source format: {{value}}",
+        "scopeNotFound": "No Skills were found for {{scopePath}} on {{rootUrl}}. Check the scoped address; the root catalog was not used.",
         "acquisitionFailed": "The source could not be read. Well-known failed: {{wellKnownReason}}; direct download failed: {{downloadReason}}",
         "acquisitionReason": {
           "notFound": "not found",
@@ -1541,6 +1543,7 @@
       "redirectConfirmationRequired": "Confirm the download redirect to {{host}} before installation",
       "parseFailed": "Parse failed",
       "suggestion": {
+        "checkSource": "Check that the source address and scoped path are correct",
         "checkSkillName": "Check that the skill name is correct",
         "reselect": "Go back and reselect skills",
         "checkNetwork": "Check your network connection",

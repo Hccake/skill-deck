@@ -7,7 +7,7 @@ use crate::application::source_acquisition::{
     attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
     GitSourceDiscovery, ManagedDownloadedDirectory, RetainedSourceOptions,
 };
-use crate::application::wellknown_access::WellKnownAccess;
+use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchError};
 use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
 use crate::core::{parse_source, CloneProgress};
@@ -166,6 +166,7 @@ impl SourceDiscoveryService {
                             },
                         )
                         .await
+                        .map_err(WellKnownFetchError::catalog_established)
                     },
                     || {
                         self.discover_download(

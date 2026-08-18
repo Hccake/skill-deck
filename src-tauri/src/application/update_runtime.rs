@@ -250,7 +250,9 @@ impl RuntimeUpdatePayloadAcquirer {
         if group.evidence_key.remote.provider() == &SourceProvider::WellKnown {
             return match &group.context.environment {
                 EnvironmentRef::Native => {
-                    let fetched = self.wellknown.fetch(&source, &cancellation).await?;
+                    let fetched = self.wellknown.fetch(&source, &cancellation).await.map_err(
+                        crate::application::wellknown_access::WellKnownFetchError::into_error,
+                    )?;
                     let root = fetched.repo_path.clone();
                     let owner = ManagedDownloadedDirectory::new(root.clone());
                     retain_discovered_source(

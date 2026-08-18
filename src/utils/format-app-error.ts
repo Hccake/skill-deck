@@ -47,6 +47,11 @@ export function formatAppError(error: AppError, t: TFunction): string {
       });
     case 'wellKnownSourceFailed':
       return t(`addSkill.source.error.acquisitionReason.${error.data.reason}`);
+    case 'wellKnownScopeNotFound':
+      return t('addSkill.source.error.scopeNotFound', {
+        scopePath: error.data.scopePath,
+        rootUrl: error.data.rootUrl,
+      });
     case 'directDownloadFailed':
       return t(`addSkill.source.error.downloadFailure.${error.data.reason}`);
     case 'directDownloadUnsupportedOperation':

@@ -43,6 +43,17 @@ describe('formatAppError', () => {
     }, t as never)).toBe('addSkill.source.error.downloadFailure.unsafeArchive');
   });
 
+  it('renders a scoped Well-known mismatch as its own public error', () => {
+    const error = {
+      kind: 'wellKnownScopeNotFound',
+      data: { scopePath: '/collections/team', rootUrl: 'https://example.com' },
+    } as unknown as AppError;
+
+    expect(formatAppError(error, t as never)).toBe(
+      'addSkill.source.error.scopeNotFound{"scopePath":"/collections/team","rootUrl":"https://example.com"}'
+    );
+  });
+
   it.each([
     [
       {

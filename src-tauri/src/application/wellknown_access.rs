@@ -12,6 +12,32 @@ pub(crate) struct WellKnownFetchResult {
     pub(crate) trust_metadata: HashMap<String, WellKnownTrustMetadata>,
 }
 
+#[derive(Debug)]
+pub(crate) enum WellKnownFetchError {
+    Unproven(AppError),
+    CatalogEstablished(AppError),
+}
+
+impl WellKnownFetchError {
+    pub(crate) fn unproven(error: AppError) -> Self {
+        Self::Unproven(error)
+    }
+
+    pub(crate) fn catalog_established(error: AppError) -> Self {
+        Self::CatalogEstablished(error)
+    }
+
+    pub(crate) fn allows_direct_download(&self) -> bool {
+        matches!(self, Self::Unproven(_))
+    }
+
+    pub(crate) fn into_error(self) -> AppError {
+        match self {
+            Self::Unproven(error) | Self::CatalogEstablished(error) => error,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct WellKnownIndexEvidence {
     pub(crate) index_url: String,
@@ -38,7 +64,7 @@ pub(crate) fn extract_hostname(value: &str) -> Option<String> {
 }
 
 pub(crate) type WellKnownFetchFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<WellKnownFetchResult, AppError>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<WellKnownFetchResult, WellKnownFetchError>> + Send + 'a>>;
 pub(crate) type WellKnownCheckFuture<'a> =
     Pin<Box<dyn Future<Output = Result<WellKnownIndexEvidence, AppError>> + Send + 'a>>;
 
@@ -74,9 +100,9 @@ impl WellKnownAccess for UnavailableWellKnownAccess {
         _cancellation: &'a CancellationSignal,
     ) -> WellKnownFetchFuture<'a> {
         Box::pin(async {
-            Err(AppError::ExecutionFailed {
+            Err(WellKnownFetchError::unproven(AppError::ExecutionFailed {
                 message: "Well-known access is unavailable in this test".to_string(),
-            })
+            }))
         })
     }
 }

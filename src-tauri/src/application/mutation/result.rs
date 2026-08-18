@@ -27,6 +27,7 @@ pub enum MutationUnitStatus {
 #[specta(rename_all = "camelCase")]
 pub enum OperationErrorCode {
     Validation,
+    WellKnownScopeNotFound,
     EnvironmentUnavailable,
     EnvironmentChanged,
     ContextChanged,
@@ -188,6 +189,17 @@ impl ErrorReport {
                 report
                     .parameters
                     .insert("reason".to_string(), reason.code().to_string());
+                report
+            }
+            AppError::WellKnownScopeNotFound {
+                scope_path,
+                root_url,
+            } => {
+                let mut report = Self::new(OperationErrorCode::WellKnownScopeNotFound);
+                report
+                    .parameters
+                    .insert("scopePath".to_string(), scope_path);
+                report.parameters.insert("rootUrl".to_string(), root_url);
                 report
             }
             AppError::DirectDownloadFailed { reason } => {

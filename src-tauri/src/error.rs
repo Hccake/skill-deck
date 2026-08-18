@@ -198,6 +198,14 @@ pub enum AppError {
         reason: SourceAcquisitionFailureReason,
     },
 
+    #[error("No Well-known skills found for scoped path {scope_path} on {root_url}")]
+    WellKnownScopeNotFound {
+        #[serde(rename = "scopePath")]
+        scope_path: String,
+        #[serde(rename = "rootUrl")]
+        root_url: String,
+    },
+
     #[error("Direct download failed: {reason:?}")]
     DirectDownloadFailed { reason: DirectDownloadFailureReason },
 

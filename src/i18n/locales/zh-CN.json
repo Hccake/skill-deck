@@ -1228,6 +1228,7 @@
       "errors": {
         "unknown": "操作因未知原因失败。",
         "validation": "当前请求已失效，请检查后重试。",
+        "wellKnownScopeNotFound": "{{rootUrl}} 的 {{scopePath}} 下没有可用 Skill，请检查 scoped 地址。",
         "environmentUnavailable": "所选环境当前不可用。",
         "environmentChanged": "环境已发生变化，请检查刷新后的计划。",
         "contextChanged": "所选范围已发生变化，请检查刷新后的计划。",
@@ -1321,6 +1322,7 @@
         "auth": "认证失败。请检查凭据或仓库访问权限。",
         "refNotFound": "未找到指定的分支或标签",
         "invalidSource": "无效的来源格式: {{value}}",
+        "scopeNotFound": "{{rootUrl}} 的 {{scopePath}} 下没有可用 Skill。请检查 scoped 地址；Skill Deck 未使用站点根目录 catalog。",
         "acquisitionFailed": "无法读取该来源。Well-known 读取失败：{{wellKnownReason}}；直接下载失败：{{downloadReason}}",
         "acquisitionReason": {
           "notFound": "未找到内容",
@@ -1541,6 +1543,7 @@
       "redirectConfirmationRequired": "下载地址已跳转到 {{host}}，请确认后再安装",
       "parseFailed": "解析失败",
       "suggestion": {
+        "checkSource": "请检查来源地址和 scoped 路径是否正确",
         "checkSkillName": "检查 skill 名称是否正确",
         "reselect": "返回上一步重新选择 skills",
         "checkNetwork": "检查网络连接是否正常",
