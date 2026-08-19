@@ -20,13 +20,15 @@ Skill 能否更新、如何重新安装以及如何修复来源，见[Skill 生�
 
 Skill Deck 根据 Skill 来源选择获取方式。在 Windows 上，用户选择 Windows 还是 WSL Environment，也会影响由哪个 Environment 执行检查：
 
-- 在桌面应用所在的 Windows、macOS 或 Linux 中，GitHub 来源通过 GitHub Trees API 获取完整目录清单和可用于比较的目录树对象 ID（tree object ID）；
+- 在桌面应用所在的 Windows、macOS 或 Linux 中，GitHub 来源优先通过 GitHub Trees API 获取完整目录清单和可用于比较的目录树对象 ID（tree object ID）。API 因认证、未授权或仓库不存在、响应信息不完整或来源暂时不可用而无法提供证据时，Skill Deck 改用本机 Git 获取相同的版本信息；
 - Windows 用户切换到某个 WSL 发行版后，GitHub 来源改由该发行版中的 Git 获取相同的版本信息；
 - GitLab 和普通 Git 来源使用桌面应用所在操作系统或当前 WSL 发行版中的 Git；
 - 本地来源没有远端版本可供比较，因此不参与更新检查；
 - 通过约定地址（Well-known）发现的来源使用索引摘要比较版本。v2 索引可以直接返回摘要；旧版索引只获取当前请求检查的已安装 Skill 内容并计算兼容摘要，不下载目录中的其他 Skill；
-- Well-known 记录同时包含索引地址和安装时摘要时可以检查并重新安装，只有索引地址时可以重新安装但不能得出版本比较结果，只有历史制品地址或来源主机时需要修复来源；历史制品地址不会被解释为直接下载来源；
+- Well-known 记录同时包含索引地址和安装时摘要时可以检查并重新安装，只有索引地址时可以重新安装但不能得出版本比较结果，只有历史制品地址或来源主机时需要修复来源；保存的 scoped 地址始终只使用对应路径下的 catalog，保存的精确 `index.json` 地址始终只请求原索引，历史制品地址不会被解释为直接下载来源；
 - Well-known 索引不再包含当前已安装 Skill 时显示“上游已移除”。自动检查和批量更新保留本地内容，由用户选择修复来源或移除。
+
+GitHub Trees API 已确认限流或请求发生普通网络错误时，更新检查继续使用相应的限流等待或来源失败退避，不启动 Git 回退。API 的其他非权威失败进入 Git 回退后，本次结果以 Git 的认证、仓库、`ref`、网络、超时或执行结果为准。
 
 这些远端信息只用于判断版本是否发生变化。安装、来源修复和复制需要使用经过校验的完整 Skill 内容。缓存失效后，Skill Deck 会在桌面应用所在操作系统中重新获取版本信息；Windows 用户切换到 WSL 后，则会由当前发行版重新获取。
 
@@ -84,6 +86,8 @@ Skill Deck 根据 Skill 来源选择获取方式。在 Windows 上，用户选�
 ## GitHub 凭据
 
 用户可以在 Git 设置中连接 GitHub 验证 Token，并将验证通过的 Token 保存到系统安全存储。系统安全存储中的凭据优先于 `GITHUB_TOKEN` 和 `GH_TOKEN`；清除已保存凭据后，Skill Deck 会重新读取环境变量。新的 Token 验证失败时不会覆盖已有凭据；公共仓库因已配置 Token 无效而访问失败时，可以匿名重试一次。
+
+Native Environment 的 GitHub API 回退使用本机 Git 已有的 credential helper、SSH 配置和其他 Git 支持的认证方式。Skill Deck 不从 GitHub CLI 提取 Token，也不为这条回退链路新增凭据存储。WSL Environment 继续直接使用对应发行版中的 Git 及其凭据配置。
 
 系统安全存储不可用时，Skill Deck 不会将 Token 写入明文文件。Token 不会进入全局或项目 lock 文件、更新检查状态文件、前端持久化设置或用户可见诊断。界面只能读取凭据来源、账号、验证结果和额度等不含 Token 的信息。
 

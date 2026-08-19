@@ -89,10 +89,28 @@ impl RuntimeSourceEvidenceDetector {
         }
     }
 
+    #[cfg(test)]
+    fn with_github_and_git_access(
+        payloads: Arc<PayloadSessionManager>,
+        snapshots: Arc<SourceSnapshotReuseIndex>,
+        github: Arc<dyn GithubTreeAccess>,
+        git_transport: Arc<dyn GitSourceTransport>,
+    ) -> Self {
+        Self {
+            payloads,
+            snapshots,
+            github,
+            git_transport,
+            wsl_source: Arc::new(UnavailableWslSourceAccess),
+            wellknown: Arc::new(crate::application::wellknown_access::UnavailableWellKnownAccess),
+        }
+    }
+
     async fn detect_github(
         &self,
         request: EvidenceDetectionRequest,
         previous: Option<RemoteEvidenceEntry>,
+        cancellation: CancellationSignal,
     ) -> Result<EvidenceDetectionOutcome, AppError> {
         let requested_ref = resolved_ref(&request.key.normalized_ref);
         let validation = previous
@@ -109,7 +127,7 @@ impl RuntimeSourceEvidenceDetector {
                 .fetch_tree(request.key.remote.repository(), &requested_ref, None)
                 .await;
         }
-        Ok(match outcome {
+        match outcome {
             GithubTreeFetchOutcome::Modified(snapshot) => {
                 let catalog = snapshot
                     .entries
@@ -147,55 +165,64 @@ impl RuntimeSourceEvidenceDetector {
                         .map(|revision| (path, SkillRevision::GitTreeOid(revision)))
                     })
                     .collect();
-                EvidenceDetectionOutcome::Modified(RemoteEvidenceObservation {
-                    snapshot_id: RemoteSnapshotId::new(
-                        request.key.normalized_ref,
-                        requested_ref,
-                        snapshot.ref_revision,
-                    ),
-                    provider_validation: snapshot.validation,
-                    complete_skill_path_catalog: catalog,
-                    skill_revisions,
-                    snapshot_facts: None,
-                })
+                Ok(EvidenceDetectionOutcome::Modified(
+                    RemoteEvidenceObservation {
+                        snapshot_id: RemoteSnapshotId::new(
+                            request.key.normalized_ref,
+                            requested_ref,
+                            snapshot.ref_revision,
+                        ),
+                        provider_validation: snapshot.validation,
+                        complete_skill_path_catalog: catalog,
+                        skill_revisions,
+                        snapshot_facts: None,
+                    },
+                ))
             }
             GithubTreeFetchOutcome::NotModified => match previous {
-                Some(_) => EvidenceDetectionOutcome::NotModified,
-                None => failure(
-                    EvidenceFailureReason::IncompleteEvidence,
-                    "incomplete GitHub tree",
-                    None,
-                    false,
-                ),
+                Some(_) => Ok(EvidenceDetectionOutcome::NotModified),
+                None => {
+                    self.detect_github_by_clone(request, None, cancellation)
+                        .await
+                }
             },
-            GithubTreeFetchOutcome::Incomplete => failure(
-                EvidenceFailureReason::IncompleteEvidence,
-                "incomplete GitHub tree",
-                None,
-                false,
-            ),
-            GithubTreeFetchOutcome::RateLimited { retry_at_epoch_ms } => failure(
+            GithubTreeFetchOutcome::Incomplete => {
+                self.detect_github_by_clone(request, previous, cancellation)
+                    .await
+            }
+            GithubTreeFetchOutcome::RateLimited { retry_at_epoch_ms } => Ok(failure(
                 EvidenceFailureReason::RateLimited,
                 "GitHub rate limit reached",
                 retry_at_epoch_ms,
                 true,
-            ),
-            GithubTreeFetchOutcome::Failed(reason) => {
-                let reason = match reason {
-                    GithubTreeFailure::AuthenticationRequired => {
-                        EvidenceFailureReason::AuthenticationRequired
-                    }
-                    GithubTreeFailure::NotFoundOrUnauthorized => {
-                        EvidenceFailureReason::NotFoundOrUnauthorized
-                    }
-                    GithubTreeFailure::Network => EvidenceFailureReason::Network,
-                    GithubTreeFailure::SourceUnavailable => {
-                        EvidenceFailureReason::SourceUnavailable
-                    }
-                };
-                failure(reason, "GitHub tree request failed", None, false)
+            )),
+            GithubTreeFetchOutcome::Failed(GithubTreeFailure::Network) => Ok(failure(
+                EvidenceFailureReason::Network,
+                "GitHub tree request failed",
+                None,
+                false,
+            )),
+            GithubTreeFetchOutcome::Failed(
+                GithubTreeFailure::AuthenticationRequired
+                | GithubTreeFailure::NotFoundOrUnauthorized
+                | GithubTreeFailure::SourceUnavailable,
+            ) => {
+                self.detect_github_by_clone(request, previous, cancellation)
+                    .await
             }
-        })
+        }
+    }
+
+    async fn detect_github_by_clone(
+        &self,
+        request: EvidenceDetectionRequest,
+        previous: Option<RemoteEvidenceEntry>,
+        cancellation: CancellationSignal,
+    ) -> Result<EvidenceDetectionOutcome, AppError> {
+        if cancellation.is_cancelled() {
+            return Err(AppError::MutationCancelled);
+        }
+        self.detect_by_clone(request, previous, cancellation).await
     }
 
     async fn detect_by_clone(
@@ -234,9 +261,8 @@ impl RuntimeSourceEvidenceDetector {
                     .snapshots
                     .find(&acquisition_key, &ref_revision, self.payloads.as_ref())
                     .map(|discovery| (discovery, ref_revision)),
-                Err(error) => {
-                    return Ok(git_failure(error));
-                }
+                Err(AppError::MutationCancelled) => return Err(AppError::MutationCancelled),
+                Err(error) => return Ok(git_failure(error)),
             }
         } else {
             None
@@ -450,7 +476,7 @@ impl SourceEvidenceDetector for RuntimeSourceEvidenceDetector {
         Box::pin(async move {
             match (&request.environment, request.key.remote.provider()) {
                 (EnvironmentRef::Native, SourceProvider::Github) => {
-                    self.detect_github(request, _previous).await
+                    self.detect_github(request, _previous, cancellation).await
                 }
                 (_, SourceProvider::Github | SourceProvider::Gitlab | SourceProvider::Git) => {
                     self.detect_by_clone(request, _previous, cancellation).await
@@ -533,7 +559,9 @@ mod tests {
     use crate::core::parse_source;
     use crate::core::source_identity::SourceIdentity;
     use crate::environment::types::EnvironmentRef;
-    use crate::git_fixture::{DeterministicGitTransport, SkillTreeFixture};
+    use crate::git_fixture::{
+        BareSkillRepo, CountingGitTransport, DeterministicGitTransport, SkillTreeFixture,
+    };
     use crate::runtime::github_client::GithubApiClient;
 
     fn payloads() -> Arc<PayloadSessionManager> {
@@ -550,6 +578,27 @@ mod tests {
     #[test]
     fn git_failure_only_schedules_network_retry_for_network_and_timeout_errors() {
         let cases = [
+            (
+                AppError::GitAuthFailed {
+                    message: "credentials rejected".to_string(),
+                },
+                EvidenceFailureReason::AuthenticationRequired,
+                false,
+            ),
+            (
+                AppError::GitRepoNotFound {
+                    repo: "acme/missing".to_string(),
+                },
+                EvidenceFailureReason::RepositoryNotFound,
+                false,
+            ),
+            (
+                AppError::GitRefNotFound {
+                    ref_name: "missing".to_string(),
+                },
+                EvidenceFailureReason::RefNotFound,
+                false,
+            ),
             (
                 AppError::GitNetworkError {
                     message: "offline".to_string(),
@@ -716,8 +765,15 @@ mod tests {
     }
 
     fn github_check_request(mode: EvidenceCheckMode) -> EvidenceCheckRequest {
+        github_check_request_for_ref(mode, "main")
+    }
+
+    fn github_check_request_for_ref(
+        mode: EvidenceCheckMode,
+        git_ref: &str,
+    ) -> EvidenceCheckRequest {
         let identity = SourceIdentity::from_parsed(
-            &parse_source("https://github.com/acme/tools#main").unwrap(),
+            &parse_source(&format!("https://github.com/acme/tools#{git_ref}")).unwrap(),
         )
         .unwrap();
         EvidenceCheckRequest {
@@ -737,6 +793,256 @@ mod tests {
             headers: vec![("Content-Type", "application/json"), ("ETag", "tree-v1")],
             body: r#"{"sha":"root-tree-v1","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"tree-alpha"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"}]}"#,
         }
+    }
+
+    #[derive(Clone)]
+    struct FixedGithubAccess {
+        outcome: GithubTreeFetchOutcome,
+        cancel_after_fetch: Option<CancellationSignal>,
+    }
+
+    #[derive(Default)]
+    struct CancelledGitTransport {
+        clone_calls: AtomicUsize,
+    }
+
+    impl GitSourceTransport for CancelledGitTransport {
+        fn clone_source(
+            &self,
+            _url: &str,
+            _git_ref: Option<&str>,
+            _on_progress: &(dyn Fn(crate::core::CloneProgress) + Send + Sync),
+            _cancellation: CancellationSignal,
+        ) -> Result<crate::core::CloneResult, AppError> {
+            self.clone_calls.fetch_add(1, Ordering::SeqCst);
+            Err(AppError::MutationCancelled)
+        }
+
+        fn probe_ref_revision(
+            &self,
+            _url: &str,
+            _git_ref: Option<&str>,
+            _cancellation: CancellationSignal,
+        ) -> Result<String, AppError> {
+            Err(AppError::MutationCancelled)
+        }
+    }
+
+    impl GithubTreeAccess for FixedGithubAccess {
+        fn fetch_tree<'a>(
+            &'a self,
+            _repository: &'a str,
+            _git_ref: &'a str,
+            _validation: Option<&'a str>,
+        ) -> crate::application::github_access::GithubTreeFuture<'a> {
+            Box::pin(async move {
+                if let Some(cancellation) = &self.cancel_after_fetch {
+                    cancellation.cancel();
+                }
+                self.outcome.clone()
+            })
+        }
+    }
+
+    fn github_detector_with_git_fallback(
+        outcome: GithubTreeFetchOutcome,
+        cancellation: Option<CancellationSignal>,
+    ) -> (
+        RuntimeSourceEvidenceDetector,
+        Arc<CountingGitTransport>,
+        BareSkillRepo,
+    ) {
+        let request = github_request("skills/alpha");
+        let remote = BareSkillRepo::new(&["skills/alpha"]);
+        let git_transport = Arc::new(CountingGitTransport::for_repo_with_public_source(
+            &remote,
+            request.acquisition.source(),
+        ));
+        let detector = RuntimeSourceEvidenceDetector::with_github_and_git_access(
+            payloads(),
+            Arc::new(SourceSnapshotReuseIndex::default()),
+            Arc::new(FixedGithubAccess {
+                outcome,
+                cancel_after_fetch: cancellation,
+            }),
+            git_transport.clone(),
+        );
+        (detector, git_transport, remote)
+    }
+
+    struct ScopeNotFoundWellKnownAccess;
+
+    impl WellKnownAccess for ScopeNotFoundWellKnownAccess {
+        fn fetch<'a>(
+            &'a self,
+            _url: &'a str,
+            _cancellation: &'a CancellationSignal,
+        ) -> crate::application::wellknown_access::WellKnownFetchFuture<'a> {
+            Box::pin(async {
+                Err(
+                    crate::application::wellknown_access::WellKnownFetchError::unproven(
+                        AppError::ExecutionFailed {
+                            message: "fetch is unused".to_string(),
+                        },
+                    ),
+                )
+            })
+        }
+
+        fn check<'a>(
+            &'a self,
+            _url: &'a str,
+            _skill_names: &'a [String],
+            _cancellation: &'a CancellationSignal,
+        ) -> crate::application::wellknown_access::WellKnownCheckFuture<'a> {
+            Box::pin(async {
+                Err(AppError::WellKnownScopeNotFound {
+                    scope_path: "/team".to_string(),
+                    root_url: "https://example.com".to_string(),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn wellknown_scope_not_found_remains_typed_for_update_checks() {
+        let identity = SourceIdentity::from_parsed(
+            &parse_source("https://example.com/team").expect("well-known source"),
+        )
+        .expect("source identity");
+        let detector = RuntimeSourceEvidenceDetector::new(
+            payloads(),
+            Arc::new(SourceSnapshotReuseIndex::default()),
+            Arc::new(UnavailableGithubAccess),
+            Arc::new(crate::application::git_transport::UnavailableGitSourceTransport),
+            Arc::new(UnavailableWslSourceAccess),
+            Arc::new(ScopeNotFoundWellKnownAccess),
+        );
+        let result = detector
+            .detect(
+                EvidenceDetectionRequest {
+                    environment: EnvironmentRef::Native,
+                    key: RemoteEvidenceKey::from_identity(&identity),
+                    requested_skill_paths: BTreeSet::from(["alpha".to_string()]),
+                    acquisition: Arc::new(identity.acquisition().clone()),
+                    acquisition_transport_identity: identity.acquisition_transport().clone(),
+                },
+                None,
+                CancellationSignal::default(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AppError::WellKnownScopeNotFound { scope_path, root_url })
+                if scope_path == "/team" && root_url == "https://example.com"
+        ));
+    }
+
+    #[tokio::test]
+    async fn github_private_source_falls_back_to_git_for_non_authoritative_api_failures() {
+        for api_outcome in [
+            GithubTreeFetchOutcome::Failed(GithubTreeFailure::AuthenticationRequired),
+            GithubTreeFetchOutcome::Failed(GithubTreeFailure::NotFoundOrUnauthorized),
+            GithubTreeFetchOutcome::Failed(GithubTreeFailure::SourceUnavailable),
+            GithubTreeFetchOutcome::Incomplete,
+        ] {
+            let (detector, git_transport, _remote) =
+                github_detector_with_git_fallback(api_outcome, None);
+
+            let outcome = detector
+                .detect(
+                    github_request("skills/alpha"),
+                    None,
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+
+            let EvidenceDetectionOutcome::Modified(evidence) = outcome else {
+                panic!("Git fallback should produce evidence, got {outcome:?}");
+            };
+            assert!(matches!(
+                evidence.skill_revisions.get("skills/alpha"),
+                Some(SkillRevision::GitTreeOid(revision)) if !revision.is_empty()
+            ));
+            assert_eq!(git_transport.clone_count(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn github_rate_limit_and_network_failure_do_not_fall_back_to_git() {
+        for (api_outcome, expected_reason) in [
+            (
+                GithubTreeFetchOutcome::RateLimited {
+                    retry_at_epoch_ms: Some(42_000),
+                },
+                EvidenceFailureReason::RateLimited,
+            ),
+            (
+                GithubTreeFetchOutcome::Failed(GithubTreeFailure::Network),
+                EvidenceFailureReason::Network,
+            ),
+        ] {
+            let (detector, git_transport, _remote) =
+                github_detector_with_git_fallback(api_outcome, None);
+
+            let outcome = detector
+                .detect(
+                    github_request("skills/alpha"),
+                    None,
+                    CancellationSignal::default(),
+                )
+                .await
+                .unwrap();
+
+            let EvidenceDetectionOutcome::Failed(failure) = outcome else {
+                panic!("API failure should remain authoritative, got {outcome:?}");
+            };
+            assert_eq!(failure.reason, expected_reason);
+            assert_eq!(git_transport.clone_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn github_cancellation_after_api_response_does_not_start_git_fallback() {
+        let cancellation = CancellationSignal::default();
+        let (detector, git_transport, _remote) = github_detector_with_git_fallback(
+            GithubTreeFetchOutcome::Failed(GithubTreeFailure::AuthenticationRequired),
+            Some(cancellation.clone()),
+        );
+
+        let result = detector
+            .detect(github_request("skills/alpha"), None, cancellation)
+            .await;
+
+        assert!(matches!(result, Err(AppError::MutationCancelled)));
+        assert_eq!(git_transport.clone_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn github_cancellation_returned_by_git_fallback_remains_cancelled() {
+        let git_transport = Arc::new(CancelledGitTransport::default());
+        let detector = RuntimeSourceEvidenceDetector::with_github_and_git_access(
+            payloads(),
+            Arc::new(SourceSnapshotReuseIndex::default()),
+            Arc::new(FixedGithubAccess {
+                outcome: GithubTreeFetchOutcome::Failed(GithubTreeFailure::AuthenticationRequired),
+                cancel_after_fetch: None,
+            }),
+            git_transport.clone(),
+        );
+
+        let result = detector
+            .detect(
+                github_request("skills/alpha"),
+                None,
+                CancellationSignal::default(),
+            )
+            .await;
+
+        assert!(matches!(result, Err(AppError::MutationCancelled)));
+        assert_eq!(git_transport.clone_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -938,7 +1244,65 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn github_truncated_rate_limit_and_ambiguous_404_are_typed_failures() {
+    async fn github_evidence_cache_keeps_refs_from_the_same_repository_independent() {
+        let fixture = HttpFixture::new(vec![
+            HttpResponse {
+                status: "200 OK",
+                headers: vec![("Content-Type", "application/json")],
+                body: r#"{"sha":"main-root-tree","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"main-skill-tree"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"}]}"#,
+            },
+            HttpResponse {
+                status: "200 OK",
+                headers: vec![("Content-Type", "application/json")],
+                body: r#"{"sha":"release-root-tree","truncated":false,"tree":[{"path":"skills/alpha","type":"tree","sha":"release-skill-tree"},{"path":"skills/alpha/SKILL.md","type":"blob","sha":"blob-alpha"}]}"#,
+            },
+        ]);
+        let detector = Arc::new(CountingDetector::new(github_detector(&fixture)));
+        let coordinator = SourceEvidenceCoordinator::with_snapshot_reuse(
+            detector.clone(),
+            Arc::new(SourceSnapshotReuseIndex::default()),
+        );
+
+        let main = coordinator
+            .check(
+                github_check_request_for_ref(EvidenceCheckMode::Automatic, "main"),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap()
+            .evidence
+            .expect("main evidence");
+        let release = coordinator
+            .check(
+                github_check_request_for_ref(EvidenceCheckMode::Automatic, "release"),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap()
+            .evidence
+            .expect("release evidence");
+        let cached_main = coordinator
+            .check(
+                github_check_request_for_ref(EvidenceCheckMode::Automatic, "main"),
+                CancellationSignal::default(),
+            )
+            .await
+            .unwrap()
+            .evidence
+            .expect("cached main evidence");
+
+        assert_eq!(main.snapshot_id.commit_revision, "main-root-tree");
+        assert_eq!(release.snapshot_id.commit_revision, "release-root-tree");
+        assert_eq!(cached_main.snapshot_id, main.snapshot_id);
+        assert_eq!(detector.calls(), 2);
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].contains("/git/trees/main?recursive=1"));
+        assert!(requests[1].contains("/git/trees/release?recursive=1"));
+    }
+
+    #[tokio::test]
+    async fn github_fallback_failures_use_git_result_while_rate_limit_remains_typed() {
         let cases = [
             (
                 vec![HttpResponse {
@@ -946,7 +1310,7 @@ mod tests {
                     headers: vec![("Content-Type", "application/json")],
                     body: r#"{"sha":"root-tree-v1","truncated":true,"tree":[]}"#,
                 }],
-                EvidenceFailureReason::IncompleteEvidence,
+                EvidenceFailureReason::SourceUnavailable,
             ),
             (
                 vec![HttpResponse {
@@ -962,7 +1326,7 @@ mod tests {
                     headers: vec![],
                     body: "",
                 }],
-                EvidenceFailureReason::NotFoundOrUnauthorized,
+                EvidenceFailureReason::SourceUnavailable,
             ),
         ];
 

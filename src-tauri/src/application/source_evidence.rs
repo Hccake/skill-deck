@@ -851,11 +851,66 @@ fn invalid_persisted_state(message: &str) -> AppError {
 struct InFlightDetection {
     batch_id: u64,
     receiver: watch::Receiver<Option<DetectionCompletion>>,
+    waiters: Arc<DetectionWaiters>,
     collecting_skill_paths: BTreeSet<String>,
     running_skill_paths: Option<BTreeSet<String>>,
     pending_skill_paths: BTreeSet<String>,
     acquisition: Arc<AcquisitionDescriptor>,
     acquisition_transport_identity: AcquisitionTransportIdentity,
+}
+
+struct DetectionWaiters {
+    state: Mutex<DetectionWaiterState>,
+    cancellation: CancellationSignal,
+}
+
+struct DetectionWaiterState {
+    active: usize,
+    closed: bool,
+}
+
+impl DetectionWaiters {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(DetectionWaiterState {
+                active: 0,
+                closed: false,
+            }),
+            cancellation: CancellationSignal::default(),
+        })
+    }
+
+    fn register(self: &Arc<Self>) -> Option<DetectionWaiter> {
+        let mut state = self.state.lock().expect("detection waiter state");
+        if state.closed {
+            return None;
+        }
+        state.active += 1;
+        Some(DetectionWaiter {
+            waiters: self.clone(),
+        })
+    }
+}
+
+struct DetectionWaiter {
+    waiters: Arc<DetectionWaiters>,
+}
+
+impl DetectionWaiter {
+    fn cancellation(&self) -> CancellationSignal {
+        self.waiters.cancellation.clone()
+    }
+}
+
+impl Drop for DetectionWaiter {
+    fn drop(&mut self) {
+        let mut state = self.waiters.state.lock().expect("detection waiter state");
+        state.active -= 1;
+        if state.active == 0 {
+            state.closed = true;
+            self.waiters.cancellation.cancel();
+        }
+    }
 }
 
 impl SourceEvidenceCoordinator {
@@ -1085,7 +1140,7 @@ impl SourceEvidenceCoordinator {
         loop {
             let now = (self.inner.now)();
             let mut spawned = None;
-            let mut receiver = {
+            let (mut receiver, _waiter, awaiting_abandoned_batch) = {
                 let mut state = state(&self.inner)?;
                 state
                     .provider_cooldowns
@@ -1157,46 +1212,51 @@ impl SourceEvidenceCoordinator {
                         paths.retain(|path| !evidence_covers_path(evidence, path));
                     }
                     paths.extend(requested_skill_paths.clone());
-                    let (batch_id, sender, receiver) =
+                    let (batch_id, sender, receiver, waiter) =
                         register_detection_batch(&mut state, &operation_key, &request, paths);
-                    spawned = Some((batch_id, sender));
-                    receiver
+                    spawned = Some((batch_id, sender, waiter.cancellation()));
+                    (receiver, Some(waiter), false)
                 } else if let Some(in_flight) = state.in_flight.get_mut(&operation_key) {
-                    let current_paths = in_flight
-                        .running_skill_paths
-                        .as_ref()
-                        .unwrap_or(&in_flight.collecting_skill_paths);
-                    if current_paths.is_superset(&requested_skill_paths) {
-                        // The current immutable batch already covers this waiter.
-                    } else if in_flight.running_skill_paths.is_none()
-                        && in_flight
-                            .acquisition
-                            .acquisition_equivalent(request.acquisition.as_ref())
-                        && in_flight.acquisition_transport_identity
-                            == request.acquisition_transport_identity
-                    {
-                        in_flight
-                            .collecting_skill_paths
-                            .extend(requested_skill_paths.clone());
-                    } else {
-                        in_flight
-                            .pending_skill_paths
-                            .extend(requested_skill_paths.clone());
+                    match in_flight.waiters.register() {
+                        Some(waiter) => {
+                            let current_paths = in_flight
+                                .running_skill_paths
+                                .as_ref()
+                                .unwrap_or(&in_flight.collecting_skill_paths);
+                            if current_paths.is_superset(&requested_skill_paths) {
+                                // The current immutable batch already covers this waiter.
+                            } else if in_flight.running_skill_paths.is_none()
+                                && in_flight
+                                    .acquisition
+                                    .acquisition_equivalent(request.acquisition.as_ref())
+                                && in_flight.acquisition_transport_identity
+                                    == request.acquisition_transport_identity
+                            {
+                                in_flight
+                                    .collecting_skill_paths
+                                    .extend(requested_skill_paths.clone());
+                            } else {
+                                in_flight
+                                    .pending_skill_paths
+                                    .extend(requested_skill_paths.clone());
+                            }
+                            (in_flight.receiver.clone(), Some(waiter), false)
+                        }
+                        None => (in_flight.receiver.clone(), None, true),
                     }
-                    in_flight.receiver.clone()
                 } else {
-                    let (batch_id, sender, receiver) = register_detection_batch(
+                    let (batch_id, sender, receiver, waiter) = register_detection_batch(
                         &mut state,
                         &operation_key,
                         &request,
                         requested_skill_paths.clone(),
                     );
-                    spawned = Some((batch_id, sender));
-                    receiver
+                    spawned = Some((batch_id, sender, waiter.cancellation()));
+                    (receiver, Some(waiter), false)
                 }
             };
 
-            if let Some((batch_id, sender)) = spawned {
+            if let Some((batch_id, sender, detection_cancellation)) = spawned {
                 let inner = self.inner.clone();
                 let detection_request = request.clone();
                 let detection_operation_key = operation_key.clone();
@@ -1207,6 +1267,7 @@ impl SourceEvidenceCoordinator {
                         detection_operation_key,
                         batch_id,
                         sender,
+                        detection_cancellation,
                     )
                     .await;
                 });
@@ -1214,6 +1275,9 @@ impl SourceEvidenceCoordinator {
 
             loop {
                 if let Some(completion) = receiver.borrow().clone() {
+                    if awaiting_abandoned_batch {
+                        break;
+                    }
                     completion?;
                     let now = (self.inner.now)();
                     let state = state(&self.inner)?;
@@ -1256,15 +1320,21 @@ fn register_detection_batch(
     u64,
     watch::Sender<Option<DetectionCompletion>>,
     watch::Receiver<Option<DetectionCompletion>>,
+    DetectionWaiter,
 ) {
     let batch_id = state.next_batch_id;
     state.next_batch_id = state.next_batch_id.wrapping_add(1);
     let (sender, receiver) = watch::channel(None);
+    let waiters = DetectionWaiters::new();
+    let waiter = waiters
+        .register()
+        .expect("a new detection batch accepts its first waiter");
     state.in_flight.insert(
         operation_key.clone(),
         InFlightDetection {
             batch_id,
             receiver: receiver.clone(),
+            waiters,
             collecting_skill_paths: requested_skill_paths,
             running_skill_paths: None,
             pending_skill_paths: BTreeSet::new(),
@@ -1272,7 +1342,7 @@ fn register_detection_batch(
             acquisition_transport_identity: request.acquisition_transport_identity.clone(),
         },
     );
-    (batch_id, sender, receiver)
+    (batch_id, sender, receiver, waiter)
 }
 
 fn evidence_covers_requested_paths(
@@ -1295,11 +1365,19 @@ async fn run_detection(
     operation_key: EnvironmentEvidenceKey,
     batch_id: u64,
     sender: watch::Sender<Option<DetectionCompletion>>,
+    cancellation: CancellationSignal,
 ) {
     let key = request.key.clone();
     let throttle_key = EnvironmentThrottleKey::new(&request.environment, &request.throttle_key);
     let acquisition_transport_identity = request.acquisition_transport_identity.clone();
-    let completion = match inner.detector_permits.clone().acquire_owned().await {
+    let permit = tokio::select! {
+        permit = inner.detector_permits.clone().acquire_owned() => permit,
+        () = cancellation.cancelled() => {
+            let _ = sender.send(Some(Err(AppError::MutationCancelled)));
+            return;
+        }
+    };
+    let completion = match permit {
         Ok(_permit) => match seal_detection_batch(&inner, &key, &operation_key, batch_id) {
             Ok(Some((requested_skill_paths, previous))) => {
                 let outcome =
@@ -1323,7 +1401,7 @@ async fn run_detection(
                                         .acquisition_transport_identity,
                                 },
                                 previous,
-                                CancellationSignal::default(),
+                                cancellation,
                             )
                             .await
                     };
@@ -1498,6 +1576,8 @@ fn finish_detection(
                 record_failure(&mut state, throttle_key, operation_key, checked_at, failure);
                 discard_pending_paths(&mut state, operation_key);
             }
+            Err(error @ AppError::MutationCancelled)
+            | Err(error @ AppError::WellKnownScopeNotFound { .. }) => return Err(error),
             Err(error) => {
                 record_failure(
                     &mut state,
@@ -1815,6 +1895,16 @@ mod tests {
             Self {
                 delay,
                 ..Self::new([outcome])
+            }
+        }
+
+        fn failing(error: AppError) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                active: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                delay: Duration::ZERO,
+                outcomes: Mutex::new(VecDeque::from([Err(error)])),
             }
         }
 
@@ -3400,6 +3490,130 @@ mod tests {
         assert_eq!(detector.calls(), 1);
     }
 
+    #[tokio::test]
+    async fn cancelling_the_last_waiter_cancels_shared_detection() {
+        let (detector, mut started) = ControlledBatchDetector::new(BTreeSet::new());
+        let coordinator = Arc::new(coordinator(
+            detector.clone(),
+            Arc::new(AtomicU64::new(1_000)),
+        ));
+        let cancellation = CancellationSignal::default();
+        let waiter = {
+            let coordinator = coordinator.clone();
+            let cancellation = cancellation.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .check(
+                        request("acme/tools", EvidenceCheckMode::Force),
+                        cancellation,
+                    )
+                    .await
+            })
+        };
+        started.recv().await.expect("shared detection started");
+
+        cancellation.cancel();
+        assert!(matches!(
+            waiter.await.unwrap(),
+            Err(crate::error::AppError::MutationCancelled)
+        ));
+        let observed = tokio::time::timeout(Duration::from_millis(50), async {
+            while detector.cancelled() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        detector.release_one();
+        assert!(
+            observed.is_ok(),
+            "shared detector did not receive cancellation"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_waiter_restarts_after_an_abandoned_detection_finishes() {
+        let (detector, mut started) = ControlledBatchDetector::new(BTreeSet::new());
+        let coordinator = Arc::new(coordinator(
+            detector.clone(),
+            Arc::new(AtomicU64::new(1_000)),
+        ));
+        let cancellation = CancellationSignal::default();
+        let abandoned = {
+            let coordinator = coordinator.clone();
+            let cancellation = cancellation.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .check(
+                        request("acme/tools", EvidenceCheckMode::Force),
+                        cancellation,
+                    )
+                    .await
+            })
+        };
+        started.recv().await.expect("first detection started");
+        cancellation.cancel();
+        assert!(matches!(
+            abandoned.await.unwrap(),
+            Err(crate::error::AppError::MutationCancelled)
+        ));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while detector.cancelled() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detector observed cancellation");
+
+        let retry = {
+            let coordinator = coordinator.clone();
+            tokio::spawn(async move {
+                coordinator
+                    .check(
+                        request("acme/tools", EvidenceCheckMode::Force),
+                        CancellationSignal::default(),
+                    )
+                    .await
+            })
+        };
+        detector.release_one();
+        let (call, _) = tokio::time::timeout(Duration::from_millis(100), started.recv())
+            .await
+            .expect("replacement detection did not start")
+            .expect("replacement detection started");
+        assert_eq!(call, 1);
+        detector.release_one();
+        assert!(retry.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancellation_and_scope_errors_are_not_persisted_as_source_failures() {
+        for error in [
+            AppError::MutationCancelled,
+            AppError::WellKnownScopeNotFound {
+                scope_path: "/team".to_string(),
+                root_url: "https://example.com".to_string(),
+            },
+        ] {
+            let detector = Arc::new(ScriptedDetector::failing(error));
+            let coordinator = coordinator(detector, Arc::new(AtomicU64::new(1_000)));
+            let result = coordinator
+                .check(
+                    request("acme/tools", EvidenceCheckMode::Force),
+                    CancellationSignal::default(),
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(AppError::MutationCancelled | AppError::WellKnownScopeNotFound { .. })
+            ));
+            let state = coordinator.inner.state.lock().unwrap();
+            assert!(state.attempts.is_empty());
+            assert!(state.network_backoff.is_empty());
+            assert!(state.provider_cooldowns.is_empty());
+        }
+    }
+
     async fn assert_pending<F>(mut future: Pin<&mut F>)
     where
         F: Future,
@@ -3413,6 +3627,7 @@ mod tests {
 
     struct ControlledBatchDetector {
         calls: AtomicUsize,
+        cancelled: AtomicUsize,
         started: tokio::sync::mpsc::UnboundedSender<(usize, BTreeSet<String>)>,
         release: Arc<tokio::sync::Semaphore>,
         failed_calls: BTreeSet<usize>,
@@ -3430,6 +3645,7 @@ mod tests {
             (
                 Arc::new(Self {
                     calls: AtomicUsize::new(0),
+                    cancelled: AtomicUsize::new(0),
                     started,
                     release: Arc::new(tokio::sync::Semaphore::new(0)),
                     failed_calls,
@@ -3450,6 +3666,10 @@ mod tests {
         fn calls(&self) -> usize {
             self.calls.load(Ordering::SeqCst)
         }
+
+        fn cancelled(&self) -> usize {
+            self.cancelled.load(Ordering::SeqCst)
+        }
     }
 
     impl SourceEvidenceDetector for ControlledBatchDetector {
@@ -3457,7 +3677,7 @@ mod tests {
             &'a self,
             request: EvidenceDetectionRequest,
             _previous: Option<RemoteEvidenceEntry>,
-            _cancellation: CancellationSignal,
+            cancellation: CancellationSignal,
         ) -> EvidenceFuture<'a> {
             Box::pin(async move {
                 let call = self.calls.fetch_add(1, Ordering::SeqCst);
@@ -3465,11 +3685,18 @@ mod tests {
                 self.started
                     .send((call, paths.clone()))
                     .expect("controlled detector receiver");
-                let permit = self
-                    .release
-                    .acquire()
-                    .await
-                    .expect("controlled detector release");
+                let permit = tokio::select! {
+                    permit = self.release.acquire() => {
+                        permit.expect("controlled detector release")
+                    }
+                    () = cancellation.cancelled() => {
+                        self.cancelled.fetch_add(1, Ordering::SeqCst);
+                        let permit = self.release.acquire().await
+                            .expect("controlled cancellation release");
+                        permit.forget();
+                        return Err(crate::error::AppError::MutationCancelled);
+                    }
+                };
                 permit.forget();
                 if self.failed_calls.contains(&call) {
                     return Ok(EvidenceDetectionOutcome::Failed(EvidenceDetectionFailure {

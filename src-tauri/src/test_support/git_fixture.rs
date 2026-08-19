@@ -176,10 +176,17 @@ pub(crate) struct CountingGitTransport {
 
 impl CountingGitTransport {
     pub(crate) fn for_repo(repo: &BareSkillRepo) -> Self {
+        Self::for_repo_with_public_source(repo, repo.source())
+    }
+
+    pub(crate) fn for_repo_with_public_source(
+        repo: &BareSkillRepo,
+        public_source: impl Into<String>,
+    ) -> Self {
         Self {
             process: ProcessGitTransport::preserving_existing_config(),
             clone_count: AtomicUsize::new(0),
-            public_source: Some(repo.source()),
+            public_source: Some(public_source.into()),
             local_source: Some(repo.local_source()),
         }
     }
