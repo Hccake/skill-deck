@@ -7,6 +7,7 @@
 //!
 //! 与 CLI skills.ts 行为一致
 
+use crate::core::builtin_agent_catalog::cli_project_discovery_dirs;
 use crate::core::plugin_manifest::{
     get_relative_plugin_groupings, get_relative_plugin_search_dirs,
 };
@@ -26,37 +27,6 @@ const MAX_DEPTH: usize = 5;
 
 /// 已知 Skill 容器的默认搜索深度（与 CLI 一致）
 const DEFAULT_SKILL_CONTAINER_DEPTH: usize = 3;
-
-const CLI_AGENT_PROJECT_SKILL_DIRS: &[&str] = &[
-    ".agents/skills",
-    ".claude/skills",
-    ".cline/skills",
-    ".codebuddy/skills",
-    ".codex/skills",
-    ".commandcode/skills",
-    ".continue/skills",
-    ".github/skills",
-    ".goose/skills",
-    ".grok/skills",
-    ".iflow/skills",
-    ".junie/skills",
-    ".kimchi/skills",
-    ".kilocode/skills",
-    ".kiro/skills",
-    ".minimax/skills",
-    ".mux/skills",
-    ".neovate/skills",
-    ".opencode/skills",
-    ".openhands/skills",
-    ".pi/skills",
-    ".posit/assistant/skills",
-    ".qoder/skills",
-    ".roo/skills",
-    ".trae/skills",
-    ".windsurf/skills",
-    ".zcode/skills",
-    ".zencoder/skills",
-];
 
 /// 发现选项
 #[derive(Debug, Default)]
@@ -328,7 +298,7 @@ fn get_priority_search_dir_specs(search_path: &Path) -> Vec<PrioritySearchDir> {
     ];
 
     dirs.extend(
-        CLI_AGENT_PROJECT_SKILL_DIRS
+        cli_project_discovery_dirs()
             .iter()
             .map(|dir| PrioritySearchDir {
                 path: search_path.join(dir),
@@ -547,7 +517,7 @@ fn is_locked_project_skill(
 }
 
 fn is_in_cli_agent_project_skill_dir(relative_path: &Path) -> bool {
-    CLI_AGENT_PROJECT_SKILL_DIRS
+    cli_project_discovery_dirs()
         .iter()
         .any(|agent_dir| relative_path.starts_with(agent_dir))
 }

@@ -1,5 +1,5 @@
 // 路径工具函数
-// 对应 CLI: agents.ts 顶层常量 (home, configHome, codexHome, claudeHome)
+// 对应 CLI: agents.ts 顶层常量 (home, configHome)
 
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
@@ -18,14 +18,6 @@ pub struct PathContext {
     /// XDG 配置目录
     /// 对应 CLI: const configHome = xdgConfig ?? join(home, '.config');
     pub config_home: PathBuf,
-
-    /// Codex 主目录
-    /// 对应 CLI: const codexHome = process.env.CODEX_HOME?.trim() || join(home, '.codex');
-    pub codex_home: PathBuf,
-
-    /// Claude 配置目录
-    /// 对应 CLI: const claudeHome = process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude');
-    pub claude_home: PathBuf,
 }
 
 impl PathContext {
@@ -45,24 +37,7 @@ impl PathContext {
             home.join(".config")
         };
 
-        let codex_home = std::env::var("CODEX_HOME")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".codex"));
-
-        let claude_home = std::env::var("CLAUDE_CONFIG_DIR")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".claude"));
-
-        Self {
-            home,
-            config_home,
-            codex_home,
-            claude_home,
-        }
+        Self { home, config_home }
     }
 }
 

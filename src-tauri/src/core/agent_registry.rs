@@ -8,7 +8,7 @@ use super::agent_settings::{
     ActiveCustomAgent, AgentSettingsRecords, CustomAgentRecord, DisabledAgentConflict,
     InvalidCustomAgentRecord,
 };
-use super::builtin_agent_definitions::builtin_agent_definitions;
+use super::builtin_agent_catalog::builtin_agent_definitions;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -39,10 +39,7 @@ impl AgentRegistry {
         Self::build(builtin_agent_definitions(), custom_records)
     }
 
-    /// Builds a path-independent fallback when agent storage cannot be located.
-    ///
-    /// Built-in definitions still depend on the legacy `PATHS` singleton. Once
-    /// that dependency is removed, this fallback can safely expose Built-ins.
+    /// Builds the current empty fallback when agent storage cannot be located.
     pub fn empty_unavailable() -> Self {
         Self::build(Vec::new(), Vec::new())
     }

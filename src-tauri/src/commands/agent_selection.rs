@@ -12,8 +12,8 @@ use crate::application::agent_selection_history;
 use crate::application::install_planner::InstallPlanningFactSource;
 use crate::application::runtime_admission::{MutationPermit, RuntimeAdmissionCoordinator};
 use crate::application::workflow_planner::AgentEntryPlan;
-use crate::core::agent_definition::{AgentId, AgentSource};
-use crate::core::agents::AgentType;
+use crate::core::agent_definition::AgentId;
+use crate::core::builtin_agent_catalog::is_cli_history_agent;
 use crate::environment::agent_environment::AgentRuntimeSnapshot;
 use crate::environment::agent_environment::DetectionState;
 use crate::environment::types::SkillLocationRef;
@@ -231,14 +231,6 @@ where
         .map(|_| AgentSelectionHistoryWarning::WriteFailed)
 }
 
-fn is_cli_history_agent(agent_id: &AgentId, source: AgentSource) -> bool {
-    source == AgentSource::Builtin
-        && agent_id
-            .as_str()
-            .parse::<AgentType>()
-            .is_ok_and(|agent| agent != AgentType::Eve)
-}
-
 fn initial_agent_ids(
     agents: &[crate::application::agent_selection::AgentSelectionAgent],
     intent: &AgentSelectionIntent,
@@ -291,7 +283,7 @@ mod tests {
         AgentEntryContent, AgentEntryPlan, LogicalAgentEntryRoot,
     };
     use crate::core::agent_definition::{AgentDefinition, AgentId, AgentSource};
-    use crate::core::builtin_agent_definitions::builtin_agent_definitions;
+    use crate::core::builtin_agent_catalog::builtin_agent_definitions;
     use crate::environment::agent_environment::{ResolvedAgent, ResolvedAgentScope};
     use crate::environment::types::{
         EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation,

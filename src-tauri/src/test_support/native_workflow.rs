@@ -49,7 +49,7 @@ use crate::core::agent_definition::{
 };
 use crate::core::agent_registry::{AgentRegistry, AgentRegistrySnapshot};
 use crate::core::agent_settings::CustomAgentRecord;
-use crate::core::builtin_agent_definitions::builtin_agent_definitions;
+use crate::core::builtin_agent_catalog::builtin_agent_definitions;
 use crate::core::mutation::CancellationSignal;
 use crate::core::skill_payload::{
     build_skill_payload, compute_cli_project_hash_from_payload, PayloadId, SkillPayload,

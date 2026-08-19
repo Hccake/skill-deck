@@ -711,7 +711,6 @@ mod tests {
         ScopeDefinition,
     };
     use crate::core::agent_registry::AgentRegistry;
-    use crate::core::agents::AgentType;
     use crate::environment::agent_environment::{
         AgentEnvironmentResolver, AgentRuntimeSnapshot, DetectionState, DirectoryPresenceState,
         EnvironmentContext, ResolvedAgent, ResolvedAgentScope,
@@ -1042,17 +1041,10 @@ Content.
         let project = tempdir().unwrap();
         let cwd = project.path().to_string_lossy().to_string();
 
-        let detected = AgentType::detect_installed();
-        let undetected_agent = AgentType::all()
-            .find(|agent| {
-                !detected.contains(agent) && agent.config().skills_dir != ".agents/skills"
-            })
-            .expect("expected at least one undetected agent with a separate skill directory");
+        let undetected_id = AgentId::parse("aider-desk").unwrap();
+        let private_skills_dir = ".aider-desk/skills";
 
-        let agent_dir = project
-            .path()
-            .join(undetected_agent.config().skills_dir)
-            .join("ghost-skill");
+        let agent_dir = project.path().join(private_skills_dir).join("ghost-skill");
         fs::create_dir_all(&agent_dir).unwrap();
         fs::write(
             agent_dir.join("SKILL.md"),
@@ -1061,7 +1053,6 @@ Content.
         .unwrap();
 
         let mut runtime = builtin_runtime(&cwd);
-        let undetected_id = AgentId::parse(undetected_agent.to_string()).unwrap();
         runtime.agents.get_mut(&undetected_id).unwrap().detection = DetectionState::NotDetected;
         let skills =
             list_installed_skills(Some(InstalledSkillLocation::Project), &cwd, &runtime).unwrap();
@@ -1085,17 +1076,10 @@ Content.
         let project = tempdir().unwrap();
         let cwd = project.path().to_string_lossy().to_string();
 
-        let detected = AgentType::detect_installed();
-        let undetected_agent = AgentType::all()
-            .find(|agent| {
-                !detected.contains(agent) && agent.config().skills_dir != ".agents/skills"
-            })
-            .expect("expected at least one undetected agent with a separate skill directory");
+        let undetected_id = AgentId::parse("aider-desk").unwrap();
+        let private_skills_dir = ".aider-desk/skills";
 
-        let agent_dir = project
-            .path()
-            .join(undetected_agent.config().skills_dir)
-            .join("ghost-skill");
+        let agent_dir = project.path().join(private_skills_dir).join("ghost-skill");
         fs::create_dir_all(&agent_dir).unwrap();
         fs::write(
             agent_dir.join("SKILL.md"),
@@ -1103,7 +1087,6 @@ Content.
         )
         .unwrap();
 
-        let undetected_id = AgentId::parse(undetected_agent.to_string()).unwrap();
         let mut runtime = builtin_runtime(&cwd);
         runtime.agents.get_mut(&undetected_id).unwrap().detection = DetectionState::NotDetected;
         let mut skill = InstalledSkill {
@@ -1152,11 +1135,8 @@ Content.
         let project = tempdir().unwrap();
         let cwd = project.path().to_string_lossy().to_string();
 
-        let agent = AgentType::ClaudeCode;
-        let agent_dir = project
-            .path()
-            .join(agent.config().skills_dir)
-            .join("custom-folder");
+        let agent_id = AgentId::parse("claude-code").unwrap();
+        let agent_dir = project.path().join(".claude/skills").join("custom-folder");
         fs::create_dir_all(&agent_dir).unwrap();
         fs::write(
             agent_dir.join("SKILL.md"),
@@ -1173,9 +1153,7 @@ Content.
             .expect("legacy skill should be visible via frontmatter fallback");
 
         assert!(
-            skill
-                .agents
-                .contains(&AgentId::parse(agent.to_string()).unwrap()),
+            skill.agents.contains(&agent_id),
             "presence summary should preserve agents found by frontmatter fallback"
         );
         assert!(skill.private_adapted_agent_count.unwrap_or_default() > 0);

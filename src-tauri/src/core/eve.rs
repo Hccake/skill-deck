@@ -1,5 +1,4 @@
-use crate::core::agent_definition::AgentId;
-use crate::core::agents::AgentType;
+use crate::core::builtin_agent_catalog::eve_agent_id;
 use crate::core::skill::sanitize_name;
 use crate::core::skill_payload::{
     verify_skill_payload_integrity, PayloadEntry, PayloadEntryKind, SkillPayload,
@@ -128,8 +127,7 @@ pub fn eve_install_targets(
 
     let mut targets = vec![InstallTargetInfo {
         target_id: eve_target_id(None),
-        agent: AgentId::parse(AgentType::Eve.to_string())
-            .expect("built-in Eve Agent ID must be valid"),
+        agent: eve_agent_id(),
         display_name: eve_target_label(None),
         subagent: None,
         path: eve_skills_dir_for_target(project_path, None)
@@ -141,8 +139,7 @@ pub fn eve_install_targets(
         let subagent = lock_subagent_value(Some(&subagent));
         InstallTargetInfo {
             target_id: eve_target_id(Some(&subagent)),
-            agent: AgentId::parse(AgentType::Eve.to_string())
-                .expect("built-in Eve Agent ID must be valid"),
+            agent: eve_agent_id(),
             display_name: eve_target_label(Some(&subagent)),
             path: eve_skills_dir_for_target(project_path, Some(&subagent))
                 .to_string_lossy()
