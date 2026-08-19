@@ -13,10 +13,10 @@ Skill Deck 固定一个 `skills` CLI 版本作为兼容参考，以此确认两�
 | 项目 | 当前值 |
 |---|---|
 | 参考仓库 | `vercel-labs/skills` |
-| package 版本 | `1.5.22` |
-| Git tag | `v1.5.22` |
-| Git 提交 | `a4d243c3d4f86cdf9385dd1b6a0733f6937e70b5` |
-| 开发依赖 | `skills: 1.5.22` |
+| package 版本 | `1.5.23` |
+| Git tag | `v1.5.23` |
+| Git 提交 | `435076e78988e1e6ec40d00b0b1d76bdbbc5419a` |
+| 开发依赖 | `skills: 1.5.23` |
 
 仓库通过精确固定的开发依赖运行兼容测试，桌面应用不会加载这个依赖。Eve 项目可以把 Skill 安装到根 Agent 或具名子 Agent；当前测试会调用实际 CLI，检查版本，并在离线临时项目中覆盖这两类位置、同时选择多个位置、只选择其他 Agent，以及从本机 Git 来源更新后重新安装。
 
@@ -142,6 +142,7 @@ Skill Deck 修改全局或项目 lock 时，只替换本次操作负责的根字
 
 - 在解析 Git URL 时先提取 `#ref`，并按相同顺序处理 Skill 筛选条件和 `ref`；
 - SSH 和私有 Git 输入保留认证所需的原始写法；
+- scoped Well-known 地址只读取对应 scope 的 catalog；精确选择命名的 internal Skill 时只放行这些名称，wildcard 仍只选择公开 Skill；
 - `skillPath` 能够精确定位来源中的原 Skill，并保留磁盘实际大小写；
 - 根目录、优先目录、plugin manifest 和递归查找使用兼容的发现顺序；
 - 项目 lock 筛选、父目录遮蔽、同名去重和结果排序在应用所在系统与 WSL 中保持一致；

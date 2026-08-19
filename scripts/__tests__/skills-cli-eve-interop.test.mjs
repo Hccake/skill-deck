@@ -134,7 +134,7 @@ test("uses the pinned Vercel Skills CLI", () => {
     env: cliEnvironment(join(repoRoot, ".tmp-skills-cli-home")),
   });
 
-  assert.equal(result.stdout.trim(), "1.5.22");
+  assert.equal(result.stdout.trim(), "1.5.23");
 });
 
 test("installs Eve root placement without writing redundant metadata", async (t) => {

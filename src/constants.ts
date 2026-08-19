@@ -1,1 +1,1 @@
-export const COMPATIBLE_CLI_VERSION = "1.5.22";
+export const COMPATIBLE_CLI_VERSION = "1.5.23";

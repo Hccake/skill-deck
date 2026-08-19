@@ -73,6 +73,6 @@ describe('AboutTab updater actions', () => {
   it('shows the third-party skills CLI reference version', () => {
     render(<AboutTab />);
 
-    expect(screen.getByText(/settings\.links\.cliReferenceVersion v1\.5\.22/)).toBeTruthy();
+    expect(screen.getByText(/settings\.links\.cliReferenceVersion v1\.5\.23/)).toBeTruthy();
   });
 });

@@ -38,8 +38,8 @@
 ## ✨ Core capabilities
 
 - **Discover and install** — Browse available Skills, review their sources, documentation, and security information, or install from GitHub, Git, local directories, Well-known URLs, raw `SKILL.md` files, and ZIP/tar archives
-- **Browse and maintain** — Read installed Skill content, check and apply updates, and select a new source when the saved source no longer works
-- **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects; built-in definitions include Grok Build, Kimchi, MiniMax Code, and ZCode
+- **Browse and maintain** — Read installed Skill content, check and apply updates, and select a new source when the saved source no longer works; private GitHub sources can reuse local Git credentials for update checks
+- **Projects and agents** — View global and project Skills together, filter by agent, manage which agents can read a Skill, and copy Project Skills to other projects; use built-in agent definitions or add your own
 - **Cross-platform management** — Manage Skills on Windows, macOS, and Linux; Windows users can also switch to installed WSL distributions
 
 ---

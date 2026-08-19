@@ -15,6 +15,9 @@
 ### Changed
 
 - **改进 Skill 集合的发现与选择** — 常见 Skill 容器目录支持更深的分类层级；`skills.sh` Pack 默认选中其中全部 Skill，并继续允许用户在安装前调整选择。
+- **收紧 Well-known scoped 来源边界** — 带页面路径的地址只读取对应 scope 的 catalog；scope 不存在时给出明确错误，不再静默使用根 catalog 或直接下载页面内容。
+- **完善 internal Skill 选择** — 用户精确指定名称时可以安装对应 internal Skill，wildcard 和普通浏览仍只展示公开 Skill。
+- **完善私有 GitHub 更新检查** — Trees API 无法确认私有仓库或证据不完整时，Native Environment 会复用本机 Git 凭据获取版本信息；限流和普通网络错误继续遵守原有等待策略。
 
 ## [1.7.0] - 2026-08-13
 

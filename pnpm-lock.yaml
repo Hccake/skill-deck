@@ -184,8 +184,8 @@ importers:
         specifier: ^3.8.4
         version: 3.8.4(@types/node@24.10.12)(typescript@5.9.3)
       skills:
-        specifier: 1.5.22
-        version: 1.5.22
+        specifier: 1.5.23
+        version: 1.5.23
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -3539,8 +3539,8 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
-  skills@1.5.22:
-    resolution: {integrity: sha512-cHiLjwZEawWFvudIqeeMZlvZayTLbRouydMbblyrdiyH7ZLbqUrSrEEr+Tg+X265iztRlVMsyOYRwpD5JxBsvg==}
+  skills@1.5.23:
+    resolution: {integrity: sha512-+hMNBSi35yfX0sKD+ZcRm9y5or7u313OdkcvrRvJAsAzGCaA8wRTu2OmVdN0KRbk9ybqKby5dijkn6OVvNTUmw==}
     engines: {node: '>=22.20.0'}
     hasBin: true
 
@@ -7579,7 +7579,7 @@ snapshots:
 
   sisteransi@1.0.5: {}
 
-  skills@1.5.22:
+  skills@1.5.23:
     dependencies:
       tar: 7.5.22
       yaml: 2.9.0
