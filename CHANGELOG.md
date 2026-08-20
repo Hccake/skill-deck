@@ -7,17 +7,27 @@
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-08-20
+
 ### Added
 
 - **新增直接下载来源** — 可以从原始 `SKILL.md` 文件和 ZIP、tar、tar.gz 归档地址安装 Skill，并在跨主机重定向时确认最终下载主机。
+- **支持 Well-known 来源更新检查** — 通过 Well-known 来源安装的 Skill 可以比较版本、重新安装，并在上游移除时显示对应状态。
+- **支持指定 internal Skill** — 明确输入 Skill 名称时，可以安装来源中同名的 internal Skill；浏览与批量选择仍只展示公开 Skill。
+- **支持使用本机 Git 凭据检查私有 GitHub 来源** — 检查私有 GitHub 来源时，可以复用本机已有的 Git 凭据获取版本信息。
 - **扩展 Agent 支持** — 随应用提供 Grok Build、Kimchi、MiniMax Code、ZCode 和 Posit Assistant 的 Skill 读取位置与检测信息。
 
 ### Changed
 
 - **改进 Skill 集合的发现与选择** — 常见 Skill 容器目录支持更深的分类层级；`skills.sh` Pack 默认选中其中全部 Skill，并继续允许用户在安装前调整选择。
-- **收紧 Well-known scoped 来源边界** — 带页面路径的地址只读取对应 scope 的 catalog；scope 不存在时给出明确错误，不再静默使用根 catalog 或直接下载页面内容。
-- **完善 internal Skill 选择** — 用户精确指定名称时可以安装对应 internal Skill，wildcard 和普通浏览仍只展示公开 Skill。
-- **完善私有 GitHub 更新检查** — Trees API 无法确认私有仓库或证据不完整时，Native Environment 会复用本机 Git 凭据获取版本信息；限流和普通网络错误继续遵守原有等待策略。
+- **调整 Agent 安装初始选择** — 安装向导结合入口信息、检测结果和当前 Environment 最近确认的选择生成初始状态；用户仍可在每次安装时调整 Agent。
+- **提高项目 Local 来源的可移植性** — 项目整体移动后，使用相对位置记录的 Local 来源仍可定位到原有内容。
+
+### Fixed
+
+- **修正 Well-known scoped 来源解析** — 带页面路径的地址只读取对应 scope；scope 不存在时会显示明确错误，不再改用根目录来源或直接下载页面内容。
+- **修正 WSL 全部更新失败** — 在 WSL 中执行全部更新时，不再因不存在的 Agent 专用目录而无法生成更新预览。
+- **修正 Vercel Skill 来源别名** — 旧的 `vercel-labs/vercel-skills` 来源会解析到当前的 `vercel-labs/agent-skills` 仓库。
 
 ## [1.7.0] - 2026-08-13
 
