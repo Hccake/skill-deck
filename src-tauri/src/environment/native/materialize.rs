@@ -29,6 +29,10 @@ use crate::models::InstallMode;
 
 pub struct NativePreparedEntrySet {
     entries: NativeEntrySet,
+    recovery: Option<NativePreparedRecovery>,
+}
+
+struct NativePreparedRecovery {
     recovery_store: Arc<dyn RecoveryMarkerStore>,
     recovery_marker: Mutex<RecoveryMarker>,
     recovery_ref: RecoveryMarkerRef,
@@ -83,9 +87,9 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
         Box::pin(async move {
             let mut loaded = BTreeMap::new();
             for entry in unit
-                .canonical_entry
+                .primary_entry
                 .iter()
-                .chain(unit.required_agent_entries.iter())
+                .chain(unit.additional_entries.iter())
             {
                 let PreparedEntryAction::Replace {
                     payload_id,
@@ -119,38 +123,42 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
             let entries = tokio::task::spawn_blocking(move || stage_entry_set(&intents))
                 .await
                 .map_err(native_task_error)??;
-            let marker = native_recovery_marker(
-                &self.operation_id,
-                &unit.id,
-                RecoverySubject {
-                    operation_kind: self.operation_kind,
-                    skill_name: unit.skill_name.clone(),
-                    context: unit.target.clone(),
-                },
-                &entries,
-                now_epoch_ms(),
-            )?;
-            let recovery_ref = match self.recovery_store.create(&marker).await {
-                Ok(marker_ref) => marker_ref,
-                Err(error) => {
-                    let cleanup = cleanup_entry_set(entries)?;
-                    if cleanup.is_empty() {
-                        return Err(error);
+            let recovery = if planned_recovery_paths(&entries).is_empty() {
+                None
+            } else {
+                let marker = native_recovery_marker(
+                    &self.operation_id,
+                    &unit.id,
+                    RecoverySubject {
+                        operation_kind: self.operation_kind,
+                        skill_name: unit.skill_name.clone(),
+                        context: unit.target.clone(),
+                    },
+                    &entries,
+                    now_epoch_ms(),
+                )?;
+                let recovery_ref = match self.recovery_store.create(&marker).await {
+                    Ok(marker_ref) => marker_ref,
+                    Err(error) => {
+                        let cleanup = cleanup_entry_set(entries)?;
+                        if cleanup.is_empty() {
+                            return Err(error);
+                        }
+                        return Err(AppError::ExecutionFailed {
+                            message: format!(
+                                "{error}; native staging cleanup failed: {}",
+                                cleanup.join("; ")
+                            ),
+                        });
                     }
-                    return Err(AppError::ExecutionFailed {
-                        message: format!(
-                            "{error}; native staging cleanup failed: {}",
-                            cleanup.join("; ")
-                        ),
-                    });
-                }
+                };
+                Some(NativePreparedRecovery {
+                    recovery_store: Arc::clone(&self.recovery_store),
+                    recovery_marker: Mutex::new(marker),
+                    recovery_ref,
+                })
             };
-            Ok(NativePreparedEntrySet {
-                entries,
-                recovery_store: Arc::clone(&self.recovery_store),
-                recovery_marker: Mutex::new(marker),
-                recovery_ref,
-            })
+            Ok(NativePreparedEntrySet { entries, recovery })
         })
     }
 
@@ -221,7 +229,12 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
                 .await?;
             let warnings = cleanup_entry_set(staged.entries)?;
             if warnings.is_empty() {
-                staged.recovery_store.remove(&staged.recovery_ref).await?;
+                if let Some(recovery) = &staged.recovery {
+                    recovery
+                        .recovery_store
+                        .remove(&recovery.recovery_ref)
+                        .await?;
+                }
                 return Ok(Vec::new());
             }
             let mut result = warnings
@@ -232,11 +245,13 @@ impl PreparedEntryExecutor for NativePreparedEntryExecutor {
                     technical_details: Some(details),
                 })
                 .collect::<Vec<_>>();
-            result.push(MutationWarning {
-                code: MutationWarningCode::CleanupMarkerRetained,
-                parameters: BTreeMap::new(),
-                technical_details: None,
-            });
+            if staged.recovery.is_some() {
+                result.push(MutationWarning {
+                    code: MutationWarningCode::CleanupMarkerRetained,
+                    parameters: BTreeMap::new(),
+                    technical_details: None,
+                });
+            }
             Ok(result)
         })
     }
@@ -254,7 +269,10 @@ impl NativePreparedEntrySet {
         kind: RecoveryMarkerKind,
         phase: Option<RecoveryEntryPhase>,
     ) -> Result<(), AppError> {
-        let mut updated = self
+        let Some(recovery) = &self.recovery else {
+            return Ok(());
+        };
+        let mut updated = recovery
             .recovery_marker
             .lock()
             .map_err(|_| AppError::Io {
@@ -267,16 +285,20 @@ impl NativePreparedEntrySet {
                 entry.phase = phase;
             }
         }
-        self.recovery_store
-            .update(&self.recovery_ref, &updated)
+        recovery
+            .recovery_store
+            .update(&recovery.recovery_ref, &updated)
             .await?;
-        *self.recovery_marker.lock().map_err(|_| AppError::Io {
+        *recovery.recovery_marker.lock().map_err(|_| AppError::Io {
             message: "native recovery marker state is unavailable".to_string(),
         })? = updated;
         Ok(())
     }
 
     async fn recovery_required(&self, message: String) -> Result<(), AppError> {
+        let Some(recovery) = &self.recovery else {
+            return Err(AppError::RestoreFailed { message });
+        };
         match self
             .update_recovery(
                 RecoveryMarkerKind::RecoveryRequired,
@@ -285,7 +307,7 @@ impl NativePreparedEntrySet {
             .await
         {
             Ok(()) => Err(AppError::RecoveryRequired {
-                recovery_resource_id: self.recovery_ref.resource_id.clone(),
+                recovery_resource_id: recovery.recovery_ref.resource_id.clone(),
                 message,
             }),
             Err(error) => Err(AppError::RestoreFailed {
@@ -364,7 +386,7 @@ pub fn prepare_native_mutations(
         return Err(AppError::StaleEnvironment);
     }
     let canonical_path = unit
-        .canonical_entry
+        .primary_entry
         .as_ref()
         .map(|entry| PathBuf::from(&entry.destination.native_path));
     let expected = unit
@@ -373,19 +395,19 @@ pub fn prepare_native_mutations(
         .map(|entry| (&entry.key, entry))
         .collect::<BTreeMap<_, _>>();
     let all_remove = unit
-        .canonical_entry
+        .primary_entry
         .iter()
-        .chain(unit.required_agent_entries.iter())
+        .chain(unit.additional_entries.iter())
         .all(|entry| entry.action == PreparedEntryAction::Remove);
     let entries = if all_remove {
-        unit.required_agent_entries
+        unit.additional_entries
             .iter()
-            .chain(unit.canonical_entry.iter())
+            .chain(unit.primary_entry.iter())
             .collect::<Vec<_>>()
     } else {
-        unit.canonical_entry
+        unit.primary_entry
             .iter()
-            .chain(unit.required_agent_entries.iter())
+            .chain(unit.additional_entries.iter())
             .collect::<Vec<_>>()
     };
     let mut intents = Vec::new();
@@ -418,6 +440,18 @@ pub fn prepare_native_mutations(
                     field: Some("canonicalEntry".to_string()),
                     message: "Native symlink entry requires a canonical entry".to_string(),
                 })?;
+                if target == Path::new(&entry.destination.native_path) {
+                    return Err(AppError::SelfCopy);
+                }
+                NativeEntryAction::Symlink { target }
+            }
+            PreparedEntryAction::Link { target } => {
+                if target.environment != EnvironmentRef::Native
+                    || !Path::new(&target.native_path).is_absolute()
+                {
+                    return Err(AppError::StaleEnvironment);
+                }
+                let target = PathBuf::from(&target.native_path);
                 if target == Path::new(&entry.destination.native_path) {
                     return Err(AppError::SelfCopy);
                 }
@@ -524,7 +558,38 @@ mod tests {
     }
 
     #[test]
-    fn remove_unit_stages_agent_entry_before_canonical_entry() {
+    fn generic_unit_maps_an_explicit_managed_directory_link() {
+        let temp = tempdir().expect("temp");
+        let library_skill = temp.path().join("library/demo");
+        let canonical = temp.path().join("shared/demo");
+        let agent = temp.path().join("agent/demo");
+        fs::create_dir_all(&library_skill).expect("library skill");
+        fs::create_dir_all(canonical.parent().unwrap()).expect("canonical parent");
+        fs::create_dir_all(agent.parent().unwrap()).expect("agent parent");
+        let unit = unit(
+            mutation(
+                &canonical,
+                PreparedEntryAction::Link {
+                    target: ResourceLocator {
+                        environment: EnvironmentRef::Native,
+                        native_path: library_skill.to_string_lossy().into_owned(),
+                    },
+                },
+            ),
+            mutation(&agent, PreparedEntryAction::Keep),
+        );
+
+        let mapped =
+            prepare_native_mutations(&unit, &BTreeMap::new(), native_backend()).expect("mapped");
+
+        assert!(matches!(
+            &mapped[0].action,
+            NativeEntryAction::Symlink { target } if target == &library_skill
+        ));
+    }
+
+    #[test]
+    fn remove_unit_stages_agent_entry_before_primary_entry() {
         let temp = tempdir().expect("temp");
         let canonical = temp.path().join("shared/demo");
         let agent = temp.path().join("agent/demo");
@@ -541,6 +606,89 @@ mod tests {
         assert_eq!(mapped.len(), 2);
         assert_eq!(mapped[0].destination, agent);
         assert_eq!(mapped[1].destination, canonical);
+    }
+
+    #[tokio::test]
+    async fn keep_only_executor_does_not_create_a_recovery_marker() {
+        let temp = tempdir().expect("temp");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let canonical = physical_root.join("shared/demo");
+        let agent = physical_root.join("agent/demo");
+        fs::create_dir_all(&canonical).expect("canonical");
+        fs::create_dir_all(&agent).expect("agent");
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Keep),
+            mutation(&agent, PreparedEntryAction::Keep),
+        );
+        let recovery_root = temp.path().join("recovery");
+        let recovery_store =
+            Arc::new(NativeRecoveryMarkerStore::new(&recovery_root).expect("recovery store"));
+        let executor = NativePreparedEntryExecutor::new(
+            native_backend(),
+            "operation-keep-only",
+            recovery_store.clone(),
+        );
+
+        let staged = executor
+            .stage(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await
+            .expect("stage Keep-only unit");
+
+        assert!(recovery_store
+            .enumerate()
+            .await
+            .expect("markers")
+            .is_empty());
+        assert_eq!(
+            fs::read_dir(&recovery_root).expect("recovery root").count(),
+            0
+        );
+        assert!(executor.cleanup(staged).await.expect("cleanup").is_empty());
+        assert_eq!(
+            fs::read_dir(&recovery_root).expect("recovery root").count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_executor_recovery_contains_only_real_changes() {
+        let temp = tempdir().expect("temp");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let canonical = physical_root.join("shared/demo");
+        let agent = physical_root.join("agent/demo");
+        fs::create_dir_all(&canonical).expect("canonical");
+        fs::create_dir_all(&agent).expect("agent");
+        let unit = unit(
+            mutation(&canonical, PreparedEntryAction::Keep),
+            mutation(&agent, PreparedEntryAction::Remove),
+        );
+        let recovery_store = Arc::new(
+            NativeRecoveryMarkerStore::new(temp.path().join("recovery")).expect("recovery store"),
+        );
+        let executor = NativePreparedEntryExecutor::new(
+            native_backend(),
+            "operation-mixed",
+            recovery_store.clone(),
+        );
+
+        let staged = executor
+            .stage(&unit, &BTreeMap::new(), CancellationSignal::default())
+            .await
+            .expect("stage mixed unit");
+        let markers = recovery_store.enumerate().await.expect("markers");
+
+        assert!(matches!(
+            markers.as_slice(),
+            [RecoveryMarkerLoad::Valid { marker, .. }]
+                if matches!(marker.entries.as_slice(), [entry]
+                    if entry.destination.native_path == agent.to_string_lossy())
+        ));
+        assert!(executor.cleanup(staged).await.expect("cleanup").is_empty());
+        assert!(recovery_store
+            .enumerate()
+            .await
+            .expect("markers after cleanup")
+            .is_empty());
     }
 
     #[tokio::test]
@@ -647,7 +795,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn executor_installs_a_new_canonical_entry_before_activating_its_symlink() {
+    async fn executor_installs_a_new_primary_entry_before_activating_its_symlink() {
         let temp = tempdir().expect("temp");
         let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
         let canonical = physical_root.join("shared/demo");
@@ -745,15 +893,15 @@ mod tests {
                 native_path: path.to_string_lossy().into_owned(),
             },
             action,
-            owner_agent_ids: vec![AgentId::parse("claude-code").expect("agent")],
+            reader_agent_ids: vec![AgentId::parse("claude-code").expect("agent")],
         }
     }
 
     fn unit(
-        canonical_entry: PreparedEntryMutation,
+        primary_entry: PreparedEntryMutation,
         agent_entry: PreparedEntryMutation,
     ) -> ExecutionUnit {
-        let expected_targets = [&canonical_entry, &agent_entry]
+        let expected_targets = [&primary_entry, &agent_entry]
             .into_iter()
             .map(|entry| ExpectedTargetEntry {
                 key: entry.key.clone(),
@@ -778,8 +926,8 @@ mod tests {
                 environment: "environment-1".to_string(),
                 context: ContextSnapshotRevision::parse("context-v1-native-test").unwrap(),
             },
-            canonical_entry: Some(canonical_entry),
-            required_agent_entries: vec![agent_entry],
+            primary_entry: Some(primary_entry),
+            additional_entries: vec![agent_entry],
             lock_mutation: None,
             expected_targets,
         }
