@@ -1,18 +1,13 @@
-use std::collections::BTreeMap;
-#[cfg(test)]
-use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
+use std::collections::BTreeMap;
 
 use crate::application::payload_session::PinnedPayloadLease;
 use crate::core::agent_definition::AgentId;
 use crate::core::mutation::MutationKind;
 use crate::core::skill_payload::PayloadId;
 use crate::environment::content_manifest::ContentManifestHash;
-#[cfg(test)]
-use crate::environment::runtime::ObservedEntryId;
 use crate::environment::runtime::{ContextSnapshotRevision, EntryFingerprint, PhysicalTargetKey};
 use crate::environment::types::ResourceLocator;
 use crate::error::AppError;
@@ -26,6 +21,9 @@ pub enum PreparedEntryAction {
         payload_id: PayloadId,
         requested_mode: InstallMode,
     },
+    Link {
+        target: ResourceLocator,
+    },
     Remove,
 }
 
@@ -34,7 +32,7 @@ pub struct PreparedEntryMutation {
     pub key: PhysicalTargetKey,
     pub destination: ResourceLocator,
     pub action: PreparedEntryAction,
-    pub owner_agent_ids: Vec<AgentId>,
+    pub reader_agent_ids: Vec<AgentId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,8 +49,8 @@ pub struct ExecutionUnit {
     pub source: Option<crate::environment::types::SkillLocationRef>,
     pub target: crate::environment::types::SkillLocationRef,
     pub expected_revisions: RuntimeRevisions,
-    pub canonical_entry: Option<PreparedEntryMutation>,
-    pub required_agent_entries: Vec<PreparedEntryMutation>,
+    pub primary_entry: Option<PreparedEntryMutation>,
+    pub additional_entries: Vec<PreparedEntryMutation>,
     pub lock_mutation: Option<PreparedLockMutation>,
     pub expected_targets: Vec<ExpectedTargetEntry>,
 }
@@ -114,33 +112,21 @@ where
     ))
 }
 
-#[cfg(test)]
-pub fn validate_observed_subset(
-    available: &BTreeSet<ObservedEntryId>,
-    selected: &[ObservedEntryId],
-) -> Result<(), AppError> {
-    if selected.iter().all(|id| available.contains(id)) {
-        Ok(())
-    } else {
-        Err(AppError::StaleTarget)
-    }
-}
-
 pub fn group_physical_mutations(
     mutations: Vec<PreparedEntryMutation>,
 ) -> Result<Vec<PreparedEntryMutation>, AppError> {
     let mut grouped: BTreeMap<PhysicalTargetKey, PreparedEntryMutation> = BTreeMap::new();
     for mut mutation in mutations {
-        mutation.owner_agent_ids.sort();
-        mutation.owner_agent_ids.dedup();
+        mutation.reader_agent_ids.sort();
+        mutation.reader_agent_ids.dedup();
         match grouped.get_mut(&mutation.key) {
             Some(existing)
                 if existing.destination == mutation.destination
                     && existing.action == mutation.action =>
             {
-                existing.owner_agent_ids.extend(mutation.owner_agent_ids);
-                existing.owner_agent_ids.sort();
-                existing.owner_agent_ids.dedup();
+                existing.reader_agent_ids.extend(mutation.reader_agent_ids);
+                existing.reader_agent_ids.sort();
+                existing.reader_agent_ids.dedup();
             }
             Some(_) => return Err(AppError::StaleTarget),
             None => {
@@ -156,7 +142,7 @@ mod tests {
     use super::*;
     use crate::core::agent_definition::AgentId;
     use crate::core::mutation::MutationKind;
-    use crate::environment::runtime::{ContextSnapshotRevision, ObservedEntryId};
+    use crate::environment::runtime::ContextSnapshotRevision;
     use crate::environment::runtime::{
         ExecutionBackend, PhysicalParentIdentity, PhysicalTargetKey,
     };
@@ -192,13 +178,13 @@ mod tests {
                 key: key("demo"),
                 destination: destination("/skills/demo"),
                 action: PreparedEntryAction::Remove,
-                owner_agent_ids: vec![agent("z-agent")],
+                reader_agent_ids: vec![agent("z-agent")],
             },
             PreparedEntryMutation {
                 key: key("demo"),
                 destination: destination("/skills/demo"),
                 action: PreparedEntryAction::Remove,
-                owner_agent_ids: vec![agent("a-agent"), agent("z-agent")],
+                reader_agent_ids: vec![agent("a-agent"), agent("z-agent")],
             },
         ])
         .expect("grouped");
@@ -206,7 +192,7 @@ mod tests {
         assert_eq!(grouped.len(), 1);
         assert_eq!(
             grouped[0]
-                .owner_agent_ids
+                .reader_agent_ids
                 .iter()
                 .map(AgentId::as_str)
                 .collect::<Vec<_>>(),
@@ -221,13 +207,13 @@ mod tests {
                 key: key("demo"),
                 destination: destination("/skills/demo"),
                 action: PreparedEntryAction::Remove,
-                owner_agent_ids: vec![agent("a-agent")],
+                reader_agent_ids: vec![agent("a-agent")],
             },
             PreparedEntryMutation {
                 key: key("demo"),
                 destination: destination("/other/demo"),
                 action: PreparedEntryAction::Remove,
-                owner_agent_ids: vec![agent("b-agent")],
+                reader_agent_ids: vec![agent("b-agent")],
             },
         ]);
 
@@ -275,19 +261,5 @@ mod tests {
             stable_digest(&first).unwrap(),
             stable_digest(&reversed).unwrap()
         );
-    }
-
-    #[test]
-    fn observed_selection_accepts_only_a_previewed_subset() {
-        let available = ["entry-a", "entry-b"]
-            .into_iter()
-            .map(|id| ObservedEntryId::parse(id).expect("entry ID"))
-            .collect::<BTreeSet<_>>();
-        let selected = [ObservedEntryId::parse("entry-b").unwrap()];
-        assert!(validate_observed_subset(&available, &selected).is_ok());
-        assert!(matches!(
-            validate_observed_subset(&available, &[ObservedEntryId::parse("entry-c").unwrap()],),
-            Err(AppError::StaleTarget)
-        ));
     }
 }

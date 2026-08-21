@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::sync::Notify;
 
-use crate::environment::types::SkillLocationRef;
+use crate::environment::types::{EnvironmentRef, SkillLocation};
 
 pub const MUTATION_STATE_CHANGED_EVENT: &str = "mutation-state-changed";
 
@@ -29,6 +29,7 @@ pub enum MutationKind {
     UpdateProjectPreference,
     UpdateSettings,
     ManageGithubCredential,
+    ManageLibraries,
     ResolveRecovery,
 }
 
@@ -40,8 +41,32 @@ pub enum MutationPhase {
     Acquiring,
     Validating,
     Committing,
-    #[allow(dead_code)]
     Finishing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[specta(tag = "kind", rename_all = "camelCase")]
+pub enum MutationTargetRef {
+    SkillLocation {
+        environment: EnvironmentRef,
+        scope: SkillLocation,
+    },
+    Library {
+        environment: EnvironmentRef,
+        #[serde(rename = "libraryId")]
+        #[specta(rename = "libraryId")]
+        library_id: String,
+    },
+}
+
+impl MutationTargetRef {
+    pub fn environment(&self) -> &EnvironmentRef {
+        match self {
+            Self::SkillLocation { environment, .. } => environment,
+            Self::Library { environment, .. } => environment,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
@@ -59,7 +84,7 @@ pub struct MutationProgress {
 pub struct ActiveMutation {
     pub id: String,
     pub kind: MutationKind,
-    pub context: SkillLocationRef,
+    pub target: MutationTargetRef,
     pub phase: MutationPhase,
     pub progress: Option<MutationProgress>,
     pub cancelable: bool,
