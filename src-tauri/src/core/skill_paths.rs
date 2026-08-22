@@ -43,14 +43,6 @@ pub fn normalize_skill_folder_path(skill_path: &str) -> String {
 }
 
 #[cfg(test)]
-pub fn relative_skill_path(root: &Path, skill_md: &Path) -> String {
-    skill_md
-        .strip_prefix(root)
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| skill_md.to_string_lossy().replace('\\', "/"))
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
@@ -80,18 +72,5 @@ mod tests {
             "skills/demo"
         );
         assert_eq!(normalize_skill_folder_path("Skill.md"), "");
-    }
-
-    #[test]
-    fn relative_skill_path_preserves_actual_casing() {
-        let temp = tempdir().unwrap();
-        let skill_dir = temp.path().join("skills/demo");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        let skill_md = skill_dir.join("skill.md");
-        std::fs::write(&skill_md, "---\nname: demo\n---\n").unwrap();
-
-        let relative = relative_skill_path(temp.path(), &skill_md);
-
-        assert_eq!(relative, "skills/demo/skill.md");
     }
 }

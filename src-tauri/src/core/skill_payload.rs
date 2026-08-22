@@ -765,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_project_hash_can_be_rebuilt_from_the_canonical_payload() {
+    fn cli_project_hash_can_be_rebuilt_from_the_original_payload() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path().join("demo");
         fs::create_dir_all(root.join("scripts")).expect("scripts");

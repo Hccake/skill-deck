@@ -247,21 +247,6 @@ fn is_component_prefix(left: &[String], right: &[String]) -> bool {
     left.len() <= right.len() && left.iter().zip(right).all(|(left, right)| left == right)
 }
 
-#[cfg(test)]
-pub fn compare_project_identity(
-    left: &PhysicalProjectIdentity,
-    right: &PhysicalProjectIdentity,
-) -> PhysicalIdentityComparison {
-    if !same_environment_identity(&left.owner, &right.owner) {
-        return PhysicalIdentityComparison::Unknown;
-    }
-    if left.stable_id == right.stable_id {
-        PhysicalIdentityComparison::Same
-    } else {
-        PhysicalIdentityComparison::Different
-    }
-}
-
 pub fn context_snapshot_revision(
     input: &ContextRevisionInput,
 ) -> Result<ContextSnapshotRevision, AppError> {
@@ -580,37 +565,5 @@ mod tests {
 
         assert_eq!(first, same);
         assert_ne!(first, changed);
-    }
-
-    #[test]
-    fn project_identity_comparison_never_guesses_across_storage_owners() {
-        let native = PhysicalProjectIdentity {
-            owner: EnvironmentRef::Native,
-            stable_id: "volume-7-file-9".to_string(),
-        };
-        let same_native = native.clone();
-        let other_native = PhysicalProjectIdentity {
-            owner: EnvironmentRef::Native,
-            stable_id: "volume-7-file-10".to_string(),
-        };
-        let wsl = PhysicalProjectIdentity {
-            owner: EnvironmentRef::Wsl {
-                distro_name: "Ubuntu".to_string(),
-            },
-            stable_id: "7:9".to_string(),
-        };
-
-        assert_eq!(
-            compare_project_identity(&native, &same_native),
-            PhysicalIdentityComparison::Same
-        );
-        assert_eq!(
-            compare_project_identity(&native, &other_native),
-            PhysicalIdentityComparison::Different
-        );
-        assert_eq!(
-            compare_project_identity(&native, &wsl),
-            PhysicalIdentityComparison::Unknown
-        );
     }
 }

@@ -1,6 +1,39 @@
 use crate::core::lossless_lock::LosslessLockDocument;
 use crate::error::AppError;
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct SkillDirectoryName(String);
+
+impl TryFrom<&str> for SkillDirectoryName {
+    type Error = AppError;
+
+    fn try_from(skill_name: &str) -> Result<Self, Self::Error> {
+        validate_skill_entry_name(skill_name)?;
+        Ok(Self(crate::core::skill::sanitize_name(skill_name)))
+    }
+}
+
+impl AsRef<str> for SkillDirectoryName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+fn validate_skill_entry_name(skill_name: &str) -> Result<(), AppError> {
+    if skill_name.trim().is_empty()
+        || skill_name.len() > 255
+        || skill_name == "."
+        || skill_name == ".."
+        || skill_name.contains(['/', '\\', '\0'])
+    {
+        return Err(AppError::UnsafePath {
+            path: skill_name.to_string(),
+            reason: "Skill identity must contain one entry name".to_string(),
+        });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedInstalledSkill {
     pub skill_name: String,
@@ -19,18 +52,9 @@ pub struct InstalledSkillResolver;
 
 impl InstalledSkillResolver {
     pub fn install_dir_name(skill_name: &str) -> Result<String, AppError> {
-        if skill_name.trim().is_empty()
-            || skill_name.len() > 255
-            || skill_name == "."
-            || skill_name == ".."
-            || skill_name.contains(['/', '\\', '\0'])
-        {
-            return Err(AppError::UnsafePath {
-                path: skill_name.to_string(),
-                reason: "Skill identity must contain one entry name".to_string(),
-            });
-        }
-        Ok(crate::core::skill::sanitize_name(skill_name))
+        Ok(SkillDirectoryName::try_from(skill_name)?
+            .as_ref()
+            .to_string())
     }
 
     pub fn resolve(
@@ -66,7 +90,7 @@ impl InstalledSkillResolver {
 mod tests {
     use crate::core::lossless_lock::LosslessLockDocument;
 
-    use super::InstalledSkillResolver;
+    use super::{InstalledSkillResolver, SkillDirectoryName};
 
     fn document(keys: &[&str]) -> LosslessLockDocument {
         let skills = keys
@@ -77,6 +101,43 @@ mod tests {
             &serde_json::to_vec(&serde_json::json!({ "version": 1, "skills": skills })).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn equivalent_raw_names_share_one_orderable_skill_directory_name() {
+        let first = SkillDirectoryName::try_from("CE:Review").expect("first directory name");
+        let second = SkillDirectoryName::try_from("ce-review").expect("second directory name");
+        let third = SkillDirectoryName::try_from("CE Review").expect("third directory name");
+
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+        assert_eq!(first.as_ref(), "ce-review");
+
+        let dto_value = first.as_ref().to_string();
+        assert_eq!(dto_value, "ce-review");
+
+        assert_eq!(
+            std::collections::BTreeSet::from([first, second, third]).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn skill_directory_name_rejects_unsafe_entry_names() {
+        for invalid in [
+            "",
+            " ",
+            ".",
+            "..",
+            "nested/skill",
+            "nested\\skill",
+            "nul\0skill",
+        ] {
+            assert!(matches!(
+                SkillDirectoryName::try_from(invalid),
+                Err(crate::error::AppError::UnsafePath { path, .. }) if path == invalid
+            ));
+        }
     }
 
     #[test]

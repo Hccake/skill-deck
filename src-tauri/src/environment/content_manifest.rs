@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
@@ -111,7 +112,7 @@ impl ContentManifestRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContentManifestHash(String);
 
 impl ContentManifestHash {

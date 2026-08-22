@@ -80,6 +80,24 @@ pub struct ResourceLocator {
     pub native_path: String,
 }
 
+impl ResourceLocator {
+    pub fn join_child(&self, child: &str) -> Self {
+        let native_path = match &self.environment {
+            EnvironmentRef::Native => std::path::Path::new(&self.native_path)
+                .join(child)
+                .to_string_lossy()
+                .into_owned(),
+            EnvironmentRef::Wsl { .. } => {
+                format!("{}/{}", self.native_path.trim_end_matches('/'), child)
+            }
+        };
+        Self {
+            environment: self.environment.clone(),
+            native_path,
+        }
+    }
+}
+
 pub fn display_locator(locator: &ResourceLocator) -> ResourceLocator {
     let native_path = if let Some(suffix) = locator.native_path.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{suffix}")
@@ -170,8 +188,43 @@ pub struct EnvironmentRuntimeEvent {
 mod tests {
     use super::{
         same_environment_identity, AddProjectResult, EnvironmentKey, EnvironmentRef, ProjectInfo,
-        ProjectStorageInfo, RegisteredProject, SkillLocation, SkillLocationRef, StorageAccess,
+        ProjectStorageInfo, RegisteredProject, ResourceLocator, SkillLocation, SkillLocationRef,
+        StorageAccess,
     };
+
+    #[test]
+    fn resource_locator_joins_children_with_environment_path_semantics() {
+        let native_root = if cfg!(windows) {
+            r"C:\scope\.agents\skills"
+        } else {
+            "/scope/.agents/skills"
+        };
+        let native_expected = if cfg!(windows) {
+            r"C:\scope\.agents\skills\demo"
+        } else {
+            "/scope/.agents/skills/demo"
+        };
+        assert_eq!(
+            ResourceLocator {
+                environment: EnvironmentRef::Native,
+                native_path: native_root.to_string(),
+            }
+            .join_child("demo")
+            .native_path,
+            native_expected
+        );
+        assert_eq!(
+            ResourceLocator {
+                environment: EnvironmentRef::Wsl {
+                    distro_name: "Ubuntu".to_string(),
+                },
+                native_path: "/home/alice/.agents/skills/".to_string(),
+            }
+            .join_child("demo")
+            .native_path,
+            "/home/alice/.agents/skills/demo"
+        );
+    }
 
     #[test]
     fn environment_ref_round_trips_native_and_wsl() {

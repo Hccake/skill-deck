@@ -49,39 +49,6 @@ fn is_valid_relative_path(path: &str) -> bool {
     path.starts_with("./")
 }
 
-/// 验证 child 路径是否在 parent 之内（防止路径遍历攻击）
-#[cfg(test)]
-fn is_contained_in(child: &Path, parent: &Path) -> bool {
-    match (child.canonicalize(), parent.canonicalize()) {
-        (Ok(c), Ok(p)) => c.starts_with(&p),
-        // 如果 canonicalize 失败（路径不存在），使用 normalize 比较
-        _ => {
-            let child_str = child.to_string_lossy().replace('\\', "/");
-            let parent_str = parent.to_string_lossy().replace('\\', "/");
-            child_str.starts_with(&parent_str)
-        }
-    }
-}
-
-/// 从 .claude-plugin/ 目录获取 plugin 分组映射
-///
-/// 对应 CLI: getPluginGroupings() (plugin-manifest.ts)
-///
-/// 返回 HashMap<PathBuf, String>：skill 目录绝对路径 → plugin 名称
-#[cfg(test)]
-pub fn get_plugin_groupings(base_path: &Path) -> HashMap<PathBuf, String> {
-    let marketplace =
-        std::fs::read_to_string(base_path.join(".claude-plugin/marketplace.json")).ok();
-    let plugin = std::fs::read_to_string(base_path.join(".claude-plugin/plugin.json")).ok();
-    get_relative_plugin_groupings(marketplace.as_deref(), plugin.as_deref())
-        .into_iter()
-        .filter_map(|(relative, name)| {
-            let skill_dir = base_path.join(relative);
-            is_contained_in(&skill_dir, base_path).then(|| (normalize_path(&skill_dir), name))
-        })
-        .collect()
-}
-
 /// 解析 plugin manifest，并返回相对于 Source root 的 Skill 路径映射。
 ///
 /// 该函数不访问 filesystem，因此 Native 与 WSL discovery 可以共用同一套规则。
@@ -224,113 +191,9 @@ fn safe_manifest_path(path: &str) -> Result<PathBuf, ()> {
     Ok(normalized)
 }
 
-/// 简单的路径规范化（不要求路径存在）
-#[cfg(test)]
-pub fn normalize_path(path: &Path) -> PathBuf {
-    match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            // 路径不存在时，手动拼接为绝对路径
-            if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir().unwrap_or_default().join(path)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_marketplace_json_groupings() {
-        let temp = tempdir().unwrap();
-        let base = temp.path();
-
-        // 创建 .claude-plugin/marketplace.json
-        let plugin_dir = base.join(".claude-plugin");
-        fs::create_dir_all(&plugin_dir).unwrap();
-
-        let manifest = r#"{
-            "metadata": { "pluginRoot": "./" },
-            "plugins": [
-                {
-                    "name": "doc-skills",
-                    "source": "./docs",
-                    "skills": ["./pdf-reader", "./md-tools"]
-                }
-            ]
-        }"#;
-        fs::write(plugin_dir.join("marketplace.json"), manifest).unwrap();
-
-        // 创建对应的 skill 目录
-        fs::create_dir_all(base.join("docs/pdf-reader")).unwrap();
-        fs::create_dir_all(base.join("docs/md-tools")).unwrap();
-
-        let groupings = get_plugin_groupings(base);
-        assert_eq!(groupings.len(), 2);
-
-        // 验证映射关系
-        let pdf_path = normalize_path(&base.join("docs/pdf-reader"));
-        let md_path = normalize_path(&base.join("docs/md-tools"));
-        assert_eq!(groupings.get(&pdf_path), Some(&"doc-skills".to_string()));
-        assert_eq!(groupings.get(&md_path), Some(&"doc-skills".to_string()));
-    }
-
-    #[test]
-    fn test_plugin_json_groupings() {
-        let temp = tempdir().unwrap();
-        let base = temp.path();
-
-        let plugin_dir = base.join(".claude-plugin");
-        fs::create_dir_all(&plugin_dir).unwrap();
-
-        let manifest = r#"{
-            "name": "my-plugin",
-            "skills": ["./skill-a", "./skill-b"]
-        }"#;
-        fs::write(plugin_dir.join("plugin.json"), manifest).unwrap();
-
-        // 创建 skill 目录
-        fs::create_dir_all(base.join("skill-a")).unwrap();
-        fs::create_dir_all(base.join("skill-b")).unwrap();
-
-        let groupings = get_plugin_groupings(base);
-        assert_eq!(groupings.len(), 2);
-
-        let a_path = normalize_path(&base.join("skill-a"));
-        assert_eq!(groupings.get(&a_path), Some(&"my-plugin".to_string()));
-    }
-
-    #[test]
-    fn test_no_manifest_returns_empty() {
-        let temp = tempdir().unwrap();
-        let groupings = get_plugin_groupings(temp.path());
-        assert!(groupings.is_empty());
-    }
-
-    #[test]
-    fn test_invalid_relative_paths_skipped() {
-        let temp = tempdir().unwrap();
-        let base = temp.path();
-
-        let plugin_dir = base.join(".claude-plugin");
-        fs::create_dir_all(&plugin_dir).unwrap();
-
-        // 不以 "./" 开头的路径应被跳过
-        let manifest = r#"{
-            "name": "bad-plugin",
-            "skills": ["../escape", "no-dot-slash"]
-        }"#;
-        fs::write(plugin_dir.join("plugin.json"), manifest).unwrap();
-
-        let groupings = get_plugin_groupings(base);
-        assert!(groupings.is_empty());
-    }
 
     #[test]
     fn manifest_documents_produce_environment_independent_relative_groupings() {
