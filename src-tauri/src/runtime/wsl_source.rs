@@ -8,6 +8,7 @@ use crate::application::payload_session::{
     DiscoverySkillSnapshot, DiscoverySourceDescriptor, DiscoverySourceLocation,
     PayloadSessionManager, PayloadSessionStorage, RetainedDiscoverySource,
 };
+use crate::application::source_acquisition::FetchResult;
 use crate::application::source_acquisition::{
     attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
     snapshot_fingerprint, source_identifier, InternalSkillVisibility, ManagedDownloadedDirectory,
@@ -33,7 +34,7 @@ use crate::environment::wsl::operations::source_acquisition::{
 };
 use crate::environment::wsl::{WslRuntime, WslSession, WslWorkspace};
 use crate::error::AppError;
-use crate::models::{AvailableSkill, FetchResult, ParsedSource, SourceType};
+use crate::models::{AvailableSkill, ParsedSource, SourceType};
 use crate::runtime::download::RuntimeDownloadAccess;
 use crate::runtime::proxy_settings::ProxySettingsStore;
 

@@ -26,9 +26,9 @@ use crate::core::skill_payload::{build_skill_payload, compute_cli_project_hash_f
 use crate::core::{
     compute_local_tree_sha, discover_skills, get_owner_repo, CloneProgress, DiscoverOptions,
 };
-use crate::environment::types::{EnvironmentRef, SkillLocationRef};
+use crate::environment::types::EnvironmentRef;
 use crate::error::{AppError, SourceAcquisitionFailureReason};
-use crate::models::{AvailableSkill, FetchResult, ParsedSource, SourceType};
+use crate::models::{AvailableSkill, ParsedSource, SourceType};
 
 const EXCLUDED_SOURCE_FILES: &[&str] = &["metadata.json"];
 const EXCLUDED_SOURCE_DIRS: &[&str] = &[".git", "__pycache__", "__pypackages__"];
@@ -45,6 +45,29 @@ pub struct AcquireSelectedPayloadsRequest {
 pub struct SourceSelectionIntent {
     pub wildcard_requested: bool,
     pub explicit_skill_names: Vec<String>,
+}
+
+/// 来源发现结果
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+#[specta(rename_all = "camelCase")]
+pub struct FetchResult {
+    /// Opaque source snapshot shared by discovery, preview and execute.
+    pub discovery_session: DiscoverySessionHandle,
+    /// 来源类型
+    pub source_type: String,
+    /// 规范化 URL
+    pub source_url: String,
+    /// 跨主机重定向后的实际下载主机；同主机跳转不返回该字段。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirected_download_host: Option<String>,
+    /// Git ref（branch/tag）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_ref: Option<String>,
+    /// @skill 语法提取的名称（用于预选）
+    pub skill_filter: Option<String>,
+    /// 可用的 skills 列表
+    pub skills: Vec<AvailableSkill>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -126,7 +149,7 @@ impl GitSourceDiscovery {
 
     pub(crate) async fn discover<P>(
         &self,
-        context: SkillLocationRef,
+        environment: EnvironmentRef,
         parsed: ParsedSource,
         requested_source: String,
         policy: SourceDiscoveryPolicy,
@@ -142,7 +165,7 @@ impl GitSourceDiscovery {
         ) {
             return Err(invalid_source("Git source discovery requires a Git source"));
         }
-        match &context.environment {
+        match &environment {
             EnvironmentRef::Native => {
                 let clone_url = parsed.url.clone();
                 let clone_ref = parsed.git_ref.clone();
@@ -166,7 +189,7 @@ impl GitSourceDiscovery {
                 let ref_revision = cloned.ref_revision.clone();
                 retain_discovered_source(
                     self.sessions.clone(),
-                    context.environment.clone(),
+                    environment.clone(),
                     parsed.clone(),
                     requested_source.clone(),
                     DiscoverySourceLocation::Native {
@@ -2038,10 +2061,7 @@ mod tests {
 
         let fetched = discovery_service
             .discover(
-                SkillLocationRef {
-                    environment: EnvironmentRef::Native,
-                    scope: SkillLocation::Global,
-                },
+                EnvironmentRef::Native,
                 source.path().to_string_lossy().to_string(),
                 |_| {},
             )
@@ -2116,7 +2136,7 @@ mod tests {
 
         let public = discovery_service
             .discover_with_selection(
-                context.clone(),
+                context.environment.clone(),
                 source.path().to_string_lossy().to_string(),
                 SourceSelectionIntent::default(),
                 |_| {},
@@ -2141,7 +2161,7 @@ mod tests {
 
         let exact = discovery_service
             .discover_with_selection(
-                context,
+                context.environment,
                 source.path().to_string_lossy().to_string(),
                 SourceSelectionIntent {
                     wildcard_requested: false,

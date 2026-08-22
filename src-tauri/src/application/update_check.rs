@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
+use crate::application::collection_records::{RecordProjection, SourceRecordRevision};
 use crate::application::source_evidence::{
     EvidenceCheckMode, EvidenceCheckRequest, EvidenceCheckResult, EvidenceFreshness,
     ProviderThrottleKey, RemoteEvidenceKey, SkillRevision, SourceEvidenceCoordinator,
@@ -12,15 +12,14 @@ use crate::application::update::{
     UpdateCheckOutcome, UpdateCheckReasonCode, UpdateCheckRequest, UpdateCheckResponse,
     UpdateCheckSelection,
 };
-use crate::core::local_lock::LocalSkillLockEntry;
-use crate::core::lossless_lock::LockSchema;
-use crate::core::mutation::CancellationSignal;
-use crate::core::skill_lock::SkillLockEntry;
-use crate::core::skill_paths::normalize_skill_folder_path;
-use crate::core::{
-    normalize_global_lock_entry, normalize_local_lock_entry, NormalizedRef,
-    NormalizedUpdateMetadata, SourceIdentity,
+use crate::application::update_subjects::{
+    BoundInstalledUpdateSubjectSource, BoundLibraryUpdateSubjectSource,
+    InstalledUpdateSubjectSnapshots, LibraryUpdateSubjectSnapshots, UpdateSubjectSnapshot,
+    UpdateSubjectSource,
 };
+use crate::core::mutation::CancellationSignal;
+use crate::core::skill_paths::normalize_skill_folder_path;
+use crate::core::{NormalizedRef, NormalizedUpdateMetadata, SourceIdentity};
 use crate::error::AppError;
 
 #[derive(Debug, Clone)]
@@ -40,17 +39,52 @@ struct UpdateCheckGroup {
     skills: Vec<UpdateCheckSkill>,
 }
 
-pub struct UpdateCheckService<F> {
-    facts: F,
+pub struct UpdateCheckService<P> {
+    subjects: P,
+    evidence: UpdateEvidenceModule,
+}
+
+pub struct UpdateEvidenceModule {
     evidence: SourceEvidenceCoordinator,
 }
 
-impl<F> UpdateCheckService<F>
+pub struct LibraryUpdateCheckService<P> {
+    subjects: P,
+    evidence: UpdateEvidenceModule,
+}
+
+impl<P> LibraryUpdateCheckService<P>
 where
-    F: InstallPlanningFactSource,
+    P: LibraryUpdateSubjectSnapshots,
 {
-    pub fn new(facts: F, evidence: SourceEvidenceCoordinator) -> Self {
-        Self { facts, evidence }
+    pub fn new(subjects: P, evidence: SourceEvidenceCoordinator) -> Self {
+        Self {
+            subjects,
+            evidence: UpdateEvidenceModule::new(evidence),
+        }
+    }
+
+    pub async fn check(
+        &self,
+        environment: crate::environment::types::EnvironmentRef,
+        library_id: crate::application::skill_libraries::LibraryId,
+        mode: UpdateCheckMode,
+        names: BTreeSet<String>,
+    ) -> Result<UpdateCheckResponse, AppError> {
+        let source = BoundLibraryUpdateSubjectSource::new(&self.subjects, environment, library_id);
+        self.evidence.check(&source, mode, names).await
+    }
+}
+
+impl<P> UpdateCheckService<P>
+where
+    P: InstalledUpdateSubjectSnapshots,
+{
+    pub fn new(subjects: P, evidence: SourceEvidenceCoordinator) -> Self {
+        Self {
+            subjects,
+            evidence: UpdateEvidenceModule::new(evidence),
+        }
     }
 
     pub async fn check(
@@ -58,11 +92,29 @@ where
         request: &UpdateCheckRequest,
     ) -> Result<UpdateCheckResponse, AppError> {
         let selected = selected_names(request)?;
-        let initial = self.facts.current(&request.context).await?;
-        let prepared = prepare_update_checks(filter_entries(
-            metadata_entries(initial)?,
-            selected.as_ref(),
-        ));
+        let source =
+            BoundInstalledUpdateSubjectSource::new(&self.subjects, request.context.clone());
+        self.evidence.check(&source, request.mode, selected).await
+    }
+}
+
+impl UpdateEvidenceModule {
+    pub fn new(evidence: SourceEvidenceCoordinator) -> Self {
+        Self { evidence }
+    }
+
+    pub async fn check<S>(
+        &self,
+        source: &S,
+        mode: UpdateCheckMode,
+        names: BTreeSet<String>,
+    ) -> Result<UpdateCheckResponse, AppError>
+    where
+        S: UpdateSubjectSource,
+    {
+        let initial = source.snapshot(names.clone()).await?;
+        let initial_revisions = subject_revisions(&initial);
+        let prepared = prepare_update_checks(projection_entries(initial));
         let mut checked = HashMap::new();
         let mut sources = Vec::new();
         let mut detections = tokio::task::JoinSet::new();
@@ -70,8 +122,7 @@ where
             let key = key.clone();
             let group = group.clone();
             let evidence = self.evidence.clone();
-            let mode = request.mode;
-            let environment = request.context.environment.clone();
+            let environment = source.environment().clone();
             detections.spawn(async move {
                 let result = evidence
                     .check(
@@ -110,22 +161,25 @@ where
             checked.insert(key, result);
         }
 
-        let latest = self.facts.current(&request.context).await?;
-        let latest =
-            prepare_update_checks(filter_entries(metadata_entries(latest)?, selected.as_ref()));
+        let latest = source.snapshot(names).await?;
+        let latest_revisions = subject_revisions(&latest);
+        let latest = prepare_update_checks(projection_entries(latest));
         let mut skills = latest.immediate_results;
         for (key, group) in latest.groups {
-            let result = checked.get(&key);
-            skills.extend(group.skills.into_iter().map(|skill| match result {
-                Some(result) => info_from_evidence(skill, result),
-                None => info(
-                    skill.name,
-                    skill.metadata,
-                    false,
-                    SkillUpdateCheckStatus::CannotCheck,
-                    Some(UpdateCheckReasonCode::UpstreamUnavailable),
-                    EvidenceFreshness::Unavailable,
-                ),
+            skills.extend(group.skills.into_iter().map(|skill| {
+                let unchanged =
+                    initial_revisions.get(&skill.name) == latest_revisions.get(&skill.name);
+                match unchanged.then(|| checked.get(&key)).flatten() {
+                    Some(result) => info_from_evidence(skill, result),
+                    None => info(
+                        skill.name,
+                        skill.metadata,
+                        false,
+                        SkillUpdateCheckStatus::CannotCheck,
+                        Some(UpdateCheckReasonCode::UpstreamUnavailable),
+                        EvidenceFreshness::Unavailable,
+                    ),
+                }
             }));
         }
         skills.sort_by(|left, right| left.name.cmp(&right.name));
@@ -166,9 +220,8 @@ fn update_check_outcome(
     }
 }
 
-fn selected_names(request: &UpdateCheckRequest) -> Result<Option<BTreeSet<String>>, AppError> {
+fn selected_names(request: &UpdateCheckRequest) -> Result<BTreeSet<String>, AppError> {
     match &request.selection {
-        UpdateCheckSelection::All => Ok(None),
         UpdateCheckSelection::Skills(identities) => {
             let mut names = BTreeSet::new();
             if identities.is_empty()
@@ -184,66 +237,55 @@ fn selected_names(request: &UpdateCheckRequest) -> Result<Option<BTreeSet<String
                         .to_string(),
                 });
             }
-            Ok(Some(names))
+            Ok(names)
         }
     }
 }
 
-fn filter_entries(
-    entries: Vec<(String, NormalizedUpdateMetadata)>,
-    selected: Option<&BTreeSet<String>>,
-) -> Vec<(String, NormalizedUpdateMetadata)> {
-    entries
+fn projection_entries(snapshot: UpdateSubjectSnapshot) -> Vec<(String, RecordProjection)> {
+    snapshot
+        .subjects
         .into_iter()
-        .filter(|(name, _)| selected.is_none_or(|selected| selected.contains(name)))
+        .map(|subject| (subject.skill_name, subject.projection))
         .collect()
 }
 
-fn metadata_entries(
-    facts: InstallPlanningFacts,
-) -> Result<Vec<(String, NormalizedUpdateMetadata)>, AppError> {
-    let project_root = facts
-        .resolved_context
-        .project
-        .as_ref()
-        .map(|project| project.native_path.clone());
-    let value = facts.lock_document.into_value();
-    let skills = value
-        .get("skills")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| AppError::ConfigurationCorrupted {
-            message: "lock skills must be an object".to_string(),
-        })?;
-    skills
+fn subject_revisions(snapshot: &UpdateSubjectSnapshot) -> HashMap<String, SourceRecordRevision> {
+    snapshot
+        .subjects
         .iter()
-        .map(|(name, raw)| {
-            let metadata = match facts.lock_schema {
-                LockSchema::Global => normalize_global_lock_entry(&serde_json::from_value::<
-                    SkillLockEntry,
-                >(raw.clone())?),
-                LockSchema::Project => {
-                    let mut entry = serde_json::from_value::<LocalSkillLockEntry>(raw.clone())?;
-                    if entry.source_type == "local" {
-                        if let Some(project_root) = &project_root {
-                            entry.source =
-                                crate::core::portable_project_path::resolve_project_source(
-                                    project_root,
-                                    &entry.source,
-                                );
-                        }
-                    }
-                    normalize_local_lock_entry(&entry)
-                }
-            };
-            Ok((name.clone(), metadata))
+        .map(|subject| {
+            (
+                subject.skill_name.clone(),
+                subject.source_record_revision.clone(),
+            )
         })
         .collect()
 }
 
-fn prepare_update_checks(entries: Vec<(String, NormalizedUpdateMetadata)>) -> PreparedUpdateChecks {
+fn prepare_update_checks(entries: Vec<(String, RecordProjection)>) -> PreparedUpdateChecks {
     let mut groups = HashMap::new();
     let mut immediate_results = Vec::new();
-    for (name, metadata) in entries {
+    for (name, projection) in entries {
+        let metadata = match projection {
+            RecordProjection::Available(metadata) => metadata,
+            RecordProjection::Missing => {
+                immediate_results.push(unavailable_info(
+                    name,
+                    UpdateCapabilityReasonCode::MissingSource,
+                    UpdateCheckReasonCode::MissingSource,
+                ));
+                continue;
+            }
+            RecordProjection::Uninterpretable => {
+                immediate_results.push(unavailable_info(
+                    name,
+                    UpdateCapabilityReasonCode::UnsupportedSource,
+                    UpdateCheckReasonCode::UnsupportedSource,
+                ));
+                continue;
+            }
+        };
         let capability = capability(&metadata);
         if !capability.can_check_for_updates {
             immediate_results.push(info(
@@ -283,6 +325,29 @@ fn prepare_update_checks(entries: Vec<(String, NormalizedUpdateMetadata)>) -> Pr
     PreparedUpdateChecks {
         groups,
         immediate_results,
+    }
+}
+
+fn unavailable_info(
+    name: String,
+    capability_reason: UpdateCapabilityReasonCode,
+    reason: UpdateCheckReasonCode,
+) -> SkillUpdateInfo {
+    SkillUpdateInfo {
+        name,
+        source: String::new(),
+        has_update: false,
+        status: SkillUpdateCheckStatus::CannotCheck,
+        capability: CheckUpdateCapability {
+            can_run_update: false,
+            can_check_for_updates: false,
+            reason: Some(capability_reason),
+        },
+        reason: Some(reason),
+        git_ref: None,
+        source_url: None,
+        skill_path: None,
+        freshness: EvidenceFreshness::Unavailable,
     }
 }
 
@@ -415,36 +480,64 @@ fn info(
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use super::*;
     use crate::application::install::InstallFuture;
-    use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
     use crate::application::mutation::plan::RuntimeRevisions;
+    use crate::application::planning_facts::{ScopePlanningSnapshot, ScopePlanningSnapshotSource};
     use crate::application::source_evidence::{
         EvidenceDetectionFailure, EvidenceDetectionOutcome, EvidenceDetectionRequest,
         EvidenceFuture, RemoteEvidenceObservation, SourceEvidenceDetector,
     };
-    use crate::core::lossless_lock::LosslessLockDocument;
+    use crate::application::update_subjects::InstalledUpdateSubjectProvider;
+    use crate::core::lossless_lock::{LockSchema, LosslessLockDocument};
     use crate::core::NormalizedUpdateMetadata;
     use crate::environment::agent_environment::AgentRuntimeSnapshot;
     use crate::environment::context_resolver::ResolvedContext;
+    use crate::environment::planning::RuntimeTargetFactResolver;
     use crate::environment::runtime::ContextSnapshotRevision;
     use crate::environment::types::{
         EnvironmentRef, EnvironmentStatus, ResourceLocator, SkillLocation, SkillLocationRef,
     };
+    use crate::environment::wsl::WslRuntime;
 
     struct Facts {
-        values: Mutex<VecDeque<InstallPlanningFacts>>,
+        values: Mutex<VecDeque<ScopePlanningSnapshot>>,
+        _root: tempfile::TempDir,
     }
 
-    impl InstallPlanningFactSource for Facts {
-        fn current<'a>(
+    impl Facts {
+        fn new(mut values: Vec<ScopePlanningSnapshot>) -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let skill_root = root.path().join(".agents/skills");
+            fs::create_dir_all(&skill_root).unwrap();
+            for facts in &mut values {
+                facts.resolved_context.home.native_path =
+                    root.path().to_string_lossy().into_owned();
+                facts.resolved_context.skill_root.native_path =
+                    skill_root.to_string_lossy().into_owned();
+                facts.resolved_context.lock.native_path = root
+                    .path()
+                    .join("skills-lock.json")
+                    .to_string_lossy()
+                    .into_owned();
+            }
+            Self {
+                values: Mutex::new(values.into()),
+                _root: root,
+            }
+        }
+    }
+
+    impl ScopePlanningSnapshotSource for Facts {
+        fn snapshot<'a>(
             &'a self,
             _context: &'a SkillLocationRef,
-        ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
+        ) -> InstallFuture<'a, Result<ScopePlanningSnapshot, AppError>> {
             Box::pin(async move {
                 let mut values = self.values.lock().unwrap();
                 Ok(if values.len() > 1 {
@@ -523,9 +616,21 @@ mod tests {
         }
     }
 
-    fn facts(lock: &str) -> InstallPlanningFacts {
+    fn selection(names: &[&str]) -> UpdateCheckSelection {
+        UpdateCheckSelection::Skills(
+            names
+                .iter()
+                .map(|name| crate::application::resources::SkillIdentity {
+                    context: context(),
+                    skill_name: (*name).to_string(),
+                })
+                .collect(),
+        )
+    }
+
+    fn facts(lock: &str) -> ScopePlanningSnapshot {
         let context = context();
-        InstallPlanningFacts {
+        ScopePlanningSnapshot {
             resolved_context: ResolvedContext {
                 context: context.clone(),
                 project: None,
@@ -603,14 +708,17 @@ mod tests {
         }
     }
 
+    type TestSubjectProvider = InstalledUpdateSubjectProvider<Facts, RuntimeTargetFactResolver>;
+
     fn service(
-        values: Vec<InstallPlanningFacts>,
+        values: Vec<ScopePlanningSnapshot>,
         detector: Arc<RecordingDetector>,
-    ) -> UpdateCheckService<Facts> {
+    ) -> UpdateCheckService<TestSubjectProvider> {
         UpdateCheckService::new(
-            Facts {
-                values: Mutex::new(values.into()),
-            },
+            InstalledUpdateSubjectProvider::new(
+                Facts::new(values),
+                RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            ),
             SourceEvidenceCoordinator::with_clock(detector, || 1_000),
         )
     }
@@ -620,7 +728,7 @@ mod tests {
         let prepared = prepare_update_checks(vec![
             (
                 "toolkit".to_string(),
-                NormalizedUpdateMetadata {
+                RecordProjection::Available(NormalizedUpdateMetadata {
                     source: "owner/repo".to_string(),
                     source_type: "github".to_string(),
                     source_url: Some("https://github.com/owner/repo".to_string()),
@@ -629,11 +737,11 @@ mod tests {
                     remote_hash: Some("old-hash".to_string()),
                     computed_hash: None,
                     well_known_digest: None,
-                },
+                }),
             ),
             (
                 "legacy".to_string(),
-                NormalizedUpdateMetadata {
+                RecordProjection::Available(NormalizedUpdateMetadata {
                     source: "owner/repo".to_string(),
                     source_type: "github".to_string(),
                     source_url: Some("https://github.com/owner/repo".to_string()),
@@ -642,7 +750,7 @@ mod tests {
                     remote_hash: None,
                     computed_hash: None,
                     well_known_digest: None,
-                },
+                }),
             ),
         ]);
 
@@ -668,7 +776,7 @@ mod tests {
             .check(&UpdateCheckRequest {
                 context: context(),
                 mode: UpdateCheckMode::Force,
-                selection: UpdateCheckSelection::All,
+                selection: selection(&["alpha", "beta"]),
             })
             .await
             .unwrap();
@@ -699,7 +807,7 @@ mod tests {
             .check(&UpdateCheckRequest {
                 context: context(),
                 mode: UpdateCheckMode::Force,
-                selection: UpdateCheckSelection::All,
+                selection: selection(&["alpha", "legacy"]),
             })
             .await
             .unwrap();
@@ -707,6 +815,48 @@ mod tests {
         assert_eq!(
             response.outcome,
             crate::application::update::UpdateCheckOutcome::Partial
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_missing_and_uninterpretable_records_remain_in_the_report() {
+        let lock = r#"{"skills":{"available":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/available","skillFolderHash":"tree-available"},"broken":{"source":42}}}"#;
+        let detector = Arc::new(RecordingDetector {
+            requested: Mutex::new(Vec::new()),
+            outcome: observation(&["skills/available"]),
+        });
+        let identities = ["available", "broken", "missing"]
+            .into_iter()
+            .map(|skill_name| crate::application::resources::SkillIdentity {
+                context: context(),
+                skill_name: skill_name.to_string(),
+            })
+            .collect();
+
+        let response = service(vec![facts(lock), facts(lock)], detector.clone())
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: UpdateCheckSelection::Skills(identities),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            detector.requested.lock().unwrap().as_slice(),
+            &[BTreeSet::from(["skills/available".to_string()])]
+        );
+        assert_eq!(response.skills.len(), 3);
+        assert_eq!(response.skills[0].name, "available");
+        assert_eq!(response.skills[1].name, "broken");
+        assert_eq!(
+            response.skills[1].reason,
+            Some(UpdateCheckReasonCode::UnsupportedSource)
+        );
+        assert_eq!(response.skills[2].name, "missing");
+        assert_eq!(
+            response.skills[2].reason,
+            Some(UpdateCheckReasonCode::MissingSource)
         );
     }
 
@@ -722,7 +872,7 @@ mod tests {
             .check(&UpdateCheckRequest {
                 context: context(),
                 mode: UpdateCheckMode::Force,
-                selection: UpdateCheckSelection::All,
+                selection: selection(&["alpha"]),
             })
             .await
             .unwrap();
@@ -945,7 +1095,7 @@ mod tests {
             .check(&UpdateCheckRequest {
                 context: context(),
                 mode: UpdateCheckMode::Force,
-                selection: UpdateCheckSelection::All,
+                selection: selection(&["alpha"]),
             })
             .await
             .unwrap();
@@ -963,6 +1113,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lock_reread_rejects_evidence_when_only_the_owned_record_fact_changes() {
+        let initial = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-old","futureEntry":1}}}"#;
+        let changed = r#"{"skills":{"alpha":{"source":"owner/repo","sourceType":"github","sourceUrl":"https://github.com/owner/repo","ref":"main","skillPath":"skills/alpha","skillFolderHash":"tree-old","futureEntry":2}}}"#;
+        let detector = Arc::new(RecordingDetector {
+            requested: Mutex::new(Vec::new()),
+            outcome: observation(&["skills/alpha"]),
+        });
+        let response = service(vec![facts(initial), facts(changed)], detector)
+            .check(&UpdateCheckRequest {
+                context: context(),
+                mode: UpdateCheckMode::Force,
+                selection: selection(&["alpha"]),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(response.skills.len(), 1);
+        assert_eq!(
+            response.skills[0].status,
+            SkillUpdateCheckStatus::CannotCheck,
+        );
+        assert_eq!(
+            response.skills[0].reason,
+            Some(UpdateCheckReasonCode::UpstreamUnavailable),
+        );
+    }
+
+    #[tokio::test]
     async fn independent_source_checks_use_the_global_concurrency_limit() {
         let skills = (0..5)
             .map(|index| {
@@ -975,9 +1153,10 @@ mod tests {
         let lock = format!(r#"{{"skills":{{{skills}}}}}"#);
         let detector = Arc::new(ConcurrentDetector::new());
         let service = UpdateCheckService::new(
-            Facts {
-                values: Mutex::new(vec![facts(&lock), facts(&lock)].into()),
-            },
+            InstalledUpdateSubjectProvider::new(
+                Facts::new(vec![facts(&lock), facts(&lock)]),
+                RuntimeTargetFactResolver::new(Arc::new(WslRuntime::default())),
+            ),
             SourceEvidenceCoordinator::with_clock(detector.clone(), || 1_000),
         );
 
@@ -985,7 +1164,14 @@ mod tests {
             .check(&UpdateCheckRequest {
                 context: context(),
                 mode: UpdateCheckMode::Force,
-                selection: UpdateCheckSelection::All,
+                selection: UpdateCheckSelection::Skills(
+                    (0..5)
+                        .map(|index| crate::application::resources::SkillIdentity {
+                            context: context(),
+                            skill_name: format!("skill-{index}"),
+                        })
+                        .collect(),
+                ),
             })
             .await
             .unwrap();

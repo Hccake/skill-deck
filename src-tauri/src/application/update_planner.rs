@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
-use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
+use crate::application::collection_records::{CollectionRecordReader, LockCollectionRecordReader};
 use crate::application::mutation::plan::{
     group_physical_mutations, stable_digest, ExpectedTargetEntry, MutationPlan,
     PreparedEntryAction, PreparedEntryMutation, PreviewToken,
@@ -16,10 +16,20 @@ use crate::application::mutation::result::OperationErrorCode;
 use crate::application::payload_session::{
     AcquiredPayloadHandle, PayloadSessionManager, PinnedPayloadLease,
 };
-use crate::application::remove::{ObservedEntryKind, ObservedEntryOwner, ObservedPhysicalEntry};
+use crate::application::planning_facts::{ScopePlanningSnapshot, ScopePlanningSnapshotSource};
+use crate::application::skill_changes::ValidatedSkillPayload;
+use crate::application::skill_entry_projection::{
+    ObservedEntryKind, ObservedEntryReader, ObservedPhysicalEntry,
+};
+use crate::application::skill_paths::{
+    ResolvedSkillRoot, ResolvedSkillTarget, SkillPathObserver, SkillTargetRequest,
+};
 use crate::application::update::{
     derive_update_capability_from_metadata, CheckUpdateCapability, UpdateFuture, UpdatePlanner,
     UpdateRequest,
+};
+use crate::application::update_subjects::{
+    build_update_subject_snapshot_from_targets, UpdateSubjectSnapshot,
 };
 use crate::core::agent_definition::{AgentAdapter, AgentId};
 use crate::core::lossless_lock::LockSchema;
@@ -63,13 +73,14 @@ pub struct LocalUpdateInspection {
     pub token: PreviewToken,
     pub source_candidates: Vec<LockedUpdateSkill>,
     pub skills: Vec<LocalUpdateSkillInspection>,
+    pub subjects: UpdateSubjectSnapshot,
 }
 
 #[derive(Debug, Clone)]
 pub struct LocalUpdateSkillInspection {
     pub skill_name: String,
-    pub observed_digest: String,
-    pub adapter_targets: Vec<ObservedEntryOwner>,
+    pub agent_observed_digest: String,
+    pub adapter_targets: Vec<ObservedEntryReader>,
     pub(crate) clean_copies: Vec<ObservedPhysicalEntry>,
     pub conflicts: Vec<ObservedPhysicalEntry>,
     pub blocking_reasons: Vec<OperationErrorCode>,
@@ -119,7 +130,7 @@ impl<F, T> ConcreteUpdatePlanner<F, T> {
 
 impl<F, T> UpdatePlanner for ConcreteUpdatePlanner<F, T>
 where
-    F: InstallPlanningFactSource,
+    F: ScopePlanningSnapshotSource,
     T: TargetFactResolver + ContentManifestReader,
 {
     fn inspect<'a>(
@@ -132,13 +143,20 @@ where
     fn build<'a>(
         &'a self,
         execution: &'a crate::application::update::UpdateExecutionRequest,
-        handles: Vec<AcquiredPayloadHandle>,
-        payloads: Vec<PinnedPayloadLease>,
+        payloads: Vec<ValidatedSkillPayload>,
     ) -> UpdateFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
         Box::pin(async move {
             let request = &execution.request;
-            let facts = self.facts.current(&request.context).await?;
+            let facts = self.facts.snapshot(&request.context).await?;
             let locked = locked_skills(request, &facts)?;
+            let handles = payloads
+                .iter()
+                .map(|payload| payload.handle().clone())
+                .collect();
+            let payloads = payloads
+                .into_iter()
+                .map(ValidatedSkillPayload::into_lease)
+                .collect();
             self.build_plan(
                 request,
                 &execution.overwrite_private_entries,
@@ -155,59 +173,57 @@ where
 #[derive(Clone)]
 enum CandidateKind {
     Canonical,
-    Private { owners: Vec<ObservedEntryOwner> },
-    Adapter { owner: ObservedEntryOwner },
+    Private { readers: Vec<ObservedEntryReader> },
+    Adapter { owner: ObservedEntryReader },
 }
 
 struct SkillSeed {
     locked_index: usize,
-    fact_start: usize,
-    fact_count: usize,
+    target_facts: Vec<ResolvedTargetFact>,
     candidates: Vec<CandidateKind>,
+    additional_roots: Vec<ResourceLocator>,
 }
 
 impl<F, T> ConcreteUpdatePlanner<F, T>
 where
-    F: InstallPlanningFactSource,
-    T: TargetFactResolver,
+    F: ScopePlanningSnapshotSource,
+    T: TargetFactResolver + ContentManifestReader,
 {
     pub async fn inspect(&self, request: &UpdateRequest) -> Result<LocalUpdateInspection, AppError>
     where
         T: ContentManifestReader,
     {
-        let facts = self.facts.current(&request.context).await?;
+        let facts = self.facts.snapshot(&request.context).await?;
         let locked = locked_skills(request, &facts)?;
-        let (destinations, seeds) = planning_seeds(&facts, request, &locked)?;
-        let target_facts = self
-            .targets
-            .resolve(&request.context, &destinations, None)
-            .await?;
-        if target_facts.len() != destinations.len() {
-            return Err(AppError::StaleTarget);
-        }
-        let mut manifests = BTreeMap::<PhysicalTargetKey, Option<ContentManifestHash>>::new();
+        let (collection, path_requests, mut seeds) = planning_seeds(&facts, request, &locked)?;
+        let (mut manifests, canonical_targets) =
+            resolve_planning_targets(&self.targets, &collection, path_requests, &mut seeds).await?;
         let mut skills = Vec::with_capacity(seeds.len());
         for seed in &seeds {
-            let facts_slice = &target_facts[seed.fact_start..seed.fact_start + seed.fact_count];
+            let facts_slice = &seed.target_facts;
             read_manifest_states(&self.targets, facts_slice, &mut manifests).await;
-            let observed_digest =
-                skill_observed_digest(facts_slice, &facts, &locked[seed.locked_index], &manifests)?;
+            let agent_observed_digest = agent_observed_digest(facts_slice, &manifests)?;
             skills.push(
                 self.inspect_skill_copies(
                     &locked[seed.locked_index],
                     facts_slice,
                     &seed.candidates,
                     &mut manifests,
-                    observed_digest,
+                    agent_observed_digest,
                 )
                 .await?,
             );
         }
+        let target_facts = flattened_target_facts(&seeds);
         let token = inspection_token(request, &facts, &locked, &target_facts, &manifests)?;
+        let records = installed_record_snapshot(&facts, &collection, request)?;
+        let subjects =
+            build_update_subject_snapshot_from_targets(collection, records, canonical_targets)?;
         Ok(LocalUpdateInspection {
             token,
             source_candidates: locked,
             skills,
+            subjects,
         })
     }
 
@@ -217,7 +233,7 @@ where
         facts: &[ResolvedTargetFact],
         candidates: &[CandidateKind],
         manifests: &mut BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
-        observed_digest: String,
+        agent_observed_digest: String,
     ) -> Result<LocalUpdateSkillInspection, AppError>
     where
         T: ContentManifestReader,
@@ -230,10 +246,10 @@ where
         };
         let mut clean = BTreeMap::<PhysicalTargetKey, ObservedPhysicalEntry>::new();
         let mut conflicts = BTreeMap::<PhysicalTargetKey, ObservedPhysicalEntry>::new();
-        let mut adapter_targets = BTreeMap::<String, ObservedEntryOwner>::new();
+        let mut adapter_targets = BTreeMap::<String, ObservedEntryReader>::new();
         for (fact, candidate) in facts.iter().zip(candidates).skip(1) {
-            let owners = match candidate {
-                CandidateKind::Private { owners } => owners,
+            let readers = match candidate {
+                CandidateKind::Private { readers } => readers,
                 CandidateKind::Adapter { owner }
                     if fact.entry_kind == TargetEntryKind::Directory =>
                 {
@@ -259,7 +275,7 @@ where
                 false
             };
             let grouped = if is_clean { &mut clean } else { &mut conflicts };
-            for owner in owners {
+            for owner in readers {
                 insert_private_entry(grouped, fact, owner)?;
             }
         }
@@ -271,7 +287,7 @@ where
         .collect();
         Ok(LocalUpdateSkillInspection {
             skill_name: locked.name.clone(),
-            observed_digest,
+            agent_observed_digest,
             adapter_targets: adapter_targets.into_values().collect(),
             clean_copies,
             conflicts: conflicts.into_values().collect(),
@@ -284,7 +300,7 @@ where
         &self,
         request: &UpdateRequest,
         overwrite_private_entries: &[ObservedEntryId],
-        facts: InstallPlanningFacts,
+        facts: ScopePlanningSnapshot,
         locked: Vec<LockedUpdateSkill>,
         handles: Vec<AcquiredPayloadHandle>,
         payloads: Vec<PinnedPayloadLease>,
@@ -294,20 +310,15 @@ where
     {
         validate_payloads(request, &facts, &locked, &handles, &payloads)?;
         let mut payloads = payloads;
-        let (destinations, seeds) = planning_seeds(&facts, request, &locked)?;
-        let target_facts = self
-            .targets
-            .resolve(&request.context, &destinations, None)
-            .await?;
-        if target_facts.len() != destinations.len() {
-            return Err(AppError::StaleTarget);
-        }
-        let mut manifests = BTreeMap::<PhysicalTargetKey, Option<ContentManifestHash>>::new();
+        let (collection, path_requests, mut seeds) = planning_seeds(&facts, request, &locked)?;
+        let (mut manifests, _) =
+            resolve_planning_targets(&self.targets, &collection, path_requests, &mut seeds).await?;
+        let target_facts = flattened_target_facts(&seeds);
         read_manifest_states(&self.targets, &target_facts, &mut manifests).await;
         let token = inspection_token(request, &facts, &locked, &target_facts, &manifests)?;
         let mut eve_payload_indexes = BTreeMap::new();
         for (seed_index, seed) in seeds.iter().enumerate() {
-            let facts_slice = &target_facts[seed.fact_start..seed.fact_start + seed.fact_count];
+            let facts_slice = &seed.target_facts;
             let needs_eve_payload =
                 facts_slice
                     .iter()
@@ -338,7 +349,7 @@ where
         for (seed_index, seed) in seeds.iter().enumerate() {
             let locked = &locked[seed.locked_index];
             let payload = &payloads[seed.locked_index];
-            let facts_slice = &target_facts[seed.fact_start..seed.fact_start + seed.fact_count];
+            let facts_slice = &seed.target_facts;
             let observed = private_entries(facts_slice, &seed.candidates)?;
             all_selectable.extend(observed.iter().map(|entry| entry.entry_id.clone()));
             units.push(build_unit(
@@ -373,7 +384,7 @@ where
 
 fn locked_skills(
     request: &UpdateRequest,
-    facts: &InstallPlanningFacts,
+    facts: &ScopePlanningSnapshot,
 ) -> Result<Vec<LockedUpdateSkill>, AppError> {
     request
         .skill_names
@@ -481,7 +492,7 @@ fn string_field(object: &Map<String, Value>, field: &str) -> Option<String> {
 
 fn validate_payloads(
     request: &UpdateRequest,
-    facts: &InstallPlanningFacts,
+    facts: &ScopePlanningSnapshot,
     locked: &[LockedUpdateSkill],
     handles: &[AcquiredPayloadHandle],
     payloads: &[PinnedPayloadLease],
@@ -525,7 +536,7 @@ fn private_entries(
     let canonical_key = facts.first().map(|fact| &fact.key);
     let mut grouped = BTreeMap::<PhysicalTargetKey, ObservedPhysicalEntry>::new();
     for (fact, candidate) in facts.iter().zip(candidates) {
-        let CandidateKind::Private { owners } = candidate else {
+        let CandidateKind::Private { readers } = candidate else {
             continue;
         };
         if fact.entry_kind != TargetEntryKind::Directory
@@ -533,16 +544,16 @@ fn private_entries(
         {
             continue;
         }
-        for owner in owners {
+        for owner in readers {
             insert_private_entry(&mut grouped, fact, owner)?;
         }
     }
     for entry in grouped.values_mut() {
         entry
-            .owners
+            .readers
             .sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
         entry
-            .owners
+            .readers
             .dedup_by(|left, right| left.agent_id == right.agent_id);
     }
     Ok(grouped.into_values().collect())
@@ -552,8 +563,8 @@ fn private_update_roots(
     runtime: &AgentRuntimeSnapshot,
     scope: &SkillLocation,
     environment: &EnvironmentRef,
-) -> Result<BTreeMap<String, Vec<ObservedEntryOwner>>, AppError> {
-    let mut private_roots = BTreeMap::<String, Vec<ObservedEntryOwner>>::new();
+) -> Result<BTreeMap<String, Vec<ObservedEntryReader>>, AppError> {
+    let mut private_roots = BTreeMap::<String, Vec<ObservedEntryReader>>::new();
     for (agent_id, agent) in &runtime.agents {
         if agent.definition.adapter != AgentAdapter::Standard {
             continue;
@@ -605,74 +616,156 @@ fn private_update_roots(
         private_roots
             .entry(root.to_string())
             .or_default()
-            .push(ObservedEntryOwner {
+            .push(ObservedEntryReader {
                 agent_id: agent_id.clone(),
                 display_name: agent.definition.display_name.clone(),
                 logical_target_id: target_id,
             });
     }
-    for owners in private_roots.values_mut() {
-        owners.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
-        owners.dedup_by(|left, right| left.agent_id == right.agent_id);
+    for readers in private_roots.values_mut() {
+        readers.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
+        readers.dedup_by(|left, right| left.agent_id == right.agent_id);
     }
     Ok(private_roots)
 }
 
 fn planning_seeds(
-    facts: &InstallPlanningFacts,
+    facts: &ScopePlanningSnapshot,
     request: &UpdateRequest,
     locked: &[LockedUpdateSkill],
-) -> Result<(Vec<ResourceLocator>, Vec<SkillSeed>), AppError> {
+) -> Result<(ResolvedSkillRoot, Vec<SkillTargetRequest>, Vec<SkillSeed>), AppError> {
     let private_roots = private_update_roots(
         &facts.agent_runtime,
         &request.context.scope,
         &request.context.environment,
     )?;
+    let collection = SkillPathObserver::resolve_installed_collection(
+        &facts.resolved_context,
+        &facts.revisions.environment,
+    )?;
 
-    let mut destinations = Vec::new();
+    let mut path_requests = Vec::with_capacity(locked.len());
     let mut seeds = Vec::with_capacity(locked.len());
     for (index, skill) in locked.iter().enumerate() {
-        let start = destinations.len();
         let mut candidates = vec![CandidateKind::Canonical];
-        let install_dir_name =
-            crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(
-                &skill.name,
-            )?;
-        destinations.push(join_entry(
-            &facts.resolved_context.skill_root,
-            &install_dir_name,
-        ));
-        for (root, owners) in &private_roots {
-            destinations.push(join_entry(
-                &ResourceLocator {
-                    environment: request.context.environment.clone(),
-                    native_path: root.clone(),
-                },
-                &install_dir_name,
-            ));
+        let mut additional_roots = Vec::new();
+        for (root, readers) in &private_roots {
+            additional_roots.push(ResourceLocator {
+                environment: request.context.environment.clone(),
+                native_path: root.clone(),
+            });
             candidates.push(CandidateKind::Private {
-                owners: owners.clone(),
+                readers: readers.clone(),
             });
         }
         for (_target_id, root, owner) in
             eve_adapter_roots(&facts.agent_runtime, skill, &request.context.environment)?
         {
-            destinations.push(join_entry(&root, &install_dir_name));
+            additional_roots.push(root);
             candidates.push(CandidateKind::Adapter { owner });
         }
+        path_requests.push(SkillTargetRequest {
+            skill_name: skill.name.clone(),
+        });
         seeds.push(SkillSeed {
             locked_index: index,
-            fact_start: start,
-            fact_count: candidates.len(),
+            target_facts: Vec::new(),
             candidates,
+            additional_roots,
         });
     }
-    Ok((destinations, seeds))
+    Ok((collection, path_requests, seeds))
+}
+
+fn installed_record_snapshot(
+    facts: &ScopePlanningSnapshot,
+    root: &ResolvedSkillRoot,
+    request: &UpdateRequest,
+) -> Result<crate::application::collection_records::CollectionRecordSnapshot, AppError> {
+    let project_root = facts
+        .resolved_context
+        .project
+        .as_ref()
+        .map(|project| ResourceLocator {
+            environment: root.environment.clone(),
+            native_path: project.native_path.clone(),
+        });
+    LockCollectionRecordReader::new(
+        &root.environment,
+        facts.lock_schema,
+        &facts.lock_document,
+        project_root.as_ref(),
+    )
+    .load_snapshot(request.skill_names.iter().cloned().collect())
+}
+
+async fn resolve_planning_targets<T>(
+    targets: &T,
+    root: &ResolvedSkillRoot,
+    requests: Vec<SkillTargetRequest>,
+    seeds: &mut [SkillSeed],
+) -> Result<
+    (
+        BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
+        Vec<ResolvedSkillTarget>,
+    ),
+    AppError,
+>
+where
+    T: TargetFactResolver + ContentManifestReader,
+{
+    let resolved = SkillPathObserver::resolve_skill_targets(targets, root, requests, None).await?;
+    if resolved.len() != seeds.len() {
+        return Err(AppError::StaleTarget);
+    }
+    let additional_destinations = seeds
+        .iter()
+        .zip(&resolved)
+        .flat_map(|(seed, resolved)| {
+            seed.additional_roots
+                .iter()
+                .map(move |root| root.join_child(&resolved.install_dir_name))
+        })
+        .collect::<Vec<_>>();
+    let additional = targets
+        .resolve_environment(&root.environment, &additional_destinations, None)
+        .await?;
+    if additional.len() != additional_destinations.len() {
+        return Err(AppError::StaleTarget);
+    }
+    let mut manifests = BTreeMap::new();
+    let mut additional_cursor = 0;
+    for (seed, resolved) in seeds.iter_mut().zip(&resolved) {
+        if let Some(manifest) = resolved.content_revision.manifest_hash().cloned() {
+            manifests.insert(resolved.target.key.clone(), Some(manifest));
+        }
+        seed.target_facts.push(resolved.target.clone());
+        let additional_end = additional_cursor + seed.additional_roots.len();
+        seed.target_facts.extend(
+            additional
+                .get(additional_cursor..additional_end)
+                .ok_or(AppError::StaleTarget)?
+                .iter()
+                .cloned(),
+        );
+        additional_cursor = additional_end;
+        if seed.target_facts.len() != seed.candidates.len() {
+            return Err(AppError::StaleTarget);
+        }
+    }
+    Ok((manifests, resolved))
+}
+
+fn flattened_target_facts(seeds: &[SkillSeed]) -> Vec<ResolvedTargetFact> {
+    seeds
+        .iter()
+        .flat_map(|seed| seed.target_facts.iter().cloned())
+        .collect()
 }
 
 fn inspection_token(
     request: &UpdateRequest,
-    facts: &InstallPlanningFacts,
+    facts: &ScopePlanningSnapshot,
     locked: &[LockedUpdateSkill],
     target_facts: &[ResolvedTargetFact],
     manifests: &BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
@@ -722,7 +815,7 @@ async fn read_manifest_once<R: ContentManifestReader>(
 fn insert_private_entry(
     grouped: &mut BTreeMap<PhysicalTargetKey, ObservedPhysicalEntry>,
     fact: &ResolvedTargetFact,
-    owner: &ObservedEntryOwner,
+    owner: &ObservedEntryReader,
 ) -> Result<(), AppError> {
     let entry_id = observed_entry_id(&fact.key, &fact.fingerprint)?;
     let physical_target_key = stable_digest(&fact.key)?;
@@ -733,15 +826,15 @@ fn insert_private_entry(
             display_path: fact.destination.clone(),
             kind: observed_kind(fact.entry_kind),
             physical_target_key,
-            owners: Vec::new(),
-            will_break_if_canonical_removed: false,
+            readers: Vec::new(),
+            will_break_if_standard_removed: false,
         });
-    entry.owners.push(owner.clone());
+    entry.readers.push(owner.clone());
     entry
-        .owners
+        .readers
         .sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
     entry
-        .owners
+        .readers
         .dedup_by(|left, right| left.agent_id == right.agent_id);
     Ok(())
 }
@@ -760,7 +853,7 @@ fn observed_kind(kind: TargetEntryKind) -> ObservedEntryKind {
 #[allow(clippy::too_many_arguments)]
 fn build_unit(
     request: &UpdateRequest,
-    facts: &InstallPlanningFacts,
+    facts: &ScopePlanningSnapshot,
     locked: &LockedUpdateSkill,
     payload: &PinnedPayloadLease,
     eve_payload: Option<&PinnedPayloadLease>,
@@ -788,12 +881,12 @@ fn build_unit(
             payload_id: payload.manifest().payload_id().clone(),
             requested_mode: InstallMode::Copy,
         },
-        owner_agent_ids: canonical_owners,
+        reader_agent_ids: canonical_owners,
     };
     let mut private = Vec::new();
     for (fact, candidate) in target_facts.iter().zip(candidates).skip(1) {
         match candidate {
-            CandidateKind::Private { owners }
+            CandidateKind::Private { readers }
                 if fact.entry_kind == TargetEntryKind::Directory
                     && selected.contains(&observed_entry_id(&fact.key, &fact.fingerprint)?) =>
             {
@@ -804,7 +897,7 @@ fn build_unit(
                         payload_id: payload.manifest().payload_id().clone(),
                         requested_mode: InstallMode::Copy,
                     },
-                    owner_agent_ids: owners.iter().map(|owner| owner.agent_id.clone()).collect(),
+                    reader_agent_ids: readers.iter().map(|owner| owner.agent_id.clone()).collect(),
                 });
             }
             CandidateKind::Adapter { owner, .. }
@@ -821,7 +914,7 @@ fn build_unit(
                             .clone(),
                         requested_mode: InstallMode::Copy,
                     },
-                    owner_agent_ids: vec![owner.agent_id.clone()],
+                    reader_agent_ids: vec![owner.agent_id.clone()],
                 });
             }
             _ => {}
@@ -829,11 +922,11 @@ fn build_unit(
     }
     let grouped =
         group_physical_mutations(std::iter::once(canonical.clone()).chain(private).collect())?;
-    let canonical_entry = grouped
+    let primary_entry = grouped
         .iter()
         .find(|entry| entry.key == canonical.key)
         .cloned();
-    let required_agent_entries = grouped
+    let additional_entries = grouped
         .into_iter()
         .filter(|entry| entry.key != canonical.key)
         .collect();
@@ -844,8 +937,8 @@ fn build_unit(
         target: request.context.clone(),
         expected_revisions: facts.revisions.clone(),
         entries: PreparedMutationEntries {
-            canonical: canonical_entry,
-            required_agents: required_agent_entries,
+            primary: primary_entry,
+            additional: additional_entries,
             expected_targets: target_facts
                 .iter()
                 .map(|fact| ExpectedTargetEntry {
@@ -860,7 +953,7 @@ fn build_unit(
 }
 
 fn lock_mutation(
-    facts: &InstallPlanningFacts,
+    facts: &ScopePlanningSnapshot,
     locked: &LockedUpdateSkill,
     payload: &PinnedPayloadLease,
     now: String,
@@ -942,7 +1035,7 @@ fn lock_mutation(
 }
 
 fn standard_owners(runtime: &AgentRuntimeSnapshot, scope: &SkillLocation) -> Vec<AgentId> {
-    let mut owners = runtime
+    let mut readers = runtime
         .agents
         .iter()
         .filter_map(|(id, agent)| {
@@ -956,8 +1049,8 @@ fn standard_owners(runtime: &AgentRuntimeSnapshot, scope: &SkillLocation) -> Vec
                 .then(|| id.clone())
         })
         .collect::<Vec<_>>();
-    owners.sort();
-    owners
+    readers.sort();
+    readers
 }
 
 fn agent_scope<'a>(
@@ -976,7 +1069,7 @@ fn eve_adapter_roots(
     runtime: &AgentRuntimeSnapshot,
     skill: &LockedUpdateSkill,
     environment: &EnvironmentRef,
-) -> Result<Vec<(String, ResourceLocator, ObservedEntryOwner)>, AppError> {
+) -> Result<Vec<(String, ResourceLocator, ObservedEntryReader)>, AppError> {
     let has_explicit_placement = skill
         .subagents
         .as_ref()
@@ -1030,14 +1123,12 @@ fn eve_adapter_roots(
             };
             Ok((
                 target_id.clone(),
-                join_entry(
-                    &ResourceLocator {
-                        environment: environment.clone(),
-                        native_path: project.to_string(),
-                    },
-                    &relative,
-                ),
-                ObservedEntryOwner {
+                ResourceLocator {
+                    environment: environment.clone(),
+                    native_path: project.to_string(),
+                }
+                .join_child(&relative),
+                ObservedEntryReader {
                     agent_id: agent_id.clone(),
                     display_name: agent.definition.display_name.clone(),
                     logical_target_id: target_id,
@@ -1049,7 +1140,7 @@ fn eve_adapter_roots(
 
 fn observed_digest(
     target_facts: &[ResolvedTargetFact],
-    facts: &InstallPlanningFacts,
+    facts: &ScopePlanningSnapshot,
     locked: &[LockedUpdateSkill],
     manifests: &BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
 ) -> Result<String, AppError> {
@@ -1075,23 +1166,17 @@ fn observed_digest(
     ))
 }
 
-fn skill_observed_digest(
+fn agent_observed_digest(
     target_facts: &[ResolvedTargetFact],
-    facts: &InstallPlanningFacts,
-    locked: &LockedUpdateSkill,
     manifests: &BTreeMap<PhysicalTargetKey, Option<ContentManifestHash>>,
 ) -> Result<String, AppError> {
+    let agent_targets = target_facts.get(1..).unwrap_or_default();
     stable_digest(&(
-        target_facts
+        agent_targets
             .iter()
             .map(|fact| (&fact.key, &fact.fingerprint, fact.entry_kind as u8))
             .collect::<Vec<_>>(),
-        manifest_digest_entries(target_facts, manifests),
-        facts
-            .lock_document
-            .entry_snapshot(&locked.lock_key)
-            .value()
-            .cloned(),
+        manifest_digest_entries(agent_targets, manifests),
     ))
 }
 
@@ -1112,23 +1197,6 @@ fn manifest_digest_entries<'a>(
             )
         })
         .collect()
-}
-
-fn join_entry(root: &ResourceLocator, child: &str) -> ResourceLocator {
-    let separator = if matches!(root.environment, EnvironmentRef::Native) && cfg!(windows) {
-        '\\'
-    } else {
-        '/'
-    };
-    ResourceLocator {
-        environment: root.environment.clone(),
-        native_path: format!(
-            "{}{}{}",
-            root.native_path.trim_end_matches(['/', '\\']),
-            separator,
-            child
-        ),
-    }
 }
 
 #[cfg(test)]
@@ -1157,12 +1225,12 @@ mod tests {
 
         use super::*;
         use crate::application::install::InstallFuture;
-        use crate::application::install_planner::{
-            InstallPlanningFactSource, InstallPlanningFacts,
-        };
         use crate::application::mutation::plan::RuntimeRevisions;
         use crate::application::payload_session::{
             PayloadPlanningMetadata, PayloadSessionLimits, PayloadSessionManager,
+        };
+        use crate::application::planning_facts::{
+            ScopePlanningSnapshot, ScopePlanningSnapshotSource,
         };
         use crate::application::update::{UpdateExecutionRequest, UpdatePlanner, UpdateRequest};
         use crate::core::agent_definition::PathSpec;
@@ -1176,21 +1244,25 @@ mod tests {
             RuntimeTargetFactResolver, TargetFactFuture, TargetFactResolver,
         };
         use crate::environment::runtime::ContextSnapshotRevision;
-        use crate::environment::types::{ResourceLocator, SkillLocation, SkillLocationRef};
+        use crate::environment::types::{
+            RegisteredProject, ResourceLocator, SkillLocation, SkillLocationRef,
+        };
         use crate::environment::wsl::WslRuntime;
 
-        struct Facts(InstallPlanningFacts);
+        #[derive(Clone)]
+        struct Facts(ScopePlanningSnapshot);
 
-        impl InstallPlanningFactSource for Facts {
-            fn current<'a>(
+        impl ScopePlanningSnapshotSource for Facts {
+            fn snapshot<'a>(
                 &'a self,
                 _context: &'a SkillLocationRef,
-            ) -> InstallFuture<'a, Result<InstallPlanningFacts, crate::error::AppError>>
+            ) -> InstallFuture<'a, Result<ScopePlanningSnapshot, crate::error::AppError>>
             {
                 Box::pin(async move { Ok(self.0.clone()) })
             }
         }
 
+        #[derive(Clone)]
         struct CountingTargets {
             inner: RuntimeTargetFactResolver,
             manifest_reads: Arc<Mutex<BTreeMap<PhysicalTargetKey, usize>>>,
@@ -1243,7 +1315,11 @@ mod tests {
             symlink(canonical_root.join("demo"), link_root.join("demo")).unwrap();
             symlink(&copy_root, &alias_root).unwrap();
             fs::create_dir_all(&source).unwrap();
-            fs::write(source.join("SKILL.md"), b"---\nname: demo\n---\nnew").unwrap();
+            fs::write(
+                source.join("SKILL.md"),
+                b"---\nname: demo\ndescription: Demo\n---\nnew",
+            )
+            .unwrap();
             let payload = build_skill_payload(&source).unwrap();
             let manager = Arc::new(PayloadSessionManager::in_memory(
                 PayloadSessionLimits {
@@ -1284,10 +1360,16 @@ mod tests {
                     project_id: "project-1".to_string(),
                 },
             };
-            let facts = InstallPlanningFacts {
+            let facts = ScopePlanningSnapshot {
             resolved_context: ResolvedContext {
                 context: context.clone(),
-                project: None,
+                project: Some(RegisteredProject {
+                    id: "project-1".to_string(),
+                    native_path: physical_root.to_string_lossy().into_owned(),
+                    display_name: None,
+                    order: None,
+                    suppress_cross_storage_warning: false,
+                }),
                 home: locator(temp.path()),
                 skill_root: locator(&canonical_root),
                 lock: locator(&temp.path().join("skills-lock.json")),
@@ -1316,12 +1398,22 @@ mod tests {
                 || "2026-07-18T00:00:00.000Z".to_string(),
             );
             let request = UpdateRequest {
-                context,
+                context: context.clone(),
                 skill_names: vec!["demo".to_string()],
             };
 
             let inspection = planner.inspect(&request).await.unwrap();
             assert_eq!(inspection.source_candidates.len(), 1);
+            assert_eq!(inspection.subjects.environment, context.environment);
+            assert_eq!(inspection.subjects.subjects.len(), 1);
+            assert_eq!(
+                inspection.subjects.subjects[0]
+                    .projection
+                    .metadata()
+                    .unwrap()
+                    .source,
+                "owner/repo"
+            );
             assert_eq!(inspection.skills[0].clean_copies.len(), 1);
             assert!(inspection.skills[0].conflicts.is_empty());
             assert!(inspection.skills[0].adapter_targets.is_empty());
@@ -1341,7 +1433,7 @@ mod tests {
                 .all(|reads| *reads == 1));
 
             assert_eq!(inspection.skills[0].clean_copies.len(), 1);
-            assert_eq!(inspection.skills[0].clean_copies[0].owners.len(), 3);
+            assert_eq!(inspection.skills[0].clean_copies[0].readers.len(), 3);
             let execution = UpdateExecutionRequest {
                 request: request.clone(),
                 overwrite_private_entries: vec![inspection.skills[0].clean_copies[0]
@@ -1351,8 +1443,15 @@ mod tests {
             let (token, plan) = planner
                 .build(
                     &execution,
-                    vec![handle.clone()],
-                    vec![manager.pin_verified(&handle).await.unwrap()],
+                    vec![ValidatedSkillPayload::validate(
+                        handle.clone(),
+                        &discovery,
+                        &EnvironmentRef::Native,
+                        "demo",
+                        manager.pin_verified(&handle).await.unwrap(),
+                    )
+                    .await
+                    .unwrap()],
                 )
                 .await
                 .unwrap();
@@ -1360,25 +1459,23 @@ mod tests {
             assert_eq!(inspection.token, token);
             assert_eq!(plan.units.len(), 1);
             assert!(plan.units[0]
-                .canonical_entry
+                .primary_entry
                 .iter()
-                .chain(&plan.units[0].required_agent_entries)
+                .chain(&plan.units[0].additional_entries)
                 .all(
                     |mutation| plan.units[0].expected_targets.iter().any(|expected| {
                         expected.key == mutation.key
                             && expected.expected_content_manifest_hash.is_some()
                     })
                 ));
-            assert!(plan.units[0].canonical_entry.is_some());
-            assert_eq!(plan.units[0].required_agent_entries.len(), 1);
+            assert!(plan.units[0].primary_entry.is_some());
+            assert_eq!(plan.units[0].additional_entries.len(), 1);
             assert_eq!(
-                plan.units[0].required_agent_entries[0]
-                    .destination
-                    .native_path,
+                plan.units[0].additional_entries[0].destination.native_path,
                 copy_root.join("demo").to_string_lossy()
             );
             assert_eq!(
-                plan.units[0].required_agent_entries[0].owner_agent_ids,
+                plan.units[0].additional_entries[0].reader_agent_ids,
                 vec![
                     AgentId::parse("alias-agent").unwrap(),
                     AgentId::parse("copy-agent").unwrap(),
@@ -1513,9 +1610,9 @@ mod tests {
                     .unwrap();
 
             assert_eq!(roots.len(), 1);
-            let owners = roots.get("/home/alice/.shared/skills").unwrap();
+            let readers = roots.get("/home/alice/.shared/skills").unwrap();
             assert_eq!(
-                owners
+                readers
                     .iter()
                     .map(|owner| owner.agent_id.as_str())
                     .collect::<Vec<_>>(),

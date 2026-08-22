@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::application::payload_session::DiscoverySessionHandle;
 use crate::core::agent_definition::AgentId;
 
 /// 安装范围
@@ -49,7 +48,7 @@ pub enum AgentSkillPresence {
     NotInstalled,
 }
 
-/// 可用的 Skill 信息（fetch_available 返回）
+/// 来源发现返回的可用 Skill 信息
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 #[specta(rename_all = "camelCase")]
@@ -106,27 +105,4 @@ pub struct SkillInstallTargetInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagent: Option<String>,
     pub path: String,
-}
-
-/// fetch_available 返回结果
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-#[specta(rename_all = "camelCase")]
-pub struct FetchResult {
-    /// Opaque source snapshot shared by discovery, preview and execute.
-    pub discovery_session: DiscoverySessionHandle,
-    /// 来源类型
-    pub source_type: String,
-    /// 规范化 URL
-    pub source_url: String,
-    /// 跨主机重定向后的实际下载主机；同主机跳转不返回该字段。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redirected_download_host: Option<String>,
-    /// Git ref（branch/tag）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub git_ref: Option<String>,
-    /// @skill 语法提取的名称（用于预选）
-    pub skill_filter: Option<String>,
-    /// 可用的 skills 列表
-    pub skills: Vec<AvailableSkill>,
 }

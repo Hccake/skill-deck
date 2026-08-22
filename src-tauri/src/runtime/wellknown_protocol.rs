@@ -31,12 +31,6 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
-pub struct WellKnownIndex {
-    pub skills: Vec<WellKnownSkillEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct WellKnownSkillEntry {
     pub name: String,
     pub description: String,
@@ -47,17 +41,11 @@ pub struct WellKnownSkillEntry {
 enum NormalizedWellKnownEntry {
     Legacy {
         name: String,
-        #[allow(dead_code)]
-        description: String,
         files: Vec<String>,
         base_url: String,
-        #[allow(dead_code)]
-        well_known_path: String,
     },
     V2 {
         name: String,
-        #[allow(dead_code)]
-        description: String,
         entry_type: String,
         artifact_url: String,
         digest: String,
@@ -113,10 +101,6 @@ struct FetchedWellKnownIndex {
 
 struct IndexUrlCandidate {
     index_url: String,
-    #[allow(dead_code)]
-    base_url: String,
-    #[allow(dead_code)]
-    well_known_path: String,
 }
 
 struct ScopedWellKnownInput {
@@ -155,21 +139,8 @@ fn build_index_url_plan(url: &str) -> IndexUrlPlan {
         let mut index_url = parsed;
         index_url.set_fragment(None);
         let index_url = index_url.to_string();
-        let base_url = index_url
-            .trim_end_matches(INDEX_FILE)
-            .trim_end_matches('/')
-            .to_string();
-        let well_known_path = WELL_KNOWN_PATHS
-            .iter()
-            .find(|path| base_url.ends_with(**path))
-            .copied()
-            .unwrap_or_default();
         return IndexUrlPlan {
-            candidates: vec![IndexUrlCandidate {
-                index_url,
-                base_url,
-                well_known_path: well_known_path.to_string(),
-            }],
+            candidates: vec![IndexUrlCandidate { index_url }],
             scope: None,
         };
     }
@@ -183,8 +154,6 @@ fn build_index_url_plan(url: &str) -> IndexUrlPlan {
         for &wk_path in WELL_KNOWN_PATHS {
             candidates.push(IndexUrlCandidate {
                 index_url: format!("{origin}{path}/{wk_path}/{INDEX_FILE}"),
-                base_url: format!("{origin}{path}/{wk_path}"),
-                well_known_path: wk_path.to_string(),
             });
         }
     }
@@ -193,8 +162,6 @@ fn build_index_url_plan(url: &str) -> IndexUrlPlan {
     for &wk_path in WELL_KNOWN_PATHS {
         candidates.push(IndexUrlCandidate {
             index_url: format!("{origin}/{wk_path}/{INDEX_FILE}"),
-            base_url: format!("{origin}/{wk_path}"),
-            well_known_path: wk_path.to_string(),
         });
     }
 
@@ -290,7 +257,6 @@ fn validate_skill_entry(entry: &WellKnownSkillEntry) -> Result<(), AppError> {
 fn normalize_wellknown_index(
     raw: &serde_json::Value,
     index_url: &str,
-    well_known_path: &str,
 ) -> Option<Vec<NormalizedWellKnownEntry>> {
     let object = raw.as_object()?;
     let skills = object.get("skills")?.as_array()?;
@@ -321,7 +287,6 @@ fn normalize_wellknown_index(
             let artifact_url = Url::parse(index_url).ok()?.join(url).ok()?.to_string();
             entries.push(NormalizedWellKnownEntry::V2 {
                 name,
-                description,
                 entry_type,
                 artifact_url,
                 digest,
@@ -349,10 +314,8 @@ fn normalize_wellknown_index(
         }
         entries.push(NormalizedWellKnownEntry::Legacy {
             name: entry.name,
-            description: entry.description,
             files: entry.files,
             base_url: base_url.clone(),
-            well_known_path: well_known_path.to_string(),
         });
     }
 
@@ -500,6 +463,7 @@ async fn materialize_fetched_index(
 
     let temp_path = tempfile::TempDir::new()?.keep();
     let mut trust_metadata = HashMap::new();
+    let mut redirected_download_host = None;
     let download = WellKnownDownloadContext {
         http,
         temp_path: &temp_path,
@@ -515,7 +479,8 @@ async fn materialize_fetched_index(
                 base_url,
                 ..
             } => {
-                download_legacy_entry(&download, name, files, base_url).await?;
+                let redirected = download_legacy_entry(&download, name, files, base_url).await?;
+                redirected_download_host = redirected_download_host.or(redirected);
             }
             NormalizedWellKnownEntry::V2 {
                 name,
@@ -524,7 +489,9 @@ async fn materialize_fetched_index(
                 digest,
                 ..
             } => {
-                download_v2_entry(&download, name, entry_type, artifact_url, digest).await?;
+                let redirected =
+                    download_v2_entry(&download, name, entry_type, artifact_url, digest).await?;
+                redirected_download_host = redirected_download_host.or(redirected);
             }
         }
         let digest = match entry {
@@ -539,6 +506,7 @@ async fn materialize_fetched_index(
     Ok(WellKnownFetchResult {
         repo_path: temp_path,
         trust_metadata,
+        redirected_download_host,
     })
 }
 
@@ -638,11 +606,12 @@ async fn download_legacy_entry(
     name: &str,
     files: &[String],
     base_url: &str,
-) -> Result<(), AppError> {
+) -> Result<Option<String>, AppError> {
     let skill_dir = context.temp_path.join(name);
     fs::create_dir_all(&skill_dir)?;
 
     let mut skill_ok = true;
+    let mut redirected_download_host = None;
 
     for file_path in files {
         if context.cancellation.is_cancelled() {
@@ -676,6 +645,12 @@ async fn download_legacy_entry(
             }
         };
 
+        redirected_download_host = redirected_download_host.or_else(|| {
+            crate::application::source_acquisition::redirected_host(
+                &file_url,
+                response.final_url.as_str(),
+            )
+        });
         let target_path = skill_dir.join(file_path);
 
         if !target_path.starts_with(&skill_dir) {
@@ -693,7 +668,7 @@ async fn download_legacy_entry(
         let _ = fs::remove_dir_all(&skill_dir);
     }
 
-    Ok(())
+    Ok(redirected_download_host)
 }
 
 async fn download_v2_entry(
@@ -702,7 +677,7 @@ async fn download_v2_entry(
     entry_type: &str,
     artifact_url: &str,
     digest: &str,
-) -> Result<(), AppError> {
+) -> Result<Option<String>, AppError> {
     let response = context
         .http
         .get(
@@ -731,7 +706,10 @@ async fn download_v2_entry(
     match entry_type {
         "skill-md" => {
             fs::write(skill_dir.join("SKILL.md"), &bytes)?;
-            Ok(())
+            Ok(crate::application::source_acquisition::redirected_host(
+                artifact_url,
+                response.final_url.as_str(),
+            ))
         }
         "archive" => {
             let format = detect_archive_format(&bytes, artifact_url, "");
@@ -740,7 +718,11 @@ async fn download_v2_entry(
                     value: "Unsupported archive format".to_string(),
                 });
             };
-            extract_archive_to_skill_dir(&bytes, format, &skill_dir)
+            extract_archive_to_skill_dir(&bytes, format, &skill_dir)?;
+            Ok(crate::application::source_acquisition::redirected_host(
+                artifact_url,
+                response.final_url.as_str(),
+            ))
         }
         other => Err(AppError::InvalidSource {
             value: format!("Unsupported well-known entry type: {other}"),
@@ -810,9 +792,7 @@ async fn fetch_index(
             Err(_) => continue,
         };
 
-        if let Some(entries) =
-            normalize_wellknown_index(&raw, resp.final_url.as_str(), &candidate.well_known_path)
-        {
+        if let Some(entries) = normalize_wellknown_index(&raw, resp.final_url.as_str()) {
             if let Some(scope) = &plan.scope {
                 if candidate_index >= scope.scoped_candidate_count {
                     return Err(AppError::WellKnownScopeNotFound {
@@ -919,15 +899,6 @@ mod tests {
     use std::thread;
 
     #[test]
-    fn test_parse_valid_index() {
-        let json = r#"{ "skills": [{ "name": "my-skill", "description": "A skill", "files": ["SKILL.md"] }] }"#;
-        let index: WellKnownIndex = serde_json::from_str(json).unwrap();
-        assert_eq!(index.skills.len(), 1);
-        assert_eq!(index.skills[0].name, "my-skill");
-        assert_eq!(index.skills[0].files, vec!["SKILL.md"]);
-    }
-
-    #[test]
     fn persisted_index_url_is_requested_directly() {
         let index_url = "https://example.com/catalog/index.json";
 
@@ -947,7 +918,6 @@ mod tests {
         let entries = normalize_wellknown_index(
             &raw,
             "https://example.com/.well-known/agent-skills/index.json",
-            ".well-known/agent-skills",
         )
         .expect("legacy index should normalize");
 
@@ -973,7 +943,6 @@ mod tests {
         let entries = normalize_wellknown_index(
             &raw,
             "https://example.com/.well-known/agent-skills/index.json",
-            ".well-known/agent-skills",
         );
 
         assert!(entries.is_none());
@@ -999,7 +968,6 @@ mod tests {
         let entries = normalize_wellknown_index(
             &raw,
             "https://example.com/.well-known/agent-skills/index.json",
-            ".well-known/agent-skills",
         )
         .expect("v2 index should normalize");
 
@@ -1037,7 +1005,6 @@ mod tests {
         let entries = normalize_wellknown_index(
             &raw,
             "https://example.com/.well-known/agent-skills/index.json",
-            ".well-known/agent-skills",
         );
 
         assert!(entries.is_none());
@@ -1063,7 +1030,6 @@ mod tests {
         let entries = normalize_wellknown_index(
             &raw,
             "https://example.com/.well-known/agent-skills/index.json",
-            ".well-known/agent-skills",
         );
 
         assert!(entries.is_none());
@@ -1082,7 +1048,6 @@ mod tests {
         let entries = normalize_wellknown_index(
             &raw,
             "https://example.com/.well-known/agent-skills/index.json",
-            ".well-known/agent-skills",
         );
 
         assert!(entries.is_none());
@@ -1882,20 +1847,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_index_multiple_skills() {
-        let json = r#"{
-            "skills": [
-                { "name": "alpha", "description": "First", "files": ["SKILL.md", "lib.py"] },
-                { "name": "beta", "description": "Second", "files": ["SKILL.md"] }
-            ]
-        }"#;
-        let index: WellKnownIndex = serde_json::from_str(json).unwrap();
-        assert_eq!(index.skills.len(), 2);
-        assert_eq!(index.skills[0].name, "alpha");
-        assert_eq!(index.skills[1].name, "beta");
-    }
-
-    #[test]
     fn test_validate_entry_valid() {
         let entry = WellKnownSkillEntry {
             name: "good-skill".into(),
@@ -2043,20 +1994,11 @@ mod tests {
             candidates[0].index_url,
             "https://example.com/docs/.well-known/agent-skills/index.json"
         );
-        assert_eq!(
-            candidates[0].base_url,
-            "https://example.com/docs/.well-known/agent-skills"
-        );
-        assert_eq!(candidates[0].well_known_path, ".well-known/agent-skills");
 
         // legacy skills path-relative
         assert_eq!(
             candidates[1].index_url,
             "https://example.com/docs/.well-known/skills/index.json"
-        );
-        assert_eq!(
-            candidates[1].base_url,
-            "https://example.com/docs/.well-known/skills"
         );
 
         // agent-skills root probe
@@ -2064,20 +2006,11 @@ mod tests {
             candidates[2].index_url,
             "https://example.com/.well-known/agent-skills/index.json"
         );
-        assert_eq!(
-            candidates[2].base_url,
-            "https://example.com/.well-known/agent-skills"
-        );
-        assert_eq!(candidates[2].well_known_path, ".well-known/agent-skills");
 
         // legacy skills root
         assert_eq!(
             candidates[3].index_url,
             "https://example.com/.well-known/skills/index.json"
-        );
-        assert_eq!(
-            candidates[3].base_url,
-            "https://example.com/.well-known/skills"
         );
     }
 
@@ -2090,12 +2023,10 @@ mod tests {
             candidates[0].index_url,
             "https://example.com/.well-known/agent-skills/index.json"
         );
-        assert_eq!(candidates[0].well_known_path, ".well-known/agent-skills");
         assert_eq!(
             candidates[1].index_url,
             "https://example.com/.well-known/skills/index.json"
         );
-        assert_eq!(candidates[1].well_known_path, ".well-known/skills");
     }
 
     #[test]

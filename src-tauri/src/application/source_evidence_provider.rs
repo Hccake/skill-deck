@@ -22,7 +22,7 @@ use crate::core::mutation::CancellationSignal;
 use crate::core::skill_paths::normalize_skill_folder_path;
 use crate::core::source_identity::{NormalizedRef, SourceProvider};
 use crate::core::{GithubTreeFailure, GithubTreeFetchOutcome};
-use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
+use crate::environment::types::EnvironmentRef;
 use crate::error::AppError;
 #[cfg(test)]
 use crate::models::{ParsedSource, SourceType};
@@ -277,10 +277,7 @@ impl RuntimeSourceEvidenceDetector {
                     Arc::clone(&self.wsl_source),
                 )
                 .discover(
-                    SkillLocationRef {
-                        environment: environment.clone(),
-                        scope: SkillLocation::Global,
-                    },
+                    environment.clone(),
                     parsed,
                     source,
                     SourceDiscoveryPolicy {

@@ -16,20 +16,24 @@ use crate::application::mutation::planning::{
 use crate::application::mutation::result::{
     ErrorReport, MutationUnitResult, MutationUnitStatus, OperationErrorCode,
 };
-use crate::application::payload_session::{
-    AcquiredPayloadHandle, PayloadSessionManager, PinnedPayloadLease,
-};
-use crate::application::remove::ObservedEntryOwner;
+#[cfg(test)]
+use crate::application::payload_session::AcquiredPayloadHandle;
+use crate::application::payload_session::PayloadSessionManager;
 use crate::application::resources::SkillIdentity;
+use crate::application::skill_changes::ValidatedSkillPayload;
+use crate::application::skill_entry_projection::ObservedEntryReader;
+use crate::application::skill_source::{
+    validate_saved_payloads, AcquiredSavedSkillSource, SavedPayloadCandidate, SavedSkillSource,
+    SavedSkillSourceAcquisition, SavedSkillSourceGroup, SkillSourceModule,
+};
 #[cfg(test)]
 use crate::application::source_evidence::RemoteSnapshotId;
-use crate::application::source_evidence::{
-    EvidenceAttempt, EvidenceFreshness, RemoteEvidenceKey, SourceSnapshotFacts,
-};
-use crate::application::source_snapshot_reuse::PayloadAcquisitionKey;
-use crate::application::update_planner::{LocalUpdateInspection, LockedUpdateSkill};
+use crate::application::source_evidence::{EvidenceAttempt, EvidenceFreshness};
+use crate::application::update_planner::LocalUpdateInspection;
+#[cfg(test)]
+use crate::application::update_planner::LockedUpdateSkill;
 use crate::core::mutation::CancellationSignal;
-use crate::core::source_identity::{AcquisitionDescriptor, NormalizedRef, SourceIdentity};
+use crate::core::source_identity::{NormalizedRef, SourceIdentity};
 use crate::environment::runtime::ObservedEntryId;
 use crate::environment::types::SkillLocationRef;
 use crate::error::AppError;
@@ -101,7 +105,6 @@ pub enum UpdateCheckMode {
 #[serde(tag = "kind", content = "skills", rename_all = "camelCase")]
 #[specta(tag = "kind", content = "skills", rename_all = "camelCase")]
 pub enum UpdateCheckSelection {
-    All,
     Skills(Vec<SkillIdentity>),
 }
 
@@ -224,7 +227,7 @@ pub struct UpdateSkillPreview {
     pub skill_name: String,
     pub source_display: String,
     pub ref_display: String,
-    pub adapter_targets: Vec<ObservedEntryOwner>,
+    pub adapter_targets: Vec<ObservedEntryReader>,
     pub capability: CheckUpdateCapability,
     pub clean_copy_count: usize,
     pub overwrite_private_entries: Vec<UpdateConflictCopyPreview>,
@@ -237,7 +240,7 @@ pub struct UpdateSkillPreview {
 #[specta(rename_all = "camelCase")]
 pub struct UpdateConflictCopyPreview {
     pub entry_id: ObservedEntryId,
-    pub owners: Vec<ObservedEntryOwner>,
+    pub readers: Vec<ObservedEntryReader>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -320,45 +323,18 @@ pub trait UpdatePlanner: Send + Sync {
     fn build<'a>(
         &'a self,
         execution: &'a UpdateExecutionRequest,
-        handles: Vec<AcquiredPayloadHandle>,
-        payloads: Vec<PinnedPayloadLease>,
+        payloads: Vec<ValidatedSkillPayload>,
     ) -> UpdateFuture<'a, Result<(PreviewToken, MutationPlan), AppError>>;
 }
 
-pub struct UpdateAcquisitionGroup {
-    pub source_result_id: String,
-    pub source: String,
-    pub context: SkillLocationRef,
-    pub key: PayloadAcquisitionKey,
-    pub evidence_key: RemoteEvidenceKey,
-    pub descriptor: Arc<AcquisitionDescriptor>,
-    pub skills: Vec<LockedUpdateSkill>,
-}
-
-pub struct AcquiredUpdateSource {
-    pub facts: SourceSnapshotFacts,
-    pub payloads: Vec<(String, AcquiredPayloadHandle)>,
-}
-
-pub struct UpdateSourceAcquisition {
-    pub source_result_id: String,
-    pub source: String,
-    pub skill_names: Vec<String>,
-    pub result: Result<AcquiredUpdateSource, AppError>,
-}
-
-pub trait UpdatePayloadAcquirer: Send + Sync {
-    fn acquire<'a>(
-        &'a self,
-        groups: &'a [UpdateAcquisitionGroup],
-        cancellation: CancellationSignal,
-    ) -> UpdateFuture<'a, Result<Vec<UpdateSourceAcquisition>, AppError>>;
-}
+pub type UpdateAcquisitionGroup = SavedSkillSourceGroup;
+pub type AcquiredUpdateSource = AcquiredSavedSkillSource;
+pub type UpdateSourceAcquisition = SavedSkillSourceAcquisition;
 
 pub struct UpdateService<P, A, E> {
     payloads: Arc<PayloadSessionManager>,
     planner: P,
-    acquirer: A,
+    skill_source: A,
     executor: E,
 }
 
@@ -379,14 +355,19 @@ pub struct UpdateExecutionProgress {
 impl<P, A, E> UpdateService<P, A, E>
 where
     P: UpdatePlanner,
-    A: UpdatePayloadAcquirer,
+    A: SkillSourceModule,
     E: MutationPlanExecutor,
 {
-    pub fn new(payloads: Arc<PayloadSessionManager>, planner: P, acquirer: A, executor: E) -> Self {
+    pub fn new(
+        payloads: Arc<PayloadSessionManager>,
+        planner: P,
+        skill_source: A,
+        executor: E,
+    ) -> Self {
         Self {
             payloads,
             planner,
-            acquirer,
+            skill_source,
             executor,
         }
     }
@@ -407,6 +388,7 @@ where
             .await
     }
 
+    #[cfg(test)]
     pub async fn execute_with_stage_observer<F>(
         &self,
         execution: &UpdateExecutionRequest,
@@ -417,24 +399,68 @@ where
     where
         F: Fn(UpdateExecutionProgress) + Send + Sync,
     {
+        self.execute_with_confirmation_and_stage_observer(
+            execution,
+            expected_token,
+            cancellation,
+            false,
+            observe_stage,
+        )
+        .await
+    }
+
+    pub async fn execute_with_confirmation_and_stage_observer<F>(
+        &self,
+        execution: &UpdateExecutionRequest,
+        expected_token: PreviewToken,
+        cancellation: CancellationSignal,
+        acknowledge_redirect: bool,
+        observe_stage: F,
+    ) -> Result<UpdateResponse, AppError>
+    where
+        F: Fn(UpdateExecutionProgress) + Send + Sync,
+    {
         validate_update_request(&execution.request)?;
         validate_conflict_decisions(execution)?;
         let initial = self.planner.inspect(&execution.request).await?;
+        let initial_subjects = initial.subjects.clone();
         validate_exact_preview(&expected_token, &initial.token)?;
-        let groups = acquisition_groups(
-            &execution.request.context,
-            initial.source_candidates.clone(),
-        )?;
-        let acquisitions = match self.acquirer.acquire(&groups, cancellation.clone()).await {
-            Ok(acquisitions) => acquisitions,
-            Err(AppError::MutationCancelled) => {
-                return Ok(cancelled_before_mutation(
-                    &execution.request.context,
-                    &groups,
-                ));
+        let saved = initial
+            .source_candidates
+            .iter()
+            .map(|skill| SavedSkillSource {
+                name: skill.name.clone(),
+                metadata: skill.metadata(),
+            })
+            .collect();
+        let acquisitions = self
+            .skill_source
+            .acquire_saved_skills(
+                &execution.request.context.environment,
+                saved,
+                cancellation.clone(),
+            )
+            .await?;
+        let source_by_skill = acquisitions
+            .iter()
+            .flat_map(|acquisition| {
+                acquisition
+                    .skill_names
+                    .iter()
+                    .map(|skill_name| (skill_name.clone(), acquisition.source_result_id.clone()))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if !acknowledge_redirect {
+            if let Some(host) = acquisitions.iter().find_map(|acquisition| {
+                acquisition
+                    .result
+                    .as_ref()
+                    .ok()
+                    .and_then(|acquired| acquired.redirected_download_host.clone())
+            }) {
+                return Err(AppError::DirectDownloadRedirectConfirmationRequired { host });
             }
-            Err(error) => return Err(error),
-        };
+        }
         observe_stage(UpdateExecutionProgress {
             stage: UpdateExecutionStage::Validating,
             subject: None,
@@ -442,10 +468,9 @@ where
             total: None,
         });
         let latest = self.planner.inspect(&execution.request).await?;
+        let latest_subjects = latest.subjects.clone();
         let mut sources = Vec::with_capacity(acquisitions.len());
         let mut skills = Vec::with_capacity(execution.request.skill_names.len());
-        let mut handles = Vec::new();
-        let mut payloads = Vec::new();
         let mut executable_names = Vec::new();
         let selected = execution
             .overwrite_private_entries
@@ -462,16 +487,6 @@ where
             .iter()
             .map(|skill| (skill.skill_name.as_str(), skill))
             .collect::<std::collections::BTreeMap<_, _>>();
-        let initial_locked_by_name = initial
-            .source_candidates
-            .iter()
-            .map(|skill| (skill.name.as_str(), skill))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        let latest_locked_by_name = latest
-            .source_candidates
-            .iter()
-            .map(|skill| (skill.name.as_str(), skill))
-            .collect::<std::collections::BTreeMap<_, _>>();
         let drifted_names = execution
             .request
             .skill_names
@@ -481,10 +496,8 @@ where
                     .get(name.as_str())
                     .zip(latest_by_name.get(name.as_str()))
                     .is_none_or(|(initial, latest)| {
-                        initial.observed_digest != latest.observed_digest
+                        initial.agent_observed_digest != latest.agent_observed_digest
                     })
-                    || initial_locked_by_name.get(name.as_str())
-                        != latest_locked_by_name.get(name.as_str())
             })
             .cloned()
             .collect::<BTreeSet<_>>();
@@ -492,17 +505,49 @@ where
             &PreviewScopeRevisions::from(&initial.token),
             &PreviewScopeRevisions::from(&latest.token),
         )?;
+        let mut candidates = Vec::new();
+        for acquisition in &acquisitions {
+            let Ok(acquired) = &acquisition.result else {
+                continue;
+            };
+            for (skill_name, handle) in &acquired.payloads {
+                if !drifted_names.contains(skill_name) {
+                    candidates.push(SavedPayloadCandidate {
+                        source_result_id: acquisition.source_result_id.clone(),
+                        discovery_session: acquired.facts.discovery_session.clone(),
+                        skill_name: skill_name.clone(),
+                        handle: handle.clone(),
+                    });
+                }
+            }
+        }
+        let validation = validate_saved_payloads(
+            self.payloads.as_ref(),
+            &execution.request.context.environment,
+            candidates,
+        )
+        .await;
         for acquisition in acquisitions {
             match acquisition.result {
                 Ok(acquired) => {
-                    let _facts = acquired.facts;
                     sources.push(UpdateSourceResult {
                         id: acquisition.source_result_id.clone(),
                         source: acquisition.source,
                         status: UpdateSourceStatus::Acquired,
                         error: None,
                     });
-                    for (skill_name, handle) in acquired.payloads {
+                    for (skill_name, error) in acquired.skill_errors {
+                        skills.push(not_updated_skill(
+                            &execution.request.context,
+                            skill_name,
+                            acquisition.source_result_id.clone(),
+                            ErrorReport::from_app_error(
+                                error,
+                                Some(execution.request.context.clone()),
+                            ),
+                        ));
+                    }
+                    for (skill_name, _handle) in acquired.payloads {
                         if drifted_names.contains(&skill_name) {
                             skills.push(not_updated_skill(
                                 &execution.request.context,
@@ -513,12 +558,7 @@ where
                                     Some(execution.request.context.clone()),
                                 ),
                             ));
-                            continue;
                         }
-                        let lease = self.payloads.pin_verified(&handle).await?;
-                        executable_names.push(skill_name);
-                        handles.push(handle);
-                        payloads.push(lease);
                     }
                 }
                 Err(error) => {
@@ -549,15 +589,52 @@ where
             }
         }
 
-        let source_by_skill = groups
-            .iter()
-            .flat_map(|group| {
-                group
-                    .skills
-                    .iter()
-                    .map(|skill| (skill.name.clone(), group.source_result_id.clone()))
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
+        for failed in validation.failed {
+            skills.push(not_updated_skill(
+                &execution.request.context,
+                failed.skill_name,
+                failed.source_result_id,
+                ErrorReport::from_app_error(failed.error, Some(execution.request.context.clone())),
+            ));
+        }
+        let mut payloads = validation
+            .validated
+            .into_iter()
+            .map(|validated| validated.payload)
+            .collect();
+
+        let prepared = crate::application::skill_changes::compare_update_subjects(
+            &initial_subjects,
+            &latest_subjects,
+            payloads,
+        )?;
+        for skill_name in prepared.stale_skill_names {
+            if !skills
+                .iter()
+                .any(|result| result.skill_identity.skill_name == skill_name)
+            {
+                let source_result_id = source_by_skill
+                    .get(&skill_name)
+                    .cloned()
+                    .unwrap_or_default();
+                skills.push(not_updated_skill(
+                    &execution.request.context,
+                    skill_name,
+                    source_result_id,
+                    ErrorReport::from_app_error(
+                        AppError::StaleTarget,
+                        Some(execution.request.context.clone()),
+                    ),
+                ));
+            }
+        }
+        payloads = prepared
+            .ready
+            .into_iter()
+            .map(|prepared| prepared.payload)
+            .collect();
+        executable_names.extend(payloads.iter().map(|payload| payload.name().to_string()));
+
         if !executable_names.is_empty() {
             let successful_request = UpdateRequest {
                 context: execution.request.context.clone(),
@@ -580,10 +657,7 @@ where
                 request: successful_request,
                 overwrite_private_entries,
             };
-            let (actual_token, plan) = self
-                .planner
-                .build(&successful_execution, handles, payloads)
-                .await?;
+            let (actual_token, plan) = self.planner.build(&successful_execution, payloads).await?;
             validate_same_scope_revisions(
                 &PreviewScopeRevisions::from(&latest.token),
                 &PreviewScopeRevisions::from(&actual_token),
@@ -670,40 +744,6 @@ fn not_updated_skill(
         },
         warnings: Vec::new(),
         retryable: report.retryable,
-    }
-}
-
-fn cancelled_before_mutation(
-    context: &SkillLocationRef,
-    groups: &[UpdateAcquisitionGroup],
-) -> UpdateResponse {
-    let report = ErrorReport::from_app_error(AppError::MutationCancelled, Some(context.clone()));
-    let sources = groups
-        .iter()
-        .map(|group| UpdateSourceResult {
-            id: group.source_result_id.clone(),
-            source: group.source.clone(),
-            status: UpdateSourceStatus::Failed,
-            error: Some(report.clone()),
-        })
-        .collect();
-    let skills = groups
-        .iter()
-        .flat_map(|group| {
-            group.skills.iter().map(|skill| {
-                not_updated_skill(
-                    context,
-                    skill.name.clone(),
-                    group.source_result_id.clone(),
-                    report.clone(),
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    UpdateResponse {
-        sources,
-        outcome: update_outcome(&skills),
-        skills,
     }
 }
 
@@ -804,7 +844,7 @@ fn preview_from_inspection(inspection: LocalUpdateInspection) -> Result<UpdatePr
                     .into_iter()
                     .map(|entry| UpdateConflictCopyPreview {
                         entry_id: entry.entry_id,
-                        owners: entry.owners,
+                        readers: entry.readers,
                     })
                     .collect(),
                 blocking_reasons: skill.blocking_reasons,
@@ -816,36 +856,6 @@ fn preview_from_inspection(inspection: LocalUpdateInspection) -> Result<UpdatePr
         token: inspection.token,
         skills,
     })
-}
-
-fn acquisition_groups(
-    context: &SkillLocationRef,
-    skills: Vec<LockedUpdateSkill>,
-) -> Result<Vec<UpdateAcquisitionGroup>, AppError> {
-    let mut groups = Vec::<UpdateAcquisitionGroup>::new();
-    for skill in skills {
-        let identity = crate::core::SourceIdentity::from_metadata(&skill.metadata())?;
-        let key = PayloadAcquisitionKey::from_identity(&identity, &context.environment);
-        if let Some(group) = groups.iter_mut().find(|group| {
-            group.key == key
-                && group
-                    .descriptor
-                    .acquisition_equivalent(identity.acquisition())
-        }) {
-            group.skills.push(skill);
-            continue;
-        }
-        groups.push(UpdateAcquisitionGroup {
-            source_result_id: format!("source-{}", groups.len() + 1),
-            source: identity.sanitized_display().to_string(),
-            context: context.clone(),
-            key,
-            evidence_key: RemoteEvidenceKey::from_identity(&identity),
-            descriptor: Arc::new(identity.acquisition().clone()),
-            skills: vec![skill],
-        });
-    }
-    Ok(groups)
 }
 
 fn validate_conflict_decisions(execution: &UpdateExecutionRequest) -> Result<(), AppError> {
@@ -915,6 +925,7 @@ mod tests {
     use super::*;
     use crate::application::mutation::executor::MutationPlanExecutor;
     use crate::application::mutation::plan::MutationPlan;
+    use crate::application::payload_session::PayloadPlanningMetadata;
     use crate::application::payload_session::{PayloadSessionLimits, PayloadSessionManager};
     use crate::application::source_evidence::SourceSnapshotFacts;
     use crate::core::mutation::CancellationSignal;
@@ -961,21 +972,23 @@ mod tests {
         fn observed_entry(
             id: &str,
             path: &str,
-        ) -> crate::application::remove::ObservedPhysicalEntry {
-            crate::application::remove::ObservedPhysicalEntry {
+        ) -> crate::application::skill_entry_projection::ObservedPhysicalEntry {
+            crate::application::skill_entry_projection::ObservedPhysicalEntry {
                 entry_id: crate::environment::runtime::ObservedEntryId::parse(id).unwrap(),
                 display_path: crate::environment::types::ResourceLocator {
                     environment: EnvironmentRef::Native,
                     native_path: path.to_string(),
                 },
-                kind: crate::application::remove::ObservedEntryKind::Directory,
+                kind: crate::application::skill_entry_projection::ObservedEntryKind::Directory,
                 physical_target_key: format!("credential-secret-target-{id}"),
-                owners: vec![crate::application::remove::ObservedEntryOwner {
-                    agent_id: crate::core::agent_definition::AgentId::parse("codex").unwrap(),
-                    display_name: "Codex".to_string(),
-                    logical_target_id: "codex-private".to_string(),
-                }],
-                will_break_if_canonical_removed: false,
+                readers: vec![
+                    crate::application::skill_entry_projection::ObservedEntryReader {
+                        agent_id: crate::core::agent_definition::AgentId::parse("codex").unwrap(),
+                        display_name: "Codex".to_string(),
+                        logical_target_id: "codex-private".to_string(),
+                    },
+                ],
+                will_break_if_standard_removed: false,
             }
         }
 
@@ -1032,28 +1045,33 @@ mod tests {
         inspection.source_candidates[0].source_url =
             Some("https://secret-token@github.com/owner/repo.git".to_string());
         inspection.source_candidates[0].ref_name = Some("release".to_string());
-        inspection.skills[0].adapter_targets =
-            vec![crate::application::remove::ObservedEntryOwner {
+        inspection.skills[0].adapter_targets = vec![
+            crate::application::skill_entry_projection::ObservedEntryReader {
                 agent_id: crate::core::agent_definition::AgentId::parse("eve").unwrap(),
                 display_name: "Eve".to_string(),
                 logical_target_id: "eve:root".to_string(),
-            }];
-        inspection.skills[0].conflicts = vec![crate::application::remove::ObservedPhysicalEntry {
-            entry_id: crate::environment::runtime::ObservedEntryId::parse("entry-v1-private")
-                .unwrap(),
-            display_path: crate::environment::types::ResourceLocator {
-                environment: EnvironmentRef::Native,
-                native_path: "/agents/private".to_string(),
             },
-            kind: crate::application::remove::ObservedEntryKind::Directory,
-            physical_target_key: "credential-secret-target".to_string(),
-            owners: vec![crate::application::remove::ObservedEntryOwner {
-                agent_id: crate::core::agent_definition::AgentId::parse("codex").unwrap(),
-                display_name: "Codex".to_string(),
-                logical_target_id: "codex-private".to_string(),
-            }],
-            will_break_if_canonical_removed: false,
-        }];
+        ];
+        inspection.skills[0].conflicts = vec![
+            crate::application::skill_entry_projection::ObservedPhysicalEntry {
+                entry_id: crate::environment::runtime::ObservedEntryId::parse("entry-v1-private")
+                    .unwrap(),
+                display_path: crate::environment::types::ResourceLocator {
+                    environment: EnvironmentRef::Native,
+                    native_path: "/agents/private".to_string(),
+                },
+                kind: crate::application::skill_entry_projection::ObservedEntryKind::Directory,
+                physical_target_key: "credential-secret-target".to_string(),
+                readers: vec![
+                    crate::application::skill_entry_projection::ObservedEntryReader {
+                        agent_id: crate::core::agent_definition::AgentId::parse("codex").unwrap(),
+                        display_name: "Codex".to_string(),
+                        logical_target_id: "codex-private".to_string(),
+                    },
+                ],
+                will_break_if_standard_removed: false,
+            },
+        ];
 
         let preview = serde_json::to_value(preview_from_inspection(inspection).unwrap()).unwrap();
         let skill = &preview["skills"][0];
@@ -1135,6 +1153,22 @@ mod tests {
         }
     }
 
+    fn update_payload_metadata(skill_name: &str) -> PayloadPlanningMetadata {
+        PayloadPlanningMetadata {
+            skill_name: skill_name.to_string(),
+            install_dir_name: skill_name.to_string(),
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: Some("https://github.com/owner/repo.git".to_string()),
+            ref_name: Some("main".to_string()),
+            skill_path: format!("skills/{skill_name}"),
+            plugin_name: None,
+            computed_hash: format!("computed-{skill_name}"),
+            upstream_revision: Some(format!("tree-{skill_name}")),
+            well_known: None,
+        }
+    }
+
     async fn acquired_update_source(
         manager: &PayloadSessionManager,
         skill_name: &str,
@@ -1144,7 +1178,7 @@ mod tests {
         fs::create_dir_all(&skill).unwrap();
         fs::write(
             skill.join("SKILL.md"),
-            format!("---\nname: {skill_name}\n---\n"),
+            format!("---\nname: {skill_name}\ndescription: {skill_name}\n---\n"),
         )
         .unwrap();
         let discovery = manager
@@ -1152,10 +1186,11 @@ mod tests {
             .await
             .unwrap();
         let handle = manager
-            .acquire_payload(
+            .acquire_payload_with_metadata(
                 &discovery,
                 format!("skills/{skill_name}"),
                 build_skill_payload(&skill).unwrap(),
+                update_payload_metadata(skill_name),
             )
             .await
             .unwrap();
@@ -1188,6 +1223,42 @@ mod tests {
         }
     }
 
+    fn update_subject_snapshot(
+        names: &[(&str, &str)],
+    ) -> crate::application::update_subjects::UpdateSubjectSnapshot {
+        crate::application::update_subjects::UpdateSubjectSnapshot {
+            environment: EnvironmentRef::Native,
+            resolution_revision: crate::application::skill_paths::RootResolutionRevision::for_test(
+                "collection-v1",
+            ),
+            document_revision: crate::application::collection_records::DocumentRevision::for_test(
+                "document-v1",
+            ),
+            subjects: names
+                .iter()
+                .map(
+                    |(name, source_revision)| crate::application::update_subjects::UpdateSubject {
+                        skill_name: (*name).to_string(),
+                        source_record_revision:
+                            crate::application::collection_records::SourceRecordRevision::for_test(
+                                source_revision,
+                            ),
+                        target_revision: crate::application::skill_paths::TargetRevision::for_test(
+                            &format!("target-{name}"),
+                        ),
+                        content_revision:
+                            crate::application::skill_paths::ContentRevision::missing_for_test(),
+                        projection:
+                            crate::application::collection_records::RecordProjection::Available(
+                                locked_update_skill(name, "https://github.com/owner/repo.git")
+                                    .metadata(),
+                            ),
+                    },
+                )
+                .collect(),
+        }
+    }
+
     impl UpdatePlanner for Planner {
         fn inspect<'a>(
             &'a self,
@@ -1213,13 +1284,14 @@ mod tests {
                     skills: vec![
                         crate::application::update_planner::LocalUpdateSkillInspection {
                             skill_name: "demo".to_string(),
-                            observed_digest: "demo-observed".to_string(),
+                            agent_observed_digest: "demo-agent-observed".to_string(),
                             adapter_targets: Vec::new(),
                             clean_copies: Vec::new(),
                             conflicts: Vec::new(),
                             blocking_reasons: Vec::new(),
                         },
                     ],
+                    subjects: update_subject_snapshot(&[("demo", "source-demo")]),
                 })
             })
         }
@@ -1227,8 +1299,7 @@ mod tests {
         fn build<'a>(
             &'a self,
             _execution: &'a UpdateExecutionRequest,
-            _handles: Vec<AcquiredPayloadHandle>,
-            payloads: Vec<PinnedPayloadLease>,
+            payloads: Vec<ValidatedSkillPayload>,
         ) -> UpdateFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
             self.rebuilds.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
@@ -1239,7 +1310,10 @@ mod tests {
                         operation_id: "update-1".to_string(),
                         payloads: payloads
                             .into_iter()
-                            .map(|lease| (lease.manifest().payload_id().clone(), lease))
+                            .map(|payload| {
+                                let id = payload.manifest().payload_id().clone();
+                                (id, payload.into_lease())
+                            })
                             .collect(),
                         units: Vec::new(),
                     },
@@ -1250,8 +1324,8 @@ mod tests {
 
     struct Acquirer(Arc<AtomicUsize>);
 
-    impl UpdatePayloadAcquirer for Acquirer {
-        fn acquire<'a>(
+    impl SkillSourceModule for Acquirer {
+        fn acquire_saved_groups<'a>(
             &'a self,
             _groups: &'a [UpdateAcquisitionGroup],
             _cancellation: CancellationSignal,
@@ -1263,8 +1337,8 @@ mod tests {
 
     struct FailingAcquirer;
 
-    impl UpdatePayloadAcquirer for FailingAcquirer {
-        fn acquire<'a>(
+    impl SkillSourceModule for FailingAcquirer {
+        fn acquire_saved_groups<'a>(
             &'a self,
             groups: &'a [UpdateAcquisitionGroup],
             _cancellation: CancellationSignal,
@@ -1289,8 +1363,8 @@ mod tests {
 
     struct CancellingAcquirer;
 
-    impl UpdatePayloadAcquirer for CancellingAcquirer {
-        fn acquire<'a>(
+    impl SkillSourceModule for CancellingAcquirer {
+        fn acquire_saved_groups<'a>(
             &'a self,
             _groups: &'a [UpdateAcquisitionGroup],
             _cancellation: CancellationSignal,
@@ -1330,8 +1404,7 @@ mod tests {
         fn build<'a>(
             &'a self,
             _execution: &'a UpdateExecutionRequest,
-            _handles: Vec<AcquiredPayloadHandle>,
-            payloads: Vec<PinnedPayloadLease>,
+            payloads: Vec<ValidatedSkillPayload>,
         ) -> UpdateFuture<'a, Result<(PreviewToken, MutationPlan), AppError>> {
             self.builds.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
@@ -1342,7 +1415,10 @@ mod tests {
                         operation_id: "update-1".to_string(),
                         payloads: payloads
                             .into_iter()
-                            .map(|lease| (lease.manifest().payload_id().clone(), lease))
+                            .map(|payload| {
+                                let id = payload.manifest().payload_id().clone();
+                                (id, payload.into_lease())
+                            })
                             .collect(),
                         units: Vec::new(),
                     },
@@ -1357,8 +1433,8 @@ mod tests {
         expected_group_count: usize,
     }
 
-    impl UpdatePayloadAcquirer for FixedAcquirer {
-        fn acquire<'a>(
+    impl SkillSourceModule for FixedAcquirer {
+        fn acquire_saved_groups<'a>(
             &'a self,
             groups: &'a [UpdateAcquisitionGroup],
             _cancellation: CancellationSignal,
@@ -1422,7 +1498,7 @@ mod tests {
             skills: vec![
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "alpha".to_string(),
-                    observed_digest: "alpha-observed".to_string(),
+                    agent_observed_digest: "alpha-agent-observed".to_string(),
                     adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
@@ -1430,13 +1506,14 @@ mod tests {
                 },
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "beta".to_string(),
-                    observed_digest: "beta-observed".to_string(),
+                    agent_observed_digest: "beta-agent-observed".to_string(),
                     adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
                 },
             ],
+            subjects: update_subject_snapshot(&[("alpha", alpha_hash), ("beta", "old")]),
         }
     }
 
@@ -1447,7 +1524,11 @@ mod tests {
         for name in ["alpha", "beta"] {
             let root = source.path().join(name);
             fs::create_dir_all(&root).unwrap();
-            fs::write(root.join("SKILL.md"), format!("---\nname: {name}\n---\n")).unwrap();
+            fs::write(
+                root.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {name}\n---\n"),
+            )
+            .unwrap();
         }
         let discovery = manager
             .discover(EnvironmentRef::Native, "source")
@@ -1458,10 +1539,11 @@ mod tests {
             payloads.push((
                 name.to_string(),
                 manager
-                    .acquire_payload(
+                    .acquire_payload_with_metadata(
                         &discovery,
                         format!("skills/{name}"),
                         build_skill_payload(&source.path().join(name)).unwrap(),
+                        update_payload_metadata(name),
                     )
                     .await
                     .unwrap(),
@@ -1506,7 +1588,12 @@ mod tests {
                     source_result_id: "source-1".to_string(),
                     source: "owner/repo".to_string(),
                     skill_names: vec!["alpha".to_string(), "beta".to_string()],
-                    result: Ok(AcquiredUpdateSource { facts, payloads }),
+                    result: Ok(AcquiredUpdateSource {
+                        facts,
+                        payloads,
+                        skill_errors: Vec::new(),
+                        redirected_download_host: None,
+                    }),
                 }])),
             },
             ResultExecutor {
@@ -1667,6 +1754,8 @@ mod tests {
                     result: Ok(AcquiredUpdateSource {
                         facts,
                         payloads: vec![("alpha".to_string(), alpha_handle)],
+                        skill_errors: Vec::new(),
+                        redirected_download_host: None,
                     }),
                 }])),
             },
@@ -1714,7 +1803,7 @@ mod tests {
             skills: vec![
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "alpha".to_string(),
-                    observed_digest: "alpha-observed".to_string(),
+                    agent_observed_digest: "alpha-agent-observed".to_string(),
                     adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
@@ -1722,13 +1811,14 @@ mod tests {
                 },
                 crate::application::update_planner::LocalUpdateSkillInspection {
                     skill_name: "beta".to_string(),
-                    observed_digest: "beta-observed".to_string(),
+                    agent_observed_digest: "beta-agent-observed".to_string(),
                     adapter_targets: Vec::new(),
                     clean_copies: Vec::new(),
                     conflicts: Vec::new(),
                     blocking_reasons: Vec::new(),
                 },
             ],
+            subjects: update_subject_snapshot(&[("alpha", "old"), ("beta", "old")]),
         };
         let acquire_calls = Arc::new(AtomicUsize::new(0));
         let builds = Arc::new(AtomicUsize::new(0));
@@ -1754,6 +1844,8 @@ mod tests {
                         result: Ok(AcquiredUpdateSource {
                             facts,
                             payloads: vec![("alpha".to_string(), alpha_handle)],
+                            skill_errors: Vec::new(),
+                            redirected_download_host: None,
                         }),
                     },
                     UpdateSourceAcquisition {
@@ -2104,33 +2196,5 @@ mod tests {
         }];
 
         assert_eq!(update_outcome(&skills), UpdateOutcome::Cancelled);
-    }
-
-    #[test]
-    fn acquisition_groups_share_only_equivalent_source_descriptors() {
-        let context = SkillLocationRef {
-            environment: EnvironmentRef::Native,
-            scope: SkillLocation::Global,
-        };
-        let shared = acquisition_groups(
-            &context,
-            vec![
-                locked_update_skill("alpha", "https://github.com/owner/repo.git"),
-                locked_update_skill("beta", "https://github.com/owner/repo.git"),
-            ],
-        )
-        .unwrap();
-        assert_eq!(shared.len(), 1);
-        assert_eq!(shared[0].skills.len(), 2);
-
-        let distinct = acquisition_groups(
-            &context,
-            vec![
-                locked_update_skill("alpha", "https://github.com/owner/repo"),
-                locked_update_skill("beta", "https://github.com/owner/repo.git"),
-            ],
-        )
-        .unwrap();
-        assert_eq!(distinct.len(), 2);
     }
 }

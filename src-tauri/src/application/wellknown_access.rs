@@ -10,6 +10,7 @@ use crate::error::AppError;
 pub(crate) struct WellKnownFetchResult {
     pub(crate) repo_path: PathBuf,
     pub(crate) trust_metadata: HashMap<String, WellKnownTrustMetadata>,
+    pub(crate) redirected_download_host: Option<String>,
 }
 
 #[derive(Debug)]

@@ -1,10 +1,11 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::application::source_acquisition::FetchResult;
 use crate::application::source_acquisition::SourceDiscoveryPolicy;
 use crate::core::mutation::CancellationSignal;
 use crate::error::AppError;
-use crate::models::{FetchResult, ParsedSource};
+use crate::models::ParsedSource;
 
 pub(crate) type WslSourceFuture<'a> =
     Pin<Box<dyn Future<Output = Result<FetchResult, AppError>> + Send + 'a>>;

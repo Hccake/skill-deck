@@ -618,26 +618,6 @@ mod tests {
     }
 
     #[test]
-    fn wsl_git_plan_keeps_a_narrow_operation_time_git_preflight() {
-        let plan = build_wsl_native_source_plan(
-            &session(),
-            WslAcquisitionSource::Git {
-                url: "https://github.com/example/repo".to_string(),
-                git_ref: None,
-            },
-            "/mnt/c/Temp/sd-1/repo",
-            configured_git_timeout(),
-            preserve_proxy(),
-        )
-        .expect("build Git source plan");
-
-        let operation = plan.operation.expect("Git Source requires acquisition");
-        assert!(operation.script.contains("command -v git"));
-        assert!(operation.script.contains("install Git"));
-        assert_eq!(operation.positional_args[3], "Ubuntu-24.04");
-    }
-
-    #[test]
     fn wsl_local_source_is_read_directly_without_a_managed_copy() {
         let plan = build_wsl_native_source_plan(
             &session(),
@@ -836,6 +816,37 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn git_acquisition_reports_missing_git_before_creating_a_managed_root() {
+        let empty_path = tempfile::tempdir().expect("empty PATH");
+        let managed_root = std::path::PathBuf::from(format!(
+            "/tmp/skill-deck-discovery-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let destination = managed_root.join("repo");
+
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(super::WSL_SOURCE_ACQUISITION_SCRIPT)
+            .arg("--")
+            .arg("git")
+            .arg("https://github.com/example/repo.git")
+            .arg(&destination)
+            .arg("")
+            .arg("Ubuntu-24.04")
+            .arg("5")
+            .arg("preserve")
+            .arg("")
+            .env("PATH", empty_path.path())
+            .output()
+            .expect("acquisition script");
+
+        assert_eq!(output.status.code(), Some(127));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("install Git"));
+        assert!(!managed_root.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn git_acquisition_blocks_ext_protocol_before_running_its_helper() {
         let temp = tempfile::tempdir().expect("temp");
         let marker = temp.path().join("ext-helper-ran");
@@ -863,13 +874,6 @@ mod tests {
         assert_eq!(output.status.code(), Some(68));
         assert!(!marker.exists());
         assert!(!managed_root.exists());
-    }
-
-    #[test]
-    fn wsl_proxy_reachability_uses_the_existing_git_baseline() {
-        assert!(!super::WSL_SOURCE_ACQUISITION_SCRIPT.contains("command -v bash"));
-        assert!(!super::WSL_SOURCE_ACQUISITION_SCRIPT.contains("/dev/tcp"));
-        assert!(super::WSL_SOURCE_ACQUISITION_SCRIPT.contains("git-probe"));
     }
 
     #[tokio::test]

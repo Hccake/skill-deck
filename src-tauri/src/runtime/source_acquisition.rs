@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::application::download_source::materialize_download;
 use crate::application::git_transport::GitSourceTransport;
 use crate::application::payload_session::{DiscoverySourceLocation, PayloadSessionManager};
+use crate::application::source_acquisition::FetchResult;
 use crate::application::source_acquisition::{
     attempt_wellknown_then_download, invalid_source, redirected_host, retain_discovered_source,
     GitSourceDiscovery, InternalSkillVisibility, ManagedDownloadedDirectory, RetainedSourceOptions,
@@ -12,9 +13,9 @@ use crate::application::wellknown_access::{WellKnownAccess, WellKnownFetchError}
 use crate::application::wsl_source_access::WslSourceAccess;
 use crate::core::mutation::CancellationSignal;
 use crate::core::{parse_source, CloneProgress};
-use crate::environment::types::{EnvironmentRef, SkillLocationRef};
+use crate::environment::types::EnvironmentRef;
 use crate::error::AppError;
-use crate::models::{FetchResult, ParsedSource, SourceType};
+use crate::models::{ParsedSource, SourceType};
 use crate::runtime::download::RuntimeDownloadAccess;
 
 pub struct SourceDiscoveryService {
@@ -70,7 +71,7 @@ impl SourceDiscoveryService {
     #[cfg(test)]
     pub async fn discover<P>(
         &self,
-        context: SkillLocationRef,
+        environment: EnvironmentRef,
         requested_source: String,
         on_progress: P,
     ) -> Result<FetchResult, AppError>
@@ -78,7 +79,7 @@ impl SourceDiscoveryService {
         P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
     {
         self.discover_with_cancellation(
-            context,
+            environment,
             requested_source,
             on_progress,
             CancellationSignal::default(),
@@ -88,7 +89,7 @@ impl SourceDiscoveryService {
 
     pub async fn discover_with_selection<P>(
         &self,
-        context: SkillLocationRef,
+        environment: EnvironmentRef,
         requested_source: String,
         selection: SourceSelectionIntent,
         on_progress: P,
@@ -97,7 +98,7 @@ impl SourceDiscoveryService {
         P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
     {
         self.discover_with_selection_and_cancellation(
-            context,
+            environment,
             requested_source,
             selection,
             on_progress,
@@ -109,7 +110,7 @@ impl SourceDiscoveryService {
     #[cfg(test)]
     pub async fn discover_with_cancellation<P>(
         &self,
-        context: SkillLocationRef,
+        environment: EnvironmentRef,
         requested_source: String,
         on_progress: P,
         cancellation: CancellationSignal,
@@ -118,7 +119,7 @@ impl SourceDiscoveryService {
         P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
     {
         self.discover_with_selection_and_cancellation(
-            context,
+            environment,
             requested_source,
             SourceSelectionIntent::default(),
             on_progress,
@@ -129,7 +130,7 @@ impl SourceDiscoveryService {
 
     async fn discover_with_selection_and_cancellation<P>(
         &self,
-        context: SkillLocationRef,
+        environment: EnvironmentRef,
         requested_source: String,
         selection: SourceSelectionIntent,
         on_progress: P,
@@ -145,7 +146,7 @@ impl SourceDiscoveryService {
             install_internal_skills_enabled(),
         );
         self.discover_parsed_with_visibility(
-            context,
+            environment,
             parsed,
             requested_source,
             visibility,
@@ -158,7 +159,7 @@ impl SourceDiscoveryService {
     #[cfg(test)]
     pub(crate) async fn discover_parsed_with_cancellation<P>(
         &self,
-        context: SkillLocationRef,
+        environment: EnvironmentRef,
         parsed: ParsedSource,
         requested_source: String,
         on_progress: P,
@@ -173,7 +174,7 @@ impl SourceDiscoveryService {
             install_internal_skills_enabled(),
         );
         self.discover_parsed_with_visibility(
-            context,
+            environment,
             parsed,
             requested_source,
             visibility,
@@ -185,7 +186,7 @@ impl SourceDiscoveryService {
 
     async fn discover_parsed_with_visibility<P>(
         &self,
-        context: SkillLocationRef,
+        environment: EnvironmentRef,
         parsed: ParsedSource,
         requested_source: String,
         internal_skill_visibility: InternalSkillVisibility,
@@ -195,7 +196,7 @@ impl SourceDiscoveryService {
     where
         P: Fn(CloneProgress) + Clone + Send + Sync + 'static,
     {
-        match (&context.environment, parsed.source_type.clone()) {
+        match (&environment, parsed.source_type.clone()) {
             (EnvironmentRef::Native, SourceType::Local) => {
                 let root = parsed
                     .local_path
@@ -203,7 +204,7 @@ impl SourceDiscoveryService {
                     .ok_or_else(|| invalid_source("Missing local path"))?;
                 retain_discovered_source(
                     self.sessions.clone(),
-                    context.environment,
+                    environment,
                     parsed,
                     requested_source,
                     DiscoverySourceLocation::Native {
@@ -220,7 +221,7 @@ impl SourceDiscoveryService {
                 .await
             }
             (EnvironmentRef::Native, SourceType::WellKnown) => {
-                let well_known_environment = context.environment.clone();
+                let well_known_environment = environment.clone();
                 let well_known_parsed = parsed.clone();
                 let well_known_requested_source = requested_source.clone();
                 let well_known_cancellation = cancellation.clone();
@@ -255,7 +256,7 @@ impl SourceDiscoveryService {
                     },
                     || {
                         self.discover_download(
-                            context.environment,
+                            environment,
                             parsed,
                             requested_source,
                             download_visibility,
@@ -268,7 +269,7 @@ impl SourceDiscoveryService {
             }
             (EnvironmentRef::Native, SourceType::Download) => {
                 self.discover_download(
-                    context.environment,
+                    environment,
                     parsed,
                     requested_source,
                     internal_skill_visibility,
@@ -279,7 +280,7 @@ impl SourceDiscoveryService {
             (EnvironmentRef::Native, _) => {
                 self.git
                     .discover(
-                        context,
+                        environment,
                         parsed,
                         requested_source,
                         SourceDiscoveryPolicy {
@@ -378,13 +379,6 @@ mod tests {
         ))
     }
 
-    fn context() -> SkillLocationRef {
-        SkillLocationRef {
-            environment: EnvironmentRef::Native,
-            scope: crate::environment::types::SkillLocation::Global,
-        }
-    }
-
     fn write_visibility_fixture(root: &Path) {
         for (name, internal) in [
             ("public", false),
@@ -408,7 +402,7 @@ mod tests {
         }
     }
 
-    fn names(result: &crate::models::FetchResult) -> BTreeSet<&str> {
+    fn names(result: &crate::application::source_acquisition::FetchResult) -> BTreeSet<&str> {
         result
             .skills
             .iter()
@@ -441,6 +435,7 @@ mod tests {
                         .take()
                         .expect("well-known root"),
                     trust_metadata: HashMap::<String, WellKnownTrustMetadata>::new(),
+                    redirected_download_host: None,
                 })
             })
         }
@@ -498,7 +493,7 @@ mod tests {
 
         let result = service
             .discover_with_selection(
-                context(),
+                EnvironmentRef::Native,
                 fixture.source(),
                 SourceSelectionIntent {
                     wildcard_requested: false,
@@ -521,7 +516,7 @@ mod tests {
 
         let result = service
             .discover_with_selection(
-                context(),
+                EnvironmentRef::Native,
                 "https://example.com/team".to_string(),
                 SourceSelectionIntent {
                     wildcard_requested: false,
@@ -556,7 +551,7 @@ mod tests {
 
         let result = service
             .discover_parsed_with_visibility(
-                context(),
+                EnvironmentRef::Native,
                 ParsedSource {
                     source_type: SourceType::Download,
                     url: url.clone(),
