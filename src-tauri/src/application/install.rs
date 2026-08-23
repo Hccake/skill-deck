@@ -70,6 +70,7 @@ pub struct InstallSkillPreview {
     pub overwrite_targets: Vec<String>,
     pub blocking_reasons: Vec<OperationErrorCode>,
     pub fallback_forecasts: Vec<AgentTargetFallbackPreview>,
+    pub overrides_library: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -518,6 +519,7 @@ mod tests {
                         overwrite_targets: Vec::new(),
                         blocking_reasons: Vec::new(),
                         fallback_forecasts: Vec::new(),
+                        overrides_library: false,
                     }],
                 },
                 rebuilds: Arc::clone(&rebuilds),

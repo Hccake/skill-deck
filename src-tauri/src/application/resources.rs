@@ -1,6 +1,5 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -78,10 +77,7 @@ where
     pub async fn open_skill(&self, identity: &SkillIdentity) -> Result<(), AppError> {
         let install_dir_name = validate_skill_name(&identity.skill_name)?;
         let resolved = self.source.resolve(&identity.context).await?;
-        let target = crate::application::skill_entries::join_entry(
-            &resolved.canonical_skills_root,
-            &install_dir_name,
-        );
+        let target = resolved.canonical_skills_root.join_child(&install_dir_name);
         let target = self.resolve_directory(&identity.context, target).await?;
         self.opener.open(target).await
     }
@@ -89,10 +85,7 @@ where
     pub async fn read_skill(&self, identity: &SkillIdentity) -> Result<String, AppError> {
         let install_dir_name = validate_skill_name(&identity.skill_name)?;
         let resolved = self.source.resolve(&identity.context).await?;
-        let target = crate::application::skill_entries::join_entry(
-            &resolved.canonical_skills_root,
-            &install_dir_name,
-        );
+        let target = resolved.canonical_skills_root.join_child(&install_dir_name);
         let target = self.resolve_directory(&identity.context, target).await?;
         self.reader.read_skill(target).await
     }
@@ -135,114 +128,6 @@ where
 
 fn validate_skill_name(name: &str) -> Result<String, AppError> {
     crate::application::installed_skill_resolver::InstalledSkillResolver::install_dir_name(name)
-}
-
-#[derive(Clone)]
-pub struct RuntimeResourceContextSource {
-    facts: crate::application::runtime_facts::RuntimePlanningFactSource,
-}
-
-impl RuntimeResourceContextSource {
-    pub fn new(facts: crate::application::runtime_facts::RuntimePlanningFactSource) -> Self {
-        Self { facts }
-    }
-}
-
-impl ResourceContextSource for RuntimeResourceContextSource {
-    fn resolve<'a>(
-        &'a self,
-        context: &'a SkillLocationRef,
-    ) -> ResourceFuture<'a, Result<ResolvedResourceContext, AppError>> {
-        use crate::application::install_planner::InstallPlanningFactSource;
-
-        Box::pin(async move {
-            let facts = self.facts.current(context).await?;
-            let context_root = facts
-                .resolved_context
-                .project
-                .as_ref()
-                .map(|project| ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path: project.native_path.clone(),
-                })
-                .unwrap_or_else(|| facts.resolved_context.home.clone());
-            Ok(ResolvedResourceContext {
-                context_root,
-                canonical_skills_root: facts.resolved_context.skill_root,
-            })
-        })
-    }
-}
-
-impl AuthorizedResourceOpener for crate::environment::opener::SystemResourceOpener {
-    fn open<'a>(&'a self, target: ResourceLocator) -> ResourceFuture<'a, Result<(), AppError>> {
-        Box::pin(async move { crate::environment::opener::open_authorized_resource(&target) })
-    }
-}
-
-#[derive(Clone)]
-pub struct RuntimeResourceReader {
-    environments: Arc<crate::environment::wsl::WslRuntime>,
-}
-
-impl RuntimeResourceReader {
-    pub fn new(environments: Arc<crate::environment::wsl::WslRuntime>) -> Self {
-        Self { environments }
-    }
-}
-
-impl AuthorizedResourceReader for RuntimeResourceReader {
-    fn read_skill<'a>(
-        &'a self,
-        target: ResourceLocator,
-    ) -> ResourceFuture<'a, Result<String, AppError>> {
-        Box::pin(async move {
-            match &target.environment {
-                crate::environment::types::EnvironmentRef::Native => {
-                    crate::core::skill::read_skill_content(&target.native_path)
-                }
-                crate::environment::types::EnvironmentRef::Wsl { distro_name } => {
-                    let path = target.native_path;
-                    self.environments
-                        .with_session_retry(distro_name, move |session| {
-                            let path = path.clone();
-                            async move {
-                                let markdown = crate::environment::wsl::operations::skill_content::read_skill_markdown(
-                                    &session,
-                                    &path,
-                                )
-                                .await?;
-                                Ok(crate::core::skill::skill_content_from_markdown(&markdown))
-                            }
-                        })
-                        .await
-                }
-            }
-        })
-    }
-}
-
-pub type RuntimeResourceService = ResourceService<
-    RuntimeResourceContextSource,
-    crate::environment::planning::RuntimeTargetFactResolver,
-    crate::environment::opener::SystemResourceOpener,
-    RuntimeResourceReader,
->;
-
-pub fn build_runtime_resource_service(
-    environments: Arc<crate::environment::wsl::WslRuntime>,
-    registry: Arc<dyn crate::application::runtime_facts::AgentRegistrySnapshotSource>,
-) -> RuntimeResourceService {
-    let facts = crate::application::runtime_facts::RuntimePlanningFactSource::for_current_user(
-        registry,
-        environments.clone(),
-    );
-    ResourceService::new(
-        RuntimeResourceContextSource::new(facts),
-        crate::environment::planning::RuntimeTargetFactResolver::new(environments.clone()),
-        crate::environment::opener::SystemResourceOpener,
-        RuntimeResourceReader::new(environments),
-    )
 }
 
 #[cfg(test)]
@@ -302,9 +187,11 @@ mod tests {
                                 .to_string(),
                         },
                         destination: destination.clone(),
+                        storage_access: crate::environment::types::StorageAccess::Native,
                         fingerprint: EntryFingerprint("entry-v1-directory".to_string()),
                         entry_kind: TargetEntryKind::Directory,
                         link_target: None,
+                        link_target_identity: None,
                     })
                     .collect())
             })

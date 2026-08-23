@@ -7,7 +7,6 @@ use crate::application::mutation::coordinator::{
 use crate::application::mutation::executor::{MutationFuture, MutationPlanExecutor};
 use crate::application::mutation::plan::{MutationPlan, RuntimeRevisions};
 use crate::application::mutation::result::{ErrorReport, MutationUnitResult, MutationUnitStatus};
-use crate::application::recovery_runtime::{RuntimeRecoveryGraph, RuntimeRecoveryService};
 use crate::core::mutation::CancellationSignal;
 use crate::environment::native::atomic_file::NativeAtomicDocumentIo;
 use crate::environment::native::materialize::NativePreparedEntryExecutor;
@@ -21,6 +20,7 @@ use crate::environment::wsl::operations::atomic_file::WslAtomicDocumentIo;
 use crate::environment::wsl::operations::materialize::WslPreparedEntryExecutor;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
+use crate::runtime::recovery::{RuntimeRecoveryGraph, RuntimeRecoveryService};
 use crate::storage::lock_plan::{LockCommitReceipt, LockPlanCommitter, PreparedLockMutation};
 
 pub struct RuntimeLockCommitter {
@@ -311,9 +311,9 @@ fn validate_entry_backends(
     expected: &ExecutionBackend,
 ) -> Result<(), AppError> {
     if plan.units.iter().any(|unit| {
-        unit.canonical_entry
+        unit.primary_entry
             .iter()
-            .chain(&unit.required_agent_entries)
+            .chain(&unit.additional_entries)
             .any(|entry| !same_backend(&entry.key.backend, expected))
     }) {
         return Err(AppError::StaleEnvironment);
@@ -497,7 +497,7 @@ mod tests {
                 payload_id: payload_id.clone(),
                 requested_mode: InstallMode::Copy,
             },
-            owner_agent_ids: Vec::new(),
+            reader_agent_ids: Vec::new(),
         };
         let plan = MutationPlan {
             kind: crate::core::mutation::MutationKind::Install,
@@ -509,8 +509,8 @@ mod tests {
                 source: None,
                 target: context,
                 expected_revisions: revisions.clone(),
-                canonical_entry: Some(entry),
-                required_agent_entries: Vec::new(),
+                primary_entry: Some(entry),
+                additional_entries: Vec::new(),
                 lock_mutation: None,
                 expected_targets: vec![ExpectedTargetEntry {
                     key: projected.key,

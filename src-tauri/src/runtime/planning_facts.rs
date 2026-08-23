@@ -5,12 +5,14 @@ use std::sync::Arc;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::application::install::InstallFuture;
-use crate::application::install_planner::{InstallPlanningFactSource, InstallPlanningFacts};
+use crate::application::agent_registry_source::AgentRegistrySnapshotSource;
 use crate::application::mutation::coordinator::{
     BoxFuture, RuntimeAuthorityRevisions, RuntimeRevisionSnapshot, RuntimeRevisionSource,
 };
 use crate::application::mutation::plan::{stable_digest, RuntimeRevisions};
+use crate::application::planning_facts::{
+    ScopePlanningFuture, ScopePlanningSnapshot, ScopePlanningSnapshotSource,
+};
 use crate::core::agent_registry::AgentRegistrySnapshot;
 use crate::core::projects::{ProjectPathSemantics, ProjectsFile};
 use crate::core::skill_lock;
@@ -35,10 +37,6 @@ use crate::models::InstallTargetInfo;
 use crate::storage::atomic_document::AtomicDocumentIo;
 use crate::storage::lock_plan::load_lock_document;
 use crate::{core::lossless_lock::LockSchema, core::lossless_lock::LosslessLockDocument};
-
-pub trait AgentRegistrySnapshotSource: Send + Sync {
-    fn snapshot(&self) -> Arc<AgentRegistrySnapshot>;
-}
 
 #[derive(Debug, Clone)]
 pub struct NativeRuntimeSnapshot {
@@ -84,14 +82,14 @@ impl RuntimePlanningFactSource {
     async fn capture_install(
         &self,
         context: &SkillLocationRef,
-    ) -> Result<InstallPlanningFacts, AppError> {
+    ) -> Result<ScopePlanningSnapshot, AppError> {
         install_facts_from_base(self.capture_context_base(context).await?, false).await
     }
 
     async fn capture_copy_source(
         &self,
         context: &SkillLocationRef,
-    ) -> Result<InstallPlanningFacts, AppError> {
+    ) -> Result<ScopePlanningSnapshot, AppError> {
         install_facts_from_base(self.capture_context_base(context).await?, true).await
     }
 
@@ -168,18 +166,18 @@ impl RuntimePlanningFactSource {
     }
 }
 
-impl InstallPlanningFactSource for RuntimePlanningFactSource {
-    fn current<'a>(
+impl ScopePlanningSnapshotSource for RuntimePlanningFactSource {
+    fn snapshot<'a>(
         &'a self,
         context: &'a SkillLocationRef,
-    ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
+    ) -> ScopePlanningFuture<'a, Result<ScopePlanningSnapshot, AppError>> {
         Box::pin(async move { self.capture_install(context).await })
     }
 
-    fn current_for_copy_source<'a>(
+    fn copy_source_snapshot<'a>(
         &'a self,
         context: &'a SkillLocationRef,
-    ) -> InstallFuture<'a, Result<InstallPlanningFacts, AppError>> {
+    ) -> ScopePlanningFuture<'a, Result<ScopePlanningSnapshot, AppError>> {
         Box::pin(async move { self.capture_copy_source(context).await })
     }
 }
@@ -417,7 +415,7 @@ fn context_authority_revision(
 async fn install_facts_from_base(
     base: CapturedBase,
     tolerate_invalid_source_lock: bool,
-) -> Result<InstallPlanningFacts, AppError> {
+) -> Result<ScopePlanningSnapshot, AppError> {
     let project_path = base
         .resolved_context
         .project
@@ -436,7 +434,7 @@ async fn install_facts_from_base(
         }
         Err(error) => return Err(error),
     };
-    Ok(InstallPlanningFacts {
+    Ok(ScopePlanningSnapshot {
         resolved_context: base.resolved_context,
         agent_runtime,
         revisions: base.revisions,
@@ -565,8 +563,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::application::install_planner::InstallPlanningFactSource;
     use crate::application::mutation::coordinator::RuntimeRevisionSource;
+    use crate::application::planning_facts::ScopePlanningSnapshotSource;
     use crate::core::agent_definition::{
         AgentAdapter, AgentDefinition, AgentId, AgentSource, DetectionSpec, PathSpec,
         ScopeDefinition,
@@ -706,7 +704,7 @@ mod tests {
             },
         };
 
-        let facts = InstallPlanningFactSource::current(&source, &context)
+        let facts = ScopePlanningSnapshotSource::snapshot(&source, &context)
             .await
             .unwrap();
         let execute_revisions = RuntimeRevisionSource::current(&source, &context)
@@ -791,11 +789,11 @@ mod tests {
         };
 
         assert!(matches!(
-            InstallPlanningFactSource::current(&source, &context).await,
+            ScopePlanningSnapshotSource::snapshot(&source, &context).await,
             Err(AppError::Json { .. })
         ));
 
-        let copy_facts = source.current_for_copy_source(&context).await.unwrap();
+        let copy_facts = source.copy_source_snapshot(&context).await.unwrap();
         assert!(copy_facts
             .lock_document
             .entry_snapshot("demo")

@@ -1,14 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::application::agent_registry_source::AgentRegistrySnapshotSource;
 use crate::application::git_transport::GitSourceTransport;
 use crate::application::github_access::GithubTreeAccess;
 use crate::application::mutation::coordinator::RuntimeRevisionSource;
 use crate::application::payload_session::{
     DiscoverySessionHandle, DiscoverySourceLocation, PayloadPlanningMetadata, PayloadSessionManager,
 };
-use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
-use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
+use crate::application::skill_libraries::SkillLibraryRepository;
+use crate::application::skill_source::SkillSourceModule;
 use crate::application::source_acquisition::{
     retain_discovered_source, AcquireSelectedPayloadsRequest, GitSourceDiscovery,
     InternalSkillVisibility, ManagedDownloadedDirectory, RetainedSourceOptions,
@@ -20,11 +21,14 @@ use crate::application::source_evidence::{
 use crate::application::source_evidence_provider::RuntimeSourceEvidenceDetector;
 use crate::application::source_snapshot_reuse::SourceSnapshotReuseIndex;
 use crate::application::update::{
-    AcquiredUpdateSource, UpdateAcquisitionGroup, UpdateFuture, UpdatePayloadAcquirer,
-    UpdateService, UpdateSourceAcquisition,
+    AcquiredUpdateSource, UpdateAcquisitionGroup, UpdateFuture, UpdateService,
+    UpdateSourceAcquisition,
 };
 use crate::application::update_check::UpdateCheckService;
 use crate::application::update_planner::ConcreteUpdatePlanner;
+use crate::application::update_subjects::{
+    InstalledUpdateSubjectProvider, LibraryUpdateSubjectProvider,
+};
 #[cfg(test)]
 use crate::application::wellknown_access::UnavailableWellKnownAccess;
 use crate::application::wellknown_access::WellKnownAccess;
@@ -38,8 +42,11 @@ use crate::environment::planning::RuntimeTargetFactResolver;
 use crate::environment::types::EnvironmentRef;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
+use crate::runtime::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
+use crate::runtime::planning_facts::RuntimePlanningFactSource;
 
-pub struct RuntimeUpdatePayloadAcquirer {
+#[derive(Clone)]
+pub struct RuntimeSkillSourceModule {
     payloads: Arc<PayloadSessionManager>,
     snapshots: Arc<SourceSnapshotReuseIndex>,
     evidence: SourceEvidenceCoordinator,
@@ -72,11 +79,11 @@ fn retained_snapshot_action(
     }
 }
 
-fn snapshot_reuse_eligible(environment: &EnvironmentRef, provider: &SourceProvider) -> bool {
-    matches!(environment, EnvironmentRef::Native) && provider != &SourceProvider::WellKnown
+fn snapshot_reuse_eligible(environment: &EnvironmentRef) -> bool {
+    matches!(environment, EnvironmentRef::Native)
 }
 
-impl RuntimeUpdatePayloadAcquirer {
+impl RuntimeSkillSourceModule {
     pub fn new(
         payloads: Arc<PayloadSessionManager>,
         snapshots: Arc<SourceSnapshotReuseIndex>,
@@ -121,12 +128,15 @@ impl RuntimeUpdatePayloadAcquirer {
             return Err(AppError::MutationCancelled);
         }
         let provider = group.evidence_key.remote.provider();
-        let reusable = if snapshot_reuse_eligible(&group.context.environment, provider) {
+        let reusable = if snapshot_reuse_eligible(&group.environment) {
             self.snapshots.candidate(&group.key, self.payloads.as_ref())
         } else {
             None
         };
         let discovery_session = match reusable {
+            Some((_retained_revision, discovery)) if provider == &SourceProvider::WellKnown => {
+                discovery
+            }
             Some((retained_revision, discovery)) => {
                 let probe_source = group.descriptor.source().to_string();
                 let probe_ref = group.descriptor.git_ref().map(ToString::to_string);
@@ -142,7 +152,7 @@ impl RuntimeUpdatePayloadAcquirer {
                 .await;
                 let action = match probed {
                     Ok(result) => retained_snapshot_action(
-                        &group.context.environment,
+                        &group.environment,
                         Some(&retained_revision),
                         result.as_ref().map(String::as_str),
                     ),
@@ -168,36 +178,57 @@ impl RuntimeUpdatePayloadAcquirer {
             .map(|skill| snapshot_skill_key(provider, &skill.skill_name, &skill.relative_path))
             .collect::<BTreeSet<_>>();
         let mut selected_paths = Vec::with_capacity(group.skills.len());
+        let mut selected_skills = Vec::with_capacity(group.skills.len());
+        let mut skill_errors = Vec::new();
         for locked in &group.skills {
-            let available = retained
-                .skills()
-                .find(|available| {
-                    retained_skill_matches(
-                        provider,
-                        &locked.name,
-                        &locked.skill_path,
-                        &available.skill_name,
-                        &available.relative_path,
-                    )
-                })
-                .ok_or_else(|| AppError::InvalidSource {
-                    value: format!(
-                        "Skill '{}' was not found at locked path '{}'",
-                        locked.name, locked.skill_path
-                    ),
-                })?;
-            selected_paths.push(available.relative_path.clone());
+            let available = retained.skills().find(|available| {
+                retained_skill_matches(
+                    provider,
+                    &locked.name,
+                    locked.skill_path(),
+                    &available.skill_name,
+                    &available.relative_path,
+                )
+            });
+            if let Some(available) = available {
+                selected_paths.push(available.relative_path.clone());
+                selected_skills.push(locked);
+                continue;
+            }
+            if let Some(renamed) = retained.skills().find(|available| {
+                normalize_skill_folder_path(&available.relative_path)
+                    == normalize_skill_folder_path(locked.skill_path())
+            }) {
+                skill_errors.push((
+                    locked.name.clone(),
+                    AppError::UpstreamSkillNameChanged {
+                        expected_name: locked.name.clone(),
+                        actual_name: renamed.skill_name.clone(),
+                    },
+                ));
+            } else {
+                skill_errors.push((
+                    locked.name.clone(),
+                    AppError::UpstreamSkillDeleted {
+                        skill_name: locked.name.clone(),
+                    },
+                ));
+            }
         }
-        let handles = SelectedPayloadAcquisitionService::new(self.payloads.clone())
-            .acquire(AcquireSelectedPayloadsRequest {
-                discovery_session: discovery_session.clone(),
-                skill_paths: selected_paths,
-            })
-            .await?;
+        let handles = if selected_paths.is_empty() {
+            Vec::new()
+        } else {
+            SelectedPayloadAcquisitionService::new(self.payloads.clone())
+                .acquire(AcquireSelectedPayloadsRequest {
+                    discovery_session: discovery_session.clone(),
+                    skill_paths: selected_paths,
+                })
+                .await?
+        };
         if cancellation.is_cancelled() {
             return Err(AppError::MutationCancelled);
         }
-        if handles.len() != group.skills.len() {
+        if handles.len() != selected_skills.len() {
             return Err(AppError::StalePayload);
         }
         let ref_revision = if provider == &SourceProvider::WellKnown {
@@ -215,10 +246,10 @@ impl RuntimeUpdatePayloadAcquirer {
             complete_skill_path_catalog: catalog,
         };
         let mut skill_revisions = BTreeMap::new();
-        for (locked, handle) in group.skills.iter().zip(&handles) {
+        for (locked, handle) in selected_skills.iter().zip(&handles) {
             let lease = self.payloads.pin_verified(handle).await?;
             skill_revisions.insert(
-                snapshot_skill_key(provider, &locked.name, &locked.skill_path),
+                snapshot_skill_key(provider, &locked.name, locked.skill_path()),
                 acquisition_skill_revision(provider, lease.planning_metadata())?,
             );
         }
@@ -230,12 +261,13 @@ impl RuntimeUpdatePayloadAcquirer {
         )?;
         Ok(AcquiredUpdateSource {
             facts,
-            payloads: group
-                .skills
-                .iter()
+            redirected_download_host: retained.descriptor().redirected_download_host.clone(),
+            payloads: selected_skills
+                .into_iter()
                 .map(|skill| skill.name.clone())
                 .zip(handles)
                 .collect(),
+            skill_errors,
         })
     }
 
@@ -249,7 +281,7 @@ impl RuntimeUpdatePayloadAcquirer {
             .descriptor
             .parsed_source(group.evidence_key.remote.provider());
         if group.evidence_key.remote.provider() == &SourceProvider::WellKnown {
-            return match &group.context.environment {
+            return match &group.environment {
                 EnvironmentRef::Native => {
                     let fetched = self.wellknown.fetch(&source, &cancellation).await.map_err(
                         crate::application::wellknown_access::WellKnownFetchError::into_error,
@@ -258,7 +290,7 @@ impl RuntimeUpdatePayloadAcquirer {
                     let owner = ManagedDownloadedDirectory::new(root.clone());
                     retain_discovered_source(
                         self.payloads.clone(),
-                        group.context.environment.clone(),
+                        group.environment.clone(),
                         parsed,
                         source,
                         DiscoverySourceLocation::Native {
@@ -269,6 +301,7 @@ impl RuntimeUpdatePayloadAcquirer {
                         owner,
                         RetainedSourceOptions {
                             trust_metadata: Some(fetched.trust_metadata),
+                            redirected_download_host: fetched.redirected_download_host,
                             full_depth: true,
                             internal_skill_visibility: InternalSkillVisibility::All,
                             ..Default::default()
@@ -299,7 +332,7 @@ impl RuntimeUpdatePayloadAcquirer {
             Arc::clone(&self.wsl_source),
         )
         .discover(
-            group.context.clone(),
+            group.environment.clone(),
             parsed,
             source,
             SourceDiscoveryPolicy {
@@ -358,8 +391,8 @@ fn acquisition_skill_revision(
     }
 }
 
-impl UpdatePayloadAcquirer for RuntimeUpdatePayloadAcquirer {
-    fn acquire<'a>(
+impl SkillSourceModule for RuntimeSkillSourceModule {
+    fn acquire_saved_groups<'a>(
         &'a self,
         groups: &'a [UpdateAcquisitionGroup],
         cancellation: crate::core::mutation::CancellationSignal,
@@ -430,11 +463,24 @@ fn resolved_ref(normalized_ref: &NormalizedRef) -> String {
 
 pub type RuntimeUpdateService = UpdateService<
     ConcreteUpdatePlanner<RuntimePlanningFactSource, RuntimeTargetFactResolver>,
-    RuntimeUpdatePayloadAcquirer,
+    RuntimeSkillSourceModule,
     RuntimePlanExecutor,
 >;
 
-pub type RuntimeUpdateCheckService = UpdateCheckService<RuntimePlanningFactSource>;
+pub type RuntimeUpdateCheckService = UpdateCheckService<
+    InstalledUpdateSubjectProvider<RuntimePlanningFactSource, RuntimeTargetFactResolver>,
+>;
+
+pub type RuntimeLibraryUpdateCheckService =
+    crate::application::update_check::LibraryUpdateCheckService<
+        LibraryUpdateSubjectProvider<RuntimeTargetFactResolver>,
+    >;
+
+pub type RuntimeLibraryUpdateService = crate::application::library_update::LibraryUpdateService<
+    LibraryUpdateSubjectProvider<RuntimeTargetFactResolver>,
+    RuntimeSkillSourceModule,
+    RuntimeTargetFactResolver,
+>;
 
 pub fn build_runtime_source_evidence_coordinator(
     payloads: Arc<PayloadSessionManager>,
@@ -467,9 +513,37 @@ pub fn build_runtime_update_check_service(
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     evidence: SourceEvidenceCoordinator,
 ) -> RuntimeUpdateCheckService {
+    let facts = RuntimePlanningFactSource::for_current_user(registry, environments.clone());
     UpdateCheckService::new(
-        RuntimePlanningFactSource::for_current_user(registry, environments),
+        InstalledUpdateSubjectProvider::new(facts, RuntimeTargetFactResolver::new(environments)),
         evidence,
+    )
+}
+
+pub fn build_runtime_library_update_check_service(
+    repository: Arc<dyn SkillLibraryRepository>,
+    targets: RuntimeTargetFactResolver,
+    evidence: SourceEvidenceCoordinator,
+) -> RuntimeLibraryUpdateCheckService {
+    crate::application::update_check::LibraryUpdateCheckService::new(
+        LibraryUpdateSubjectProvider::new(repository, targets.clone()),
+        evidence,
+    )
+}
+
+pub fn build_runtime_library_update_service(
+    payloads: Arc<PayloadSessionManager>,
+    repository: Arc<dyn SkillLibraryRepository>,
+    targets: RuntimeTargetFactResolver,
+    skill_source: RuntimeSkillSourceModule,
+    libraries: Arc<crate::application::skill_libraries::SkillLibraryModule>,
+) -> RuntimeLibraryUpdateService {
+    crate::application::library_update::LibraryUpdateService::new(
+        payloads,
+        LibraryUpdateSubjectProvider::new(repository, targets.clone()),
+        skill_source,
+        targets.clone(),
+        libraries,
     )
 }
 
@@ -478,7 +552,7 @@ pub fn build_runtime_update_service(
     environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
-    acquirer: RuntimeUpdatePayloadAcquirer,
+    skill_source: RuntimeSkillSourceModule,
 ) -> RuntimeUpdateService {
     let facts = RuntimePlanningFactSource::for_current_user(registry, environments.clone());
     let planner = ConcreteUpdatePlanner::new(
@@ -493,7 +567,7 @@ pub fn build_runtime_update_service(
     );
     let revisions: Arc<dyn RuntimeRevisionSource> = Arc::new(facts);
     let executor = execution.executor(environments, revisions);
-    UpdateService::new(payloads, planner, acquirer, executor)
+    UpdateService::new(payloads, planner, skill_source, executor)
 }
 
 #[cfg(test)]
@@ -576,20 +650,10 @@ mod tests {
             ),
             RetainedSnapshotAction::Reacquire
         );
-        assert!(snapshot_reuse_eligible(
-            &EnvironmentRef::Native,
-            &SourceProvider::Github
-        ));
-        assert!(!snapshot_reuse_eligible(
-            &EnvironmentRef::Native,
-            &SourceProvider::WellKnown
-        ));
-        assert!(!snapshot_reuse_eligible(
-            &EnvironmentRef::Wsl {
-                distro_name: "Ubuntu".to_string(),
-            },
-            &SourceProvider::Github,
-        ));
+        assert!(snapshot_reuse_eligible(&EnvironmentRef::Native));
+        assert!(!snapshot_reuse_eligible(&EnvironmentRef::Wsl {
+            distro_name: "Ubuntu".to_string(),
+        },));
         assert_eq!(
             retained_snapshot_action(
                 &EnvironmentRef::Wsl {

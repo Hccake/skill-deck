@@ -8,7 +8,6 @@ use tokio::sync::watch;
 use crate::application::payload_session::{
     PayloadCleanupReport, PayloadSessionMaintenance, PayloadSessionManager,
 };
-use crate::application::recovery_runtime::RuntimeRecoveryGraph;
 use crate::application::runtime_admission::RuntimeAdmissionCoordinator;
 use crate::core::mutation::LifecycleLeaseKind;
 use crate::environment::maintenance::{
@@ -19,6 +18,7 @@ use crate::environment::types::{EnvironmentKey, EnvironmentRef};
 use crate::environment::wsl::operations::acquire::WslPayloadSessionStorage;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
+use crate::runtime::recovery::RuntimeRecoveryGraph;
 
 pub struct MaintenanceTaskOutcome {
     pub payload: Result<PayloadCleanupReport, AppError>,

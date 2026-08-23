@@ -1,15 +1,15 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::application::agent_registry_source::AgentRegistrySnapshotSource;
 use crate::application::copy::{
     compare_resolved_projects, CopyFuture, CopyProjectComparator, CopyService, ProjectComparison,
 };
-use crate::application::install_planner::InstallPlanningFacts;
+use crate::application::installed_skill_payload::InstalledSkillPayloadAcquirer;
+use crate::application::library_candidates::LibraryCandidateSource;
 use crate::application::mutation::coordinator::RuntimeRevisionSource;
 use crate::application::payload_session::PayloadSessionManager;
-use crate::application::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
-use crate::application::runtime_facts::{AgentRegistrySnapshotSource, RuntimePlanningFactSource};
-use crate::application::skill_entries::InstalledSkillPayloadAcquirer;
+use crate::application::planning_facts::ScopePlanningSnapshot;
 use crate::environment::path_mapping::{windows_storage_owner, WindowsStorageOwner};
 use crate::environment::planning::{
     resolve_native_targets, ResolvedTargetFact, RuntimeTargetFactResolver,
@@ -18,6 +18,8 @@ use crate::environment::types::{EnvironmentRef, ResourceLocator, StorageAccess};
 use crate::environment::wsl::operations::path::map_storage_path_to_host;
 use crate::environment::wsl::WslRuntime;
 use crate::error::AppError;
+use crate::runtime::plan_runner::{RuntimeExecutionDependencies, RuntimePlanExecutor};
+use crate::runtime::planning_facts::RuntimePlanningFactSource;
 
 #[derive(Clone)]
 pub struct RuntimeCopyProjectComparator {
@@ -31,7 +33,7 @@ impl RuntimeCopyProjectComparator {
 
     async fn resolve_project_to_native(
         &self,
-        facts: &InstallPlanningFacts,
+        facts: &ScopePlanningSnapshot,
     ) -> Result<ResolvedTargetFact, AppError> {
         let project = facts
             .resolved_context
@@ -55,7 +57,7 @@ impl RuntimeCopyProjectComparator {
     async fn compare_runtime(
         &self,
         source: &ResolvedTargetFact,
-        target: &InstallPlanningFacts,
+        target: &ScopePlanningSnapshot,
     ) -> Result<ProjectComparison, AppError> {
         let target_project = target
             .resolved_context
@@ -107,7 +109,7 @@ impl RuntimeCopyProjectComparator {
 impl CopyProjectComparator for RuntimeCopyProjectComparator {
     fn capture_source<'a>(
         &'a self,
-        source: &'a InstallPlanningFacts,
+        source: &'a ScopePlanningSnapshot,
     ) -> CopyFuture<'a, Result<ResolvedTargetFact, AppError>> {
         Box::pin(async move { self.resolve_project_to_native(source).await })
     }
@@ -115,7 +117,7 @@ impl CopyProjectComparator for RuntimeCopyProjectComparator {
     fn compare<'a>(
         &'a self,
         source: &'a ResolvedTargetFact,
-        target: &'a InstallPlanningFacts,
+        target: &'a ScopePlanningSnapshot,
     ) -> CopyFuture<'a, Result<ProjectComparison, AppError>> {
         Box::pin(async move { self.compare_runtime(source, target).await })
     }
@@ -161,6 +163,7 @@ pub fn build_runtime_copy_service(
     environments: Arc<WslRuntime>,
     registry: Arc<dyn AgentRegistrySnapshotSource>,
     execution: RuntimeExecutionDependencies,
+    library_candidates: Arc<dyn LibraryCandidateSource>,
 ) -> RuntimeCopyService {
     let facts = RuntimePlanningFactSource::for_current_user(registry, environments.clone());
     let targets = RuntimeTargetFactResolver::new(environments.clone());
@@ -174,6 +177,7 @@ pub fn build_runtime_copy_service(
         acquirer,
         executor,
         RuntimeCopyProjectComparator::new(environments),
+        library_candidates,
     )
 }
 
