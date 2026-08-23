@@ -6,12 +6,21 @@ use std::sync::Mutex;
 
 static CONFIG_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
-/// 获取配置文件路径: ~/.skill-deck/config.json
-pub fn get_config_path() -> Result<PathBuf, AppError> {
+fn get_skill_deck_home() -> Result<PathBuf, AppError> {
     let home = dirs::home_dir().ok_or(AppError::Path {
         message: "无法获取用户主目录".to_string(),
     })?;
-    Ok(home.join(".skill-deck").join("config.json"))
+    Ok(home.join(".skill-deck"))
+}
+
+/// 获取配置文件路径: ~/.skill-deck/config.json
+pub fn get_config_path() -> Result<PathBuf, AppError> {
+    Ok(get_skill_deck_home()?.join("config.json"))
+}
+
+/// 获取 Skill 库根目录: ~/.skill-deck/skill-libraries
+pub fn get_skill_library_root() -> Result<PathBuf, AppError> {
+    Ok(get_skill_deck_home()?.join("skill-libraries"))
 }
 
 pub fn read_config() -> Result<SkillDeckConfig, AppError> {
@@ -105,9 +114,21 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use super::{read_config_from_path, update_config_at_path, write_config_to_path};
+    use super::{
+        get_skill_library_root, read_config_from_path, update_config_at_path, write_config_to_path,
+    };
     use crate::models::{NativeGitProxySettings, ProxyMode, SkillDeckConfig};
     use tempfile::tempdir;
+
+    #[test]
+    fn skill_library_root_is_stored_under_the_shared_skill_deck_home() {
+        let home = dirs::home_dir().expect("home directory");
+
+        assert_eq!(
+            get_skill_library_root().expect("Skill Library root"),
+            home.join(".skill-deck").join("skill-libraries")
+        );
+    }
 
     #[test]
     fn test_read_config_from_missing_file_returns_default() {

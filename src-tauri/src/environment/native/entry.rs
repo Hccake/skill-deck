@@ -67,8 +67,12 @@ pub fn stage_entry_set(intents: &[NativeEntryIntent]) -> Result<NativeEntrySet, 
             .destination
             .parent()
             .ok_or_else(|| unsafe_destination(&intent.destination))?;
-        fs::create_dir_all(parent)?;
-        let parent_identity = physical_parent_identity(parent)?;
+        let parent_identity = if matches!(intent.action, NativeEntryAction::Keep) {
+            intent.target.physical_parent.clone()
+        } else {
+            fs::create_dir_all(parent)?;
+            physical_parent_identity(parent)?
+        };
         let backup_path = unique_sibling(&intent.destination, "backup")?;
         let staged_path = match &intent.action {
             NativeEntryAction::Keep => None,
@@ -149,7 +153,13 @@ pub fn recheck_entry_set(entries: &NativeEntrySet) -> Result<(), AppError> {
             .destination
             .parent()
             .ok_or_else(|| unsafe_destination(&entry.intent.destination))?;
-        if physical_parent_identity(parent)? != entry.parent_identity
+        let target_is_current = if matches!(entry.intent.action, NativeEntryAction::Keep) {
+            projected_key_for_destination(&entry.intent.destination, &entry.intent.target.backend)?
+                == entry.intent.target
+        } else {
+            physical_parent_identity(parent)? == entry.parent_identity
+        };
+        if !target_is_current
             || inspect_entry_no_follow(&entry.intent.destination)?.fingerprint
                 != entry.intent.expected_fingerprint
         {
@@ -168,7 +178,9 @@ pub fn recheck_entry_set(entries: &NativeEntrySet) -> Result<(), AppError> {
             return Err(AppError::StaleTarget);
         }
         preflight_staged_entry(entry)?;
-        preflight_atomic_replace(parent)?;
+        if !matches!(entry.intent.action, NativeEntryAction::Keep) {
+            preflight_atomic_replace(parent)?;
+        }
     }
     Ok(())
 }
@@ -177,7 +189,17 @@ pub fn verify_entry_set(entries: &NativeEntrySet) -> Result<(), AppError> {
     for entry in &entries.entries {
         let inspected = inspect_entry_no_follow(&entry.intent.destination)?;
         let valid = match &entry.intent.action {
-            NativeEntryAction::Keep => inspected.fingerprint == entry.intent.expected_fingerprint,
+            NativeEntryAction::Keep => {
+                inspected.fingerprint == entry.intent.expected_fingerprint
+                    && entry
+                        .intent
+                        .expected_content_manifest_hash
+                        .as_ref()
+                        .is_none_or(|expected| {
+                            read_directory(&entry.intent.destination)
+                                .is_ok_and(|actual| actual.hash() == expected)
+                        })
+            }
             NativeEntryAction::Materialize { payload } => {
                 verify_materialized_payload(payload, &entry.intent.destination).is_ok()
             }
@@ -282,7 +304,10 @@ fn swap_one(entry: &mut StagedEntry) -> Result<(), AppError> {
     Ok(())
 }
 
-fn materialize_payload(payload: &SkillPayload, destination: &Path) -> Result<(), AppError> {
+pub(crate) fn materialize_payload(
+    payload: &SkillPayload,
+    destination: &Path,
+) -> Result<(), AppError> {
     verify_skill_payload_integrity(payload)?;
     fs::create_dir(destination)?;
     for entry in &payload.entries {
@@ -329,7 +354,10 @@ fn preflight_staged_entry(entry: &StagedEntry) -> Result<(), AppError> {
     }
 }
 
-fn verify_materialized_payload(payload: &SkillPayload, stage: &Path) -> Result<(), AppError> {
+pub(crate) fn verify_materialized_payload(
+    payload: &SkillPayload,
+    stage: &Path,
+) -> Result<(), AppError> {
     verify_skill_payload_integrity(payload)?;
     let metadata = fs::symlink_metadata(stage)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -596,6 +624,18 @@ mod tests {
         Arc::new(build_skill_payload(&root).expect("payload"))
     }
 
+    fn native_backend() -> ExecutionBackend {
+        if cfg!(windows) {
+            ExecutionBackend::NativeWindows
+        } else {
+            ExecutionBackend::NativeUnix
+        }
+    }
+
+    fn native_case_sensitive() -> bool {
+        !cfg!(windows)
+    }
+
     fn existing_destination(parent: &Path, name: &str, content: &[u8]) -> PathBuf {
         let destination = parent.join(name);
         fs::create_dir(&destination).expect("destination");
@@ -616,10 +656,10 @@ mod tests {
             .clone();
         NativeEntryIntent {
             target: physical_target_key(
-                ExecutionBackend::NativeUnix,
+                native_backend(),
                 physical_parent_identity(parent).expect("parent identity"),
                 destination.file_name().unwrap().to_str().unwrap(),
-                true,
+                native_case_sensitive(),
             )
             .expect("target"),
             destination,
@@ -791,10 +831,10 @@ mod tests {
         let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
         let physical_destination = physical_root.join(".custom/skills/demo");
         let target = projected_physical_target_key(
-            ExecutionBackend::NativeUnix,
+            native_backend(),
             physical_parent_identity(&physical_root).expect("ancestor identity"),
             [".custom", "skills", "demo"],
-            true,
+            native_case_sensitive(),
         )
         .unwrap();
         let intent = NativeEntryIntent {
@@ -814,5 +854,111 @@ mod tests {
         assert!(destination.join("SKILL.md").is_file());
         cleanup_entry_set(entries).expect("cleanup");
         assert!(destination.parent().unwrap().is_dir());
+    }
+
+    #[test]
+    fn keep_only_stage_does_not_create_a_missing_parent_or_operation_paths() {
+        let temp = tempdir().expect("temp");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let destination = physical_root.join(".custom/skills/demo");
+        let target = projected_physical_target_key(
+            native_backend(),
+            physical_parent_identity(&physical_root).expect("ancestor identity"),
+            [".custom", "skills", "demo"],
+            native_case_sensitive(),
+        )
+        .expect("projected target");
+        let intent = NativeEntryIntent {
+            target,
+            destination: destination.clone(),
+            expected_fingerprint: inspect_entry_no_follow(&destination)
+                .expect("missing entry")
+                .fingerprint,
+            expected_content_manifest_hash: None,
+            action: NativeEntryAction::Keep,
+        };
+
+        let entries = stage_entry_set(&[intent]).expect("stage Keep observation");
+
+        assert!(!destination.parent().expect("parent").exists());
+        assert!(planned_recovery_paths(&entries).is_empty());
+        assert_eq!(
+            fs::read_dir(&physical_root)
+                .expect("physical root")
+                .filter_map(Result::ok)
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".skill-deck-"))
+                .count(),
+            0
+        );
+        assert!(cleanup_entry_set(entries).expect("cleanup").is_empty());
+    }
+
+    #[test]
+    fn keep_verification_rechecks_the_optional_content_manifest() {
+        let temp = tempdir().expect("temp");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let destination = existing_destination(&physical_root, "demo", b"version-one");
+        let expected = inspect_entry_no_follow(&destination).expect("inspect");
+        let expected_content_manifest_hash = read_directory(&destination)
+            .expect("content manifest")
+            .hash()
+            .clone();
+        let intent = NativeEntryIntent {
+            target: physical_target_key(
+                native_backend(),
+                physical_parent_identity(&physical_root).expect("parent identity"),
+                "demo",
+                native_case_sensitive(),
+            )
+            .expect("target"),
+            destination: destination.clone(),
+            expected_fingerprint: expected.fingerprint,
+            expected_content_manifest_hash: Some(expected_content_manifest_hash),
+            action: NativeEntryAction::Keep,
+        };
+        let entries = stage_entry_set(&[intent]).expect("stage Keep observation");
+        recheck_entry_set(&entries).expect("initial recheck");
+
+        fs::write(destination.join("SKILL.md"), b"version-two").expect("change observed content");
+
+        assert!(matches!(
+            verify_entry_set(&entries),
+            Err(AppError::ExecutionFailed { .. })
+        ));
+        assert!(cleanup_entry_set(entries).expect("cleanup").is_empty());
+    }
+
+    #[test]
+    fn keep_recheck_rejects_a_target_replaced_after_stage() {
+        let temp = tempdir().expect("temp");
+        let physical_root = fs::canonicalize(temp.path()).expect("physical temp root");
+        let destination = existing_destination(&physical_root, "demo", b"observed");
+        let expected = inspect_entry_no_follow(&destination).expect("inspect");
+        let intent = NativeEntryIntent {
+            target: physical_target_key(
+                native_backend(),
+                physical_parent_identity(&physical_root).expect("parent identity"),
+                "demo",
+                native_case_sensitive(),
+            )
+            .expect("target"),
+            destination: destination.clone(),
+            expected_fingerprint: expected.fingerprint,
+            expected_content_manifest_hash: None,
+            action: NativeEntryAction::Keep,
+        };
+        let entries = stage_entry_set(&[intent]).expect("stage Keep observation");
+
+        fs::remove_dir_all(&destination).expect("remove observed directory");
+        fs::write(&destination, b"external replacement").expect("replace observed target");
+
+        assert!(matches!(
+            recheck_entry_set(&entries),
+            Err(AppError::StaleTarget)
+        ));
+        assert!(cleanup_entry_set(entries).expect("cleanup").is_empty());
     }
 }

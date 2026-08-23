@@ -1998,13 +1998,31 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn bundled_session_script_reports_the_complete_session_baseline() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("session fixture");
+        let bin = temp.path().join("bin");
+        let probe_parent = temp.path().join("probe");
+        std::fs::create_dir_all(&bin).expect("fixture bin");
+        std::fs::create_dir_all(&probe_parent).expect("probe parent");
+        let flock = bin.join("flock");
+        std::fs::write(&flock, "#!/bin/sh\nexit 99\n").expect("failing flock fixture");
+        std::fs::set_permissions(&flock, std::fs::Permissions::from_mode(0o755))
+            .expect("make flock executable");
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
         let output = command_output_with_timeout(
             Command::new("/bin/sh")
                 .arg("-c")
                 .arg(include_str!("wsl/scripts/session.sh"))
                 .arg("--")
                 .arg("session")
-                .env("GROK_HOME", "/opt/grok"),
+                .env("GROK_HOME", "/opt/grok")
+                .env("PATH", path)
+                .env("TMPDIR", &probe_parent),
             std::time::Duration::from_secs(10),
         )
         .expect("session script");
@@ -2020,6 +2038,13 @@ mod tests {
         assert!(!session.user.is_empty());
         assert!(session.home.starts_with('/'));
         assert_eq!(session.environment["GROK_HOME"], "/opt/grok");
+        assert!(
+            std::fs::read_dir(probe_parent)
+                .expect("probe parent remains readable")
+                .next()
+                .is_none(),
+            "session capability probe must clean up its temporary directory"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -2161,15 +2186,6 @@ printf '/\n'
             unexpected_successes.is_empty(),
             "incompatible commands passed the WSL session baseline: {unexpected_successes:?}"
         );
-    }
-
-    #[test]
-    fn session_script_cleans_the_probe_root_only_after_owning_its_creation() {
-        let script = include_str!("wsl/scripts/session.sh");
-
-        assert!(script.contains("probe_root_created=0"));
-        assert!(script.contains("probe_root_created=1"));
-        assert!(script.contains("if [ \"$probe_root_created\" = 1 ]; then"));
     }
 
     #[test]

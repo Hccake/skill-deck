@@ -5,6 +5,7 @@ pub mod directory_count;
 pub mod entry;
 pub mod eve;
 pub mod inspection;
+pub mod library_content;
 pub mod materialize;
 pub mod path;
 pub mod path_metadata;
