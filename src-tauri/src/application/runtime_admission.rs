@@ -5,7 +5,7 @@ use crate::application::install_wizard_session::InstallWizardSessionSnapshot;
 use crate::core::mutation::{
     ActiveLifecycleLease, ActiveMutation, BackendActivitySnapshot, CancellationSignal,
     LifecycleLeaseKind, MutationKind, MutationPhase, MutationProgress, MutationSnapshot,
-    TerminationAdmission,
+    MutationTargetRef, TerminationAdmission,
 };
 use crate::environment::types::{same_environment_identity, EnvironmentRef, SkillLocationRef};
 use crate::error::AppError;
@@ -143,7 +143,35 @@ impl RuntimeAdmissionCoordinator {
         let state = self.lock_state();
         self.denial_for(&state, AdmissionIntent::Mutation)
             .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
-        Ok(self.register_mutation(state, kind, context, MutationOwner::Standalone))
+        Ok(self.register_mutation(
+            state,
+            kind,
+            MutationTargetRef::SkillLocation {
+                environment: context.environment,
+                scope: context.scope,
+            },
+            MutationOwner::Standalone,
+        ))
+    }
+
+    pub fn begin_library_mutation(
+        &self,
+        kind: MutationKind,
+        environment: EnvironmentRef,
+        library_id: String,
+    ) -> Result<MutationPermit, AppError> {
+        let state = self.lock_state();
+        self.denial_for(&state, AdmissionIntent::Mutation)
+            .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
+        Ok(self.register_mutation(
+            state,
+            kind,
+            MutationTargetRef::Library {
+                environment,
+                library_id,
+            },
+            MutationOwner::Standalone,
+        ))
     }
 
     pub fn begin_install_from_active_wizard(
@@ -163,14 +191,22 @@ impl RuntimeAdmissionCoordinator {
         let owner = MutationOwner::InstallWizard {
             instance_id: instance_id.clone(),
         };
-        Ok(self.register_mutation(state, MutationKind::Install, context, owner))
+        Ok(self.register_mutation(
+            state,
+            MutationKind::Install,
+            MutationTargetRef::SkillLocation {
+                environment: context.environment,
+                scope: context.scope,
+            },
+            owner,
+        ))
     }
 
     fn register_mutation(
         &self,
         mut state: std::sync::MutexGuard<'_, AdmissionState>,
         kind: MutationKind,
-        context: SkillLocationRef,
+        target: MutationTargetRef,
         owner: MutationOwner,
     ) -> MutationPermit {
         let token = next_token(&mut state);
@@ -181,7 +217,7 @@ impl RuntimeAdmissionCoordinator {
             active: ActiveMutation {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind,
-                context,
+                target,
                 phase: MutationPhase::Preparing,
                 progress: None,
                 cancelable: false,
@@ -358,7 +394,7 @@ impl RuntimeAdmissionCoordinator {
 
     pub fn active_for_environment(&self, environment: &EnvironmentRef) -> bool {
         self.lock_state().mutation.as_ref().is_some_and(|mutation| {
-            same_environment_identity(&mutation.active.context.environment, environment)
+            same_environment_identity(mutation.active.target.environment(), environment)
         })
     }
 
@@ -439,6 +475,19 @@ impl RuntimeAdmissionCoordinator {
             token,
         };
         Ok(action())
+    }
+
+    pub fn begin_exclusive_action(&self) -> Result<ExclusivePermit, AppError> {
+        let mut state = self.lock_state();
+        self.denial_for(&state, AdmissionIntent::ExclusiveAction)
+            .map_or(Ok(()), |denied| Err(denied.into_legacy_error()))?;
+        let token = next_token(&mut state);
+        state.exclusive_token = Some(token);
+        state.revision = next_revision(state.revision);
+        Ok(ExclusivePermit {
+            inner: Arc::clone(&self.inner),
+            token,
+        })
     }
 
     pub fn set_mutation_listener(
@@ -749,7 +798,7 @@ pub struct SettingPermit {
     token: u64,
 }
 
-struct ExclusivePermit {
+pub struct ExclusivePermit {
     inner: Arc<AdmissionInner>,
     token: u64,
 }
@@ -834,7 +883,9 @@ impl Drop for WizardReservation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::mutation::{LifecycleLeaseKind, MutationKind};
+    use crate::core::mutation::{
+        LifecycleLeaseKind, MutationKind, MutationPhase, MutationTargetRef,
+    };
     use crate::environment::types::{EnvironmentRef, SkillLocation, SkillLocationRef};
 
     fn native_global() -> SkillLocationRef {
@@ -842,6 +893,29 @@ mod tests {
             environment: EnvironmentRef::Native,
             scope: SkillLocation::Global,
         }
+    }
+
+    #[test]
+    fn library_mutation_binds_its_target_and_uses_the_active_cancellation_signal() {
+        let admission = RuntimeAdmissionCoordinator::default();
+        let permit = admission
+            .begin_library_mutation(
+                MutationKind::ManageLibraries,
+                EnvironmentRef::Native,
+                "library-1".to_string(),
+            )
+            .expect("Library mutation admitted");
+        permit.transition(MutationPhase::Acquiring, None, true);
+
+        assert_eq!(
+            admission.snapshot().active.unwrap().target,
+            MutationTargetRef::Library {
+                environment: EnvironmentRef::Native,
+                library_id: "library-1".to_string(),
+            }
+        );
+        assert_eq!(admission.request_cancel(), Ok(true));
+        assert!(permit.cancellation().is_cancelled());
     }
 
     #[test]

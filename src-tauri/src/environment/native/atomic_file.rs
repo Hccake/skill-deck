@@ -35,7 +35,7 @@ impl AtomicDocumentIo for NativeAtomicDocumentIo {
     }
 }
 
-fn write_native_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
+pub(crate) fn write_native_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     let parent = path.parent().ok_or_else(|| AppError::UnsafePath {
         path: path.to_string_lossy().into_owned(),
         reason: "document path has no parent".to_string(),
