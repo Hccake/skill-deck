@@ -5,9 +5,6 @@ use specta::Type;
 
 use crate::application::agent_intent::{AdapterTargetId, AgentWriteIntent};
 use crate::application::mutation::plan::stable_digest;
-use crate::application::workflow_planner::{
-    AgentEntryContent, AgentEntryPlan, LogicalAgentEntryRoot,
-};
 use crate::core::agent_definition::{AgentAdapter, AgentId};
 use crate::environment::agent_environment::{
     AgentRuntimeSnapshot, DetectionState, ResolvedAgentScope,
@@ -20,9 +17,37 @@ use crate::environment::types::{
 use crate::error::{AgentSelectionInvalidReason, AppError};
 use crate::models::{InstallMode, InstallTargetInfo};
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub(crate) enum DirectoryContentKind {
+    #[serde(rename = "Canonical")]
+    Original,
+    EveDerived {
+        subagent: Option<String>,
+    },
+}
+
+impl DirectoryContentKind {
+    pub(crate) fn uses_eve_payload(&self) -> bool {
+        matches!(self, Self::EveDerived { .. })
+    }
+
+    pub(crate) fn eve_subagent(&self) -> Option<Option<&str>> {
+        match self {
+            Self::Original => None,
+            Self::EveDerived { subagent } => Some(subagent.as_deref()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(transparent)]
 pub struct AgentInstallOptionId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DirectoryPlacementId {
+    Standard,
+    Option(AgentInstallOptionId),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(transparent)]
@@ -189,10 +214,17 @@ pub enum ConfirmInstallAgentSelectionOutcome {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedAgentInstallOption {
     pub public: AgentInstallOption,
-    pub root: ResourceLocator,
     pub adapter_target_ids: Vec<String>,
-    physical_key: PhysicalTargetKey,
-    content: AgentSelectionContent,
+    pub placement: ResolvedDirectoryPlacement,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedDirectoryPlacement {
+    pub id: DirectoryPlacementId,
+    pub root: ResourceLocator,
+    pub physical_key: PhysicalTargetKey,
+    pub storage_access: crate::environment::types::StorageAccess,
+    pub content: DirectoryContentKind,
 }
 
 impl ResolvedAgentInstallOption {
@@ -204,16 +236,115 @@ impl ResolvedAgentInstallOption {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-enum AgentSelectionContent {
-    Canonical,
-    EveDerived { subagent: Option<String> },
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct AgentSelectionCatalog {
-    pub snapshot: AgentSelectionSnapshot,
-    pub resolved_options: BTreeMap<AgentInstallOptionId, ResolvedAgentInstallOption>,
+    context: SkillLocationRef,
+    snapshot: AgentSelectionSnapshot,
+    resolved_options: BTreeMap<AgentInstallOptionId, ResolvedAgentInstallOption>,
+    standard_placement: ResolvedDirectoryPlacement,
+}
+
+impl AgentSelectionCatalog {
+    pub(crate) fn context(&self) -> &SkillLocationRef {
+        &self.context
+    }
+
+    pub(crate) fn standard(&self) -> &ResolvedDirectoryPlacement {
+        &self.standard_placement
+    }
+
+    pub(crate) fn snapshot(&self) -> &AgentSelectionSnapshot {
+        &self.snapshot
+    }
+
+    pub(crate) fn options(&self) -> impl Iterator<Item = &ResolvedAgentInstallOption> {
+        self.resolved_options.values()
+    }
+
+    pub(crate) fn option(&self, id: &AgentInstallOptionId) -> Option<&ResolvedAgentInstallOption> {
+        self.resolved_options.get(id)
+    }
+
+    pub(crate) fn readers(&self, id: &DirectoryPlacementId) -> Vec<AgentId> {
+        match id {
+            DirectoryPlacementId::Standard => self
+                .snapshot
+                .agents
+                .iter()
+                .filter(|agent| {
+                    matches!(
+                        agent.directory_access,
+                        Some(SkillDirectoryAccess::StandardOnly | SkillDirectoryAccess::Both)
+                    )
+                })
+                .map(|agent| agent.id.clone())
+                .collect(),
+            DirectoryPlacementId::Option(id) => self
+                .resolved_options
+                .get(id)
+                .map(|option| option.public.agent_ids.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn placement(
+        &self,
+        id: &DirectoryPlacementId,
+    ) -> Option<&ResolvedDirectoryPlacement> {
+        match id {
+            DirectoryPlacementId::Standard => (self.standard_placement.id
+                == DirectoryPlacementId::Standard)
+                .then_some(&self.standard_placement),
+            DirectoryPlacementId::Option(id) => self.resolved_options.get(id).and_then(|option| {
+                (option.placement.id == DirectoryPlacementId::Option(id.clone()))
+                    .then_some(&option.placement)
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_snapshot_for_test(snapshot: AgentSelectionSnapshot) -> Self {
+        Self {
+            context: SkillLocationRef {
+                environment: crate::environment::types::EnvironmentRef::Native,
+                scope: crate::environment::types::SkillLocation::Global,
+            },
+            snapshot,
+            resolved_options: BTreeMap::new(),
+            standard_placement: ResolvedDirectoryPlacement {
+                id: DirectoryPlacementId::Standard,
+                root: ResourceLocator {
+                    environment: crate::environment::types::EnvironmentRef::Native,
+                    native_path: "/test/.agents/skills".to_string(),
+                },
+                physical_key: PhysicalTargetKey {
+                    backend: crate::environment::runtime::ExecutionBackend::NativeUnix,
+                    physical_parent: crate::environment::runtime::PhysicalParentIdentity::Unix {
+                        device: 0,
+                        inode: 0,
+                    },
+                    normalized_final_child_name: "skills".to_string(),
+                },
+                storage_access: crate::environment::types::StorageAccess::Native,
+                content: DirectoryContentKind::Original,
+            },
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts_for_test(
+        context: SkillLocationRef,
+        snapshot: AgentSelectionSnapshot,
+        resolved_options: BTreeMap<AgentInstallOptionId, ResolvedAgentInstallOption>,
+        standard_placement: ResolvedDirectoryPlacement,
+    ) -> Self {
+        Self {
+            context,
+            snapshot,
+            resolved_options,
+            standard_placement,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,41 +365,28 @@ impl ResolvedAgentSelection {
         &self.intents
     }
 
-    pub fn entry_plan(&self, include_all_direct_agents: bool) -> AgentEntryPlan {
+    pub(crate) fn selected_options(&self) -> &[ResolvedAgentInstallOption] {
+        &self.selected_options
+    }
+
+    pub(crate) fn selected_agent_ids(&self, include_all_direct_agents: bool) -> Vec<AgentId> {
         let selected_agent_ids = self
             .selected_options
             .iter()
             .flat_map(|option| option.public.agent_ids.iter().cloned())
             .collect::<BTreeSet<_>>();
-        let mut canonical_owner_agent_ids = self
+        let mut canonical_reader_agent_ids = self
             .direct_agent_ids
             .iter()
             .filter(|agent_id| include_all_direct_agents || selected_agent_ids.contains(*agent_id))
             .cloned()
             .collect::<Vec<_>>();
-        canonical_owner_agent_ids.sort();
-        canonical_owner_agent_ids.dedup();
-        let required_agent_roots = self
-            .selected_options
-            .iter()
-            .map(|option| LogicalAgentEntryRoot {
-                target_id: option.target_id(),
-                root: option.root.clone(),
-                owner_agent_ids: option.public.agent_ids.clone(),
-                content: match &option.content {
-                    AgentSelectionContent::Canonical => AgentEntryContent::Canonical,
-                    AgentSelectionContent::EveDerived { subagent } => {
-                        AgentEntryContent::EveDerived {
-                            subagent: subagent.clone(),
-                        }
-                    }
-                },
-            })
-            .collect();
-        AgentEntryPlan {
-            canonical_owner_agent_ids,
-            required_agent_roots,
-        }
+        canonical_reader_agent_ids.sort();
+        canonical_reader_agent_ids.dedup();
+        canonical_reader_agent_ids.extend(selected_agent_ids);
+        canonical_reader_agent_ids.sort();
+        canonical_reader_agent_ids.dedup();
+        canonical_reader_agent_ids
     }
 }
 
@@ -322,7 +440,27 @@ pub(crate) fn resolve_agent_selection_submission(
     catalog: &AgentSelectionCatalog,
     submission: &AgentSelectionSubmission,
 ) -> Result<AgentSelectionResolution, AppError> {
-    if submission.revision != catalog.snapshot.revision {
+    resolve_agent_selection_submission_with_revision(
+        catalog,
+        &catalog.snapshot.revision,
+        submission,
+    )
+}
+
+pub(crate) fn resolve_agent_selection_submission_for_snapshot(
+    catalog: &AgentSelectionCatalog,
+    snapshot: &AgentSelectionSnapshot,
+    submission: &AgentSelectionSubmission,
+) -> Result<AgentSelectionResolution, AppError> {
+    resolve_agent_selection_submission_with_revision(catalog, &snapshot.revision, submission)
+}
+
+fn resolve_agent_selection_submission_with_revision(
+    catalog: &AgentSelectionCatalog,
+    expected_revision: &AgentSelectionRevision,
+    submission: &AgentSelectionSubmission,
+) -> Result<AgentSelectionResolution, AppError> {
+    if &submission.revision != expected_revision {
         return Ok(AgentSelectionResolution::Stale);
     }
 
@@ -343,16 +481,16 @@ pub(crate) fn resolve_agent_selection_submission(
         }
     }
     let mut selected_content_by_target =
-        BTreeMap::<PhysicalTargetKey, BTreeSet<AgentSelectionContent>>::new();
+        BTreeMap::<PhysicalTargetKey, BTreeSet<DirectoryContentKind>>::new();
     for option_id in &selected_ids {
         let option = catalog
             .resolved_options
             .get(option_id)
             .expect("selected option was validated above");
         selected_content_by_target
-            .entry(option.physical_key.clone())
+            .entry(option.placement.physical_key.clone())
             .or_default()
-            .insert(option.content.clone());
+            .insert(option.placement.content.clone());
     }
     if selected_content_by_target
         .values()
@@ -442,7 +580,8 @@ fn selection_validation(reason: AgentSelectionInvalidReason) -> AppError {
 }
 
 pub(crate) fn apply_initial_agent_selection(
-    catalog: &mut AgentSelectionCatalog,
+    catalog: &AgentSelectionCatalog,
+    snapshot: &mut AgentSelectionSnapshot,
     requested_agent_ids: &[String],
 ) {
     let known_agents = catalog
@@ -451,7 +590,7 @@ pub(crate) fn apply_initial_agent_selection(
         .iter()
         .map(|agent| agent.id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    catalog.snapshot.unavailable_explicit_agents = requested_agent_ids
+    snapshot.unavailable_explicit_agents = requested_agent_ids
         .iter()
         .filter(|agent_id| !known_agents.contains(agent_id.as_str()))
         .map(|agent_id| UnavailableAgentSelection {
@@ -470,8 +609,8 @@ pub(crate) fn apply_initial_agent_selection(
         .iter()
         .map(|agent| (&agent.id, agent.directory_access))
         .collect::<BTreeMap<_, _>>();
-    catalog.snapshot.initial_selected_option_ids = catalog
-        .snapshot
+    snapshot.initial_selected_option_ids = catalog
+        .snapshot()
         .install_options
         .iter()
         .filter(|option| {
@@ -490,15 +629,14 @@ pub(crate) fn apply_initial_agent_selection(
 struct CatalogCandidate {
     agent_id: AgentId,
     display_name: String,
-    path: String,
     destination: ResourceLocator,
-    standard_destination: Option<ResourceLocator>,
 }
 
 pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
     context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     eve_targets: &[InstallTargetInfo],
+    standard_root: &ResourceLocator,
     targets: &T,
 ) -> Result<AgentSelectionCatalog, AppError> {
     if !same_environment_identity(&context.environment, &runtime.environment) {
@@ -545,56 +683,30 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
         candidates.push(CatalogCandidate {
             agent_id: agent_id.clone(),
             display_name: agent.definition.display_name.clone(),
-            path: path.clone(),
             destination: ResourceLocator {
                 environment: context.environment.clone(),
                 native_path: path,
             },
-            standard_destination: scope
-                .standard_path
-                .clone()
-                .map(|native_path| ResourceLocator {
-                    environment: context.environment.clone(),
-                    native_path,
-                }),
         });
     }
 
-    let destinations = candidates
-        .iter()
-        .map(|candidate| candidate.destination.clone())
+    let destinations = std::iter::once(standard_root.clone())
+        .chain(
+            candidates
+                .iter()
+                .map(|candidate| candidate.destination.clone()),
+        )
         .collect::<Vec<_>>();
-    let facts = if destinations.is_empty() {
-        Vec::new()
-    } else {
-        targets.resolve(context, &destinations, None).await?
-    };
+    let mut facts = targets.resolve(context, &destinations, None).await?;
     if facts.len() != destinations.len() {
         return Err(AppError::StaleTarget);
     }
-    let standard_destinations = candidates
-        .iter()
-        .filter_map(|candidate| candidate.standard_destination.clone())
-        .collect::<Vec<_>>();
-    let standard_facts = if standard_destinations.is_empty() {
-        Vec::new()
-    } else {
-        targets
-            .resolve(context, &standard_destinations, None)
-            .await?
-    };
-    if standard_facts.len() != standard_destinations.len() {
-        return Err(AppError::StaleTarget);
-    }
+    let standard_fact = facts.remove(0);
 
     let mut by_physical_key =
         BTreeMap::<PhysicalTargetKey, Vec<(CatalogCandidate, ResolvedTargetFact)>>::new();
-    let mut standard_facts = standard_facts.into_iter();
     for (candidate, fact) in candidates.into_iter().zip(facts) {
-        let duplicates_standard = candidate.standard_destination.is_some()
-            && standard_facts
-                .next()
-                .is_some_and(|standard_fact| standard_fact.key == fact.key);
+        let duplicates_standard = standard_fact.key == fact.key;
         if duplicates_standard {
             if let Some(agent) = agents
                 .iter_mut()
@@ -622,7 +734,7 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
             "agent-install-option-v2",
             context,
             &physical_key,
-            AgentSelectionContent::Canonical,
+            DirectoryContentKind::Original,
             AgentSelectionModeConstraint::UserSelectable,
         ))?);
         for agent_id in &agent_ids {
@@ -631,12 +743,19 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
             }
         }
         let display_name = members[0].0.display_name.clone();
+        let placement = ResolvedDirectoryPlacement {
+            id: DirectoryPlacementId::Option(id.clone()),
+            root: members[0].0.destination.clone(),
+            physical_key,
+            storage_access: members[0].1.storage_access,
+            content: DirectoryContentKind::Original,
+        };
         let public = AgentInstallOption {
             id: id.clone(),
             kind: AgentInstallOptionKind::StandardDirectory,
             agent_ids,
             display_name,
-            path: members[0].0.path.clone(),
+            path: placement.root.native_path.clone(),
             group_id: None,
             selectable: true,
             mode_constraint: AgentSelectionModeConstraint::UserSelectable,
@@ -644,13 +763,11 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
         };
         install_options.push(public.clone());
         resolved_options.insert(
-            id,
+            id.clone(),
             ResolvedAgentInstallOption {
                 public,
-                root: members[0].0.destination.clone(),
                 adapter_target_ids: Vec::new(),
-                physical_key,
-                content: AgentSelectionContent::Canonical,
+                placement,
             },
         );
     }
@@ -682,7 +799,7 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
             }
             let mut option_ids = Vec::new();
             for (target, fact) in available_targets.into_iter().zip(facts) {
-                let content = AgentSelectionContent::EveDerived {
+                let content = DirectoryContentKind::EveDerived {
                     subagent: target.subagent.clone(),
                 };
                 let id = AgentInstallOptionId(stable_digest(&(
@@ -693,12 +810,19 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
                     AgentSelectionModeConstraint::CopyOnly,
                     &target.target_id,
                 ))?);
+                let placement = ResolvedDirectoryPlacement {
+                    id: DirectoryPlacementId::Option(id.clone()),
+                    root: fact.destination,
+                    physical_key: fact.key,
+                    storage_access: fact.storage_access,
+                    content,
+                };
                 let public = AgentInstallOption {
                     id: id.clone(),
                     kind: AgentInstallOptionKind::GroupLocation,
                     agent_ids: vec![target.agent.clone()],
                     display_name: target.display_name.clone(),
-                    path: target.path.clone(),
+                    path: placement.root.native_path.clone(),
                     group_id: Some(group_id.clone()),
                     selectable: true,
                     mode_constraint: AgentSelectionModeConstraint::CopyOnly,
@@ -707,13 +831,11 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
                 option_ids.push(id.clone());
                 install_options.push(public.clone());
                 resolved_options.insert(
-                    id,
+                    id.clone(),
                     ResolvedAgentInstallOption {
                         public,
-                        root: fact.destination,
                         adapter_target_ids: vec![target.target_id.clone()],
-                        physical_key: fact.key,
-                        content,
+                        placement,
                     },
                 );
             }
@@ -727,12 +849,12 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
         }
     }
     let content_by_target = resolved_options.values().fold(
-        BTreeMap::<PhysicalTargetKey, BTreeSet<AgentSelectionContent>>::new(),
+        BTreeMap::<PhysicalTargetKey, BTreeSet<DirectoryContentKind>>::new(),
         |mut grouped, item| {
             grouped
-                .entry(item.physical_key.clone())
+                .entry(item.placement.physical_key.clone())
                 .or_default()
-                .insert(item.content.clone());
+                .insert(item.placement.content.clone());
             grouped
         },
     );
@@ -742,7 +864,7 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
         .collect::<BTreeSet<_>>();
     if !conflicts.is_empty() {
         for resolved in resolved_options.values_mut() {
-            if conflicts.contains(&resolved.physical_key) {
+            if conflicts.contains(&resolved.placement.physical_key) {
                 resolved.public.disabled_reason =
                     Some(AgentSelectionDisabledReason::PlacementConflict);
             }
@@ -799,6 +921,7 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
     ))?);
 
     Ok(AgentSelectionCatalog {
+        context: context.clone(),
         snapshot: AgentSelectionSnapshot {
             agents,
             install_options,
@@ -809,6 +932,13 @@ pub(crate) async fn build_agent_selection_catalog<T: TargetFactResolver>(
             revision,
         },
         resolved_options,
+        standard_placement: ResolvedDirectoryPlacement {
+            id: DirectoryPlacementId::Standard,
+            root: standard_fact.destination,
+            physical_key: standard_fact.key,
+            storage_access: standard_fact.storage_access,
+            content: DirectoryContentKind::Original,
+        },
     })
 }
 
@@ -828,23 +958,27 @@ pub(crate) async fn test_submission_for_agents<T: TargetFactResolver>(
     context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     eve_targets: &[InstallTargetInfo],
+    standard_root: &ResourceLocator,
     targets: &T,
     agent_ids: &[&str],
     requested_mode: InstallMode,
 ) -> AgentSelectionSubmission {
-    let mut catalog = build_agent_selection_catalog(context, runtime, eve_targets, targets)
-        .await
-        .expect("test Agent selection catalog");
+    let catalog =
+        build_agent_selection_catalog(context, runtime, eve_targets, standard_root, targets)
+            .await
+            .expect("test Agent selection catalog");
+    let mut snapshot = catalog.snapshot().clone();
     apply_initial_agent_selection(
-        &mut catalog,
+        &catalog,
+        &mut snapshot,
         &agent_ids
             .iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>(),
     );
     AgentSelectionSubmission {
-        revision: catalog.snapshot.revision,
-        selected_option_ids: catalog.snapshot.initial_selected_option_ids,
+        revision: snapshot.revision,
+        selected_option_ids: snapshot.initial_selected_option_ids,
         requested_mode,
     }
 }
@@ -854,23 +988,27 @@ pub(crate) async fn test_submission_for_agents_and_own_directories<T: TargetFact
     context: &SkillLocationRef,
     runtime: &AgentRuntimeSnapshot,
     eve_targets: &[InstallTargetInfo],
+    standard_root: &ResourceLocator,
     targets: &T,
     agent_ids: &[&str],
     requested_mode: InstallMode,
 ) -> AgentSelectionSubmission {
-    let mut catalog = build_agent_selection_catalog(context, runtime, eve_targets, targets)
-        .await
-        .expect("test Agent selection catalog");
+    let catalog =
+        build_agent_selection_catalog(context, runtime, eve_targets, standard_root, targets)
+            .await
+            .expect("test Agent selection catalog");
     let requested = agent_ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut snapshot = catalog.snapshot().clone();
     apply_initial_agent_selection(
-        &mut catalog,
+        &catalog,
+        &mut snapshot,
         &agent_ids
             .iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>(),
     );
-    catalog.snapshot.initial_selected_option_ids = catalog
-        .snapshot
+    snapshot.initial_selected_option_ids = catalog
+        .snapshot()
         .install_options
         .iter()
         .filter(|option| {
@@ -882,8 +1020,8 @@ pub(crate) async fn test_submission_for_agents_and_own_directories<T: TargetFact
         .map(|option| option.id.clone())
         .collect();
     AgentSelectionSubmission {
-        revision: catalog.snapshot.revision,
-        selected_option_ids: catalog.snapshot.initial_selected_option_ids,
+        revision: snapshot.revision,
+        selected_option_ids: snapshot.initial_selected_option_ids,
         requested_mode,
     }
 }
@@ -915,7 +1053,7 @@ mod tests {
         apply_initial_agent_selection, build_agent_selection_catalog,
         resolve_agent_selection_submission, AgentInstallOptionKind, AgentSelectionDisabledReason,
         AgentSelectionModeConstraint, AgentSelectionResolution, AgentSelectionRevision,
-        AgentSelectionSubmission, SkillDirectoryAccess,
+        AgentSelectionSubmission, DirectoryContentKind, DirectoryPlacementId, SkillDirectoryAccess,
     };
 
     #[derive(Clone)]
@@ -945,9 +1083,11 @@ mod tests {
                             normalized_final_child_name: "skills".to_string(),
                         },
                         destination: destination.clone(),
+                        storage_access: crate::environment::types::StorageAccess::Native,
                         fingerprint: EntryFingerprint("missing".to_string()),
                         entry_kind: TargetEntryKind::Missing,
                         link_target: None,
+                        link_target_identity: None,
                     })
                     .collect())
             })
@@ -982,9 +1122,11 @@ mod tests {
                             normalized_final_child_name: "skills".to_string(),
                         },
                         destination: destination.clone(),
+                        storage_access: crate::environment::types::StorageAccess::Native,
                         fingerprint: EntryFingerprint("missing".to_string()),
                         entry_kind: TargetEntryKind::Missing,
                         link_target: None,
+                        link_target_identity: None,
                     })
                     .collect())
             })
@@ -1097,6 +1239,37 @@ mod tests {
         }
     }
 
+    fn standard_root() -> ResourceLocator {
+        ResourceLocator {
+            environment: EnvironmentRef::Native,
+            native_path: "/authoritative/.agents/skills".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_exposes_the_authoritative_standard_directory_placement() {
+        let context = SkillLocationRef {
+            environment: EnvironmentRef::Native,
+            scope: SkillLocation::Global,
+        };
+
+        let catalog = build_agent_selection_catalog(
+            &context,
+            &runtime(Vec::new()),
+            &[],
+            &standard_root(),
+            &DistinctTargetResolver,
+        )
+        .await
+        .unwrap();
+
+        let placement = catalog
+            .placement(&DirectoryPlacementId::Standard)
+            .expect("catalog contains the Standard placement");
+        assert_eq!(placement.root, standard_root());
+        assert_eq!(placement.id, DirectoryPlacementId::Standard);
+    }
+
     #[tokio::test]
     async fn catalog_classifies_direct_separate_and_additional_agents() {
         let context = SkillLocationRef {
@@ -1114,6 +1287,7 @@ mod tests {
                 agent("cursor", true, "/logical/cursor/skills"),
             ]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await
@@ -1148,18 +1322,21 @@ mod tests {
             environment: EnvironmentRef::Native,
             scope: SkillLocation::Global,
         };
-        let mut catalog = build_agent_selection_catalog(
+        let catalog = build_agent_selection_catalog(
             &context,
             &runtime(vec![agent("cursor", true, "/logical/cursor/skills")]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await
         .unwrap();
 
-        apply_initial_agent_selection(&mut catalog, &["cursor".to_string()]);
+        let mut snapshot = catalog.snapshot().clone();
+        apply_initial_agent_selection(&catalog, &mut snapshot, &["cursor".to_string()]);
 
-        assert!(catalog.snapshot.initial_selected_option_ids.is_empty());
+        assert!(snapshot.initial_selected_option_ids.is_empty());
+        assert!(catalog.snapshot().initial_selected_option_ids.is_empty());
     }
 
     #[tokio::test]
@@ -1174,6 +1351,7 @@ mod tests {
             &context,
             &runtime(vec![(AgentId::parse("cursor").unwrap(), duplicate)]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await
@@ -1198,7 +1376,7 @@ mod tests {
             panic!("current selection must resolve");
         };
         assert_eq!(
-            selection.entry_plan(true).canonical_owner_agent_ids,
+            selection.selected_agent_ids(true),
             vec![AgentId::parse("cursor").unwrap()]
         );
     }
@@ -1216,6 +1394,7 @@ mod tests {
                 agent("cursor", true, "/logical/cursor/skills"),
             ]),
             &[],
+            &standard_root(),
             &StandardTargetResolver,
         )
         .await
@@ -1227,6 +1406,13 @@ mod tests {
             AgentInstallOptionKind::StandardDirectory
         );
         assert_eq!(catalog.snapshot.install_options[0].agent_ids.len(), 2);
+        let option_id = catalog.snapshot.install_options[0].id.clone();
+        let placement = catalog
+            .placement(&DirectoryPlacementId::Option(option_id.clone()))
+            .expect("shared option has one resolved placement");
+        assert_eq!(placement.id, DirectoryPlacementId::Option(option_id));
+        assert_eq!(placement.content, DirectoryContentKind::Original);
+        assert_eq!(placement.root.native_path, "/logical/claude/skills");
         assert_eq!(
             catalog
                 .snapshot
@@ -1249,9 +1435,8 @@ mod tests {
         let AgentSelectionResolution::Ready(selection) = resolution else {
             panic!("current selection must resolve");
         };
-        let plan = selection.entry_plan(true);
-        assert_eq!(plan.required_agent_roots.len(), 1);
-        assert_eq!(plan.required_agent_roots[0].owner_agent_ids.len(), 2);
+        assert_eq!(selection.selected_options().len(), 1);
+        assert_eq!(selection.selected_options()[0].public.agent_ids.len(), 2);
     }
 
     #[tokio::test]
@@ -1286,10 +1471,15 @@ mod tests {
             },
         ];
 
-        let catalog =
-            build_agent_selection_catalog(&context, &runtime, &targets, &DistinctTargetResolver)
-                .await
-                .unwrap();
+        let catalog = build_agent_selection_catalog(
+            &context,
+            &runtime,
+            &targets,
+            &standard_root(),
+            &DistinctTargetResolver,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(catalog.snapshot.groups.len(), 1);
         assert_eq!(catalog.snapshot.groups[0].display_name, "Eve");
@@ -1325,10 +1515,15 @@ mod tests {
             path: "/workspace/project/agent/skills".to_string(),
         }];
 
-        let catalog =
-            build_agent_selection_catalog(&context, &runtime, &targets, &StandardTargetResolver)
-                .await
-                .unwrap();
+        let catalog = build_agent_selection_catalog(
+            &context,
+            &runtime,
+            &targets,
+            &standard_root(),
+            &StandardTargetResolver,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(catalog.snapshot.install_options.len(), 2);
         assert!(catalog.snapshot.install_options.iter().all(|option| {
@@ -1370,6 +1565,7 @@ mod tests {
                 agent("cursor", true, "/logical/cursor/skills"),
             ]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await
@@ -1417,6 +1613,7 @@ mod tests {
             &context,
             &runtime(vec![agent("claude-code", false, "/logical/claude/skills")]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await
@@ -1448,6 +1645,7 @@ mod tests {
             &context,
             &runtime(vec![(id.clone(), direct.clone())]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await
@@ -1459,6 +1657,7 @@ mod tests {
             &context,
             &runtime(vec![(id.clone(), direct.clone())]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await
@@ -1471,6 +1670,7 @@ mod tests {
             &context,
             &runtime(vec![(id, direct)]),
             &[],
+            &standard_root(),
             &DistinctTargetResolver,
         )
         .await

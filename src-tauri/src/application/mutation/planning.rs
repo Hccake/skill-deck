@@ -31,9 +31,10 @@ pub struct MutationUnitDraft {
     pub lock_mutation: Option<PreparedLockMutation>,
 }
 
+#[derive(Debug, Clone)]
 pub struct PreparedMutationEntries {
-    pub canonical: Option<PreparedEntryMutation>,
-    pub required_agents: Vec<PreparedEntryMutation>,
+    pub primary: Option<PreparedEntryMutation>,
+    pub additional: Vec<PreparedEntryMutation>,
     pub expected_targets: Vec<ExpectedTargetEntry>,
 }
 
@@ -51,8 +52,8 @@ pub fn assemble_plan(draft: MutationPlanDraft) -> MutationPlan {
                 source: unit.source,
                 target: unit.target,
                 expected_revisions: unit.expected_revisions,
-                canonical_entry: unit.entries.canonical,
-                required_agent_entries: unit.entries.required_agents,
+                primary_entry: unit.entries.primary,
+                additional_entries: unit.entries.additional,
                 lock_mutation: unit.lock_mutation,
                 expected_targets: unit.entries.expected_targets,
             })
@@ -326,8 +327,8 @@ mod tests {
                     .expect("context revision"),
             },
             entries: PreparedMutationEntries {
-                canonical: None,
-                required_agents: Vec::new(),
+                primary: None,
+                additional: Vec::new(),
                 expected_targets: Vec::new(),
             },
             lock_mutation: None,
@@ -429,7 +430,7 @@ mod tests {
                 payload_id: payloads.keys().next().expect("payload ID").clone(),
                 requested_mode: InstallMode::Copy,
             },
-            owner_agent_ids: vec![AgentId::parse("codex").expect("Agent ID")],
+            reader_agent_ids: vec![AgentId::parse("codex").expect("Agent ID")],
         };
         let expected_target = ExpectedTargetEntry {
             key: canonical.key.clone(),
@@ -440,7 +441,7 @@ mod tests {
             key: key("alpha-codex"),
             destination: destination(&required_agent_destination),
             action: canonical.action.clone(),
-            owner_agent_ids: vec![AgentId::parse("codex").expect("Agent ID")],
+            reader_agent_ids: vec![AgentId::parse("codex").expect("Agent ID")],
         };
         let source = SkillLocationRef {
             environment: EnvironmentRef::Native,
@@ -472,8 +473,8 @@ mod tests {
         first.source = Some(source.clone());
         first.target = target.clone();
         first.entries = PreparedMutationEntries {
-            canonical: Some(canonical.clone()),
-            required_agents: vec![required_agent.clone()],
+            primary: Some(canonical.clone()),
+            additional: vec![required_agent.clone()],
             expected_targets: vec![expected_target.clone()],
         };
         first.lock_mutation = Some(lock_mutation);
@@ -506,8 +507,8 @@ mod tests {
             plan.units[0].expected_revisions.context.as_str(),
             "context-v1-test"
         );
-        assert_eq!(plan.units[0].canonical_entry, Some(canonical));
-        assert_eq!(plan.units[0].required_agent_entries, vec![required_agent]);
+        assert_eq!(plan.units[0].primary_entry, Some(canonical));
+        assert_eq!(plan.units[0].additional_entries, vec![required_agent]);
         assert_eq!(plan.units[0].expected_targets, vec![expected_target]);
         let prepared_lock = plan.units[0].lock_mutation.as_ref().expect("lock mutation");
         assert_eq!(
